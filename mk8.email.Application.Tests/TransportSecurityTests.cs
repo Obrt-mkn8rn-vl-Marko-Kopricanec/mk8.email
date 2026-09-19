@@ -496,12 +496,13 @@ public sealed class TransportSecurityTests
         await connection.WriteLineAsync("a1 CAPABILITY");
         var capability = await connection.ReadLineAsync();
         StringAssert.Contains(capability, "IMAP4rev1 LITERAL+ IDLE NAMESPACE SPECIAL-USE UIDPLUS");
+        StringAssert.Contains(capability, "ID ENABLE MOVE UNSELECT QUOTA CONDSTORE QRESYNC ESEARCH");
         StringAssert.Contains(capability, "LOGINDISABLED");
         StringAssert.Contains(capability, "STARTTLS");
         Assert.IsFalse(capability.Contains("AUTH=PLAIN", StringComparison.Ordinal));
         foreach (var unverifiedExtension in new[]
                  {
-                     "CONDSTORE", "QRESYNC", "ESEARCH", "MULTIAPPEND",
+                     "MULTIAPPEND",
                      "COMPRESS=DEFLATE", "BINARY", "OBJECTID", "SORT", "THREAD=REFERENCES",
                  })
         {
@@ -563,9 +564,142 @@ public sealed class TransportSecurityTests
         await connection.WriteLineAsync("a2 CAPABILITY");
         var capability = await connection.ReadLineAsync();
         StringAssert.Contains(capability, "AUTH=PLAIN");
+        StringAssert.Contains(capability, "SASL-IR");
         Assert.IsFalse(capability.Contains("LOGINDISABLED", StringComparison.Ordinal));
         Assert.IsFalse(capability.Contains("STARTTLS", StringComparison.Ordinal));
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a2 OK", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    [Timeout(10_000)]
+    public async Task ImapAuthenticatePlainSupportsInitialResponseAndRejectsProxyAuthorization()
+    {
+        var port = ReservePort();
+        var environment = CreateEnvironment(imapPort: port);
+        await using var server = await ServerFixture.StartImapAsync(environment, port);
+
+        await using (var connection = await ProtocolConnection.ConnectAsync(port))
+        {
+            await connection.ReadLineAsync();
+            await connection.WriteLineAsync("a1 STARTTLS");
+            Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a1 OK", StringComparison.Ordinal));
+            await connection.UpgradeToTlsAsync("email.mk8n.com");
+
+            var credentials = Convert.ToBase64String(
+                Encoding.UTF8.GetBytes($"\0{TestUsername}\0{TestPassword}"));
+            await connection.WriteLineAsync($"a2 AUTHENTICATE PLAIN {credentials}");
+            Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a2 OK", StringComparison.Ordinal));
+            await connection.WriteLineAsync("a3 NOOP");
+            Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a3 OK", StringComparison.Ordinal));
+        }
+
+        await using var rejected = await ProtocolConnection.ConnectAsync(port);
+        await rejected.ReadLineAsync();
+        await rejected.WriteLineAsync("b1 STARTTLS");
+        Assert.IsTrue((await rejected.ReadLineAsync()).StartsWith("b1 OK", StringComparison.Ordinal));
+        await rejected.UpgradeToTlsAsync("email.mk8n.com");
+
+        var proxyCredentials = Convert.ToBase64String(
+            Encoding.UTF8.GetBytes($"other@mk8n.com\0{TestUsername}\0{TestPassword}"));
+        await rejected.WriteLineAsync($"b2 AUTHENTICATE PLAIN {proxyCredentials}");
+        Assert.IsTrue((await rejected.ReadLineAsync()).StartsWith("b2 NO", StringComparison.Ordinal));
+        await rejected.WriteLineAsync($"b3 LOGIN \"{TestUsername}\" \"{TestPassword}\"");
+        Assert.IsTrue((await rejected.ReadLineAsync()).StartsWith("b3 OK", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    [Timeout(10_000)]
+    public async Task ImapEnableRequiresAuthenticatedState()
+    {
+        var port = ReservePort();
+        var environment = CreateEnvironment(imapPort: port);
+        await using var server = await ServerFixture.StartImapAsync(environment, port);
+        await using var connection = await ProtocolConnection.ConnectAsync(port);
+
+        await connection.ReadLineAsync();
+        await connection.WriteLineAsync("a1 ENABLE QRESYNC");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a1 BAD", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a2 STARTTLS");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a2 OK", StringComparison.Ordinal));
+        await connection.UpgradeToTlsAsync("email.mk8n.com");
+        await connection.WriteLineAsync($"a3 LOGIN \"{TestUsername}\" \"{TestPassword}\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a3 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a4 ENABLE QRESYNC CONDSTORE UNKNOWN");
+        Assert.AreEqual("* ENABLED QRESYNC CONDSTORE", await connection.ReadLineAsync());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a4 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a5 SELECT INBOX");
+        await ReadUntilTaggedResponseAsync(connection, "a5");
+        await connection.WriteLineAsync("a6 ENABLE QRESYNC");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a6 BAD", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    [Timeout(10_000)]
+    public async Task ImapRejectsUnknownCompressionWithoutChangingTheTransport()
+    {
+        var port = ReservePort();
+        var environment = CreateEnvironment(imapPort: port);
+        await using var server = await ServerFixture.StartImapAsync(environment, port);
+        await using var connection = await ProtocolConnection.ConnectAsync(port);
+
+        await connection.ReadLineAsync();
+        await connection.WriteLineAsync("a1 STARTTLS");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a1 OK", StringComparison.Ordinal));
+        await connection.UpgradeToTlsAsync("email.mk8n.com");
+        await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a2 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a3 COMPRESS GZIP");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a3 BAD", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a4 NOOP");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a4 OK", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    [Timeout(10_000)]
+    public async Task ImapReportsNamespaceIdentityAndQuotaForThunderbirdDiscovery()
+    {
+        var port = ReservePort();
+        var environment = CreateEnvironment(imapPort: port);
+        await using var server = await ServerFixture.StartImapAsync(environment, port);
+        await server.SeedInboxMessagesForSearchAsync();
+        await server.SetUserQuotaAsync(4096);
+        await using var connection = await ProtocolConnection.ConnectAsync(port);
+
+        await connection.ReadLineAsync();
+        await connection.WriteLineAsync("a1 STARTTLS");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a1 OK", StringComparison.Ordinal));
+        await connection.UpgradeToTlsAsync("email.mk8n.com");
+        await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a2 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a3 ID (\"name\" \"Thunderbird\")");
+        StringAssert.Contains(await connection.ReadLineAsync(), "\"name\" \"mk8.email\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a3 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a4 NAMESPACE");
+        Assert.AreEqual("* NAMESPACE ((\"\" \"/\")) NIL NIL", await connection.ReadLineAsync());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a4 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a5 GETQUOTAROOT INBOX");
+        Assert.AreEqual("* QUOTAROOT \"INBOX\" \"\"", await connection.ReadLineAsync());
+        Assert.AreEqual("* QUOTA \"\" (STORAGE 1 4)", await connection.ReadLineAsync());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a5 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a6 GETQUOTA \"\"");
+        Assert.AreEqual("* QUOTA \"\" (STORAGE 1 4)", await connection.ReadLineAsync());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a6 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a7 GETQUOTA missing");
+        StringAssert.Contains(await connection.ReadLineAsync(), "[NONEXISTENT]");
+        await connection.WriteLineAsync("a8 GETQUOTAROOT missing");
+        StringAssert.Contains(await connection.ReadLineAsync(), "[NONEXISTENT]");
+
+        await server.SetUserQuotaAsync(0);
+        await connection.WriteLineAsync("a9 GETQUOTA \"\"");
+        Assert.AreEqual("* QUOTA \"\" ()", await connection.ReadLineAsync());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a9 OK", StringComparison.Ordinal));
     }
 
     [TestMethod]

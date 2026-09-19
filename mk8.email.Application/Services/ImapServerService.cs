@@ -36,6 +36,9 @@ ILogger<ImapServerService> logger) : BackgroundService
     private const int MaximumMultiAppendMessages = 20;
     private const int MaximumCommandLiterals = 64;
     private static readonly Encoding ProtocolEncoding = MailWireEncoding.Instance;
+    private static readonly Encoding StrictUtf8 = new UTF8Encoding(
+        encoderShouldEmitUTF8Identifier: false,
+        throwOnInvalidBytes: true);
 
     private enum ListenerMode { Imap, ImplicitTls }
 
@@ -322,6 +325,11 @@ ILogger<ImapServerService> logger) : BackgroundService
                     break;
 
                 case "ENABLE":
+                    if (session.State != ImapState.Authenticated)
+                    {
+                        await writer.WriteLineAsync($"{tag} BAD ENABLE is only valid in the authenticated state");
+                        break;
+                    }
                     await HandleEnableAsync(writer, tag, args, session);
                     break;
 
@@ -358,7 +366,7 @@ ILogger<ImapServerService> logger) : BackgroundService
                         await writer.WriteLineAsync($"{tag} NO Not authenticated");
                         break;
                     }
-                    await HandleGetQuotaAsync(writer, tag, session, ct);
+                    await HandleGetQuotaAsync(writer, tag, args, session, ct);
                     break;
 
                 case "LIST":
@@ -586,12 +594,18 @@ ILogger<ImapServerService> logger) : BackgroundService
                     break;
 
                 case "COMPRESS":
+                    if (session.State == ImapState.NotAuthenticated)
+                    {
+                        await writer.WriteLineAsync($"{tag} NO Not authenticated");
+                        break;
+                    }
                     if (session.CompressEnabled)
                     {
                         await writer.WriteLineAsync($"{tag} NO COMPRESS already active");
                         break;
                     }
-                    await HandleCompressAsync(writer, tag, args);
+                    if (!await HandleCompressAsync(writer, tag, args))
+                        break;
                     session.CompressEnabled = true;
                     return SessionUpgrade.Compress;
 
@@ -764,18 +778,19 @@ ILogger<ImapServerService> logger) : BackgroundService
         await writer.WriteLineAsync($"{tag} BAD {response}");
     }
 
-    private static async Task HandleCompressAsync(StreamWriter writer, string tag, string args)
+    private static async Task<bool> HandleCompressAsync(StreamWriter writer, string tag, string args)
     {
         var mechanism = args.Trim().ToUpperInvariant();
         if (mechanism != "DEFLATE")
         {
             await writer.WriteLineAsync($"{tag} BAD Unknown compression mechanism");
-            return;
+            return false;
         }
 
         // Signal OK — the caller will upgrade the stream
         await writer.WriteLineAsync($"{tag} OK COMPRESS DEFLATE active");
         await writer.FlushAsync();
+        return true;
     }
 
     private static async Task HandleCapabilityAsync(
@@ -784,10 +799,12 @@ ILogger<ImapServerService> logger) : BackgroundService
         GlobalConfigDB config,
         ImapSession session)
     {
-        var caps = "IMAP4rev1 LITERAL+ IDLE NAMESPACE SPECIAL-USE UIDPLUS";
+        var caps =
+            "IMAP4rev1 LITERAL+ IDLE NAMESPACE SPECIAL-USE UIDPLUS " +
+            "ID ENABLE MOVE UNSELECT QUOTA CONDSTORE QRESYNC ESEARCH";
         if (session.IsSecure)
         {
-            caps += " AUTH=PLAIN";
+            caps += " AUTH=PLAIN SASL-IR";
         }
         else
         {
@@ -849,7 +866,14 @@ ILogger<ImapServerService> logger) : BackgroundService
             return;
         }
 
-        var mechanism = args.Trim().ToUpperInvariant();
+        var authenticationArgs = args.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        if (authenticationArgs.Length == 0)
+        {
+            await writer.WriteLineAsync($"{tag} BAD Missing authentication mechanism");
+            return;
+        }
+
+        var mechanism = authenticationArgs[0].ToUpperInvariant();
 
         if (mechanism != "PLAIN")
         {
@@ -857,39 +881,65 @@ ILogger<ImapServerService> logger) : BackgroundService
             return;
         }
 
-        await writer.WriteLineAsync("+ ");
-        var encodedResult = await reader.ReadLineAsync(MaximumAuthenticationLineCharacters, ct);
-        var encoded = encodedResult.Value;
-        if (encodedResult.IsTooLong)
+        string? encoded;
+        if (authenticationArgs.Length == 2)
         {
-            await writer.WriteLineAsync($"{tag} BAD Authentication response is too long");
-            return;
+            encoded = authenticationArgs[1];
+            if (encoded.Length > MaximumAuthenticationLineCharacters)
+            {
+                await writer.WriteLineAsync($"{tag} BAD Authentication response is too long");
+                return;
+            }
+
+            if (encoded == "=")
+                encoded = string.Empty;
         }
+        else
+        {
+            await writer.WriteLineAsync("+ ");
+            var encodedResult = await reader.ReadLineAsync(MaximumAuthenticationLineCharacters, ct);
+            encoded = encodedResult.Value;
+            if (encodedResult.IsTooLong)
+            {
+                await writer.WriteLineAsync($"{tag} BAD Authentication response is too long");
+                return;
+            }
+        }
+
         if (encoded is null || encoded == "*")
         {
             await writer.WriteLineAsync($"{tag} BAD Authentication cancelled");
             return;
         }
 
-        string? username = null;
-        string? password = null;
+        string decoded;
         try
         {
-            var decoded = Encoding.UTF8.GetString(Convert.FromBase64String(encoded));
-            var fields = decoded.Split('\0');
-            if (fields.Length >= 3)
-            {
-                username = string.IsNullOrEmpty(fields[0]) ? fields[1] : fields[0];
-                password = fields[2];
-            }
+            decoded = StrictUtf8.GetString(Convert.FromBase64String(encoded));
         }
-        catch (FormatException)
+        catch (Exception exception) when (exception is FormatException or DecoderFallbackException)
         {
             await writer.WriteLineAsync($"{tag} BAD Invalid base64");
             return;
         }
 
-        if (username is null || password is null)
+        var firstSeparator = decoded.IndexOf('\0');
+        var secondSeparator = firstSeparator < 0
+            ? -1
+            : decoded.IndexOf('\0', firstSeparator + 1);
+        if (firstSeparator < 0 || secondSeparator < 0)
+        {
+            RecordAuthenticationFailure(session);
+            await writer.WriteLineAsync($"{tag} NO Authentication failed");
+            return;
+        }
+
+        var authorizationIdentity = decoded[..firstSeparator];
+        var username = decoded[(firstSeparator + 1)..secondSeparator];
+        var password = decoded[(secondSeparator + 1)..];
+        if (username.Length == 0
+            || authorizationIdentity.Length > 0
+            && !string.Equals(authorizationIdentity, username, StringComparison.OrdinalIgnoreCase))
         {
             RecordAuthenticationFailure(session);
             await writer.WriteLineAsync($"{tag} NO Authentication failed");
@@ -2965,6 +3015,12 @@ ILogger<ImapServerService> logger) : BackgroundService
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
 
+        if (await ResolveFolderAsync(db, session.UserId, mailboxName, ct) is null)
+        {
+            await writer.WriteLineAsync($"{tag} NO [NONEXISTENT] Mailbox not found");
+            return;
+        }
+
         var user = await db.Users.AsNoTracking()
             .FirstOrDefaultAsync(u => u.Id == session.UserId, ct);
 
@@ -2974,17 +3030,24 @@ ILogger<ImapServerService> logger) : BackgroundService
 
         var quotaBytes = user?.QuotaBytes ?? 0;
 
-        await writer.WriteLineAsync($"* QUOTAROOT \"{mailboxName}\" \"\"");
+        await writer.WriteLineAsync($"* QUOTAROOT \"{EscapeImapString(mailboxName)}\" \"\"");
         if (quotaBytes > 0)
-            await writer.WriteLineAsync($"* QUOTA \"\" (STORAGE {usedBytes / 1024} {quotaBytes / 1024})");
+            await writer.WriteLineAsync(
+                $"* QUOTA \"\" (STORAGE {ToQuotaStorageUnits(usedBytes)} {ToQuotaStorageUnits(quotaBytes)})");
         else
-            await writer.WriteLineAsync($"* QUOTA \"\" (STORAGE {usedBytes / 1024} 0)");
+            await writer.WriteLineAsync("* QUOTA \"\" ()");
         await writer.WriteLineAsync($"{tag} OK GETQUOTAROOT completed");
     }
 
     private async Task HandleGetQuotaAsync(
-        StreamWriter writer, string tag, ImapSession session, CancellationToken ct)
+        StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
+        if (!string.Equals(UnquoteArg(args.Trim()), string.Empty, StringComparison.Ordinal))
+        {
+            await writer.WriteLineAsync($"{tag} NO [NONEXISTENT] Quota root not found");
+            return;
+        }
+
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
 
@@ -2998,11 +3061,15 @@ ILogger<ImapServerService> logger) : BackgroundService
         var quotaBytes = user?.QuotaBytes ?? 0;
 
         if (quotaBytes > 0)
-            await writer.WriteLineAsync($"* QUOTA \"\" (STORAGE {usedBytes / 1024} {quotaBytes / 1024})");
+            await writer.WriteLineAsync(
+                $"* QUOTA \"\" (STORAGE {ToQuotaStorageUnits(usedBytes)} {ToQuotaStorageUnits(quotaBytes)})");
         else
-            await writer.WriteLineAsync($"* QUOTA \"\" (STORAGE {usedBytes / 1024} 0)");
+            await writer.WriteLineAsync("* QUOTA \"\" ()");
         await writer.WriteLineAsync($"{tag} OK GETQUOTA completed");
     }
+
+    private static long ToQuotaStorageUnits(long bytes) =>
+        bytes <= 0 ? 0 : 1 + (bytes - 1) / 1024;
 
     private static string BuildEnvelope(EmailDB email)
     {

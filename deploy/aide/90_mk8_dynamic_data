@@ -50,6 +50,11 @@
 -/home/codex/\.nuget/packages$
 -/home/codex/\.tmp$
 -/home/codex/Codex$
+# Interactive desktop state changes independently of the mail host.
+# Keep the operator home and authentication material monitored.
+-/home/mkn8rn/\.cache$
+-/home/mkn8rn/\.local/state/wireplumber$
+-/home/mkn8rn/\.bash_history$
 # This operator recovery tree is immutable and outside the mail-host boundary.
 # Exclude its parent so AIDE never traverses the protected dated archive.
 -/root/BraloGruppeColdArchive$

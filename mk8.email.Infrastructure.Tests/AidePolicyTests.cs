@@ -16,6 +16,9 @@ public sealed class AidePolicyTests
         @"-/home/codex/\.nuget/packages$",
         @"-/home/codex/\.tmp$",
         "-/home/codex/Codex$",
+        @"-/home/mkn8rn/\.cache$",
+        @"-/home/mkn8rn/\.local/state/wireplumber$",
+        @"-/home/mkn8rn/\.bash_history$",
         "-/root/BraloGruppeColdArchive$",
     ];
 

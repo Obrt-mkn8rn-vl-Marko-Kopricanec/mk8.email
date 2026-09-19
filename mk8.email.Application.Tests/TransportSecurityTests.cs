@@ -1389,6 +1389,110 @@ public sealed class TransportSecurityTests
     }
 
     [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    [Timeout(25_000)]
+    public async Task ImapIdleReportsCrossConnectionMailboxChanges(bool enableQresync)
+    {
+        var port = ReservePort();
+        var environment = CreateEnvironment(imapPort: port);
+        await using var server = await ServerFixture.StartImapAsync(environment, port);
+        await using var writerConnection = await ProtocolConnection.ConnectAsync(port);
+        await using var idleConnection = await ProtocolConnection.ConnectAsync(port);
+
+        await writerConnection.ReadLineAsync();
+        await writerConnection.WriteLineAsync("w1 STARTTLS");
+        Assert.IsTrue((await writerConnection.ReadLineAsync()).StartsWith("w1 OK", StringComparison.Ordinal));
+        await writerConnection.UpgradeToTlsAsync("email.mk8n.com");
+        await writerConnection.WriteLineAsync($"w2 LOGIN \"{TestUsername}\" \"{TestPassword}\"");
+        Assert.IsTrue((await writerConnection.ReadLineAsync()).StartsWith("w2 OK", StringComparison.Ordinal));
+
+        await idleConnection.ReadLineAsync();
+        await idleConnection.WriteLineAsync("r1 STARTTLS");
+        Assert.IsTrue((await idleConnection.ReadLineAsync()).StartsWith("r1 OK", StringComparison.Ordinal));
+        await idleConnection.UpgradeToTlsAsync("email.mk8n.com");
+        await idleConnection.WriteLineAsync($"r2 LOGIN \"{TestUsername}\" \"{TestPassword}\"");
+        Assert.IsTrue((await idleConnection.ReadLineAsync()).StartsWith("r2 OK", StringComparison.Ordinal));
+
+        const string firstMessage =
+            "From: user@mk8n.com\r\nTo: user@mk8n.com\r\n" +
+            "Subject: first idle message\r\n\r\nfirst\r\n";
+        const string secondMessage =
+            "From: user@mk8n.com\r\nTo: user@mk8n.com\r\n" +
+            "Subject: second idle message\r\n\r\nsecond\r\n";
+        const string thirdMessage =
+            "From: user@mk8n.com\r\nTo: user@mk8n.com\r\n" +
+            "Subject: third idle message\r\n\r\nthird\r\n";
+
+        await writerConnection.WriteLineAsync($"w3 APPEND INBOX {{{firstMessage.Length}}}");
+        Assert.IsTrue((await writerConnection.ReadLineAsync()).StartsWith("+ ", StringComparison.Ordinal));
+        await writerConnection.WriteRawAsync(firstMessage);
+        await writerConnection.WriteLineAsync(string.Empty);
+        Assert.IsTrue((await writerConnection.ReadLineAsync()).StartsWith("w3 OK", StringComparison.Ordinal));
+        await writerConnection.WriteLineAsync($"w4 APPEND INBOX {{{secondMessage.Length}}}");
+        Assert.IsTrue((await writerConnection.ReadLineAsync()).StartsWith("+ ", StringComparison.Ordinal));
+        await writerConnection.WriteRawAsync(secondMessage);
+        await writerConnection.WriteLineAsync(string.Empty);
+        Assert.IsTrue((await writerConnection.ReadLineAsync()).StartsWith("w4 OK", StringComparison.Ordinal));
+
+        var selectTag = "r3";
+        var idleTag = "r4";
+        if (enableQresync)
+        {
+            await idleConnection.WriteLineAsync("r3 ENABLE QRESYNC");
+            Assert.AreEqual("* ENABLED QRESYNC", await idleConnection.ReadLineAsync());
+            Assert.IsTrue((await idleConnection.ReadLineAsync()).StartsWith("r3 OK", StringComparison.Ordinal));
+            selectTag = "r4";
+            idleTag = "r5";
+        }
+
+        await idleConnection.WriteLineAsync($"{selectTag} SELECT INBOX (CONDSTORE)");
+        var selected = await ReadUntilTaggedResponseAsync(idleConnection, selectTag);
+        Assert.IsTrue(selected[^1].StartsWith($"{selectTag} OK", StringComparison.Ordinal));
+        await idleConnection.WriteLineAsync($"{idleTag} IDLE");
+        Assert.AreEqual("+ idling", await idleConnection.ReadLineAsync());
+
+        await writerConnection.WriteLineAsync("w5 SELECT INBOX");
+        await ReadUntilTaggedResponseAsync(writerConnection, "w5");
+        await writerConnection.WriteLineAsync("w6 STORE 1 +FLAGS (\\Seen)");
+        await ReadUntilTaggedResponseAsync(writerConnection, "w6");
+        await writerConnection.WriteLineAsync("w7 MOVE 2 Trash");
+        await ReadUntilTaggedResponseAsync(writerConnection, "w7");
+        await writerConnection.WriteLineAsync($"w8 APPEND INBOX {{{thirdMessage.Length}}}");
+        Assert.IsTrue((await writerConnection.ReadLineAsync()).StartsWith("+ ", StringComparison.Ordinal));
+        await writerConnection.WriteRawAsync(thirdMessage);
+        await writerConnection.WriteLineAsync(string.Empty);
+        Assert.IsTrue((await writerConnection.ReadLineAsync()).StartsWith("w8 OK", StringComparison.Ordinal));
+
+        var expectedRemoval = enableQresync ? "* VANISHED 2" : "* 2 EXPUNGE";
+        var updates = new List<string>();
+        for (var index = 0; index < 10; index++)
+        {
+            updates.Add(await idleConnection.ReadLineAsync(TimeSpan.FromSeconds(8)));
+            if (updates.Any(line => line == expectedRemoval)
+                && updates.Any(line => line == "* 2 EXISTS")
+                && updates.Any(line => line.StartsWith("* 1 FETCH", StringComparison.Ordinal)
+                    && line.Contains("\\Seen", StringComparison.Ordinal)
+                    && line.Contains("MODSEQ", StringComparison.Ordinal))
+                && updates.Any(line => line.StartsWith("* 2 FETCH", StringComparison.Ordinal)))
+            {
+                break;
+            }
+        }
+
+        CollectionAssert.Contains(updates, expectedRemoval);
+        CollectionAssert.Contains(updates, "* 2 EXISTS");
+        Assert.IsTrue(updates.Any(line => line.StartsWith("* 1 FETCH", StringComparison.Ordinal)
+            && line.Contains("\\Seen", StringComparison.Ordinal)
+            && line.Contains("MODSEQ", StringComparison.Ordinal)));
+        Assert.IsTrue(updates.Any(line => line.StartsWith("* 2 FETCH", StringComparison.Ordinal)));
+
+        await idleConnection.WriteLineAsync("DONE");
+        var completed = await ReadUntilTaggedResponseAsync(idleConnection, idleTag);
+        Assert.IsTrue(completed[^1].StartsWith($"{idleTag} OK", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
     [Timeout(10_000)]
     public async Task ImapAppendChecksQuotaBeforeReadingTheLiteral()
     {
@@ -2309,9 +2413,11 @@ public sealed class TransportSecurityTests
             return new ProtocolConnection(client);
         }
 
-        public async Task<string> ReadLineAsync()
+        public Task<string> ReadLineAsync() => ReadLineAsync(TimeSpan.FromSeconds(3));
+
+        public async Task<string> ReadLineAsync(TimeSpan timeoutDuration)
         {
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            using var timeout = new CancellationTokenSource(timeoutDuration);
             return await _reader.ReadLineAsync(timeout.Token)
                 ?? throw new EndOfStreamException("The server closed the protocol stream.");
         }

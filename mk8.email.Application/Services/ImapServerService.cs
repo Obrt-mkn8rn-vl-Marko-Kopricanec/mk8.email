@@ -5552,14 +5552,17 @@ ILogger<ImapServerService> logger) : BackgroundService
 
         timeout.CancelAfter(TimeSpan.FromMinutes(30));
 
-        var lastKnownCount = 0;
+        var knownMessages = new List<EmailDB>();
         long lastKnownModSeq = 0;
 
         if (session.SelectedFolderId is not null)
         {
             using var initScope = scopeFactory.CreateScope();
             var initDb = initScope.ServiceProvider.GetRequiredService<EmailDbContext>();
-            lastKnownCount = await initDb.Emails.CountAsync(e => e.FolderId == session.SelectedFolderId.Value, timeout.Token);
+            knownMessages = await GetEmailMetadataInFolderAsync(
+                initDb,
+                session.SelectedFolderId.Value,
+                timeout.Token);
             var folder = await initDb.Folders.AsNoTracking().FirstOrDefaultAsync(f => f.Id == session.SelectedFolderId.Value, timeout.Token);
             lastKnownModSeq = folder?.HighestModSeq ?? 0;
         }
@@ -5601,49 +5604,79 @@ ILogger<ImapServerService> logger) : BackgroundService
                     using var pollScope = scopeFactory.CreateScope();
                     var pollDb = pollScope.ServiceProvider.GetRequiredService<EmailDbContext>();
 
-                    var currentCount = await pollDb.Emails.CountAsync(
-                        e => e.FolderId == session.SelectedFolderId.Value, timeout.Token);
+                    var currentMessages = await GetEmailMetadataInFolderAsync(
+                        pollDb,
+                        session.SelectedFolderId.Value,
+                        timeout.Token);
                     var folder = await pollDb.Folders.AsNoTracking()
                         .FirstOrDefaultAsync(f => f.Id == session.SelectedFolderId.Value, timeout.Token);
                     var currentModSeq = folder?.HighestModSeq ?? 0;
 
-                    if (currentCount != lastKnownCount)
+                    var currentIds = currentMessages
+                        .Select(email => email.Id)
+                        .ToHashSet();
+                    var removed = knownMessages
+                        .Where(email => !currentIds.Contains(email.Id))
+                        .ToList();
+                    var survivingKnownMessages = knownMessages.ToList();
+                    if (removed.Count > 0 && session.QresyncEnabled)
                     {
-                        await writer.WriteLineAsync($"* {currentCount} EXISTS");
-                        lastKnownCount = currentCount;
+                        var vanishedUids = removed
+                            .Select(email => email.Uid)
+                            .Order()
+                            .ToList();
+                        await writer.WriteLineAsync($"* VANISHED {FormatUidRange(vanishedUids)}");
+                        survivingKnownMessages.RemoveAll(email => !currentIds.Contains(email.Id));
+                    }
+                    else if (removed.Count > 0)
+                    {
+                        for (var index = 0; index < survivingKnownMessages.Count;)
+                        {
+                            if (currentIds.Contains(survivingKnownMessages[index].Id))
+                            {
+                                index++;
+                                continue;
+                            }
+
+                            await writer.WriteLineAsync($"* {index + 1} EXPUNGE");
+                            survivingKnownMessages.RemoveAt(index);
+                        }
+                    }
+
+                    if (currentMessages.Count != survivingKnownMessages.Count)
+                    {
+                        await writer.WriteLineAsync($"* {currentMessages.Count} EXISTS");
                     }
 
                     if (currentModSeq > lastKnownModSeq)
                     {
-                        // Notify about changed flags since last check
-                        var changed = await SelectEmailMetadata(
-                                pollDb.Emails.Where(e => e.FolderId == session.SelectedFolderId.Value
-                                    && e.ModSeq > lastKnownModSeq))
-                            .OrderBy(e => e.Uid)
-                            .ToListAsync(timeout.Token);
+                        var changed = currentMessages
+                            .Where(email => email.ModSeq > lastKnownModSeq)
+                            .ToList();
 
                         if (changed.Count > 0)
                         {
-                            var allIds = await pollDb.Emails
-                                .Where(e => e.FolderId == session.SelectedFolderId.Value)
-                                .OrderBy(e => e.Uid)
-                                .Select(e => e.Id)
-                                .ToListAsync(timeout.Token);
-
                             foreach (var email in changed)
                             {
-                                var seqIdx = allIds.IndexOf(email.Id);
+                                var seqIdx = currentMessages.FindIndex(
+                                    candidate => candidate.Id == email.Id);
                                 if (seqIdx >= 0)
                                 {
                                     var seqNum = seqIdx + 1;
                                     var flags = BuildFlagsList(email);
-                                    await writer.WriteLineAsync($"* {seqNum} FETCH (FLAGS ({flags}))");
+                                    var modSeq = session.CondstoreEnabled
+                                        ? $" MODSEQ ({email.ModSeq})"
+                                        : string.Empty;
+                                    await writer.WriteLineAsync(
+                                        $"* {seqNum} FETCH (FLAGS ({flags}){modSeq})");
                                 }
                             }
                         }
 
                         lastKnownModSeq = currentModSeq;
                     }
+
+                    knownMessages = currentMessages;
                 }
                 catch (OperationCanceledException)
                 {

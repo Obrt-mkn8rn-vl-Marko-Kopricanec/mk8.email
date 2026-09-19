@@ -35,6 +35,8 @@ ILogger<ImapServerService> logger) : BackgroundService
     private const int MaximumSearchNestingDepth = 64;
     private const int MaximumMultiAppendMessages = 20;
     private const int MaximumCommandLiterals = 64;
+    private const int MaximumKeywordsPerMessage = 128;
+    private const int MaximumKeywordLength = 255;
     private static readonly Encoding ProtocolEncoding = MailWireEncoding.Instance;
     private static readonly Encoding StrictUtf8 = new UTF8Encoding(
         encoderShouldEmitUTF8Identifier: false,
@@ -1171,6 +1173,17 @@ ILogger<ImapServerService> logger) : BackgroundService
 
         var totalCount = await db.Emails.CountAsync(e => e.FolderId == folder.Id, ct);
         var unseenCount = await db.Emails.CountAsync(e => e.FolderId == folder.Id && !e.IsRead, ct);
+        var keywordSets = await db.Emails
+            .AsNoTracking()
+            .Where(email => email.FolderId == folder.Id)
+            .Select(email => email.Keywords)
+            .ToListAsync(ct);
+        var keywords = keywordSets
+            .SelectMany(keywordSet => keywordSet ?? [])
+            .Where(IsValidImapKeyword)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
 
         session.SelectedFolderId = folder.Id;
         session.SelectedFolderName = mailboxName;
@@ -1179,7 +1192,10 @@ ILogger<ImapServerService> logger) : BackgroundService
 
         await writer.WriteLineAsync($"* {totalCount} EXISTS");
         await writer.WriteLineAsync("* 0 RECENT");
-        await writer.WriteLineAsync("* FLAGS (\\Seen \\Answered \\Flagged \\Deleted \\Draft)");
+        var definedFlags = keywords.Length == 0
+            ? "\\Seen \\Answered \\Flagged \\Deleted \\Draft"
+            : $"\\Seen \\Answered \\Flagged \\Deleted \\Draft {string.Join(' ', keywords)}";
+        await writer.WriteLineAsync($"* FLAGS ({definedFlags})");
         await writer.WriteLineAsync("* OK [PERMANENTFLAGS (\\Seen \\Answered \\Flagged \\Deleted \\Draft \\*)] Flags permitted");
         await writer.WriteLineAsync($"* OK [UIDVALIDITY {folder.UidValidity}]");
         await writer.WriteLineAsync($"* OK [UIDNEXT {folder.NextUid}]");
@@ -1656,12 +1672,20 @@ ILogger<ImapServerService> logger) : BackgroundService
             .Where(item => MessageSetContains(parsedMessageSet, item.SequenceNumber))
             .ToList();
         var flagsList = flagsRaw.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (!IsStoreAction(action))
+        {
+            await writer.WriteLineAsync($"{tag} BAD Invalid STORE action");
+            return;
+        }
+        if (!TryValidateFlagList(flagsList, out var flagFailure))
+        {
+            await writer.WriteLineAsync($"{tag} BAD {flagFailure}");
+            return;
+        }
+
         var isSilent = action.Contains(".SILENT");
-
-        var folder = await db.Folders.FindAsync([session.SelectedFolderId!.Value], ct);
-        var newModSeq = ++folder!.HighestModSeq;
-
         var modified = new List<int>();
+        var applicable = new List<(EmailDB Email, int SequenceNumber)>();
 
         foreach (var item in selected)
         {
@@ -1674,15 +1698,32 @@ ILogger<ImapServerService> logger) : BackgroundService
                 continue;
             }
 
-            var tracked = AttachFlagUpdate(db, email, action, flagsList, newModSeq);
-
-            if (!isSilent)
+            if (!TryApplyFlags(email, action, flagsList, out _))
             {
-                var flags = BuildFlagsList(tracked);
-                if (session.CondstoreEnabled)
-                    await writer.WriteLineAsync($"* {seqNum} FETCH (FLAGS ({flags}) MODSEQ ({newModSeq}))");
-                else
-                    await writer.WriteLineAsync($"* {seqNum} FETCH (FLAGS ({flags}))");
+                await writer.WriteLineAsync($"{tag} NO [LIMIT] Too many keywords");
+                return;
+            }
+
+            applicable.Add(item);
+        }
+
+        if (applicable.Count > 0)
+        {
+            var folder = await db.Folders.FindAsync([session.SelectedFolderId!.Value], ct);
+            var newModSeq = ++folder!.HighestModSeq;
+
+            foreach (var item in applicable)
+            {
+                var tracked = AttachFlagUpdate(db, item.Email, newModSeq);
+
+                if (!isSilent)
+                {
+                    var flags = BuildFlagsList(tracked);
+                    if (session.CondstoreEnabled)
+                        await writer.WriteLineAsync($"* {item.SequenceNumber} FETCH (FLAGS ({flags}) MODSEQ ({newModSeq}))");
+                    else
+                        await writer.WriteLineAsync($"* {item.SequenceNumber} FETCH (FLAGS ({flags}))");
+                }
             }
         }
 
@@ -2017,6 +2058,16 @@ ILogger<ImapServerService> logger) : BackgroundService
             session.CondstoreEnabled = true;
 
         var flagsList = flagsRaw.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (!IsStoreAction(action))
+        {
+            await writer.WriteLineAsync($"{tag} BAD Invalid STORE action");
+            return;
+        }
+        if (!TryValidateFlagList(flagsList, out var flagFailure))
+        {
+            await writer.WriteLineAsync($"{tag} BAD {flagFailure}");
+            return;
+        }
 
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
@@ -2030,11 +2081,8 @@ ILogger<ImapServerService> logger) : BackgroundService
         }
 
         var isSilent = action.Contains(".SILENT");
-
-        var folder = await db.Folders.FindAsync([session.SelectedFolderId!.Value], ct);
-        var newModSeq = ++folder!.HighestModSeq;
-
         var modified = new List<int>();
+        var applicable = new List<(EmailDB Email, int SequenceNumber)>();
 
         for (var i = 0; i < emails.Count; i++)
         {
@@ -2047,16 +2095,32 @@ ILogger<ImapServerService> logger) : BackgroundService
                 continue;
             }
 
-            var tracked = AttachFlagUpdate(db, email, action, flagsList, newModSeq);
-
-            if (!isSilent)
+            if (!TryApplyFlags(email, action, flagsList, out _))
             {
-                var seqNum = i + 1;
+                await writer.WriteLineAsync($"{tag} NO [LIMIT] Too many keywords");
+                return;
+            }
+
+            applicable.Add((email, i + 1));
+        }
+
+        if (applicable.Count > 0)
+        {
+            var folder = await db.Folders.FindAsync([session.SelectedFolderId!.Value], ct);
+            var newModSeq = ++folder!.HighestModSeq;
+
+            foreach (var item in applicable)
+            {
+                var tracked = AttachFlagUpdate(db, item.Email, newModSeq);
+
+                if (isSilent)
+                    continue;
+
                 var flags = BuildFlagsList(tracked);
                 if (session.CondstoreEnabled)
-                    await writer.WriteLineAsync($"* {seqNum} FETCH (UID {email.Uid} FLAGS ({flags}) MODSEQ ({newModSeq}))");
+                    await writer.WriteLineAsync($"* {item.SequenceNumber} FETCH (UID {item.Email.Uid} FLAGS ({flags}) MODSEQ ({newModSeq}))");
                 else
-                    await writer.WriteLineAsync($"* {seqNum} FETCH (UID {email.Uid} FLAGS ({flags}))");
+                    await writer.WriteLineAsync($"* {item.SequenceNumber} FETCH (UID {item.Email.Uid} FLAGS ({flags}))");
             }
         }
 
@@ -2258,6 +2322,7 @@ ILogger<ImapServerService> logger) : BackgroundService
                 IsFlagged = email.IsFlagged,
                 IsDraft = email.IsDraft,
                 IsAnswered = email.IsAnswered,
+                Keywords = email.Keywords,
                 ModSeq = email.ModSeq,
                 Uid = email.Uid,
                 SizeBytes = email.SizeBytes,
@@ -2326,6 +2391,7 @@ ILogger<ImapServerService> logger) : BackgroundService
                 IsFlagged = source.IsFlagged,
                 IsDraft = source.IsDraft,
                 IsAnswered = source.IsAnswered,
+                Keywords = source.Keywords.ToArray(),
                 ReceivedAt = source.ReceivedAt,
                 Uid = newUid,
                 ModSeq = newModSeq,
@@ -2345,8 +2411,6 @@ ILogger<ImapServerService> logger) : BackgroundService
     private static EmailDB AttachFlagUpdate(
         EmailDbContext db,
         EmailDB metadata,
-        string action,
-        string[] flags,
         long modSeq)
     {
         var update = new EmailDB
@@ -2357,9 +2421,9 @@ ILogger<ImapServerService> logger) : BackgroundService
             IsFlagged = metadata.IsFlagged,
             IsDraft = metadata.IsDraft,
             IsAnswered = metadata.IsAnswered,
+            Keywords = metadata.Keywords.ToArray(),
             ModSeq = modSeq,
         };
-        ApplyFlags(update, action, flags);
         db.Emails.Attach(update);
         var entry = db.Entry(update);
         entry.Property(email => email.IsRead).IsModified = true;
@@ -2367,6 +2431,7 @@ ILogger<ImapServerService> logger) : BackgroundService
         entry.Property(email => email.IsFlagged).IsModified = true;
         entry.Property(email => email.IsDraft).IsModified = true;
         entry.Property(email => email.IsAnswered).IsModified = true;
+        entry.Property(email => email.Keywords).IsModified = true;
         entry.Property(email => email.ModSeq).IsModified = true;
         return update;
     }
@@ -2617,6 +2682,7 @@ ILogger<ImapServerService> logger) : BackgroundService
                 IsFlagged = email.IsFlagged,
                 IsDraft = email.IsDraft,
                 IsAnswered = email.IsAnswered,
+                Keywords = email.Keywords,
                 ModSeq = email.ModSeq,
                 Uid = email.Uid,
                 EmailObjectId = email.EmailObjectId,
@@ -2916,6 +2982,10 @@ ILogger<ImapServerService> logger) : BackgroundService
         if (email.IsFlagged) flags.Add("\\Flagged");
         if (email.IsDraft) flags.Add("\\Draft");
         if (email.IsAnswered) flags.Add("\\Answered");
+        flags.AddRange((email.Keywords ?? [])
+            .Where(IsValidImapKeyword)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.OrdinalIgnoreCase));
         return string.Join(' ', flags);
     }
 
@@ -2964,46 +3034,117 @@ ILogger<ImapServerService> logger) : BackgroundService
         return sb.ToString();
     }
 
-    private static void ApplyFlags(EmailDB email, string action, string[] flags)
-    {
-        bool SetValue(bool current, string act) => act switch
-        {
-            "+FLAGS" or "+FLAGS.SILENT" => true,
-            "-FLAGS" or "-FLAGS.SILENT" => false,
-            "FLAGS" or "FLAGS.SILENT" => true,
-            _ => current,
-        };
+    private static bool IsStoreAction(string action) =>
+        action is "FLAGS" or "FLAGS.SILENT" or "+FLAGS" or "+FLAGS.SILENT" or "-FLAGS" or "-FLAGS.SILENT";
 
-        if (action is "FLAGS" or "FLAGS.SILENT")
+    private static bool TryValidateFlagList(IEnumerable<string> flags, out string failure)
+    {
+        foreach (var flag in flags)
         {
-            email.IsRead = false;
-            email.IsDeleted = false;
-            email.IsFlagged = false;
-            email.IsDraft = false;
-            email.IsAnswered = false;
+            if (IsMutableSystemFlag(flag))
+                continue;
+
+            if (flag.Equals("\\Recent", StringComparison.OrdinalIgnoreCase))
+            {
+                failure = "The \\Recent flag cannot be changed";
+                return false;
+            }
+
+            if (flag.StartsWith('\\') || !IsValidImapKeyword(flag))
+            {
+                failure = "Invalid flag list";
+                return false;
+            }
         }
+
+        failure = string.Empty;
+        return true;
+    }
+
+    private static bool IsMutableSystemFlag(string flag) =>
+        flag.ToUpperInvariant() is "\\SEEN" or "\\DELETED" or "\\FLAGGED" or "\\DRAFT" or "\\ANSWERED";
+
+    private static bool IsValidImapKeyword(string keyword)
+    {
+        if (keyword.Length is 0 or > MaximumKeywordLength || keyword[0] == '\\')
+            return false;
+
+        foreach (var character in keyword)
+        {
+            if (character <= ' '
+                || character >= '\u007f'
+                || character is '(' or ')' or '{' or '%' or '*' or ']')
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool TryApplyFlags(
+        EmailDB email,
+        string action,
+        IReadOnlyList<string> flags,
+        out string failure)
+    {
+        if (!IsStoreAction(action))
+        {
+            failure = "Invalid STORE action";
+            return false;
+        }
+        if (!TryValidateFlagList(flags, out failure))
+            return false;
+
+        var replace = action is "FLAGS" or "FLAGS.SILENT";
+        var remove = action is "-FLAGS" or "-FLAGS.SILENT";
+        var isRead = replace ? false : email.IsRead;
+        var isDeleted = replace ? false : email.IsDeleted;
+        var isFlagged = replace ? false : email.IsFlagged;
+        var isDraft = replace ? false : email.IsDraft;
+        var isAnswered = replace ? false : email.IsAnswered;
+        var keywords = new HashSet<string>(
+            replace
+                ? []
+                : (email.Keywords ?? []).Where(IsValidImapKeyword),
+            StringComparer.OrdinalIgnoreCase);
 
         foreach (var flag in flags)
         {
+            var value = !remove;
             switch (flag.ToUpperInvariant())
             {
-                case "\\SEEN":
-                    email.IsRead = SetValue(email.IsRead, action);
-                    break;
-                case "\\DELETED":
-                    email.IsDeleted = SetValue(email.IsDeleted, action);
-                    break;
-                case "\\FLAGGED":
-                    email.IsFlagged = SetValue(email.IsFlagged, action);
-                    break;
-                case "\\DRAFT":
-                    email.IsDraft = SetValue(email.IsDraft, action);
-                    break;
-                case "\\ANSWERED":
-                    email.IsAnswered = SetValue(email.IsAnswered, action);
+                case "\\SEEN": isRead = value; break;
+                case "\\DELETED": isDeleted = value; break;
+                case "\\FLAGGED": isFlagged = value; break;
+                case "\\DRAFT": isDraft = value; break;
+                case "\\ANSWERED": isAnswered = value; break;
+                default:
+                    if (remove)
+                        keywords.Remove(flag);
+                    else
+                        keywords.Add(flag);
                     break;
             }
         }
+
+        if (keywords.Count > MaximumKeywordsPerMessage)
+        {
+            failure = "Too many keywords";
+            return false;
+        }
+
+        email.IsRead = isRead;
+        email.IsDeleted = isDeleted;
+        email.IsFlagged = isFlagged;
+        email.IsDraft = isDraft;
+        email.IsAnswered = isAnswered;
+        email.Keywords = keywords
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ThenBy(keyword => keyword, StringComparer.Ordinal)
+            .ToArray();
+        failure = string.Empty;
+        return true;
     }
 
     private static bool IsMarkedDeleted(EmailDB email) => email.IsDeleted;
@@ -3733,6 +3874,7 @@ ILogger<ImapServerService> logger) : BackgroundService
         bool IsFlagged,
         bool IsDraft,
         bool IsAnswered,
+        string[] Keywords,
         long ModSeq,
         int SizeBytes,
         string? RawHeaders,
@@ -4236,6 +4378,7 @@ ILogger<ImapServerService> logger) : BackgroundService
                 message.IsFlagged,
                 message.IsDraft,
                 message.IsAnswered,
+                message.Keywords,
                 message.ModSeq,
                 message.SizeBytes,
                 message.RawHeaders,
@@ -4259,6 +4402,7 @@ ILogger<ImapServerService> logger) : BackgroundService
                 message.IsFlagged,
                 message.IsDraft,
                 message.IsAnswered,
+                message.Keywords,
                 message.ModSeq,
                 message.SizeBytes,
                 null,
@@ -4282,6 +4426,7 @@ ILogger<ImapServerService> logger) : BackgroundService
                 message.IsFlagged,
                 message.IsDraft,
                 message.IsAnswered,
+                message.Keywords,
                 message.ModSeq,
                 message.SizeBytes,
                 message.RawHeaders,
@@ -4303,6 +4448,7 @@ ILogger<ImapServerService> logger) : BackgroundService
             message.IsFlagged,
             message.IsDraft,
             message.IsAnswered,
+            message.Keywords,
             message.ModSeq,
             message.SizeBytes,
             null,
@@ -4488,7 +4634,7 @@ ILogger<ImapServerService> logger) : BackgroundService
             "\\DRAFT" => message.IsDraft,
             "\\ANSWERED" => message.IsAnswered,
             "\\RECENT" => false,
-            _ => false,
+            _ => message.Keywords.Contains(keyword, StringComparer.OrdinalIgnoreCase),
         };
 
     private static bool HeaderContains(
@@ -5275,6 +5421,32 @@ ILogger<ImapServerService> logger) : BackgroundService
             }
 
             var isLiteralPlus = remaining.Contains("{" + literalSize + "+}");
+            if (!TryValidateFlagList(flags, out var flagFailure))
+            {
+                await RejectAppendBeforeLiteralAsync(
+                    writer,
+                    tag,
+                    session,
+                    isLiteralPlus,
+                    $"[CANNOT] {flagFailure}");
+                return;
+            }
+
+            var keywordCount = flags
+                .Where(flag => !flag.StartsWith('\\'))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count();
+            if (keywordCount > MaximumKeywordsPerMessage)
+            {
+                await RejectAppendBeforeLiteralAsync(
+                    writer,
+                    tag,
+                    session,
+                    isLiteralPlus,
+                    "[LIMIT] APPEND contains too many keywords");
+                return;
+            }
+
             if (pendingMessages.Count >= MaximumMultiAppendMessages)
             {
                 await RejectAppendBeforeLiteralAsync(
@@ -5367,16 +5539,10 @@ ILogger<ImapServerService> logger) : BackgroundService
                 ReceivedAt = internalDate ?? DateTime.UtcNow,
             };
 
-            foreach (var flag in flags)
+            if (!TryApplyFlags(email, "+FLAGS", flags, out var applyFailure))
             {
-                switch (flag.ToUpperInvariant())
-                {
-                    case "\\SEEN": email.IsRead = true; break;
-                    case "\\DELETED": email.IsDeleted = true; break;
-                    case "\\FLAGGED": email.IsFlagged = true; break;
-                    case "\\DRAFT": email.IsDraft = true; break;
-                    case "\\ANSWERED": email.IsAnswered = true; break;
-                }
+                await writer.WriteLineAsync($"{tag} NO [LIMIT] {applyFailure}");
+                return;
             }
 
             pendingMessages.Add(email);

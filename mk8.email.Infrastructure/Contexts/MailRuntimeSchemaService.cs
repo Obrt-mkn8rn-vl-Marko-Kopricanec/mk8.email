@@ -47,6 +47,13 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["completed_at"] = "timestamptz",
         };
 
+    private static readonly IReadOnlyDictionary<string, string> RequiredEmailColumns =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["queue_delivery_id"] = "uuid",
+            ["keywords"] = "_text",
+        };
+
     public async Task EnsureAsync(CancellationToken cancellationToken = default)
     {
         if (!string.Equals(
@@ -111,6 +118,8 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
 
             ALTER TABLE emails
                 ADD COLUMN IF NOT EXISTS queue_delivery_id uuid;
+            ALTER TABLE emails
+                ADD COLUMN IF NOT EXISTS keywords text[] NOT NULL DEFAULT ARRAY[]::text[];
 
             CREATE UNIQUE INDEX IF NOT EXISTS ix_emails_queue_delivery_id
                 ON emails (queue_delivery_id)
@@ -132,7 +141,10 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             "mail_queue_recipients",
             RequiredRecipientColumns,
             cancellationToken);
-        await ValidateEmailColumnAsync(cancellationToken);
+        await ValidateTableAsync(
+            "emails",
+            RequiredEmailColumns,
+            cancellationToken);
     }
 
     private async Task ValidateTableAsync(
@@ -171,20 +183,4 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
         }
     }
 
-    private async Task ValidateEmailColumnAsync(CancellationToken cancellationToken)
-    {
-        var connection = database.Database.GetDbConnection();
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT count(*)
-            FROM information_schema.columns
-            WHERE table_schema = 'public'
-              AND table_name = 'emails'
-              AND column_name = 'queue_delivery_id'
-              AND udt_name = 'uuid'
-            """;
-        var count = Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken));
-        if (count != 1)
-            throw new InvalidOperationException("The emails.queue_delivery_id database column is missing or invalid.");
-    }
 }

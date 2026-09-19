@@ -44,6 +44,9 @@ public class EmailDB
     [Column("is_answered")]
     public bool IsAnswered { get; set; }
 
+    [Column("keywords", TypeName = "text[]")]
+    public string[] Keywords { get; set; } = [];
+
     [Column("mod_seq")]
     public long ModSeq { get; set; }
 

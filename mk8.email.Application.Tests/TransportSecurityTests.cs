@@ -1389,6 +1389,112 @@ public sealed class TransportSecurityTests
     }
 
     [TestMethod]
+    [Timeout(15_000)]
+    public async Task ImapPersistsCustomKeywordsAcrossAppendStoreSearchAndCopy()
+    {
+        var port = ReservePort();
+        var environment = CreateEnvironment(imapPort: port);
+        await using var server = await ServerFixture.StartImapAsync(environment, port);
+        await using var connection = await ProtocolConnection.ConnectAsync(port);
+
+        await connection.ReadLineAsync();
+        await connection.WriteLineAsync("a1 STARTTLS");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a1 OK", StringComparison.Ordinal));
+        await connection.UpgradeToTlsAsync("email.mk8n.com");
+        await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a2 OK", StringComparison.Ordinal));
+
+        const string message =
+            "From: user@mk8n.com\r\n" +
+            "To: user@mk8n.com\r\n" +
+            "Subject: keyword persistence\r\n" +
+            "\r\n" +
+            "tagged message\r\n";
+        await connection.WriteLineAsync(
+            $"a3 APPEND \"Sent\" (\\Seen $label1 Custom) {{{message.Length}}}");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("+ ", StringComparison.Ordinal));
+        await connection.WriteRawAsync(message);
+        await connection.WriteLineAsync(string.Empty);
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a3 OK [APPENDUID", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a4 SELECT \"Sent\"");
+        var responses = await ReadUntilTaggedResponseAsync(connection, "a4");
+        var definedFlags = responses.Single(line => line.StartsWith("* FLAGS (", StringComparison.Ordinal));
+        StringAssert.Contains(definedFlags, "$label1");
+        StringAssert.Contains(definedFlags, "Custom");
+        Assert.IsTrue(responses.Any(line => line.Contains("PERMANENTFLAGS", StringComparison.Ordinal)
+            && line.Contains("\\*", StringComparison.Ordinal)));
+
+        await connection.WriteLineAsync("a5 FETCH 1 (UID FLAGS)");
+        responses = await ReadUntilTaggedResponseAsync(connection, "a5");
+        Assert.IsTrue(responses.Any(line => line.StartsWith("* 1 FETCH", StringComparison.Ordinal)
+            && line.Contains("\\Seen", StringComparison.Ordinal)
+            && line.Contains("$label1", StringComparison.Ordinal)
+            && line.Contains("Custom", StringComparison.Ordinal)));
+
+        await connection.WriteLineAsync("a6 STORE 1 +FLAGS ($label2)");
+        responses = await ReadUntilTaggedResponseAsync(connection, "a6");
+        Assert.IsTrue(responses.Any(line => line.StartsWith("* 1 FETCH", StringComparison.Ordinal)
+            && line.Contains("$label1", StringComparison.Ordinal)
+            && line.Contains("$label2", StringComparison.Ordinal)));
+
+        await connection.WriteLineAsync("a7 UID STORE 1 -FLAGS (CUSTOM)");
+        responses = await ReadUntilTaggedResponseAsync(connection, "a7");
+        Assert.IsTrue(responses.Any(line => line.StartsWith("* 1 FETCH", StringComparison.Ordinal)
+            && line.Contains("$label1", StringComparison.Ordinal)
+            && line.Contains("$label2", StringComparison.Ordinal)
+            && !line.Contains("Custom", StringComparison.OrdinalIgnoreCase)));
+
+        await connection.WriteLineAsync("a8 UID SEARCH KEYWORD $label2");
+        Assert.AreEqual("* SEARCH 1", await connection.ReadLineAsync());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a8 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a9 COPY 1 Trash");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a9 OK [COPYUID", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a10 SELECT Trash");
+        await ReadUntilTaggedResponseAsync(connection, "a10");
+        await connection.WriteLineAsync("a11 FETCH 1 FLAGS");
+        responses = await ReadUntilTaggedResponseAsync(connection, "a11");
+        Assert.IsTrue(responses.Any(line => line.StartsWith("* 1 FETCH", StringComparison.Ordinal)
+            && line.Contains("$label1", StringComparison.Ordinal)
+            && line.Contains("$label2", StringComparison.Ordinal)));
+
+        await connection.WriteLineAsync("a12 STORE 1 FLAGS (\\Seen Final)");
+        responses = await ReadUntilTaggedResponseAsync(connection, "a12");
+        var replacement = responses.Single(line => line.StartsWith("* 1 FETCH", StringComparison.Ordinal));
+        StringAssert.Contains(replacement, "\\Seen");
+        StringAssert.Contains(replacement, "Final");
+        Assert.IsFalse(replacement.Contains("$label", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a13 UID SEARCH UNKEYWORD Final");
+        Assert.AreEqual("* SEARCH ", await connection.ReadLineAsync());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a13 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a14 STORE 1 +FLAGS (bad])");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a14 BAD", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync($"a15 APPEND \"Sent\" (\\Recent) {{{message.Length}}}");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a15 NO [CANNOT]", StringComparison.Ordinal));
+
+        var excessiveKeywords = string.Join(' ', Enumerable.Range(1, 129).Select(index => $"k{index}"));
+        await connection.WriteLineAsync($"a16 STORE 1 +FLAGS ({excessiveKeywords})");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a16 NO [LIMIT]", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a17 FETCH 1 FLAGS");
+        responses = await ReadUntilTaggedResponseAsync(connection, "a17");
+        replacement = responses.Single(line => line.StartsWith("* 1 FETCH", StringComparison.Ordinal));
+        StringAssert.Contains(replacement, "Final");
+        Assert.IsFalse(replacement.Contains("bad]", StringComparison.Ordinal));
+        Assert.IsFalse(replacement.Contains("k1", StringComparison.Ordinal));
+
+        var sent = await server.GetStoredEmailAsync(DefaultFolders.Sent);
+        CollectionAssert.AreEquivalent(new[] { "$label1", "$label2" }, sent.Keywords);
+        var copied = await server.GetStoredEmailAsync(DefaultFolders.Trash);
+        CollectionAssert.AreEqual(new[] { "Final" }, copied.Keywords);
+        Assert.IsTrue(copied.IsRead);
+    }
+
+    [TestMethod]
     [DataRow(false)]
     [DataRow(true)]
     [Timeout(25_000)]
@@ -1454,7 +1560,7 @@ public sealed class TransportSecurityTests
 
         await writerConnection.WriteLineAsync("w5 SELECT INBOX");
         await ReadUntilTaggedResponseAsync(writerConnection, "w5");
-        await writerConnection.WriteLineAsync("w6 STORE 1 +FLAGS (\\Seen)");
+        await writerConnection.WriteLineAsync("w6 STORE 1 +FLAGS (\\Seen $label1)");
         await ReadUntilTaggedResponseAsync(writerConnection, "w6");
         await writerConnection.WriteLineAsync("w7 MOVE 2 Trash");
         await ReadUntilTaggedResponseAsync(writerConnection, "w7");
@@ -1473,6 +1579,7 @@ public sealed class TransportSecurityTests
                 && updates.Any(line => line == "* 2 EXISTS")
                 && updates.Any(line => line.StartsWith("* 1 FETCH", StringComparison.Ordinal)
                     && line.Contains("\\Seen", StringComparison.Ordinal)
+                    && line.Contains("$label1", StringComparison.Ordinal)
                     && line.Contains("MODSEQ", StringComparison.Ordinal))
                 && updates.Any(line => line.StartsWith("* 2 FETCH", StringComparison.Ordinal)))
             {
@@ -1484,6 +1591,7 @@ public sealed class TransportSecurityTests
         CollectionAssert.Contains(updates, "* 2 EXISTS");
         Assert.IsTrue(updates.Any(line => line.StartsWith("* 1 FETCH", StringComparison.Ordinal)
             && line.Contains("\\Seen", StringComparison.Ordinal)
+            && line.Contains("$label1", StringComparison.Ordinal)
             && line.Contains("MODSEQ", StringComparison.Ordinal)));
         Assert.IsTrue(updates.Any(line => line.StartsWith("* 2 FETCH", StringComparison.Ordinal)));
 

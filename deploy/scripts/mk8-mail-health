@@ -98,6 +98,15 @@ done
 if pgrep -x master >/dev/null || pgrep -x dovecot >/dev/null; then
     record_error "A forbidden mail process is running."
 fi
+if [ -L /dev/null ] || [ ! -c /dev/null ]; then
+    record_error "/dev/null is not a direct character device."
+elif [ "$(stat -c '%t:%T %U:%G %a %h' /dev/null)" != "1:3 root:root 666 1" ]; then
+    record_error "/dev/null has unexpected device metadata."
+fi
+unexpected_device_name=$(LC_ALL=C find /dev -xdev -mindepth 1 -maxdepth 1 \
+    -regextype posix-extended -regex '.*/.*[[:cntrl:]].*' -printf x -quit)
+[ -z "$unexpected_device_name" ] \
+    || record_error "/dev contains a direct child with control characters in its name."
 
 for completed_service in mk8-backup.service dailyaidecheck.service \
     apt-daily-upgrade.service certbot.service fstrim.service logrotate.service; do

@@ -11,6 +11,16 @@ fail() {
     exit 1
 }
 
+if [ -L /dev/null ] || [ ! -c /dev/null ]; then
+    fail "/dev/null is not a direct character device."
+fi
+[ "$(stat -c '%t:%T %U:%G %a %h' /dev/null)" = "1:3 root:root 666 1" ] \
+    || fail "/dev/null has unexpected device metadata."
+unexpected_device_name=$(LC_ALL=C find /dev -xdev -mindepth 1 -maxdepth 1 \
+    -regextype posix-extended -regex '.*/.*[[:cntrl:]].*' -printf x -quit)
+[ -z "$unexpected_device_name" ] \
+    || fail "/dev contains a direct child with control characters in its name."
+
 [ "$(systemctl get-default)" = multi-user.target ] \
     || fail "The default boot target is not multi-user.target."
 if [ "$(systemctl is-enabled sddm.service 2>/dev/null || true)" != disabled ]; then

@@ -18,4 +18,10 @@
     <ProjectReference Include="..\mk8.email.Infrastructure\mk8.email.Infrastructure.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="..\deploy\aide\90_mk8_dynamic_data"
+          Link="DeploymentAssets\90_mk8_dynamic_data"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

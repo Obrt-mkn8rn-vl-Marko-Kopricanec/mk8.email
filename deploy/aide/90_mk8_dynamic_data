@@ -2,8 +2,8 @@
 -/dev/input/by-id
 -/dev/input/by-path
 -/run
--/tmp/systemd-private-
--/tmp/user
+# Keep the temporary-directory metadata, but do not baseline transient content.
+-/tmp/
 -/var/cache/apt
 -/var/cache/swcatalog
 -/var/lib/alsa
@@ -33,9 +33,23 @@
 -/var/log/unattended-upgrades
 -/var/log/wtmp\.db$
 -/var/spool/anacron
--/var/tmp/systemd-private-
+-/var/tmp/
 -/var/backups/mk8
 -/var/backups/mk8-export
 -/var/lib/mk8-mail-health
 -/var/lib/mk8email-build
 -/var/log/mk8email-admin
+# Codex workspaces and runtime caches change independently of the mail host.
+# Authentication material and other files below /home/codex remain monitored.
+-/home/codex/\.cache$
+-/home/codex/\.codex$
+-/home/codex/\.codex-devops-backups$
+-/home/codex/\.dotnet$
+-/home/codex/\.local/share$
+-/home/codex/\.local/state$
+-/home/codex/\.nuget/packages$
+-/home/codex/\.tmp$
+-/home/codex/Codex$
+# This operator recovery tree is immutable and outside the mail-host boundary.
+# Exclude its parent so AIDE never traverses the protected dated archive.
+-/root/BraloGruppeColdArchive$

@@ -54,6 +54,8 @@ fi
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
     | grep -Fx 'var/lib/aide/aide.db' >/dev/null
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
+    | grep -Fx 'etc/aide/aide.conf.d/90_mk8_dynamic_data' >/dev/null
+tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
     | grep -Fx 'etc/default/smartmontools' >/dev/null
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
     | grep -Fx 'etc/smartd.conf' >/dev/null

@@ -1296,6 +1296,83 @@ public sealed class TransportSecurityTests
     }
 
     [TestMethod]
+    [Timeout(15_000)]
+    public async Task ImapFetchProjectsMultipartBodyStructureAndNestedSections()
+    {
+        var port = ReservePort();
+        var environment = CreateEnvironment(imapPort: port);
+        await using var server = await ServerFixture.StartImapAsync(environment, port);
+        await using var connection = await ProtocolConnection.ConnectAsync(port);
+        const string message =
+            "From: sender@example.net\r\n" +
+            $"To: {TestUsername}\r\n" +
+            "Subject: multipart message\r\n" +
+            "Message-ID: <multipart@example.net>\r\n" +
+            "MIME-Version: 1.0\r\n" +
+            "Content-Type: multipart/mixed; boundary=\"mix\"\r\n\r\n" +
+            "--mix\r\n" +
+            "Content-Type: multipart/alternative; boundary=\"alt\"\r\n\r\n" +
+            "--alt\r\n" +
+            "Content-Type: text/plain; charset=utf-8\r\n" +
+            "Content-Transfer-Encoding: quoted-printable\r\n\r\n" +
+            "plain=20body\r\n" +
+            "--alt\r\n" +
+            "Content-Type: text/html; charset=utf-8\r\n" +
+            "Content-Transfer-Encoding: quoted-printable\r\n\r\n" +
+            "<html><body>html=20body</body></html>\r\n" +
+            "--alt--\r\n" +
+            "--mix\r\n" +
+            "Content-Type: application/octet-stream; name=\"test.txt\"\r\n" +
+            "Content-Disposition: attachment; filename=\"test.txt\"\r\n" +
+            "Content-Transfer-Encoding: base64\r\n\r\n" +
+            "YXR0YWNobWVudA==\r\n" +
+            "--mix--\r\n";
+
+        await connection.ReadLineAsync();
+        await connection.WriteLineAsync("a1 STARTTLS");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a1 OK", StringComparison.Ordinal));
+        await connection.UpgradeToTlsAsync("email.mk8n.com");
+        await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a2 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync($"a3 APPEND Sent {{{message.Length}}}");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("+ ", StringComparison.Ordinal));
+        await connection.WriteRawAsync(message);
+        await connection.WriteLineAsync(string.Empty);
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a3 OK [APPENDUID", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a4 SELECT Sent");
+        await ReadUntilTaggedResponseAsync(connection, "a4");
+
+        await connection.WriteLineAsync("a5 UID FETCH 1 (UID BODYSTRUCTURE)");
+        var bodyStructure = await connection.ReadLineAsync();
+        StringAssert.Contains(bodyStructure, "BODYSTRUCTURE");
+        StringAssert.Contains(bodyStructure, "\"ALTERNATIVE\"");
+        StringAssert.Contains(bodyStructure, "\"MIXED\"");
+        StringAssert.Contains(bodyStructure, "\"TEXT\" \"HTML\"");
+        StringAssert.Contains(bodyStructure, "\"APPLICATION\" \"OCTET-STREAM\"");
+        StringAssert.Contains(bodyStructure, "\"BASE64\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a5 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a6 UID FETCH 1 (UID BODY.PEEK[1.2])");
+        var htmlSection = string.Join('\n', await ReadUntilTaggedResponseAsync(connection, "a6"));
+        StringAssert.Contains(htmlSection, "BODY[1.2]");
+        StringAssert.Contains(htmlSection, "<html><body>html=20body</body></html>");
+        Assert.IsFalse((await server.GetStoredEmailByUidAsync(1)).IsRead);
+
+        await connection.WriteLineAsync("a7 UID FETCH 1 (UID BODY.PEEK[2.MIME])");
+        var attachmentHeaders = string.Join('\n', await ReadUntilTaggedResponseAsync(connection, "a7"));
+        StringAssert.Contains(attachmentHeaders, "BODY[2.MIME]");
+        StringAssert.Contains(attachmentHeaders, "Content-Type: application/octet-stream");
+        StringAssert.Contains(attachmentHeaders, "Content-Disposition: attachment");
+        Assert.IsFalse((await server.GetStoredEmailByUidAsync(1)).IsRead);
+
+        await connection.WriteLineAsync("a8 UID FETCH 1 (UID BODY[2])");
+        var attachment = string.Join('\n', await ReadUntilTaggedResponseAsync(connection, "a8"));
+        StringAssert.Contains(attachment, "BODY[2]");
+        StringAssert.Contains(attachment, "YXR0YWNobWVudA==");
+        Assert.IsTrue((await server.GetStoredEmailByUidAsync(1)).IsRead);
+    }
+
+    [TestMethod]
     [Timeout(10_000)]
     public async Task ImapMutationsUseUidSequenceOrderWithoutChangingMessageContent()
     {

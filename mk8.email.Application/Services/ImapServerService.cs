@@ -2476,6 +2476,14 @@ ILogger<ImapServerService> logger) : BackgroundService
         var normalizedItems = items.Replace("BODY.PEEK[", "BODY[");
         var parts = new List<string>();
 
+        var numericSectionMatch = NumericBodySectionRegex().Match(items);
+        var needsMimeProjection = normalizedItems.Contains("BODYSTRUCTURE", StringComparison.Ordinal)
+            || BodyStandaloneRegex().IsMatch(normalizedItems)
+            || numericSectionMatch.Success;
+        using var mimeMessage = needsMimeProjection
+            ? ImapMimeMessage.TryParse(BuildRfc822(email))
+            : null;
+
         var partialMatch = PartialFetchRegex().Match(items);
         int? partialOffset = null;
         int? partialCount = null;
@@ -2546,35 +2554,33 @@ ILogger<ImapServerService> logger) : BackgroundService
 
         if (normalizedItems.Contains("BODYSTRUCTURE"))
         {
-            var size = MailWireEncoding.Instance.GetByteCount(email.Body);
-            var lines = email.Body.Split('\n').Length;
-            parts.Add($"BODYSTRUCTURE (\"TEXT\" \"PLAIN\" (\"CHARSET\" \"UTF-8\") NIL NIL \"7BIT\" {size} {lines})");
+            parts.Add($"BODYSTRUCTURE {mimeMessage?.BodyStructure ?? BuildFallbackBodyStructure(email)}");
         }
         else if (BodyStandaloneRegex().IsMatch(normalizedItems))
         {
-            var size = MailWireEncoding.Instance.GetByteCount(email.Body);
-            var lines = email.Body.Split('\n').Length;
-            parts.Add($"BODY (\"TEXT\" \"PLAIN\" (\"CHARSET\" \"UTF-8\") NIL NIL \"7BIT\" {size} {lines})");
+            parts.Add($"BODY {mimeMessage?.BodyStructure ?? BuildFallbackBodyStructure(email)}");
         }
 
-        var sectionMatch = BodySectionRegex().Match(items);
-        if (sectionMatch.Success)
+        if (numericSectionMatch.Success)
         {
-            var section = sectionMatch.Groups[1].Value;
-            var sectionUpper = section.ToUpperInvariant();
-            if (sectionUpper is "" or "TEXT" or "1")
+            var section = numericSectionMatch.Groups[1].Value
+                + numericSectionMatch.Groups[2].Value;
+            string? sectionContent = null;
+            if (mimeMessage?.TryGetSection(section, out var mimeContent) == true)
             {
-                // already handled above for BODY[] and BODY[TEXT]
-                if (sectionUpper == "1")
-                {
-                    var bodyContent = email.Body;
-                    parts.Add($"BODY[1] {{{MailWireEncoding.Instance.GetByteCount(bodyContent)}}}\r\n{bodyContent}");
-                }
+                sectionContent = mimeContent;
             }
-            else if (sectionUpper == "1.MIME")
+            else if (section == "1")
             {
-                var mime = "Content-Type: text/plain; charset=UTF-8\r\n\r\n";
-                parts.Add($"BODY[1.MIME] {{{MailWireEncoding.Instance.GetByteCount(mime)}}}\r\n{mime}");
+                sectionContent = email.Body;
+            }
+
+            if (sectionContent is not null)
+            {
+                var (data, origin) = ApplyPartial(sectionContent, partialOffset, partialCount);
+                var suffix = origin is not null ? $"<{origin}>" : string.Empty;
+                parts.Add(
+                    $"BODY[{section}]{suffix} {{{MailWireEncoding.Instance.GetByteCount(data)}}}\r\n{data}");
             }
         }
 
@@ -2633,8 +2639,8 @@ ILogger<ImapServerService> logger) : BackgroundService
     [GeneratedRegex(@"BODY(?:\.PEEK)?\[HEADER\.FIELDS\.NOT\s*\(([^)]+)\)\]")]
     private static partial Regex HeaderFieldsNotRegex();
 
-    [GeneratedRegex(@"BODY(?:\.PEEK)?\[(\d[\d.]*(?:\.MIME)?)\]")]
-    private static partial Regex BodySectionRegex();
+    [GeneratedRegex(@"BODY(?:\.PEEK)?\[((?:\d+\.)*\d+)(\.MIME)?\]")]
+    private static partial Regex NumericBodySectionRegex();
 
     [GeneratedRegex(@"<(\d+)\.(\d+)>")]
     private static partial Regex PartialFetchRegex();
@@ -2658,6 +2664,16 @@ ILogger<ImapServerService> logger) : BackgroundService
         var length = Math.Min(count.Value, bytes.Length - start);
         var sliced = MailWireEncoding.Instance.GetString(bytes, start, length);
         return (sliced, start);
+    }
+
+    private static string BuildFallbackBodyStructure(EmailDB email)
+    {
+        var size = MailWireEncoding.Instance.GetByteCount(email.Body);
+        var lines = email.Body.Length == 0
+            ? 0
+            : email.Body.Count(character => character == '\n')
+                + (email.Body[^1] == '\n' ? 0 : 1);
+        return $"(\"TEXT\" \"PLAIN\" (\"CHARSET\" \"UTF-8\") NIL NIL \"7BIT\" {size} {lines})";
     }
 
     private static string BuildFlagsList(EmailDB email)

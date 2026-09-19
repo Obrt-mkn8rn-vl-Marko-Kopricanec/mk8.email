@@ -125,6 +125,18 @@ try {
         'IN MX 10 email.mk8n.com.',
         [StringComparison]::Ordinal)) `
         'The rendered MX record has the wrong mail hostname.'
+    foreach ($routerFile in @('mk8-web-preflight.rsc', 'mk8-public-services.rsc')) {
+        $renderedRouter = Get-Content `
+            -LiteralPath (Join-Path $renderedRoot "deploy/routeros/$routerFile") -Raw
+        Assert-True ($renderedRouter.Contains(
+            "dst-address=$($validProfile.PublicIPv4)",
+            [StringComparison]::Ordinal)) `
+            "$routerFile does not bind NAT to the public address."
+        Assert-True (-not $renderedRouter.Contains(
+            'dst-address-type=local',
+            [StringComparison]::Ordinal)) `
+            "$routerFile can match an unrelated WAN address."
+    }
     $renderedAutoconfig = Get-Content `
         -LiteralPath (Join-Path $renderedRoot 'deploy/nginx/www/autoconfig/mail/config-v1.1.xml') -Raw
     Assert-True ($renderedAutoconfig.Contains(

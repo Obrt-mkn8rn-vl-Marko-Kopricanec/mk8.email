@@ -2,7 +2,7 @@
 remove [find where comment="mk8 preflight TCP web"]
 remove [find where comment="mk8 public TCP services"]
 remove [find where comment~"^mk8 .* UDP services$"]
-add chain=dstnat action=dst-nat in-interface-list=WAN dst-address-type=local protocol=tcp dst-port=25,80,443,465,587,993 to-addresses=@@MK8_SERVER_IPV4@@ comment="mk8 public TCP services" place-before=0
+add chain=dstnat action=dst-nat in-interface-list=WAN dst-address=@@MK8_PUBLIC_IPV4@@ protocol=tcp dst-port=25,80,443,465,587,993 to-addresses=@@MK8_SERVER_IPV4@@ comment="mk8 public TCP services" place-before=0
 
 /ip firewall filter
 remove [find where comment="allow mk8 preflight TCP web"]

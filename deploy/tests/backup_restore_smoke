@@ -54,6 +54,10 @@ fi
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
     | grep -Fx 'var/lib/aide/aide.db' >/dev/null
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
+    | grep -Fx 'etc/default/smartmontools' >/dev/null
+tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
+    | grep -Fx 'etc/smartd.conf' >/dev/null
+tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
     | grep -Fx 'usr/local/sbin/verify-host-prerequisites' >/dev/null
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
     | grep -Fx 'usr/local/sbin/configure-apt-sources' >/dev/null

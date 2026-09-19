@@ -6,7 +6,7 @@ if [ "$(id -u)" -ne 0 ] || [ "$#" -ne 1 ]; then
     exit 2
 fi
 
-for command_name in aide auditctl debsums s-nail; do
+for command_name in aide auditctl debsums s-nail smartctl; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         printf '%s\n' "A required host security command is missing: $command_name" >&2
         exit 1
@@ -99,7 +99,9 @@ systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
 systemctl mask --now avahi-daemon.service avahi-daemon.socket bluetooth.service \
     cups-browsed.service cups.path cups.service cups.socket
 systemctl mask drkonqi-coredump-processor@.service
-systemctl enable --now nftables.service auditd.service fail2ban.service acct.service sysstat.service
+systemctl enable --now apparmor.service nftables.service auditd.service fail2ban.service \
+    acct.service cron.service smartmontools.service sysstat.service \
+    unattended-upgrades.service
 systemctl enable --now dailyaidecheck.timer sysstat-collect.timer sysstat-summary.timer
 systemctl reload ssh.service
 systemctl restart fail2ban.service

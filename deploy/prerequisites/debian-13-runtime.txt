@@ -14,6 +14,7 @@ certbot
 clamav-daemon
 clamav-freshclam
 clamdscan
+cron
 curl
 debian-archive-keyring
 debsums
@@ -39,6 +40,7 @@ rspamd
 rsync
 s-nail
 shellcheck
+smartmontools
 sudo
 swaks
 sysstat

@@ -55,6 +55,15 @@ if pgrep -x master >/dev/null || pgrep -x dovecot >/dev/null; then
     fail "A forbidden mail process is running."
 fi
 
+for required_security_unit in apparmor.service auditd.service acct.service \
+    cron.service fail2ban.service nftables.service smartmontools.service \
+    sysstat.service unattended-upgrades.service; do
+    [ "$(systemctl is-enabled "$required_security_unit" 2>/dev/null || true)" = enabled ] \
+        || fail "$required_security_unit is not enabled."
+    systemctl is-active --quiet "$required_security_unit" \
+        || fail "$required_security_unit is not active."
+done
+
 mail_required_units=$(systemctl show --property=Requires --value mk8email.service)
 case " $mail_required_units " in
     *" postgresql.service "*) ;;

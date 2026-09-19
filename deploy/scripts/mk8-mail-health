@@ -74,7 +74,11 @@ write_status_snapshot() {
 for service_name in postgresql.service mk8email.service rspamd.service \
     clamav-daemon.service clamav-freshclam.service valkey-server.service \
     mk8email-admin.service nginx.service nftables.service fail2ban.service \
-    mk8-backup.timer mk8-mail-health.timer dailyaidecheck.timer; do
+    auditd.service apparmor.service acct.service cron.service \
+    smartmontools.service sysstat.service unattended-upgrades.service \
+    mk8-backup.timer mk8-mail-health.timer dailyaidecheck.timer \
+    apt-daily.timer apt-daily-upgrade.timer certbot.timer fstrim.timer \
+    logrotate.timer sysstat-collect.timer sysstat-summary.timer; do
     systemctl is-active --quiet "$service_name" || record_error "$service_name is not active."
 done
 
@@ -95,7 +99,8 @@ if pgrep -x master >/dev/null || pgrep -x dovecot >/dev/null; then
     record_error "A forbidden mail process is running."
 fi
 
-for completed_service in mk8-backup.service dailyaidecheck.service; do
+for completed_service in mk8-backup.service dailyaidecheck.service \
+    apt-daily-upgrade.service certbot.service fstrim.service logrotate.service; do
     service_result=$(systemctl show "$completed_service" --property=Result --value 2>/dev/null || true)
     [ "$service_result" = success ] || record_error "$completed_service did not finish successfully."
 done
@@ -228,7 +233,8 @@ if [ -n "$queue_stats" ]; then
     fi
 fi
 
-used_percent=$(df -P /var/lib/postgresql | awk 'NR == 2 { gsub(/%/, "", $5); print $5 }')
+used_percent=$(df -P /var/lib/postgresql 2>/dev/null \
+    | awk 'NR == 2 { gsub(/%/, "", $5); print $5 }' || true)
 case "$used_percent" in
     ''|*[!0-9]*)
         used_percent=null
@@ -236,6 +242,24 @@ case "$used_percent" in
         ;;
     *)
         [ "$used_percent" -lt 90 ] || record_error "Mail storage is at least 90 percent full."
+        ;;
+esac
+backup_used_percent=$(df -P /var/backups 2>/dev/null \
+    | awk 'NR == 2 { gsub(/%/, "", $5); print $5 }' || true)
+case "$backup_used_percent" in
+    ''|*[!0-9]*) record_error "Backup storage use is not available." ;;
+    *)
+        [ "$backup_used_percent" -lt 90 ] \
+            || record_error "Backup storage is at least 90 percent full."
+        ;;
+esac
+inode_used_percent=$(df -Pi /var/lib/postgresql 2>/dev/null \
+    | awk 'NR == 2 { gsub(/%/, "", $5); print $5 }' || true)
+case "$inode_used_percent" in
+    ''|*[!0-9]*) record_error "Mail storage inode use is not available." ;;
+    *)
+        [ "$inode_used_percent" -lt 90 ] \
+            || record_error "Mail storage inode use is at least 90 percent."
         ;;
 esac
 openssl x509 -in /etc/mk8email/tls/fullchain.pem -noout -checkend 1209600 >/dev/null 2>&1 \
@@ -369,6 +393,8 @@ if [ "$deep" = true ]; then
             && sha256sum --quiet --strict --check "$export_checksum_name") \
             || record_error "The latest encrypted backup failed checksum verification."
     fi
+    debsums --silent >/dev/null 2>&1 \
+        || record_error "An installed package failed checksum verification."
     logrotate --debug /etc/logrotate.conf >/dev/null 2>&1 \
         || record_error "The log rotation configuration is not valid."
     rspamadm configtest --config=/etc/rspamd/rspamd.conf --strict --quiet >/dev/null 2>&1 \

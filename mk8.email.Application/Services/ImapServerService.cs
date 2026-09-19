@@ -65,11 +65,30 @@ ILogger<ImapServerService> logger) : BackgroundService
 
     private readonly record struct MessageSetRange(int Start, int End);
     private readonly record struct MailboxLocation(Guid InboxId, string FolderName);
+    private sealed record MailboxFolderInfo(
+        string InboxName,
+        string Domain,
+        string FolderName,
+        bool IsPrimary,
+        bool IsSubscribed);
     private sealed record MailboxListEntry(
         string FullName,
         string? FolderName,
         bool IsSelectable,
-        bool HasChildren);
+        bool HasChildren,
+        bool IsSubscribed);
+    private sealed record ListCommandOptions(
+        string Reference,
+        IReadOnlyList<string> Patterns,
+        bool IsExtended,
+        bool SelectSubscribed,
+        bool SelectRemote,
+        bool SelectRecursiveMatch,
+        bool SelectSpecialUse,
+        bool ReturnSubscribed,
+        bool ReturnChildren,
+        bool ReturnSpecialUse,
+        string[] StatusItems);
 
     private readonly ConnectionLimiter _connectionLimiter = new(MaximumConcurrentConnections);
     private readonly SemaphoreSlim _messageWriteCommandLimiter = new(
@@ -806,7 +825,7 @@ ILogger<ImapServerService> logger) : BackgroundService
         ImapSession session)
     {
         var caps =
-            "IMAP4rev1 LITERAL+ IDLE NAMESPACE SPECIAL-USE UIDPLUS " +
+            "IMAP4rev1 LITERAL+ IDLE NAMESPACE SPECIAL-USE UIDPLUS LIST-EXTENDED LIST-STATUS " +
             "ID ENABLE MOVE UNSELECT QUOTA CONDSTORE QRESYNC ESEARCH " +
             $"MULTIAPPEND STATUS=SIZE APPENDLIMIT={config.MaxMessageSizeBytes}";
         if (session.IsSecure)
@@ -998,36 +1017,15 @@ ILogger<ImapServerService> logger) : BackgroundService
 
     private async Task HandleListAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
-        var returnStatus = false;
-        string[] statusItems = [];
-        var argsUpper = args.ToUpperInvariant();
-        var returnIdx = argsUpper.IndexOf("RETURN", StringComparison.Ordinal);
-        string listArgs;
-        if (returnIdx >= 0)
+        if (!TryParseListCommand(args, out var options, out var failureResponse))
         {
-            listArgs = args[..returnIdx].Trim();
-            var statusParen = argsUpper.IndexOf("STATUS", returnIdx, StringComparison.Ordinal);
-            if (statusParen >= 0)
-            {
-                returnStatus = true;
-                var openParen = args.IndexOf('(', statusParen);
-                var closeParen = args.IndexOf(')', openParen + 1);
-                if (openParen >= 0 && closeParen > openParen)
-                    statusItems = args[(openParen + 1)..closeParen].Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            }
-        }
-        else
-        {
-            listArgs = args;
-        }
-
-        if (!TryParseMailboxArgs(listArgs, out var reference, out var pattern))
-        {
-            await writer.WriteLineAsync($"{tag} BAD Invalid mailbox name");
+            await writer.WriteLineAsync($"{tag} BAD {failureResponse}");
             return;
         }
 
-        if (pattern == string.Empty)
+        if (!options.IsExtended
+            && options.Patterns.Count == 1
+            && options.Patterns[0] == string.Empty)
         {
             await writer.WriteLineAsync("* LIST (\\Noselect) \"/\" \"\"");
             await writer.WriteLineAsync($"{tag} OK LIST completed");
@@ -1035,33 +1033,54 @@ ILogger<ImapServerService> logger) : BackgroundService
         }
 
         var folders = await GetUserFoldersAsync(session.UserId, ct);
+        var entries = BuildMailboxListEntries(folders);
 
-        using var scope = returnStatus ? scopeFactory.CreateScope() : null;
-        var db = returnStatus ? scope!.ServiceProvider.GetRequiredService<EmailDbContext>() : null;
+        using var scope = options.StatusItems.Length > 0 ? scopeFactory.CreateScope() : null;
+        var db = scope?.ServiceProvider.GetRequiredService<EmailDbContext>();
 
-        foreach (var entry in BuildMailboxListEntries(folders))
+        foreach (var entry in entries)
         {
-            if (MatchesPattern(entry.FullName, reference, pattern))
-            {
-                var attrs = GetFolderAttributes(
-                    entry.FolderName,
-                    entry.IsSelectable,
-                    entry.HasChildren);
-                await writer.WriteLineAsync(
-                    $"* LIST ({attrs}) \"/\" \"{EscapeImapString(FormatWireMailboxName(entry.FullName))}\"");
+            if (!MatchesAnyPattern(entry.FullName, options.Reference, options.Patterns))
+                continue;
 
-                if (entry.IsSelectable
-                    && returnStatus
-                    && db is not null
-                    && statusItems.Length > 0)
+            var matchesSelection = MatchesListSelection(entry, options);
+            var includeChildInfo = false;
+            if (!matchesSelection && options.SelectRecursiveMatch)
+            {
+                var descendantPrefix = entry.FullName + "/";
+                includeChildInfo = entries.Any(descendant =>
+                    descendant.FullName.StartsWith(descendantPrefix, StringComparison.Ordinal)
+                    && MatchesListSelection(descendant, options)
+                    && !MatchesAnyPattern(descendant.FullName, options.Reference, options.Patterns));
+            }
+
+            if (!matchesSelection && !includeChildInfo)
+                continue;
+
+            var attrs = GetFolderAttributes(
+                entry.FolderName,
+                entry.IsSelectable,
+                entry.HasChildren,
+                includeSubscribed: (options.SelectSubscribed || options.ReturnSubscribed)
+                    && entry.IsSubscribed,
+                useNonExistent: options.IsExtended);
+            var childInfo = includeChildInfo
+                ? $" (CHILDINFO ({BuildChildInfoCriteria(options)}))"
+                : string.Empty;
+            await writer.WriteLineAsync(
+                $"* LIST ({attrs}) \"/\" \"{EscapeImapString(FormatWireMailboxName(entry.FullName))}\"{childInfo}");
+
+            if (entry.IsSelectable
+                && matchesSelection
+                && db is not null
+                && options.StatusItems.Length > 0)
+            {
+                var folder = await ResolveFolderAsync(db, session.UserId, entry.FullName, ct);
+                if (folder is not null)
                 {
-                    var folder = await ResolveFolderAsync(db, session.UserId, entry.FullName, ct);
-                    if (folder is not null)
-                    {
-                        var statusResult = await BuildStatusResultAsync(db, folder, statusItems, ct);
-                        await writer.WriteLineAsync(
-                            $"* STATUS \"{EscapeImapString(FormatWireMailboxName(entry.FullName))}\" ({statusResult})");
-                    }
+                    var statusResult = await BuildStatusResultAsync(db, folder, options.StatusItems, ct);
+                    await writer.WriteLineAsync(
+                        $"* STATUS \"{EscapeImapString(FormatWireMailboxName(entry.FullName))}\" ({statusResult})");
                 }
             }
         }
@@ -2117,7 +2136,7 @@ ILogger<ImapServerService> logger) : BackgroundService
 
     // ?? Helpers ??
 
-    private async Task<List<(string InboxName, string Domain, string FolderName, bool IsPrimary)>> GetUserFoldersAsync(
+    private async Task<List<MailboxFolderInfo>> GetUserFoldersAsync(
         Guid userId, CancellationToken ct, bool subscribedOnly = false)
     {
         using var scope = scopeFactory.CreateScope();
@@ -2137,19 +2156,21 @@ ILogger<ImapServerService> logger) : BackgroundService
                 f.Inbox.Address.Domain,
                 FolderName = f.Name,
                 OwnerUsername = f.Inbox.Owner.Username,
+                f.IsSubscribed,
             })
             .OrderBy(f => f.Domain).ThenBy(f => f.InboxName).ThenBy(f => f.FolderName)
             .ToListAsync(ct);
 
         return folders
-            .Select(folder => ValueTuple.Create(
+            .Select(folder => new MailboxFolderInfo(
                 folder.InboxName,
                 folder.Domain,
                 folder.FolderName,
                 string.Equals(
                     folder.OwnerUsername,
                     $"{folder.InboxName}@{folder.Domain}",
-                    StringComparison.OrdinalIgnoreCase)))
+                    StringComparison.OrdinalIgnoreCase),
+                folder.IsSubscribed))
             .ToList();
     }
 
@@ -2428,7 +2449,7 @@ ILogger<ImapServerService> logger) : BackgroundService
     }
 
     private static IReadOnlyList<MailboxListEntry> BuildMailboxListEntries(
-        IReadOnlyList<(string InboxName, string Domain, string FolderName, bool IsPrimary)> folders)
+        IReadOnlyList<MailboxFolderInfo> folders)
     {
         var selectable = folders
             .Select(folder => (
@@ -2437,11 +2458,14 @@ ILogger<ImapServerService> logger) : BackgroundService
                     folder.Domain,
                     folder.FolderName,
                     folder.IsPrimary),
-                folder.FolderName))
+                folder.FolderName,
+                folder.IsSubscribed))
             .GroupBy(folder => folder.FullName, StringComparer.Ordinal)
             .ToDictionary(
                 group => group.Key,
-                group => group.First().FolderName,
+                group => (
+                    group.First().FolderName,
+                    IsSubscribed: group.Any(folder => folder.IsSubscribed)),
                 StringComparer.Ordinal);
         var names = new HashSet<string>(selectable.Keys, StringComparer.Ordinal);
 
@@ -2458,12 +2482,17 @@ ILogger<ImapServerService> logger) : BackgroundService
             .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
             .Select(name =>
             {
-                var isSelectable = selectable.TryGetValue(name, out var folderName);
+                var isSelectable = selectable.TryGetValue(name, out var folder);
                 var childPrefix = name + "/";
                 var hasChildren = names.Any(
                     candidate => candidate.Length > childPrefix.Length
                               && candidate.StartsWith(childPrefix, StringComparison.Ordinal));
-                return new MailboxListEntry(name, folderName, isSelectable, hasChildren);
+                return new MailboxListEntry(
+                    name,
+                    isSelectable ? folder.FolderName : null,
+                    isSelectable,
+                    hasChildren,
+                    isSelectable && folder.IsSubscribed);
             })
             .ToList();
     }
@@ -2609,25 +2638,53 @@ ILogger<ImapServerService> logger) : BackgroundService
     private static string GetFolderAttributes(
         string? folderName,
         bool isSelectable,
-        bool hasChildren)
+        bool hasChildren,
+        bool includeSubscribed = false,
+        bool useNonExistent = false)
     {
         var attributes = new List<string>();
         if (!isSelectable)
-            attributes.Add("\\Noselect");
+            attributes.Add(useNonExistent ? "\\NonExistent" : "\\Noselect");
 
-        var specialUse = folderName switch
-        {
-            "Sent" => "\\Sent",
-            "Drafts" => "\\Drafts",
-            "Trash" => "\\Trash",
-            "Spam" => "\\Junk",
-            _ => null,
-        };
+        var specialUse = GetSpecialUseAttribute(folderName);
         if (specialUse is not null)
             attributes.Add(specialUse);
+        if (includeSubscribed)
+            attributes.Add("\\Subscribed");
 
         attributes.Add(hasChildren ? "\\HasChildren" : "\\HasNoChildren");
         return string.Join(' ', attributes);
+    }
+
+    private static string? GetSpecialUseAttribute(string? folderName) => folderName switch
+    {
+        "Sent" => "\\Sent",
+        "Drafts" => "\\Drafts",
+        "Trash" => "\\Trash",
+        "Spam" => "\\Junk",
+        _ => null,
+    };
+
+    private static bool MatchesAnyPattern(
+        string name,
+        string reference,
+        IReadOnlyList<string> patterns) =>
+        patterns.Any(pattern => pattern.Length > 0 && MatchesPattern(name, reference, pattern));
+
+    private static bool MatchesListSelection(
+        MailboxListEntry entry,
+        ListCommandOptions options) =>
+        (!options.SelectSubscribed || entry.IsSubscribed)
+        && (!options.SelectSpecialUse || GetSpecialUseAttribute(entry.FolderName) is not null);
+
+    private static string BuildChildInfoCriteria(ListCommandOptions options)
+    {
+        var criteria = new List<string>();
+        if (options.SelectSubscribed)
+            criteria.Add("\"SUBSCRIBED\"");
+        if (options.SelectSpecialUse)
+            criteria.Add("\"SPECIAL-USE\"");
+        return string.Join(' ', criteria);
     }
 
     private static bool MatchesPattern(string name, string reference, string pattern)
@@ -3077,6 +3134,238 @@ ILogger<ImapServerService> logger) : BackgroundService
         if (tokens.Count < 2) return (null, null);
         return (UnquoteArg(tokens[0]), UnquoteArg(tokens[1]));
     }
+
+    private static bool TryParseListCommand(
+        string args,
+        out ListCommandOptions options,
+        out string failureResponse)
+    {
+        options = new ListCommandOptions(
+            string.Empty,
+            [],
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            []);
+        failureResponse = "Invalid LIST arguments";
+
+        if (!TryTokenizeSearchCriteria(args, out var tokens) || tokens.Count == 0)
+            return false;
+
+        var index = 0;
+        var isExtended = false;
+        var selectionOptions = new List<string>();
+        if (tokens[index].Kind == SearchTokenKind.OpenParenthesis)
+        {
+            isExtended = true;
+            if (!TryReadFlatList(tokens, ref index, out selectionOptions))
+                return false;
+        }
+
+        if (!TryReadListAtom(tokens, ref index, out var wireReference)
+            || !ImapMailboxEncoding.TryDecode(wireReference, out var reference))
+        {
+            failureResponse = "Invalid LIST reference name";
+            return false;
+        }
+
+        List<string> wirePatterns;
+        if (index < tokens.Count && tokens[index].Kind == SearchTokenKind.OpenParenthesis)
+        {
+            isExtended = true;
+            if (!TryReadFlatList(tokens, ref index, out wirePatterns))
+                return false;
+        }
+        else if (TryReadListAtom(tokens, ref index, out var wirePattern))
+        {
+            wirePatterns = [wirePattern];
+        }
+        else
+        {
+            return false;
+        }
+
+        var patterns = new List<string>(wirePatterns.Count);
+        foreach (var wirePattern in wirePatterns)
+        {
+            if (!ImapMailboxEncoding.TryDecode(wirePattern, out var pattern))
+            {
+                failureResponse = "Invalid LIST mailbox pattern";
+                return false;
+            }
+            patterns.Add(pattern);
+        }
+
+        var returnSubscribed = false;
+        var returnChildren = false;
+        var returnSpecialUse = false;
+        string[] statusItems = [];
+        if (index < tokens.Count)
+        {
+            isExtended = true;
+            if (!TryReadListAtom(tokens, ref index, out var returnKeyword)
+                || !returnKeyword.Equals("RETURN", StringComparison.OrdinalIgnoreCase)
+                || index >= tokens.Count
+                || tokens[index].Kind != SearchTokenKind.OpenParenthesis)
+            {
+                return false;
+            }
+
+            index++;
+            var sawReturnOption = false;
+            var sawStatus = false;
+            while (index < tokens.Count && tokens[index].Kind != SearchTokenKind.CloseParenthesis)
+            {
+                if (!TryReadListAtom(tokens, ref index, out var returnOption))
+                    return false;
+
+                sawReturnOption = true;
+                switch (returnOption.ToUpperInvariant())
+                {
+                    case "SUBSCRIBED":
+                        returnSubscribed = true;
+                        break;
+                    case "CHILDREN":
+                        returnChildren = true;
+                        break;
+                    case "SPECIAL-USE":
+                        returnSpecialUse = true;
+                        break;
+                    case "STATUS":
+                        if (sawStatus
+                            || !TryReadFlatList(tokens, ref index, out var requestedStatusItems)
+                            || requestedStatusItems.Any(item => !IsSupportedStatusItem(item)))
+                        {
+                            failureResponse = "Invalid LIST STATUS items";
+                            return false;
+                        }
+
+                        sawStatus = true;
+                        statusItems = requestedStatusItems
+                            .Select(item => item.ToUpperInvariant())
+                            .ToArray();
+                        break;
+                    default:
+                        failureResponse = $"Unsupported LIST return option {returnOption}";
+                        return false;
+                }
+            }
+
+            if (!sawReturnOption
+                || index >= tokens.Count
+                || tokens[index].Kind != SearchTokenKind.CloseParenthesis)
+            {
+                return false;
+            }
+            index++;
+        }
+
+        if (index != tokens.Count)
+            return false;
+
+        var selectSubscribed = false;
+        var selectRemote = false;
+        var selectRecursiveMatch = false;
+        var selectSpecialUse = false;
+        foreach (var selectionOption in selectionOptions)
+        {
+            switch (selectionOption.ToUpperInvariant())
+            {
+                case "SUBSCRIBED":
+                    selectSubscribed = true;
+                    break;
+                case "REMOTE":
+                    selectRemote = true;
+                    break;
+                case "RECURSIVEMATCH":
+                    selectRecursiveMatch = true;
+                    break;
+                case "SPECIAL-USE":
+                    selectSpecialUse = true;
+                    break;
+                default:
+                    failureResponse = $"Unsupported LIST selection option {selectionOption}";
+                    return false;
+            }
+        }
+
+        if (selectRecursiveMatch && !selectSubscribed && !selectSpecialUse)
+        {
+            failureResponse = "RECURSIVEMATCH requires a filtering selection option";
+            return false;
+        }
+
+        options = new ListCommandOptions(
+            reference,
+            patterns,
+            isExtended,
+            selectSubscribed,
+            selectRemote,
+            selectRecursiveMatch,
+            selectSpecialUse,
+            returnSubscribed,
+            returnChildren,
+            returnSpecialUse,
+            statusItems);
+        return true;
+    }
+
+    private static bool TryReadFlatList(
+        IReadOnlyList<SearchToken> tokens,
+        ref int index,
+        out List<string> values)
+    {
+        values = [];
+        if (index >= tokens.Count || tokens[index].Kind != SearchTokenKind.OpenParenthesis)
+            return false;
+
+        index++;
+        while (index < tokens.Count && tokens[index].Kind != SearchTokenKind.CloseParenthesis)
+        {
+            if (!TryReadListAtom(tokens, ref index, out var value))
+                return false;
+            values.Add(value);
+        }
+
+        if (values.Count == 0
+            || index >= tokens.Count
+            || tokens[index].Kind != SearchTokenKind.CloseParenthesis)
+        {
+            return false;
+        }
+
+        index++;
+        return true;
+    }
+
+    private static bool TryReadListAtom(
+        IReadOnlyList<SearchToken> tokens,
+        ref int index,
+        out string value)
+    {
+        value = string.Empty;
+        if (index >= tokens.Count || tokens[index].Kind != SearchTokenKind.Atom)
+            return false;
+
+        value = tokens[index++].Value;
+        return true;
+    }
+
+    private static bool IsSupportedStatusItem(string item) =>
+        item.ToUpperInvariant() is
+            "MESSAGES" or
+            "RECENT" or
+            "UNSEEN" or
+            "UIDVALIDITY" or
+            "UIDNEXT" or
+            "HIGHESTMODSEQ" or
+            "SIZE" or
+            "MAILBOXID";
 
     private static bool TryParseMailboxArgs(
         string args,

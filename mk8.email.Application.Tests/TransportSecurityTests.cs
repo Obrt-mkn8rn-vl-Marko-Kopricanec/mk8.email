@@ -496,6 +496,7 @@ public sealed class TransportSecurityTests
         await connection.WriteLineAsync("a1 CAPABILITY");
         var capability = await connection.ReadLineAsync();
         StringAssert.Contains(capability, "IMAP4rev1 LITERAL+ IDLE NAMESPACE SPECIAL-USE UIDPLUS");
+        StringAssert.Contains(capability, "LIST-EXTENDED LIST-STATUS");
         StringAssert.Contains(capability, "ID ENABLE MOVE UNSELECT QUOTA CONDSTORE QRESYNC ESEARCH");
         StringAssert.Contains(capability, "MULTIAPPEND STATUS=SIZE APPENDLIMIT=65536");
         StringAssert.Contains(capability, "LOGINDISABLED");
@@ -994,6 +995,85 @@ public sealed class TransportSecurityTests
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a16 OK", StringComparison.Ordinal));
         await connection.WriteLineAsync("a17 CREATE \"&AEE-\"");
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a17 BAD", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    [Timeout(15_000)]
+    public async Task ImapListExtendedCombinesSubscriptionsSpecialUseAndStatus()
+    {
+        var port = ReservePort();
+        var environment = CreateEnvironment(imapPort: port);
+        await using var server = await ServerFixture.StartImapAsync(environment, port);
+        await using var connection = await ProtocolConnection.ConnectAsync(port);
+
+        await connection.ReadLineAsync();
+        await connection.WriteLineAsync("a1 STARTTLS");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a1 OK", StringComparison.Ordinal));
+        await connection.UpgradeToTlsAsync("email.mk8n.com");
+        await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a2 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a3 CREATE Projects");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a3 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a4 CREATE Projects/2026");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a4 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a5 CREATE Projects/2027");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a5 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a5d CREATE Drafts");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a5d OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a5s CREATE Spam");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a5s OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a6 UNSUBSCRIBE Projects");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a6 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a7 UNSUBSCRIBE Projects/2026");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a7 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync(
+            "a8 LIST (SUBSCRIBED RECURSIVEMATCH) \"\" \"%\" " +
+            "RETURN (SUBSCRIBED CHILDREN STATUS (MESSAGES UIDNEXT SIZE))");
+        var recursive = await ReadUntilTaggedResponseAsync(connection, "a8");
+        var projects = recursive.Single(line =>
+            line.StartsWith("* LIST (", StringComparison.Ordinal)
+            && line.Contains("\"Projects\" (CHILDINFO (\"SUBSCRIBED\"))", StringComparison.Ordinal));
+        Assert.IsFalse(projects.Contains("\\Subscribed", StringComparison.Ordinal));
+        Assert.IsFalse(recursive.Any(line =>
+            line.StartsWith("* STATUS \"Projects\"", StringComparison.Ordinal)));
+
+        await connection.WriteLineAsync(
+            "a9 LIST (SUBSCRIBED) \"\" (\"Projects/*\" \"Sent\") " +
+            "RETURN (SUBSCRIBED STATUS (MESSAGES SIZE))");
+        var subscribed = await ReadUntilTaggedResponseAsync(connection, "a9");
+        Assert.IsFalse(subscribed.Any(line => line.Contains("Projects/2026", StringComparison.Ordinal)));
+        Assert.IsTrue(subscribed.Any(line =>
+            line.StartsWith("* LIST (", StringComparison.Ordinal)
+            && line.Contains("\\Subscribed", StringComparison.Ordinal)
+            && line.EndsWith("\"Projects/2027\"", StringComparison.Ordinal)));
+        Assert.IsTrue(subscribed.Any(line =>
+            line.StartsWith("* STATUS \"Projects/2027\" (MESSAGES 0 SIZE 0)", StringComparison.Ordinal)));
+        Assert.IsTrue(subscribed.Any(line =>
+            line.StartsWith("* LIST (", StringComparison.Ordinal)
+            && line.Contains("\\Sent", StringComparison.Ordinal)
+            && line.Contains("\\Subscribed", StringComparison.Ordinal)
+            && line.EndsWith("\"Sent\"", StringComparison.Ordinal)));
+        Assert.IsTrue(subscribed.Any(line =>
+            line.StartsWith("* STATUS \"Sent\" (MESSAGES 0 SIZE 0)", StringComparison.Ordinal)));
+
+        await connection.WriteLineAsync("a10 LIST (SPECIAL-USE) \"\" \"*\"");
+        var specialUse = await ReadUntilTaggedResponseAsync(connection, "a10");
+        Assert.AreEqual(4, specialUse.Count(line => line.StartsWith("* LIST", StringComparison.Ordinal)));
+        Assert.IsTrue(specialUse.Any(line => line.Contains("\\Drafts", StringComparison.Ordinal)));
+        Assert.IsTrue(specialUse.Any(line => line.Contains("\\Junk", StringComparison.Ordinal)));
+        Assert.IsTrue(specialUse.Any(line => line.Contains("\\Sent", StringComparison.Ordinal)));
+        Assert.IsTrue(specialUse.Any(line => line.Contains("\\Trash", StringComparison.Ordinal)));
+
+        await connection.WriteLineAsync("a11 LIST (UNKNOWN) \"\" \"*\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a11 BAD", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a12 LIST (RECURSIVEMATCH) \"\" \"*\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a12 BAD", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a13 LIST \"\" \"\"");
+        Assert.AreEqual("* LIST (\\Noselect) \"/\" \"\"", await connection.ReadLineAsync());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a13 OK", StringComparison.Ordinal));
     }
 
     [TestMethod]

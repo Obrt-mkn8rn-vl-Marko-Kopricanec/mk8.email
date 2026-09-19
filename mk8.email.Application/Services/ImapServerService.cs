@@ -1021,7 +1021,11 @@ ILogger<ImapServerService> logger) : BackgroundService
             listArgs = args;
         }
 
-        var (reference, pattern) = ParseMailboxArgs(listArgs);
+        if (!TryParseMailboxArgs(listArgs, out var reference, out var pattern))
+        {
+            await writer.WriteLineAsync($"{tag} BAD Invalid mailbox name");
+            return;
+        }
 
         if (pattern == string.Empty)
         {
@@ -1044,7 +1048,7 @@ ILogger<ImapServerService> logger) : BackgroundService
                     entry.IsSelectable,
                     entry.HasChildren);
                 await writer.WriteLineAsync(
-                    $"* LIST ({attrs}) \"/\" \"{EscapeImapString(entry.FullName)}\"");
+                    $"* LIST ({attrs}) \"/\" \"{EscapeImapString(FormatWireMailboxName(entry.FullName))}\"");
 
                 if (entry.IsSelectable
                     && returnStatus
@@ -1056,7 +1060,7 @@ ILogger<ImapServerService> logger) : BackgroundService
                     {
                         var statusResult = await BuildStatusResultAsync(db, folder, statusItems, ct);
                         await writer.WriteLineAsync(
-                            $"* STATUS \"{EscapeImapString(entry.FullName)}\" ({statusResult})");
+                            $"* STATUS \"{EscapeImapString(FormatWireMailboxName(entry.FullName))}\" ({statusResult})");
                     }
                 }
             }
@@ -1067,7 +1071,11 @@ ILogger<ImapServerService> logger) : BackgroundService
 
     private async Task HandleLsubAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
-        var (reference, pattern) = ParseMailboxArgs(args);
+        if (!TryParseMailboxArgs(args, out var reference, out var pattern))
+        {
+            await writer.WriteLineAsync($"{tag} BAD Invalid mailbox name");
+            return;
+        }
 
         var folders = await GetUserFoldersAsync(session.UserId, ct, subscribedOnly: true);
 
@@ -1080,7 +1088,7 @@ ILogger<ImapServerService> logger) : BackgroundService
                     entry.IsSelectable,
                     entry.HasChildren);
                 await writer.WriteLineAsync(
-                    $"* LSUB ({attrs}) \"/\" \"{EscapeImapString(entry.FullName)}\"");
+                    $"* LSUB ({attrs}) \"/\" \"{EscapeImapString(FormatWireMailboxName(entry.FullName))}\"");
             }
         }
 
@@ -1126,7 +1134,11 @@ ILogger<ImapServerService> logger) : BackgroundService
             selectArgs = selectArgs[..parenIdx].Trim();
         }
 
-        var mailboxName = UnquoteArg(selectArgs);
+        if (!TryParseMailboxName(selectArgs, out var mailboxName))
+        {
+            await writer.WriteLineAsync($"{tag} BAD Invalid mailbox name");
+            return;
+        }
 
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
@@ -1253,7 +1265,11 @@ ILogger<ImapServerService> logger) : BackgroundService
 
     private async Task HandleCreateAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
-        var mailboxName = UnquoteArg(args.Trim());
+        if (!TryParseMailboxName(args.Trim(), out var mailboxName))
+        {
+            await writer.WriteLineAsync($"{tag} BAD Invalid mailbox name");
+            return;
+        }
 
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
@@ -1288,7 +1304,11 @@ ILogger<ImapServerService> logger) : BackgroundService
 
     private async Task HandleDeleteAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
-        var mailboxName = UnquoteArg(args.Trim());
+        if (!TryParseMailboxName(args.Trim(), out var mailboxName))
+        {
+            await writer.WriteLineAsync($"{tag} BAD Invalid mailbox name");
+            return;
+        }
 
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
@@ -1401,7 +1421,11 @@ ILogger<ImapServerService> logger) : BackgroundService
             return;
         }
 
-        var mailboxName = UnquoteArg(args[..parenIdx].Trim());
+        if (!TryParseMailboxName(args[..parenIdx].Trim(), out var mailboxName))
+        {
+            await writer.WriteLineAsync($"{tag} BAD Invalid mailbox name");
+            return;
+        }
         var statusItemsRaw = args[(parenIdx + 1)..].TrimEnd(')').Trim();
         var statusItems = statusItemsRaw.Split(' ', StringSplitOptions.RemoveEmptyEntries);
 
@@ -1418,7 +1442,7 @@ ILogger<ImapServerService> logger) : BackgroundService
         var statusResult = await BuildStatusResultAsync(db, folder, statusItems, ct);
 
         await writer.WriteLineAsync(
-            $"* STATUS \"{EscapeImapString(mailboxName)}\" ({statusResult})");
+            $"* STATUS \"{EscapeImapString(FormatWireMailboxName(mailboxName))}\" ({statusResult})");
         await writer.WriteLineAsync($"{tag} OK STATUS completed");
     }
 
@@ -1833,7 +1857,11 @@ ILogger<ImapServerService> logger) : BackgroundService
         }
 
         var messageSet = args[..spaceIdx];
-        var destMailbox = UnquoteArg(args[(spaceIdx + 1)..].Trim());
+        if (!TryParseMailboxName(args[(spaceIdx + 1)..].Trim(), out var destMailbox))
+        {
+            await writer.WriteLineAsync($"{tag} BAD Invalid destination mailbox name");
+            return;
+        }
 
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
@@ -2064,7 +2092,11 @@ ILogger<ImapServerService> logger) : BackgroundService
     private async Task HandleSubscribeAsync(
         StreamWriter writer, string tag, string args, ImapSession session, bool subscribe, CancellationToken ct)
     {
-        var mailboxName = UnquoteArg(args.Trim());
+        if (!TryParseMailboxName(args.Trim(), out var mailboxName))
+        {
+            await writer.WriteLineAsync($"{tag} BAD Invalid mailbox name");
+            return;
+        }
 
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
@@ -3046,19 +3078,42 @@ ILogger<ImapServerService> logger) : BackgroundService
         return (UnquoteArg(tokens[0]), UnquoteArg(tokens[1]));
     }
 
-    private static (string reference, string pattern) ParseMailboxArgs(string args)
+    private static bool TryParseMailboxArgs(
+        string args,
+        out string reference,
+        out string pattern)
     {
         var tokens = ParseImapTokens(args);
-        if (tokens.Count < 2) return (string.Empty, string.Empty);
-        return (UnquoteArg(tokens[0]), UnquoteArg(tokens[1]));
+        if (tokens.Count < 2
+            || !TryParseMailboxName(tokens[0], out reference)
+            || !TryParseMailboxName(tokens[1], out pattern))
+        {
+            reference = string.Empty;
+            pattern = string.Empty;
+            return false;
+        }
+
+        return true;
     }
 
     private static (string oldName, string newName)? ParseTwoMailboxArgs(string args)
     {
         var tokens = ParseImapTokens(args);
         if (tokens.Count < 2) return null;
-        return (UnquoteArg(tokens[0]), UnquoteArg(tokens[1]));
+        if (!TryParseMailboxName(tokens[0], out var oldName)
+            || !TryParseMailboxName(tokens[1], out var newName))
+        {
+            return null;
+        }
+
+        return (oldName, newName);
     }
+
+    private static bool TryParseMailboxName(string value, out string mailboxName) =>
+        ImapMailboxEncoding.TryDecode(UnquoteArg(value), out mailboxName);
+
+    private static string FormatWireMailboxName(string mailboxName) =>
+        ImapMailboxEncoding.Encode(mailboxName);
 
     private static List<string> ParseImapTokens(string input)
     {
@@ -3169,7 +3224,11 @@ ILogger<ImapServerService> logger) : BackgroundService
     private async Task HandleGetQuotaRootAsync(
         StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
-        var mailboxName = UnquoteArg(args.Trim());
+        if (!TryParseMailboxName(args.Trim(), out var mailboxName))
+        {
+            await writer.WriteLineAsync($"{tag} BAD Invalid mailbox name");
+            return;
+        }
 
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
@@ -3189,7 +3248,8 @@ ILogger<ImapServerService> logger) : BackgroundService
 
         var quotaBytes = user?.QuotaBytes ?? 0;
 
-        await writer.WriteLineAsync($"* QUOTAROOT \"{EscapeImapString(mailboxName)}\" \"\"");
+        await writer.WriteLineAsync(
+            $"* QUOTAROOT \"{EscapeImapString(FormatWireMailboxName(mailboxName))}\" \"\"");
         if (quotaBytes > 0)
             await writer.WriteLineAsync(
                 $"* QUOTA \"\" (STORAGE {ToQuotaStorageUnits(usedBytes)} {ToQuotaStorageUnits(quotaBytes)})");
@@ -4748,7 +4808,11 @@ ILogger<ImapServerService> logger) : BackgroundService
         }
 
         var messageSet = args[..spaceIdx];
-        var destMailbox = UnquoteArg(args[(spaceIdx + 1)..].Trim());
+        if (!TryParseMailboxName(args[(spaceIdx + 1)..].Trim(), out var destMailbox))
+        {
+            await writer.WriteLineAsync($"{tag} BAD Invalid destination mailbox name");
+            return;
+        }
 
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
@@ -5047,7 +5111,8 @@ ILogger<ImapServerService> logger) : BackgroundService
                 return;
             }
 
-            remaining = $"\"{EscapeImapString(targetMailbox)}\" {nextLine.Trim()}";
+            remaining =
+                $"\"{EscapeImapString(FormatWireMailboxName(targetMailbox))}\" {nextLine.Trim()}";
         }
 
         db.ChangeTracker.Clear();
@@ -5140,7 +5205,8 @@ ILogger<ImapServerService> logger) : BackgroundService
         if (tokens.Count < 1)
             return (null, [], null, null);
 
-        var mailboxName = UnquoteArg(tokens[0]);
+        if (!TryParseMailboxName(tokens[0], out var mailboxName))
+            return (null, [], null, null);
         var flags = new List<string>();
         DateTime? internalDate = null;
         int? literalSize = null;

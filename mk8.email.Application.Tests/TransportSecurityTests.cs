@@ -918,6 +918,85 @@ public sealed class TransportSecurityTests
     }
 
     [TestMethod]
+    [Timeout(15_000)]
+    public async Task ImapRoundTripsInternationalMailboxNamesForThunderbird()
+    {
+        var port = ReservePort();
+        var environment = CreateEnvironment(imapPort: port);
+        await using var server = await ServerFixture.StartImapAsync(environment, port);
+        await using var connection = await ProtocolConnection.ConnectAsync(port);
+
+        await connection.ReadLineAsync();
+        await connection.WriteLineAsync("a1 STARTTLS");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a1 OK", StringComparison.Ordinal));
+        await connection.UpgradeToTlsAsync("email.mk8n.com");
+        await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a2 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a3 CREATE Projects");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a3 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a4 CREATE \"Projects/&ZeVnLIqe-\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a4 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a5 CREATE \"Projects/&U,BTFw-\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a5 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a6 LIST \"\" \"Projects/*\"");
+        var listed = await ReadUntilTaggedResponseAsync(connection, "a6");
+        Assert.IsTrue(listed.Any(line =>
+            line.EndsWith("\"Projects/&ZeVnLIqe-\"", StringComparison.Ordinal)));
+        Assert.IsTrue(listed.Any(line =>
+            line.EndsWith("\"Projects/&U,BTFw-\"", StringComparison.Ordinal)));
+
+        const string message =
+            "From: user@mk8n.com\r\n" +
+            "To: user@mk8n.com\r\n" +
+            "Subject: international mailbox\r\n" +
+            "\r\n" +
+            "body\r\n";
+        await connection.WriteLineAsync($"a7 APPEND \"Projects/&ZeVnLIqe-\" {{{message.Length}}}");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("+ ", StringComparison.Ordinal));
+        await connection.WriteRawAsync(message);
+        await connection.WriteLineAsync(string.Empty);
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a7 OK [APPENDUID", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a8 SELECT \"Projects/&ZeVnLIqe-\"");
+        var selected = await ReadUntilTaggedResponseAsync(connection, "a8");
+        Assert.IsTrue(selected[^1].StartsWith("a8 OK [READ-WRITE]", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a9 COPY 1 \"Projects/&U,BTFw-\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a9 OK [COPYUID", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a10 STATUS \"Projects/&U,BTFw-\" (MESSAGES)");
+        Assert.AreEqual(
+            "* STATUS \"Projects/&U,BTFw-\" (MESSAGES 1)",
+            await connection.ReadLineAsync());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a10 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a11 GETQUOTAROOT \"Projects/&ZeVnLIqe-\"");
+        var quota = await ReadUntilTaggedResponseAsync(connection, "a11");
+        Assert.AreEqual("* QUOTAROOT \"Projects/&ZeVnLIqe-\" \"\"", quota[0]);
+
+        await connection.WriteLineAsync("a12 RENAME \"Projects/&U,BTFw-\" \"Projects/A&-B\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a12 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a13 SELECT \"Projects/A&-B\"");
+        selected = await ReadUntilTaggedResponseAsync(connection, "a13");
+        Assert.IsTrue(selected[^1].StartsWith("a13 OK [READ-WRITE]", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a14 MOVE 1 \"Projects/&ZeVnLIqe-\"");
+        var moved = await ReadUntilTaggedResponseAsync(connection, "a14");
+        Assert.IsTrue(moved[^1].StartsWith("a14 OK [COPYUID", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a15 STATUS \"Projects/&ZeVnLIqe-\" (MESSAGES)");
+        Assert.AreEqual(
+            "* STATUS \"Projects/&ZeVnLIqe-\" (MESSAGES 2)",
+            await connection.ReadLineAsync());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a15 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a16 DELETE \"Projects/A&-B\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a16 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a17 CREATE \"&AEE-\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a17 BAD", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
     [Timeout(10_000)]
     public async Task ImapSearchMatchesOnlyTheRequestedHeaderValue()
     {

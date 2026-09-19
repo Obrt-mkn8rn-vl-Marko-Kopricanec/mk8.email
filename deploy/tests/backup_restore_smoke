@@ -33,6 +33,11 @@ fi
 
 (cd "$backup_directory" && sha256sum --quiet --check SHA256SUMS)
 pg_restore --list "$backup_directory/mk8email.dump" >/dev/null
+test -s "$backup_directory/backup-metadata.txt"
+grep -Fx 'mail_services_interrupted=false' "$backup_directory/backup-metadata.txt" >/dev/null
+grep -Eq '^valkey_was_active=(true|false)$' "$backup_directory/backup-metadata.txt"
+grep -Eq '^valkey_interruption_milliseconds=[0-9]+$' "$backup_directory/backup-metadata.txt"
+valkey-check-rdb "$backup_directory/valkey/dump.rdb" >/dev/null
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
     | grep -F 'etc/NetworkManager/system-connections/' >/dev/null
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \

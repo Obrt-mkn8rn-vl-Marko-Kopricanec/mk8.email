@@ -4,10 +4,24 @@ set -euo pipefail
 backup_root=/var/backups/mk8
 export_root=/var/backups/mk8-export
 recipient_file=/etc/mk8email/secrets/backup-age-recipient
+lock=/run/lock/mk8-backup.lock
 
-if [[ $# -gt 1 ]]; then
+if [[ $(id -u) -ne 0 || $# -gt 1 ]]; then
     printf '%s\n' "Usage: mk8-export-backup [BACKUP_NAME]" >&2
     exit 2
+fi
+
+if [[ ${MK8_BACKUP_LOCK_HELD:-} == 1 ]]; then
+    if ! flock --exclusive --nonblock 9; then
+        printf '%s\n' "The inherited backup lock is not available." >&2
+        exit 1
+    fi
+else
+    exec 9>"$lock"
+    if ! flock --exclusive --wait 30 9; then
+        printf '%s\n' "Another backup, export, or health check is active." >&2
+        exit 1
+    fi
 fi
 
 if [[ $# -eq 1 ]]; then
@@ -28,6 +42,7 @@ esac
 test -d "$backup_root/$backup_name"
 test -s "$backup_root/$backup_name/SHA256SUMS"
 test -s "$recipient_file"
+(cd "$backup_root/$backup_name" && sha256sum --quiet --strict --check SHA256SUMS)
 
 recipient=$(tr -d '\r\n' < "$recipient_file")
 case "$recipient" in
@@ -42,25 +57,48 @@ umask 077
 install -d -o root -g root -m 0700 "$export_root"
 stage="$export_root/.incomplete-$backup_name.tar.gz.age"
 final="$export_root/$backup_name.tar.gz.age"
+checksum_stage="$export_root/.incomplete-$backup_name.tar.gz.age.sha256"
+stage_created=false
+checksum_stage_created=false
+final_created=false
 
 cleanup() {
-    case "$stage" in
-        /var/backups/mk8-export/.incomplete-*.tar.gz.age) rm -f -- "$stage" ;;
-    esac
+    if [[ "$stage_created" == true ]]; then
+        case "$stage" in
+            /var/backups/mk8-export/.incomplete-*.tar.gz.age) rm -f -- "$stage" ;;
+        esac
+    fi
+    if [[ "$checksum_stage_created" == true ]]; then
+        case "$checksum_stage" in
+            /var/backups/mk8-export/.incomplete-*.tar.gz.age.sha256) rm -f -- "$checksum_stage" ;;
+        esac
+    fi
+    if [[ "$final_created" == true && ! -s "$final.sha256" ]]; then
+        rm -f -- "$final"
+    fi
 }
 trap cleanup EXIT HUP INT TERM
 
-if [[ -e "$stage" || -e "$final" ]]; then
+if [[ -e "$stage" || -e "$checksum_stage" || -e "$final" || -e "$final.sha256" ]]; then
     printf '%s\n' "The encrypted backup export already exists." >&2
     exit 1
 fi
 
+stage_created=true
 tar --create --gzip --directory="$backup_root" "$backup_name" \
     | age --recipient "$recipient" --output "$stage"
 mv "$stage" "$final"
 stage=
+stage_created=false
+final_created=true
 
-(cd "$export_root" && sha256sum "$(basename "$final")") > "$final.sha256"
+checksum_stage_created=true
+(cd "$export_root" && sha256sum "$(basename "$final")") > "$checksum_stage"
+(cd "$export_root" && sha256sum --quiet --strict --check "$(basename "$checksum_stage")")
+mv "$checksum_stage" "$final.sha256"
+checksum_stage=
+checksum_stage_created=false
+final_created=false
 find "$export_root" -mindepth 1 -maxdepth 1 -type f \
     \( -name '20??????T??????Z.tar.gz.age' -o -name '20??????T??????Z.tar.gz.age.sha256' \) \
     -mtime +14 -delete

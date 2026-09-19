@@ -193,6 +193,7 @@ run_unit "mk8-build-$short_commit-$$" yes /bin/sh -eu -c '
         deploy/scripts/verify-host-prerequisites \
         deploy/tests/aide_alert_smoke \
         deploy/tests/apt_sources_smoke \
+        deploy/tests/backup_continuity_smoke \
         deploy/tests/backup_restore_smoke \
         deploy/tests/build_environment_smoke \
         deploy/tests/certificate_deploy_smoke \

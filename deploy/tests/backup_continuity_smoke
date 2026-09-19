@@ -1,0 +1,70 @@
+#!/bin/sh
+set -eu
+
+if [ "$(id -u)" -ne 0 ] || [ "$#" -ne 0 ]; then
+    printf '%s\n' "Usage: backup_continuity_smoke" >&2
+    exit 2
+fi
+
+fail() {
+    printf '%s\n' "$1" >&2
+    exit 1
+}
+
+active_pid() {
+    unit_name=$1
+    systemctl is-active --quiet "$unit_name" \
+        || fail "$unit_name is not active before the backup."
+    unit_pid=$(systemctl show "$unit_name" --property=MainPID --value)
+    case "$unit_pid" in
+        ''|0|*[!0-9]*) fail "$unit_name does not have a valid main process." ;;
+    esac
+    printf '%s\n' "$unit_pid"
+}
+
+assert_same_pid() {
+    unit_name=$1
+    expected_pid=$2
+    current_pid=$(active_pid "$unit_name")
+    [ "$current_pid" = "$expected_pid" ] \
+        || fail "$unit_name restarted during the backup."
+}
+
+mail_pid=$(active_pid mk8email.service)
+admin_pid=$(active_pid mk8email-admin.service)
+prosody_pid=$(active_pid prosody.service)
+xmpp_tunnel_pid=$(active_pid cloudflared-xmpp.service)
+
+latest_before=$(find /var/backups/mk8 -mindepth 1 -maxdepth 1 -type d \
+    -name '20??????T??????Z' -printf '%f\n' | sort | tail -n 1)
+systemctl start mk8-backup.service
+[ "$(systemctl show mk8-backup.service --property=Result --value)" = success ] \
+    || fail "The backup service did not finish successfully."
+latest_after=$(find /var/backups/mk8 -mindepth 1 -maxdepth 1 -type d \
+    -name '20??????T??????Z' -printf '%f\n' | sort | tail -n 1)
+case "$latest_after" in
+    20??????T??????Z) ;;
+    *) fail "The backup service did not create a valid backup directory." ;;
+esac
+[ "$latest_after" != "$latest_before" ] \
+    || fail "The backup service did not create a new backup."
+
+assert_same_pid mk8email.service "$mail_pid"
+assert_same_pid mk8email-admin.service "$admin_pid"
+assert_same_pid prosody.service "$prosody_pid"
+assert_same_pid cloudflared-xmpp.service "$xmpp_tunnel_pid"
+
+backup_directory=/var/backups/mk8/$latest_after
+grep -Fx 'mail_services_interrupted=false' "$backup_directory/backup-metadata.txt" >/dev/null \
+    || fail "The backup did not record online mail service continuity."
+/usr/local/lib/mk8email/tests/backup_restore_smoke "$backup_directory"
+
+encrypted_name=$latest_after.tar.gz.age
+encrypted_root=/var/backups/mk8-export
+test -s "$encrypted_root/$encrypted_name"
+test -s "$encrypted_root/$encrypted_name.sha256"
+(cd "$encrypted_root" \
+    && sha256sum --quiet --strict --check "$encrypted_name.sha256")
+
+printf 'Backup continuity passed: backup=%s mail_pid=%s admin_pid=%s prosody_pid=%s xmpp_tunnel_pid=%s\n' \
+    "$latest_after" "$mail_pid" "$admin_pid" "$prosody_pid" "$xmpp_tunnel_pid"

@@ -1,7 +1,7 @@
 [Unit]
 Description=Back up mk8 services
 Requires=postgresql.service
-After=postgresql.service mk8email.service rspamd.service valkey-server.service mk8email-admin.service
+After=postgresql.service valkey-server.service
 
 [Service]
 Type=oneshot
@@ -10,6 +10,7 @@ UMask=0077
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7
+TimeoutStartSec=1h
 NoNewPrivileges=true
 PrivateDevices=true
 PrivateTmp=true

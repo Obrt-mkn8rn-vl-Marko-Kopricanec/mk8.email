@@ -37,6 +37,10 @@ backup_age=null
 signature_age=null
 mail_certificate_remaining=null
 admin_certificate_remaining=null
+latest_backup=
+latest_export=
+latest_export_checksum=
+backup_checksum_metadata_valid=false
 
 record_error() {
     printf '%s\n' "$1" >> "$errors"
@@ -95,6 +99,26 @@ for completed_service in mk8-backup.service dailyaidecheck.service; do
     service_result=$(systemctl show "$completed_service" --property=Result --value 2>/dev/null || true)
     [ "$service_result" = success ] || record_error "$completed_service did not finish successfully."
 done
+aide_last_exit=$(systemctl show dailyaidecheck.service \
+    --property=ExecMainExitTimestampMonotonic --value 2>/dev/null || true)
+uptime_seconds=$(cut -d. -f1 /proc/uptime)
+case "$aide_last_exit:$uptime_seconds" in
+    *[!0-9:]*|:*|*:)
+        record_error "The AIDE completion time is not available."
+        ;;
+    0:*)
+        if [ "$uptime_seconds" -gt 129600 ]; then
+            record_error "AIDE has not completed during the last 36 hours."
+        fi
+        ;;
+    *)
+        aide_last_exit_seconds=$((aide_last_exit / 1000000))
+        if [ "$aide_last_exit_seconds" -gt "$uptime_seconds" ] \
+            || [ $((uptime_seconds - aide_last_exit_seconds)) -gt 129600 ]; then
+            record_error "AIDE has not completed during the last 36 hours."
+        fi
+        ;;
+esac
 
 pg_isready --host=127.0.0.1 --port=5432 --dbname=mk8email --quiet \
     || record_error "PostgreSQL is not ready."
@@ -121,11 +145,15 @@ else
 fi
 if [ -s /etc/mk8email/secrets/backup-age-recipient ]; then
     latest_export=$(find /var/backups/mk8-export -maxdepth 1 -type f \
-        -name '*.tar.gz.age' -printf '%T@ %p\n' 2>/dev/null \
+        -name '20??????T??????Z.tar.gz.age' -printf '%T@ %p\n' 2>/dev/null \
         | sort -nr | sed -n '1s/^[^ ]* //p')
     if [ -z "$latest_export" ]; then
         record_error "An encrypted backup export is not available."
     else
+        export_name=${latest_export##*/}
+        backup_name=${export_name%.tar.gz.age}
+        latest_backup=/var/backups/mk8/$backup_name
+        latest_export_checksum=$latest_export.sha256
         export_epoch=$(stat -c %Y "$latest_export")
         backup_age=$((check_epoch - export_epoch))
         if [ "$backup_age" -lt 0 ]; then
@@ -133,6 +161,28 @@ if [ -s /etc/mk8email/secrets/backup-age-recipient ]; then
             record_error "The encrypted backup timestamp is in the future."
         elif [ "$backup_age" -gt 172800 ]; then
             record_error "The encrypted backup export is older than two days."
+        fi
+        if [ ! -d "$latest_backup" ] || [ ! -s "$latest_backup/SHA256SUMS" ]; then
+            record_error "The encrypted export does not have a complete local backup."
+        elif [ ! -s "$latest_export_checksum" ]; then
+            record_error "The encrypted backup checksum is not available."
+        else
+            checksum_line=$(cat "$latest_export_checksum")
+            checksum_digest=${checksum_line%% *}
+            checksum_name=${checksum_line#"$checksum_digest  "}
+            case "$checksum_digest" in
+                ''|*[!0-9a-f]*) ;;
+                *)
+                    if [ "${#checksum_digest}" -eq 64 ] \
+                        && [ "$checksum_name" = "$export_name" ] \
+                        && [ "$(wc -l < "$latest_export_checksum" | tr -d ' ')" -eq 1 ]; then
+                        backup_checksum_metadata_valid=true
+                    fi
+                    ;;
+            esac
+            if [ "$backup_checksum_metadata_valid" != true ]; then
+                record_error "The encrypted backup checksum metadata is not valid."
+            fi
         fi
     fi
 fi
@@ -308,6 +358,17 @@ case "$current_release" in
 esac
 
 if [ "$deep" = true ]; then
+    if [ -n "$latest_backup" ] && [ -s "$latest_backup/SHA256SUMS" ]; then
+        (cd "$latest_backup" && sha256sum --quiet --strict --check SHA256SUMS) \
+            || record_error "The latest local backup failed checksum verification."
+    fi
+    if [ "$backup_checksum_metadata_valid" = true ]; then
+        export_root=${latest_export%/*}
+        export_checksum_name=${latest_export_checksum##*/}
+        (cd "$export_root" \
+            && sha256sum --quiet --strict --check "$export_checksum_name") \
+            || record_error "The latest encrypted backup failed checksum verification."
+    fi
     logrotate --debug /etc/logrotate.conf >/dev/null 2>&1 \
         || record_error "The log rotation configuration is not valid."
     rspamadm configtest --config=/etc/rspamd/rspamd.conf --strict --quiet >/dev/null 2>&1 \

@@ -6,15 +6,13 @@ timestamp=$(date --utc +%Y%m%dT%H%M%SZ)
 stage="$backup_root/.incomplete-$timestamp"
 final="$backup_root/$timestamp"
 lock=/run/lock/mk8-backup.lock
-managed_services="mk8email.service mk8email-admin.service valkey-server.service"
+managed_services="valkey-server.service"
 active_services=
 
 resume_services() {
-    for service_name in valkey-server.service mk8email.service mk8email-admin.service; do
-        case " $active_services " in
-            *" $service_name "*) systemctl start "$service_name" ;;
-        esac
-    done
+    case " $active_services " in
+        *" valkey-server.service "*) systemctl start valkey-server.service ;;
+    esac
     active_services=
 }
 
@@ -50,18 +48,6 @@ for service_name in $managed_services; do
     fi
 done
 
-systemctl stop mk8email.service mk8email-admin.service 2>/dev/null || true
-for service_name in mk8email.service mk8email-admin.service; do
-    if systemctl is-active --quiet "$service_name"; then
-        printf '%s\n' "$service_name did not stop for the backup." >&2
-        exit 1
-    fi
-done
-if systemctl is-active --quiet valkey-server.service; then
-    valkey-cli -h 127.0.0.1 -p 6379 save >/dev/null
-    systemctl stop valkey-server.service
-fi
-
 runuser -u postgres -- pg_dump --format=custom --compress=9 mk8email > "$stage/mk8email.dump"
 runuser -u postgres -- pg_dumpall --globals-only > "$stage/postgresql-globals.sql"
 readlink -f /opt/mk8email/current > "$stage/mk8email-release.txt"
@@ -70,10 +56,28 @@ apt-mark showmanual | sort > "$stage/debian-manual-packages.txt"
 cp -p /etc/os-release "$stage/os-release"
 uname -a > "$stage/kernel.txt"
 
+valkey_was_active=false
+valkey_interruption_milliseconds=0
+if systemctl is-active --quiet valkey-server.service; then
+    valkey_was_active=true
+    valkey_interruption_started=$(date +%s%N)
+    valkey-cli -h 127.0.0.1 -p 6379 save 2>/dev/null | grep -qx OK
+    systemctl stop valkey-server.service
+fi
+
 install -d -m 0700 "$stage/valkey"
 rsync --archive --delete --numeric-ids /var/lib/valkey/ "$stage/valkey/"
 
 resume_services
+if [ "$valkey_was_active" = true ]; then
+    valkey_interruption_finished=$(date +%s%N)
+    valkey_interruption_milliseconds=$((
+        (valkey_interruption_finished - valkey_interruption_started) / 1000000
+    ))
+fi
+printf 'backup_started_at=%s\nmail_services_interrupted=false\nvalkey_was_active=%s\nvalkey_interruption_milliseconds=%s\n' \
+    "$timestamp" "$valkey_was_active" "$valkey_interruption_milliseconds" \
+    > "$stage/backup-metadata.txt"
 
 tar --create --gzip --file="$stage/configuration.tar.gz" --directory=/ \
     --exclude=etc/mk8email/bootstrap-secrets \
@@ -131,7 +135,6 @@ tar --create --gzip --file="$stage/configuration.tar.gz" --directory=/ \
     etc/tmpfiles.d/mk8-mail.conf \
     etc/tmpfiles.d/mk8-postgresql.conf \
     etc/valkey \
-    var/lib/aide/aide.db \
     var/lib/mk8email \
     var/lib/mk8email-admin \
     var/log/mk8email-admin \
@@ -160,12 +163,17 @@ tar --create --gzip --file="$stage/configuration.tar.gz" --directory=/ \
     usr/local/share/mk8email/domain-templates \
     usr/local/share/mk8email/prerequisites
 
+if find "$stage" -type l -print -quit | grep -q .; then
+    printf '%s\n' "The backup staging directory contains a symbolic link." >&2
+    exit 1
+fi
 (cd "$stage" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum) > "$stage/SHA256SUMS"
+(cd "$stage" && sha256sum --quiet --strict --check SHA256SUMS)
 mv "$stage" "$final"
 stage=
 
 if [ -s /etc/mk8email/secrets/backup-age-recipient ]; then
-    /usr/local/sbin/mk8-export-backup "$timestamp" >/dev/null
+    MK8_BACKUP_LOCK_HELD=1 /usr/local/sbin/mk8-export-backup "$timestamp" >/dev/null
 fi
 
 find /var/backups/mk8 -mindepth 1 -maxdepth 1 -type d -name '20??????T??????Z' -mtime +14 -exec rm -rf -- {} +

@@ -267,6 +267,7 @@ install -o root -g root -m 0644 "$asset_root/deploy/domain-templates/mta-sts.txt
 
 install -d -o root -g root -m 0755 /usr/local/lib/mk8email/tests
 install -o root -g root -m 0755 "$asset_root/deploy/tests/backup_restore_smoke" /usr/local/lib/mk8email/tests/backup_restore_smoke
+install -o root -g root -m 0755 "$asset_root/deploy/tests/backup_continuity_smoke" /usr/local/lib/mk8email/tests/backup_continuity_smoke
 install -o root -g root -m 0755 "$asset_root/deploy/tests/build_environment_smoke" /usr/local/lib/mk8email/tests/build_environment_smoke
 install -o root -g root -m 0755 "$asset_root/deploy/tests/aide_alert_smoke" /usr/local/lib/mk8email/tests/aide_alert_smoke
 install -o root -g root -m 0755 "$asset_root/deploy/tests/apt_sources_smoke" /usr/local/lib/mk8email/tests/apt_sources_smoke
@@ -351,9 +352,10 @@ systemctl unmask mk8email.service rspamd.service clamav-daemon.service \
     clamav-daemon.socket clamav-freshclam.service valkey-server.service
 systemctl mask postfix.service dovecot.service
 systemctl daemon-reload
-systemd-analyze verify mk8email-admin.service mk8-mail-health.service mk8-mail-health.timer \
-    mk8email.service rspamd.service clamav-daemon.service clamav-freshclam.service \
-    valkey-server.service dailyaidecheck.service dailyaidecheck.timer
+systemd-analyze verify mk8email-admin.service mk8-backup.service mk8-backup.timer \
+    mk8-mail-health.service mk8-mail-health.timer mk8email.service rspamd.service \
+    clamav-daemon.service clamav-freshclam.service valkey-server.service \
+    dailyaidecheck.service dailyaidecheck.timer
 nft -f /etc/nftables.conf
 systemctl reload nginx.service
 systemctl restart fail2ban.service

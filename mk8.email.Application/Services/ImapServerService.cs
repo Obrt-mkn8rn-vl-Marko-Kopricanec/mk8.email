@@ -64,6 +64,12 @@ ILogger<ImapServerService> logger) : BackgroundService
     private enum SessionUpgrade { None, StartTls, Compress }
 
     private readonly record struct MessageSetRange(int Start, int End);
+    private readonly record struct MailboxLocation(Guid InboxId, string FolderName);
+    private sealed record MailboxListEntry(
+        string FullName,
+        string? FolderName,
+        bool IsSelectable,
+        bool HasChildren);
 
     private readonly ConnectionLimiter _connectionLimiter = new(MaximumConcurrentConnections);
     private readonly SemaphoreSlim _messageWriteCommandLimiter = new(
@@ -1028,21 +1034,28 @@ ILogger<ImapServerService> logger) : BackgroundService
         using var scope = returnStatus ? scopeFactory.CreateScope() : null;
         var db = returnStatus ? scope!.ServiceProvider.GetRequiredService<EmailDbContext>() : null;
 
-        foreach (var (inboxName, domain, folderName, isPrimary) in folders)
+        foreach (var entry in BuildMailboxListEntries(folders))
         {
-            var fullName = FormatMailboxName(inboxName, domain, folderName, isPrimary);
-            if (MatchesPattern(fullName, reference, pattern))
+            if (MatchesPattern(entry.FullName, reference, pattern))
             {
-                var attrs = GetFolderAttributes(folderName);
-                await writer.WriteLineAsync($"* LIST ({attrs}) \"/\" \"{fullName}\"");
+                var attrs = GetFolderAttributes(
+                    entry.FolderName,
+                    entry.IsSelectable,
+                    entry.HasChildren);
+                await writer.WriteLineAsync(
+                    $"* LIST ({attrs}) \"/\" \"{EscapeImapString(entry.FullName)}\"");
 
-                if (returnStatus && db is not null && statusItems.Length > 0)
+                if (entry.IsSelectable
+                    && returnStatus
+                    && db is not null
+                    && statusItems.Length > 0)
                 {
-                    var folder = await ResolveFolderAsync(db, session.UserId, fullName, ct);
+                    var folder = await ResolveFolderAsync(db, session.UserId, entry.FullName, ct);
                     if (folder is not null)
                     {
                         var statusResult = await BuildStatusResultAsync(db, folder, statusItems, ct);
-                        await writer.WriteLineAsync($"* STATUS \"{fullName}\" ({statusResult})");
+                        await writer.WriteLineAsync(
+                            $"* STATUS \"{EscapeImapString(entry.FullName)}\" ({statusResult})");
                     }
                 }
             }
@@ -1057,13 +1070,16 @@ ILogger<ImapServerService> logger) : BackgroundService
 
         var folders = await GetUserFoldersAsync(session.UserId, ct, subscribedOnly: true);
 
-        foreach (var (inboxName, domain, folderName, isPrimary) in folders)
+        foreach (var entry in BuildMailboxListEntries(folders))
         {
-            var fullName = FormatMailboxName(inboxName, domain, folderName, isPrimary);
-            if (MatchesPattern(fullName, reference, pattern))
+            if (MatchesPattern(entry.FullName, reference, pattern))
             {
-                var attrs = GetFolderAttributes(folderName);
-                await writer.WriteLineAsync($"* LSUB ({attrs}) \"/\" \"{fullName}\"");
+                var attrs = GetFolderAttributes(
+                    entry.FolderName,
+                    entry.IsSelectable,
+                    entry.HasChildren);
+                await writer.WriteLineAsync(
+                    $"* LSUB ({attrs}) \"/\" \"{EscapeImapString(entry.FullName)}\"");
             }
         }
 
@@ -1237,43 +1253,32 @@ ILogger<ImapServerService> logger) : BackgroundService
     private async Task HandleCreateAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
         var mailboxName = UnquoteArg(args.Trim());
-        var parts = mailboxName.Split('/');
-
-        if (parts.Length < 3)
-        {
-            await writer.WriteLineAsync($"{tag} NO Invalid mailbox name");
-            return;
-        }
-
-        var inboxLocal = parts[0];
-        var domain = parts[1];
-        var folderName = string.Join("/", parts[2..]);
 
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
 
-        var inbox = await db.Inboxes.AsNoTracking()
-            .FirstOrDefaultAsync(i => i.Name == inboxLocal
-                                   && i.Address.Domain == domain
-                                   && i.OwnerId == session.UserId, ct);
-        if (inbox is null)
+        var location = await ResolveMailboxLocationAsync(db, session.UserId, mailboxName, ct);
+        if (location is null || !IsValidFolderName(location.Value.FolderName))
         {
-            await writer.WriteLineAsync($"{tag} NO Mailbox not found");
+            await writer.WriteLineAsync($"{tag} NO [CANNOT] Invalid mailbox name");
             return;
         }
 
-        var exists = await db.Folders.AnyAsync(f => f.InboxId == inbox.Id && f.Name == folderName, ct);
+        var exists = await db.Folders.AnyAsync(
+            folder => folder.InboxId == location.Value.InboxId
+                   && folder.Name == location.Value.FolderName,
+            ct);
         if (exists)
         {
-            await writer.WriteLineAsync($"{tag} NO Mailbox already exists");
+            await writer.WriteLineAsync($"{tag} NO [ALREADYEXISTS] Mailbox already exists");
             return;
         }
 
         db.Folders.Add(new FolderDB
         {
             Id = Guid.CreateVersion7(),
-            Name = folderName,
-            InboxId = inbox.Id,
+            Name = location.Value.FolderName,
+            InboxId = location.Value.InboxId,
         });
         await db.SaveChangesAsync(ct);
 
@@ -1290,7 +1295,13 @@ ILogger<ImapServerService> logger) : BackgroundService
         var folder = await ResolveFolderAsync(db, session.UserId, mailboxName, ct);
         if (folder is null)
         {
-            await writer.WriteLineAsync($"{tag} NO Mailbox not found");
+            await writer.WriteLineAsync($"{tag} NO [NONEXISTENT] Mailbox not found");
+            return;
+        }
+
+        if (IsSystemFolder(folder.Name))
+        {
+            await writer.WriteLineAsync($"{tag} NO [CANNOT] System mailboxes cannot be deleted");
             return;
         }
 
@@ -1317,14 +1328,6 @@ ILogger<ImapServerService> logger) : BackgroundService
         }
 
         var (oldName, newName) = parsedArgs.Value;
-        var newParts = newName.Split('/');
-        if (newParts.Length < 3)
-        {
-            await writer.WriteLineAsync($"{tag} NO Invalid new mailbox name");
-            return;
-        }
-
-        var newFolderName = string.Join("/", newParts[2..]);
 
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
@@ -1332,12 +1335,58 @@ ILogger<ImapServerService> logger) : BackgroundService
         var folder = await ResolveFolderAsync(db, session.UserId, oldName, ct);
         if (folder is null)
         {
-            await writer.WriteLineAsync($"{tag} NO Mailbox not found");
+            await writer.WriteLineAsync($"{tag} NO [NONEXISTENT] Mailbox not found");
             return;
         }
 
-        folder.Name = newFolderName;
+        if (IsSystemFolder(folder.Name))
+        {
+            await writer.WriteLineAsync($"{tag} NO [CANNOT] System mailboxes cannot be renamed");
+            return;
+        }
+
+        var destination = await ResolveMailboxLocationAsync(db, session.UserId, newName, ct);
+        if (destination is null
+            || destination.Value.InboxId != folder.InboxId
+            || !IsValidFolderName(destination.Value.FolderName))
+        {
+            await writer.WriteLineAsync($"{tag} NO [CANNOT] Invalid rename destination");
+            return;
+        }
+
+        var oldFolderName = folder.Name;
+        var affected = await db.Folders
+            .Where(candidate => candidate.InboxId == folder.InboxId
+                             && (candidate.Name == oldFolderName
+                                 || candidate.Name.StartsWith(oldFolderName + "/")))
+            .ToListAsync(ct);
+        var renamed = affected.ToDictionary(
+            candidate => candidate.Id,
+            candidate => destination.Value.FolderName + candidate.Name[oldFolderName.Length..]);
+        var renamedNames = renamed.Values.ToHashSet(StringComparer.Ordinal);
+        var affectedIds = affected.Select(candidate => candidate.Id).ToHashSet();
+        var existingNames = await db.Folders
+            .AsNoTracking()
+            .Where(candidate => candidate.InboxId == folder.InboxId
+                             && !affectedIds.Contains(candidate.Id))
+            .Select(candidate => candidate.Name)
+            .ToListAsync(ct);
+        if (existingNames.Any(renamedNames.Contains))
+        {
+            await writer.WriteLineAsync($"{tag} NO [ALREADYEXISTS] Rename destination already exists");
+            return;
+        }
+
+        foreach (var candidate in affected)
+            candidate.Name = renamed[candidate.Id];
         await db.SaveChangesAsync(ct);
+
+        if (session.SelectedFolderName is not null
+            && (string.Equals(session.SelectedFolderName, oldName, StringComparison.OrdinalIgnoreCase)
+                || session.SelectedFolderName.StartsWith(oldName + "/", StringComparison.OrdinalIgnoreCase)))
+        {
+            session.SelectedFolderName = newName + session.SelectedFolderName[oldName.Length..];
+        }
 
         await writer.WriteLineAsync($"{tag} OK RENAME completed");
     }
@@ -1367,7 +1416,8 @@ ILogger<ImapServerService> logger) : BackgroundService
 
         var statusResult = await BuildStatusResultAsync(db, folder, statusItems, ct);
 
-        await writer.WriteLineAsync($"* STATUS \"{mailboxName}\" ({statusResult})");
+        await writer.WriteLineAsync(
+            $"* STATUS \"{EscapeImapString(mailboxName)}\" ({statusResult})");
         await writer.WriteLineAsync($"{tag} OK STATUS completed");
     }
 
@@ -2064,44 +2114,76 @@ ILogger<ImapServerService> logger) : BackgroundService
 
     private static async Task<FolderDB?> ResolveFolderAsync(EmailDbContext db, Guid userId, string mailboxName, CancellationToken ct)
     {
-        if (!mailboxName.Contains('/'))
-        {
-            var username = await db.Users
-                .AsNoTracking()
-                .Where(user => user.Id == userId)
-                .Select(user => user.Username)
-                .SingleOrDefaultAsync(ct);
-            if (username is null)
-                return null;
-
-            var separator = username.LastIndexOf('@');
-            if (separator <= 0 || separator == username.Length - 1)
-                return null;
-
-            var primaryLocalPart = username[..separator];
-            var primaryDomain = username[(separator + 1)..];
-            var primaryFolderName = NormalizePrimaryFolderName(mailboxName);
-            return await db.Folders
-                .FirstOrDefaultAsync(f => f.Inbox.Name == primaryLocalPart
-                                       && f.Inbox.Address.Domain == primaryDomain
-                                       && f.Inbox.OwnerId == userId
-                                       && f.Name == primaryFolderName, ct);
-        }
-
-        var parts = mailboxName.Split('/', 3);
-        if (parts.Length < 3)
+        var location = await ResolveMailboxLocationAsync(db, userId, mailboxName, ct);
+        if (location is null)
             return null;
 
-        var inboxLocal = parts[0];
-        var domain = parts[1];
-        var folderName = parts[2];
-
         return await db.Folders
-            .FirstOrDefaultAsync(f => f.Inbox.Name == inboxLocal
-                                   && f.Inbox.Address.Domain == domain
-                                   && f.Inbox.OwnerId == userId
-                                   && f.Name == folderName, ct);
+            .FirstOrDefaultAsync(folder => folder.InboxId == location.Value.InboxId
+                                        && folder.Name == location.Value.FolderName, ct);
     }
+
+    private static async Task<MailboxLocation?> ResolveMailboxLocationAsync(
+        EmailDbContext db,
+        Guid userId,
+        string mailboxName,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(mailboxName))
+            return null;
+
+        var username = await db.Users
+            .AsNoTracking()
+            .Where(user => user.Id == userId)
+            .Select(user => user.Username)
+            .SingleOrDefaultAsync(ct);
+        if (username is null)
+            return null;
+
+        var qualifiedParts = mailboxName.Split('/', 3);
+        if (qualifiedParts.Length == 3)
+        {
+            var qualifiedInboxId = await db.Inboxes
+                .AsNoTracking()
+                .Where(inbox => inbox.OwnerId == userId
+                             && inbox.Name == qualifiedParts[0]
+                             && inbox.Address.Domain == qualifiedParts[1])
+                .Select(inbox => (Guid?)inbox.Id)
+                .SingleOrDefaultAsync(ct);
+            if (qualifiedInboxId is not null)
+                return new MailboxLocation(qualifiedInboxId.Value, qualifiedParts[2]);
+        }
+
+        var separator = username.LastIndexOf('@');
+        if (separator <= 0 || separator == username.Length - 1)
+            return null;
+
+        var primaryLocalPart = username[..separator];
+        var primaryDomain = username[(separator + 1)..];
+        var primaryInboxId = await db.Inboxes
+            .AsNoTracking()
+            .Where(inbox => inbox.OwnerId == userId
+                         && inbox.Name == primaryLocalPart
+                         && inbox.Address.Domain == primaryDomain)
+            .Select(inbox => (Guid?)inbox.Id)
+            .SingleOrDefaultAsync(ct);
+        return primaryInboxId is null
+            ? null
+            : new MailboxLocation(
+                primaryInboxId.Value,
+                NormalizePrimaryFolderName(mailboxName));
+    }
+
+    private static bool IsValidFolderName(string folderName) =>
+        folderName.Length is > 0 and <= 100
+        && folderName[0] != '/'
+        && folderName[^1] != '/'
+        && !folderName.Contains("//", StringComparison.Ordinal)
+        && !folderName.Any(char.IsControl);
+
+    private static bool IsSystemFolder(string folderName) =>
+        DefaultFolders.All.Any(
+            systemName => string.Equals(systemName, folderName, StringComparison.OrdinalIgnoreCase));
 
     private static IQueryable<EmailDB> SelectEmailMetadata(IQueryable<EmailDB> query) =>
         query
@@ -2304,6 +2386,47 @@ ILogger<ImapServerService> logger) : BackgroundService
             : folderName;
     }
 
+    private static IReadOnlyList<MailboxListEntry> BuildMailboxListEntries(
+        IReadOnlyList<(string InboxName, string Domain, string FolderName, bool IsPrimary)> folders)
+    {
+        var selectable = folders
+            .Select(folder => (
+                FullName: FormatMailboxName(
+                    folder.InboxName,
+                    folder.Domain,
+                    folder.FolderName,
+                    folder.IsPrimary),
+                folder.FolderName))
+            .GroupBy(folder => folder.FullName, StringComparer.Ordinal)
+            .ToDictionary(
+                group => group.Key,
+                group => group.First().FolderName,
+                StringComparer.Ordinal);
+        var names = new HashSet<string>(selectable.Keys, StringComparer.Ordinal);
+
+        foreach (var fullName in selectable.Keys)
+        {
+            for (var index = fullName.IndexOf('/'); index >= 0; index = fullName.IndexOf('/', index + 1))
+            {
+                if (index > 0)
+                    names.Add(fullName[..index]);
+            }
+        }
+
+        return names
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .Select(name =>
+            {
+                var isSelectable = selectable.TryGetValue(name, out var folderName);
+                var childPrefix = name + "/";
+                var hasChildren = names.Any(
+                    candidate => candidate.Length > childPrefix.Length
+                              && candidate.StartsWith(childPrefix, StringComparison.Ordinal));
+                return new MailboxListEntry(name, folderName, isSelectable, hasChildren);
+            })
+            .ToList();
+    }
+
     private static string NormalizePrimaryFolderName(string folderName)
     {
         if (string.Equals(folderName, "INBOX", StringComparison.OrdinalIgnoreCase))
@@ -2442,17 +2565,28 @@ ILogger<ImapServerService> logger) : BackgroundService
     private static bool IsFetchMacro(string items, string macro) =>
         items == macro || items.StartsWith(macro + " ") || items.EndsWith(" " + macro) || items.Contains(" " + macro + " ");
 
-    private static string GetFolderAttributes(string folderName)
+    private static string GetFolderAttributes(
+        string? folderName,
+        bool isSelectable,
+        bool hasChildren)
     {
-        return folderName switch
+        var attributes = new List<string>();
+        if (!isSelectable)
+            attributes.Add("\\Noselect");
+
+        var specialUse = folderName switch
         {
-            "Inbox" => "\\HasNoChildren",
-            "Sent" => "\\Sent \\HasNoChildren",
-            "Drafts" => "\\Drafts \\HasNoChildren",
-            "Trash" => "\\Trash \\HasNoChildren",
-            "Spam" => "\\Junk \\HasNoChildren",
-            _ => "\\HasNoChildren",
+            "Sent" => "\\Sent",
+            "Drafts" => "\\Drafts",
+            "Trash" => "\\Trash",
+            "Spam" => "\\Junk",
+            _ => null,
         };
+        if (specialUse is not null)
+            attributes.Add(specialUse);
+
+        attributes.Add(hasChildren ? "\\HasChildren" : "\\HasNoChildren");
+        return string.Join(' ', attributes);
     }
 
     private static bool MatchesPattern(string name, string reference, string pattern)

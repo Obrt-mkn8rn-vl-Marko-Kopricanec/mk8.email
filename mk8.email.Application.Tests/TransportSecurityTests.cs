@@ -845,6 +845,79 @@ public sealed class TransportSecurityTests
     }
 
     [TestMethod]
+    [Timeout(15_000)]
+    public async Task ImapManagesPrimaryMailboxHierarchyUsingThunderbirdNames()
+    {
+        var port = ReservePort();
+        var environment = CreateEnvironment(imapPort: port);
+        await using var server = await ServerFixture.StartImapAsync(environment, port);
+        await using var connection = await ProtocolConnection.ConnectAsync(port);
+
+        await connection.ReadLineAsync();
+        await connection.WriteLineAsync("a1 STARTTLS");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a1 OK", StringComparison.Ordinal));
+        await connection.UpgradeToTlsAsync("email.mk8n.com");
+        await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a2 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a3 CREATE Projects");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a3 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a4 CREATE Projects/2026");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a4 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a5 CREATE Projects/2026");
+        StringAssert.Contains(await connection.ReadLineAsync(), "[ALREADYEXISTS]");
+
+        await connection.WriteLineAsync("a6 LIST \"\" \"*\"");
+        var listed = await ReadUntilTaggedResponseAsync(connection, "a6");
+        Assert.IsTrue(listed.Any(line =>
+            line.Contains("(\\HasChildren)", StringComparison.Ordinal)
+            && line.EndsWith("\"Projects\"", StringComparison.Ordinal)));
+        Assert.IsTrue(listed.Any(line =>
+            line.Contains("(\\HasNoChildren)", StringComparison.Ordinal)
+            && line.EndsWith("\"Projects/2026\"", StringComparison.Ordinal)));
+
+        await connection.WriteLineAsync("a7 UNSUBSCRIBE Projects");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a7 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a8 LSUB \"\" \"*\"");
+        var subscribed = await ReadUntilTaggedResponseAsync(connection, "a8");
+        Assert.IsTrue(subscribed.Any(line =>
+            line.Contains("(\\Noselect \\HasChildren)", StringComparison.Ordinal)
+            && line.EndsWith("\"Projects\"", StringComparison.Ordinal)));
+        Assert.IsTrue(subscribed.Any(line => line.EndsWith("\"Projects/2026\"", StringComparison.Ordinal)));
+
+        await connection.WriteLineAsync("a9 SELECT Projects/2026");
+        var selected = await ReadUntilTaggedResponseAsync(connection, "a9");
+        Assert.IsTrue(selected[^1].StartsWith("a9 OK [READ-WRITE]", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a10 STATUS Projects/2026 (MESSAGES UIDNEXT)");
+        Assert.AreEqual("* STATUS \"Projects/2026\" (MESSAGES 0 UIDNEXT 1)", await connection.ReadLineAsync());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a10 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a11 RENAME Projects Archive");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a11 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a12 SELECT Projects/2026");
+        StringAssert.Contains(await connection.ReadLineAsync(), "Mailbox not found");
+        await connection.WriteLineAsync("a13 SELECT Archive/2026");
+        selected = await ReadUntilTaggedResponseAsync(connection, "a13");
+        Assert.IsTrue(selected[^1].StartsWith("a13 OK [READ-WRITE]", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a14 DELETE Archive");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a14 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a15 LIST \"\" \"Archive*\"");
+        listed = await ReadUntilTaggedResponseAsync(connection, "a15");
+        Assert.IsTrue(listed.Any(line =>
+            line.Contains("(\\Noselect \\HasChildren)", StringComparison.Ordinal)
+            && line.EndsWith("\"Archive\"", StringComparison.Ordinal)));
+        Assert.IsTrue(listed.Any(line => line.EndsWith("\"Archive/2026\"", StringComparison.Ordinal)));
+
+        await connection.WriteLineAsync("a16 DELETE Archive/2026");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a16 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a17 LIST \"\" \"Archive*\"");
+        listed = await ReadUntilTaggedResponseAsync(connection, "a17");
+        Assert.AreEqual(1, listed.Count);
+        Assert.IsTrue(listed[0].StartsWith("a17 OK", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
     [Timeout(10_000)]
     public async Task ImapSearchMatchesOnlyTheRequestedHeaderValue()
     {

@@ -807,7 +807,8 @@ ILogger<ImapServerService> logger) : BackgroundService
     {
         var caps =
             "IMAP4rev1 LITERAL+ IDLE NAMESPACE SPECIAL-USE UIDPLUS " +
-            "ID ENABLE MOVE UNSELECT QUOTA CONDSTORE QRESYNC ESEARCH";
+            "ID ENABLE MOVE UNSELECT QUOTA CONDSTORE QRESYNC ESEARCH " +
+            $"MULTIAPPEND STATUS=SIZE APPENDLIMIT={config.MaxMessageSizeBytes}";
         if (session.IsSecure)
         {
             caps += " AUTH=PLAIN SASL-IR";
@@ -1426,6 +1427,7 @@ ILogger<ImapServerService> logger) : BackgroundService
     {
         int? totalCount = null;
         int? unseenCount = null;
+        long? totalSize = null;
 
         var results = new StringBuilder();
         foreach (var item in statusItems)
@@ -1452,6 +1454,13 @@ ILogger<ImapServerService> logger) : BackgroundService
                     break;
                 case "HIGHESTMODSEQ":
                     results.Append($"HIGHESTMODSEQ {folder.HighestModSeq}");
+                    break;
+                case "SIZE":
+                    totalSize ??= await db.Emails
+                        .Where(email => email.FolderId == folder.Id)
+                        .SumAsync(email => (long?)email.SizeBytes, ct)
+                        ?? 0;
+                    results.Append($"SIZE {totalSize}");
                     break;
                 case "MAILBOXID":
                     results.Append($"MAILBOXID ({folder.MailboxId})");
@@ -4924,6 +4933,17 @@ ILogger<ImapServerService> logger) : BackgroundService
                 return;
             }
 
+            if (literalSize == 0)
+            {
+                await RejectAppendBeforeLiteralAsync(
+                    writer,
+                    tag,
+                    session,
+                    isLiteralPlus,
+                    "APPEND requires a non-empty message");
+                return;
+            }
+
             if (literalSize < 0
                 || literalSize > maximumMessageSize
                 || literalSize > maximumMessageSize - pendingBytes)
@@ -5018,8 +5038,14 @@ ILogger<ImapServerService> logger) : BackgroundService
                 return;
             }
             var nextLine = nextLineResult.Value;
-            if (nextLine is null || nextLine.Length == 0 || !nextLine.TrimStart().StartsWith('(') && !nextLine.TrimStart().StartsWith('{'))
+            if (nextLine is null || nextLine.Length == 0)
                 break;
+
+            if (!nextLine.TrimStart().StartsWith('(') && !nextLine.TrimStart().StartsWith('{'))
+            {
+                await writer.WriteLineAsync($"{tag} BAD Invalid APPEND continuation");
+                return;
+            }
 
             remaining = $"\"{EscapeImapString(targetMailbox)}\" {nextLine.Trim()}";
         }

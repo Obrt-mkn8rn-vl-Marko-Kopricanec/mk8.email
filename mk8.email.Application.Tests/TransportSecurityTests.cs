@@ -497,12 +497,12 @@ public sealed class TransportSecurityTests
         var capability = await connection.ReadLineAsync();
         StringAssert.Contains(capability, "IMAP4rev1 LITERAL+ IDLE NAMESPACE SPECIAL-USE UIDPLUS");
         StringAssert.Contains(capability, "ID ENABLE MOVE UNSELECT QUOTA CONDSTORE QRESYNC ESEARCH");
+        StringAssert.Contains(capability, "MULTIAPPEND STATUS=SIZE APPENDLIMIT=65536");
         StringAssert.Contains(capability, "LOGINDISABLED");
         StringAssert.Contains(capability, "STARTTLS");
         Assert.IsFalse(capability.Contains("AUTH=PLAIN", StringComparison.Ordinal));
         foreach (var unverifiedExtension in new[]
                  {
-                     "MULTIAPPEND",
                      "COMPRESS=DEFLATE", "BINARY", "OBJECTID", "SORT", "THREAD=REFERENCES",
                  })
         {
@@ -1164,6 +1164,69 @@ public sealed class TransportSecurityTests
         Assert.AreEqual("café", stored.Subject);
         Assert.AreEqual("\r\nbody é\r\n", stored.Body);
         Assert.AreEqual(message.Length, stored.SizeBytes);
+    }
+
+    [TestMethod]
+    [Timeout(10_000)]
+    public async Task ImapMultiAppendReportsAppendLimitAndMailboxSize()
+    {
+        var port = ReservePort();
+        var environment = CreateEnvironment(imapPort: port);
+        await using var server = await ServerFixture.StartImapAsync(environment, port);
+        await using var connection = await ProtocolConnection.ConnectAsync(port);
+
+        await connection.ReadLineAsync();
+        await connection.WriteLineAsync("a1 STARTTLS");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a1 OK", StringComparison.Ordinal));
+        await connection.UpgradeToTlsAsync("email.mk8n.com");
+        await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a2 OK", StringComparison.Ordinal));
+
+        const string firstMessage =
+            "From: user@mk8n.com\r\n" +
+            "To: user@mk8n.com\r\n" +
+            "Subject: first\r\n" +
+            "\r\n" +
+            "first body\r\n";
+        const string secondMessage =
+            "From: user@mk8n.com\r\n" +
+            "To: user@mk8n.com\r\n" +
+            "Subject: second\r\n" +
+            "\r\n" +
+            "second body\r\n";
+
+        await connection.WriteLineAsync($"a3 APPEND \"Sent\" {{{firstMessage.Length}}}");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("+ ", StringComparison.Ordinal));
+        await connection.WriteRawAsync(firstMessage);
+        await connection.WriteLineAsync($" (\\Seen) {{{secondMessage.Length}}}");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("+ ", StringComparison.Ordinal));
+        await connection.WriteRawAsync(secondMessage);
+        await connection.WriteLineAsync(string.Empty);
+        var appendResponse = await connection.ReadLineAsync();
+        Assert.IsTrue(appendResponse.StartsWith("a3 OK [APPENDUID", StringComparison.Ordinal));
+        StringAssert.Contains(appendResponse, " 1:2]");
+
+        await connection.WriteLineAsync("a4 STATUS \"Sent\" (MESSAGES UIDNEXT SIZE)");
+        Assert.AreEqual(
+            $"* STATUS \"Sent\" (MESSAGES 2 UIDNEXT 3 SIZE {firstMessage.Length + secondMessage.Length})",
+            await connection.ReadLineAsync());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a4 OK", StringComparison.Ordinal));
+
+        var stored = await server.GetStoredEmailsAsync(DefaultFolders.Sent);
+        Assert.AreEqual(2, stored.Count);
+        Assert.IsFalse(stored[0].IsRead);
+        Assert.IsTrue(stored[1].IsRead);
+
+        await connection.WriteLineAsync($"a5 APPEND \"Sent\" {{{firstMessage.Length}}}");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("+ ", StringComparison.Ordinal));
+        await connection.WriteRawAsync(firstMessage);
+        await connection.WriteLineAsync(" invalid continuation");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a5 BAD", StringComparison.Ordinal));
+        Assert.AreEqual(2, await server.CountStoredEmailsAsync());
+
+        await connection.WriteLineAsync("a6 APPEND \"Sent\" {0}");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a6 NO", StringComparison.Ordinal));
+        Assert.AreEqual(2, await server.CountStoredEmailsAsync());
     }
 
     [TestMethod]

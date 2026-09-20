@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -2403,6 +2404,39 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task EncryptedPushRetainsTheJsonMediaType()
+    {
+        using var receiver = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
+        var receiverParameters = receiver.ExportParameters(false);
+        var receiverPublic = new byte[65];
+        receiverPublic[0] = 4;
+        receiverParameters.Q.X!.CopyTo(receiverPublic, 1);
+        receiverParameters.Q.Y!.CopyTo(receiverPublic, 33);
+        var handler = new PushRequestHandler();
+        using var delivery = new JmapPushDeliveryService(handler);
+        var subscription = new JmapPushSubscriptionDB
+        {
+            Url = "https://push.example.net/jmap",
+            ExpiresAt = DateTime.UtcNow.AddDays(1),
+            KeysJson = new JsonObject
+            {
+                ["p256dh"] = Base64Url(receiverPublic),
+                ["auth"] = Base64Url(RandomNumberGenerator.GetBytes(16)),
+            }.ToJsonString(),
+        };
+
+        var result = await delivery.SendAsync(
+            subscription,
+            new JsonObject { ["@type"] = "StateChange", ["changed"] = new JsonObject() },
+            CancellationToken.None);
+
+        Assert.AreEqual(JmapPushDeliveryResult.Success, result);
+        Assert.AreEqual("application/json", handler.ContentType);
+        CollectionAssert.AreEqual(new[] { "aes128gcm" }, handler.ContentEncodings.ToArray());
+        Assert.IsTrue(handler.ContentLength > 0);
+    }
+
+    [TestMethod]
     public void SearchSnippetNeverSplitsUnicodeScalars()
     {
         var value = new string('x', 10)
@@ -2529,5 +2563,22 @@ public sealed class JmapProtocolTests
             counter++;
         }
         return output;
+    }
+
+    private sealed class PushRequestHandler : HttpMessageHandler
+    {
+        public string? ContentType { get; private set; }
+        public IReadOnlyList<string> ContentEncodings { get; private set; } = [];
+        public int ContentLength { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            ContentType = request.Content?.Headers.ContentType?.MediaType;
+            ContentEncodings = request.Content?.Headers.ContentEncoding.ToArray() ?? [];
+            ContentLength = (await request.Content!.ReadAsByteArrayAsync(cancellationToken)).Length;
+            return new HttpResponseMessage(HttpStatusCode.Created);
+        }
     }
 }

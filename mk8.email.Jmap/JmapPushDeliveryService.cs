@@ -22,9 +22,21 @@ internal sealed class JmapPushDeliveryService : IDisposable
 {
     private readonly HttpClient _client;
 
-    public JmapPushDeliveryService()
+    public JmapPushDeliveryService() : this(CreateHandler())
     {
-        var handler = new SocketsHttpHandler
+    }
+
+    internal JmapPushDeliveryService(HttpMessageHandler handler)
+    {
+        _client = new HttpClient(handler)
+        {
+            Timeout = TimeSpan.FromSeconds(10),
+        };
+    }
+
+    private static SocketsHttpHandler CreateHandler()
+    {
+        return new SocketsHttpHandler
         {
             AllowAutoRedirect = false,
             AutomaticDecompression = DecompressionMethods.None,
@@ -35,10 +47,6 @@ internal sealed class JmapPushDeliveryService : IDisposable
             UseCookies = false,
             UseProxy = false,
             ConnectCallback = ConnectPublicAsync,
-        };
-        _client = new HttpClient(handler)
-        {
-            Timeout = TimeSpan.FromSeconds(10),
         };
     }
 
@@ -68,7 +76,6 @@ internal sealed class JmapPushDeliveryService : IDisposable
             return JmapPushDeliveryResult.Failed;
         var json = Encoding.UTF8.GetBytes(payload.ToJsonString(JmapJson.SerializerOptions));
         var body = json;
-        var mediaType = "application/json";
         var encrypted = false;
         if (subscription.KeysJson is not null)
         {
@@ -80,7 +87,6 @@ internal sealed class JmapPushDeliveryService : IDisposable
                     || !JmapMethodHelpers.TryGetRequiredString(keys, "auth", out var auth))
                     return JmapPushDeliveryResult.Failed;
                 body = JmapPushEncryption.Encrypt(json, p256dh, auth);
-                mediaType = "application/octet-stream";
                 encrypted = true;
             }
             catch (Exception exception) when (exception is CryptographicException or FormatException or JsonException)
@@ -96,7 +102,7 @@ internal sealed class JmapPushDeliveryService : IDisposable
                 .ToString(System.Globalization.CultureInfo.InvariantCulture));
         request.Headers.TryAddWithoutValidation("Urgency", "normal");
         request.Content = new ByteArrayContent(body);
-        request.Content.Headers.ContentType = new MediaTypeHeaderValue(mediaType);
+        request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
         if (encrypted)
             request.Content.Headers.ContentEncoding.Add("aes128gcm");
 

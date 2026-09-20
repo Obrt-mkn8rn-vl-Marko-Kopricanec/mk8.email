@@ -122,6 +122,31 @@ public sealed class JmapCoreTests
     }
 
     [TestMethod]
+    public async Task CoreTreatsUsingAsASetAndReportsUnknownStringCapabilities()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+
+        var duplicate = await fixture.InvokeAsync(
+            """
+            {
+              "using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:core"],
+              "methodCalls":[["Core/echo",{"ok":true},"c1"]]
+            }
+            """);
+        Assert.AreEqual(
+            true,
+            duplicate["methodResponses"]?[0]?[1]?["ok"]?.GetValue<bool>());
+
+        using var scope = fixture.Services.CreateScope();
+        var processor = scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>();
+        var emptyCapability = JsonNode.Parse(
+            """{"using":["urn:ietf:params:jmap:core",""],"methodCalls":[]}""");
+        var exception = await Assert.ThrowsAsync<JmapRequestException>(
+            () => processor.ProcessAsync(emptyCapability, fixture.User));
+        Assert.AreEqual("urn:ietf:params:jmap:error:unknownCapability", exception.Type);
+    }
+
+    [TestMethod]
     public async Task CoreIgnoresUnknownRequestPropertiesAndEchoesSuppliedCreatedIdsOnly()
     {
         await using var fixture = await JmapFixture.CreateAsync();

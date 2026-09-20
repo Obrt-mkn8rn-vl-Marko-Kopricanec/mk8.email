@@ -149,11 +149,11 @@ public sealed class JmapRequestProcessor
         {
             if (value is not JsonValue jsonValue
                 || !jsonValue.TryGetValue<string>(out var capability)
-                || string.IsNullOrEmpty(capability)
-                || !result.Add(capability))
+                || capability is null)
             {
-                throw NotRequest("The using property must contain unique capability strings.");
+                throw NotRequest("The using property must contain capability strings.");
             }
+            result.Add(capability);
         }
         return result;
     }

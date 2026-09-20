@@ -1172,16 +1172,6 @@ internal sealed class MailboxSetMethod(
             properties.Add("name");
         }
 
-        if (requested["parentId"] is JsonValue requestedParentNode
-            && requestedParentNode.TryGetValue<string>(out var requestedParent)
-            && !string.Equals(
-                requestedParent,
-                parentId is null ? null : JmapId.Mailbox(parentId.Value),
-                StringComparison.Ordinal))
-        {
-            properties.Add("parentId");
-        }
-
         return JmapMailboxJson.Build(
             new JmapMailboxView(
                 id,

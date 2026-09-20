@@ -39,7 +39,7 @@ public sealed class JmapProtocolTests
         var created = Arguments(create)["created"]!.AsObject();
         var parentId = created["parent"]!["id"]!.GetValue<string>();
         var childId = created["child"]!["id"]!.GetValue<string>();
-        Assert.AreEqual(parentId, created["child"]!["parentId"]!.GetValue<string>());
+        Assert.IsFalse(created["child"]!.AsObject().ContainsKey("parentId"));
 
         var query = await fixture.InvokeAsync($$$"""
         {

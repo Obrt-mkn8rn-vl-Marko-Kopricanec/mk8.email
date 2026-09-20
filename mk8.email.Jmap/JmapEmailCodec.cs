@@ -737,7 +737,7 @@ internal static partial class JmapEmailCodec
         return form switch
         {
             HeaderForm.Raw => JsonValue.Create(RawHeaderValue(header)),
-            HeaderForm.Text => JsonValue.Create(header.Value.Normalize(NormalizationForm.FormC)),
+            HeaderForm.Text => JsonValue.Create(NormalizeDecodedHeaderText(header.Value)),
             HeaderForm.Addresses => ParseAddresses(header.Value, grouped: false),
             HeaderForm.GroupedAddresses => ParseAddresses(header.Value, grouped: true),
             HeaderForm.MessageIds => ParseMessageIds(header.Value),
@@ -785,9 +785,10 @@ internal static partial class JmapEmailCodec
             FlushUngrouped();
             if (address is GroupAddress group)
             {
+                var groupName = NormalizeDecodedHeaderText(group.Name);
                 groups.Add(new JsonObject
                 {
-                    ["name"] = string.IsNullOrEmpty(group.Name) ? null : group.Name,
+                    ["name"] = string.IsNullOrEmpty(groupName) ? null : groupName,
                     ["addresses"] = BuildAddressArray(group.Members.Mailboxes),
                 });
             }
@@ -816,11 +817,33 @@ internal static partial class JmapEmailCodec
         return result;
     }
 
-    private static JsonObject BuildAddress(MailboxAddress mailbox) => new()
+    private static JsonObject BuildAddress(MailboxAddress mailbox)
     {
-        ["name"] = string.IsNullOrEmpty(mailbox.Name) ? null : mailbox.Name,
-        ["email"] = mailbox.Address,
-    };
+        var name = NormalizeDecodedHeaderText(mailbox.Name);
+        return new JsonObject
+        {
+            ["name"] = string.IsNullOrEmpty(name) ? null : name,
+            ["email"] = mailbox.Address,
+        };
+    }
+
+    private static string NormalizeDecodedHeaderText(string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return string.Empty;
+
+        var normalized = value.Normalize(NormalizationForm.FormC);
+        if (!normalized.Any(char.IsControl))
+            return normalized;
+
+        var result = new StringBuilder(normalized.Length);
+        foreach (var character in normalized)
+        {
+            if (!char.IsControl(character))
+                result.Append(character);
+        }
+        return result.ToString();
+    }
 
     private static JsonNode? ParseMessageIds(string value)
     {

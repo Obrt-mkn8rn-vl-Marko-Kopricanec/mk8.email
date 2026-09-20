@@ -396,6 +396,42 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task EmailParsedHeaderTextDropsDecodedControlsAndNormalizesUnicode()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        const string decodedSubject = "Clean\0\u0001 Cafe\u0301";
+        const string decodedName = "Sender Cafe\u0301";
+        var encodedSubject = Convert.ToBase64String(Encoding.UTF8.GetBytes(decodedSubject));
+        var encodedName = Convert.ToBase64String(Encoding.UTF8.GetBytes(decodedName));
+        var raw = Encoding.ASCII.GetBytes(
+            $"From: =?utf-8?B?{encodedName}?= <sender@example.net>\r\n"
+            + $"To: {fixture.User.Username}\r\n"
+            + $"Subject: =?utf-8?B?{encodedSubject}?=\r\n\r\nbody");
+        var blobId = await fixture.StoreBlobAsync(raw);
+
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/parse", {
+            "accountId": "{{{fixture.AccountId}}}",
+            "blobIds": ["{{{blobId}}}"],
+            "properties": ["subject", "header:Subject:asText", "from"]
+          }, "p1"]]
+        }
+        """);
+        var parsed = Arguments(response)["parsed"]![blobId]!;
+        var expectedSubject = "Clean Cafe\u0301".Normalize(NormalizationForm.FormC);
+        var expectedName = decodedName.Normalize(NormalizationForm.FormC);
+        Assert.AreEqual(expectedSubject, parsed["subject"]!.GetValue<string>());
+        Assert.AreEqual(
+            expectedSubject,
+            parsed["header:Subject:asText"]!.GetValue<string>());
+        Assert.AreEqual(
+            expectedName,
+            parsed["from"]![0]!["name"]!.GetValue<string>());
+    }
+
+    [TestMethod]
     public async Task EmailLifecycleProjectsMimeAndPreservesImapState()
     {
         await using var fixture = await JmapFixture.CreateAsync();

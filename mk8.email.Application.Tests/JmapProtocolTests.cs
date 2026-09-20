@@ -1799,6 +1799,119 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task EmailSubmissionQueryChangesReturnsImmutableQueryDeltas()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var initial = await fixture.InvokeAsync($$$"""
+        {
+          "using":["{{{Core}}}","{{{Submission}}}"],
+          "methodCalls":[["EmailSubmission/query",{
+            "accountId":"{{{fixture.AccountId}}}",
+            "sort":[{"property":"sentAt","isAscending":true}]
+          },"q1"]]
+        }
+        """);
+        Assert.IsTrue(Arguments(initial)["canCalculateChanges"]!.GetValue<bool>());
+        var initialState = Arguments(initial)["queryState"]!.GetValue<string>();
+
+        var submissionId = Guid.CreateVersion7();
+        var submissionObjectId = JmapId.Submission(submissionId);
+        using (var scope = fixture.Services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            database.JmapEmailSubmissions.Add(new JmapEmailSubmissionDB
+            {
+                Id = submissionId,
+                SubmissionObjectId = submissionObjectId,
+                AccountId = fixture.InboxId,
+                IdentityId = JmapId.Identity(fixture.InboxId),
+                EmailId = JmapId.Email(Guid.CreateVersion7()),
+                ThreadId = JmapId.Thread(Guid.CreateVersion7().ToString("N")),
+                QueueId = Guid.CreateVersion7(),
+                EnvelopeSender = fixture.User.Username,
+                EnvelopeRecipients = ["recipient@example.net"],
+                SendAt = new DateTime(2026, 9, 20, 12, 0, 0, DateTimeKind.Utc),
+            });
+            await database.SaveChangesAsync();
+        }
+
+        var limited = await fixture.InvokeAsync($$$"""
+        {
+          "using":["{{{Core}}}","{{{Submission}}}"],
+          "methodCalls":[["EmailSubmission/queryChanges",{
+            "accountId":"{{{fixture.AccountId}}}",
+            "sort":[{"property":"sentAt","isAscending":true}],
+            "sinceQueryState":"{{{initialState}}}","maxChanges":0
+          },"qc1"]]
+        }
+        """);
+        Assert.AreEqual("tooManyChanges", Arguments(limited)["type"]!.GetValue<string>());
+
+        var createdChanges = await fixture.InvokeAsync($$$"""
+        {
+          "using":["{{{Core}}}","{{{Submission}}}"],
+          "methodCalls":[["EmailSubmission/queryChanges",{
+            "accountId":"{{{fixture.AccountId}}}",
+            "sort":[{"property":"sentAt","isAscending":true}],
+            "sinceQueryState":"{{{initialState}}}","calculateTotal":true
+          },"qc2"]]
+        }
+        """);
+        var createdArguments = Arguments(createdChanges);
+        Assert.AreEqual(0, createdArguments["removed"]!.AsArray().Count);
+        Assert.AreEqual(submissionObjectId, createdArguments["added"]![0]!["id"]!.GetValue<string>());
+        Assert.AreEqual(0, createdArguments["added"]![0]!["index"]!.GetValue<int>());
+        Assert.AreEqual(1, createdArguments["total"]!.GetValue<int>());
+        var createdState = createdArguments["newQueryState"]!.GetValue<string>();
+
+        using (var scope = fixture.Services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            var submission = await database.JmapEmailSubmissions.SingleAsync();
+            submission.UpdatedAt = submission.UpdatedAt.AddSeconds(1);
+            await database.SaveChangesAsync();
+        }
+        var unchangedQuery = await fixture.InvokeAsync($$$"""
+        {
+          "using":["{{{Core}}}","{{{Submission}}}"],
+          "methodCalls":[["EmailSubmission/queryChanges",{
+            "accountId":"{{{fixture.AccountId}}}",
+            "sort":[{"property":"sentAt","isAscending":true}],
+            "sinceQueryState":"{{{createdState}}}"
+          },"qc3"]]
+        }
+        """);
+        Assert.AreEqual(0, Arguments(unchangedQuery)["removed"]!.AsArray().Count);
+        Assert.AreEqual(0, Arguments(unchangedQuery)["added"]!.AsArray().Count);
+        var updatedState = Arguments(unchangedQuery)["newQueryState"]!.GetValue<string>();
+        Assert.AreNotEqual(createdState, updatedState);
+
+        await fixture.InvokeAsync($$$"""
+        {
+          "using":["{{{Core}}}","{{{Submission}}}"],
+          "methodCalls":[["EmailSubmission/set",{
+            "accountId":"{{{fixture.AccountId}}}","destroy":["{{{submissionObjectId}}}"]
+          },"s1"]]
+        }
+        """);
+        var destroyedChanges = await fixture.InvokeAsync($$$"""
+        {
+          "using":["{{{Core}}}","{{{Submission}}}"],
+          "methodCalls":[["EmailSubmission/queryChanges",{
+            "accountId":"{{{fixture.AccountId}}}",
+            "sort":[{"property":"sentAt","isAscending":true}],
+            "sinceQueryState":"{{{updatedState}}}"
+          },"qc4"]]
+        }
+        """);
+        CollectionAssert.AreEqual(
+            new[] { submissionObjectId },
+            Arguments(destroyedChanges)["removed"]!.AsArray()
+                .Select(node => node!.GetValue<string>()).ToArray());
+        Assert.AreEqual(0, Arguments(destroyedChanges)["added"]!.AsArray().Count);
+    }
+
+    [TestMethod]
     public async Task EmailCreationRejectsAmbiguousHeadersAndInvalidBodyParts()
     {
         await using var fixture = await JmapFixture.CreateAsync();

@@ -862,8 +862,7 @@ internal static partial class JmapEmailCodec
         foreach (var part in allParts.Where(part => part.PartId is not null && selected.Contains(part.PartId)))
         {
             var (text, encodingProblem) = DecodeText(part);
-            text = text.Replace("\r\n", "\n", StringComparison.Ordinal)
-                .Replace('\r', '\n');
+            text = text.Replace("\r\n", "\n", StringComparison.Ordinal);
             var truncated = TruncateUtf8(
                 text,
                 options.MaxBodyValueBytes,

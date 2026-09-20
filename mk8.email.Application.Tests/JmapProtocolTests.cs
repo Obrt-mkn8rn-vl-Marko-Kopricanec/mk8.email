@@ -2161,6 +2161,35 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task ParsedBodyValuesOnlyNormalizeCrLfPairs()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var raw = Encoding.ASCII.GetBytes(
+            "From: sender@example.net\r\n"
+            + $"To: {fixture.User.Username}\r\n"
+            + "Content-Type: text/plain; charset=us-ascii\r\n\r\n"
+            + "first\rsecond\r\nthird\nfourth");
+        var blobId = await fixture.StoreBlobAsync(raw);
+
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/parse", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "blobIds":["{{{blobId}}}"],
+            "properties":["bodyValues"],
+            "fetchAllBodyValues":true
+          }, "p1"]]
+        }
+        """);
+
+        Assert.AreEqual(
+            "first\rsecond\nthird\nfourth",
+            Arguments(response)["parsed"]![blobId]!["bodyValues"]!["1"]!["value"]!
+                .GetValue<string>());
+    }
+
+    [TestMethod]
     public async Task ImportDefaultsReceivedAtFromMostRecentReceivedHeader()
     {
         await using var fixture = await JmapFixture.CreateAsync();

@@ -347,6 +347,7 @@ internal static partial class JmapEmailCodec
 
     public static bool IsValidKeyword(string keyword) =>
         keyword.Length is >= 1 and <= 255
+        && !string.Equals(keyword, "$recent", StringComparison.OrdinalIgnoreCase)
         && keyword.All(character => character is >= (char)0x21 and <= (char)0x7e
             && character is not ('(' or ')' or '{' or ']' or '%' or '*' or '"' or '\\'));
 

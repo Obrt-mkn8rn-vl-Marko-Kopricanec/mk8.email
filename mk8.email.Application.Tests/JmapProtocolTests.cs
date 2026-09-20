@@ -586,6 +586,75 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task EmailKeywordsReserveRecentAndNeverExposeIt()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var create = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/set", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "create":{
+              "valid":{
+                "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true},
+                "bodyValues":{"1":{"value":"body"}},
+                "textBody":[{"partId":"1", "type":"text/plain"}]
+              },
+              "reserved":{
+                "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true},
+                "keywords":{"$ReCeNt":true},
+                "bodyValues":{"1":{"value":"body"}},
+                "textBody":[{"partId":"1", "type":"text/plain"}]
+              }
+            }
+          }, "s1"]]
+        }
+        """);
+
+        var emailId = Arguments(create)["created"]!["valid"]!["id"]!.GetValue<string>();
+        Assert.AreEqual(
+            "invalidProperties",
+            Arguments(create)["notCreated"]!["reserved"]!["type"]!.GetValue<string>());
+
+        var update = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/set", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "update":{
+              "{{{emailId}}}":{"keywords":{"$recent":true, "custom":true}}
+            }
+          }, "s2"]]
+        }
+        """);
+        Assert.AreEqual(
+            "invalidProperties",
+            Arguments(update)["notUpdated"]![emailId]!["type"]!.GetValue<string>());
+
+        Assert.IsTrue(JmapId.TryParseEmail(emailId, out var storedEmailId));
+        using (var scope = fixture.Services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            var email = await database.Emails.SingleAsync(candidate => candidate.Id == storedEmailId);
+            email.Keywords = ["$recent", "custom"];
+            await database.SaveChangesAsync();
+        }
+
+        var get = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/get", {
+            "accountId":"{{{fixture.AccountId}}}", "ids":["{{{emailId}}}"],
+            "properties":["keywords"]
+          }, "g1"]]
+        }
+        """);
+        var keywords = Arguments(get)["list"]![0]!["keywords"]!.AsObject();
+        Assert.IsFalse(keywords.ContainsKey("$recent"));
+        Assert.IsTrue(keywords["custom"]!.GetValue<bool>());
+    }
+
+    [TestMethod]
     public async Task EmailReadsFailInsteadOfHidingCorruptStoredRecords()
     {
         await using var fixture = await JmapFixture.CreateAsync();

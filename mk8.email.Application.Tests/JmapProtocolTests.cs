@@ -1406,6 +1406,12 @@ public sealed class JmapProtocolTests
                   "blobId":"{{{existingBlob}}}", "type":"application/octet-stream", "size":-1
                 }]
               },
+              "malformedBlobId": {
+                "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true},
+                "attachments":[{
+                  "blobId":"not valid", "type":"application/octet-stream"
+                }]
+              },
               "invalidMessageId": {
                 "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true},
                 "messageId":["not a message id"],
@@ -1479,6 +1485,11 @@ public sealed class JmapProtocolTests
         Assert.AreEqual("invalidProperties", failures["invalidBodyValue"]!["type"]!.GetValue<string>());
         Assert.AreEqual("invalidProperties", failures["nonTextCharset"]!["type"]!.GetValue<string>());
         Assert.AreEqual("invalidProperties", failures["invalidBlobSize"]!["type"]!.GetValue<string>());
+        Assert.AreEqual("invalidProperties", failures["malformedBlobId"]!["type"]!.GetValue<string>());
+        CollectionAssert.Contains(
+            failures["malformedBlobId"]!["properties"]!.AsArray()
+                .Select(node => node!.GetValue<string>()).ToArray(),
+            "blobId");
         Assert.AreEqual("invalidProperties", failures["invalidMessageId"]!["type"]!.GetValue<string>());
         Assert.AreEqual("invalidProperties", failures["invalidParsedHeader"]!["type"]!.GetValue<string>());
         Assert.AreEqual("invalidProperties", failures["missingGroupedAddresses"]!["type"]!.GetValue<string>());

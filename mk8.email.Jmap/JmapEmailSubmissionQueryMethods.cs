@@ -58,7 +58,8 @@ internal static class JmapEmailSubmissionQueryEngine
                 || !JmapMethodHelpers.TryGetOptionalString(
                     comparator,
                     "collation",
-                    out var collation))
+                    out var collation,
+                    allowNull: false))
             {
                 result = [];
                 error = "invalidArguments";

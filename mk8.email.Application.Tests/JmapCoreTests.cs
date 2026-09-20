@@ -388,6 +388,36 @@ public sealed class JmapCoreTests
     }
 
     [TestMethod]
+    public void SubmissionDatesUseCurrentRfc5322SyntaxAndSemantics()
+    {
+        Assert.IsTrue(JmapDate.IsValidRfc5322DateTime(
+            "Sun, 20 Sep 2026 10:00:00 +0000 (valid)"));
+        Assert.IsTrue(JmapDate.IsValidRfc5322DateTime(
+            "20 sep 2026 10:00 +9959"));
+        Assert.IsTrue(JmapDate.IsValidRfc5322DateTime(
+            "31 Dec 2016 23:59:60 -0000"));
+        Assert.IsTrue(JmapDate.IsValidRfc5322DateTime(
+            "\r\n 20 Sep 12026 10:00:00 +0000"));
+
+        Assert.IsFalse(JmapDate.IsValidRfc5322DateTime(
+            "20 Sep 26 10:00:00 GMT"));
+        Assert.IsFalse(JmapDate.IsValidRfc5322DateTime(
+            "Mon, 20 Sep 2026 10:00:00 +0000"));
+        Assert.IsFalse(JmapDate.IsValidRfc5322DateTime(
+            "20 (old comment) Sep 2026 10:00:00 +0000"));
+        Assert.IsFalse(JmapDate.IsValidRfc5322DateTime(
+            "20 Sep 2026 1:00:00 +0000"));
+        Assert.IsFalse(JmapDate.IsValidRfc5322DateTime(
+            "20 Sep 2026 10:00:00 +0060"));
+        Assert.IsFalse(JmapDate.IsValidRfc5322DateTime(
+            "20 Sep 2026 10:00:61 +0000"));
+        Assert.IsFalse(JmapDate.IsValidRfc5322DateTime(
+            "20 Sep 1899 10:00:00 +0000"));
+        Assert.IsFalse(JmapDate.IsValidRfc5322DateTime(
+            "31 Apr 2026 10:00:00 +0000"));
+    }
+
+    [TestMethod]
     public void JmapIntegersAndAdvertisedCollationsFollowCoreRanges()
     {
         var values = JsonNode.Parse(

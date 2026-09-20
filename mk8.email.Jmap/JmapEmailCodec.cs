@@ -1306,6 +1306,12 @@ internal static partial class JmapEmailCodec
         return true;
     }
 
+    internal static bool IsHeaderCfwsOnly(string value)
+    {
+        var index = 0;
+        return TrySkipHeaderCfws(value, ref index) && index == value.Length;
+    }
+
     private static string RemoveListHeaderWhitespace(string value)
     {
         var builder = new StringBuilder(value.Length);

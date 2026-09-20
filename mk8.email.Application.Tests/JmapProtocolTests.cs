@@ -2544,6 +2544,14 @@ public sealed class JmapProtocolTests
             + "References: (comment only)\r\n"
             + "Subject: Invalid message ids\r\n\r\nbody");
         var malformedIdsBlobId = await fixture.StoreBlobAsync(malformedIds);
+        var malformedDates = Encoding.UTF8.GetBytes(
+            "Date: Mon, 20 Sep 2026 10:00:00 +0000\r\n"
+            + $"Resent-From: {fixture.User.Username}\r\n"
+            + "Resent-Date: 20 Sep 26 10:00:00 GMT\r\n"
+            + $"From: {fixture.User.Username}\r\n"
+            + $"To: {fixture.User.Username}\r\n"
+            + "Subject: Invalid dates\r\n\r\nbody");
+        var malformedDatesBlobId = await fixture.StoreBlobAsync(malformedDates);
         var import = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
@@ -2552,12 +2560,15 @@ public sealed class JmapProtocolTests
             "emails":{"bad":{"blobId":"{{{blobId}}}",
               "mailboxIds":{"{{{fixture.DraftsMailboxId}}}":true} },
               "badIds":{"blobId":"{{{malformedIdsBlobId}}}",
+              "mailboxIds":{"{{{fixture.DraftsMailboxId}}}":true} },
+              "badDates":{"blobId":"{{{malformedDatesBlobId}}}",
               "mailboxIds":{"{{{fixture.DraftsMailboxId}}}":true} } }
           }, "i1"]]
         }
         """);
         var emailId = Arguments(import)["created"]!["bad"]!["id"]!.GetValue<string>();
         var malformedIdsEmailId = Arguments(import)["created"]!["badIds"]!["id"]!.GetValue<string>();
+        var malformedDatesEmailId = Arguments(import)["created"]!["badDates"]!["id"]!.GetValue<string>();
         var submission = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Submission}}}"],
@@ -2567,6 +2578,9 @@ public sealed class JmapProtocolTests
               "envelope":{"mailFrom":{"email":"{{{fixture.User.Username}}}"},
                 "rcptTo":[{"email":"{{{fixture.User.Username}}}"}]} },
               "badIds":{"identityId":"{{{identityId}}}", "emailId":"{{{malformedIdsEmailId}}}",
+              "envelope":{"mailFrom":{"email":"{{{fixture.User.Username}}}"},
+                "rcptTo":[{"email":"{{{fixture.User.Username}}}"}]} },
+              "badDates":{"identityId":"{{{identityId}}}", "emailId":"{{{malformedDatesEmailId}}}",
               "envelope":{"mailFrom":{"email":"{{{fixture.User.Username}}}"},
                 "rcptTo":[{"email":"{{{fixture.User.Username}}}"}]} } }
           }, "s2"]]
@@ -2582,6 +2596,13 @@ public sealed class JmapProtocolTests
         CollectionAssert.AreEquivalent(
             new[] { "inReplyTo", "messageId", "references" },
             idError["properties"]!.AsArray().Select(node => node!.GetValue<string>()).ToArray());
+        var dateError = Arguments(submission)["notCreated"]!["badDates"]!;
+        Assert.AreEqual("invalidEmail", dateError["type"]!.GetValue<string>());
+        CollectionAssert.AreEquivalent(
+            new[] { "header:Resent-Date:asDate:all", "sentAt" },
+            dateError["properties"]!.AsArray()
+                .Select(node => node!.GetValue<string>())
+                .ToArray());
     }
 
     [TestMethod]
@@ -2694,7 +2715,7 @@ public sealed class JmapProtocolTests
         var identityId = Arguments(identities)["list"]![0]!["id"]!.GetValue<string>();
 
         string Message(string extraHeader, string body, string newline = "\r\n") =>
-            "Date: 20 Sep 2026 10:00:00 +0000" + newline
+            "Date: 31 Dec 2016 23:59:60 +0000" + newline
             + $"From: {fixture.User.Username}" + newline
             + $"To: {fixture.User.Username}" + newline
             + extraHeader + newline + newline + body;
@@ -2706,6 +2727,10 @@ public sealed class JmapProtocolTests
         {
             ["valid"] = Encoding.ASCII.GetBytes(
                 Message("X-Max: " + new string('x', 991), new string('b', 998))),
+            ["validFoldedDate"] = Encoding.ASCII.GetBytes(
+                "Date:\r\n 31 Dec 2016 23:59:60 +0000\r\n"
+                + $"From: {fixture.User.Username}\r\n"
+                + $"To: {fixture.User.Username}\r\n\r\nbody"),
             ["longHeader"] = Encoding.ASCII.GetBytes(
                 Message("X-Max: " + new string('x', 992), "body")),
             ["longBody"] = Encoding.ASCII.GetBytes(
@@ -2765,6 +2790,7 @@ public sealed class JmapProtocolTests
         });
 
         Assert.IsNotNull(Arguments(submission)["created"]!["valid"]);
+        Assert.IsNotNull(Arguments(submission)["created"]!["validFoldedDate"]);
         AssertInvalid("longHeader", "headers");
         AssertInvalid("longBody", "bodyStructure");
         AssertInvalid("lfOnly", "headers");

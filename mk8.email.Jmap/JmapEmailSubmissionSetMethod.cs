@@ -549,7 +549,7 @@ internal sealed class EmailSubmissionSetMethod(
 
             var dateHeaders = Headers(message.Headers, "Date");
             if (dateHeaders.Length != 1
-                || !MimeKit.Utils.DateUtils.TryParse(dateHeaders[0].Value, out _))
+                || !JmapDate.IsValidRfc5322DateTime(dateHeaders[0].Value))
             {
                 invalid.Add("sentAt");
             }
@@ -777,7 +777,7 @@ internal sealed class EmailSubmissionSetMethod(
         ValidateEveryHeader(
             resent,
             "Resent-Date",
-            value => MimeKit.Utils.DateUtils.TryParse(value, out _),
+            JmapDate.IsValidRfc5322DateTime,
             invalid);
         ValidateEveryHeader(
             resent,
@@ -900,7 +900,7 @@ internal sealed class EmailSubmissionSetMethod(
         bool mailboxesOnly,
         out InternetAddressList addresses)
     {
-        if (allowEmpty && IsCfwsOnly(value))
+        if (allowEmpty && JmapEmailCodec.IsHeaderCfwsOnly(value))
         {
             addresses = new InternetAddressList();
             return true;
@@ -917,46 +917,6 @@ internal sealed class EmailSubmissionSetMethod(
         addresses = parsedAddresses;
         return (allowEmpty || addresses.Count > 0)
             && (!mailboxesOnly || addresses.All(address => address is MailboxAddress));
-    }
-
-    private static bool IsCfwsOnly(string value)
-    {
-        var index = 0;
-        while (index < value.Length)
-        {
-            var character = value[index++];
-            if (character is ' ' or '\t' or '\r' or '\n')
-                continue;
-            if (character != '(')
-                return false;
-
-            var depth = 1;
-            while (depth > 0)
-            {
-                if (index >= value.Length)
-                    return false;
-                character = value[index++];
-                if (character == '\\')
-                {
-                    if (index >= value.Length)
-                        return false;
-                    index++;
-                }
-                else if (character == '(')
-                {
-                    depth++;
-                }
-                else if (character == ')')
-                {
-                    depth--;
-                }
-                else if (character < ' ' && character is not ('\t' or '\r' or '\n'))
-                {
-                    return false;
-                }
-            }
-        }
-        return true;
     }
 
     private static void ValidateMessageIdsHeader(

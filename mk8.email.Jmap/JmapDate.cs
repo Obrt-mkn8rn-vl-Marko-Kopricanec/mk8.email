@@ -11,6 +11,66 @@ internal static partial class JmapDate
     public static bool TryParseUtcDate(string? value, out DateTimeOffset result) =>
         TryParse(value, requireUtc: true, out result);
 
+    public static bool IsValidRfc5322DateTime(string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return false;
+
+        var index = 0;
+        DayOfWeek? suppliedDayOfWeek = null;
+        var dayOfWeekStart = index;
+        if (!TrySkipFws(value, ref index, required: false))
+            return false;
+        if (TryReadDayName(value, ref index, out var dayOfWeek)
+            && TryReadCharacter(value, ref index, ','))
+        {
+            suppliedDayOfWeek = dayOfWeek;
+        }
+        else
+        {
+            index = dayOfWeekStart;
+        }
+
+        if (!TrySkipFws(value, ref index, required: false)
+            || !TryReadNumber(value, ref index, 1, 2, out var day)
+            || !TrySkipFws(value, ref index, required: true)
+            || !TryReadMonth(value, ref index, out var month)
+            || !TrySkipFws(value, ref index, required: true)
+            || !TryReadYear(value, ref index, out var calendarYear)
+            || !TrySkipFws(value, ref index, required: true)
+            || !TryReadNumber(value, ref index, 2, 2, out var hour)
+            || !TryReadCharacter(value, ref index, ':')
+            || !TryReadNumber(value, ref index, 2, 2, out var minute))
+        {
+            return false;
+        }
+
+        var second = 0;
+        if (index < value.Length && value[index] == ':')
+        {
+            index++;
+            if (!TryReadNumber(value, ref index, 2, 2, out second))
+                return false;
+        }
+        if (!TrySkipFws(value, ref index, required: true)
+            || index >= value.Length
+            || value[index++] is not ('+' or '-')
+            || !TryReadNumber(value, ref index, 4, 4, out var zone)
+            || !JmapEmailCodec.IsHeaderCfwsOnly(value[index..])
+            || day == 0
+            || day > DateTime.DaysInMonth(calendarYear, month)
+            || hour > 23
+            || minute > 59
+            || second > 60
+            || zone % 100 > 59)
+        {
+            return false;
+        }
+
+        return suppliedDayOfWeek is null
+            || new DateTime(calendarYear, month, day).DayOfWeek == suppliedDayOfWeek;
+    }
+
     public static string FormatUtc(DateTime value)
     {
         var utc = value.Kind == DateTimeKind.Utc ? value : value.ToUniversalTime();
@@ -85,6 +145,124 @@ internal static partial class JmapDate
             return false;
         }
         result = result.AddSeconds(1);
+        return true;
+    }
+
+    private static bool TrySkipFws(
+        string value,
+        ref int index,
+        bool required)
+    {
+        var start = index;
+        while (index < value.Length && value[index] is ' ' or '\t')
+            index++;
+        if (index < value.Length && value[index] is '\r' or '\n')
+        {
+            if (value[index] != '\r'
+                || index + 2 >= value.Length
+                || value[index + 1] != '\n'
+                || value[index + 2] is not (' ' or '\t'))
+            {
+                return false;
+            }
+            index += 3;
+            while (index < value.Length && value[index] is ' ' or '\t')
+                index++;
+            if (index < value.Length && value[index] is '\r' or '\n')
+                return false;
+        }
+        return !required || index > start;
+    }
+
+    private static bool TryReadDayName(
+        string value,
+        ref int index,
+        out DayOfWeek result)
+    {
+        result = default;
+        if (index + 3 > value.Length)
+            return false;
+        var token = value.AsSpan(index, 3);
+        if (token.Equals("Sun", StringComparison.OrdinalIgnoreCase))
+            result = DayOfWeek.Sunday;
+        else if (token.Equals("Mon", StringComparison.OrdinalIgnoreCase))
+            result = DayOfWeek.Monday;
+        else if (token.Equals("Tue", StringComparison.OrdinalIgnoreCase))
+            result = DayOfWeek.Tuesday;
+        else if (token.Equals("Wed", StringComparison.OrdinalIgnoreCase))
+            result = DayOfWeek.Wednesday;
+        else if (token.Equals("Thu", StringComparison.OrdinalIgnoreCase))
+            result = DayOfWeek.Thursday;
+        else if (token.Equals("Fri", StringComparison.OrdinalIgnoreCase))
+            result = DayOfWeek.Friday;
+        else if (token.Equals("Sat", StringComparison.OrdinalIgnoreCase))
+            result = DayOfWeek.Saturday;
+        else
+            return false;
+        index += 3;
+        return true;
+    }
+
+    private static bool TryReadMonth(string value, ref int index, out int result)
+    {
+        result = 0;
+        if (index + 3 > value.Length)
+            return false;
+        var token = value.AsSpan(index, 3);
+        for (var month = 0; month < MonthNames.Length; month++)
+        {
+            if (!token.Equals(MonthNames[month], StringComparison.OrdinalIgnoreCase))
+                continue;
+            result = month + 1;
+            index += 3;
+            return true;
+        }
+        return false;
+    }
+
+    private static bool TryReadYear(string value, ref int index, out int calendarYear)
+    {
+        calendarYear = 0;
+        var start = index;
+        var cappedYear = 0;
+        var modulo400 = 0;
+        while (index < value.Length && char.IsAsciiDigit(value[index]))
+        {
+            var digit = value[index++] - '0';
+            if (cappedYear < 10_000)
+                cappedYear = Math.Min(10_000, (cappedYear * 10) + digit);
+            modulo400 = ((modulo400 * 10) + digit) % 400;
+        }
+        if (index - start < 4 || cappedYear < 1900)
+            return false;
+        calendarYear = 2000 + modulo400;
+        return true;
+    }
+
+    private static bool TryReadNumber(
+        string value,
+        ref int index,
+        int minimumDigits,
+        int maximumDigits,
+        out int result)
+    {
+        result = 0;
+        var start = index;
+        while (index < value.Length
+            && index - start < maximumDigits
+            && char.IsAsciiDigit(value[index]))
+        {
+            result = (result * 10) + value[index++] - '0';
+        }
+        return index - start >= minimumDigits
+            && (index >= value.Length || !char.IsAsciiDigit(value[index]));
+    }
+
+    private static bool TryReadCharacter(string value, ref int index, char expected)
+    {
+        if (index >= value.Length || value[index] != expected)
+            return false;
+        index++;
         return true;
     }
 
@@ -167,6 +345,11 @@ internal static partial class JmapDate
     [
         "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'Z'",
         "yyyy-MM-dd'T'HH:mm:ss.FFFFFFFzzz",
+    ];
+    private static readonly string[] MonthNames =
+    [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     ];
 
     [GeneratedRegex(

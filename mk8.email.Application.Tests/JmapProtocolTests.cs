@@ -463,6 +463,39 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task EmailParsedUrlsRejectInvalidBracketedValues()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var raw = Encoding.ASCII.GetBytes(
+            "From: sender@example.net\r\n"
+            + $"To: {fixture.User.Username}\r\n"
+            + "List-Unsubscribe: <not a url>\r\n"
+            + "List-Help: <https://example.test/help>, <mailto:help@example.test>\r\n\r\nbody");
+        var blobId = await fixture.StoreBlobAsync(raw);
+
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/parse", {
+            "accountId": "{{{fixture.AccountId}}}",
+            "blobIds": ["{{{blobId}}}"],
+            "properties": [
+              "header:List-Unsubscribe:asURLs",
+              "header:List-Help:asURLs"
+            ]
+          }, "p1"]]
+        }
+        """);
+        var parsed = Arguments(response)["parsed"]![blobId]!;
+        Assert.IsNull(parsed["header:List-Unsubscribe:asURLs"]);
+        CollectionAssert.AreEqual(
+            new[] { "https://example.test/help", "mailto:help@example.test" },
+            parsed["header:List-Help:asURLs"]!.AsArray()
+                .Select(node => node!.GetValue<string>())
+                .ToArray());
+    }
+
+    [TestMethod]
     public async Task DeletingLegacyEmailWithNullThreadDestroysItsFallbackThread()
     {
         await using var fixture = await JmapFixture.CreateAsync();

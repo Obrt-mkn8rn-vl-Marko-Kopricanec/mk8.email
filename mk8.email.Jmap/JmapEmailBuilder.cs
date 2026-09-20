@@ -958,7 +958,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
             {
                 if (item is not JsonValue urlValue
                     || !urlValue.TryGetValue<string>(out var url)
-                    || !Uri.TryCreate(url, UriKind.Absolute, out _)) return false;
+                    || !JmapHeaderUrl.IsValidParsedForm(url)) return false;
                 parsed.Add($"<{url}>");
             }
             value = string.Join(", ", parsed);

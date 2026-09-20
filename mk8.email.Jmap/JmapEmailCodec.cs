@@ -862,7 +862,12 @@ internal static partial class JmapEmailCodec
     {
         var result = new JsonArray();
         foreach (Match match in UrlRegex().Matches(value))
-            result.Add(match.Groups[1].Value);
+        {
+            var url = match.Groups[1].Value;
+            if (!JmapHeaderUrl.IsValidParsedForm(url))
+                return null;
+            result.Add(url);
+        }
         return result.Count == 0 ? null : result;
     }
 

@@ -2731,7 +2731,18 @@ public sealed class JmapProtocolTests
           }, "s1"]]
         }
         """);
-        var submissionId = Arguments(submissionResponse)["created"]!["submit"]!["id"]!.GetValue<string>();
+        var createdSubmission = Arguments(submissionResponse)["created"]!["submit"]!.AsObject();
+        var submissionId = createdSubmission["id"]!.GetValue<string>();
+        CollectionAssert.AreEquivalent(
+            new[]
+            {
+                "id", "threadId", "sendAt", "undoStatus", "deliveryStatus",
+                "dsnBlobIds", "mdnBlobIds",
+            },
+            createdSubmission.Select(property => property.Key).ToArray());
+        Assert.AreEqual("final", createdSubmission["undoStatus"]!.GetValue<string>());
+        Assert.AreEqual(0, createdSubmission["dsnBlobIds"]!.AsArray().Count);
+        Assert.AreEqual(0, createdSubmission["mdnBlobIds"]!.AsArray().Count);
         Assert.AreEqual(
             "invalidProperties",
             Arguments(submissionResponse)["notCreated"]!["badParameter"]!["type"]!.GetValue<string>());
@@ -2837,7 +2848,15 @@ public sealed class JmapProtocolTests
           }, "s1"]]
         }
         """);
-        var submissionId = Arguments(submission)["created"]!["generated"]!["id"]!.GetValue<string>();
+        var createdSubmission = Arguments(submission)["created"]!["generated"]!.AsObject();
+        var submissionId = createdSubmission["id"]!.GetValue<string>();
+        CollectionAssert.AreEquivalent(
+            new[]
+            {
+                "id", "threadId", "envelope", "sendAt", "undoStatus", "deliveryStatus",
+                "dsnBlobIds", "mdnBlobIds",
+            },
+            createdSubmission.Select(property => property.Key).ToArray());
         var read = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Submission}}}"],
@@ -2848,6 +2867,7 @@ public sealed class JmapProtocolTests
         }
         """);
         var envelope = Arguments(read)["list"]![0]!["envelope"]!;
+        Assert.IsTrue(JsonNode.DeepEquals(createdSubmission["envelope"], envelope));
         Assert.AreEqual(fixture.User.Username, envelope["mailFrom"]!["email"]!.GetValue<string>());
         Assert.IsNull(envelope["mailFrom"]!["parameters"]);
         Assert.AreEqual(1, envelope["rcptTo"]!.AsArray().Count);

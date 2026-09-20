@@ -140,7 +140,10 @@ internal sealed class EmailSubmissionSetMethod(
                 }
                 var submissionId = JmapId.Submission(result.Submission!.Id);
                 context.CreatedIds[item.Key] = submissionId;
-                created[item.Key] = new JsonObject { ["id"] = submissionId };
+                created[item.Key] = await BuildCreatedResponseAsync(
+                    item.Value,
+                    result.Submission,
+                    cancellationToken);
                 successful[submissionId] = result.Submission.EmailId;
             }
         }
@@ -258,6 +261,37 @@ internal sealed class EmailSubmissionSetMethod(
             return new JmapMethodResponse(Name, response);
         var implicitResponse = await emailSet.InvokeAsync(context, implicitArguments, cancellationToken);
         return new JmapMethodResponse(Name, response, [implicitResponse]);
+    }
+
+    private async Task<JsonObject> BuildCreatedResponseAsync(
+        JsonObject requested,
+        JmapEmailSubmissionDB submission,
+        CancellationToken cancellationToken)
+    {
+        var response = await JmapEmailSubmissionJson.BuildAsync(
+            database,
+            submission,
+            null,
+            cancellationToken);
+
+        if (requested["identityId"] is JsonValue requestedIdentityNode
+            && requestedIdentityNode.TryGetValue<string>(out var requestedIdentityId)
+            && string.Equals(requestedIdentityId, submission.IdentityId, StringComparison.Ordinal))
+        {
+            response.Remove("identityId");
+        }
+        if (requested["emailId"] is JsonValue requestedEmailNode
+            && requestedEmailNode.TryGetValue<string>(out var requestedEmailId)
+            && string.Equals(requestedEmailId, submission.EmailId, StringComparison.Ordinal))
+        {
+            response.Remove("emailId");
+        }
+        if (requested["envelope"] is { } requestedEnvelope
+            && JsonNode.DeepEquals(requestedEnvelope, response["envelope"]))
+        {
+            response.Remove("envelope");
+        }
+        return response;
     }
 
     private async Task<SubmissionCreateResult> CreateAsync(

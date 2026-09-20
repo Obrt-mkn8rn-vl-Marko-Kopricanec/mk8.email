@@ -932,6 +932,18 @@ public sealed class JmapProtocolTests
                 "bodyValues":{"1":{"value":"body"}},
                 "textBody":[{"partId":"1", "type":"text/plain"}]
               },
+              "missingGroupedAddresses": {
+                "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true},
+                "header:X-Team:asGroupedAddresses":[{"name":"Team"}],
+                "bodyValues":{"1":{"value":"body"}},
+                "textBody":[{"partId":"1", "type":"text/plain"}]
+              },
+              "nullGroupedAddresses": {
+                "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true},
+                "header:X-Team:asGroupedAddresses":[{"name":"Team", "addresses":null}],
+                "bodyValues":{"1":{"value":"body"}},
+                "textBody":[{"partId":"1", "type":"text/plain"}]
+              },
               "allMissingBlobs": {
                 "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true},
                 "attachments":[
@@ -963,6 +975,8 @@ public sealed class JmapProtocolTests
         Assert.AreEqual("invalidProperties", failures["invalidBlobSize"]!["type"]!.GetValue<string>());
         Assert.AreEqual("invalidProperties", failures["invalidMessageId"]!["type"]!.GetValue<string>());
         Assert.AreEqual("invalidProperties", failures["invalidParsedHeader"]!["type"]!.GetValue<string>());
+        Assert.AreEqual("invalidProperties", failures["missingGroupedAddresses"]!["type"]!.GetValue<string>());
+        Assert.AreEqual("invalidProperties", failures["nullGroupedAddresses"]!["type"]!.GetValue<string>());
         Assert.AreEqual("blobNotFound", failures["allMissingBlobs"]!["type"]!.GetValue<string>());
         CollectionAssert.AreEquivalent(
             new[] { missingOne, missingTwo },

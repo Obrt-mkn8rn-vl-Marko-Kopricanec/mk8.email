@@ -922,7 +922,9 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
             {
                 if (item is not JsonObject group
                     || !JmapMethodHelpers.TryGetOptionalString(group, "name", out var name)
-                    || !TryParseAddressList(group["addresses"], out var members)
+                    || !group.TryGetPropertyValue("addresses", out var addressNode)
+                    || addressNode is null
+                    || !TryParseAddressList(addressNode, out var members)
                     || group.Any(property => property.Key is not ("name" or "addresses"))) return false;
                 if (name is null) addresses.AddRange(members);
                 else addresses.Add(new GroupAddress(name, members));

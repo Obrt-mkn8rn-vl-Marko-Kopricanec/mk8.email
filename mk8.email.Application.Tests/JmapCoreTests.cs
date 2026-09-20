@@ -659,6 +659,51 @@ public sealed class JmapCoreTests
     }
 
     [TestMethod]
+    public async Task ChangesRejectUnsafeIntermediateLifecycleBoundaries()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        using var scope = fixture.Services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        database.JmapChanges.AddRange(
+            new JmapChangeDB
+            {
+                AccountId = fixture.InboxId,
+                DataType = "Test",
+                ObjectId = "one",
+                ChangeKind = JmapConstants.DestroyedChange,
+                ChangedAt = DateTime.UtcNow,
+            },
+            new JmapChangeDB
+            {
+                AccountId = fixture.InboxId,
+                DataType = "Test",
+                ObjectId = "two",
+                ChangeKind = JmapConstants.UpdatedChange,
+                ChangedAt = DateTime.UtcNow,
+            },
+            new JmapChangeDB
+            {
+                AccountId = fixture.InboxId,
+                DataType = "Test",
+                ObjectId = "one",
+                ChangeKind = JmapConstants.CreatedChange,
+                ChangedAt = DateTime.UtcNow,
+            });
+        await database.SaveChangesAsync();
+
+        var states = scope.ServiceProvider.GetRequiredService<JmapStateService>();
+        var changes = await states.GetChangesAsync(
+            fixture.InboxId,
+            "Test",
+            "s0",
+            1,
+            100,
+            CancellationToken.None);
+
+        Assert.IsNull(changes);
+    }
+
+    [TestMethod]
     public async Task ChangesRequirePositiveLimitButQueryChangesAcceptsZero()
     {
         await using var fixture = await JmapFixture.CreateAsync();

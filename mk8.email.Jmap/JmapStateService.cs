@@ -101,6 +101,17 @@ public sealed class JmapStateService(
 
         if (!hasMoreChanges)
             hasMoreChanges = newSequence < currentSequence;
+        if (hasMoreChanges
+            && await HasUnsafeFutureLifecycleAsync(
+                accountId,
+                dataType,
+                newSequence,
+                currentSequence,
+                folded,
+                cancellationToken))
+        {
+            return null;
+        }
         if (!hasMoreChanges)
             newSequence = currentSequence;
 
@@ -111,6 +122,39 @@ public sealed class JmapStateService(
             folded.Where(item => item.Value == JmapConstants.CreatedChange).Select(item => item.Key).ToArray(),
             folded.Where(item => item.Value == JmapConstants.UpdatedChange).Select(item => item.Key).ToArray(),
             folded.Where(item => item.Value == JmapConstants.DestroyedChange).Select(item => item.Key).ToArray());
+    }
+
+    private Task<bool> HasUnsafeFutureLifecycleAsync(
+        Guid accountId,
+        string dataType,
+        long pageSequence,
+        long currentSequence,
+        IReadOnlyDictionary<string, string> pageChanges,
+        CancellationToken cancellationToken)
+    {
+        var mustNotBeCreated = pageChanges
+            .Where(change => change.Value is
+                JmapConstants.UpdatedChange or JmapConstants.DestroyedChange)
+            .Select(change => change.Key)
+            .ToArray();
+        var mustNotBeUpdated = pageChanges
+            .Where(change => change.Value == JmapConstants.DestroyedChange)
+            .Select(change => change.Key)
+            .ToArray();
+        if (mustNotBeCreated.Length == 0 && mustNotBeUpdated.Length == 0)
+            return Task.FromResult(false);
+
+        return database.JmapChanges
+            .AsNoTracking()
+            .AnyAsync(change => change.AccountId == accountId
+                && change.DataType == dataType
+                && change.Sequence > pageSequence
+                && change.Sequence <= currentSequence
+                && (change.ChangeKind == JmapConstants.CreatedChange
+                        && mustNotBeCreated.Contains(change.ObjectId)
+                    || change.ChangeKind == JmapConstants.UpdatedChange
+                        && mustNotBeUpdated.Contains(change.ObjectId)),
+                cancellationToken);
     }
 
     public async Task<IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>>> GetUserStatesAsync(

@@ -13,6 +13,7 @@ namespace mk8.email.Jmap;
 internal sealed record JmapEmailQueryItem(
     EmailDB Email,
     MimeMessage Message,
+    long Size,
     IReadOnlySet<string> Keywords,
     string ThreadId,
     bool HasAttachment,
@@ -69,6 +70,9 @@ internal static partial class JmapEmailQueryEngine
                 result.Add(new JmapEmailQueryItem(
                     email,
                     message,
+                    email.SizeBytes > 0
+                        ? email.SizeBytes
+                        : JmapEmailCodec.GetRawBytes(email).LongLength,
                     keywords,
                     JmapId.Thread(email.ThreadObjectId ?? email.Id.ToString("N")),
                     JmapEmailCodec.HasAttachment(message),
@@ -307,8 +311,8 @@ internal static partial class JmapEmailQueryEngine
                 || !otherThan.Contains(JmapId.Mailbox(item.Email.FolderId)))
             && (before is null || item.Email.ReceivedAt.ToUniversalTime() < before.Value.UtcDateTime)
             && (after is null || item.Email.ReceivedAt.ToUniversalTime() >= after.Value.UtcDateTime)
-            && (minimumSize is null || item.Email.SizeBytes >= minimumSize)
-            && (maximumSize is null || item.Email.SizeBytes < maximumSize)
+            && (minimumSize is null || item.Size >= minimumSize)
+            && (maximumSize is null || item.Size < maximumSize)
             && (allThreadKeyword is null || byThread[item.ThreadId].All(threadItem => threadItem.Keywords.Contains(allThreadKeyword)))
             && (someThreadKeyword is null || byThread[item.ThreadId].Any(threadItem => threadItem.Keywords.Contains(someThreadKeyword)))
             && (noThreadKeyword is null || byThread[item.ThreadId].All(threadItem => !threadItem.Keywords.Contains(noThreadKeyword)))
@@ -335,7 +339,7 @@ internal static partial class JmapEmailQueryEngine
         return comparator.Property switch
         {
             "receivedAt" => left.Email.ReceivedAt.CompareTo(right.Email.ReceivedAt),
-            "size" => left.Email.SizeBytes.CompareTo(right.Email.SizeBytes),
+            "size" => left.Size.CompareTo(right.Size),
             "from" => CompareString(left.FromSortValue, right.FromSortValue, comparator.Collation),
             "to" => CompareString(left.ToSortValue, right.ToSortValue, comparator.Collation),
             "subject" => CompareString(BaseSubject(left.SubjectSortValue), BaseSubject(right.SubjectSortValue), comparator.Collation),

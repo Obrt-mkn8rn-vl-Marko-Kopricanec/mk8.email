@@ -2025,6 +2025,93 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task EmailQueryUsesTheProjectedSizeForLegacyRows()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var legacyId = Guid.CreateVersion7();
+        var currentId = Guid.CreateVersion7();
+        var legacyRaw = Encoding.ASCII.GetBytes(
+            "From: sender@example.net\r\n"
+            + $"To: {fixture.User.Username}\r\n"
+            + "Subject: Legacy size\r\n\r\n"
+            + new string('x', 256));
+        var currentRaw = Encoding.ASCII.GetBytes(
+            "From: sender@example.net\r\n"
+            + $"To: {fixture.User.Username}\r\n"
+            + "Subject: Current size\r\n\r\nsmall");
+
+        using (var scope = fixture.Services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            database.Emails.AddRange(
+                new EmailDB
+                {
+                    Id = legacyId,
+                    Sender = "sender@example.net",
+                    Recipient = fixture.User.Username,
+                    Subject = "Legacy size",
+                    Body = new string('x', 256),
+                    RawMessage = legacyRaw,
+                    SizeBytes = 0,
+                    ReceivedAt = DateTime.UtcNow.AddMinutes(-1),
+                    FolderId = fixture.InboxFolderId,
+                    Uid = 200,
+                    ThreadObjectId = Guid.CreateVersion7().ToString("N"),
+                },
+                new EmailDB
+                {
+                    Id = currentId,
+                    Sender = "sender@example.net",
+                    Recipient = fixture.User.Username,
+                    Subject = "Current size",
+                    Body = "small",
+                    RawMessage = currentRaw,
+                    SizeBytes = currentRaw.Length,
+                    ReceivedAt = DateTime.UtcNow,
+                    FolderId = fixture.InboxFolderId,
+                    Uid = 201,
+                    ThreadObjectId = Guid.CreateVersion7().ToString("N"),
+                });
+            await database.SaveChangesAsync();
+        }
+
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [
+            ["Email/get", {
+              "accountId":"{{{fixture.AccountId}}}",
+              "ids":["{{{JmapId.Email(legacyId)}}}"],
+              "properties":["size"]
+            }, "g1"],
+            ["Email/query", {
+              "accountId":"{{{fixture.AccountId}}}",
+              "filter":{"minSize":{{{legacyRaw.Length}}}}
+            }, "q1"],
+            ["Email/query", {
+              "accountId":"{{{fixture.AccountId}}}",
+              "sort":[{"property":"size"}]
+            }, "q2"]
+          ]
+        }
+        """);
+
+        Assert.AreEqual(
+            legacyRaw.LongLength,
+            Arguments(response)["list"]![0]!["size"]!.GetValue<long>());
+        CollectionAssert.AreEqual(
+            new[] { JmapId.Email(legacyId) },
+            Arguments(response, 1)["ids"]!.AsArray()
+                .Select(node => node!.GetValue<string>())
+                .ToArray());
+        CollectionAssert.AreEqual(
+            new[] { JmapId.Email(currentId), JmapId.Email(legacyId) },
+            Arguments(response, 2)["ids"]!.AsArray()
+                .Select(node => node!.GetValue<string>())
+                .ToArray());
+    }
+
+    [TestMethod]
     public async Task UploadBlobCanBeParsedAndImported()
     {
         await using var fixture = await JmapFixture.CreateAsync();

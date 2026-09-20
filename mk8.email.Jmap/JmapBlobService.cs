@@ -189,6 +189,7 @@ internal sealed class BlobCopyMethod(
         if (!JmapMethodHelpers.HasOnlyProperties(arguments, "fromAccountId", "accountId", "blobIds")
             || !JmapMethodHelpers.TryGetRequiredString(arguments, "fromAccountId", out var fromAccountId)
             || !JmapMethodHelpers.TryGetRequiredString(arguments, "accountId", out var accountId)
+            || string.Equals(fromAccountId, accountId, StringComparison.Ordinal)
             || !JmapEmailArguments.TryGetIds(arguments, "blobIds", context, false, out var blobIds)
             || blobIds is null)
         {

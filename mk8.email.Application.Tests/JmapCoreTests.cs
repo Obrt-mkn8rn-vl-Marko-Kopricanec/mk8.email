@@ -297,6 +297,30 @@ public sealed class JmapCoreTests
     }
 
     [TestMethod]
+    public async Task BlobCopyRejectsTheSameSourceAndDestinationAccount()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var response = await fixture.InvokeAsync(
+            $$"""
+            {
+              "using":["urn:ietf:params:jmap:core"],
+              "methodCalls":[["Blob/copy",{
+                "fromAccountId":"{{fixture.AccountId}}",
+                "accountId":"{{fixture.AccountId}}",
+                "blobIds":[]
+              },"c1"]]
+            }
+            """);
+
+        Assert.AreEqual(
+            "error",
+            response["methodResponses"]?[0]?[0]?.GetValue<string>());
+        Assert.AreEqual(
+            "invalidArguments",
+            response["methodResponses"]?[0]?[1]?["type"]?.GetValue<string>());
+    }
+
+    [TestMethod]
     public async Task JsonTransportRejectsUnpairedUnicodeSurrogates()
     {
         var context = new DefaultHttpContext();

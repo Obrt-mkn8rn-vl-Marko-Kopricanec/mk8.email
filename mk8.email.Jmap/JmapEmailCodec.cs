@@ -400,10 +400,19 @@ internal static partial class JmapEmailCodec
         var charset = type.StartsWith("text/", StringComparison.Ordinal)
             ? entity.ContentType.Charset ?? "us-ascii"
             : null;
-        var languageHeader = entity.Headers.FirstOrDefault(header =>
+        var languageHeaders = entity.Headers.Where(header =>
             header.Field.Equals("Content-Language", StringComparison.OrdinalIgnoreCase));
-        var languages = languageHeader?.Value
-            .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        List<string>? languages = null;
+        foreach (var languageHeader in languageHeaders)
+        {
+            if (!JmapLanguageTag.TryParseHeader(languageHeader.Value, out var parsedLanguages))
+            {
+                languages = null;
+                break;
+            }
+            languages ??= [];
+            languages.AddRange(parsedLanguages);
+        }
         var fileName = entity is MimePart mimePart ? mimePart.FileName : null;
         return new PartDescriptor(
             entity,
@@ -419,7 +428,7 @@ internal static partial class JmapEmailCodec
             charset,
             entity.ContentDisposition?.Disposition?.ToLowerInvariant(),
             entity.ContentId,
-            languages is { Length: > 0 } ? languages : null,
+            languages is { Count: > 0 } ? languages.ToArray() : null,
             entity.ContentLocation?.ToString(),
             subParts);
     }

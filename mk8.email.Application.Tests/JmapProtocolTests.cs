@@ -1113,6 +1113,88 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task BodyLanguageUsesRfcLanguageTags()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var validBlobId = await fixture.StoreBlobAsync(Encoding.ASCII.GetBytes(
+            "From: sender@example.net\r\n"
+            + $"To: {fixture.User.Username}\r\n"
+            + "Content-Type: text/plain; charset=us-ascii\r\n"
+            + "Content-Language: en-US (primary), i-klingon\r\n\r\nbody"));
+        var invalidBlobId = await fixture.StoreBlobAsync(Encoding.ASCII.GetBytes(
+            "From: sender@example.net\r\n"
+            + $"To: {fixture.User.Username}\r\n"
+            + "Content-Type: text/plain; charset=us-ascii\r\n"
+            + "Content-Language: en_US\r\n\r\nbody"));
+
+        var parse = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/parse", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "blobIds":["{{{validBlobId}}}", "{{{invalidBlobId}}}"],
+            "properties":["bodyStructure"],
+            "bodyProperties":["language"]
+          }, "p1"]]
+        }
+        """);
+        Assert.AreEqual(
+            "en-US|i-klingon",
+            string.Join(
+                '|',
+                Arguments(parse)["parsed"]![validBlobId]!["bodyStructure"]!["language"]!
+                    .AsArray()
+                    .Select(node => node!.GetValue<string>())));
+        Assert.IsNull(
+            Arguments(parse)["parsed"]![invalidBlobId]!["bodyStructure"]!["language"]);
+
+        var create = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/set", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "create":{
+              "badLanguage":{
+                "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true},
+                "bodyValues":{"1":{"value":"body"}},
+                "textBody":[{"partId":"1", "type":"text/plain", "language":["en_US"]}]
+              },
+              "goodLanguage":{
+                "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true},
+                "bodyValues":{"1":{"value":"body"}},
+                "textBody":[{
+                  "partId":"1", "type":"text/plain", "language":["en-US", "i-klingon"]
+                }]
+              }
+            }
+          }, "s1"]]
+        }
+        """);
+        Assert.AreEqual(
+            "invalidProperties",
+            Arguments(create)["notCreated"]!["badLanguage"]!["type"]!.GetValue<string>());
+        var createdId = Arguments(create)["created"]!["goodLanguage"]!["id"]!.GetValue<string>();
+        var get = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/get", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "ids":["{{{createdId}}}"],
+            "properties":["bodyStructure"],
+            "bodyProperties":["language"]
+          }, "g1"]]
+        }
+        """);
+        Assert.AreEqual(
+            "en-US|i-klingon",
+            string.Join(
+                '|',
+                Arguments(get)["list"]![0]!["bodyStructure"]!["language"]!
+                    .AsArray()
+                    .Select(node => node!.GetValue<string>())));
+    }
+
+    [TestMethod]
     public async Task BlobQuotaEvictsOldestUnreferencedUpload()
     {
         const int quota = 1_048_576;

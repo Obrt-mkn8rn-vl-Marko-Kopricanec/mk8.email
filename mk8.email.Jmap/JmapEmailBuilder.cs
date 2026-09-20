@@ -694,7 +694,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
                 {
                     if (item is not JsonValue value
                         || !value.TryGetValue<string>(out var language)
-                        || string.IsNullOrWhiteSpace(language))
+                        || !JmapLanguageTag.IsValid(language))
                     {
                         return false;
                     }

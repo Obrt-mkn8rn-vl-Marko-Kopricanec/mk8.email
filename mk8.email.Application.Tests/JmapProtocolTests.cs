@@ -3450,6 +3450,94 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task SubmissionEnforcesTheRawSizeForLegacyRows()
+    {
+        const int maximumMessageSize = 512;
+        await using var fixture = await JmapFixture.CreateAsync(maximumMessageSize);
+        var raw = Encoding.ASCII.GetBytes(
+            "Date: Sun, 20 Sep 2026 10:00:00 +0000\r\n"
+            + $"From: {fixture.User.Username}\r\n"
+            + $"To: {fixture.User.Username}\r\n"
+            + "Subject: Oversized legacy row\r\n\r\n"
+            + string.Join("\r\n", Enumerable.Repeat(new string('x', 100), 6)));
+        Assert.IsTrue(raw.Length > maximumMessageSize);
+
+        var emailId = Guid.CreateVersion7();
+        using (var scope = fixture.Services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            var drafts = await database.Folders.SingleAsync(folder =>
+                folder.Id == fixture.DraftsFolderId);
+            database.Emails.Add(new EmailDB
+            {
+                Id = emailId,
+                Sender = fixture.User.Username,
+                Recipient = fixture.User.Username,
+                Subject = "Oversized legacy row",
+                Body = Encoding.ASCII.GetString(raw),
+                RawMessage = raw,
+                SizeBytes = 0,
+                MessageId = $"<{emailId:N}@mk8n.com>",
+                EmailObjectId = emailId.ToString("N"),
+                ThreadObjectId = emailId.ToString("N"),
+                ReceivedAt = DateTime.UtcNow,
+                FolderId = drafts.Id,
+                Uid = drafts.NextUid++,
+                ModSeq = ++drafts.HighestModSeq,
+                IsDraft = true,
+            });
+            await database.SaveChangesAsync();
+        }
+
+        var identities = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Submission}}}"],
+          "methodCalls": [["Identity/get", {"accountId":"{{{fixture.AccountId}}}"}, "g1"]]
+        }
+        """);
+        var identityId = Arguments(identities)["list"]![0]!["id"]!.GetValue<string>();
+        var submission = await fixture.InvokeAsync(new JsonObject
+        {
+            ["using"] = new JsonArray(Core, Submission),
+            ["methodCalls"] = new JsonArray(new JsonArray(
+                "EmailSubmission/set",
+                new JsonObject
+                {
+                    ["accountId"] = fixture.AccountId,
+                    ["create"] = new JsonObject
+                    {
+                        ["legacy"] = new JsonObject
+                        {
+                            ["identityId"] = identityId,
+                            ["emailId"] = JmapId.Email(emailId),
+                            ["envelope"] = new JsonObject
+                            {
+                                ["mailFrom"] = new JsonObject
+                                {
+                                    ["email"] = fixture.User.Username,
+                                },
+                                ["rcptTo"] = new JsonArray(new JsonObject
+                                {
+                                    ["email"] = fixture.User.Username,
+                                }),
+                            },
+                        },
+                    },
+                },
+                "s1")),
+        });
+
+        var error = Arguments(submission)["notCreated"]!["legacy"]!;
+        Assert.AreEqual("tooLarge", error["type"]!.GetValue<string>());
+        Assert.AreEqual(maximumMessageSize, error["maxSize"]!.GetValue<int>());
+        using var verificationScope = fixture.Services.CreateScope();
+        var verificationDatabase = verificationScope.ServiceProvider
+            .GetRequiredService<EmailDbContext>();
+        Assert.AreEqual(0, await verificationDatabase.JmapEmailSubmissions.CountAsync());
+        Assert.AreEqual(0, await verificationDatabase.MailQueueMessages.CountAsync());
+    }
+
+    [TestMethod]
     public async Task IdentityAndVacationAcceptWholeGetObjectsAsUpdates()
     {
         await using var fixture = await JmapFixture.CreateAsync();

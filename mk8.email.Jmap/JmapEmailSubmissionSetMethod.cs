@@ -310,14 +310,14 @@ internal sealed class EmailSubmissionSetMethod(
             cancellationToken);
         if (identity is null || email is null)
             return SubmissionCreateResult.Failed("invalidProperties");
-        if (email.SizeBytes > environment.Limits.MaxMessageSizeBytes)
+        var rawBytes = JmapEmailCodec.GetRawBytes(email);
+        if (rawBytes.LongLength > environment.Limits.MaxMessageSizeBytes)
         {
             var error = JmapMethodHelpers.SetError("tooLarge");
             error["maxSize"] = environment.Limits.MaxMessageSizeBytes;
             return new SubmissionCreateResult(null, error);
         }
 
-        var rawBytes = JmapEmailCodec.GetRawBytes(email);
         if (!TryValidateSubmissionEmail(rawBytes, out var invalidEmailProperties))
         {
             return new SubmissionCreateResult(

@@ -143,6 +143,71 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task MailboxSetReturnsOnlyServerSetDefaultedAndChangedProperties()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var batch = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Mailbox/set", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "create": {
+              "explicit": {
+                "name":"Explicit response",
+                "parentId":null,
+                "role":null,
+                "sortOrder":5,
+                "isSubscribed":false
+              },
+              "defaults": {"name":"Default response"}
+            }
+          }, "m1"]]
+        }
+        """);
+
+        var created = Arguments(batch)["created"]!.AsObject();
+        var serverSet = new[]
+        {
+            "id", "totalEmails", "unreadEmails", "totalThreads", "unreadThreads", "myRights",
+        };
+        CollectionAssert.AreEquivalent(
+            serverSet,
+            created["explicit"]!.AsObject().Select(property => property.Key).ToArray());
+        CollectionAssert.AreEquivalent(
+            serverSet.Concat(new[] { "parentId", "role", "sortOrder", "isSubscribed" }).ToArray(),
+            created["defaults"]!.AsObject().Select(property => property.Key).ToArray());
+        Assert.AreEqual(0, created["defaults"]!["totalEmails"]!.GetValue<int>());
+        Assert.AreEqual(0, created["defaults"]!["unreadEmails"]!.GetValue<int>());
+        Assert.AreEqual(0, created["defaults"]!["totalThreads"]!.GetValue<int>());
+        Assert.AreEqual(0, created["defaults"]!["unreadThreads"]!.GetValue<int>());
+        Assert.IsNotNull(created["defaults"]!["myRights"]);
+        Assert.IsNull(created["defaults"]!["parentId"]);
+        Assert.IsNull(created["defaults"]!["role"]);
+        Assert.AreEqual(0L, created["defaults"]!["sortOrder"]!.GetValue<long>());
+        Assert.IsTrue(created["defaults"]!["isSubscribed"]!.GetValue<bool>());
+
+        var single = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Mailbox/set", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "create": {"single": {
+              "name":"Single response",
+              "parentId":null,
+              "role":null,
+              "sortOrder":7,
+              "isSubscribed":true
+            }}
+          }, "m2"]]
+        }
+        """);
+        CollectionAssert.AreEquivalent(
+            serverSet,
+            Arguments(single)["created"]!["single"]!.AsObject()
+                .Select(property => property.Key).ToArray());
+    }
+
+    [TestMethod]
     public async Task MailboxSortOrderIsLimitedToTheRfc8621Range()
     {
         await using var fixture = await JmapFixture.CreateAsync();

@@ -124,16 +124,14 @@ internal sealed class MailboxSetMethod(
                     {
                         var id = JmapId.Mailbox(result.Folder!.Id);
                         context.CreatedIds[item.Key] = id;
-                        created[item.Key] = new JsonObject
-                        {
-                            ["id"] = id,
-                            ["parentId"] = result.ParentId is null
-                                ? null
-                                : JmapId.Mailbox(result.ParentId.Value),
-                            ["role"] = result.Folder.JmapRole,
-                            ["sortOrder"] = result.Folder.SortOrder,
-                            ["isSubscribed"] = result.Folder.IsSubscribed,
-                        };
+                        created[item.Key] = BuildCreatedResponse(
+                            item.Value,
+                            result.Folder.Id,
+                            JmapMailboxStore.LeafName(result.Folder.Name),
+                            result.ParentId,
+                            result.Folder.JmapRole,
+                            result.Folder.SortOrder,
+                            result.Folder.IsSubscribed);
                     }
 
                     pending.Remove(item.Key);
@@ -716,16 +714,14 @@ internal sealed class MailboxSetMethod(
         {
             var id = JmapId.Mailbox(plan.Node.Id);
             context.CreatedIds[plan.CreationId] = id;
-            createdResponse[plan.CreationId] = new JsonObject
-            {
-                ["id"] = id,
-                ["parentId"] = plan.Node.ParentId is null
-                    ? null
-                    : JmapId.Mailbox(plan.Node.ParentId.Value),
-                ["role"] = plan.Node.Role,
-                ["sortOrder"] = plan.Node.SortOrder,
-                ["isSubscribed"] = plan.Node.IsSubscribed,
-            };
+            createdResponse[plan.CreationId] = BuildCreatedResponse(
+                requestedCreates[plan.CreationId],
+                plan.Node.Id,
+                plan.Node.Name,
+                plan.Node.ParentId,
+                plan.Node.Role,
+                plan.Node.SortOrder,
+                plan.Node.IsSubscribed);
         }
         foreach (var responseId in updateResponseIds)
             updatedResponse[responseId] = null;
@@ -1151,6 +1147,56 @@ internal sealed class MailboxSetMethod(
 
     private static bool IsProtectedRole(string? role) =>
         role is "inbox" or "sent" or "drafts" or "trash" or "junk";
+
+    private static JsonObject BuildCreatedResponse(
+        JsonObject requested,
+        Guid id,
+        string name,
+        Guid? parentId,
+        string? role,
+        long sortOrder,
+        bool isSubscribed)
+    {
+        var properties = new HashSet<string>(
+            ["totalEmails", "unreadEmails", "totalThreads", "unreadThreads", "myRights"],
+            StringComparer.Ordinal);
+        if (!requested.ContainsKey("parentId")) properties.Add("parentId");
+        if (!requested.ContainsKey("role")) properties.Add("role");
+        if (!requested.ContainsKey("sortOrder")) properties.Add("sortOrder");
+        if (!requested.ContainsKey("isSubscribed")) properties.Add("isSubscribed");
+
+        if (requested["name"] is JsonValue requestedNameNode
+            && requestedNameNode.TryGetValue<string>(out var requestedName)
+            && !string.Equals(requestedName, name, StringComparison.Ordinal))
+        {
+            properties.Add("name");
+        }
+
+        if (requested["parentId"] is JsonValue requestedParentNode
+            && requestedParentNode.TryGetValue<string>(out var requestedParent)
+            && !string.Equals(
+                requestedParent,
+                parentId is null ? null : JmapId.Mailbox(parentId.Value),
+                StringComparison.Ordinal))
+        {
+            properties.Add("parentId");
+        }
+
+        return JmapMailboxJson.Build(
+            new JmapMailboxView(
+                id,
+                name,
+                name,
+                parentId,
+                role,
+                sortOrder,
+                isSubscribed,
+                0,
+                0,
+                0,
+                0),
+            properties);
+    }
 
     private sealed record MailboxUpdatePlan(
         string Name,

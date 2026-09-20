@@ -573,6 +573,48 @@ public sealed class JmapCoreTests
         }
     }
 
+    [TestMethod]
+    public async Task VacationMethodsEnforceAdvertisedObjectLimits()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var excessiveCount = fixture.Configuration.Jmap.MaxObjectsInGet + 1;
+        var ids = new JsonArray(
+            Enumerable.Range(0, excessiveCount)
+                .Select(index => JsonValue.Create($"id-{index}"))
+                .ToArray());
+        var create = new JsonObject();
+        foreach (var index in Enumerable.Range(0, fixture.Configuration.Jmap.MaxObjectsInSet + 1))
+            create[$"create-{index}"] = new JsonObject();
+
+        var response = await fixture.InvokeAsync(new JsonObject
+        {
+            ["using"] = new JsonArray(
+                JmapConstants.CoreCapability,
+                JmapConstants.VacationResponseCapability),
+            ["methodCalls"] = new JsonArray(
+                new JsonArray(
+                    "VacationResponse/get",
+                    new JsonObject
+                    {
+                        ["accountId"] = fixture.AccountId,
+                        ["ids"] = ids,
+                    },
+                    "g1"),
+                new JsonArray(
+                    "VacationResponse/set",
+                    new JsonObject
+                    {
+                        ["accountId"] = fixture.AccountId,
+                        ["create"] = create,
+                    },
+                    "s1")),
+        });
+
+        var methodResponses = response["methodResponses"]!.AsArray();
+        Assert.AreEqual("requestTooLarge", methodResponses[0]![1]!["type"]!.GetValue<string>());
+        Assert.AreEqual("requestTooLarge", methodResponses[1]![1]!["type"]!.GetValue<string>());
+    }
+
     private sealed class ImplicitResponseMethod : IJmapMethod
     {
         public string Name => "Test/implicit";

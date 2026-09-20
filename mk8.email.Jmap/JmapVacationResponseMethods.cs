@@ -152,7 +152,8 @@ internal sealed class JmapVacationResponseService(EmailDbContext database)
 internal sealed class VacationResponseGetMethod(
     JmapAccountService accounts,
     JmapVacationResponseService vacations,
-    JmapStateService states) : IJmapMethod
+    JmapStateService states,
+    EnvironmentConfig environment) : IJmapMethod
 {
     private static readonly IReadOnlySet<string> Properties = new HashSet<string>(
         ["id", "isEnabled", "fromDate", "toDate", "subject", "textBody", "htmlBody"],
@@ -174,6 +175,11 @@ internal sealed class VacationResponseGetMethod(
         var properties = requestedProperties?.ToHashSet(StringComparer.Ordinal);
         if (properties is not null && properties.Any(property => !Properties.Contains(property)))
             return JmapMethodResponse.Error("invalidArguments");
+        if (requestedIds is { Count: > 0 }
+            && requestedIds.Count > environment.Jmap.MaxObjectsInGet)
+        {
+            return JmapMethodResponse.Error("requestTooLarge");
+        }
         var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken);
         if (account is null) return JmapMethodResponse.Error("accountNotFound");
         var response = await vacations.GetOrCreateAsync(account.InboxId, cancellationToken);
@@ -233,6 +239,9 @@ internal sealed class VacationResponseSetMethod(
             || !JmapMethodHelpers.AreValidIdReferences(update?.Keys)
             || !JmapMethodHelpers.AreValidIdReferences(destroy))
             return JmapMethodResponse.Error("invalidArguments");
+        var operationCount = (create?.Count ?? 0) + (update?.Count ?? 0) + (destroy?.Count ?? 0);
+        if (operationCount > environment.Jmap.MaxObjectsInSet)
+            return JmapMethodResponse.Error("requestTooLarge");
         var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken);
         if (account is null) return JmapMethodResponse.Error("accountNotFound");
         var response = await vacations.GetOrCreateAsync(account.InboxId, cancellationToken);

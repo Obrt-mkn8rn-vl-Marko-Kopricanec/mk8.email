@@ -951,7 +951,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
             if (node is not JsonValue dateValue
                 || !dateValue.TryGetValue<string>(out var text)
                 || !JmapDate.TryParseDate(text, out var date)) return false;
-            value = date.ToString("r", CultureInfo.InvariantCulture);
+            value = DateUtils.FormatDate(date);
             return true;
         }
         if (form == "URLs")

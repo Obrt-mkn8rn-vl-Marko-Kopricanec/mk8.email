@@ -729,6 +729,46 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task EmailCreationPreservesParsedDateOffsets()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var create = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/set", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "create":{"dated":{
+              "mailboxIds":{"{{{fixture.DraftsMailboxId}}}":true},
+              "sentAt":"2026-01-02T03:04:05+02:30",
+              "header:Resent-Date:asDate":"2026-01-03T04:05:06-05:00",
+              "bodyValues":{"1":{"value":"body"}},
+              "textBody":[{"partId":"1", "type":"text/plain"}]
+            }}
+          }, "s1"]]
+        }
+        """);
+        var emailId = Arguments(create)["created"]!["dated"]!["id"]!.GetValue<string>();
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/get", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "ids":["{{{emailId}}}"],
+            "properties":["sentAt", "header:Resent-Date:asDate"]
+          }, "g1"]]
+        }
+        """);
+
+        var email = Arguments(response)["list"]![0]!;
+        Assert.AreEqual(
+            "2026-01-02T03:04:05+02:30",
+            email["sentAt"]!.GetValue<string>());
+        Assert.AreEqual(
+            "2026-01-03T04:05:06-05:00",
+            email["header:Resent-Date:asDate"]!.GetValue<string>());
+    }
+
+    [TestMethod]
     public async Task DeletingLegacyEmailWithNullThreadDestroysItsFallbackThread()
     {
         await using var fixture = await JmapFixture.CreateAsync();

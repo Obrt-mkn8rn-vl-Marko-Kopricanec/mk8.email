@@ -234,8 +234,8 @@ public sealed class VacationResponder(
             MessageId = MimeUtils.GenerateMessageId(environment.Smtp.Hostname),
             Subject = settings.Subject
                 ?? (string.IsNullOrWhiteSpace(original.Subject)
-                    ? "Automatic reply"
-                    : $"Re: {original.Subject}"),
+                    ? "Auto: Automatic reply"
+                    : $"Auto: {original.Subject}"),
         };
         response.From.Add(MailboxAddress.Parse(fromAddress));
         response.To.Add(recipient);
@@ -244,6 +244,13 @@ public sealed class VacationResponder(
         if (!string.IsNullOrWhiteSpace(original.MessageId))
         {
             response.InReplyTo = original.MessageId;
+            foreach (var reference in original.References)
+                response.References.Add(reference);
+            if (response.References.Count == 0
+                && !string.IsNullOrWhiteSpace(original.InReplyTo))
+            {
+                response.References.Add(original.InReplyTo);
+            }
             response.References.Add(original.MessageId);
         }
         var body = new BodyBuilder

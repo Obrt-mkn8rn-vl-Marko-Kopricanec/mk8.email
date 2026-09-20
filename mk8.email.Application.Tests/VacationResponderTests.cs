@@ -47,6 +47,7 @@ public sealed class VacationResponderTests
             "From: sender@example.net\r\n" +
             "To: another@example.org\r\n" +
             "Resent-Cc: Support <support@mk8n.com>\r\n" +
+            "References: <root@example.net> <ancestor@example.net>\r\n" +
             "Message-ID: <original@example.net>\r\n" +
             "Subject: alias check\r\n\r\n" +
             "body\r\n";
@@ -68,8 +69,38 @@ public sealed class VacationResponderTests
             new MemoryStream(Encoding.Latin1.GetBytes(submission.RawMessage)));
         Assert.AreEqual(AccountAddress, response.From.Mailboxes.Single().Address);
         Assert.AreEqual("auto-replied", response.Headers[HeaderId.AutoSubmitted]);
+        Assert.AreEqual("Auto: alias check", response.Subject);
         Assert.AreEqual("original@example.net", response.InReplyTo);
+        CollectionAssert.AreEqual(
+            new[] { "root@example.net", "ancestor@example.net", "original@example.net" },
+            response.References.ToArray());
         Assert.AreEqual(1, fixture.Database.JmapVacationReplies.Local.Count);
+    }
+
+    [TestMethod]
+    public async Task ResponseBuildsReferencesFromInReplyToWhenNoReferencesArePresent()
+    {
+        await using var fixture = await VacationFixture.CreateAsync(includeAlias: false);
+        var rawMessage =
+            "From: sender@example.net\r\n" +
+            "To: admin@mk8n.com\r\n" +
+            "In-Reply-To: <root@example.net>\r\n" +
+            "Message-ID: <original@example.net>\r\n" +
+            "Subject: thread check\r\n\r\n" +
+            "body\r\n";
+
+        Assert.IsTrue(await fixture.Responder.QueueResponseAsync(
+            SenderAddress,
+            AccountAddress,
+            rawMessage,
+            DefaultFolders.Inbox,
+            Guid.CreateVersion7()));
+
+        using var response = MimeMessage.Load(new MemoryStream(
+            Encoding.Latin1.GetBytes(fixture.Queue.Submission!.RawMessage)));
+        CollectionAssert.AreEqual(
+            new[] { "root@example.net", "original@example.net" },
+            response.References.ToArray());
     }
 
     private sealed class VacationFixture(

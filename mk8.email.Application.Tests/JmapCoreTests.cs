@@ -568,6 +568,66 @@ public sealed class JmapCoreTests
     }
 
     [TestMethod]
+    public async Task ChangesRequirePositiveLimitButQueryChangesAcceptsZero()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var response = await fixture.InvokeAsync(
+            $$$$"""
+            {
+              "using":[
+                "urn:ietf:params:jmap:core",
+                "urn:ietf:params:jmap:mail",
+                "urn:ietf:params:jmap:submission"
+              ],
+              "methodCalls":[
+                ["Mailbox/get",{"accountId":"{{{{fixture.AccountId}}}}","ids":[]},"g1"],
+                ["Mailbox/changes",{
+                  "accountId":"{{{{fixture.AccountId}}}}",
+                  "#sinceState":{"resultOf":"g1","name":"Mailbox/get","path":"/state"},
+                  "maxChanges":0
+                },"c1"],
+                ["Mailbox/query",{"accountId":"{{{{fixture.AccountId}}}}"},"q1"],
+                ["Mailbox/queryChanges",{
+                  "accountId":"{{{{fixture.AccountId}}}}",
+                  "#sinceQueryState":{"resultOf":"q1","name":"Mailbox/query","path":"/queryState"},
+                  "maxChanges":0
+                },"qc1"],
+                ["Email/query",{"accountId":"{{{{fixture.AccountId}}}}"},"q2"],
+                ["Email/queryChanges",{
+                  "accountId":"{{{{fixture.AccountId}}}}",
+                  "#sinceQueryState":{"resultOf":"q2","name":"Email/query","path":"/queryState"},
+                  "maxChanges":0
+                },"qc2"],
+                ["EmailSubmission/query",{"accountId":"{{{{fixture.AccountId}}}}"},"q3"],
+                ["EmailSubmission/queryChanges",{
+                  "accountId":"{{{{fixture.AccountId}}}}",
+                  "#sinceQueryState":{
+                    "resultOf":"q3",
+                    "name":"EmailSubmission/query",
+                    "path":"/queryState"
+                  },
+                  "maxChanges":0
+                },"qc3"]
+              ]
+            }
+            """);
+
+        var methodResponses = response["methodResponses"]!.AsArray();
+        Assert.AreEqual("error", methodResponses[1]![0]!.GetValue<string>());
+        Assert.AreEqual(
+            "invalidArguments",
+            methodResponses[1]![1]!["type"]!.GetValue<string>());
+        Assert.AreEqual("Mailbox/queryChanges", methodResponses[3]![0]!.GetValue<string>());
+        Assert.AreEqual(0, methodResponses[3]![1]!["added"]!.AsArray().Count);
+        Assert.AreEqual("Email/queryChanges", methodResponses[5]![0]!.GetValue<string>());
+        Assert.AreEqual(0, methodResponses[5]![1]!["added"]!.AsArray().Count);
+        Assert.AreEqual(
+            "EmailSubmission/queryChanges",
+            methodResponses[7]![0]!.GetValue<string>());
+        Assert.AreEqual(0, methodResponses[7]![1]!["added"]!.AsArray().Count);
+    }
+
+    [TestMethod]
     public async Task TypedIdArgumentsRejectValuesOutsideTheIdAlphabet()
     {
         await using var fixture = await JmapFixture.CreateAsync();

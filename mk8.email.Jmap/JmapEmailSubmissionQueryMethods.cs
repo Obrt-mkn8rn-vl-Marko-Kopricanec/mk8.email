@@ -302,7 +302,6 @@ internal sealed class EmailSubmissionQueryChangesMethod(
             || !JmapMethodHelpers.TryGetRequiredString(arguments, "accountId", out var accountId)
             || !JmapMethodHelpers.TryGetRequiredString(arguments, "sinceQueryState", out var sinceState)
             || !JmapMethodHelpers.TryGetOptionalUnsignedInt(arguments, "maxChanges", out var maxChanges)
-            || maxChanges == 0
             || !JmapMethodHelpers.TryGetOptionalId(arguments, "upToId", context, out _)
             || !JmapMethodHelpers.TryGetOptionalBoolean(arguments, "calculateTotal", false, out var calculateTotal))
             return JmapMethodResponse.Error("invalidArguments");

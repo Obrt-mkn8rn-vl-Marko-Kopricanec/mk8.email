@@ -641,13 +641,13 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
         {
             "Content-Type",
         };
-        if (name is not null || disposition is not null)
+        if (source.ContainsKey("name") || source.ContainsKey("disposition"))
             representedHeaders.Add("Content-Disposition");
-        if (contentId is not null)
+        if (source.ContainsKey("cid"))
             representedHeaders.Add("Content-ID");
         if (source.ContainsKey("language"))
             representedHeaders.Add("Content-Language");
-        if (location is not null)
+        if (source.ContainsKey("location"))
             representedHeaders.Add("Content-Location");
 
         if (name is not null && entity is MimePart mimePart)

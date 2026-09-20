@@ -949,6 +949,14 @@ public sealed class JmapProtocolTests
                 "bodyValues":{"1":{"value":"body"}},
                 "textBody":[{"partId":"1", "type":"text/plain"}]
               },
+              "duplicateNullPartHeader": {
+                "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true},
+                "bodyValues":{"1":{"value":"body"}},
+                "bodyStructure":{
+                  "partId":"1", "type":"text/plain", "cid":null,
+                  "header:Content-ID":" <part@example.test>"
+                }
+              },
               "allMissingBlobs": {
                 "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true},
                 "attachments":[
@@ -983,6 +991,7 @@ public sealed class JmapProtocolTests
         Assert.AreEqual("invalidProperties", failures["invalidParsedHeader"]!["type"]!.GetValue<string>());
         Assert.AreEqual("invalidProperties", failures["missingGroupedAddresses"]!["type"]!.GetValue<string>());
         Assert.AreEqual("invalidProperties", failures["nullGroupedAddresses"]!["type"]!.GetValue<string>());
+        Assert.AreEqual("invalidProperties", failures["duplicateNullPartHeader"]!["type"]!.GetValue<string>());
         Assert.AreEqual("blobNotFound", failures["allMissingBlobs"]!["type"]!.GetValue<string>());
         CollectionAssert.AreEquivalent(
             new[] { missingOne, missingTwo },

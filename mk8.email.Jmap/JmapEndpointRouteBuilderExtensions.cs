@@ -35,12 +35,9 @@ public static class JmapEndpointRouteBuilderExtensions
         }
         if (!TryEventTypes(context.Request.Query["types"].ToString(), out var types)
             || context.Request.Query["closeafter"].ToString() is not ("state" or "no")
-            || !int.TryParse(
+            || !TryNormalizeEventSourcePing(
                 context.Request.Query["ping"].ToString(),
-                System.Globalization.NumberStyles.None,
-                System.Globalization.CultureInfo.InvariantCulture,
-                out var requestedPing)
-            || requestedPing < 0)
+                out var ping))
         {
             context.Response.StatusCode = StatusCodes.Status400BadRequest;
             context.Response.ContentType = "application/problem+json";
@@ -54,7 +51,6 @@ public static class JmapEndpointRouteBuilderExtensions
         }
 
         var closeAfterState = context.Request.Query["closeafter"] == "state";
-        var ping = requestedPing == 0 ? 0 : Math.Clamp(requestedPing, 15, 300);
         var lastEventId = context.Request.Headers["Last-Event-ID"].ToString();
         long cursor;
         if (string.IsNullOrEmpty(lastEventId))
@@ -123,6 +119,25 @@ public static class JmapEndpointRouteBuilderExtensions
                 return false;
         }
         types = result;
+        return true;
+    }
+
+    internal static bool TryNormalizeEventSourcePing(string value, out int ping)
+    {
+        ping = 0;
+        if (value.Length == 0)
+            return false;
+
+        foreach (var character in value)
+        {
+            var digit = character - '0';
+            if ((uint)digit > 9)
+                return false;
+            if (ping <= 300)
+                ping = (ping * 10) + digit;
+        }
+
+        ping = ping == 0 ? 0 : Math.Clamp(ping, 15, 300);
         return true;
     }
 

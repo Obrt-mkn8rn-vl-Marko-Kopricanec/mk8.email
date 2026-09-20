@@ -261,6 +261,34 @@ public sealed class JmapCoreTests
     }
 
     [TestMethod]
+    public void EventSourcePingAcceptsUnsignedIntervalsAndClampsSafely()
+    {
+        foreach (var (value, expected) in new (string Value, int Expected)[]
+        {
+            ("0", 0),
+            ("000", 0),
+            ("1", 15),
+            ("30", 30),
+            ("300", 300),
+            ("2147483648", 300),
+            (new string('9', 100), 300),
+        })
+        {
+            Assert.IsTrue(
+                JmapEndpointRouteBuilderExtensions.TryNormalizeEventSourcePing(value, out var actual),
+                value);
+            Assert.AreEqual(expected, actual, value);
+        }
+
+        foreach (var invalid in new[] { "", "-1", "+1", " 1", "1 ", "1.0", "1e2", "١" })
+        {
+            Assert.IsFalse(
+                JmapEndpointRouteBuilderExtensions.TryNormalizeEventSourcePing(invalid, out _),
+                invalid);
+        }
+    }
+
+    [TestMethod]
     public void EmailBodyMediaTypesUseRfc6838RestrictedNames()
     {
         Assert.IsTrue(JmapMediaType.TryNormalize(

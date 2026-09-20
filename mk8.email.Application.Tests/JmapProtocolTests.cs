@@ -1348,6 +1348,59 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task SearchIncludesTextInsideAttachedMessages()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var raw = Encoding.UTF8.GetBytes(
+            $"From: sender@example.net\r\nTo: {fixture.User.Username}\r\n"
+            + "Subject: Attached message search\r\n"
+            + "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=parts\r\n\r\n"
+            + "--parts\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nOuter text\r\n"
+            + "--parts\r\nContent-Type: message/rfc822\r\n"
+            + "Content-Disposition: attachment; filename=nested.eml\r\n\r\n"
+            + "From: nested@example.net\r\n"
+            + $"To: {fixture.User.Username}\r\n"
+            + "Subject: Nested subject\r\n"
+            + "Content-Type: text/plain; charset=utf-8\r\n\r\n"
+            + "Attached searchable needle\r\n"
+            + "--parts--\r\n");
+        var blobId = await fixture.StoreBlobAsync(raw);
+        var import = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/import", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "emails":{"attached":{"blobId":"{{{blobId}}}",
+              "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true} } }
+          }, "i1"]]
+        }
+        """);
+        var emailId = Arguments(import)["created"]!["attached"]!["id"]!.GetValue<string>();
+
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [
+            ["Email/query", {
+              "accountId":"{{{fixture.AccountId}}}",
+              "filter":{"body":"attached searchable needle"}
+            }, "q1"],
+            ["SearchSnippet/get", {
+              "accountId":"{{{fixture.AccountId}}}",
+              "filter":{"body":"attached searchable needle"},
+              "emailIds":["{{{emailId}}}"]
+            }, "ss1"]
+          ]
+        }
+        """);
+
+        Assert.AreEqual(emailId, Arguments(response)["ids"]![0]!.GetValue<string>());
+        StringAssert.Contains(
+            Arguments(response, 1)["list"]![0]!["preview"]!.GetValue<string>(),
+            "<mark>Attached</mark> <mark>searchable</mark> <mark>needle</mark>");
+    }
+
+    [TestMethod]
     public async Task SearchSnippetPreservesPlainTextHtmlEntities()
     {
         await using var fixture = await JmapFixture.CreateAsync();

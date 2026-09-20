@@ -363,16 +363,65 @@ internal static partial class JmapEmailCodec
             !string.Equals(part.Disposition, "inline", StringComparison.OrdinalIgnoreCase));
     }
 
-    internal static string SearchableBodyText(MimeMessage message) => string.Join(
-        '\n',
-        Flatten(BuildParts(message.Body, Guid.Empty, blobPartPrefix: null))
-            .Where(part => part.PartId is not null
-                && part.Type.StartsWith("text/", StringComparison.Ordinal))
-            .Select(part =>
+    internal static string SearchableBodyText(MimeMessage message)
+    {
+        var text = new List<string>();
+        var pending = new Queue<(MimeMessage Message, bool IsAttached)>();
+        var visited = new HashSet<MimeMessage>(ReferenceEqualityComparer.Instance);
+        pending.Enqueue((message, false));
+        while (pending.TryDequeue(out var current))
+        {
+            if (!visited.Add(current.Message))
+                continue;
+            if (current.IsAttached)
             {
-                var value = DecodeText(part).Text;
-                return part.Type == "text/html" ? JmapHtmlText.Extract(value) : value;
-            }));
+                text.AddRange(
+                [
+                    current.Message.From.ToString(),
+                    current.Message.To.ToString(),
+                    current.Message.Cc.ToString(),
+                    current.Message.Bcc.ToString(),
+                    current.Message.Subject ?? string.Empty,
+                ]);
+            }
+
+            foreach (var part in Flatten(BuildParts(
+                         current.Message.Body,
+                         Guid.Empty,
+                         blobPartPrefix: null)))
+            {
+                if (part.PartId is not null
+                    && part.Type.StartsWith("text/", StringComparison.Ordinal))
+                {
+                    var value = DecodeText(part).Text;
+                    text.Add(part.Type == "text/html" ? JmapHtmlText.Extract(value) : value);
+                }
+            }
+            foreach (var nested in NestedMessages(current.Message.Body))
+                pending.Enqueue((nested, true));
+        }
+        return string.Join('\n', text);
+    }
+
+    private static IEnumerable<MimeMessage> NestedMessages(MimeEntity? root)
+    {
+        if (root is null)
+            yield break;
+        var pending = new Stack<MimeEntity>();
+        pending.Push(root);
+        while (pending.TryPop(out var entity))
+        {
+            if (entity is MessagePart { Message: not null } messagePart)
+            {
+                yield return messagePart.Message;
+                continue;
+            }
+            if (entity is not Multipart multipart)
+                continue;
+            for (var index = multipart.Count - 1; index >= 0; index--)
+                pending.Push(multipart[index]);
+        }
+    }
 
     private static PartDescriptor? BuildParts(
         MimeEntity? entity,

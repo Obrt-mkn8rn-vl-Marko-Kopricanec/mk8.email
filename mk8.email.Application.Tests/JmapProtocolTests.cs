@@ -1106,6 +1106,44 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task SearchSnippetPreservesPlainTextHtmlEntities()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var raw = Encoding.UTF8.GetBytes(
+            $"From: sender@example.net\r\nTo: {fixture.User.Username}\r\n"
+            + "Date: Sun, 20 Sep 2026 10:00:00 +0000\r\n"
+            + "Subject: Plain text entities\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n"
+            + "Literal entity &lt;value&gt;");
+        var blobId = await fixture.StoreBlobAsync(raw);
+        var import = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/import", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "emails":{"plain":{"blobId":"{{{blobId}}}",
+              "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true} } }
+          }, "i1"]]
+        }
+        """);
+        var emailId = Arguments(import)["created"]!["plain"]!["id"]!.GetValue<string>();
+
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["SearchSnippet/get", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "filter":{"body":"Literal"},
+            "emailIds":["{{{emailId}}}"]
+          }, "ss1"]]
+        }
+        """);
+
+        Assert.AreEqual(
+            "<mark>Literal</mark> entity &amp;lt;value&amp;gt;",
+            Arguments(response)["list"]![0]!["preview"]!.GetValue<string>());
+    }
+
+    [TestMethod]
     public async Task MimeProjectionPreservesNestedStructureAndResolvablePartBlobs()
     {
         await using var fixture = await JmapFixture.CreateAsync();

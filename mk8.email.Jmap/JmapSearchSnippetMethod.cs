@@ -118,7 +118,7 @@ internal static partial class JmapSearchSnippetFormatter
         var value = message.TextBody;
         if (string.IsNullOrWhiteSpace(value))
             return JmapHtmlText.Extract(message.HtmlBody);
-        return WebUtility.HtmlDecode(value);
+        return value;
     }
 
     private static bool ContainsAny(string value, IEnumerable<string> terms) =>

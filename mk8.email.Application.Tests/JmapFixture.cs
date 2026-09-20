@@ -129,9 +129,14 @@ internal sealed class JmapFixture : IAsyncDisposable
 
     public async Task<JsonObject> InvokeAsync(string requestJson)
     {
+        return await InvokeAsync(JsonNode.Parse(requestJson));
+    }
+
+    public async Task<JsonObject> InvokeAsync(JsonNode? request)
+    {
         using var scope = Services.CreateScope();
         var processor = scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>();
-        return await processor.ProcessAsync(JsonNode.Parse(requestJson), User);
+        return await processor.ProcessAsync(request, User);
     }
 
     public async Task<string> StoreBlobAsync(byte[] content, string contentType = "message/rfc822")

@@ -107,6 +107,103 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task MailboxSetUsesFinalStateForSwapsAndAcceptsGetObjects()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var create = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Mailbox/set", {
+            "accountId": "{{{fixture.AccountId}}}",
+            "create": {
+              "alpha": {"name":"Alpha", "role":"flagged", "sortOrder":10},
+              "beta": {"name":"Beta", "role":"important", "sortOrder":20}
+            }
+          }, "m1"]]
+        }
+        """);
+        var created = Arguments(create)["created"]!.AsObject();
+        var alphaId = created["alpha"]!["id"]!.GetValue<string>();
+        var betaId = created["beta"]!["id"]!.GetValue<string>();
+
+        var get = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Mailbox/get", {
+            "accountId": "{{{fixture.AccountId}}}",
+            "ids": ["{{{alphaId}}}", "{{{betaId}}}"]
+          }, "g1"]]
+        }
+        """);
+        var mailboxes = Arguments(get)["list"]!.AsArray()
+            .Select(node => node!.AsObject())
+            .ToDictionary(mailbox => mailbox["id"]!.GetValue<string>(), StringComparer.Ordinal);
+
+        var alphaRoundTrip = (JsonObject)mailboxes[alphaId].DeepClone();
+        alphaRoundTrip["sortOrder"] = 11;
+        var roundTripUpdate = await fixture.InvokeAsync(new JsonObject
+        {
+            ["using"] = new JsonArray(Core, Mail),
+            ["methodCalls"] = new JsonArray(new JsonArray(
+                "Mailbox/set",
+                new JsonObject
+                {
+                    ["accountId"] = fixture.AccountId,
+                    ["update"] = new JsonObject { [alphaId] = alphaRoundTrip },
+                },
+                "m2")),
+        });
+        Assert.IsNull(Arguments(roundTripUpdate)["notUpdated"]);
+        Assert.IsTrue(Arguments(roundTripUpdate)["updated"]!.AsObject().ContainsKey(alphaId));
+
+        var alphaSwap = (JsonObject)mailboxes[alphaId].DeepClone();
+        alphaSwap["name"] = "Beta";
+        alphaSwap["role"] = "important";
+        alphaSwap["sortOrder"] = 11;
+        var betaSwap = (JsonObject)mailboxes[betaId].DeepClone();
+        betaSwap["name"] = "Alpha";
+        betaSwap["role"] = "flagged";
+        var swap = await fixture.InvokeAsync(new JsonObject
+        {
+            ["using"] = new JsonArray(Core, Mail),
+            ["methodCalls"] = new JsonArray(new JsonArray(
+                "Mailbox/set",
+                new JsonObject
+                {
+                    ["accountId"] = fixture.AccountId,
+                    ["update"] = new JsonObject
+                    {
+                        [alphaId] = alphaSwap,
+                        [betaId] = betaSwap,
+                    },
+                },
+                "m3")),
+        });
+        Assert.IsNull(Arguments(swap)["notUpdated"]);
+        CollectionAssert.AreEquivalent(
+            new[] { alphaId, betaId },
+            Arguments(swap)["updated"]!.AsObject().Select(item => item.Key).ToArray());
+
+        var verify = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Mailbox/get", {
+            "accountId": "{{{fixture.AccountId}}}",
+            "ids": ["{{{alphaId}}}", "{{{betaId}}}"]
+          }, "g2"]]
+        }
+        """);
+        var swapped = Arguments(verify)["list"]!.AsArray()
+            .Select(node => node!.AsObject())
+            .ToDictionary(mailbox => mailbox["id"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("Beta", swapped[alphaId]["name"]!.GetValue<string>());
+        Assert.AreEqual("important", swapped[alphaId]["role"]!.GetValue<string>());
+        Assert.AreEqual(11, swapped[alphaId]["sortOrder"]!.GetValue<int>());
+        Assert.AreEqual("Alpha", swapped[betaId]["name"]!.GetValue<string>());
+        Assert.AreEqual("flagged", swapped[betaId]["role"]!.GetValue<string>());
+    }
+
+    [TestMethod]
     public async Task ImportedEmailPreservesExactRawOctets()
     {
         await using var fixture = await JmapFixture.CreateAsync();

@@ -10,6 +10,7 @@ namespace mk8.email.Jmap;
 internal sealed class MailboxSetMethod(
     EmailDbContext database,
     JmapAccountService accounts,
+    JmapMailboxStore mailboxes,
     JmapStateService states,
     EnvironmentConfig environment) : IJmapMethod
 {
@@ -138,25 +139,34 @@ internal sealed class MailboxSetMethod(
 
         if (update is not null)
         {
-            foreach (var item in update)
+            var appliedAsBatch = await TryApplyUpdatesAsBatchAsync(
+                account.InboxId,
+                context,
+                update,
+                updated,
+                cancellationToken);
+            if (!appliedAsBatch)
             {
-                var resolvedId = context.ResolveId(item.Key);
-                if (!JmapId.TryParseMailbox(resolvedId, out var folderId))
+                foreach (var item in update)
                 {
-                    notUpdated[item.Key] = JmapMethodHelpers.SetError("notFound");
-                    continue;
-                }
+                    var resolvedId = context.ResolveId(item.Key);
+                    if (!JmapId.TryParseMailbox(resolvedId, out var folderId))
+                    {
+                        notUpdated[item.Key] = JmapMethodHelpers.SetError("notFound");
+                        continue;
+                    }
 
-                var error = await UpdateAsync(
-                    account.InboxId,
-                    folderId,
-                    context,
-                    item.Value,
-                    cancellationToken);
-                if (error is null)
-                    updated[resolvedId!] = null;
-                else
-                    notUpdated[item.Key] = error;
+                    var error = await UpdateAsync(
+                        account.InboxId,
+                        folderId,
+                        context,
+                        item.Value,
+                        cancellationToken);
+                    if (error is null)
+                        updated[resolvedId!] = null;
+                    else
+                        notUpdated[item.Key] = error;
+                }
             }
         }
 
@@ -308,13 +318,6 @@ internal sealed class MailboxSetMethod(
         if (folder is null)
             return JmapMethodHelpers.SetError("notFound");
 
-        var invalidProperties = patch.KeysForPatch()
-            .Where(property => !MutableProperties.Contains(property))
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
-        if (invalidProperties.Length > 0)
-            return JmapMethodHelpers.SetError("invalidProperties", properties: invalidProperties);
-
         var parentName = JmapMailboxStore.ParentName(folder.Name);
         var currentParent = parentName is null
             ? null
@@ -322,16 +325,18 @@ internal sealed class MailboxSetMethod(
                 candidate.Name,
                 parentName,
                 StringComparison.OrdinalIgnoreCase));
-        var current = new JsonObject
-        {
-            ["name"] = JmapMailboxStore.LeafName(folder.Name),
-            ["parentId"] = currentParent is null ? null : JmapId.Mailbox(currentParent.Id),
-            ["role"] = folder.JmapRole ?? JmapMailboxStore.InferRole(folder.Name),
-            ["sortOrder"] = folder.SortOrder,
-            ["isSubscribed"] = folder.IsSubscribed,
-        };
-        if (!JmapMethodHelpers.TryApplyPatch(current, patch, out var updated))
+        var currentView = (await mailboxes.LoadAsync(accountId, cancellationToken))
+            .Single(candidate => candidate.Id == folderId);
+        var current = JmapMailboxJson.Build(currentView);
+        if (!JmapMethodHelpers.TryApplyPatchAllowingUnchangedProperties(
+                current,
+                patch,
+                MutableProperties,
+                out var updated,
+                out var invalidProperties))
             return JmapMethodHelpers.SetError("invalidPatch");
+        if (invalidProperties.Count > 0)
+            return JmapMethodHelpers.SetError("invalidProperties", properties: invalidProperties);
         if (!TryParseName(updated, true, out var name)
             || !TryParseParentId(updated, context, out var parentId)
             || !TryParseRole(updated, out var role)
@@ -400,6 +405,210 @@ internal sealed class MailboxSetMethod(
         folder.IsSubscribed = isSubscribed;
         await database.SaveChangesAsync(cancellationToken);
         return null;
+    }
+
+    private async Task<bool> TryApplyUpdatesAsBatchAsync(
+        Guid accountId,
+        JmapInvocationContext context,
+        IReadOnlyDictionary<string, JsonObject> updates,
+        JsonObject updatedResponse,
+        CancellationToken cancellationToken)
+    {
+        if (updates.Count < 2)
+            return false;
+
+        var views = await mailboxes.LoadAsync(accountId, cancellationToken);
+        var viewsById = views.ToDictionary(view => view.Id);
+        var folders = await database.Folders
+            .Where(folder => folder.InboxId == accountId)
+            .ToListAsync(cancellationToken);
+        var foldersById = folders.ToDictionary(folder => folder.Id);
+        var plans = new Dictionary<Guid, MailboxUpdatePlan>();
+        var responseIds = new List<string>(updates.Count);
+
+        foreach (var item in updates)
+        {
+            var resolvedId = context.ResolveId(item.Key);
+            if (!JmapId.TryParseMailbox(resolvedId, out var folderId)
+                || !viewsById.TryGetValue(folderId, out var view)
+                || plans.ContainsKey(folderId))
+            {
+                return false;
+            }
+
+            var current = JmapMailboxJson.Build(view);
+            if (!JmapMethodHelpers.TryApplyPatchAllowingUnchangedProperties(
+                    current,
+                    item.Value,
+                    MutableProperties,
+                    out var revised,
+                    out var invalidProperties)
+                || invalidProperties.Count > 0
+                || !TryParseName(revised, true, out var name)
+                || !TryParseParentId(revised, context, out var parentId)
+                || !TryParseRole(revised, out var role)
+                || !TryParseSortOrder(revised, out var sortOrder)
+                || !JmapMethodHelpers.TryGetOptionalBoolean(
+                    revised,
+                    "isSubscribed",
+                    true,
+                    out var isSubscribed))
+            {
+                return false;
+            }
+
+            var hierarchyChanged = !string.Equals(name, view.Name, StringComparison.Ordinal)
+                || parentId != view.ParentId;
+            if (view.IsProtected
+                && (hierarchyChanged || !string.Equals(role, view.Role, StringComparison.Ordinal)))
+            {
+                return false;
+            }
+
+            plans[folderId] = new MailboxUpdatePlan(
+                name,
+                parentId,
+                role,
+                sortOrder,
+                isSubscribed);
+            responseIds.Add(resolvedId!);
+        }
+
+        var nodes = views.ToDictionary(
+            view => view.Id,
+            view => plans.TryGetValue(view.Id, out var plan)
+                ? new MailboxNode(
+                    view.Id,
+                    plan.Name,
+                    plan.ParentId,
+                    plan.Role,
+                    plan.SortOrder,
+                    plan.IsSubscribed)
+                : new MailboxNode(
+                    view.Id,
+                    view.Name,
+                    view.ParentId,
+                    view.Role,
+                    view.SortOrder,
+                    view.IsSubscribed));
+        if (nodes.Values.Any(node => node.ParentId is not null && !nodes.ContainsKey(node.ParentId.Value)))
+            return false;
+
+        var finalNames = new Dictionary<Guid, string>();
+        var visiting = new HashSet<Guid>();
+        foreach (var node in nodes.Values)
+        {
+            if (!TryBuildFullName(node.Id, nodes, finalNames, visiting, out _))
+                return false;
+        }
+        if (finalNames.Values.Any(name => !IsValidFullName(name))
+            || nodes.Values
+                .GroupBy(node => node.ParentId)
+                .Any(group => group.Select(node => node.Name)
+                    .Distinct(StringComparer.OrdinalIgnoreCase).Count() != group.Count())
+            || nodes.Values.Where(node => node.Role is not null)
+                .GroupBy(node => node.Role, StringComparer.Ordinal)
+                .Any(group => group.Count() > 1))
+        {
+            return false;
+        }
+
+        var changedNames = folders
+            .Where(folder => !string.Equals(
+                folder.Name,
+                finalNames[folder.Id],
+                StringComparison.Ordinal))
+            .ToArray();
+        var changedRoles = plans
+            .Where(item => !string.Equals(
+                foldersById[item.Key].JmapRole,
+                item.Value.Role,
+                StringComparison.Ordinal))
+            .Select(item => foldersById[item.Key])
+            .ToArray();
+
+        Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? transaction = null;
+        try
+        {
+            if (database.Database.IsRelational())
+            {
+                transaction = await database.Database.BeginTransactionAsync(cancellationToken);
+                foreach (var folder in changedNames)
+                {
+                    var temporaryName = $"__jmap_tmp_{folder.Id:N}";
+                    await database.Database.ExecuteSqlInterpolatedAsync(
+                        $"UPDATE folders SET name = {temporaryName} WHERE id = {folder.Id} AND inbox_id = {accountId}",
+                        cancellationToken);
+                }
+                foreach (var folder in changedRoles)
+                {
+                    await database.Database.ExecuteSqlInterpolatedAsync(
+                        $"UPDATE folders SET jmap_role = NULL WHERE id = {folder.Id} AND inbox_id = {accountId}",
+                        cancellationToken);
+                }
+            }
+
+            foreach (var folder in folders)
+                folder.Name = finalNames[folder.Id];
+            foreach (var plan in plans)
+            {
+                var folder = foldersById[plan.Key];
+                folder.JmapRole = plan.Value.Role;
+                folder.SortOrder = plan.Value.SortOrder;
+                folder.IsSubscribed = plan.Value.IsSubscribed;
+            }
+            await database.SaveChangesAsync(cancellationToken);
+            if (transaction is not null)
+                await transaction.CommitAsync(cancellationToken);
+        }
+        finally
+        {
+            if (transaction is not null)
+                await transaction.DisposeAsync();
+        }
+
+        foreach (var responseId in responseIds)
+            updatedResponse[responseId] = null;
+        return true;
+    }
+
+    private static bool TryBuildFullName(
+        Guid id,
+        IReadOnlyDictionary<Guid, MailboxNode> nodes,
+        IDictionary<Guid, string> names,
+        ISet<Guid> visiting,
+        out string fullName)
+    {
+        if (names.TryGetValue(id, out fullName!))
+            return true;
+        if (!visiting.Add(id))
+        {
+            fullName = string.Empty;
+            return false;
+        }
+
+        var node = nodes[id];
+        if (node.ParentId is null)
+        {
+            fullName = node.Name;
+        }
+        else if (!TryBuildFullName(
+                     node.ParentId.Value,
+                     nodes,
+                     names,
+                     visiting,
+                     out var parentName))
+        {
+            fullName = string.Empty;
+            return false;
+        }
+        else
+        {
+            fullName = $"{parentName}/{node.Name}";
+        }
+        visiting.Remove(id);
+        names[id] = fullName;
+        return true;
     }
 
     private async Task<JsonObject?> DestroyAsync(
@@ -588,6 +797,21 @@ internal sealed class MailboxSetMethod(
 
     private static bool IsProtectedRole(string? role) =>
         role is "inbox" or "sent" or "drafts" or "trash" or "junk";
+
+    private sealed record MailboxUpdatePlan(
+        string Name,
+        Guid? ParentId,
+        string? Role,
+        int SortOrder,
+        bool IsSubscribed);
+
+    private sealed record MailboxNode(
+        Guid Id,
+        string Name,
+        Guid? ParentId,
+        string? Role,
+        int SortOrder,
+        bool IsSubscribed);
 
     private sealed record CreateResult(FolderDB? Folder, Guid? ParentId, JsonObject? Error)
     {

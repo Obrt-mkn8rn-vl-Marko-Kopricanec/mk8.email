@@ -202,6 +202,33 @@ internal static class JmapMethodHelpers
         return true;
     }
 
+    public static bool TryApplyPatchAllowingUnchangedProperties(
+        JsonObject source,
+        JsonObject patch,
+        IReadOnlySet<string> mutableProperties,
+        out JsonObject result,
+        out IReadOnlyList<string> invalidProperties)
+    {
+        invalidProperties = [];
+        if (!TryApplyPatch(source, patch, out result))
+            return false;
+
+        var invalid = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var property in patch.KeysForPatch())
+        {
+            if (mutableProperties.Contains(property))
+                continue;
+            if (!source.TryGetPropertyValue(property, out var original)
+                || !result.TryGetPropertyValue(property, out var revised)
+                || !JsonNode.DeepEquals(original, revised))
+            {
+                invalid.Add(property);
+            }
+        }
+        invalidProperties = invalid.Order(StringComparer.Ordinal).ToArray();
+        return true;
+    }
+
     private static bool TryParsePatchPath(string value, out IReadOnlyList<string> path)
     {
         path = [];

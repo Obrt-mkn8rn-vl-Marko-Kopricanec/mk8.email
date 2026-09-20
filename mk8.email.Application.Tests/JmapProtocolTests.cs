@@ -906,6 +906,59 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task EmailCreationPreservesRawHeadersAndRejectsHeaderInjection()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/set", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "create":{
+              "raw":{
+                "mailboxIds":{"{{{fixture.DraftsMailboxId}}}":true},
+                "header:X-Raw:all":[
+                  " \t=?UTF-8?Q?already_encoded?=\r\n\tcontinued",
+                  "second"
+                ],
+                "bodyValues":{"1":{"value":"body"}},
+                "textBody":[{"partId":"1", "type":"text/plain"}]
+              },
+              "injection":{
+                "mailboxIds":{"{{{fixture.DraftsMailboxId}}}":true},
+                "header:X-Raw":" value\r\nBcc: injected@example.test",
+                "bodyValues":{"1":{"value":"body"}},
+                "textBody":[{"partId":"1", "type":"text/plain"}]
+              }
+            }
+          }, "s1"]]
+        }
+        """);
+
+        var rawId = Arguments(response)["created"]!["raw"]!["id"]!.GetValue<string>();
+        Assert.AreEqual(
+            "invalidProperties",
+            Arguments(response)["notCreated"]!["injection"]!["type"]!.GetValue<string>());
+
+        var get = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/get", {
+            "accountId":"{{{fixture.AccountId}}}", "ids":["{{{rawId}}}"],
+            "properties":["header:X-Raw", "header:X-Raw:all"]
+          }, "g1"]]
+        }
+        """);
+        var email = Arguments(get)["list"]![0]!;
+        Assert.AreEqual("second", email["header:X-Raw"]!.GetValue<string>());
+        CollectionAssert.AreEqual(
+            new[] { " \t=?UTF-8?Q?already_encoded?=\r\n\tcontinued", "second" },
+            email["header:X-Raw:all"]!.AsArray()
+                .Select(node => node!.GetValue<string>())
+                .ToArray());
+    }
+
+    [TestMethod]
     public async Task DeletingLegacyEmailWithNullThreadDestroysItsFallbackThread()
     {
         await using var fixture = await JmapFixture.CreateAsync();

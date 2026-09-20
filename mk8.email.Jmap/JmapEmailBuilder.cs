@@ -869,23 +869,85 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
                     return false;
                 foreach (var item in array)
                 {
-                    if (!TryFormatHeaderValue(header.Form, item, out var value))
+                    if (!TryAddHeaderValue(headers, header, item))
                         return false;
-                    headers.Add(header.Name, value);
                 }
                 return true;
             }
             if (node is null)
                 return true;
-            if (!TryFormatHeaderValue(header.Form, node, out var singleValue))
-                return false;
-            headers.Add(header.Name, singleValue);
-            return true;
+            return TryAddHeaderValue(headers, header, node);
         }
         catch (Exception exception) when (exception is ArgumentException or FormatException)
         {
             return false;
         }
+    }
+
+    private static bool TryAddHeaderValue(
+        HeaderList headers,
+        WritableHeader header,
+        JsonNode? node)
+    {
+        if (header.Form == "Raw")
+        {
+            if (node is not JsonValue rawNode
+                || !rawNode.TryGetValue<string>(out var rawValue)
+                || !IsValidRawHeaderValue(header.Name, rawValue))
+            {
+                return false;
+            }
+
+            var rawHeader = new Header(header.Name, string.Empty);
+            rawHeader.SetRawValue(Encoding.UTF8.GetBytes(rawValue + "\r\n"));
+            headers.Add(rawHeader);
+            return true;
+        }
+
+        if (!TryFormatHeaderValue(header.Form, node, out var value))
+            return false;
+        headers.Add(header.Name, value);
+        return true;
+    }
+
+    private static bool IsValidRawHeaderValue(string name, string value)
+    {
+        var lineLength = checked(name.Length + 1);
+        for (var index = 0; index < value.Length;)
+        {
+            var character = value[index];
+            if (character == '\r')
+            {
+                if (index + 2 >= value.Length
+                    || value[index + 1] != '\n'
+                    || value[index + 2] is not (' ' or '\t')
+                    || lineLength > 998)
+                {
+                    return false;
+                }
+                lineLength = 0;
+                index += 2;
+                continue;
+            }
+            if (character == '\n'
+                || character == '\0'
+                || character is < (char)0x20 and not '\t'
+                || character == (char)0x7f)
+            {
+                return false;
+            }
+
+            if (Rune.TryGetRuneAt(value, index, out var rune))
+            {
+                lineLength = checked(lineLength + rune.Utf8SequenceLength);
+                index += rune.Utf16SequenceLength;
+            }
+            else
+            {
+                return false;
+            }
+        }
+        return lineLength <= 998;
     }
 
     private static bool IsAllowedHeaderForm(string name, string form)
@@ -933,7 +995,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
         out string value)
     {
         value = string.Empty;
-        if (form is "Raw" or "Text")
+        if (form == "Text")
         {
             return node is JsonValue jsonValue
                 && jsonValue.TryGetValue<string>(out value!);

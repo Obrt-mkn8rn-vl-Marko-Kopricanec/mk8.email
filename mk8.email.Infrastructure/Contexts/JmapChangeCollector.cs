@@ -351,7 +351,8 @@ internal static class JmapChangeCollector
     private static void AssignDefaultMailboxRoles(
         IEnumerable<EntityEntry<FolderDB>> entries)
     {
-        foreach (var entry in entries.Where(entry => entry.State == EntityState.Added))
+        foreach (var entry in entries.Where(entry => entry.State == EntityState.Added
+                     && !entry.Entity.SuppressDefaultJmapRole))
         {
             entry.Entity.JmapRole ??= entry.Entity.Name switch
             {

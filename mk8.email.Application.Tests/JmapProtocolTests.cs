@@ -204,6 +204,118 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task MailboxSetUsesFinalStateAcrossCreatesUpdatesAndDestroys()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var seed = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Mailbox/set", {
+            "accountId": "{{{fixture.AccountId}}}",
+            "create": {
+              "move": {"name":"Taken", "role":"flagged"},
+              "remove": {"name":"Removed", "role":"important"}
+            }
+          }, "m1"]]
+        }
+        """);
+        var seeded = Arguments(seed)["created"]!.AsObject();
+        var moveId = seeded["move"]!["id"]!.GetValue<string>();
+        var removeId = seeded["remove"]!["id"]!.GetValue<string>();
+
+        var replace = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Mailbox/set", {
+            "accountId": "{{{fixture.AccountId}}}",
+            "create": {
+              "reuseUpdate": {"name":"Taken", "role":"flagged"},
+              "reuseDestroy": {"name":"Removed", "role":"important"}
+            },
+            "update": {
+              "{{{moveId}}}": {"name":"Moved", "role":"archive"}
+            },
+            "destroy": ["{{{removeId}}}"]
+          }, "m2"]]
+        }
+        """);
+        var arguments = Arguments(replace);
+        Assert.IsNull(arguments["notCreated"]);
+        Assert.IsNull(arguments["notUpdated"]);
+        Assert.IsNull(arguments["notDestroyed"]);
+        Assert.IsTrue(arguments["updated"]!.AsObject().ContainsKey(moveId));
+        CollectionAssert.AreEqual(
+            new[] { removeId },
+            arguments["destroyed"]!.AsArray()
+                .Select(node => node!.GetValue<string>())
+                .ToArray());
+
+        var replacements = arguments["created"]!.AsObject();
+        var reusedUpdateId = replacements["reuseUpdate"]!["id"]!.GetValue<string>();
+        var reusedDestroyId = replacements["reuseDestroy"]!["id"]!.GetValue<string>();
+        var verify = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Mailbox/get", {
+            "accountId": "{{{fixture.AccountId}}}",
+            "ids": ["{{{moveId}}}", "{{{removeId}}}", "{{{reusedUpdateId}}}", "{{{reusedDestroyId}}}"]
+          }, "g1"]]
+        }
+        """);
+        var byId = Arguments(verify)["list"]!.AsArray()
+            .Select(node => node!.AsObject())
+            .ToDictionary(mailbox => mailbox["id"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("Moved", byId[moveId]["name"]!.GetValue<string>());
+        Assert.AreEqual("archive", byId[moveId]["role"]!.GetValue<string>());
+        Assert.AreEqual("Taken", byId[reusedUpdateId]["name"]!.GetValue<string>());
+        Assert.AreEqual("flagged", byId[reusedUpdateId]["role"]!.GetValue<string>());
+        Assert.AreEqual("Removed", byId[reusedDestroyId]["name"]!.GetValue<string>());
+        Assert.AreEqual("important", byId[reusedDestroyId]["role"]!.GetValue<string>());
+        CollectionAssert.AreEqual(
+            new[] { removeId },
+            Arguments(verify)["notFound"]!.AsArray()
+                .Select(node => node!.GetValue<string>())
+                .ToArray());
+
+        var secondSeed = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Mailbox/set", {
+            "accountId": "{{{fixture.AccountId}}}",
+            "create": {
+              "shift": {"name":"Shift", "role":"memos"},
+              "vacate": {"name":"Vacate", "role":"snoozed"}
+            }
+          }, "m3"]]
+        }
+        """);
+        var secondSeeded = Arguments(secondSeed)["created"]!.AsObject();
+        var shiftId = secondSeeded["shift"]!["id"]!.GetValue<string>();
+        var vacateId = secondSeeded["vacate"]!["id"]!.GetValue<string>();
+        var updateIntoDestroyedValues = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Mailbox/set", {
+            "accountId": "{{{fixture.AccountId}}}",
+            "update": {
+              "{{{shiftId}}}": {"name":"Vacate", "role":"snoozed"}
+            },
+            "destroy": ["{{{vacateId}}}"]
+          }, "m4"]]
+        }
+        """);
+        Assert.IsNull(Arguments(updateIntoDestroyedValues)["notUpdated"]);
+        Assert.IsNull(Arguments(updateIntoDestroyedValues)["notDestroyed"]);
+        Assert.IsTrue(Arguments(updateIntoDestroyedValues)["updated"]!
+            .AsObject().ContainsKey(shiftId));
+        CollectionAssert.AreEqual(
+            new[] { vacateId },
+            Arguments(updateIntoDestroyedValues)["destroyed"]!.AsArray()
+                .Select(node => node!.GetValue<string>())
+                .ToArray());
+    }
+
+    [TestMethod]
     public async Task ImportedEmailPreservesExactRawOctets()
     {
         await using var fixture = await JmapFixture.CreateAsync();

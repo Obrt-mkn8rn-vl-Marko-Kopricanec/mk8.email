@@ -225,6 +225,41 @@ public sealed class JmapCoreTests
     }
 
     [TestMethod]
+    public void BinaryEndpointsNormalizeOnlyRfc6838MediaTypes()
+    {
+        Assert.AreEqual(
+            "text/plain",
+            JmapEndpointRouteBuilderExtensions.NormalizeMediaType(
+                " Text/Plain ; charset=utf-8 "));
+        Assert.AreEqual(
+            "application/vnd.example.mail+json",
+            JmapEndpointRouteBuilderExtensions.NormalizeMediaType(
+                "application/vnd.example.mail+json"));
+
+        foreach (var invalid in new string?[]
+        {
+            null,
+            "",
+            "*/*",
+            "text/pl%ain",
+            "text/plain, application/json",
+            "text/plain; charset=\"unterminated",
+            $"application/{new string('a', 128)}",
+        })
+        {
+            Assert.AreEqual(
+                "application/octet-stream",
+                JmapEndpointRouteBuilderExtensions.NormalizeMediaType(invalid),
+                invalid);
+        }
+
+        Assert.AreEqual(
+            $"{new string('a', 127)}/{new string('b', 127)}",
+            JmapEndpointRouteBuilderExtensions.NormalizeMediaType(
+                $"{new string('A', 127)}/{new string('B', 127)}"));
+    }
+
+    [TestMethod]
     public async Task JsonTransportRejectsUnpairedUnicodeSurrogates()
     {
         var context = new DefaultHttpContext();

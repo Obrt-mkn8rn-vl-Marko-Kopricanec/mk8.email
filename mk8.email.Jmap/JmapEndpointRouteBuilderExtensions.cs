@@ -251,37 +251,10 @@ public static class JmapEndpointRouteBuilderExtensions
         if (!MediaTypeHeaderValue.TryParse(value, out var parsed))
             return "application/octet-stream";
 
-        var mediaType = parsed.MediaType.Value ?? string.Empty;
-        var separator = mediaType.IndexOf('/');
-        if (separator <= 0
-            || separator != mediaType.LastIndexOf('/')
-            || !IsRestrictedMediaTypeName(mediaType.AsSpan(0, separator))
-            || !IsRestrictedMediaTypeName(mediaType.AsSpan(separator + 1)))
-            return "application/octet-stream";
-
-        return mediaType.ToLowerInvariant();
+        return JmapMediaType.TryNormalize(parsed.MediaType.Value, out var normalized)
+            ? normalized
+            : "application/octet-stream";
     }
-
-    private static bool IsRestrictedMediaTypeName(ReadOnlySpan<char> value)
-    {
-        if (value.Length is < 1 or > 127 || !IsAsciiLetterOrDigit(value[0]))
-            return false;
-
-        foreach (var character in value[1..])
-        {
-            if (!IsAsciiLetterOrDigit(character)
-                && character is not ('!' or '#' or '$' or '&' or '-' or '^' or '_' or '.' or '+'))
-            {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private static bool IsAsciiLetterOrDigit(char value) =>
-        value is >= 'A' and <= 'Z'
-        or >= 'a' and <= 'z'
-        or >= '0' and <= '9';
 
     private static async Task<IResult> GetSessionAsync(
         HttpContext context,

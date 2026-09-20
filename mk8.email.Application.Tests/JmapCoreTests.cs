@@ -261,6 +261,27 @@ public sealed class JmapCoreTests
     }
 
     [TestMethod]
+    public void EmailBodyMediaTypesUseRfc6838RestrictedNames()
+    {
+        Assert.IsTrue(JmapMediaType.TryNormalize(
+            "Application/Vnd.Example+Json",
+            out var normalized));
+        Assert.AreEqual("application/vnd.example+json", normalized);
+
+        foreach (var invalid in new[]
+        {
+            "+application/json",
+            "application/+json",
+            "application/json; charset=utf-8",
+            "application/json/extra",
+            $"application/{new string('a', 128)}",
+        })
+        {
+            Assert.IsFalse(JmapMediaType.TryNormalize(invalid, out _), invalid);
+        }
+    }
+
+    [TestMethod]
     public void BinaryDownloadPreservesTheSuppliedFilename()
     {
         var name = $"reports/{new string('é', 260)}.txt";

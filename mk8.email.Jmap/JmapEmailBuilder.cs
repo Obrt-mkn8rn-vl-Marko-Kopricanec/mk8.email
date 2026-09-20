@@ -592,12 +592,12 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
     {
         mediaType = string.Empty;
         mediaSubtype = string.Empty;
-        var separator = value.IndexOf('/');
-        if (separator <= 0 || separator != value.LastIndexOf('/') || separator == value.Length - 1)
+        if (!JmapMediaType.TryNormalize(value, out var normalized))
             return false;
-        mediaType = value[..separator].ToLowerInvariant();
-        mediaSubtype = value[(separator + 1)..].ToLowerInvariant();
-        return IsMimeToken(mediaType) && IsMimeToken(mediaSubtype);
+        var separator = normalized.IndexOf('/');
+        mediaType = normalized[..separator];
+        mediaSubtype = normalized[(separator + 1)..];
+        return true;
     }
 
     private static bool IsMimeToken(string value) =>

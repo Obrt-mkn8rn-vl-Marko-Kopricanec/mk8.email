@@ -486,9 +486,9 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
             case "sender":
                 if (node is null)
                     return true;
-                if (!TryParseAddressList(node, out var senders) || senders.Count != 1)
+                if (!TryParseAddressList(node, out var senders))
                     return false;
-                message.Sender = senders.Mailboxes.Single();
+                message.Headers.Add(HeaderId.Sender, senders.ToString());
                 return true;
             case "subject":
                 if (node is null) return true;
@@ -509,8 +509,9 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
                     return true;
                 return TrySetMessageIds(node, ids =>
                 {
-                    if (ids.Count != 1) return false;
-                    message.MessageId = ids[0];
+                    message.Headers.Add(
+                        HeaderId.MessageId,
+                        string.Join(' ', ids.Select(id => $"<{id}>")));
                     return true;
                 });
             case "inReplyTo":

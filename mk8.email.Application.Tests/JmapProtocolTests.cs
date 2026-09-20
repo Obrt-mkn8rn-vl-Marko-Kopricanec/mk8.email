@@ -1370,6 +1370,78 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task EmailCreationDefersInvalidSenderAndMessageIdCardinalityUntilSubmission()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var create = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/set", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "create":{"draft":{
+              "mailboxIds":{"{{{fixture.DraftsMailboxId}}}":true},
+              "from":[{"email":"{{{fixture.User.Username}}}"}],
+              "to":[{"email":"{{{fixture.User.Username}}}"}],
+              "sender":[
+                {"email":"first@example.test"},
+                {"email":"second@example.test"}
+              ],
+              "messageId":["first@example.test", "second@example.test"],
+              "bodyValues":{"1":{"value":"body"}},
+              "textBody":[{"partId":"1", "type":"text/plain"}]
+            }}
+          }, "s1"]]
+        }
+        """);
+        var emailId = Arguments(create)["created"]!["draft"]!["id"]!.GetValue<string>();
+
+        var get = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/get", {
+            "accountId":"{{{fixture.AccountId}}}", "ids":["{{{emailId}}}"],
+            "properties":["sender", "messageId"]
+          }, "g1"]]
+        }
+        """);
+        var email = Arguments(get)["list"]![0]!;
+        CollectionAssert.AreEqual(
+            new[] { "first@example.test", "second@example.test" },
+            email["sender"]!.AsArray()
+                .Select(node => node!["email"]!.GetValue<string>())
+                .ToArray());
+        CollectionAssert.AreEqual(
+            new[] { "first@example.test", "second@example.test" },
+            email["messageId"]!.AsArray().Select(node => node!.GetValue<string>()).ToArray());
+
+        var identities = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Submission}}}"],
+          "methodCalls": [["Identity/get", {"accountId":"{{{fixture.AccountId}}}"}, "i1"]]
+        }
+        """);
+        var identityId = Arguments(identities)["list"]![0]!["id"]!.GetValue<string>();
+        var submission = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Submission}}}"],
+          "methodCalls": [["EmailSubmission/set", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "create":{"send":{"identityId":"{{{identityId}}}", "emailId":"{{{emailId}}}",
+              "envelope":{"mailFrom":{"email":"{{{fixture.User.Username}}}"},
+                "rcptTo":[{"email":"{{{fixture.User.Username}}}"}]
+              }
+            }}
+          }, "e1"]]
+        }
+        """);
+        var error = Arguments(submission)["notCreated"]!["send"]!;
+        Assert.AreEqual("invalidEmail", error["type"]!.GetValue<string>());
+        CollectionAssert.AreEquivalent(
+            new[] { "messageId", "sender" },
+            error["properties"]!.AsArray().Select(node => node!.GetValue<string>()).ToArray());
+    }
+
+    [TestMethod]
     public async Task MimeHeadersSupportPermittedParsedForms()
     {
         await using var fixture = await JmapFixture.CreateAsync();

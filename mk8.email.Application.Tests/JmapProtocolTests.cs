@@ -217,6 +217,59 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task QueryFiltersAcceptValidUnknownIds()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var create = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/set", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "create":{
+              "email":{
+                "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true},
+                "bodyValues":{"1":{"value":"body"}},
+                "textBody":[{"partId":"1", "type":"text/plain"}]
+              }
+            }
+          }, "s1"]]
+        }
+        """);
+        var emailId = Arguments(create)["created"]!["email"]!["id"]!.GetValue<string>();
+
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [
+            ["Mailbox/query", {
+              "accountId":"{{{fixture.AccountId}}}",
+              "filter":{"parentId":"unknownMailbox"}
+            }, "q1"],
+            ["Email/query", {
+              "accountId":"{{{fixture.AccountId}}}",
+              "filter":{"inMailbox":"unknownMailbox"}
+            }, "q2"],
+            ["Email/query", {
+              "accountId":"{{{fixture.AccountId}}}",
+              "filter":{"inMailboxOtherThan":["unknownMailbox"]}
+            }, "q3"]
+          ]
+        }
+        """);
+
+        Assert.AreEqual("Mailbox/query", response["methodResponses"]![0]![0]!.GetValue<string>());
+        Assert.AreEqual(0, Arguments(response, 0)["ids"]!.AsArray().Count);
+        Assert.AreEqual("Email/query", response["methodResponses"]![1]![0]!.GetValue<string>());
+        Assert.AreEqual(0, Arguments(response, 1)["ids"]!.AsArray().Count);
+        Assert.AreEqual("Email/query", response["methodResponses"]![2]![0]!.GetValue<string>());
+        CollectionAssert.AreEqual(
+            new[] { emailId },
+            Arguments(response, 2)["ids"]!.AsArray()
+                .Select(node => node!.GetValue<string>())
+                .ToArray());
+    }
+
+    [TestMethod]
     public async Task MailboxWithNullRoleDoesNotInferOneFromItsName()
     {
         await using var fixture = await JmapFixture.CreateAsync();

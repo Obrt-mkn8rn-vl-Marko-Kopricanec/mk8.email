@@ -192,7 +192,7 @@ internal static class JmapMailboxQueryEngine
             return false;
         }
 
-        Guid? parentId = null;
+        string? parentId = null;
         var matchNullParent = false;
         if (value.TryGetPropertyValue("parentId", out var parentNode))
         {
@@ -202,14 +202,15 @@ internal static class JmapMailboxQueryEngine
             }
             else if (parentNode is not JsonValue parentValue
                      || !parentValue.TryGetValue<string>(out var parentString)
-                     || !JmapId.TryParseMailbox(parentString, out var parsedParentId))
+                     || parentString is null
+                     || !JmapId.IsValidId(parentString))
             {
                 error = "invalidArguments";
                 return false;
             }
             else
             {
-                parentId = parsedParentId;
+                parentId = parentString;
             }
         }
 
@@ -265,8 +266,13 @@ internal static class JmapMailboxQueryEngine
         }
 
         predicate = mailbox =>
-            (!matchNullParent && parentId is null || mailbox.ParentId == parentId)
-            && (!matchNullParent || mailbox.ParentId is null)
+            (!matchNullParent || mailbox.ParentId is null)
+            && (parentId is null
+                || mailbox.ParentId is { } actualParentId
+                    && string.Equals(
+                        JmapId.Mailbox(actualParentId),
+                        parentId,
+                        StringComparison.Ordinal))
             && (name is null || mailbox.Name.Contains(name, StringComparison.InvariantCultureIgnoreCase))
             && (!matchNullRole && role is null || string.Equals(mailbox.Role, role, StringComparison.Ordinal))
             && (!matchNullRole || mailbox.Role is null)

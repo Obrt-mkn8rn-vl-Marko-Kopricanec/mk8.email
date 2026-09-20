@@ -241,7 +241,7 @@ internal static partial class JmapEmailQueryEngine
             return false;
         }
 
-        Guid? inMailbox = null;
+        string? inMailbox = null;
         if (value.TryGetPropertyValue("inMailbox", out var mailboxNode))
         {
             if (!TryMailboxId(mailboxNode, out var parsedMailbox))
@@ -251,7 +251,7 @@ internal static partial class JmapEmailQueryEngine
             }
             inMailbox = parsedMailbox;
         }
-        HashSet<Guid>? otherThan = null;
+        HashSet<string>? otherThan = null;
         if (value.TryGetPropertyValue("inMailboxOtherThan", out var otherNode))
         {
             if (otherNode is not JsonArray otherArray)
@@ -296,8 +296,13 @@ internal static partial class JmapEmailQueryEngine
 
         var byThread = all.ToLookup(item => item.ThreadId, StringComparer.Ordinal);
         predicate = item =>
-            (inMailbox is null || item.Email.FolderId == inMailbox)
-            && (otherThan is null || !otherThan.Contains(item.Email.FolderId))
+            (inMailbox is null
+                || string.Equals(
+                    JmapId.Mailbox(item.Email.FolderId),
+                    inMailbox,
+                    StringComparison.Ordinal))
+            && (otherThan is null
+                || !otherThan.Contains(JmapId.Mailbox(item.Email.FolderId)))
             && (before is null || item.Email.ReceivedAt.ToUniversalTime() < before.Value.UtcDateTime)
             && (after is null || item.Email.ReceivedAt.ToUniversalTime() >= after.Value.UtcDateTime)
             && (minimumSize is null || item.Email.SizeBytes >= minimumSize)
@@ -385,12 +390,18 @@ internal static partial class JmapEmailQueryEngine
             && (text is null || headers.Any(header => MatchesText(header.Value, text)));
     }
 
-    private static bool TryMailboxId(JsonNode? node, out Guid id)
+    private static bool TryMailboxId(JsonNode? node, out string id)
     {
-        id = Guid.Empty;
-        return node is JsonValue value
-            && value.TryGetValue<string>(out var stringValue)
-            && JmapId.TryParseMailbox(stringValue, out id);
+        id = string.Empty;
+        if (node is not JsonValue value
+            || !value.TryGetValue<string>(out var stringValue)
+            || stringValue is null
+            || !JmapId.IsValidId(stringValue))
+        {
+            return false;
+        }
+        id = stringValue;
+        return true;
     }
 
     private static bool TryUtcDate(JsonObject value, string name, out DateTimeOffset? result)

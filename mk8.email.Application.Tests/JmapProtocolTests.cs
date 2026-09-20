@@ -639,7 +639,7 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
-    public async Task EmailKeywordsRejectReservedAndForbiddenNames()
+    public async Task EmailKeywordsFollowTheImapCompatibleCharacterSet()
     {
         await using var fixture = await JmapFixture.CreateAsync();
         var create = await fixture.InvokeAsync($$$"""
@@ -670,6 +670,18 @@ public sealed class JmapProtocolTests
                 "keywords":{"bad}key":true},
                 "bodyValues":{"1":{"value":"body"}},
                 "textBody":[{"partId":"1", "type":"text/plain"}]
+              },
+              "leftBrace":{
+                "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true},
+                "keywords":{"bad{key":true},
+                "bodyValues":{"1":{"value":"body"}},
+                "textBody":[{"partId":"1", "type":"text/plain"}]
+              },
+              "rightBracket":{
+                "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true},
+                "keywords":{"bad]key":true},
+                "bodyValues":{"1":{"value":"body"}},
+                "textBody":[{"partId":"1", "type":"text/plain"}]
               }
             }
           }, "s1"]]
@@ -682,10 +694,12 @@ public sealed class JmapProtocolTests
             Arguments(create)["notCreated"]!["reserved"]!["type"]!.GetValue<string>());
         Assert.AreEqual(
             "invalidProperties",
-            Arguments(create)["notCreated"]!["leftBracket"]!["type"]!.GetValue<string>());
+            Arguments(create)["notCreated"]!["leftBrace"]!["type"]!.GetValue<string>());
         Assert.AreEqual(
             "invalidProperties",
-            Arguments(create)["notCreated"]!["rightBrace"]!["type"]!.GetValue<string>());
+            Arguments(create)["notCreated"]!["rightBracket"]!["type"]!.GetValue<string>());
+        Assert.IsNotNull(Arguments(create)["created"]!["leftBracket"]);
+        Assert.IsNotNull(Arguments(create)["created"]!["rightBrace"]);
 
         var update = await fixture.InvokeAsync($$$"""
         {

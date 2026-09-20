@@ -171,7 +171,9 @@ internal static class JmapChangeCollector
                         oldAccountId == newAccountId ? Updated : Created);
                 }
             }
-            if (entry.State == EntityState.Added && newVisible && newAccountId is not null)
+            if (newVisible
+                && newAccountId is not null
+                && (!oldVisible || oldAccountId != newAccountId))
             {
                 AddChange(
                     changes,

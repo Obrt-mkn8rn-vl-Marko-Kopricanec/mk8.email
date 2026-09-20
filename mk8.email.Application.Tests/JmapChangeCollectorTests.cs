@@ -125,4 +125,66 @@ public sealed class JmapChangeCollectorTests
                 || change.DataType == JmapConstants.ThreadDataType
                 && change.ObjectId == JmapId.Thread(threadValue))));
     }
+
+    [TestMethod]
+    public async Task CrossAccountMovePublishesTargetEmailDelivery()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        using var scope = fixture.Services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var sourceInbox = await database.Inboxes
+            .AsNoTracking()
+            .SingleAsync(inbox => inbox.Id == fixture.InboxId);
+        var targetInboxId = Guid.CreateVersion7();
+        var targetFolderId = Guid.CreateVersion7();
+        database.Inboxes.Add(new InboxDB
+        {
+            Id = targetInboxId,
+            Name = "alternate",
+            AddressId = sourceInbox.AddressId,
+            OwnerId = sourceInbox.OwnerId,
+        });
+        database.Folders.Add(new FolderDB
+        {
+            Id = targetFolderId,
+            InboxId = targetInboxId,
+            Name = "INBOX",
+            JmapRole = "inbox",
+        });
+        var emailId = Guid.CreateVersion7();
+        database.Emails.Add(new EmailDB
+        {
+            Id = emailId,
+            FolderId = fixture.InboxFolderId,
+            Sender = "sender@example.net",
+            Recipient = fixture.User.Username,
+            Subject = "Cross-account move",
+            Body = "body",
+            RawMessage = "From: sender@example.net\r\n\r\nbody"u8.ToArray(),
+            SizeBytes = 39,
+            EmailObjectId = emailId.ToString("N"),
+            ThreadObjectId = Guid.CreateVersion7().ToString("N"),
+            MessageId = $"<{emailId:N}@example.net>",
+            Uid = 1,
+            ModSeq = 1,
+        });
+        await database.SaveChangesAsync();
+        database.ChangeTracker.Clear();
+
+        var email = await database.Emails.SingleAsync(candidate => candidate.Id == emailId);
+        email.FolderId = targetFolderId;
+        await database.SaveChangesAsync();
+
+        var emailObjectId = JmapId.Email(emailId);
+        Assert.AreEqual(1, await database.JmapChanges.CountAsync(change =>
+            change.AccountId == targetInboxId
+            && change.DataType == JmapConstants.EmailDataType
+            && change.ObjectId == emailObjectId
+            && change.ChangeKind == JmapConstants.CreatedChange));
+        Assert.AreEqual(1, await database.JmapChanges.CountAsync(change =>
+            change.AccountId == targetInboxId
+            && change.DataType == JmapConstants.EmailDeliveryDataType
+            && change.ObjectId == emailObjectId
+            && change.ChangeKind == JmapConstants.CreatedChange));
+    }
 }

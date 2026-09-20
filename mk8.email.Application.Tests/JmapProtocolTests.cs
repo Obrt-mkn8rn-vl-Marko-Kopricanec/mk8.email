@@ -363,6 +363,39 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task EmailBodyValuesReportMalformedCharsetData()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var prefix = Encoding.ASCII.GetBytes(
+            "From: sender@example.net\r\n"
+            + $"To: {fixture.User.Username}\r\n"
+            + "Subject: Invalid UTF-8\r\n"
+            + "Content-Type: text/plain; charset=utf-8\r\n"
+            + "Content-Transfer-Encoding: 8bit\r\n\r\n"
+            + "before ");
+        var suffix = Encoding.ASCII.GetBytes(" after\r\n");
+        var raw = prefix.Concat(new byte[] { 0xc3, 0x28 }).Concat(suffix).ToArray();
+        var blobId = await fixture.StoreBlobAsync(raw);
+
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/parse", {
+            "accountId": "{{{fixture.AccountId}}}",
+            "blobIds": ["{{{blobId}}}"],
+            "properties": ["textBody", "bodyValues"],
+            "fetchTextBodyValues": true
+          }, "p1"]]
+        }
+        """);
+        var parsed = Arguments(response)["parsed"]![blobId]!;
+        var partId = parsed["textBody"]![0]!["partId"]!.GetValue<string>();
+        var bodyValue = parsed["bodyValues"]![partId]!;
+        Assert.IsTrue(bodyValue["isEncodingProblem"]!.GetValue<bool>());
+        StringAssert.Contains(bodyValue["value"]!.GetValue<string>(), "\ufffd(");
+    }
+
+    [TestMethod]
     public async Task EmailLifecycleProjectsMimeAndPreservesImapState()
     {
         await using var fixture = await JmapFixture.CreateAsync();

@@ -617,30 +617,43 @@ internal static partial class JmapEmailCodec
 
     private static (string Text, bool EncodingProblem) DecodeText(PartDescriptor part)
     {
-        if (part.Entity is TextPart textPart)
-        {
-            try
-            {
-                return (textPart.Text ?? string.Empty, false);
-            }
-            catch (Exception exception) when (exception is DecoderFallbackException or NotSupportedException)
-            {
-                return (Encoding.UTF8.GetString(part.Bytes), true);
-            }
-        }
-
+        var transferEncodingProblem = HasUnknownTransferEncoding(part.Entity);
+        Encoding encoding;
         try
         {
-            var encoding = Encoding.GetEncoding(
-                part.Charset ?? "utf-8",
-                EncoderFallback.ReplacementFallback,
-                DecoderFallback.ReplacementFallback);
-            return (encoding.GetString(part.Bytes), false);
+            encoding = Encoding.GetEncoding(
+                part.Charset ?? "us-ascii",
+                EncoderFallback.ExceptionFallback,
+                DecoderFallback.ExceptionFallback);
         }
         catch (ArgumentException)
         {
             return (Encoding.UTF8.GetString(part.Bytes), true);
         }
+
+        try
+        {
+            return (encoding.GetString(part.Bytes), transferEncodingProblem);
+        }
+        catch (DecoderFallbackException)
+        {
+            var replacementEncoding = Encoding.GetEncoding(
+                encoding.CodePage,
+                EncoderFallback.ReplacementFallback,
+                new DecoderReplacementFallback("\ufffd"));
+            return (replacementEncoding.GetString(part.Bytes), true);
+        }
+    }
+
+    private static bool HasUnknownTransferEncoding(MimeEntity entity)
+    {
+        var value = entity.Headers[HeaderId.ContentTransferEncoding];
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+
+        return value.Trim().ToLowerInvariant() is not (
+            "7bit" or "8bit" or "binary" or "base64" or "quoted-printable"
+            or "uuencode" or "x-uuencode" or "uue" or "x-uue");
     }
 
     private static (string Value, bool IsTruncated) TruncateUtf8(string value, int maximumBytes)

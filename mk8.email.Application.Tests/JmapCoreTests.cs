@@ -140,6 +140,38 @@ public sealed class JmapCoreTests
     }
 
     [TestMethod]
+    public async Task CommittedPostCommitActionsIgnoreRequestCancellation()
+    {
+        var completed = false;
+        using var cancellation = new CancellationTokenSource();
+        await using var fixture = await JmapFixture.CreateAsync(
+            configureServices: services => services.AddSingleton<IJmapMethod>(
+                new PostCommitCancellationProbeMethod(
+                    cancellation,
+                    () => completed = true)));
+        using var scope = fixture.Services.CreateScope();
+        var processor = scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>();
+        var request = JsonNode.Parse(
+            """
+            {
+              "using":["urn:ietf:params:jmap:core"],
+              "methodCalls":[["Test/cancelAfterCommit",{},"c1"]]
+            }
+            """);
+
+        try
+        {
+            _ = await processor.ProcessAsync(request, fixture.User, cancellation.Token);
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+        }
+
+        Assert.IsTrue(cancellation.IsCancellationRequested);
+        Assert.IsTrue(completed);
+    }
+
+    [TestMethod]
     public async Task CoreRejectsUnknownCapabilitiesAndInvalidReferences()
     {
         await using var fixture = await JmapFixture.CreateAsync();
@@ -1065,6 +1097,33 @@ public sealed class JmapCoreTests
             });
             if (fail)
                 throw new InvalidOperationException("Atomicity probe failure.");
+            return Task.FromResult(new JmapMethodResponse(Name, new JsonObject()));
+        }
+    }
+
+    private sealed class PostCommitCancellationProbeMethod(
+        CancellationTokenSource cancellation,
+        Action completed) : IJmapMethod
+    {
+        public string Name => "Test/cancelAfterCommit";
+        public string Capability => JmapConstants.CoreCapability;
+
+        public Task<JmapMethodResponse> InvokeAsync(
+            JmapInvocationContext context,
+            JsonObject arguments,
+            CancellationToken cancellationToken)
+        {
+            context.AddPostCommitAction(_ =>
+            {
+                cancellation.Cancel();
+                return Task.CompletedTask;
+            });
+            context.AddPostCommitAction(postCommitCancellationToken =>
+            {
+                postCommitCancellationToken.ThrowIfCancellationRequested();
+                completed();
+                return Task.CompletedTask;
+            });
             return Task.FromResult(new JmapMethodResponse(Name, new JsonObject()));
         }
     }

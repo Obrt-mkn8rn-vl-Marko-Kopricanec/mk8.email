@@ -170,7 +170,10 @@ public sealed class JmapRequestProcessor
             {
                 try
                 {
-                    await action(cancellationToken);
+                    // The database commit makes these actions durable work.
+                    // A client disconnect must not prevent push verification
+                    // (or any future committed external effect) from running.
+                    await action(CancellationToken.None);
                 }
                 catch (Exception exception)
                 {

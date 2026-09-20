@@ -1333,6 +1333,94 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task EmailQueryUsesAllHeadersForTextAndLastProjectedHeaderForSort()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var duplicateHeaders = Encoding.ASCII.GetBytes(
+            "From: Zulu First <zulu-first@example.test>\r\n"
+            + "From: Adam Last <adam-late@example.test>\r\n"
+            + "To: Zulu First <zulu-to@example.test>\r\n"
+            + "To: Adam Last <adam-to@example.test>\r\n"
+            + "Subject: Zulu first subject\r\n"
+            + "Subject: Alpha-last subject\r\n"
+            + "Date: Sun, 20 Sep 2026 12:00:00 +0000\r\n"
+            + "Date: Sun, 20 Sep 2026 10:00:00 +0000\r\n"
+            + "Message-ID: <duplicate-query@example.test>\r\n"
+            + "Content-Type: text/plain; charset=us-ascii\r\n\r\nbody");
+        var middleHeaders = Encoding.ASCII.GetBytes(
+            "From: Middle Sender <middle@example.test>\r\n"
+            + "To: Middle Recipient <middle-to@example.test>\r\n"
+            + "Subject: Middle subject\r\n"
+            + "Date: Sun, 20 Sep 2026 11:00:00 +0000\r\n"
+            + "Message-ID: <middle-query@example.test>\r\n"
+            + "Content-Type: text/plain; charset=us-ascii\r\n\r\nbody");
+        var duplicateBlobId = await fixture.StoreBlobAsync(duplicateHeaders);
+        var middleBlobId = await fixture.StoreBlobAsync(middleHeaders);
+
+        var import = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/import", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "emails":{
+              "duplicate":{"blobId":"{{{duplicateBlobId}}}",
+                "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true}},
+              "middle":{"blobId":"{{{middleBlobId}}}",
+                "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true}}
+            }
+          }, "i1"]]
+        }
+        """);
+        var duplicateId = Arguments(import)["created"]!["duplicate"]!["id"]!.GetValue<string>();
+        var middleId = Arguments(import)["created"]!["middle"]!["id"]!.GetValue<string>();
+
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [
+            ["Email/get", {
+              "accountId":"{{{fixture.AccountId}}}", "ids":["{{{duplicateId}}}"],
+              "properties":["from", "to", "subject", "sentAt"]
+            }, "g1"],
+            ["Email/query", {
+              "accountId":"{{{fixture.AccountId}}}", "filter":{"from":"adam-late"}
+            }, "q1"],
+            ["Email/query", {
+              "accountId":"{{{fixture.AccountId}}}", "filter":{"text":"alpha-last"}
+            }, "q2"],
+            ["Email/query", {
+              "accountId":"{{{fixture.AccountId}}}", "sort":[{"property":"from"}]
+            }, "q3"],
+            ["Email/query", {
+              "accountId":"{{{fixture.AccountId}}}", "sort":[{"property":"to"}]
+            }, "q4"],
+            ["Email/query", {
+              "accountId":"{{{fixture.AccountId}}}", "sort":[{"property":"subject"}]
+            }, "q5"],
+            ["Email/query", {
+              "accountId":"{{{fixture.AccountId}}}", "sort":[{"property":"sentAt"}]
+            }, "q6"]
+          ]
+        }
+        """);
+
+        var projected = Arguments(response)["list"]![0]!;
+        Assert.AreEqual("Adam Last", projected["from"]![0]!["name"]!.GetValue<string>());
+        Assert.AreEqual("Adam Last", projected["to"]![0]!["name"]!.GetValue<string>());
+        Assert.AreEqual("Alpha-last subject", projected["subject"]!.GetValue<string>());
+        Assert.AreEqual("2026-09-20T10:00:00Z", projected["sentAt"]!.GetValue<string>());
+        CollectionAssert.AreEqual(new[] { duplicateId }, QueryIds(response, 1));
+        CollectionAssert.AreEqual(new[] { duplicateId }, QueryIds(response, 2));
+        for (var index = 3; index <= 6; index++)
+            CollectionAssert.AreEqual(new[] { duplicateId, middleId }, QueryIds(response, index));
+
+        static string[] QueryIds(JsonObject value, int index) =>
+            Arguments(value, index)["ids"]!.AsArray()
+                .Select(node => node!.GetValue<string>())
+                .ToArray();
+    }
+
+    [TestMethod]
     public async Task UploadBlobCanBeParsedAndImported()
     {
         await using var fixture = await JmapFixture.CreateAsync();

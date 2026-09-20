@@ -15,7 +15,11 @@ internal sealed record JmapEmailQueryItem(
     MimeMessage Message,
     IReadOnlySet<string> Keywords,
     string ThreadId,
-    bool HasAttachment) : IDisposable
+    bool HasAttachment,
+    string FromSortValue,
+    string ToSortValue,
+    string SubjectSortValue,
+    DateTimeOffset? SentAtSortValue) : IDisposable
 {
     public void Dispose() => Message.Dispose();
 }
@@ -67,7 +71,11 @@ internal static partial class JmapEmailQueryEngine
                     message,
                     keywords,
                     JmapId.Thread(email.ThreadObjectId ?? email.Id.ToString("N")),
-                    JmapEmailCodec.HasAttachment(message)));
+                    JmapEmailCodec.HasAttachment(message),
+                    JmapEmailCodec.FirstAddressInLastHeader(message, "From"),
+                    JmapEmailCodec.FirstAddressInLastHeader(message, "To"),
+                    JmapEmailCodec.LastTextHeader(message, "Subject"),
+                    JmapEmailCodec.LastDateHeader(message, "Date")));
             }
             return result;
         }
@@ -303,11 +311,11 @@ internal static partial class JmapEmailQueryEngine
             && (notKeyword is null || !item.Keywords.Contains(notKeyword))
             && (hasAttachment is null || item.HasAttachment == hasAttachment)
             && (text is null || MatchesText(AllSearchableText(item), text))
-            && (from is null || MatchesText(item.Message.From.ToString(), from))
-            && (to is null || MatchesText(item.Message.To.ToString(), to))
-            && (cc is null || MatchesText(item.Message.Cc.ToString(), cc))
-            && (bcc is null || MatchesText(item.Message.Bcc.ToString(), bcc))
-            && (subject is null || MatchesText(item.Message.Subject ?? string.Empty, subject))
+            && (from is null || MatchesText(HeaderText(item.Message, "From"), from))
+            && (to is null || MatchesText(HeaderText(item.Message, "To"), to))
+            && (cc is null || MatchesText(HeaderText(item.Message, "Cc"), cc))
+            && (bcc is null || MatchesText(HeaderText(item.Message, "Bcc"), bcc))
+            && (subject is null || MatchesText(HeaderText(item.Message, "Subject"), subject))
             && (body is null || MatchesText(BodyText(item), body))
             && (headerName is null || MatchesHeader(item.Message, headerName, headerText));
         return true;
@@ -323,10 +331,10 @@ internal static partial class JmapEmailQueryEngine
         {
             "receivedAt" => left.Email.ReceivedAt.CompareTo(right.Email.ReceivedAt),
             "size" => left.Email.SizeBytes.CompareTo(right.Email.SizeBytes),
-            "from" => CompareString(FirstAddress(left.Message.From), FirstAddress(right.Message.From), comparator.Collation),
-            "to" => CompareString(FirstAddress(left.Message.To), FirstAddress(right.Message.To), comparator.Collation),
-            "subject" => CompareString(BaseSubject(left.Message.Subject), BaseSubject(right.Message.Subject), comparator.Collation),
-            "sentAt" => left.Message.Date.CompareTo(right.Message.Date),
+            "from" => CompareString(left.FromSortValue, right.FromSortValue, comparator.Collation),
+            "to" => CompareString(left.ToSortValue, right.ToSortValue, comparator.Collation),
+            "subject" => CompareString(BaseSubject(left.SubjectSortValue), BaseSubject(right.SubjectSortValue), comparator.Collation),
+            "sentAt" => Nullable.Compare(left.SentAtSortValue, right.SentAtSortValue),
             "hasKeyword" => left.Keywords.Contains(comparator.Keyword!).CompareTo(right.Keywords.Contains(comparator.Keyword!)),
             "allInThreadHaveKeyword" => byThread[left.ThreadId].All(item => item.Keywords.Contains(comparator.Keyword!))
                 .CompareTo(byThread[right.ThreadId].All(item => item.Keywords.Contains(comparator.Keyword!))),
@@ -338,12 +346,15 @@ internal static partial class JmapEmailQueryEngine
 
     private static string AllSearchableText(JmapEmailQueryItem item) => string.Join(
         '\n',
-        item.Message.From,
-        item.Message.To,
-        item.Message.Cc,
-        item.Message.Bcc,
-        item.Message.Subject,
+        HeaderText(item.Message, "From"),
+        HeaderText(item.Message, "To"),
+        HeaderText(item.Message, "Cc"),
+        HeaderText(item.Message, "Bcc"),
+        HeaderText(item.Message, "Subject"),
         BodyText(item));
+
+    private static string HeaderText(MimeMessage message, string name) =>
+        JmapEmailCodec.SearchableHeaderText(message, name);
 
     private static string BodyText(JmapEmailQueryItem item) =>
         JmapEmailCodec.SearchableBodyText(item.Message);
@@ -471,14 +482,6 @@ internal static partial class JmapEmailQueryEngine
             || array[1] is JsonValue textValue
             && textValue.TryGetValue<string>(out text)
             && text is not null;
-    }
-
-    private static string FirstAddress(InternetAddressList addresses)
-    {
-        var mailbox = addresses.Mailboxes.FirstOrDefault();
-        return mailbox is null
-            ? string.Empty
-            : string.IsNullOrEmpty(mailbox.Name) ? mailbox.Address : mailbox.Name;
     }
 
     internal static string BaseSubject(string? value)

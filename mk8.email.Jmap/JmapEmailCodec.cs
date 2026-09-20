@@ -848,6 +848,49 @@ internal static partial class JmapEmailCodec
             .OrderBy(header => header.Offset < 0 ? long.MaxValue : header.Offset)
             .ToArray();
 
+    internal static string SearchableHeaderText(MimeMessage message, string name) =>
+        string.Join(
+            '\n',
+            MessageHeaders(message)
+                .Where(header => header.Field.Equals(name, StringComparison.OrdinalIgnoreCase))
+                .Select(NormalizeDecodedHeaderText));
+
+    internal static string FirstAddressInLastHeader(MimeMessage message, string name)
+    {
+        var header = LastHeader(message, name);
+        if (header is null)
+            return string.Empty;
+
+        var (value, rawTabMarker) = ProtectRawHeaderTabs(header);
+        value = NormalizeDecodedHeaderText(value);
+        if (!InternetAddressList.TryParse(value, out var addresses))
+            return string.Empty;
+
+        var mailbox = addresses.Mailboxes.FirstOrDefault();
+        if (mailbox is null)
+            return string.Empty;
+        var displayName = NormalizeAddressText(mailbox.Name, rawTabMarker);
+        return string.IsNullOrEmpty(displayName) ? mailbox.Address : displayName;
+    }
+
+    internal static string LastTextHeader(MimeMessage message, string name)
+    {
+        var header = LastHeader(message, name);
+        return header is null ? string.Empty : NormalizeDecodedHeaderText(header);
+    }
+
+    internal static DateTimeOffset? LastDateHeader(MimeMessage message, string name)
+    {
+        var header = LastHeader(message, name);
+        return header is not null && DateUtils.TryParse(header.Value, out var value)
+            ? value
+            : null;
+    }
+
+    private static Header? LastHeader(MimeMessage message, string name) =>
+        MessageHeaders(message)
+            .LastOrDefault(header => header.Field.Equals(name, StringComparison.OrdinalIgnoreCase));
+
     private static JsonArray BuildHeaders(IEnumerable<Header> headers)
     {
         var result = new JsonArray();

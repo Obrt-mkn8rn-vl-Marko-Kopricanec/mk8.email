@@ -47,6 +47,11 @@ internal sealed class PushSubscriptionGetMethod(
             .ToListAsync(cancellationToken);
         if (expired.Count > 0)
         {
+            foreach (var subscription in expired)
+            {
+                subscription.Url = string.Empty;
+                subscription.KeysJson = null;
+            }
             database.JmapPushSubscriptions.RemoveRange(expired);
             await database.SaveChangesAsync(cancellationToken);
         }
@@ -198,39 +203,40 @@ internal sealed class PushSubscriptionSetMethod(
                     notUpdated[requestedId] = JmapMethodHelpers.SetError("notFound");
                     continue;
                 }
-                var invalid = item.Value.KeysForPatch()
-                    .Where(property => !UpdateProperties.Contains(property))
-                    .Distinct(StringComparer.Ordinal)
-                    .ToArray();
-                if (invalid.Length > 0)
-                {
-                    notUpdated[requestedId] = JmapMethodHelpers.SetError(
-                        "invalidProperties",
-                        properties: invalid);
-                    continue;
-                }
-                var current = new JsonObject
-                {
-                    ["verificationCode"] = subscription.IsVerified
-                        ? subscription.VerificationCode
-                        : null,
-                    ["expires"] = PushSubscriptionGetMethod.FormatDate(subscription.ExpiresAt),
-                    ["types"] = subscription.Types is null
-                        ? null
-                        : JmapMethodHelpers.ToJsonArray(subscription.Types),
-                };
-                if (!JmapMethodHelpers.TryApplyPatch(current, item.Value, out var patched))
+                var current = BuildUpdateSource(subscription);
+                if (!JmapMethodHelpers.TryApplyPatchAllowingUnchangedProperties(
+                        current,
+                        item.Value,
+                        UpdateProperties,
+                        out var patched,
+                        out var invalidProperties))
                 {
                     notUpdated[requestedId] = JmapMethodHelpers.SetError("invalidPatch");
                     continue;
                 }
+                if (invalidProperties.Count > 0)
+                {
+                    notUpdated[requestedId] = JmapMethodHelpers.SetError(
+                        "invalidProperties",
+                        properties: invalidProperties);
+                    continue;
+                }
                 var changedProperties = item.Value.KeysForPatch().ToHashSet(StringComparer.Ordinal);
+                changedProperties.IntersectWith(UpdateProperties);
+                // A full object returned by /get contains verificationCode:null
+                // until verification. Under PatchObject null semantics this is
+                // a no-op, not an attempt to verify with an invalid code.
+                if (!subscription.IsVerified
+                    && !patched.ContainsKey("verificationCode"))
+                {
+                    changedProperties.Remove("verificationCode");
+                }
                 if (!TryUpdate(
                         subscription,
                         patched,
                         changedProperties,
                         out var revised,
-                        out var invalidProperties))
+                        out invalidProperties))
                 {
                     notUpdated[requestedId] = JmapMethodHelpers.SetError(
                         "invalidProperties",
@@ -338,6 +344,21 @@ internal sealed class PushSubscriptionSetMethod(
         await database.SaveChangesAsync(cancellationToken);
         return new PushCreateResult(subscription, null);
     }
+
+    private static JsonObject BuildUpdateSource(JmapPushSubscriptionDB subscription) => new()
+    {
+        ["id"] = JmapId.PushSubscription(subscription.Id),
+        ["deviceClientId"] = subscription.DeviceClientId,
+        ["url"] = subscription.Url,
+        ["keys"] = subscription.KeysJson is null ? null : JsonNode.Parse(subscription.KeysJson),
+        ["verificationCode"] = subscription.IsVerified
+            ? subscription.VerificationCode
+            : null,
+        ["expires"] = PushSubscriptionGetMethod.FormatDate(subscription.ExpiresAt),
+        ["types"] = subscription.Types is null
+            ? null
+            : JmapMethodHelpers.ToJsonArray(subscription.Types),
+    };
 
     private static bool TryUpdate(
         JmapPushSubscriptionDB subscription,

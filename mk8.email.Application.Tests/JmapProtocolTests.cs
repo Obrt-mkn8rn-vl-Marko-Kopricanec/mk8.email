@@ -931,6 +931,82 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task PushSubscriptionAcceptsWholeGetObjectAndProtectsImmutableValues()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var subscriptionId = Guid.CreateVersion7();
+        var wireId = JmapId.PushSubscription(subscriptionId);
+        using (var scope = fixture.Services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            database.JmapPushSubscriptions.Add(new JmapPushSubscriptionDB
+            {
+                Id = subscriptionId,
+                SubscriptionObjectId = wireId,
+                UserId = fixture.User.Id,
+                DeviceClientId = "round-trip-device",
+                Url = "https://push.example.net/jmap",
+                VerificationCode = "not-yet-verified",
+                IsVerified = false,
+                Types = ["Email"],
+                ExpiresAt = DateTime.UtcNow.AddDays(3),
+                CreatedAt = DateTime.UtcNow.AddMinutes(-1),
+                UpdatedAt = DateTime.UtcNow.AddMinutes(-1),
+            });
+            await database.SaveChangesAsync();
+        }
+
+        var get = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}"],
+          "methodCalls": [["PushSubscription/get", {"ids":["{{{wireId}}}"]}, "p1"]]
+        }
+        """);
+        var subscription = (JsonObject)Arguments(get)["list"]![0]!.DeepClone();
+        Assert.IsNull(subscription["verificationCode"]);
+        subscription["types"] = new JsonArray("Mailbox", "Email");
+        var update = await fixture.InvokeAsync(new JsonObject
+        {
+            ["using"] = new JsonArray(Core),
+            ["methodCalls"] = new JsonArray(new JsonArray(
+                "PushSubscription/set",
+                new JsonObject
+                {
+                    ["update"] = new JsonObject { [wireId] = subscription },
+                },
+                "p2")),
+        });
+        Assert.IsNull(Arguments(update)["notUpdated"]);
+        Assert.IsTrue(Arguments(update)["updated"]!.AsObject().ContainsKey(wireId));
+
+        var forbidden = (JsonObject)subscription.DeepClone();
+        forbidden["deviceClientId"] = "different-device";
+        var invalid = await fixture.InvokeAsync(new JsonObject
+        {
+            ["using"] = new JsonArray(Core),
+            ["methodCalls"] = new JsonArray(new JsonArray(
+                "PushSubscription/set",
+                new JsonObject
+                {
+                    ["update"] = new JsonObject { [wireId] = forbidden },
+                },
+                "p3")),
+        });
+        var error = Arguments(invalid)["notUpdated"]![wireId]!;
+        Assert.AreEqual("invalidProperties", error["type"]!.GetValue<string>());
+        CollectionAssert.AreEqual(
+            new[] { "deviceClientId" },
+            error["properties"]!.AsArray().Select(node => node!.GetValue<string>()).ToArray());
+
+        using var verificationScope = fixture.Services.CreateScope();
+        var stored = await verificationScope.ServiceProvider.GetRequiredService<EmailDbContext>()
+            .JmapPushSubscriptions.AsNoTracking().SingleAsync();
+        CollectionAssert.AreEquivalent(new[] { "Mailbox", "Email" }, stored.Types!);
+        Assert.IsFalse(stored.IsVerified);
+        Assert.AreEqual("round-trip-device", stored.DeviceClientId);
+    }
+
+    [TestMethod]
     public void WebPushEncryptionRoundTripsWithReceiverKeys()
     {
         using var receiver = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);

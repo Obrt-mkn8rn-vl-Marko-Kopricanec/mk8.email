@@ -2041,7 +2041,7 @@ public sealed class JmapProtocolTests
             + "Date: Sun, 20 Sep 2026 11:00:00 +0000\r\n"
             + $"From: {fixture.User.Username}\r\n"
             + $"From: {fixture.User.Username}\r\n"
-            + $"To: {fixture.User.Username}\r\n"
+            + "To: local-only\r\n"
             + "Subject: Invalid singleton headers\r\n\r\nbody");
         var blobId = await fixture.StoreBlobAsync(malformedRaw);
         var malformedIds = Encoding.UTF8.GetBytes(
@@ -2084,7 +2084,7 @@ public sealed class JmapProtocolTests
         var error = Arguments(submission)["notCreated"]!["bad"]!;
         Assert.AreEqual("invalidEmail", error["type"]!.GetValue<string>());
         CollectionAssert.AreEquivalent(
-            new[] { "from", "sentAt" },
+            new[] { "from", "sentAt", "to" },
             error["properties"]!.AsArray().Select(node => node!.GetValue<string>()).ToArray());
         var idError = Arguments(submission)["notCreated"]!["badIds"]!;
         Assert.AreEqual("invalidEmail", idError["type"]!.GetValue<string>());

@@ -19,6 +19,12 @@ internal sealed class EmailSubmissionSetMethod(
     EmailSetMethod emailSet,
     EnvironmentConfig environment) : IJmapMethod
 {
+    private static readonly ParserOptions StrictAddressParserOptions = new()
+    {
+        AddressParserComplianceMode = RfcComplianceMode.Strict,
+        AllowAddressesWithoutDomain = false,
+        AllowUnquotedCommasInAddresses = false,
+    };
     private static readonly IReadOnlySet<string> CreateProperties = new HashSet<string>(
         ["identityId", "emailId", "envelope"],
         StringComparer.Ordinal);
@@ -538,7 +544,10 @@ internal sealed class EmailSubmissionSetMethod(
             var fromHeaders = Headers(message.Headers, "From");
             InternetAddressList? from = null;
             if (fromHeaders.Length != 1
-                || !InternetAddressList.TryParse(fromHeaders[0].Value, out from)
+                || !InternetAddressList.TryParse(
+                    StrictAddressParserOptions,
+                    fromHeaders[0].Value,
+                    out from)
                 || from.Count == 0
                 || from.Any(address => address is not MailboxAddress))
             {
@@ -547,7 +556,10 @@ internal sealed class EmailSubmissionSetMethod(
 
             var senderHeaders = Headers(message.Headers, "Sender");
             if (senderHeaders.Length == 1
-                && !MailboxAddress.TryParse(senderHeaders[0].Value, out _))
+                && !MailboxAddress.TryParse(
+                    StrictAddressParserOptions,
+                    senderHeaders[0].Value,
+                    out _))
             {
                 invalid.Add("sender");
             }
@@ -607,7 +619,10 @@ internal sealed class EmailSubmissionSetMethod(
     {
         var matching = Headers(headers, headerName);
         if (matching.Length == 1
-            && !InternetAddressList.TryParse(matching[0].Value, out _))
+            && !InternetAddressList.TryParse(
+                StrictAddressParserOptions,
+                matching[0].Value,
+                out _))
         {
             invalid.Add(propertyName);
         }

@@ -396,7 +396,7 @@ internal sealed class MailboxQueryMethod(
                 account.InboxId,
                 JmapConstants.MailboxDataType,
                 cancellationToken),
-            ["canCalculateChanges"] = false,
+            ["canCalculateChanges"] = !sortAsTree && !filterAsTree,
             ["position"] = position,
             ["ids"] = JmapMethodHelpers.ToJsonArray(page),
         };
@@ -454,26 +454,54 @@ internal sealed class MailboxQueryChangesMethod(
         }
         if (!JmapMailboxQueryEngine.TryParseSort(
                 arguments["sort"],
-                out _,
+                out var sort,
                 out var sortError))
         {
             return JmapMethodResponse.Error(sortError);
         }
 
-        var currentState = await states.GetStateAsync(
+        var changes = await states.GetChangesAsync(
             account.InboxId,
             JmapConstants.MailboxDataType,
+            sinceState,
+            null,
+            int.MaxValue,
             cancellationToken);
-        if (!string.Equals(sinceState, currentState, StringComparison.Ordinal))
+        if (changes is null)
             return JmapMethodResponse.Error("cannotCalculateChanges");
+
+        var currentIds = JmapMailboxQueryEngine.Sort(allMailboxes, filtered, sort, false)
+            .Select(mailbox => JmapId.Mailbox(mailbox.Id))
+            .ToList();
+        var currentIdSet = currentIds.ToHashSet(StringComparer.Ordinal);
+        var removed = changes.Destroyed
+            .Concat(changes.Updated)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var changedCurrentIds = changes.Created
+            .Concat(changes.Updated)
+            .Where(currentIdSet.Contains)
+            .ToHashSet(StringComparer.Ordinal);
+        var added = currentIds
+            .Select((id, index) => new { Id = id, Index = index })
+            .Where(item => changedCurrentIds.Contains(item.Id))
+            .ToArray();
+        if (maxChanges is not null && removed.LongLength + added.LongLength > maxChanges.Value)
+            return JmapMethodResponse.Error("tooManyChanges");
 
         var response = new JsonObject
         {
             ["accountId"] = accountId,
             ["oldQueryState"] = sinceState,
-            ["newQueryState"] = currentState,
-            ["removed"] = new JsonArray(),
-            ["added"] = new JsonArray(),
+            ["newQueryState"] = changes.NewState,
+            ["removed"] = JmapMethodHelpers.ToJsonArray(removed),
+            ["added"] = new JsonArray(added
+                .Select(item => (JsonNode)new JsonObject
+                {
+                    ["id"] = item.Id,
+                    ["index"] = item.Index,
+                })
+                .ToArray()),
         };
         if (calculateTotal)
             response["total"] = filtered.Count;

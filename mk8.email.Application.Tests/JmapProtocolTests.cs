@@ -108,6 +108,123 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task MailboxQueryChangesReturnsOrderedCreateUpdateAndDestroyDeltas()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var sort = "\"sort\":[{\"property\":\"name\",\"isAscending\":true}]";
+        var initial = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Mailbox/query", {
+            "accountId":"{{{fixture.AccountId}}}", {{{sort}}}, "calculateTotal":true
+          }, "q1"]]
+        }
+        """);
+        Assert.IsTrue(Arguments(initial)["canCalculateChanges"]!.GetValue<bool>());
+        var initialState = Arguments(initial)["queryState"]!.GetValue<string>();
+
+        var create = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Mailbox/set", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "create":{"mailbox":{"name":"Zulu query delta"}}
+          }, "s1"]]
+        }
+        """);
+        var mailboxId = Arguments(create)["created"]!["mailbox"]!["id"]!.GetValue<string>();
+
+        var createdChanges = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Mailbox/queryChanges", {
+            "accountId":"{{{fixture.AccountId}}}", {{{sort}}},
+            "sinceQueryState":"{{{initialState}}}", "calculateTotal":true
+          }, "qc1"]]
+        }
+        """);
+        var createdArguments = Arguments(createdChanges);
+        Assert.AreEqual(0, createdArguments["removed"]!.AsArray().Count);
+        Assert.AreEqual(mailboxId, createdArguments["added"]![0]!["id"]!.GetValue<string>());
+        Assert.AreEqual(
+            createdArguments["total"]!.GetValue<int>() - 1,
+            createdArguments["added"]![0]!["index"]!.GetValue<int>());
+        var createdState = createdArguments["newQueryState"]!.GetValue<string>();
+
+        await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Mailbox/set", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "update":{"{{{mailboxId}}}":{"name":"Aardvark query delta"}}
+          }, "s2"]]
+        }
+        """);
+        var limited = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Mailbox/queryChanges", {
+            "accountId":"{{{fixture.AccountId}}}", {{{sort}}},
+            "sinceQueryState":"{{{createdState}}}", "maxChanges":1
+          }, "qc2"]]
+        }
+        """);
+        Assert.AreEqual("error", limited["methodResponses"]![0]![0]!.GetValue<string>());
+        Assert.AreEqual("tooManyChanges", Arguments(limited)["type"]!.GetValue<string>());
+
+        var updatedChanges = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Mailbox/queryChanges", {
+            "accountId":"{{{fixture.AccountId}}}", {{{sort}}},
+            "sinceQueryState":"{{{createdState}}}", "upToId":"{{{mailboxId}}}"
+          }, "qc3"]]
+        }
+        """);
+        var updatedArguments = Arguments(updatedChanges);
+        CollectionAssert.AreEqual(
+            new[] { mailboxId },
+            updatedArguments["removed"]!.AsArray()
+                .Select(node => node!.GetValue<string>()).ToArray());
+        Assert.AreEqual(mailboxId, updatedArguments["added"]![0]!["id"]!.GetValue<string>());
+        Assert.AreEqual(0, updatedArguments["added"]![0]!["index"]!.GetValue<int>());
+        var updatedState = updatedArguments["newQueryState"]!.GetValue<string>();
+
+        await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Mailbox/set", {
+            "accountId":"{{{fixture.AccountId}}}", "destroy":["{{{mailboxId}}}"]
+          }, "s3"]]
+        }
+        """);
+        var destroyedChanges = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Mailbox/queryChanges", {
+            "accountId":"{{{fixture.AccountId}}}", {{{sort}}},
+            "sinceQueryState":"{{{updatedState}}}"
+          }, "qc4"]]
+        }
+        """);
+        CollectionAssert.AreEqual(
+            new[] { mailboxId },
+            Arguments(destroyedChanges)["removed"]!.AsArray()
+                .Select(node => node!.GetValue<string>()).ToArray());
+        Assert.AreEqual(0, Arguments(destroyedChanges)["added"]!.AsArray().Count);
+
+        var tree = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Mailbox/query", {
+            "accountId":"{{{fixture.AccountId}}}", "sortAsTree":true
+          }, "q2"]]
+        }
+        """);
+        Assert.IsFalse(Arguments(tree)["canCalculateChanges"]!.GetValue<bool>());
+    }
+
+    [TestMethod]
     public async Task MailboxNamesMustUseNetUnicode()
     {
         await using var fixture = await JmapFixture.CreateAsync();

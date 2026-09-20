@@ -176,6 +176,36 @@ public sealed class JmapCoreTests
     }
 
     [TestMethod]
+    public async Task ResultReferencesOnlySelectTheFirstResponseForACallId()
+    {
+        await using var fixture = await JmapFixture.CreateAsync(
+            configureServices: services => services.AddSingleton<IJmapMethod>(
+                new ImplicitResponseMethod()));
+        var response = await fixture.InvokeAsync(
+            """
+            {
+              "using":["urn:ietf:params:jmap:core"],
+              "methodCalls":[
+                ["Test/implicit",{},"c1"],
+                ["Core/echo",{
+                  "#value":{"resultOf":"c1","name":"Test/additional","path":"/value"}
+                },"c2"]
+              ]
+            }
+            """);
+
+        Assert.AreEqual(
+            "Test/implicit",
+            response["methodResponses"]?[0]?[0]?.GetValue<string>());
+        Assert.AreEqual(
+            "Test/additional",
+            response["methodResponses"]?[1]?[0]?.GetValue<string>());
+        Assert.AreEqual(
+            "invalidResultReference",
+            response["methodResponses"]?[2]?[1]?["type"]?.GetValue<string>());
+    }
+
+    [TestMethod]
     public async Task JsonTransportEnforcesExactMediaTypeAndNamedLimits()
     {
         var context = new DefaultHttpContext();
@@ -366,4 +396,20 @@ public sealed class JmapCoreTests
         CollectionAssert.AreEqual(new[] { "two" }, second.Created.ToArray());
     }
 
+    private sealed class ImplicitResponseMethod : IJmapMethod
+    {
+        public string Name => "Test/implicit";
+        public string Capability => JmapConstants.CoreCapability;
+
+        public Task<JmapMethodResponse> InvokeAsync(
+            JmapInvocationContext context,
+            JsonObject arguments,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new JmapMethodResponse(
+                Name,
+                new JsonObject { ["value"] = "primary" },
+                [new JmapMethodResponse(
+                    "Test/additional",
+                    new JsonObject { ["value"] = "additional" })]));
+    }
 }

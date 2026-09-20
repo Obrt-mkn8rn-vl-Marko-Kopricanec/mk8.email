@@ -40,7 +40,9 @@ internal sealed class JmapFixture : IAsyncDisposable
     public string InboxMailboxId => JmapId.Mailbox(InboxFolderId);
     public string DraftsMailboxId => JmapId.Mailbox(DraftsFolderId);
 
-    public static async Task<JmapFixture> CreateAsync(long? maximumUnreferencedBlobBytes = null)
+    public static async Task<JmapFixture> CreateAsync(
+        long? maximumUnreferencedBlobBytes = null,
+        Action<IServiceCollection>? configureServices = null)
     {
         var blobLimit = maximumUnreferencedBlobBytes ?? 100_000_000;
         var objectSizeLimit = maximumUnreferencedBlobBytes is null
@@ -70,6 +72,7 @@ internal sealed class JmapFixture : IAsyncDisposable
         services.AddDbContext<EmailDbContext>(options =>
             options.UseInMemoryDatabase(databaseName));
         services.AddJmapProtocol();
+        configureServices?.Invoke(services);
         var provider = services.BuildServiceProvider();
 
         var userId = Guid.CreateVersion7();

@@ -249,6 +249,7 @@ internal sealed class EmailParseMethod(
             || !JmapEmailArguments.TryGetProjectionOptions(
                 arguments,
                 JmapEmailCodec.ParseDefaultProperties,
+                allowNullProperties: false,
                 out var options))
         {
             return JmapMethodResponse.Error("invalidArguments");

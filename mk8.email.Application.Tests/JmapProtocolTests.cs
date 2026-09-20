@@ -923,6 +923,36 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task EmailParseRejectsNullPropertiesButEmailGetAcceptsThem()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var blobId = await fixture.StoreBlobAsync(Encoding.ASCII.GetBytes(
+            $"From: sender@example.net\r\nTo: {fixture.User.Username}\r\n\r\nbody"));
+
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [
+            ["Email/parse", {
+              "accountId": "{{{fixture.AccountId}}}",
+              "blobIds": ["{{{blobId}}}"],
+              "properties": null
+            }, "p1"],
+            ["Email/get", {
+              "accountId": "{{{fixture.AccountId}}}",
+              "ids": [],
+              "properties": null
+            }, "g1"]
+          ]
+        }
+        """);
+
+        Assert.AreEqual("error", response["methodResponses"]![0]![0]!.GetValue<string>());
+        Assert.AreEqual("invalidArguments", Arguments(response)["type"]!.GetValue<string>());
+        Assert.AreEqual("Email/get", response["methodResponses"]![1]![0]!.GetValue<string>());
+    }
+
+    [TestMethod]
     public async Task HtmlBodyValueTruncationStopsBeforeAnOpenTag()
     {
         await using var fixture = await JmapFixture.CreateAsync();

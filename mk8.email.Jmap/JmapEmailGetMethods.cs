@@ -10,10 +10,15 @@ internal static class JmapEmailArguments
     public static bool TryGetProjectionOptions(
         JsonObject arguments,
         IReadOnlyList<string> defaults,
+        bool allowNullProperties,
         out JmapEmailProjectionOptions options)
     {
         options = null!;
-        if (!JmapMethodHelpers.TryGetStringArray(arguments, "properties", true, out var properties)
+        if (!JmapMethodHelpers.TryGetStringArray(
+                arguments,
+                "properties",
+                allowNullProperties,
+                out var properties)
             || !JmapMethodHelpers.TryGetStringArray(arguments, "bodyProperties", false, out var bodyProperties)
             || !JmapMethodHelpers.TryGetOptionalBoolean(arguments, "fetchTextBodyValues", false, out var fetchText)
             || !JmapMethodHelpers.TryGetOptionalBoolean(arguments, "fetchHTMLBodyValues", false, out var fetchHtml)
@@ -85,6 +90,7 @@ internal sealed class EmailGetMethod(
             || !JmapEmailArguments.TryGetProjectionOptions(
                 arguments,
                 JmapEmailCodec.DefaultProperties,
+                allowNullProperties: true,
                 out var options)
             || !JmapEmailArguments.TryGetIds(arguments, "ids", true, out var requestedIds))
         {

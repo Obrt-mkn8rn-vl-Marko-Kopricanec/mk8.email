@@ -1872,6 +1872,20 @@ public sealed class JmapProtocolTests
                   "mailFrom":{"email":"{{{fixture.User.Username}}}"},
                   "rcptTo":[{"email":"{{{fixture.User.Username}}}","parameters":{"SIZE":"1"}}]
                 }
+              },
+              "badRecipientShape":{
+                "identityId":"{{{identityId}}}", "emailId":"{{{emailId}}}",
+                "envelope":{
+                  "mailFrom":{"email":"{{{fixture.User.Username}}}"},
+                  "rcptTo":[{"parameters":null}]
+                }
+              },
+              "badRecipientAddress":{
+                "identityId":"{{{identityId}}}", "emailId":"{{{emailId}}}",
+                "envelope":{
+                  "mailFrom":{"email":"{{{fixture.User.Username}}}"},
+                  "rcptTo":[{"email":"not an address"}]
+                }
               }
             }
           }, "s1"]]
@@ -1885,6 +1899,15 @@ public sealed class JmapProtocolTests
             "invalidProperties",
             Arguments(submissionResponse)["notCreated"]!["badRecipientParameter"]!["type"]!
                 .GetValue<string>());
+        Assert.AreEqual(
+            "invalidProperties",
+            Arguments(submissionResponse)["notCreated"]!["badRecipientShape"]!["type"]!
+                .GetValue<string>());
+        var invalidRecipient = Arguments(submissionResponse)["notCreated"]!["badRecipientAddress"]!;
+        Assert.AreEqual("invalidRecipients", invalidRecipient["type"]!.GetValue<string>());
+        Assert.AreEqual(
+            "not an address",
+            invalidRecipient["invalidRecipients"]![0]!.GetValue<string>());
 
         using (var scope = fixture.Services.CreateScope())
         {

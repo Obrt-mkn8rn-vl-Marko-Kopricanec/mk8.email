@@ -626,7 +626,7 @@ internal sealed class EmailSubmissionSetMethod(
         if (node is not JsonObject address
             || !JmapMethodHelpers.TryGetRequiredString(address, "email", out email))
         {
-            error = EnvelopeAddressError.InvalidEmail;
+            error = EnvelopeAddressError.InvalidProperties;
             return false;
         }
         if (address.Any(item => item.Key is not ("email" or "parameters")))

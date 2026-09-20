@@ -136,6 +136,45 @@ public sealed class MailAdministrationTests
     }
 
     [TestMethod]
+    public async Task DomainDeactivationRevokesJmapPushSubscriptionsForItsAccountsOnly()
+    {
+        await using var database = CreateDatabase();
+        var administration = new MailAdministrationService(database);
+        await administration.EnsureDomainAsync("Example", "example.com");
+        await administration.CreateAccountAsync(
+            "postmaster@example.com",
+            "postmaster-password-value",
+            UserRole.User);
+        await administration.EnsureDomainAsync("Example", "example.net");
+        await administration.CreateAccountAsync(
+            "postmaster@example.net",
+            "postmaster-password-value",
+            UserRole.User);
+        await administration.SetDomainActiveAsync("example.com", true);
+        await administration.SetDomainActiveAsync("example.net", true);
+
+        var revokedUserId = await database.Users
+            .Where(user => user.Username == "postmaster@example.com")
+            .Select(user => user.Id)
+            .SingleAsync();
+        var retainedUserId = await database.Users
+            .Where(user => user.Username == "postmaster@example.net")
+            .Select(user => user.Id)
+            .SingleAsync();
+        var revokedSubscription = CreatePushSubscription(revokedUserId, "revoked");
+        var retainedSubscription = CreatePushSubscription(retainedUserId, "retained");
+        database.JmapPushSubscriptions.AddRange(revokedSubscription, retainedSubscription);
+        await database.SaveChangesAsync();
+
+        Assert.IsTrue((await administration.SetDomainActiveAsync("example.com", false)).Succeeded);
+
+        var remaining = await database.JmapPushSubscriptions.AsNoTracking().SingleAsync();
+        Assert.AreEqual(retainedSubscription.Id, remaining.Id);
+        Assert.AreEqual(string.Empty, revokedSubscription.Url);
+        Assert.IsNull(revokedSubscription.KeysJson);
+    }
+
+    [TestMethod]
     public async Task UserQuotaIncludesEveryOwnedInbox()
     {
         await using var database = CreateDatabase();
@@ -208,4 +247,17 @@ public sealed class MailAdministrationTests
         database.Database.EnsureCreated();
         return database;
     }
+
+    private static JmapPushSubscriptionDB CreatePushSubscription(Guid userId, string deviceClientId) =>
+        new()
+        {
+            Id = Guid.CreateVersion7(),
+            SubscriptionObjectId = $"ps-{Guid.NewGuid():N}",
+            UserId = userId,
+            DeviceClientId = deviceClientId,
+            Url = $"https://push.example/{deviceClientId}",
+            KeysJson = "{\"p256dh\":\"key\",\"auth\":\"secret\"}",
+            VerificationCode = "verification-code",
+            ExpiresAt = DateTime.UtcNow.AddDays(1),
+        };
 }

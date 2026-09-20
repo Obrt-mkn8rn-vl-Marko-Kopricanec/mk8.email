@@ -205,6 +205,16 @@ public sealed partial class MailAdministrationService(EmailDbContext db) : IMail
 
         mailDomain.IsActive = isActive;
         mailDomain.UpdatedAt = DateTime.UtcNow;
+        if (!isActive)
+        {
+            var usernameSuffix = $"@{normalizedDomain}";
+            var affectedUserIds = await db.Users
+                .Where(user => user.CompanyId == mailDomain.CompanyId
+                    && user.Username.EndsWith(usernameSuffix))
+                .Select(user => user.Id)
+                .ToArrayAsync(cancellationToken);
+            await RevokePushSubscriptionsAsync(affectedUserIds, cancellationToken);
+        }
         await db.SaveChangesAsync(cancellationToken);
         return Success(isActive ? "The domain was activated." : "The domain was deactivated.", mailDomain.Id);
     }
@@ -247,10 +257,18 @@ public sealed partial class MailAdministrationService(EmailDbContext db) : IMail
 
     private async Task RevokePushSubscriptionsAsync(
         Guid userId,
+        CancellationToken cancellationToken) =>
+        await RevokePushSubscriptionsAsync([userId], cancellationToken);
+
+    private async Task RevokePushSubscriptionsAsync(
+        IReadOnlyCollection<Guid> userIds,
         CancellationToken cancellationToken)
     {
+        if (userIds.Count == 0)
+            return;
+
         var subscriptions = await db.JmapPushSubscriptions
-            .Where(subscription => subscription.UserId == userId)
+            .Where(subscription => userIds.Contains(subscription.UserId))
             .ToListAsync(cancellationToken);
         foreach (var subscription in subscriptions)
         {

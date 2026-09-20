@@ -54,9 +54,9 @@ internal static partial class JmapEmailQueryEngine
             .Where(email => email.Folder.InboxId == accountId && !email.IsDeleted)
             .ToListAsync(cancellationToken);
         var result = new List<JmapEmailQueryItem>(emails.Count);
-        foreach (var email in emails)
+        try
         {
-            try
+            foreach (var email in emails)
             {
                 var message = JmapEmailCodec.Parse(email);
                 var keywords = JmapEmailCodec.BuildKeywords(email)
@@ -69,12 +69,14 @@ internal static partial class JmapEmailQueryEngine
                     JmapId.Thread(email.ThreadObjectId ?? email.Id.ToString("N")),
                     JmapEmailCodec.HasAttachment(message)));
             }
-            catch (FormatException)
-            {
-                // Invalid legacy messages are omitted from query results but remain retrievable over IMAP.
-            }
+            return result;
         }
-        return result;
+        catch
+        {
+            foreach (var item in result)
+                item.Dispose();
+            throw;
+        }
     }
 
     public static bool TryFilter(

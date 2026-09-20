@@ -363,7 +363,7 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
-    public async Task EmailGetFailsInsteadOfReportingCorruptStoredRecordsAsMissing()
+    public async Task EmailReadsFailInsteadOfHidingCorruptStoredRecords()
     {
         await using var fixture = await JmapFixture.CreateAsync();
         var emailId = Guid.CreateVersion7();
@@ -389,15 +389,23 @@ public sealed class JmapProtocolTests
         var response = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
-          "methodCalls": [["Email/get", {
-            "accountId": "{{{fixture.AccountId}}}",
-            "ids": ["{{{JmapId.Email(emailId)}}}"]
-          }, "g1"]]
+          "methodCalls": [
+            ["Email/get", {
+              "accountId": "{{{fixture.AccountId}}}",
+              "ids": ["{{{JmapId.Email(emailId)}}}"]
+            }, "g1"],
+            ["Email/query", {
+              "accountId": "{{{fixture.AccountId}}}",
+              "calculateTotal": true
+            }, "q1"]
+          ]
         }
         """);
 
         Assert.AreEqual("error", response["methodResponses"]![0]![0]!.GetValue<string>());
         Assert.AreEqual("serverFail", Arguments(response)["type"]!.GetValue<string>());
+        Assert.AreEqual("error", response["methodResponses"]![1]![0]!.GetValue<string>());
+        Assert.AreEqual("serverFail", Arguments(response, 1)["type"]!.GetValue<string>());
     }
 
     [TestMethod]

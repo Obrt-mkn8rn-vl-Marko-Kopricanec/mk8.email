@@ -1257,6 +1257,53 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task SearchIncludesEveryInlineTextBodyPart()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var raw = Encoding.UTF8.GetBytes(
+            $"From: sender@example.net\r\nTo: {fixture.User.Username}\r\n"
+            + "Subject: Multipart search\r\n"
+            + "Content-Type: multipart/mixed; boundary=parts\r\n\r\n"
+            + "--parts\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nOpening text\r\n"
+            + "--parts\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nClosing needle\r\n"
+            + "--parts--\r\n");
+        var blobId = await fixture.StoreBlobAsync(raw);
+        var import = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/import", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "emails":{"multipart":{"blobId":"{{{blobId}}}",
+              "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true} } }
+          }, "i1"]]
+        }
+        """);
+        var emailId = Arguments(import)["created"]!["multipart"]!["id"]!.GetValue<string>();
+
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [
+            ["Email/query", {
+              "accountId":"{{{fixture.AccountId}}}",
+              "filter":{"body":"closing needle"}
+            }, "q1"],
+            ["SearchSnippet/get", {
+              "accountId":"{{{fixture.AccountId}}}",
+              "filter":{"body":"closing needle"},
+              "emailIds":["{{{emailId}}}"]
+            }, "ss1"]
+          ]
+        }
+        """);
+
+        Assert.AreEqual(emailId, Arguments(response)["ids"]![0]!.GetValue<string>());
+        StringAssert.Contains(
+            Arguments(response, 1)["list"]![0]!["preview"]!.GetValue<string>(),
+            "<mark>Closing</mark> <mark>needle</mark>");
+    }
+
+    [TestMethod]
     public async Task SearchSnippetPreservesPlainTextHtmlEntities()
     {
         await using var fixture = await JmapFixture.CreateAsync();

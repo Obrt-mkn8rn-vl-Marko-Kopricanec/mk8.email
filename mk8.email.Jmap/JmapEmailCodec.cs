@@ -363,6 +363,17 @@ internal static partial class JmapEmailCodec
             !string.Equals(part.Disposition, "inline", StringComparison.OrdinalIgnoreCase));
     }
 
+    internal static string SearchableBodyText(MimeMessage message) => string.Join(
+        '\n',
+        Flatten(BuildParts(message.Body, Guid.Empty, blobPartPrefix: null))
+            .Where(part => part.PartId is not null
+                && part.Type.StartsWith("text/", StringComparison.Ordinal))
+            .Select(part =>
+            {
+                var value = DecodeText(part).Text;
+                return part.Type == "text/html" ? JmapHtmlText.Extract(value) : value;
+            }));
+
     private static PartDescriptor? BuildParts(
         MimeEntity? entity,
         Guid blobSourceId,

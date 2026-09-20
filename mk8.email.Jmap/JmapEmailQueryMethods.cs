@@ -346,7 +346,7 @@ internal static partial class JmapEmailQueryEngine
         BodyText(item));
 
     private static string BodyText(JmapEmailQueryItem item) =>
-        (item.Message.TextBody ?? string.Empty) + "\n" + JmapHtmlText.Extract(item.Message.HtmlBody);
+        JmapEmailCodec.SearchableBodyText(item.Message);
 
     private static bool MatchesText(string haystack, string query)
     {

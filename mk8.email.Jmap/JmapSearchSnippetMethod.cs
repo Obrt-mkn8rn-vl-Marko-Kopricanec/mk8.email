@@ -113,13 +113,8 @@ internal static partial class JmapSearchSnippetFormatter
         return value[..^length];
     }
 
-    public static string PlainBody(MimeKit.MimeMessage message)
-    {
-        var value = message.TextBody;
-        if (string.IsNullOrWhiteSpace(value))
-            return JmapHtmlText.Extract(message.HtmlBody);
-        return value;
-    }
+    public static string PlainBody(MimeKit.MimeMessage message) =>
+        JmapEmailCodec.SearchableBodyText(message);
 
     private static bool ContainsAny(string value, IEnumerable<string> terms) =>
         terms.Any(term => value.Contains(term, StringComparison.InvariantCultureIgnoreCase));

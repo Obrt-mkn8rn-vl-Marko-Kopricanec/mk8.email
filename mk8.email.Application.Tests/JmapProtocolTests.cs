@@ -2585,6 +2585,103 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task SubmissionValidatesAddressListsAndResentBlocks()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var identities = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Submission}}}"],
+          "methodCalls": [["Identity/get", {"accountId":"{{{fixture.AccountId}}}"}, "g1"]]
+        }
+        """);
+        var identityId = Arguments(identities)["list"]![0]!["id"]!.GetValue<string>();
+
+        var validRaw = Encoding.UTF8.GetBytes(
+            $"Resent-From: {fixture.User.Username}\r\n"
+            + "Resent-To: first@example.test\r\n"
+            + "Resent-Date: 19 Sep 2026 10:00:00 +0000\r\n"
+            + "Resent-Message-ID: <first@example.test>\r\n"
+            + $"Resent-From: {fixture.User.Username}, delegate@example.test\r\n"
+            + $"Resent-Sender: {fixture.User.Username}\r\n"
+            + "Resent-Cc: Undisclosed:;\r\n"
+            + "Resent-Bcc: \r\n"
+            + "Resent-Date: 18 Sep 2026 10:00:00 +0000\r\n"
+            + "Resent-Message-ID: <second@example.test>\r\n"
+            + "Date: 20 Sep 2026 10:00:00 +0000\r\n"
+            + $"From: {fixture.User.Username}\r\n"
+            + $"To: {fixture.User.Username}\r\n"
+            + "Bcc: (undisclosed recipients)\r\n"
+            + "Subject: Valid resent blocks\r\n\r\nbody");
+        var invalidRaw = Encoding.UTF8.GetBytes(
+            $"Resent-From: {fixture.User.Username}, delegate@example.test\r\n"
+            + "Resent-To: \r\n"
+            + "Resent-Cc: local-only\r\n"
+            + "Resent-Bcc: (undisclosed recipients)\r\n"
+            + "Resent-Message-ID: missing-brackets@example.test\r\n"
+            + $"Resent-Reply-To: {fixture.User.Username}\r\n"
+            + "Date: 20 Sep 2026 10:00:00 +0000\r\n"
+            + $"From: {fixture.User.Username}\r\n"
+            + "Reply-To: \r\n"
+            + "To: \r\n"
+            + "Cc: \r\n"
+            + "Bcc: (undisclosed recipients)\r\n"
+            + "Subject: Invalid resent block\r\n\r\nbody");
+        var validBlobId = await fixture.StoreBlobAsync(validRaw);
+        var invalidBlobId = await fixture.StoreBlobAsync(invalidRaw);
+        var import = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/import", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "emails":{
+              "valid":{"blobId":"{{{validBlobId}}}",
+                "mailboxIds":{"{{{fixture.DraftsMailboxId}}}":true}},
+              "invalid":{"blobId":"{{{invalidBlobId}}}",
+                "mailboxIds":{"{{{fixture.DraftsMailboxId}}}":true}}
+            }
+          }, "i1"]]
+        }
+        """);
+        var validEmailId = Arguments(import)["created"]!["valid"]!["id"]!.GetValue<string>();
+        var invalidEmailId = Arguments(import)["created"]!["invalid"]!["id"]!.GetValue<string>();
+
+        var submission = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Submission}}}"],
+          "methodCalls": [["EmailSubmission/set", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "create":{
+              "valid":{"identityId":"{{{identityId}}}", "emailId":"{{{validEmailId}}}",
+                "envelope":{"mailFrom":{"email":"{{{fixture.User.Username}}}"},
+                  "rcptTo":[{"email":"{{{fixture.User.Username}}}"}]}},
+              "invalid":{"identityId":"{{{identityId}}}", "emailId":"{{{invalidEmailId}}}",
+                "envelope":{"mailFrom":{"email":"{{{fixture.User.Username}}}"},
+                  "rcptTo":[{"email":"{{{fixture.User.Username}}}"}]}}
+            }
+          }, "s1"]]
+        }
+        """);
+        Assert.IsNotNull(Arguments(submission)["created"]!["valid"]);
+        var error = Arguments(submission)["notCreated"]!["invalid"]!;
+        Assert.AreEqual("invalidEmail", error["type"]!.GetValue<string>());
+        CollectionAssert.AreEquivalent(
+            new[]
+            {
+                "cc",
+                "header:Resent-Cc:asAddresses:all",
+                "header:Resent-Date:asDate:all",
+                "header:Resent-Message-ID:asMessageIds:all",
+                "header:Resent-Reply-To:asAddresses:all",
+                "header:Resent-Sender:asAddresses:all",
+                "header:Resent-To:asAddresses:all",
+                "headers",
+                "replyTo",
+                "to",
+            },
+            error["properties"]!.AsArray().Select(node => node!.GetValue<string>()).ToArray());
+    }
+
+    [TestMethod]
     public async Task IdentityAndVacationAcceptWholeGetObjectsAsUpdates()
     {
         await using var fixture = await JmapFixture.CreateAsync();

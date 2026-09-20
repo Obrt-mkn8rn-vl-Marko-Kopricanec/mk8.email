@@ -53,6 +53,17 @@ internal sealed class EmailSubmissionSetMethod(
             "Content-Language", "Content-Location",
         ],
         StringComparer.OrdinalIgnoreCase);
+    private static readonly IReadOnlyDictionary<string, string> ResentHeaderProperties =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Resent-Date"] = "header:Resent-Date:asDate:all",
+            ["Resent-From"] = "header:Resent-From:asAddresses:all",
+            ["Resent-Sender"] = "header:Resent-Sender:asAddresses:all",
+            ["Resent-To"] = "header:Resent-To:asAddresses:all",
+            ["Resent-Cc"] = "header:Resent-Cc:asAddresses:all",
+            ["Resent-Bcc"] = "header:Resent-Bcc:asAddresses:all",
+            ["Resent-Message-ID"] = "header:Resent-Message-ID:asMessageIds:all",
+        };
 
     public string Name => "EmailSubmission/set";
     public string Capability => JmapConstants.SubmissionCapability;
@@ -566,10 +577,10 @@ internal sealed class EmailSubmissionSetMethod(
             if (from is not null && from.Mailboxes.Skip(1).Any() && senderHeaders.Length != 1)
                 invalid.Add("sender");
 
-            ValidateAddressHeader(message.Headers, "Reply-To", "replyTo", invalid);
-            ValidateAddressHeader(message.Headers, "To", "to", invalid);
-            ValidateAddressHeader(message.Headers, "Cc", "cc", invalid);
-            ValidateAddressHeader(message.Headers, "Bcc", "bcc", invalid);
+            ValidateAddressHeader(message.Headers, "Reply-To", "replyTo", false, invalid);
+            ValidateAddressHeader(message.Headers, "To", "to", false, invalid);
+            ValidateAddressHeader(message.Headers, "Cc", "cc", false, invalid);
+            ValidateAddressHeader(message.Headers, "Bcc", "bcc", true, invalid);
             ValidateMessageIdsHeader(
                 message.Headers,
                 "Message-ID",
@@ -588,6 +599,7 @@ internal sealed class EmailSubmissionSetMethod(
                 "references",
                 requireSingle: false,
                 invalid);
+            ValidateResentHeaders(message.Headers, invalid);
 
             if (message.Headers
                 .Where(header => SingletonMimeHeaders.Contains(header.Field))
@@ -615,17 +627,212 @@ internal sealed class EmailSubmissionSetMethod(
         HeaderList headers,
         string headerName,
         string propertyName,
+        bool allowEmpty,
         ISet<string> invalid)
     {
         var matching = Headers(headers, headerName);
         if (matching.Length == 1
-            && !InternetAddressList.TryParse(
-                StrictAddressParserOptions,
-                matching[0].Value,
-                out _))
+            && !TryParseAddressList(matching[0].Value, allowEmpty, false, out _))
         {
             invalid.Add(propertyName);
         }
+    }
+
+    private static void ValidateResentHeaders(HeaderList headers, ISet<string> invalid)
+    {
+        var resent = headers
+            .Where(header => ResentHeaderProperties.ContainsKey(header.Field))
+            .ToArray();
+        if (resent.Length == 0)
+        {
+            if (Headers(headers, "Resent-Reply-To").Length > 0)
+                invalid.Add("header:Resent-Reply-To:asAddresses:all");
+            return;
+        }
+
+        ValidateEveryHeader(
+            resent,
+            "Resent-Date",
+            value => MimeKit.Utils.DateUtils.TryParse(value, out _),
+            invalid);
+        ValidateEveryHeader(
+            resent,
+            "Resent-From",
+            value => TryParseAddressList(value, false, true, out _),
+            invalid);
+        ValidateEveryHeader(
+            resent,
+            "Resent-Sender",
+            value => MailboxAddress.TryParse(StrictAddressParserOptions, value, out _),
+            invalid);
+        ValidateEveryHeader(
+            resent,
+            "Resent-To",
+            value => TryParseAddressList(value, false, false, out _),
+            invalid);
+        ValidateEveryHeader(
+            resent,
+            "Resent-Cc",
+            value => TryParseAddressList(value, false, false, out _),
+            invalid);
+        ValidateEveryHeader(
+            resent,
+            "Resent-Bcc",
+            value => TryParseAddressList(value, true, false, out _),
+            invalid);
+        ValidateEveryHeader(
+            resent,
+            "Resent-Message-ID",
+            value => JmapEmailCodec.IsValidMessageIdsHeader(value, true),
+            invalid);
+
+        ValidateResentCardinality(resent, invalid);
+        if (!CanPartitionResentBlocks(resent))
+            invalid.Add("headers");
+        if (Headers(headers, "Resent-Reply-To").Length > 0)
+            invalid.Add("header:Resent-Reply-To:asAddresses:all");
+    }
+
+    private static void ValidateEveryHeader(
+        IEnumerable<Header> headers,
+        string headerName,
+        Func<string, bool> isValid,
+        ISet<string> invalid)
+    {
+        if (headers.Any(header => header.Field.Equals(headerName, StringComparison.OrdinalIgnoreCase)
+            && !isValid(header.Value)))
+        {
+            invalid.Add(ResentHeaderProperties[headerName]);
+        }
+    }
+
+    private static void ValidateResentCardinality(
+        IReadOnlyList<Header> headers,
+        ISet<string> invalid)
+    {
+        var dateCount = CountHeaders(headers, "Resent-Date");
+        var fromHeaders = headers
+            .Where(header => header.Field.Equals("Resent-From", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        var blockCount = Math.Max(1, Math.Max(dateCount, fromHeaders.Length));
+        if (dateCount < blockCount)
+            invalid.Add(ResentHeaderProperties["Resent-Date"]);
+        if (fromHeaders.Length < blockCount)
+            invalid.Add(ResentHeaderProperties["Resent-From"]);
+
+        foreach (var name in ResentHeaderProperties.Keys
+            .Where(name => name is not ("Resent-Date" or "Resent-From")))
+        {
+            if (CountHeaders(headers, name) > blockCount)
+                invalid.Add(ResentHeaderProperties[name]);
+        }
+
+        var multiFromCount = fromHeaders.Count(ResentFromRequiresSender);
+        if (CountHeaders(headers, "Resent-Sender") < multiFromCount)
+            invalid.Add(ResentHeaderProperties["Resent-Sender"]);
+    }
+
+    private static int CountHeaders(IEnumerable<Header> headers, string name) =>
+        headers.Count(header => header.Field.Equals(name, StringComparison.OrdinalIgnoreCase));
+
+    private static bool CanPartitionResentBlocks(IReadOnlyList<Header> headers)
+    {
+        var reachable = new bool[headers.Count + 1];
+        reachable[0] = true;
+        for (var start = 0; start < headers.Count; start++)
+        {
+            if (!reachable[start])
+                continue;
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            Header? from = null;
+            var hasDate = false;
+            var hasSender = false;
+            for (var end = start; end < headers.Count; end++)
+            {
+                var header = headers[end];
+                if (!names.Add(header.Field))
+                    break;
+                if (header.Field.Equals("Resent-Date", StringComparison.OrdinalIgnoreCase))
+                    hasDate = true;
+                else if (header.Field.Equals("Resent-From", StringComparison.OrdinalIgnoreCase))
+                    from = header;
+                else if (header.Field.Equals("Resent-Sender", StringComparison.OrdinalIgnoreCase))
+                    hasSender = true;
+
+                if (hasDate && from is not null && (!ResentFromRequiresSender(from) || hasSender))
+                    reachable[end + 1] = true;
+            }
+        }
+        return reachable[^1];
+    }
+
+    private static bool ResentFromRequiresSender(Header header) =>
+        TryParseAddressList(header.Value, false, true, out var addresses)
+        && addresses.Mailboxes.Skip(1).Any();
+
+    private static bool TryParseAddressList(
+        string value,
+        bool allowEmpty,
+        bool mailboxesOnly,
+        out InternetAddressList addresses)
+    {
+        if (allowEmpty && IsCfwsOnly(value))
+        {
+            addresses = new InternetAddressList();
+            return true;
+        }
+        if (!InternetAddressList.TryParse(
+                StrictAddressParserOptions,
+                value,
+                out var parsedAddresses)
+            || parsedAddresses is null)
+        {
+            addresses = new InternetAddressList();
+            return false;
+        }
+        addresses = parsedAddresses;
+        return (allowEmpty || addresses.Count > 0)
+            && (!mailboxesOnly || addresses.All(address => address is MailboxAddress));
+    }
+
+    private static bool IsCfwsOnly(string value)
+    {
+        var index = 0;
+        while (index < value.Length)
+        {
+            var character = value[index++];
+            if (character is ' ' or '\t' or '\r' or '\n')
+                continue;
+            if (character != '(')
+                return false;
+
+            var depth = 1;
+            while (depth > 0)
+            {
+                if (index >= value.Length)
+                    return false;
+                character = value[index++];
+                if (character == '\\')
+                {
+                    if (index >= value.Length)
+                        return false;
+                    index++;
+                }
+                else if (character == '(')
+                {
+                    depth++;
+                }
+                else if (character == ')')
+                {
+                    depth--;
+                }
+                else if (character < ' ' && character is not ('\t' or '\r' or '\n'))
+                {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     private static void ValidateMessageIdsHeader(

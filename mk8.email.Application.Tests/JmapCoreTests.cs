@@ -374,20 +374,30 @@ public sealed class JmapCoreTests
     }
 
     [TestMethod]
-    public async Task JsonTransportRejectsUnpairedUnicodeSurrogates()
+    public async Task JsonTransportRejectsSurrogatesAndUnicodeNoncharacters()
     {
-        var context = new DefaultHttpContext();
-        var bytes = Encoding.UTF8.GetBytes("{\"value\":\"\\uD800\"}");
-        context.Request.ContentLength = bytes.Length;
-        context.Request.Body = new MemoryStream(bytes);
+        foreach (var json in new[]
+        {
+            "{\"value\":\"\\uD800\"}",
+            "{\"value\":\"\\uFDD0\"}",
+            "{\"value\":\"\\uFFFF\"}",
+            "{\"value\":\"\\uD83F\\uDFFE\"}",
+            "{\"\\uFDEF\":true}",
+        })
+        {
+            var context = new DefaultHttpContext();
+            var bytes = Encoding.UTF8.GetBytes(json);
+            context.Request.ContentLength = bytes.Length;
+            context.Request.Body = new MemoryStream(bytes);
 
-        var exception = await Assert.ThrowsAsync<JmapRequestException>(
-            () => JmapJson.ParseRequestAsync(
-                context.Request,
-                new JmapConfig { MaxRequestSizeBytes = 65_536 },
-                CancellationToken.None));
+            var exception = await Assert.ThrowsAsync<JmapRequestException>(
+                () => JmapJson.ParseRequestAsync(
+                    context.Request,
+                    new JmapConfig { MaxRequestSizeBytes = 65_536 },
+                    CancellationToken.None));
 
-        Assert.AreEqual("urn:ietf:params:jmap:error:notJSON", exception.Type);
+            Assert.AreEqual("urn:ietf:params:jmap:error:notJSON", exception.Type, json);
+        }
     }
 
     [TestMethod]

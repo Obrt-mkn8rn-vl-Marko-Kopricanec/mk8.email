@@ -54,7 +54,7 @@ internal static class JmapJson
             if (!HasValidNumbers(document.RootElement))
                 throw NotJson("JSON numbers must be finite IEEE 754 values.");
             if (!HasValidUnicode(document.RootElement))
-                throw NotJson("JSON strings must contain only valid Unicode scalar values.");
+                throw NotJson("JSON strings must contain only I-JSON Unicode characters.");
 
             return JsonNode.Parse(bytes, documentOptions: new JsonDocumentOptions
             {
@@ -119,7 +119,7 @@ internal static class JmapJson
             case JsonValueKind.Object:
                 foreach (var property in element.EnumerateObject())
                 {
-                    if (!ContainsOnlyUnicodeScalars(property.Name)
+                    if (!ContainsOnlyIJsonCharacters(property.Name)
                         || !HasValidUnicode(property.Value))
                     {
                         return false;
@@ -129,7 +129,7 @@ internal static class JmapJson
             case JsonValueKind.Array:
                 return element.EnumerateArray().All(HasValidUnicode);
             case JsonValueKind.String:
-                return ContainsOnlyUnicodeScalars(element.GetString()!);
+                return ContainsOnlyIJsonCharacters(element.GetString()!);
             default:
                 return true;
         }
@@ -147,6 +147,23 @@ internal static class JmapJson
         }
         return true;
     }
+
+    private static bool ContainsOnlyIJsonCharacters(string value)
+    {
+        var remaining = value.AsSpan();
+        while (!remaining.IsEmpty)
+        {
+            var status = Rune.DecodeFromUtf16(remaining, out var rune, out var consumed);
+            if (status != OperationStatus.Done || IsUnicodeNoncharacter(rune.Value))
+                return false;
+            remaining = remaining[consumed..];
+        }
+        return true;
+    }
+
+    private static bool IsUnicodeNoncharacter(int value) =>
+        value is >= 0xFDD0 and <= 0xFDEF
+        || (value & 0xFFFE) == 0xFFFE;
 
     private static JmapRequestException Limit() =>
         new(

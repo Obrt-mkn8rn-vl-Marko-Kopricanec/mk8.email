@@ -1,6 +1,7 @@
 using System.Text.Json.Nodes;
 using System.Text;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using mk8.email.Application.Interfaces;
@@ -257,6 +258,21 @@ public sealed class JmapCoreTests
             $"{new string('a', 127)}/{new string('b', 127)}",
             JmapEndpointRouteBuilderExtensions.NormalizeMediaType(
                 $"{new string('A', 127)}/{new string('B', 127)}"));
+    }
+
+    [TestMethod]
+    public void BinaryDownloadPreservesTheSuppliedFilename()
+    {
+        var name = $"reports/{new string('é', 260)}.txt";
+        var result = JmapEndpointRouteBuilderExtensions.CreateDownloadResult(
+            [1, 2, 3],
+            "text/plain",
+            name);
+
+        var file = Assert.IsInstanceOfType<FileContentHttpResult>(result);
+        Assert.AreEqual(name, file.FileDownloadName);
+        Assert.AreEqual("text/plain", file.ContentType);
+        Assert.IsTrue(file.EnableRangeProcessing);
     }
 
     [TestMethod]

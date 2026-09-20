@@ -208,18 +208,19 @@ public static class JmapEndpointRouteBuilderExtensions
             return ResourceNotFound("The account or blob was not found.");
 
         var requestedType = NormalizeMediaType(context.Request.Query["accept"].ToString());
-        var downloadName = string.IsNullOrWhiteSpace(name)
-            ? blob.Name ?? "download"
-            : Path.GetFileName(name);
-        if (downloadName.Length > 255)
-            downloadName = downloadName[..255];
         context.Response.Headers.CacheControl = "private, immutable, max-age=31536000";
-        return Results.File(
-            blob.Content,
-            requestedType,
-            downloadName,
-            enableRangeProcessing: true);
+        return CreateDownloadResult(blob.Content, requestedType, name);
     }
+
+    internal static IResult CreateDownloadResult(
+        byte[] content,
+        string requestedType,
+        string name) =>
+        Results.File(
+            content,
+            requestedType,
+            name,
+            enableRangeProcessing: true);
 
     private static IResult UploadProblem(int status, string detail) => Results.Json(
         new JsonObject

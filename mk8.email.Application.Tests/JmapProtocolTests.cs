@@ -107,6 +107,41 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task MailboxNamesMustUseNetUnicode()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Mailbox/set", {
+            "accountId": "{{{fixture.AccountId}}}",
+            "create": {
+              "bom": {"name":"\uFEFFHidden"},
+              "unassigned": {"name":"Unassigned \u0378"},
+              "normalized": {"name":"Cafe\u0301"}
+            }
+          }, "m1"]]
+        }
+        """);
+
+        var notCreated = Arguments(response)["notCreated"]!.AsObject();
+        Assert.AreEqual("invalidProperties", notCreated["bom"]!["type"]!.GetValue<string>());
+        Assert.AreEqual("invalidProperties", notCreated["unassigned"]!["type"]!.GetValue<string>());
+        var mailboxId = Arguments(response)["created"]!["normalized"]!["id"]!.GetValue<string>();
+
+        var get = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Mailbox/get", {
+            "accountId": "{{{fixture.AccountId}}}", "ids":["{{{mailboxId}}}"],
+            "properties":["name"]
+          }, "g1"]]
+        }
+        """);
+        Assert.AreEqual("Caf\u00e9", Arguments(get)["list"]![0]!["name"]!.GetValue<string>());
+    }
+
+    [TestMethod]
     public async Task MailboxSetUsesFinalStateForSwapsAndAcceptsGetObjects()
     {
         await using var fixture = await JmapFixture.CreateAsync();

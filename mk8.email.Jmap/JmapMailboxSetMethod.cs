@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
@@ -1074,9 +1075,15 @@ internal sealed class MailboxSetMethod(
             return false;
         }
         return Encoding.UTF8.GetByteCount(name) <= FolderDB.MaximumLeafNameOctets
+            && IsNetUnicode(name)
             && !name.Contains('/')
             && !name.Any(char.IsControl);
     }
+
+    private static bool IsNetUnicode(string value) =>
+        value[0] != '\ufeff'
+        && value.EnumerateRunes().All(rune =>
+            Rune.GetUnicodeCategory(rune) != UnicodeCategory.OtherNotAssigned);
 
     private static bool TryParseParentId(
         JsonObject value,

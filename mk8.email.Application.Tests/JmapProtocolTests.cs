@@ -959,6 +959,56 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task EmailCreationDoesNotDuplicateGenericConvenienceHeaders()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var create = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/set", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "create":{"generic":{
+              "mailboxIds":{"{{{fixture.DraftsMailboxId}}}":true},
+              "header:From:asAddresses":[{"name":"Author", "email":"author@example.test"}],
+              "header:Subject:asText":"Generic headers",
+              "header:Date:asDate":"2026-09-20T12:34:56Z",
+              "header:Message-ID:asMessageIds":["generic@example.test"],
+              "bodyValues":{"1":{"value":"body"}},
+              "textBody":[{"partId":"1", "type":"text/plain"}]
+            }}
+          }, "s1"]]
+        }
+        """);
+        var emailId = Arguments(create)["created"]!["generic"]!["id"]!.GetValue<string>();
+
+        var get = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/get", {
+            "accountId":"{{{fixture.AccountId}}}", "ids":["{{{emailId}}}"],
+            "properties":[
+              "header:From:asAddresses:all",
+              "header:Subject:asText:all",
+              "header:Date:asDate:all",
+              "header:Message-ID:asMessageIds:all"
+            ]
+          }, "g1"]]
+        }
+        """);
+        var email = Arguments(get)["list"]![0]!;
+        Assert.AreEqual(1, email["header:From:asAddresses:all"]!.AsArray().Count);
+        Assert.AreEqual(1, email["header:Subject:asText:all"]!.AsArray().Count);
+        Assert.AreEqual(1, email["header:Date:asDate:all"]!.AsArray().Count);
+        Assert.AreEqual(1, email["header:Message-ID:asMessageIds:all"]!.AsArray().Count);
+        Assert.AreEqual(
+            "author@example.test",
+            email["header:From:asAddresses:all"]![0]![0]!["email"]!.GetValue<string>());
+        Assert.AreEqual(
+            "generic@example.test",
+            email["header:Message-ID:asMessageIds:all"]![0]![0]!.GetValue<string>());
+    }
+
+    [TestMethod]
     public async Task DeletingLegacyEmailWithNullThreadDestroysItsFallbackThread()
     {
         await using var fixture = await JmapFixture.CreateAsync();

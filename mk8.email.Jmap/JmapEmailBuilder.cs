@@ -74,15 +74,15 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
         if (invalid.Length > 0 || value.ContainsKey("headers"))
             return JmapBuildResult.Failed("invalidProperties", properties: invalid);
 
-        var message = new MimeMessage();
+        var message = new MimeMessage((IEnumerable<Header>)Array.Empty<Header>());
         if (!TryApplyHeaders(message, value, out var representedHeaders, out var headerError))
         {
             message.Dispose();
             return JmapBuildResult.Failed("invalidProperties", headerError);
         }
-        if (message.From.Count == 0)
+        if (!message.Headers.Contains(HeaderId.From))
             message.From.Add(MailboxAddress.Parse(accountAddress));
-        if (string.IsNullOrEmpty(message.MessageId))
+        if (!message.Headers.Contains(HeaderId.MessageId))
         {
             var domain = accountAddress[(accountAddress.LastIndexOf('@') + 1)..];
             message.MessageId = MimeUtils.GenerateMessageId(domain);

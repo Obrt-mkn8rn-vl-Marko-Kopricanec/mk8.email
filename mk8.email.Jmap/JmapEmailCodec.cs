@@ -349,7 +349,8 @@ internal static partial class JmapEmailCodec
         keyword.Length is >= 1 and <= 255
         && !string.Equals(keyword, "$recent", StringComparison.OrdinalIgnoreCase)
         && keyword.All(character => character is >= (char)0x21 and <= (char)0x7e
-            && character is not ('(' or ')' or '{' or ']' or '%' or '*' or '"' or '\\'));
+            && character is not ('(' or ')' or '{' or '}' or '[' or ']'
+                or '%' or '*' or '"' or '\\'));
 
     public static string FormatUtcDate(DateTime value) =>
         JmapDate.FormatUtc(value);

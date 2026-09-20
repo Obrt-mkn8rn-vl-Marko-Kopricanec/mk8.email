@@ -639,7 +639,7 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
-    public async Task EmailKeywordsReserveRecentAndNeverExposeIt()
+    public async Task EmailKeywordsRejectReservedAndForbiddenNames()
     {
         await using var fixture = await JmapFixture.CreateAsync();
         var create = await fixture.InvokeAsync($$$"""
@@ -658,6 +658,18 @@ public sealed class JmapProtocolTests
                 "keywords":{"$ReCeNt":true},
                 "bodyValues":{"1":{"value":"body"}},
                 "textBody":[{"partId":"1", "type":"text/plain"}]
+              },
+              "leftBracket":{
+                "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true},
+                "keywords":{"bad[key":true},
+                "bodyValues":{"1":{"value":"body"}},
+                "textBody":[{"partId":"1", "type":"text/plain"}]
+              },
+              "rightBrace":{
+                "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true},
+                "keywords":{"bad}key":true},
+                "bodyValues":{"1":{"value":"body"}},
+                "textBody":[{"partId":"1", "type":"text/plain"}]
               }
             }
           }, "s1"]]
@@ -668,6 +680,12 @@ public sealed class JmapProtocolTests
         Assert.AreEqual(
             "invalidProperties",
             Arguments(create)["notCreated"]!["reserved"]!["type"]!.GetValue<string>());
+        Assert.AreEqual(
+            "invalidProperties",
+            Arguments(create)["notCreated"]!["leftBracket"]!["type"]!.GetValue<string>());
+        Assert.AreEqual(
+            "invalidProperties",
+            Arguments(create)["notCreated"]!["rightBrace"]!["type"]!.GetValue<string>());
 
         var update = await fixture.InvokeAsync($$$"""
         {

@@ -202,7 +202,7 @@ public sealed class JmapCoreTests
     }
 
     [TestMethod]
-    public async Task ResultReferencesOnlySelectTheFirstResponseForACallId()
+    public async Task ResultReferencesCanSelectAnImplicitResponseForACallId()
     {
         await using var fixture = await JmapFixture.CreateAsync(
             configureServices: services => services.AddSingleton<IJmapMethod>(
@@ -227,8 +227,8 @@ public sealed class JmapCoreTests
             "Test/additional",
             response["methodResponses"]?[1]?[0]?.GetValue<string>());
         Assert.AreEqual(
-            "invalidResultReference",
-            response["methodResponses"]?[2]?[1]?["type"]?.GetValue<string>());
+            "additional",
+            response["methodResponses"]?[2]?[1]?["value"]?.GetValue<string>());
     }
 
     [TestMethod]

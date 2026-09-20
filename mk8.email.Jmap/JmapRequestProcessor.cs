@@ -232,9 +232,9 @@ public sealed class JmapRequestProcessor
                 return false;
             }
 
-            var response = previousResponses.FirstOrDefault(item => item.CallId == resultOf);
+            var response = previousResponses.FirstOrDefault(item =>
+                item.CallId == resultOf && item.Name == responseName);
             if (response is null
-                || response.Name != responseName
                 || !TryApplyJsonPointer(response.Arguments, path, out var referencedValue))
             {
                 return false;

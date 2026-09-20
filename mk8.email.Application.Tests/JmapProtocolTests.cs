@@ -496,6 +496,34 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task EmailParsedDatesUseRfc5322Syntax()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var raw = Encoding.ASCII.GetBytes(
+            "From: sender@example.net\r\n"
+            + $"To: {fixture.User.Username}\r\n"
+            + "Date: 2026-01-02T03:04:05Z\r\n"
+            + "Resent-Date: Fri, 2 Jan 2026 03:04:05 +0000\r\n\r\nbody");
+        var blobId = await fixture.StoreBlobAsync(raw);
+
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/parse", {
+            "accountId": "{{{fixture.AccountId}}}",
+            "blobIds": ["{{{blobId}}}"],
+            "properties": ["sentAt", "header:Resent-Date:asDate"]
+          }, "p1"]]
+        }
+        """);
+        var parsed = Arguments(response)["parsed"]![blobId]!;
+        Assert.IsNull(parsed["sentAt"]);
+        Assert.AreEqual(
+            "2026-01-02T03:04:05Z",
+            parsed["header:Resent-Date:asDate"]!.GetValue<string>());
+    }
+
+    [TestMethod]
     public async Task DeletingLegacyEmailWithNullThreadDestroysItsFallbackThread()
     {
         await using var fixture = await JmapFixture.CreateAsync();

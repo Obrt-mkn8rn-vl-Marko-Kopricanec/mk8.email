@@ -742,11 +742,7 @@ internal static partial class JmapEmailCodec
             HeaderForm.Addresses => ParseAddresses(header.Value, grouped: false),
             HeaderForm.GroupedAddresses => ParseAddresses(header.Value, grouped: true),
             HeaderForm.MessageIds => ParseMessageIds(header.Value),
-            HeaderForm.Date => DateTimeOffset.TryParse(
-                    header.Value,
-                    CultureInfo.InvariantCulture,
-                    DateTimeStyles.AllowWhiteSpaces,
-                    out var date)
+            HeaderForm.Date => DateUtils.TryParse(header.Value, out var date)
                 ? JsonValue.Create(FormatDate(date))
                 : null,
             HeaderForm.URLs => ParseUrls(header.Value),

@@ -41,7 +41,7 @@ internal static class JmapChangeCollector
             .Where(IsChanged)
             .ToList();
         var changedQueueIds = database.ChangeTracker.Entries<MailQueueMessageDB>()
-            .Where(entry => entry.State == EntityState.Modified)
+            .Where(entry => entry.State is EntityState.Modified or EntityState.Deleted)
             .Select(entry => entry.Entity.Id)
             .ToHashSet();
 

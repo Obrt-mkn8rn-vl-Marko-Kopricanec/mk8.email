@@ -8,6 +8,7 @@ using mk8.email.Contracts.Enums;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Infrastructure.Environment;
 using mk8.email.Infrastructure.Models;
+using mk8.email.Jmap;
 
 namespace mk8.email.Application.Tests;
 
@@ -279,6 +280,69 @@ public sealed class MailQueueTests
         Assert.AreEqual(MailQueueRecipientStates.PermanentFailure, queued.Recipients.Single().State);
         Assert.AreEqual(RawMessage, queued.RawMessage);
         Assert.AreEqual(0, await database.Emails.CountAsync());
+    }
+
+    [TestMethod]
+    public async Task DeletingQueueRecordPublishesSubmissionStatusChange()
+    {
+        var environment = CreateEnvironment();
+        await using var services = CreateServices(
+            environment,
+            CleanScan(),
+            new StubRelay(OutboundDeliveryStatus.Delivered));
+        using var scope = services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        await database.Database.EnsureCreatedAsync();
+        var accountId = Guid.CreateVersion7();
+        var queueId = Guid.CreateVersion7();
+        var queue = new MailQueueMessageDB
+        {
+            Id = queueId,
+            EnvelopeSender = TestAccount,
+            RawMessage = RawMessage,
+            AuthenticatedUser = TestAccount,
+            Direction = MailQueueDirections.Submission,
+            State = MailQueueStates.Completed,
+            ScanState = MailQueueScanStates.Complete,
+            ReceivedAt = DateTime.UtcNow,
+            NextAttemptAt = DateTime.UtcNow,
+            CompletedAt = DateTime.UtcNow,
+        };
+        queue.Recipients.Add(new MailQueueRecipientDB
+        {
+            Id = Guid.CreateVersion7(),
+            Recipient = "recipient@example.net",
+            State = MailQueueRecipientStates.Delivered,
+            NextAttemptAt = DateTime.UtcNow,
+            CompletedAt = DateTime.UtcNow,
+        });
+        var submissionId = Guid.CreateVersion7();
+        database.MailQueueMessages.Add(queue);
+        database.JmapEmailSubmissions.Add(new JmapEmailSubmissionDB
+        {
+            Id = submissionId,
+            SubmissionObjectId = JmapId.Submission(submissionId),
+            AccountId = accountId,
+            IdentityId = JmapId.Identity(Guid.CreateVersion7()),
+            EmailId = JmapId.Email(Guid.CreateVersion7()),
+            ThreadId = JmapId.Thread(Guid.CreateVersion7().ToString("N")),
+            QueueId = queueId,
+            EnvelopeSender = TestAccount,
+            EnvelopeRecipients = ["recipient@example.net"],
+            UndoStatus = "final",
+        });
+        await database.SaveChangesAsync();
+
+        database.MailQueueMessages.Remove(queue);
+        await database.SaveChangesAsync();
+
+        var changes = await database.JmapChanges
+            .Where(change => change.AccountId == accountId
+                && change.DataType == "EmailSubmission"
+                && change.ObjectId == JmapId.Submission(submissionId))
+            .Select(change => change.ChangeKind)
+            .ToListAsync();
+        CollectionAssert.AreEquivalent(new[] { "created", "updated" }, changes);
     }
 
     private static ServiceProvider CreateServices(

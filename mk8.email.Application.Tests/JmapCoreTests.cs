@@ -364,6 +364,21 @@ public sealed class JmapCoreTests
     }
 
     [TestMethod]
+    [DataRow("\t Re [list] :   Topic  (fwd)\t", "Topic")]
+    [DataRow("[mailing-list] Re: Topic", "Topic")]
+    [DataRow("Re: [mailing-list] Topic", "Topic")]
+    [DataRow("[fwd: Re: [mailing-list] Topic (fwd)]", "Topic")]
+    [DataRow("[fwd: [fwd: Topic]]", "Topic")]
+    [DataRow("[one] [two]", "[two]")]
+    [DataRow("[only]", "[only]")]
+    [DataRow("re[2]:topic", "topic")]
+    [DataRow("Regarding: Topic", "Regarding: Topic")]
+    public void EmailSubjectSortUsesTheRfc5256BaseSubject(string subject, string expected)
+    {
+        Assert.AreEqual(expected, JmapEmailQueryEngine.BaseSubject(subject));
+    }
+
+    [TestMethod]
     public void OptionalNonNullableArgumentsRejectExplicitNull()
     {
         var values = JsonNode.Parse(

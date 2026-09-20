@@ -94,6 +94,29 @@ public sealed class JmapCoreTests
     }
 
     [TestMethod]
+    public async Task MalformedInvocationRejectsRequestBeforeEarlierCallsRun()
+    {
+        var invocationCount = 0;
+        await using var fixture = await JmapFixture.CreateAsync(
+            configureServices: services => services.AddSingleton<IJmapMethod>(
+                new InvocationProbeMethod(() => invocationCount++)));
+
+        var exception = await Assert.ThrowsAsync<JmapRequestException>(() => fixture.InvokeAsync(
+            """
+            {
+              "using":["urn:ietf:params:jmap:core"],
+              "methodCalls":[
+                ["Test/invocationProbe",{},"c1"],
+                ["Core/echo",{}]
+              ]
+            }
+            """));
+
+        Assert.AreEqual("urn:ietf:params:jmap:error:notRequest", exception.Type);
+        Assert.AreEqual(0, invocationCount);
+    }
+
+    [TestMethod]
     public async Task FailedMethodsRestoreCreationIdsAndDiscardPostCommitActions()
     {
         var failedPostCommitCount = 0;
@@ -1175,6 +1198,21 @@ public sealed class JmapCoreTests
                     ["value"] = "before\ufdd0middle\U0001fffeafter\ud800",
                     ["invalid\ufdefname"] = true,
                 }));
+    }
+
+    private sealed class InvocationProbeMethod(Action invoked) : IJmapMethod
+    {
+        public string Name => "Test/invocationProbe";
+        public string Capability => JmapConstants.CoreCapability;
+
+        public Task<JmapMethodResponse> InvokeAsync(
+            JmapInvocationContext context,
+            JsonObject arguments,
+            CancellationToken cancellationToken)
+        {
+            invoked();
+            return Task.FromResult(new JmapMethodResponse(Name, new JsonObject()));
+        }
     }
 
     private sealed class AtomicityProbeMethod(

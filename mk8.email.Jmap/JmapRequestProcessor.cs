@@ -70,6 +70,14 @@ public sealed class JmapRequestProcessor
                 "maxCallsInRequest");
         }
 
+        var invocations = new List<ParsedInvocation>(methodCalls.Count);
+        foreach (var methodCallNode in methodCalls)
+        {
+            if (!TryParseInvocation(methodCallNode, out var methodName, out var arguments, out var callId))
+                throw NotRequest("A methodCalls entry is not a valid Invocation object.");
+            invocations.Add(new ParsedInvocation(methodName, arguments, callId));
+        }
+
         var methodResponses = new JsonArray();
         var previousResponses = new List<CompletedInvocation>();
         var hasCreatedIds = request.TryGetPropertyValue("createdIds", out var createdIdsNode);
@@ -78,17 +86,18 @@ public sealed class JmapRequestProcessor
         var createdIds = ParseCreatedIds(createdIdsNode);
         var context = new JmapInvocationContext(user, capabilities, createdIds);
 
-        foreach (var methodCallNode in methodCalls)
+        foreach (var invocation in invocations)
         {
-            if (!TryParseInvocation(methodCallNode, out var methodName, out var arguments, out var callId))
-                throw NotRequest("A methodCalls entry is not a valid Invocation object.");
-
             JmapMethodResponse response;
-            if (!TryResolveResultReferences(arguments, previousResponses, out var resolvedArguments, out var referenceFailure))
+            if (!TryResolveResultReferences(
+                    invocation.Arguments,
+                    previousResponses,
+                    out var resolvedArguments,
+                    out var referenceFailure))
             {
                 response = JmapMethodResponse.Error(referenceFailure);
             }
-            else if (!_methods.TryGetValue(methodName, out var method)
+            else if (!_methods.TryGetValue(invocation.MethodName, out var method)
                 || !capabilities.Contains(method.Capability))
             {
                 response = JmapMethodResponse.Error("unknownMethod");
@@ -112,13 +121,13 @@ public sealed class JmapRequestProcessor
             void AddResponse(JmapMethodResponse completed)
             {
                 var arguments = JmapJson.SanitizeResponse(completed.Arguments);
-                var invocation = new JsonArray(
+                var responseInvocation = new JsonArray(
                     completed.Name,
                     arguments.DeepClone(),
-                    callId);
-                methodResponses.Add(invocation);
+                    invocation.CallId);
+                methodResponses.Add(responseInvocation);
                 previousResponses.Add(new CompletedInvocation(
-                    callId,
+                    invocation.CallId,
                     completed.Name,
                     arguments));
             }
@@ -472,5 +481,9 @@ public sealed class JmapRequestProcessor
             "Invalid JMAP request",
             detail);
 
+    private sealed record ParsedInvocation(
+        string MethodName,
+        JsonObject Arguments,
+        string CallId);
     private sealed record CompletedInvocation(string CallId, string Name, JsonObject Arguments);
 }

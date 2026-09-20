@@ -20,6 +20,15 @@ public sealed class VacationResponder(
     TimeProvider timeProvider) : IVacationResponder
 {
     private static readonly TimeSpan RepeatInterval = TimeSpan.FromDays(7);
+    private static readonly string[] RecipientHeaderFields =
+    [
+        "To",
+        "Cc",
+        "Bcc",
+        "Resent-To",
+        "Resent-Cc",
+        "Resent-Bcc",
+    ];
 
     public async Task<bool> QueueResponseAsync(
         string envelopeSender,
@@ -52,7 +61,8 @@ public sealed class VacationResponder(
 
             var route = await ResolveVacationRouteAsync(deliveredRecipient, cancellationToken);
             if (route is null
-                || string.Equals(route.Address, senderMailbox.Address, StringComparison.OrdinalIgnoreCase))
+                || string.Equals(route.Address, senderMailbox.Address, StringComparison.OrdinalIgnoreCase)
+                || !NamesRecipient(original, deliveredRecipient, route.Address))
                 return true;
             var now = timeProvider.GetUtcNow().UtcDateTime;
             var vacation = await database.JmapVacationResponses
@@ -185,6 +195,30 @@ public sealed class VacationResponder(
             || localPart.Equals("postmaster", StringComparison.OrdinalIgnoreCase)
             || localPart.Equals("listserv", StringComparison.OrdinalIgnoreCase)
             || localPart.EndsWith("-request", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool NamesRecipient(MimeMessage message, params string[] addresses)
+    {
+        var recognizedAddresses = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var address in addresses)
+        {
+            if (MailboxAddress.TryParse(address, out var mailbox))
+                recognizedAddresses.Add(mailbox.Address);
+        }
+
+        foreach (var header in message.Headers)
+        {
+            if (!RecipientHeaderFields.Contains(header.Field, StringComparer.OrdinalIgnoreCase)
+                || !InternetAddressList.TryParse(header.Value, out var recipients))
+            {
+                continue;
+            }
+
+            if (recipients.Mailboxes.Any(mailbox => recognizedAddresses.Contains(mailbox.Address)))
+                return true;
+        }
+
+        return false;
     }
 
     private MimeMessage BuildResponse(

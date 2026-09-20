@@ -143,6 +143,50 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task MailboxWithNullRoleDoesNotInferOneFromItsName()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        using (var scope = fixture.Services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            var sent = await database.Folders.SingleAsync(folder => folder.Id == fixture.SentFolderId);
+            database.Folders.Remove(sent);
+            await database.SaveChangesAsync();
+        }
+
+        var create = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Mailbox/set", {
+            "accountId": "{{{fixture.AccountId}}}",
+            "create": {"sentByName":{"name":"Sent", "role":null}}
+          }, "m1"]]
+        }
+        """);
+        var mailboxId = Arguments(create)["created"]!["sentByName"]!["id"]!.GetValue<string>();
+        Assert.IsNull(Arguments(create)["created"]!["sentByName"]!["role"]);
+
+        var get = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Mailbox/get", {
+            "accountId": "{{{fixture.AccountId}}}", "ids":["{{{mailboxId}}}"],
+            "properties":["id", "name", "role"]
+          }, "g1"]]
+        }
+        """);
+
+        Assert.IsNull(Arguments(get)["list"]![0]!["role"]);
+        Assert.IsTrue(JmapId.TryParseMailbox(mailboxId, out var folderId));
+        using var verificationScope = fixture.Services.CreateScope();
+        var stored = await verificationScope.ServiceProvider.GetRequiredService<EmailDbContext>()
+            .Folders.AsNoTracking()
+            .SingleAsync(folder => folder.Id == folderId);
+        Assert.IsNull(stored.JmapRole);
+        Assert.IsTrue(stored.SuppressDefaultJmapRole);
+    }
+
+    [TestMethod]
     public async Task MailboxSetUsesFinalStateForSwapsAndAcceptsGetObjects()
     {
         await using var fixture = await JmapFixture.CreateAsync();

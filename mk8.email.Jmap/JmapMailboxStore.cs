@@ -35,6 +35,7 @@ internal sealed class JmapMailboxStore(EmailDbContext database)
                 folder.Id,
                 folder.Name,
                 folder.JmapRole,
+                folder.SuppressDefaultJmapRole,
                 folder.SortOrder,
                 folder.IsSubscribed,
             })
@@ -73,7 +74,10 @@ internal sealed class JmapMailboxStore(EmailDbContext database)
                 folder.Name,
                 LeafName(folder.Name),
                 parentId,
-                folder.JmapRole ?? InferRole(folder.Name),
+                EffectiveRole(
+                    folder.JmapRole,
+                    folder.SuppressDefaultJmapRole,
+                    folder.Name),
                 folder.SortOrder,
                 folder.IsSubscribed,
                 folderMessages.Length,
@@ -119,6 +123,17 @@ internal sealed class JmapMailboxStore(EmailDbContext database)
             _ => null,
         };
     }
+
+    public static string? EffectiveRole(FolderDB folder) => EffectiveRole(
+        folder.JmapRole,
+        folder.SuppressDefaultJmapRole,
+        folder.Name);
+
+    private static string? EffectiveRole(
+        string? storedRole,
+        bool suppressDefaultRole,
+        string fullName) =>
+        storedRole ?? (suppressDefaultRole ? null : InferRole(fullName));
 
     private static string ThreadKey(MailboxMessage message) =>
         string.IsNullOrEmpty(message.ThreadObjectId)

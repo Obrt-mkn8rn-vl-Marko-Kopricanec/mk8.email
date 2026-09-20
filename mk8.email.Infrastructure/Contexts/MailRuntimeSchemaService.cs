@@ -59,6 +59,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["jmap_role"] = "varchar",
+            ["suppress_default_jmap_role"] = "bool",
             ["sort_order"] = "int4",
         };
 
@@ -237,6 +238,8 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ALTER TABLE folders
                 ADD COLUMN IF NOT EXISTS jmap_role varchar(32);
             ALTER TABLE folders
+                ADD COLUMN IF NOT EXISTS suppress_default_jmap_role boolean NOT NULL DEFAULT false;
+            ALTER TABLE folders
                 ADD COLUMN IF NOT EXISTS sort_order integer NOT NULL DEFAULT 0;
             ALTER TABLE folders
                 ALTER COLUMN name TYPE varchar(5049);
@@ -251,6 +254,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 ELSE jmap_role
             END
             WHERE jmap_role IS NULL
+              AND NOT suppress_default_jmap_role
               AND lower(name) IN ('inbox', 'sent', 'drafts', 'trash', 'spam');
 
             CREATE TABLE IF NOT EXISTS jmap_changes (

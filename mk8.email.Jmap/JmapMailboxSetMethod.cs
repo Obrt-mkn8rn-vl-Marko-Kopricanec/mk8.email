@@ -289,7 +289,7 @@ internal sealed class MailboxSetMethod(
             return CreateResult.Failed(JmapMethodHelpers.SetError("invalidProperties", properties: ["parentId"]));
         if (role is not null
             && folders.Any(folder => string.Equals(
-                folder.JmapRole ?? JmapMailboxStore.InferRole(folder.Name),
+                JmapMailboxStore.EffectiveRole(folder),
                 role,
                 StringComparison.Ordinal)))
         {
@@ -363,7 +363,7 @@ internal sealed class MailboxSetMethod(
             return JmapMethodHelpers.SetError("invalidProperties");
         }
 
-        var currentRole = folder.JmapRole ?? JmapMailboxStore.InferRole(folder.Name);
+        var currentRole = JmapMailboxStore.EffectiveRole(folder);
         var hierarchyChanged = !string.Equals(
                 name,
                 JmapMailboxStore.LeafName(folder.Name),
@@ -388,7 +388,7 @@ internal sealed class MailboxSetMethod(
         if (role is not null
             && folders.Any(candidate => candidate.Id != folder.Id
                 && string.Equals(
-                    candidate.JmapRole ?? JmapMailboxStore.InferRole(candidate.Name),
+                    JmapMailboxStore.EffectiveRole(candidate),
                     role,
                     StringComparison.Ordinal)))
         {
@@ -418,6 +418,7 @@ internal sealed class MailboxSetMethod(
         foreach (var affectedFolder in affected)
             affectedFolder.Name = renamed[affectedFolder.Id];
         folder.JmapRole = role;
+        folder.SuppressDefaultJmapRole = true;
         folder.SortOrder = sortOrder;
         folder.IsSubscribed = isSubscribed;
         await database.SaveChangesAsync(cancellationToken);
@@ -674,6 +675,7 @@ internal sealed class MailboxSetMethod(
                     continue;
                 var node = nodes[folder.Id];
                 folder.JmapRole = node.Role;
+                folder.SuppressDefaultJmapRole = true;
                 folder.SortOrder = node.SortOrder;
                 folder.IsSubscribed = node.IsSubscribed;
             }
@@ -896,6 +898,7 @@ internal sealed class MailboxSetMethod(
             {
                 var folder = foldersById[plan.Key];
                 folder.JmapRole = plan.Value.Role;
+                folder.SuppressDefaultJmapRole = true;
                 folder.SortOrder = plan.Value.SortOrder;
                 folder.IsSubscribed = plan.Value.IsSubscribed;
             }
@@ -965,7 +968,7 @@ internal sealed class MailboxSetMethod(
         var folder = folders.SingleOrDefault(candidate => candidate.Id == folderId);
         if (folder is null)
             return JmapMethodHelpers.SetError("notFound");
-        var role = folder.JmapRole ?? JmapMailboxStore.InferRole(folder.Name);
+        var role = JmapMailboxStore.EffectiveRole(folder);
         if (IsProtectedRole(role))
             return JmapMethodHelpers.SetError("forbidden");
         if (folders.Any(candidate => candidate.Id != folder.Id

@@ -43,7 +43,7 @@ public class FolderDB
     [Column("jmap_role")]
     public string? JmapRole { get; set; }
 
-    [NotMapped]
+    [Column("suppress_default_jmap_role")]
     public bool SuppressDefaultJmapRole { get; set; }
 
     [Column("sort_order")]

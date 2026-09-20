@@ -2682,6 +2682,107 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task SubmissionEnforcesInternetMessageWireLimits()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var identities = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Submission}}}"],
+          "methodCalls": [["Identity/get", {"accountId":"{{{fixture.AccountId}}}"}, "g1"]]
+        }
+        """);
+        var identityId = Arguments(identities)["list"]![0]!["id"]!.GetValue<string>();
+
+        string Message(string extraHeader, string body, string newline = "\r\n") =>
+            "Date: 20 Sep 2026 10:00:00 +0000" + newline
+            + $"From: {fixture.User.Username}" + newline
+            + $"To: {fixture.User.Username}" + newline
+            + extraHeader + newline + newline + body;
+
+        var invalidUtf8Raw = Encoding.ASCII.GetBytes(Message("Subject: x", string.Empty));
+        invalidUtf8Raw[Array.LastIndexOf(invalidUtf8Raw, (byte)'x')] = 0xc3;
+
+        var rawMessages = new Dictionary<string, byte[]>(StringComparer.Ordinal)
+        {
+            ["valid"] = Encoding.ASCII.GetBytes(
+                Message("X-Max: " + new string('x', 991), new string('b', 998))),
+            ["longHeader"] = Encoding.ASCII.GetBytes(
+                Message("X-Max: " + new string('x', 992), "body")),
+            ["longBody"] = Encoding.ASCII.GetBytes(
+                Message("Subject: Long body", new string('b', 999))),
+            ["lfOnly"] = Encoding.ASCII.GetBytes(
+                Message("Subject: LF only", "body", "\n")),
+            ["invalidUtf8"] = invalidUtf8Raw,
+        };
+        var imports = new JsonObject();
+        foreach (var item in rawMessages)
+        {
+            imports[item.Key] = new JsonObject
+            {
+                ["blobId"] = await fixture.StoreBlobAsync(item.Value),
+                ["mailboxIds"] = new JsonObject { [fixture.DraftsMailboxId] = true },
+            };
+        }
+        var import = await fixture.InvokeAsync(new JsonObject
+        {
+            ["using"] = new JsonArray(Core, Mail),
+            ["methodCalls"] = new JsonArray(new JsonArray(
+                "Email/import",
+                new JsonObject
+                {
+                    ["accountId"] = fixture.AccountId,
+                    ["emails"] = imports,
+                },
+                "i1")),
+        });
+        var imported = Arguments(import)["created"]!.AsObject();
+        var submissions = new JsonObject();
+        foreach (var name in rawMessages.Keys)
+        {
+            submissions[name] = new JsonObject
+            {
+                ["identityId"] = identityId,
+                ["emailId"] = imported[name]!["id"]!.GetValue<string>(),
+                ["envelope"] = new JsonObject
+                {
+                    ["mailFrom"] = new JsonObject { ["email"] = fixture.User.Username },
+                    ["rcptTo"] = new JsonArray(
+                        new JsonObject { ["email"] = fixture.User.Username }),
+                },
+            };
+        }
+        var submission = await fixture.InvokeAsync(new JsonObject
+        {
+            ["using"] = new JsonArray(Core, Submission),
+            ["methodCalls"] = new JsonArray(new JsonArray(
+                "EmailSubmission/set",
+                new JsonObject
+                {
+                    ["accountId"] = fixture.AccountId,
+                    ["create"] = submissions,
+                },
+                "s1")),
+        });
+
+        Assert.IsNotNull(Arguments(submission)["created"]!["valid"]);
+        AssertInvalid("longHeader", "headers");
+        AssertInvalid("longBody", "bodyStructure");
+        AssertInvalid("lfOnly", "headers");
+        AssertInvalid("invalidUtf8", "headers");
+
+        void AssertInvalid(string name, string property)
+        {
+            var error = Arguments(submission)["notCreated"]![name]!;
+            Assert.AreEqual("invalidEmail", error["type"]!.GetValue<string>());
+            CollectionAssert.Contains(
+                error["properties"]!.AsArray()
+                    .Select(node => node!.GetValue<string>())
+                    .ToArray(),
+                property);
+        }
+    }
+
+    [TestMethod]
     public async Task IdentityAndVacationAcceptWholeGetObjectsAsUpdates()
     {
         await using var fixture = await JmapFixture.CreateAsync();

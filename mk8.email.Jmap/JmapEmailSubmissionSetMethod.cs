@@ -19,6 +19,7 @@ internal sealed class EmailSubmissionSetMethod(
     EmailSetMethod emailSet,
     EnvironmentConfig environment) : IJmapMethod
 {
+    private static readonly UTF8Encoding StrictUtf8 = new(false, true);
     private static readonly ParserOptions StrictAddressParserOptions = new()
     {
         AddressParserComplianceMode = RfcComplianceMode.Strict,
@@ -533,6 +534,7 @@ internal sealed class EmailSubmissionSetMethod(
     {
         var invalid = new HashSet<string>(StringComparer.Ordinal);
         invalidProperties = [];
+        ValidateWireFormat(raw, invalid);
         try
         {
             using var message = JmapEmailCodec.Parse(raw);
@@ -617,6 +619,128 @@ internal sealed class EmailSubmissionSetMethod(
 
         invalidProperties = invalid.Order(StringComparer.Ordinal).ToArray();
         return invalidProperties.Count == 0;
+    }
+
+    private static void ValidateWireFormat(byte[] raw, ISet<string> invalid)
+    {
+        var inHeaders = true;
+        var hasHeader = false;
+        var lineStart = 0;
+        for (var index = 0; index < raw.Length; index++)
+        {
+            if (raw[index] == (byte)'\r')
+            {
+                if (index + 1 >= raw.Length || raw[index + 1] != (byte)'\n')
+                {
+                    invalid.Add(inHeaders ? "headers" : "bodyStructure");
+                    continue;
+                }
+
+                var line = raw.AsSpan(lineStart, index - lineStart);
+                ValidateWireLine(line, inHeaders, ref hasHeader, invalid);
+                if (inHeaders && line.Length == 0)
+                    inHeaders = false;
+                index++;
+                lineStart = index + 1;
+            }
+            else if (raw[index] == (byte)'\n')
+            {
+                invalid.Add(inHeaders ? "headers" : "bodyStructure");
+                var line = raw.AsSpan(lineStart, index - lineStart);
+                ValidateWireLine(line, inHeaders, ref hasHeader, invalid);
+                if (inHeaders && line.Length == 0)
+                    inHeaders = false;
+                lineStart = index + 1;
+            }
+        }
+
+        if (lineStart < raw.Length)
+        {
+            ValidateWireLine(raw.AsSpan(lineStart), inHeaders, ref hasHeader, invalid);
+            if (inHeaders)
+                invalid.Add("headers");
+        }
+    }
+
+    private static void ValidateWireLine(
+        ReadOnlySpan<byte> line,
+        bool inHeaders,
+        ref bool hasHeader,
+        ISet<string> invalid)
+    {
+        if (line.Length > 998)
+            invalid.Add(inHeaders ? "headers" : "bodyStructure");
+        if (!inHeaders)
+        {
+            if (line.Contains((byte)0))
+                invalid.Add("bodyStructure");
+            return;
+        }
+        if (line.Length == 0)
+            return;
+
+        var valueStart = 0;
+        if (line[0] is (byte)' ' or (byte)'\t')
+        {
+            if (!hasHeader || IsWhitespaceOnly(line))
+                invalid.Add("headers");
+        }
+        else
+        {
+            var colon = line.IndexOf((byte)':');
+            if (colon <= 0 || !IsValidFieldName(line[..colon]))
+            {
+                invalid.Add("headers");
+                return;
+            }
+            hasHeader = true;
+            valueStart = colon + 1;
+        }
+
+        var value = line[valueStart..];
+        if (HasInvalidHeaderValueByte(value))
+        {
+            invalid.Add("headers");
+            return;
+        }
+        try
+        {
+            _ = StrictUtf8.GetCharCount(value);
+        }
+        catch (DecoderFallbackException)
+        {
+            invalid.Add("headers");
+        }
+    }
+
+    private static bool IsWhitespaceOnly(ReadOnlySpan<byte> value)
+    {
+        foreach (var character in value)
+        {
+            if (character is not ((byte)' ' or (byte)'\t'))
+                return false;
+        }
+        return true;
+    }
+
+    private static bool IsValidFieldName(ReadOnlySpan<byte> value)
+    {
+        foreach (var character in value)
+        {
+            if (character is < 33 or > 126)
+                return false;
+        }
+        return true;
+    }
+
+    private static bool HasInvalidHeaderValueByte(ReadOnlySpan<byte> value)
+    {
+        foreach (var character in value)
+        {
+            if (character != (byte)'\t' && (character < 32 || character == 127))
+                return true;
+        }
+        return false;
     }
 
     private static Header[] Headers(HeaderList headers, string name) =>

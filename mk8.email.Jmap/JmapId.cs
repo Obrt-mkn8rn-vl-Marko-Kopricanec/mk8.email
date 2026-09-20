@@ -1,4 +1,5 @@
 using System.Buffers.Text;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace mk8.email.Jmap;
@@ -20,7 +21,13 @@ public static class JmapId
     public static string BodyPartBlob(Guid emailId, string partId)
     {
         var encodedPart = Base64UrlEncode(Encoding.UTF8.GetBytes(partId));
-        return $"R{emailId:N}_{encodedPart}";
+        var pathId = $"R{emailId:N}_{encodedPart}";
+        if (IsValidId(pathId))
+            return pathId;
+
+        var digest = Base64UrlEncode(SHA256.HashData(Encoding.UTF8.GetBytes(partId)));
+        var nestingDepth = partId.Count(character => character == '!');
+        return $"H{emailId:N}_{nestingDepth}_{digest}";
     }
 
     public static bool TryParseAccount(string? value, out Guid id) => TryParseGuid(value, 'A', out id);
@@ -72,6 +79,39 @@ public static class JmapId
             partId = string.Empty;
             return false;
         }
+    }
+
+    public static bool TryParseHashedBodyPartBlob(
+        string? value,
+        out Guid emailId,
+        out int nestingDepth,
+        out byte[] pathHash)
+    {
+        emailId = Guid.Empty;
+        nestingDepth = 0;
+        pathHash = [];
+        if (string.IsNullOrEmpty(value) || value[0] != 'H' || !IsValidId(value))
+            return false;
+
+        var firstSeparator = value.IndexOf('_');
+        var secondSeparator = value.IndexOf('_', firstSeparator + 1);
+        if (firstSeparator != 33
+            || secondSeparator <= firstSeparator + 1
+            || !Guid.TryParseExact(value.AsSpan(1, 32), "N", out emailId)
+            || !int.TryParse(
+                value.AsSpan(firstSeparator + 1, secondSeparator - firstSeparator - 1),
+                System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out nestingDepth)
+            || !TryBase64UrlDecode(value[(secondSeparator + 1)..], out pathHash)
+            || pathHash.Length != SHA256.HashSizeInBytes)
+        {
+            emailId = Guid.Empty;
+            nestingDepth = 0;
+            pathHash = [];
+            return false;
+        }
+        return true;
     }
 
     public static bool IsValidId(string value)

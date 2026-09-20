@@ -2635,28 +2635,8 @@ public sealed class JmapProtocolTests
     {
         const int depth = 70;
         await using var fixture = await JmapFixture.CreateAsync();
-        var raw = new StringBuilder(
-            $"From: sender@example.net\r\nTo: {fixture.User.Username}\r\n"
-            + "MIME-Version: 1.0\r\n"
-            + "Content-Type: multipart/mixed; boundary=b0\r\n\r\n");
-        for (var index = 0; index < depth; index++)
-        {
-            raw.Append("--b").Append(index).Append("\r\n");
-            if (index == depth - 1)
-            {
-                raw.Append("Content-Type: text/plain; charset=us-ascii\r\n\r\n")
-                    .Append("Deep payload\r\n");
-            }
-            else
-            {
-                raw.Append("Content-Type: multipart/mixed; boundary=b")
-                    .Append(index + 1)
-                    .Append("\r\n\r\n");
-            }
-        }
-        for (var index = depth - 1; index >= 0; index--)
-            raw.Append("--b").Append(index).Append("--\r\n");
-        var uploadedBlobId = await fixture.StoreBlobAsync(Encoding.ASCII.GetBytes(raw.ToString()));
+        var uploadedBlobId = await fixture.StoreBlobAsync(
+            BuildDeepMultipartMessage(fixture.User.Username, depth, "Deep payload"));
 
         var response = await fixture.InvokeAsync($$$"""
         {
@@ -2680,6 +2660,103 @@ public sealed class JmapProtocolTests
             .GetAsync(fixture.InboxId, partBlobId, CancellationToken.None);
         Assert.IsNotNull(content);
         Assert.AreEqual("Deep payload", Encoding.ASCII.GetString(content.Content).Trim());
+    }
+
+    [TestMethod]
+    public async Task VeryDeepMimePartBlobIdsAreBoundedAndResolvable()
+    {
+        const int depth = 85;
+        await using var fixture = await JmapFixture.CreateAsync();
+        var uploadedBlobId = await fixture.StoreBlobAsync(
+            BuildDeepMultipartMessage(fixture.User.Username, depth, "Very deep payload"));
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/parse", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "blobIds":["{{{uploadedBlobId}}}"],
+            "properties":["textBody"],
+            "bodyProperties":["partId", "blobId"]
+          }, "p1"]]
+        }
+        """);
+
+        var part = Arguments(response)["parsed"]![uploadedBlobId]!["textBody"]![0]!;
+        var partId = part["partId"]!.GetValue<string>();
+        var partBlobId = part["blobId"]!.GetValue<string>();
+        Assert.IsTrue(partId.Length > 165);
+        Assert.IsTrue(JmapId.IsValidId(partBlobId));
+        Assert.IsTrue(JmapId.TryParseHashedBodyPartBlob(
+            partBlobId,
+            out _,
+            out var nestingDepth,
+            out _));
+        Assert.AreEqual(0, nestingDepth);
+        using var scope = fixture.Services.CreateScope();
+        var content = await scope.ServiceProvider.GetRequiredService<JmapBlobService>()
+            .GetAsync(fixture.InboxId, partBlobId, CancellationToken.None);
+        Assert.IsNotNull(content);
+        Assert.AreEqual("Very deep payload", Encoding.ASCII.GetString(content.Content).Trim());
+    }
+
+    [TestMethod]
+    public async Task HashedNestedMimePartBlobIdsPreserveTheirSourcePath()
+    {
+        const int depth = 85;
+        await using var fixture = await JmapFixture.CreateAsync();
+        var nested = BuildDeepMultipartMessage(
+            fixture.User.Username,
+            depth,
+            "Nested very deep payload");
+        var outer = Encoding.ASCII.GetBytes(
+            $"From: sender@example.net\r\nTo: {fixture.User.Username}\r\n"
+            + "MIME-Version: 1.0\r\n"
+            + "Content-Type: message/rfc822\r\n"
+            + "Content-Disposition: attachment; filename=nested.eml\r\n"
+            + "Content-Transfer-Encoding: base64\r\n\r\n"
+            + Convert.ToBase64String(nested)
+            + "\r\n");
+        var outerBlobId = await fixture.StoreBlobAsync(outer);
+        var outerParse = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/parse", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "blobIds":["{{{outerBlobId}}}"],
+            "properties":["bodyStructure"],
+            "bodyProperties":["blobId"]
+          }, "p1"]]
+        }
+        """);
+        var messageBlobId = Arguments(outerParse)["parsed"]![outerBlobId]!["bodyStructure"]!["blobId"]!
+            .GetValue<string>();
+        var innerParse = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/parse", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "blobIds":["{{{messageBlobId}}}"],
+            "properties":["textBody"],
+            "bodyProperties":["blobId"]
+          }, "p2"]]
+        }
+        """);
+        var nestedBodyBlobId = Arguments(innerParse)["parsed"]![messageBlobId]!["textBody"]![0]!["blobId"]!
+            .GetValue<string>();
+        Assert.IsTrue(JmapId.IsValidId(nestedBodyBlobId));
+        Assert.IsTrue(JmapId.TryParseHashedBodyPartBlob(
+            nestedBodyBlobId,
+            out _,
+            out var nestingDepth,
+            out _));
+        Assert.AreEqual(1, nestingDepth);
+        using var scope = fixture.Services.CreateScope();
+        var content = await scope.ServiceProvider.GetRequiredService<JmapBlobService>()
+            .GetAsync(fixture.InboxId, nestedBodyBlobId, CancellationToken.None);
+        Assert.IsNotNull(content);
+        Assert.AreEqual(
+            "Nested very deep payload",
+            Encoding.ASCII.GetString(content.Content).Trim());
     }
 
     [TestMethod]
@@ -4149,6 +4226,36 @@ public sealed class JmapProtocolTests
           }, "e1"]]
         }
         """);
+    }
+
+    private static byte[] BuildDeepMultipartMessage(
+        string recipient,
+        int depth,
+        string payload)
+    {
+        var raw = new StringBuilder(
+            $"From: sender@example.net\r\nTo: {recipient}\r\n"
+            + "MIME-Version: 1.0\r\n"
+            + "Content-Type: multipart/mixed; boundary=b0\r\n\r\n");
+        for (var index = 0; index < depth; index++)
+        {
+            raw.Append("--b").Append(index).Append("\r\n");
+            if (index == depth - 1)
+            {
+                raw.Append("Content-Type: text/plain; charset=us-ascii\r\n\r\n")
+                    .Append(payload)
+                    .Append("\r\n");
+            }
+            else
+            {
+                raw.Append("Content-Type: multipart/mixed; boundary=b")
+                    .Append(index + 1)
+                    .Append("\r\n\r\n");
+            }
+        }
+        for (var index = depth - 1; index >= 0; index--)
+            raw.Append("--b").Append(index).Append("--\r\n");
+        return Encoding.ASCII.GetBytes(raw.ToString());
     }
 
     private static async Task<string> GetStateAsync(JmapFixture fixture, string dataType)

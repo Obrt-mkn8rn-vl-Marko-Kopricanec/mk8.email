@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -98,6 +99,119 @@ internal static partial class JmapEmailCodec
                 out contentType,
                 out name);
     }
+
+    public static bool TryGetPartContentByHash(
+        MimeMessage message,
+        ReadOnlySpan<byte> pathHash,
+        int nestingDepth,
+        out string partId,
+        out byte[] content,
+        out string contentType,
+        out string? name)
+    {
+        partId = string.Empty;
+        content = [];
+        contentType = "application/octet-stream";
+        name = null;
+        return pathHash.Length == SHA256.HashSizeInBytes
+            && nestingDepth >= 0
+            && TryGetPartContentByHash(
+                message,
+                pathHash.ToArray(),
+                nestingDepth,
+                null,
+                out partId,
+                out content,
+                out contentType,
+                out name);
+    }
+
+    private static bool TryGetPartContentByHash(
+        MimeMessage message,
+        byte[] pathHash,
+        int nestingDepth,
+        string? prefix,
+        out string partId,
+        out byte[] content,
+        out string contentType,
+        out string? name)
+    {
+        partId = string.Empty;
+        content = [];
+        contentType = "application/octet-stream";
+        name = null;
+        var parts = EnumerateLeafEntities(message.Body);
+        foreach (var part in parts)
+        {
+            var candidate = prefix is null ? part.Path : $"{prefix}!{part.Path}";
+            if (nestingDepth == 0 && MatchesPathHash(candidate, pathHash))
+            {
+                partId = candidate;
+                content = GetDecodedContent(part.Entity);
+                contentType = part.Entity.ContentType.MimeType.ToLowerInvariant();
+                name = GetPartName(part.Entity);
+                return true;
+            }
+        }
+        if (nestingDepth == 0)
+            return false;
+
+        foreach (var part in parts)
+        {
+            try
+            {
+                using var nestedMessage = Parse(GetDecodedContent(part.Entity));
+                var nestedPrefix = prefix is null ? part.Path : $"{prefix}!{part.Path}";
+                if (TryGetPartContentByHash(
+                        nestedMessage,
+                        pathHash,
+                        nestingDepth - 1,
+                        nestedPrefix,
+                        out partId,
+                        out content,
+                        out contentType,
+                        out name))
+                {
+                    return true;
+                }
+            }
+            catch (FormatException)
+            {
+            }
+        }
+        return false;
+    }
+
+    private static IReadOnlyList<(MimeEntity Entity, string Path)> EnumerateLeafEntities(
+        MimeEntity? root)
+    {
+        if (root is null)
+            return [];
+        var result = new List<(MimeEntity Entity, string Path)>();
+        var pending = new Stack<(MimeEntity Entity, string Path, bool IsRoot)>();
+        pending.Push((root, "1", true));
+        while (pending.TryPop(out var current))
+        {
+            if (current.Entity is not Multipart multipart)
+            {
+                result.Add((current.Entity, current.Path));
+                continue;
+            }
+            for (var index = multipart.Count - 1; index >= 0; index--)
+            {
+                var childPath = current.IsRoot
+                    ? (index + 1).ToString(CultureInfo.InvariantCulture)
+                    : $"{current.Path}.{index + 1}";
+                pending.Push((multipart[index], childPath, false));
+            }
+        }
+        return result;
+    }
+
+    private static bool MatchesPathHash(string partId, ReadOnlySpan<byte> expected) =>
+        CryptographicOperations.FixedTimeEquals(
+            SHA256.HashData(Encoding.UTF8.GetBytes(partId)),
+            expected);
 
     private static bool TryGetPartContent(
         MimeMessage message,

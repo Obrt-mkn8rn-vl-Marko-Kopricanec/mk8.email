@@ -10,7 +10,9 @@ namespace mk8.email.Jmap;
 internal sealed record JmapBlobContent(
     byte[] Content,
     string ContentType,
-    string? Name);
+    string? Name,
+    Guid SourceId,
+    string? PartPrefix);
 
 internal sealed class JmapBlobService(
     EmailDbContext database,
@@ -33,7 +35,12 @@ internal sealed class JmapBlobService(
                     cancellationToken);
             return uploaded is null
                 ? null
-                : new JmapBlobContent(uploaded.Content, uploaded.ContentType, uploaded.Name);
+                : new JmapBlobContent(
+                    uploaded.Content,
+                    uploaded.ContentType,
+                    uploaded.Name,
+                    uploaded.Id,
+                    null);
         }
 
         if (JmapId.TryParseRawBlob(blobId, out var emailId))
@@ -44,24 +51,32 @@ internal sealed class JmapBlobService(
                 : new JmapBlobContent(
                     JmapEmailCodec.GetRawBytes(email),
                     "message/rfc822",
+                    null,
+                    emailId,
                     null);
         }
 
-        if (!JmapId.TryParseBodyPartBlob(blobId, out var sourceId, out var partId))
+        var isPath = JmapId.TryParseBodyPartBlob(blobId, out var sourceId, out var partId);
+        var nestingDepth = 0;
+        byte[] pathHash = [];
+        var isHash = !isPath && JmapId.TryParseHashedBodyPartBlob(
+            blobId,
+            out sourceId,
+            out nestingDepth,
+            out pathHash);
+        if (!isPath && !isHash)
             return null;
 
         var sourceEmail = await FindEmailAsync(accountId, sourceId, cancellationToken);
         if (sourceEmail is not null)
         {
             using var message = JmapEmailCodec.Parse(sourceEmail);
-            return JmapEmailCodec.TryGetPartContent(
+            return ResolveBodyPart(
                 message,
-                partId,
-                out var content,
-                out var contentType,
-                out var name)
-                    ? new JmapBlobContent(content, contentType, name)
-                    : null;
+                sourceId,
+                isPath ? partId : null,
+                isHash ? pathHash : null,
+                nestingDepth);
         }
 
         var sourceBlob = await database.JmapBlobs
@@ -75,19 +90,53 @@ internal sealed class JmapBlobService(
         try
         {
             using var message = JmapEmailCodec.Parse(sourceBlob.Content);
+            return ResolveBodyPart(
+                message,
+                sourceId,
+                isPath ? partId : null,
+                isHash ? pathHash : null,
+                nestingDepth);
+        }
+        catch (FormatException)
+        {
+            return null;
+        }
+    }
+
+    private static JmapBlobContent? ResolveBodyPart(
+        MimeKit.MimeMessage message,
+        Guid sourceId,
+        string? partId,
+        byte[]? pathHash,
+        int nestingDepth)
+    {
+        if (partId is not null)
+        {
             return JmapEmailCodec.TryGetPartContent(
                 message,
                 partId,
                 out var content,
                 out var contentType,
                 out var name)
-                    ? new JmapBlobContent(content, contentType, name)
+                    ? new JmapBlobContent(content, contentType, name, sourceId, partId)
                     : null;
         }
-        catch (FormatException)
-        {
-            return null;
-        }
+        return pathHash is not null
+            && JmapEmailCodec.TryGetPartContentByHash(
+                message,
+                pathHash,
+                nestingDepth,
+                out var resolvedPartId,
+                out var hashedContent,
+                out var hashedContentType,
+                out var hashedName)
+                ? new JmapBlobContent(
+                    hashedContent,
+                    hashedContentType,
+                    hashedName,
+                    sourceId,
+                    resolvedPartId)
+                : null;
     }
 
     public async Task<JmapBlobDB> StoreAsync(

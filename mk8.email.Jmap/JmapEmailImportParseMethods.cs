@@ -274,14 +274,13 @@ internal sealed class EmailParseMethod(
             try
             {
                 using var message = JmapEmailCodec.Parse(blob.Content);
-                var source = BlobSource(blobId);
                 parsed[blobId] = JmapEmailCodec.BuildEmail(
                     message,
                     options,
-                    source.Id,
+                    blob.SourceId,
                     uploadedBlobId: blobId,
                     rawSize: blob.Content.LongLength,
-                    blobPartPrefix: source.PartPrefix);
+                    blobPartPrefix: blob.PartPrefix);
             }
             catch (FormatException)
             {
@@ -295,17 +294,5 @@ internal sealed class EmailParseMethod(
             ["notParsable"] = notParsable.Count == 0 ? null : notParsable,
             ["notFound"] = notFound.Count == 0 ? null : notFound,
         });
-    }
-
-    private static (Guid Id, string? PartPrefix) BlobSource(string blobId)
-    {
-        if (JmapId.TryParseUploadedBlob(blobId, out var id)
-            || JmapId.TryParseRawBlob(blobId, out id))
-        {
-            return (id, null);
-        }
-        return JmapId.TryParseBodyPartBlob(blobId, out id, out var partId)
-            ? (id, partId)
-            : (Guid.CreateVersion7(), null);
     }
 }

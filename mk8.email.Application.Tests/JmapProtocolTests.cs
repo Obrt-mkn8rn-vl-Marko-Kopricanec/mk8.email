@@ -275,16 +275,18 @@ public sealed class JmapProtocolTests
           "methodCalls": [["Email/get", {
             "accountId":"{{{fixture.AccountId}}}", "ids":["{{{emailId}}}"],
             "properties":["id", "threadId", "mailboxIds", "keywords", "subject",
-              "header:Subject:asText", "bodyValues", "textBody", "preview"],
+              "header:Subject:asText", "bodyStructure", "bodyValues", "textBody", "preview"],
             "bodyProperties":["partId", "type", "charset"],
-            "fetchTextBodyValues":true
+            "fetchTextBodyValues":true,
+            "maxBodyValueBytes":5
           }, "g1"]]
         }
         """);
         var email = Arguments(get)["list"]![0]!.AsObject();
         Assert.AreEqual("JMAP lifecycle", email["subject"]!.GetValue<string>());
         Assert.AreEqual("JMAP lifecycle", email["header:Subject:asText"]!.GetValue<string>());
-        Assert.AreEqual("Hello from JMAP", email["bodyValues"]!["1"]!["value"]!.GetValue<string>());
+        Assert.AreEqual("Hello", email["bodyValues"]!["1"]!["value"]!.GetValue<string>());
+        Assert.IsTrue(email["bodyValues"]!["1"]!["isTruncated"]!.GetValue<bool>());
         Assert.IsTrue(email["keywords"]!["$draft"]!.GetValue<bool>());
 
         var query = await fixture.InvokeAsync($$$"""
@@ -301,20 +303,41 @@ public sealed class JmapProtocolTests
         Assert.AreEqual(emailId, Arguments(query)["ids"]![0]!.GetValue<string>());
         Assert.AreEqual(1, Arguments(query)["total"]!.GetValue<int>());
 
-        var update = await fixture.InvokeAsync($$$"""
+        var updateObject = (JsonObject)email.DeepClone();
+        updateObject["mailboxIds"] = new JsonObject { [fixture.DraftsMailboxId] = true };
+        updateObject["keywords"]!["$seen"] = true;
+        var update = await fixture.InvokeAsync(new JsonObject
         {
-          "using": ["{{{Core}}}", "{{{Mail}}}"],
-          "methodCalls": [["Email/set", {
-            "accountId":"{{{fixture.AccountId}}}",
-            "update":{"{{{emailId}}}":{
-              "mailboxIds":{"{{{fixture.DraftsMailboxId}}}":true},
-              "keywords/$seen":true
-            }}
-          }, "s2"]]
-        }
-        """);
+            ["using"] = new JsonArray(Core, Mail),
+            ["methodCalls"] = new JsonArray(new JsonArray(
+                "Email/set",
+                new JsonObject
+                {
+                    ["accountId"] = fixture.AccountId,
+                    ["update"] = new JsonObject { [emailId] = updateObject },
+                },
+                "s2")),
+        });
         Assert.IsTrue(Arguments(update)["updated"]!.AsObject().ContainsKey(emailId));
         var updatedState = Arguments(update)["newState"]!.GetValue<string>();
+
+        var changedSubject = (JsonObject)updateObject.DeepClone();
+        changedSubject["subject"] = "Changed immutable subject";
+        var invalidUpdate = await fixture.InvokeAsync(new JsonObject
+        {
+            ["using"] = new JsonArray(Core, Mail),
+            ["methodCalls"] = new JsonArray(new JsonArray(
+                "Email/set",
+                new JsonObject
+                {
+                    ["accountId"] = fixture.AccountId,
+                    ["update"] = new JsonObject { [emailId] = changedSubject },
+                },
+                "s2b")),
+        });
+        Assert.AreEqual(
+            "invalidProperties",
+            Arguments(invalidUpdate)["notUpdated"]![emailId]!["type"]!.GetValue<string>());
 
         using (var scope = fixture.Services.CreateScope())
         {

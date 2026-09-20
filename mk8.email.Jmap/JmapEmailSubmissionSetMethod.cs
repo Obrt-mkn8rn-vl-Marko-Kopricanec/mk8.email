@@ -274,18 +274,8 @@ internal sealed class EmailSubmissionSetMethod(
             null,
             cancellationToken);
 
-        if (requested["identityId"] is JsonValue requestedIdentityNode
-            && requestedIdentityNode.TryGetValue<string>(out var requestedIdentityId)
-            && string.Equals(requestedIdentityId, submission.IdentityId, StringComparison.Ordinal))
-        {
-            response.Remove("identityId");
-        }
-        if (requested["emailId"] is JsonValue requestedEmailNode
-            && requestedEmailNode.TryGetValue<string>(out var requestedEmailId)
-            && string.Equals(requestedEmailId, submission.EmailId, StringComparison.Ordinal))
-        {
-            response.Remove("emailId");
-        }
+        response.Remove("identityId");
+        response.Remove("emailId");
         if (requested["envelope"] is { } requestedEnvelope
             && JsonNode.DeepEquals(requestedEnvelope, response["envelope"]))
         {

@@ -2840,6 +2840,71 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task SubmissionCreationReferencesDoNotEchoClientPropertiesAndRunImplicitEmailSet()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var identityResponse = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Submission}}}"],
+          "methodCalls": [["Identity/get", {"accountId":"{{{fixture.AccountId}}}"}, "i1"]]
+        }
+        """);
+        var identityId = Arguments(identityResponse)["list"]![0]!["id"]!.GetValue<string>();
+        var emailResponse = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/set", {
+            "accountId":"{{{fixture.AccountId}}}", "create":{"draft":{
+              "mailboxIds":{"{{{fixture.DraftsMailboxId}}}":true},
+              "keywords":{"$draft":true},
+              "from":[{"email":"{{{fixture.User.Username}}}"}],
+              "to":[{"email":"{{{fixture.User.Username}}}"}],
+              "subject":"Creation references",
+              "bodyValues":{"1":{"value":"queued"}},
+              "textBody":[{"partId":"1", "type":"text/plain"}]
+            }}
+          }, "e1"]]
+        }
+        """);
+        var emailId = Arguments(emailResponse)["created"]!["draft"]!["id"]!.GetValue<string>();
+
+        var submission = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}", "{{{Submission}}}"],
+          "createdIds": {"identity":"{{{identityId}}}", "email":"{{{emailId}}}"},
+          "methodCalls": [["EmailSubmission/set", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "create":{"submit":{"identityId":"#identity", "emailId":"#email"}},
+            "onSuccessUpdateEmail":{"#submit":{"keywords/$draft":null}}
+          }, "s1"]]
+        }
+        """);
+
+        var responses = submission["methodResponses"]!.AsArray();
+        Assert.AreEqual(2, responses.Count);
+        Assert.AreEqual("EmailSubmission/set", responses[0]![0]!.GetValue<string>());
+        Assert.AreEqual("Email/set", responses[1]![0]!.GetValue<string>());
+        Assert.AreEqual("s1", responses[0]![2]!.GetValue<string>());
+        Assert.AreEqual("s1", responses[1]![2]!.GetValue<string>());
+        var createdSubmission = Arguments(submission)["created"]!["submit"]!.AsObject();
+        CollectionAssert.DoesNotContain(createdSubmission.Select(property => property.Key).ToArray(), "identityId");
+        CollectionAssert.DoesNotContain(createdSubmission.Select(property => property.Key).ToArray(), "emailId");
+        Assert.IsNotNull(createdSubmission["envelope"]);
+        Assert.IsTrue(Arguments(submission, 1)["updated"]!.AsObject().ContainsKey(emailId));
+
+        var email = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/get", {
+            "accountId":"{{{fixture.AccountId}}}", "ids":["{{{emailId}}}"],
+            "properties":["keywords"]
+          }, "g1"]]
+        }
+        """);
+        Assert.IsFalse(Arguments(email)["list"]![0]!["keywords"]!.AsObject().ContainsKey("$draft"));
+    }
+
+    [TestMethod]
     public async Task SubmissionGeneratesAndPersistsDeduplicatedEnvelope()
     {
         await using var fixture = await JmapFixture.CreateAsync();

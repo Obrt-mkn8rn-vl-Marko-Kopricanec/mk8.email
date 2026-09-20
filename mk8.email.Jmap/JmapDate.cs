@@ -59,13 +59,14 @@ internal static partial class JmapDate
             ? DateFormatsWithoutFraction
             : DateFormatsWithFraction;
         if (!DateTimeOffset.TryParseExact(
-            value,
-            formats,
-            CultureInfo.InvariantCulture,
-            value[^1] == 'Z'
-                ? DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal
-                : DateTimeStyles.None,
-            out result))
+                value,
+                formats,
+                CultureInfo.InvariantCulture,
+                value[^1] == 'Z'
+                    ? DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal
+                    : DateTimeStyles.None,
+                out result)
+            && !TryParseExtendedOffset(value, fractionSeparator >= 0, out result))
         {
             return false;
         }
@@ -84,6 +85,59 @@ internal static partial class JmapDate
             return false;
         }
         result = result.AddSeconds(1);
+        return true;
+    }
+
+    private static bool TryParseExtendedOffset(
+        string value,
+        bool hasFraction,
+        out DateTimeOffset result)
+    {
+        result = default;
+        if (value[^1] == 'Z')
+            return false;
+
+        var offsetIndex = value.Length - 6;
+        if (offsetIndex <= 0
+            || value[offsetIndex] is not ('+' or '-')
+            || !int.TryParse(
+                value.AsSpan(offsetIndex + 1, 2),
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out var offsetHours)
+            || !int.TryParse(
+                value.AsSpan(offsetIndex + 4, 2),
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out var offsetMinutes)
+            || offsetHours > 23
+            || offsetMinutes > 59)
+        {
+            return false;
+        }
+
+        var format = hasFraction
+            ? "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF"
+            : "yyyy-MM-dd'T'HH:mm:ss";
+        if (!DateTime.TryParseExact(
+                value.AsSpan(0, offsetIndex),
+                format,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None,
+                out var local))
+        {
+            return false;
+        }
+
+        var offsetTicks = (offsetHours * TimeSpan.TicksPerHour)
+            + (offsetMinutes * TimeSpan.TicksPerMinute);
+        if (value[offsetIndex] == '-')
+            offsetTicks = -offsetTicks;
+        var utcTicks = local.Ticks - offsetTicks;
+        if (utcTicks < DateTime.MinValue.Ticks || utcTicks > DateTime.MaxValue.Ticks)
+            return false;
+
+        result = new DateTimeOffset(utcTicks, TimeSpan.Zero);
         return true;
     }
 

@@ -366,16 +366,24 @@ public sealed class JmapCoreTests
         Assert.AreEqual("2026-09-20T12:34:56.1234567Z", JmapDate.FormatUtc(utc));
         Assert.IsTrue(JmapDate.TryParseDate("2026-09-20T14:34:56.25+02:00", out var offset));
         Assert.AreEqual("2026-09-20T14:34:56.25+02:00", JmapDate.FormatDate(offset));
+        Assert.IsTrue(JmapDate.TryParseDate("2026-09-20T23:34:56.25+23:00", out var extendedOffset));
+        Assert.AreEqual("2026-09-20T00:34:56.25Z", JmapDate.FormatDate(extendedOffset));
+        Assert.IsTrue(JmapDate.TryParseDate("2026-09-20T00:34:56.25-23:00", out extendedOffset));
+        Assert.AreEqual("2026-09-20T23:34:56.25Z", JmapDate.FormatDate(extendedOffset));
 
         Assert.IsFalse(JmapDate.TryParseUtcDate("2026-09-20T12:34:56.000Z", out _));
         Assert.IsFalse(JmapDate.TryParseUtcDate("2026-09-20t12:34:56z", out _));
         Assert.IsFalse(JmapDate.TryParseUtcDate("2026-09-20T14:34:56+02:00", out _));
         Assert.IsFalse(JmapDate.TryParseDate("2026-02-30T12:34:56Z", out _));
+        Assert.IsFalse(JmapDate.TryParseDate("2026-09-20T12:34:56+24:00", out _));
+        Assert.IsFalse(JmapDate.TryParseDate("2026-09-20T12:34:56+23:60", out _));
 
         Assert.IsTrue(JmapDate.TryParseUtcDate("1990-12-31T23:59:60Z", out var leapSecond));
         Assert.AreEqual("1991-01-01T00:00:00Z", JmapDate.FormatUtc(leapSecond));
         Assert.IsTrue(JmapDate.TryParseDate("1990-12-31T15:59:60-08:00", out var offsetLeapSecond));
         Assert.AreEqual("1990-12-31T16:00:00-08:00", JmapDate.FormatDate(offsetLeapSecond));
+        Assert.IsTrue(JmapDate.TryParseDate("1990-12-31T00:59:60-23:00", out var extendedLeapSecond));
+        Assert.AreEqual("1991-01-01T00:00:00Z", JmapDate.FormatDate(extendedLeapSecond));
         Assert.IsFalse(JmapDate.TryParseUtcDate("2026-09-20T12:34:60Z", out _));
     }
 

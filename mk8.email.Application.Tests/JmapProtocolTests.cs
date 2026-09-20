@@ -2791,6 +2791,44 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task IdentitySetReturnsOnlyServerSetAndDefaultedProperties()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Submission}}}"],
+          "methodCalls": [["Identity/set", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "create": {
+              "explicit": {
+                "email":"{{{fixture.User.Username}}}",
+                "name":"Explicit",
+                "replyTo":null,
+                "bcc":null,
+                "textSignature":"text",
+                "htmlSignature":"<b>html</b>"
+              },
+              "defaults": {"email":"{{{fixture.User.Username}}}"}
+            }
+          }, "s1"]]
+        }
+        """);
+
+        var created = Arguments(response)["created"]!.AsObject();
+        CollectionAssert.AreEquivalent(
+            new[] { "id", "mayDelete" },
+            created["explicit"]!.AsObject().Select(property => property.Key).ToArray());
+        CollectionAssert.AreEquivalent(
+            new[] { "id", "name", "replyTo", "bcc", "textSignature", "htmlSignature", "mayDelete" },
+            created["defaults"]!.AsObject().Select(property => property.Key).ToArray());
+        Assert.AreEqual(string.Empty, created["defaults"]!["name"]!.GetValue<string>());
+        Assert.IsNull(created["defaults"]!["replyTo"]);
+        Assert.IsNull(created["defaults"]!["bcc"]);
+        Assert.AreEqual(string.Empty, created["defaults"]!["textSignature"]!.GetValue<string>());
+        Assert.AreEqual(string.Empty, created["defaults"]!["htmlSignature"]!.GetValue<string>());
+    }
+
+    [TestMethod]
     public async Task IdentityAndSubmissionRejectInvalidWireValues()
     {
         await using var fixture = await JmapFixture.CreateAsync();

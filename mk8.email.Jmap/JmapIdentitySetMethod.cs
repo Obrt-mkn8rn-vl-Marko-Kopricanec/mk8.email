@@ -100,16 +100,22 @@ internal sealed class IdentitySetMethod(
                 await database.SaveChangesAsync(cancellationToken);
                 var wireId = JmapId.Identity(id);
                 context.CreatedIds[item.Key] = wireId;
-                created[item.Key] = new JsonObject
+                var createdIdentity = new JsonObject
                 {
                     ["id"] = wireId,
-                    ["name"] = identity.Name,
-                    ["replyTo"] = identity.ReplyToJson is null ? null : JsonNode.Parse(identity.ReplyToJson),
-                    ["bcc"] = identity.BccJson is null ? null : JsonNode.Parse(identity.BccJson),
-                    ["textSignature"] = identity.TextSignature,
-                    ["htmlSignature"] = identity.HtmlSignature,
                     ["mayDelete"] = true,
                 };
+                if (!item.Value.ContainsKey("name"))
+                    createdIdentity["name"] = identity.Name;
+                if (!item.Value.ContainsKey("replyTo"))
+                    createdIdentity["replyTo"] = null;
+                if (!item.Value.ContainsKey("bcc"))
+                    createdIdentity["bcc"] = null;
+                if (!item.Value.ContainsKey("textSignature"))
+                    createdIdentity["textSignature"] = identity.TextSignature;
+                if (!item.Value.ContainsKey("htmlSignature"))
+                    createdIdentity["htmlSignature"] = identity.HtmlSignature;
+                created[item.Key] = createdIdentity;
             }
         }
         if (update is not null)

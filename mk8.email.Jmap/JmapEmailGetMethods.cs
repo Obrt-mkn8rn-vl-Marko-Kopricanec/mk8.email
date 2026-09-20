@@ -127,19 +127,12 @@ internal sealed class EmailGetMethod(
                 continue;
             }
 
-            try
-            {
-                using var message = JmapEmailCodec.Parse(email);
-                responseList.Add(JmapEmailCodec.BuildEmail(
-                    message,
-                    options,
-                    email.Id,
-                    email));
-            }
-            catch (FormatException)
-            {
-                notFound.Add(id);
-            }
+            using var message = JmapEmailCodec.Parse(email);
+            responseList.Add(JmapEmailCodec.BuildEmail(
+                message,
+                options,
+                email.Id,
+                email));
         }
 
         return new JmapMethodResponse(Name, new JsonObject

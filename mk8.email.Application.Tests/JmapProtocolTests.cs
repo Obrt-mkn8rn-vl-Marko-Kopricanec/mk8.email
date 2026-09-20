@@ -363,6 +363,44 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task EmailGetFailsInsteadOfReportingCorruptStoredRecordsAsMissing()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var emailId = Guid.CreateVersion7();
+        using (var scope = fixture.Services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            database.Emails.Add(new EmailDB
+            {
+                Id = emailId,
+                Sender = "sender@example.net",
+                Recipient = fixture.User.Username,
+                Subject = "Corrupt raw message",
+                Body = string.Empty,
+                RawMessage = [],
+                SizeBytes = 0,
+                ReceivedAt = DateTime.UtcNow,
+                FolderId = fixture.InboxFolderId,
+                Uid = 100,
+            });
+            await database.SaveChangesAsync();
+        }
+
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/get", {
+            "accountId": "{{{fixture.AccountId}}}",
+            "ids": ["{{{JmapId.Email(emailId)}}}"]
+          }, "g1"]]
+        }
+        """);
+
+        Assert.AreEqual("error", response["methodResponses"]![0]![0]!.GetValue<string>());
+        Assert.AreEqual("serverFail", Arguments(response)["type"]!.GetValue<string>());
+    }
+
+    [TestMethod]
     public async Task EmailBodyValuesReportMalformedCharsetData()
     {
         await using var fixture = await JmapFixture.CreateAsync();

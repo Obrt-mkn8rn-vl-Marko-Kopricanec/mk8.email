@@ -506,10 +506,16 @@ public sealed class JmapCoreTests
         var response = await fixture.InvokeAsync(
             """
             {
-              "using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
+              "using":[
+                "urn:ietf:params:jmap:core",
+                "urn:ietf:params:jmap:mail",
+                "urn:ietf:params:jmap:submission"
+              ],
               "methodCalls":[
                 ["Email/get",{"accountId":"ACCOUNT","ids":["not an id"]},"c1"],
-                ["Mailbox/query",{"accountId":"ACCOUNT","anchor":"not/an/id"},"c2"]
+                ["Mailbox/query",{"accountId":"ACCOUNT","anchor":"not/an/id"},"c2"],
+                ["EmailSubmission/query",{"accountId":"ACCOUNT",
+                  "filter":{"identityIds":["not an id"]}},"c3"]
               ]
             }
             """.Replace("ACCOUNT", JmapId.Account(fixture.InboxId), StringComparison.Ordinal));
@@ -520,6 +526,9 @@ public sealed class JmapCoreTests
         Assert.AreEqual(
             "invalidArguments",
             response["methodResponses"]?[1]?[1]?["type"]?.GetValue<string>());
+        Assert.AreEqual(
+            "invalidArguments",
+            response["methodResponses"]?[2]?[1]?["type"]?.GetValue<string>());
     }
 
     [TestMethod]

@@ -186,7 +186,8 @@ internal static class JmapEmailSubmissionQueryEngine
         {
             if (item is not JsonValue jsonValue
                 || !jsonValue.TryGetValue<string>(out var id)
-                || context.ResolveId(id) is not { } resolved) return false;
+                || context.ResolveId(id) is not { } resolved
+                || !JmapId.IsValidId(resolved)) return false;
             result.Add(resolved);
         }
         return true;

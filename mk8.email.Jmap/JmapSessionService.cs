@@ -105,9 +105,10 @@ public sealed class JmapSessionService(
             ["uploadUrl"] = $"{baseUrl}/jmap/upload/{{accountId}}",
             ["eventSourceUrl"] = $"{baseUrl}/jmap/event?types={{types}}&closeafter={{closeafter}}&ping={{ping}}",
         };
-        var state = BuildState(session);
-        session["state"] = state;
-        return new JmapSessionDocument(session, state);
+        var sanitizedSession = JmapJson.SanitizeResponse(session);
+        var state = BuildState(sanitizedSession);
+        sanitizedSession["state"] = state;
+        return new JmapSessionDocument(sanitizedSession, state);
     }
 
     private static string BuildState(JsonObject session)

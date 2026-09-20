@@ -113,15 +113,16 @@ public sealed class JmapRequestProcessor
 
             void AddResponse(JmapMethodResponse completed)
             {
+                var arguments = JmapJson.SanitizeResponse(completed.Arguments);
                 var invocation = new JsonArray(
                     completed.Name,
-                    completed.Arguments.DeepClone(),
+                    arguments.DeepClone(),
                     callId);
                 methodResponses.Add(invocation);
                 previousResponses.Add(new CompletedInvocation(
                     callId,
                     completed.Name,
-                    (JsonObject)completed.Arguments.DeepClone()));
+                    arguments));
             }
         }
 

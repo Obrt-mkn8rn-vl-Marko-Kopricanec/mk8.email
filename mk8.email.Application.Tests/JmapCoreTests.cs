@@ -401,6 +401,34 @@ public sealed class JmapCoreTests
     }
 
     [TestMethod]
+    public async Task ResponsesReplaceCharactersForbiddenByIJsonBeforeResultReferences()
+    {
+        await using var fixture = await JmapFixture.CreateAsync(
+            configureServices: services => services.AddSingleton<IJmapMethod>(
+                new InvalidUnicodeResponseMethod()));
+        var response = await fixture.InvokeAsync(
+            """
+            {
+              "using":["urn:ietf:params:jmap:core"],
+              "methodCalls":[
+                ["Test/invalidUnicode",{},"c1"],
+                ["Core/echo",{
+                  "#copied":{"resultOf":"c1","name":"Test/invalidUnicode","path":"/value"}
+                },"c2"]
+              ]
+            }
+            """);
+
+        const string expected = "before\ufffdmiddle\ufffdafter\ufffd";
+        var first = response["methodResponses"]![0]![1]!;
+        Assert.AreEqual(expected, first["value"]!.GetValue<string>());
+        Assert.IsTrue(first.AsObject().ContainsKey("invalid\ufffdname"));
+        Assert.AreEqual(
+            expected,
+            response["methodResponses"]![1]![1]!["copied"]!.GetValue<string>());
+    }
+
+    [TestMethod]
     public async Task ConcurrentRequestLimitRejectsInsteadOfQueuing()
     {
         await using var fixture = await JmapFixture.CreateAsync();
@@ -821,5 +849,23 @@ public sealed class JmapCoreTests
                 [new JmapMethodResponse(
                     "Test/additional",
                     new JsonObject { ["value"] = "additional" })]));
+    }
+
+    private sealed class InvalidUnicodeResponseMethod : IJmapMethod
+    {
+        public string Name => "Test/invalidUnicode";
+        public string Capability => JmapConstants.CoreCapability;
+
+        public Task<JmapMethodResponse> InvokeAsync(
+            JmapInvocationContext context,
+            JsonObject arguments,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new JmapMethodResponse(
+                Name,
+                new JsonObject
+                {
+                    ["value"] = "before\ufdd0middle\U0001fffeafter\ud800",
+                    ["invalid\ufdefname"] = true,
+                }));
     }
 }

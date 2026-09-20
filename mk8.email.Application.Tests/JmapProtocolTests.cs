@@ -2397,7 +2397,9 @@ public sealed class JmapProtocolTests
         var authText = Base64Url(auth);
         Assert.IsTrue(JmapPushEncryption.TryValidateKeys(publicText, authText));
 
-        var plaintext = Encoding.UTF8.GetBytes("{\"@type\":\"StateChange\"}");
+        // This makes the encrypted record exactly 4096 octets before the
+        // required strictly-greater record-size adjustment.
+        var plaintext = Enumerable.Repeat((byte)'x', 4079).ToArray();
         var encrypted = JmapPushEncryption.Encrypt(plaintext, publicText, authText);
         var decrypted = DecryptWebPush(encrypted, receiver, receiverPublic, auth);
         CollectionAssert.AreEqual(plaintext, decrypted);
@@ -2503,6 +2505,7 @@ public sealed class JmapProtocolTests
         var senderLength = content[20];
         var senderPublic = content.AsSpan(21, senderLength).ToArray();
         Assert.AreEqual(65, senderPublic.Length);
+        Assert.IsTrue(recordSize > content.Length - 21 - senderLength);
         using var sender = ECDiffieHellman.Create(new ECParameters
         {
             Curve = ECCurve.NamedCurves.nistP256,

@@ -286,7 +286,7 @@ internal static class JmapPushEncryption
         using (var aes = new AesGcm(contentEncryptionKey, 16))
             aes.Encrypt(nonce, recordPlaintext, ciphertext, tag);
 
-        var recordSize = checked((uint)Math.Max(4096, ciphertext.Length + tag.Length));
+        var recordSize = checked((uint)Math.Max(4096, ciphertext.Length + tag.Length + 1));
         var result = new byte[16 + 4 + 1 + senderPublic.Length + ciphertext.Length + tag.Length];
         salt.CopyTo(result, 0);
         BinaryPrimitives.WriteUInt32BigEndian(result.AsSpan(16, 4), recordSize);

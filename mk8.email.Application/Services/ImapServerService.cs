@@ -2300,12 +2300,23 @@ ILogger<ImapServerService> logger) : BackgroundService
                 NormalizePrimaryFolderName(mailboxName));
     }
 
-    private static bool IsValidFolderName(string folderName) =>
-        folderName.Length is > 0 and <= 100
-        && folderName[0] != '/'
-        && folderName[^1] != '/'
-        && !folderName.Contains("//", StringComparison.Ordinal)
-        && !folderName.Any(char.IsControl);
+    private static bool IsValidFolderName(string folderName)
+    {
+        if (folderName.Length is < 1 or > FolderDB.MaximumStoredNameLength
+            || folderName[0] == '/'
+            || folderName[^1] == '/'
+            || folderName.Contains("//", StringComparison.Ordinal)
+            || folderName.Any(char.IsControl))
+        {
+            return false;
+        }
+
+        var components = folderName.Split('/');
+        return components.Length <= FolderDB.MaximumHierarchyDepth
+            && components.All(component =>
+                component.Length > 0
+                && Encoding.UTF8.GetByteCount(component) <= FolderDB.MaximumLeafNameOctets);
+    }
 
     private static bool IsSystemFolder(string folderName) =>
         DefaultFolders.All.Any(
@@ -2380,6 +2391,7 @@ ILogger<ImapServerService> logger) : BackgroundService
                 Subject = source.Subject,
                 Body = source.Body,
                 RawHeaders = source.RawHeaders,
+                RawMessage = source.RawMessage?.ToArray(),
                 SizeBytes = source.SizeBytes,
                 MessageId = source.MessageId,
                 InReplyTo = source.InReplyTo,
@@ -2991,6 +3003,8 @@ ILogger<ImapServerService> logger) : BackgroundService
 
     private static string BuildRfc822(EmailDB email)
     {
+        if (email.RawMessage is not null)
+            return MailWireEncoding.Instance.GetString(email.RawMessage);
         if (email.RawHeaders is not null)
             return email.RawHeaders + "\r\n\r\n" + email.Body;
 
@@ -3014,6 +3028,17 @@ ILogger<ImapServerService> logger) : BackgroundService
 
     private static string BuildRfc822Header(EmailDB email)
     {
+        if (email.RawMessage is not null)
+        {
+            var raw = MailWireEncoding.Instance.GetString(email.RawMessage);
+            var separator = raw.IndexOf("\r\n\r\n", StringComparison.Ordinal);
+            if (separator >= 0)
+                return raw[..(separator + 4)];
+            separator = raw.IndexOf("\n\n", StringComparison.Ordinal);
+            if (separator >= 0)
+                return raw[..(separator + 2)];
+            return raw;
+        }
         if (email.RawHeaders is not null)
             return email.RawHeaders + "\r\n\r\n";
 
@@ -5530,6 +5555,7 @@ ILogger<ImapServerService> logger) : BackgroundService
                 Subject = subject.Length > 998 ? subject[..998] : subject,
                 Body = body,
                 RawHeaders = headers,
+                RawMessage = MailWireEncoding.Instance.GetBytes(messageData),
                 SizeBytes = MailWireEncoding.Instance.GetByteCount(messageData),
                 MessageId = msgId,
                 InReplyTo = inReplyTo,

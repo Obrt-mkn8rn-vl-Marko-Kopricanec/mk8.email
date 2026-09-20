@@ -5,6 +5,8 @@ namespace mk8.email.Infrastructure.Data;
 
 public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContext(options)
 {
+    private bool _collectingJmapChanges;
+
     public DbSet<CompanyDB> Companies => Set<CompanyDB>();
     public DbSet<AddressDB> Addresses => Set<AddressDB>();
     public DbSet<UserDB> Users => Set<UserDB>();
@@ -18,9 +20,46 @@ public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContex
     public DbSet<ExpungedUidDB> ExpungedUids => Set<ExpungedUidDB>();
     public DbSet<MailQueueMessageDB> MailQueueMessages => Set<MailQueueMessageDB>();
     public DbSet<MailQueueRecipientDB> MailQueueRecipients => Set<MailQueueRecipientDB>();
+    public DbSet<JmapChangeDB> JmapChanges => Set<JmapChangeDB>();
+    public DbSet<JmapBlobDB> JmapBlobs => Set<JmapBlobDB>();
+    public DbSet<JmapEmailSubmissionDB> JmapEmailSubmissions => Set<JmapEmailSubmissionDB>();
+    public DbSet<JmapPushSubscriptionDB> JmapPushSubscriptions => Set<JmapPushSubscriptionDB>();
+    public DbSet<JmapVacationResponseDB> JmapVacationResponses => Set<JmapVacationResponseDB>();
+    public DbSet<JmapVacationReplyDB> JmapVacationReplies => Set<JmapVacationReplyDB>();
+    public DbSet<JmapIdentityDB> JmapIdentities => Set<JmapIdentityDB>();
 
     private static readonly Guid GlobalConfigSeedId = Guid.Parse("00000000-0000-0000-0000-000000000001");
     private static readonly Guid GlobalLimitsSeedId = Guid.Parse("00000000-0000-0000-0000-000000000002");
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        PrepareJmapChangesAsync(CancellationToken.None).GetAwaiter().GetResult();
+        return base.SaveChanges(acceptAllChangesOnSuccess);
+    }
+
+    public override async Task<int> SaveChangesAsync(
+        bool acceptAllChangesOnSuccess,
+        CancellationToken cancellationToken = default)
+    {
+        await PrepareJmapChangesAsync(cancellationToken);
+        return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+    }
+
+    private async Task PrepareJmapChangesAsync(CancellationToken cancellationToken)
+    {
+        if (_collectingJmapChanges)
+            return;
+
+        _collectingJmapChanges = true;
+        try
+        {
+            await JmapChangeCollector.CollectAsync(this, cancellationToken);
+        }
+        finally
+        {
+            _collectingJmapChanges = false;
+        }
+    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -74,6 +113,10 @@ public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContex
         modelBuilder.Entity<FolderDB>(entity =>
         {
             entity.HasIndex(f => new { f.InboxId, f.Name }).IsUnique();
+            entity.HasIndex(f => new { f.InboxId, f.MailboxId }).IsUnique();
+            entity.HasIndex(f => new { f.InboxId, f.JmapRole })
+                .IsUnique()
+                .HasFilter("jmap_role IS NOT NULL");
 
             entity.HasOne(f => f.Inbox)
                   .WithMany(i => i.Folders)
@@ -110,6 +153,50 @@ public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContex
                   .WithMany(message => message.Recipients)
                   .HasForeignKey(recipient => recipient.MessageId)
                   .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<JmapChangeDB>(entity =>
+        {
+            entity.HasIndex(change => new { change.AccountId, change.DataType, change.Sequence });
+            entity.HasIndex(change => change.ChangedAt);
+            entity.HasIndex(change => change.AccountId)
+                .IsUnique()
+                .HasFilter("data_type = '_Account'");
+        });
+
+        modelBuilder.Entity<JmapBlobDB>(entity =>
+        {
+            entity.HasIndex(blob => blob.BlobId).IsUnique();
+            entity.HasIndex(blob => new { blob.AccountId, blob.ExpiresAt });
+        });
+
+        modelBuilder.Entity<JmapEmailSubmissionDB>(entity =>
+        {
+            entity.HasIndex(submission => submission.SubmissionObjectId).IsUnique();
+            entity.HasIndex(submission => submission.QueueId).IsUnique();
+            entity.HasIndex(submission => new { submission.AccountId, submission.CreatedAt });
+        });
+
+        modelBuilder.Entity<JmapPushSubscriptionDB>(entity =>
+        {
+            entity.HasIndex(subscription => subscription.SubscriptionObjectId).IsUnique();
+            entity.HasIndex(subscription => new { subscription.UserId, subscription.DeviceClientId });
+            entity.HasIndex(subscription => subscription.ExpiresAt);
+        });
+
+        modelBuilder.Entity<JmapVacationResponseDB>();
+
+        modelBuilder.Entity<JmapVacationReplyDB>(entity =>
+        {
+            entity.HasIndex(reply => new { reply.AccountId, reply.SenderAddress }).IsUnique();
+            entity.HasIndex(reply => reply.LastDeliveryId).IsUnique();
+            entity.HasIndex(reply => reply.LastSentAt);
+        });
+
+        modelBuilder.Entity<JmapIdentityDB>(entity =>
+        {
+            entity.HasIndex(identity => identity.IdentityObjectId).IsUnique();
+            entity.HasIndex(identity => new { identity.AccountId, identity.Email });
         });
 
         modelBuilder.Entity<ExpungedUidDB>(entity =>

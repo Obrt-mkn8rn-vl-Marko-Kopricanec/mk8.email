@@ -6,6 +6,7 @@
   </Folder>
   <Folder Name="/PublicAPI/">
     <Project Path="mk8.email.PublicAPI/mk8.email.PublicAPI.csproj" />
+    <Project Path="mk8.email.Jmap/mk8.email.Jmap.csproj" />
   </Folder>
   <Folder Name="/Shared/">
     <Project Path="mk8.email.Contracts/mk8.email.Contracts.csproj" />

@@ -37,6 +37,7 @@ public static class ApplicationServiceExtensions
         services.AddScoped<ISenderAuthorizationService, SenderAuthorizationService>();
         services.AddScoped<IMailAuthenticator, MailAuthenticator>();
         services.AddScoped<IEmailService, EmailService>();
+        services.AddScoped<IVacationResponder, VacationResponder>();
         services.AddScoped<IMailSubmissionQueue, PostgresMailSubmissionQueue>();
         services.AddHostedService<MailQueueWorker>();
         services.AddHostedService<SmtpServerService>();

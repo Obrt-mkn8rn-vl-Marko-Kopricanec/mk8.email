@@ -67,6 +67,12 @@ public class EmailDB
     [Column("raw_headers")]
     public string? RawHeaders { get; set; }
 
+    // Preserve the exact RFC 5322 octets. RawHeaders/Body remain populated for
+    // efficient legacy IMAP searches, but cannot losslessly represent the
+    // original line endings or a message without a header/body separator.
+    [Column("raw_message")]
+    public byte[]? RawMessage { get; set; }
+
     [MaxLength(255)]
     [Column("message_id")]
     public string? MessageId { get; set; }

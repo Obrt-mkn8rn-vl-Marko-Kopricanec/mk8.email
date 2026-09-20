@@ -220,6 +220,8 @@ public sealed partial class MailAdministrationService(EmailDbContext db) : IMail
 
         user.IsActive = isActive;
         user.UpdatedAt = DateTime.UtcNow;
+        if (!isActive)
+            await RevokePushSubscriptionsAsync(user.Id, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
         return Success(isActive ? "The account was enabled." : "The account was disabled.", user.Id);
     }
@@ -238,8 +240,24 @@ public sealed partial class MailAdministrationService(EmailDbContext db) : IMail
 
         user.PasswordHash = PasswordHasher.Hash(password);
         user.UpdatedAt = DateTime.UtcNow;
+        await RevokePushSubscriptionsAsync(user.Id, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
         return Success("The password was changed.", user.Id);
+    }
+
+    private async Task RevokePushSubscriptionsAsync(
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        var subscriptions = await db.JmapPushSubscriptions
+            .Where(subscription => subscription.UserId == userId)
+            .ToListAsync(cancellationToken);
+        foreach (var subscription in subscriptions)
+        {
+            subscription.Url = string.Empty;
+            subscription.KeysJson = null;
+        }
+        db.JmapPushSubscriptions.RemoveRange(subscriptions);
     }
 
     public async Task<IReadOnlyList<MailDomainSummaryDTO>> GetDomainsAsync(

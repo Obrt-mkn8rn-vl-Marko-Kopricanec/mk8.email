@@ -2,6 +2,7 @@ $ORIGIN mk8n.com.
 $TTL 300
 
 @                               IN MX 10 email.mk8n.com.
+_jmap._tcp                      IN SRV 0 1 443 email.mk8n.com.
 _imaps._tcp                     IN SRV 0 1 993 email.mk8n.com.
 _submission._tcp                IN SRV 0 1 587 email.mk8n.com.
 _submissions._tcp               IN SRV 0 1 465 email.mk8n.com.

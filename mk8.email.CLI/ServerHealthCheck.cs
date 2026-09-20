@@ -36,5 +36,7 @@ internal static class ServerHealthCheck
             yield return environment.Imap.Port;
         if (environment.Imap.EnableImplicitTls)
             yield return environment.Imap.ImplicitTlsPort;
+        if (environment.Jmap.EnableJmap)
+            yield return environment.Jmap.Port;
     }
 }

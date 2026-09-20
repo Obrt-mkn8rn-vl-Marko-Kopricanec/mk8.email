@@ -6,9 +6,12 @@ namespace mk8.email.Infrastructure.Environment;
 
 public sealed class EnvironmentConfig
 {
+    private const long JmapMaximumInteger = 9_007_199_254_740_991;
+
     public DatabaseConfig Database { get; init; } = new();
     public SmtpConfig Smtp { get; init; } = new();
     public ImapConfig Imap { get; init; } = new();
+    public JmapConfig Jmap { get; init; } = new();
     public TlsConfig Tls { get; init; } = new();
     public DkimConfig Dkim { get; init; } = new();
     public SecurityConfig Security { get; init; } = new();
@@ -52,9 +55,10 @@ public sealed class EnvironmentConfig
         AddEnabledPort(enabledPorts, Smtp.EnableImplicitTls, "Smtp.ImplicitTlsPort", Smtp.ImplicitTlsPort);
         AddEnabledPort(enabledPorts, Imap.EnableImap, "Imap.Port", Imap.Port);
         AddEnabledPort(enabledPorts, Imap.EnableImplicitTls, "Imap.ImplicitTlsPort", Imap.ImplicitTlsPort);
+        AddEnabledPort(enabledPorts, Jmap.EnableJmap, "Jmap.Port", Jmap.Port);
 
         if (enabledPorts.Count == 0)
-            errors.Add("Enable at least one SMTP or IMAP listener.");
+            errors.Add("Enable at least one SMTP, IMAP, or JMAP listener.");
 
         foreach (var enabledPort in enabledPorts)
             RequirePort(errors, enabledPort.Port, enabledPort.Name);
@@ -70,6 +74,48 @@ public sealed class EnvironmentConfig
             errors.Add("Smtp.RequireTls requires STARTTLS or implicit TLS.");
         if (!isDevelopment && Imap.EnableImap && !Smtp.EnableStartTls)
             errors.Add("The production IMAP listener requires STARTTLS.");
+
+        if (Jmap.IsDefault && !Jmap.EnableJmap)
+            errors.Add("Jmap.IsDefault requires Jmap.EnableJmap.");
+        if (Jmap.EnableJmap)
+        {
+            var publicBaseUrl = string.IsNullOrWhiteSpace(Jmap.PublicBaseUrl)
+                ? $"https://{Smtp.Hostname}"
+                : Jmap.PublicBaseUrl;
+            if (!Uri.TryCreate(publicBaseUrl, UriKind.Absolute, out var jmapBaseUri)
+                || jmapBaseUri.Scheme != Uri.UriSchemeHttps
+                || !string.IsNullOrEmpty(jmapBaseUri.Query)
+                || !string.IsNullOrEmpty(jmapBaseUri.Fragment))
+            {
+                errors.Add("Jmap.PublicBaseUrl must be an absolute HTTPS URL without a query or fragment.");
+            }
+            if (Jmap.MaxUploadSizeBytes is < 1_048_576 or > 1_073_741_824)
+                errors.Add("Jmap.MaxUploadSizeBytes must be from 1048576 through 1073741824.");
+            if (Jmap.MaxRequestSizeBytes is < 65_536 or > 104_857_600)
+                errors.Add("Jmap.MaxRequestSizeBytes must be from 65536 through 104857600.");
+            if (Jmap.MaxCallsInRequest is < 1 or > 1024)
+                errors.Add("Jmap.MaxCallsInRequest must be from 1 through 1024.");
+            if (Jmap.MaxObjectsInGet is < 1 or > 10000)
+                errors.Add("Jmap.MaxObjectsInGet must be from 1 through 10000.");
+            if (Jmap.MaxObjectsInSet is < 1 or > 10000)
+                errors.Add("Jmap.MaxObjectsInSet must be from 1 through 10000.");
+            if (Jmap.MaxConcurrentRequests is < 1 or > 1024)
+                errors.Add("Jmap.MaxConcurrentRequests must be from 1 through 1024.");
+            if (Jmap.MaxConcurrentUploads is < 1 or > 128)
+                errors.Add("Jmap.MaxConcurrentUploads must be from 1 through 128.");
+            if (Jmap.UploadRetentionHours is < 1 or > 168)
+                errors.Add("Jmap.UploadRetentionHours must be from 1 through 168.");
+            if (Jmap.MaxUnreferencedBlobBytesPerAccount < Math.Max(
+                    Jmap.MaxUploadSizeBytes,
+                    Limits.MaxMessageSizeBytes)
+                || Jmap.MaxUnreferencedBlobBytesPerAccount > JmapMaximumInteger)
+            {
+                errors.Add(
+                    "Jmap.MaxUnreferencedBlobBytesPerAccount must be at least the larger of "
+                    + "Jmap.MaxUploadSizeBytes and Limits.MaxMessageSizeBytes, and no greater than "
+                    + "9007199254740991.");
+            }
+        }
 
         var needsCertificate = Smtp.EnableStartTls || Smtp.EnableImplicitTls || Imap.EnableImplicitTls;
         if (needsCertificate)
@@ -255,6 +301,31 @@ public sealed class ImapConfig
     public int ImplicitTlsPort { get; init; } = 993;
     public bool EnableImap { get; init; } = true;
     public bool EnableImplicitTls { get; init; }
+}
+
+public sealed class JmapConfig
+{
+    public int Port { get; init; } = 8081;
+    public bool EnableJmap { get; init; } = true;
+    public bool IsDefault { get; init; } = true;
+    public string? PublicBaseUrl { get; init; }
+    public long MaxUploadSizeBytes { get; init; } = 50_000_000;
+    public long MaxRequestSizeBytes { get; init; } = 10_000_000;
+    public int MaxCallsInRequest { get; init; } = 64;
+    public int MaxObjectsInGet { get; init; } = 500;
+    public int MaxObjectsInSet { get; init; } = 500;
+    public int MaxConcurrentRequests { get; init; } = 8;
+    public int MaxConcurrentUploads { get; init; } = 4;
+    public int UploadRetentionHours { get; init; } = 24;
+    public long MaxUnreferencedBlobBytesPerAccount { get; init; } = 100_000_000;
+
+    public Uri GetPublicBaseUri(string smtpHostname)
+    {
+        var value = string.IsNullOrWhiteSpace(PublicBaseUrl)
+            ? $"https://{smtpHostname}"
+            : PublicBaseUrl;
+        return new Uri(value.TrimEnd('/') + "/", UriKind.Absolute);
+    }
 }
 
 public sealed class TlsConfig

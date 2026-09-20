@@ -6,12 +6,17 @@ namespace mk8.email.Infrastructure.Models;
 [Table("folders")]
 public class FolderDB
 {
+    public const int MaximumLeafNameOctets = 100;
+    public const int MaximumHierarchyDepth = 50;
+    public const int MaximumStoredNameLength =
+        MaximumLeafNameOctets * MaximumHierarchyDepth + MaximumHierarchyDepth - 1;
+
     [Key]
     [Column("id")]
     public Guid Id { get; set; }
 
     [Required]
-    [MaxLength(100)]
+    [MaxLength(MaximumStoredNameLength)]
     [Column("name")]
     public string Name { get; set; } = string.Empty;
 
@@ -33,6 +38,13 @@ public class FolderDB
 
     [Column("is_subscribed")]
     public bool IsSubscribed { get; set; } = true;
+
+    [MaxLength(32)]
+    [Column("jmap_role")]
+    public string? JmapRole { get; set; }
+
+    [Column("sort_order")]
+    public int SortOrder { get; set; }
 
     [Column("inbox_id")]
     public Guid InboxId { get; set; }

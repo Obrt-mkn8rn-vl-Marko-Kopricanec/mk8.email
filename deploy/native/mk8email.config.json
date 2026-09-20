@@ -25,6 +25,21 @@
     "EnableImap": false,
     "EnableImplicitTls": true
   },
+  "Jmap": {
+    "Port": 8081,
+    "EnableJmap": true,
+    "IsDefault": true,
+    "PublicBaseUrl": "https://email.mk8n.com",
+    "MaxUploadSizeBytes": 26214400,
+    "MaxRequestSizeBytes": 10485760,
+    "MaxCallsInRequest": 64,
+    "MaxObjectsInGet": 500,
+    "MaxObjectsInSet": 500,
+    "MaxConcurrentRequests": 8,
+    "MaxConcurrentUploads": 4,
+    "UploadRetentionHours": 24,
+    "MaxUnreferencedBlobBytesPerAccount": 104857600
+  },
   "Tls": {
     "CertificatePath": "/etc/mk8email/tls/fullchain.pem",
     "CertificateKeyPath": "/etc/mk8email/tls/privkey.pem"

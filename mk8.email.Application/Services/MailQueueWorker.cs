@@ -108,6 +108,7 @@ public sealed class MailQueueWorker(
 
         var scanner = services.GetRequiredService<IMailScanner>();
         var delivery = services.GetRequiredService<IEmailService>();
+        var vacationResponder = services.GetService<IVacationResponder>();
         var relay = services.GetRequiredService<IOutboundMailRelay>();
 
         if (message.ScanState == MailQueueScanStates.Pending)
@@ -176,6 +177,7 @@ public sealed class MailQueueWorker(
                 recipient,
                 deliveryMessage,
                 delivery,
+                vacationResponder,
                 relay,
                 now,
                 cancellationToken);
@@ -208,6 +210,7 @@ public sealed class MailQueueWorker(
         MailQueueRecipientDB recipient,
         string rawMessage,
         IEmailService delivery,
+        IVacationResponder? vacationResponder,
         IOutboundMailRelay relay,
         DateTime now,
         CancellationToken cancellationToken)
@@ -228,6 +231,22 @@ public sealed class MailQueueWorker(
                     cancellationToken);
                 if (delivered)
                 {
+                    if (vacationResponder is not null
+                        && !await vacationResponder.QueueResponseAsync(
+                            message.EnvelopeSender,
+                            recipient.Recipient,
+                            rawMessage,
+                            message.TargetFolder ?? DefaultFolders.Inbox,
+                            recipient.Id,
+                            cancellationToken))
+                    {
+                        ScheduleRecipientRetry(
+                            message,
+                            recipient,
+                            "The vacation response could not be queued.",
+                            now);
+                        return;
+                    }
                     MarkDelivered(recipient, now);
                     return;
                 }

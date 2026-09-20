@@ -522,6 +522,48 @@ public sealed class JmapCoreTests
             response["methodResponses"]?[1]?[1]?["type"]?.GetValue<string>());
     }
 
+    [TestMethod]
+    public async Task SetAndImportMethodsRejectMalformedTypedIds()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var response = await fixture.InvokeAsync(
+            $$$$"""
+            {
+              "using":[
+                "urn:ietf:params:jmap:core",
+                "urn:ietf:params:jmap:mail",
+                "urn:ietf:params:jmap:submission",
+                "urn:ietf:params:jmap:vacationresponse"
+              ],
+              "methodCalls":[
+                ["Email/set",{"accountId":"{{{{fixture.AccountId}}}}",
+                  "update":{"not an id":{}}},"c1"],
+                ["Mailbox/set",{"accountId":"{{{{fixture.AccountId}}}}",
+                  "destroy":["not/an/id"]},"c2"],
+                ["Email/import",{"accountId":"{{{{fixture.AccountId}}}}",
+                  "emails":{"not an id":{}}},"c3"],
+                ["Identity/set",{"accountId":"{{{{fixture.AccountId}}}}",
+                  "destroy":["not an id"]},"c4"],
+                ["EmailSubmission/set",{"accountId":"{{{{fixture.AccountId}}}}",
+                  "update":{"not an id":{}}},"c5"],
+                ["VacationResponse/set",{"accountId":"{{{{fixture.AccountId}}}}",
+                  "update":{"not an id":{}}},"c6"],
+                ["PushSubscription/set",{"create":{"not an id":{}}},"c7"]
+              ]
+            }
+            """);
+
+        var methodResponses = response["methodResponses"]!.AsArray();
+        Assert.AreEqual(7, methodResponses.Count);
+        foreach (var methodResponse in methodResponses)
+        {
+            Assert.AreEqual("error", methodResponse![0]!.GetValue<string>());
+            Assert.AreEqual(
+                "invalidArguments",
+                methodResponse[1]!["type"]!.GetValue<string>());
+        }
+    }
+
     private sealed class ImplicitResponseMethod : IJmapMethod
     {
         public string Name => "Test/implicit";

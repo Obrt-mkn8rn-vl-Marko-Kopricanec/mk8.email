@@ -46,7 +46,8 @@ internal sealed class EmailCopyMethod(
                 false,
                 out var destroyOriginal)
             || !JmapEmailMutationHelpers.TryGetObjectMap(arguments, "create", true, out var create)
-            || create is null)
+            || create is null
+            || !JmapMethodHelpers.AreValidCreationIds(create.Keys))
         {
             return JmapMethodResponse.Error("invalidArguments");
         }

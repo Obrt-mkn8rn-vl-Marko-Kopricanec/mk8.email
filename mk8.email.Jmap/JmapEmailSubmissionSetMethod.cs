@@ -75,7 +75,12 @@ internal sealed class EmailSubmissionSetMethod(
                 "onSuccessUpdateEmail",
                 false,
                 out var onSuccessUpdate)
-            || !TryStringArray(arguments, "onSuccessDestroyEmail", out var onSuccessDestroy))
+            || !TryStringArray(arguments, "onSuccessDestroyEmail", out var onSuccessDestroy)
+            || !JmapMethodHelpers.AreValidCreationIds(create?.Keys)
+            || !JmapMethodHelpers.AreValidIdReferences(update?.Keys)
+            || !JmapMethodHelpers.AreValidIdReferences(destroy)
+            || !JmapMethodHelpers.AreValidIdReferences(onSuccessUpdate?.Keys)
+            || !JmapMethodHelpers.AreValidIdReferences(onSuccessDestroy))
         {
             return JmapMethodResponse.Error("invalidArguments");
         }

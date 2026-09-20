@@ -38,7 +38,10 @@ internal sealed class EmailSetMethod(
             || !JmapMethodHelpers.TryGetOptionalString(arguments, "ifInState", out var ifInState)
             || !TryGetObjectMap(arguments, "create", out var create)
             || !TryGetObjectMap(arguments, "update", out var update)
-            || !TryGetDestroy(arguments, out var destroy))
+            || !TryGetDestroy(arguments, out var destroy)
+            || !JmapMethodHelpers.AreValidCreationIds(create?.Keys)
+            || !JmapMethodHelpers.AreValidIdReferences(update?.Keys)
+            || !JmapMethodHelpers.AreValidIdReferences(destroy))
         {
             return JmapMethodResponse.Error("invalidArguments");
         }

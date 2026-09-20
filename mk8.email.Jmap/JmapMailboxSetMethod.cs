@@ -49,7 +49,10 @@ internal sealed class MailboxSetMethod(
                 out var onDestroyRemoveEmails)
             || !TryGetObjectMap(arguments, "create", out var create)
             || !TryGetObjectMap(arguments, "update", out var update)
-            || !TryGetDestroy(arguments, out var destroy))
+            || !TryGetDestroy(arguments, out var destroy)
+            || !JmapMethodHelpers.AreValidCreationIds(create?.Keys)
+            || !JmapMethodHelpers.AreValidIdReferences(update?.Keys)
+            || !JmapMethodHelpers.AreValidIdReferences(destroy))
         {
             return JmapMethodResponse.Error("invalidArguments");
         }

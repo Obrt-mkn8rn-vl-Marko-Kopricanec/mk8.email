@@ -123,7 +123,8 @@ internal sealed class EmailImportMethod(
             || !JmapMethodHelpers.TryGetRequiredString(arguments, "accountId", out var accountId)
             || !JmapMethodHelpers.TryGetOptionalString(arguments, "ifInState", out var ifInState)
             || !JmapEmailMutationHelpers.TryGetObjectMap(arguments, "emails", true, out var imports)
-            || imports is null)
+            || imports is null
+            || !JmapMethodHelpers.AreValidCreationIds(imports.Keys))
         {
             return JmapMethodResponse.Error("invalidArguments");
         }

@@ -186,6 +186,16 @@ internal static class JmapMethodHelpers
         return JmapId.IsValidId(resolved);
     }
 
+    public static bool AreValidCreationIds(IEnumerable<string>? values) =>
+        values is null || values.All(JmapId.IsValidId);
+
+    public static bool AreValidIdReferences(IEnumerable<string>? values) =>
+        values is null || values.All(value =>
+            JmapId.IsValidId(value)
+            || value.Length > 1
+                && value[0] == '#'
+                && JmapId.IsValidId(value[1..]));
+
     public static JsonArray ToJsonArray(IEnumerable<string> values)
     {
         var result = new JsonArray();

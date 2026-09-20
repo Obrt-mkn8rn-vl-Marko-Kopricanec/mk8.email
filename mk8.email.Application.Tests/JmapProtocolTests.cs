@@ -2396,6 +2396,54 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task SearchSnippetUsesTheProjectedLastSubjectHeader()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var raw = Encoding.UTF8.GetBytes(
+            $"From: sender@example.net\r\nTo: {fixture.User.Username}\r\n"
+            + "Subject: Superseded subject\r\n"
+            + "Subject: Final needle subject\r\n\r\nbody");
+        var blobId = await fixture.StoreBlobAsync(raw);
+        var import = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/import", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "emails":{"duplicate-subject":{"blobId":"{{{blobId}}}",
+              "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true} } }
+          }, "i1"]]
+        }
+        """);
+        var emailId = Arguments(import)["created"]!["duplicate-subject"]!["id"]!
+            .GetValue<string>();
+
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [
+            ["Email/get", {
+              "accountId":"{{{fixture.AccountId}}}",
+              "ids":["{{{emailId}}}"],
+              "properties":["subject"]
+            }, "g1"],
+            ["SearchSnippet/get", {
+              "accountId":"{{{fixture.AccountId}}}",
+              "filter":{"subject":"needle"},
+              "emailIds":["{{{emailId}}}"]
+            }, "ss1"]
+          ]
+        }
+        """);
+
+        Assert.AreEqual(
+            "Final needle subject",
+            Arguments(response)["list"]![0]!["subject"]!.GetValue<string>());
+        Assert.AreEqual(
+            "Final <mark>needle</mark> subject",
+            Arguments(response, 1)["list"]![0]!["subject"]!.GetValue<string>());
+    }
+
+    [TestMethod]
     public async Task MimeProjectionPreservesNestedStructureAndResolvablePartBlobs()
     {
         await using var fixture = await JmapFixture.CreateAsync();

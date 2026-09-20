@@ -213,7 +213,7 @@ internal sealed class SearchSnippetGetMethod(
                 {
                     ["emailId"] = id,
                     ["subject"] = JmapSearchSnippetFormatter.HighlightSubject(
-                        item.Message.Subject,
+                        JmapEmailCodec.LastTextHeader(item.Message, "Subject"),
                         terms),
                     ["preview"] = JmapSearchSnippetFormatter.HighlightPreview(
                         JmapSearchSnippetFormatter.PlainBody(item.Message),

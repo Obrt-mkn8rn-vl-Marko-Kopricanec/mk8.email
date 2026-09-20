@@ -436,13 +436,15 @@ internal sealed class EmailSubmissionSetMethod(
                 raw.LongLength,
                 maximumMessageSize,
                 out sender,
-                out var senderParameters)
+                out var senderParameters,
+                out _)
             || envelope["rcptTo"] is not JsonArray recipientArray)
         {
             error = JmapMethodHelpers.SetError("invalidProperties", properties: ["envelope"]);
             return false;
         }
         var invalid = new List<string>();
+        var hasInvalidProperties = false;
         var normalizedRecipients = new List<(string Email, JsonObject? Parameters)>(recipientArray.Count);
         foreach (var item in recipientArray)
         {
@@ -453,15 +455,24 @@ internal sealed class EmailSubmissionSetMethod(
                     raw.LongLength,
                     maximumMessageSize,
                     out var recipient,
-                    out var parameters))
+                    out var parameters,
+                    out var addressError))
             {
-                invalid.Add(TryReadEnvelopeEmail(item));
+                if (addressError == EnvelopeAddressError.InvalidEmail)
+                    invalid.Add(TryReadEnvelopeEmail(item));
+                else
+                    hasInvalidProperties = true;
             }
             else
             {
                 recipients.Add(recipient);
                 normalizedRecipients.Add((recipient, parameters));
             }
+        }
+        if (hasInvalidProperties)
+        {
+            error = JmapMethodHelpers.SetError("invalidProperties", properties: ["envelope"]);
+            return false;
         }
         if (invalid.Count > 0)
         {
@@ -606,16 +617,28 @@ internal sealed class EmailSubmissionSetMethod(
         long messageSize,
         long maximumMessageSize,
         out string email,
-        out JsonObject? normalizedParameters)
+        out JsonObject? normalizedParameters,
+        out EnvelopeAddressError error)
     {
         email = string.Empty;
         normalizedParameters = null;
+        error = EnvelopeAddressError.None;
         if (node is not JsonObject address
-            || !JmapMethodHelpers.TryGetRequiredString(address, "email", out email)
-            || address.Any(item => item.Key is not ("email" or "parameters")))
+            || !JmapMethodHelpers.TryGetRequiredString(address, "email", out email))
+        {
+            error = EnvelopeAddressError.InvalidEmail;
             return false;
+        }
+        if (address.Any(item => item.Key is not ("email" or "parameters")))
+        {
+            error = EnvelopeAddressError.InvalidProperties;
+            return false;
+        }
         if (!IsValidEnvelopeAddress(email, allowEmpty))
+        {
+            error = EnvelopeAddressError.InvalidEmail;
             return false;
+        }
 
         if (!address.TryGetPropertyValue("parameters", out var parameterNode)
             || parameterNode is null)
@@ -623,7 +646,10 @@ internal sealed class EmailSubmissionSetMethod(
             return true;
         }
         if (parameterNode is not JsonObject parameters)
+        {
+            error = EnvelopeAddressError.InvalidProperties;
             return false;
+        }
         normalizedParameters = new JsonObject();
         var parameterNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var parameter in parameters)
@@ -643,6 +669,7 @@ internal sealed class EmailSubmissionSetMethod(
                 || declaredSize < messageSize
                 || declaredSize > maximumMessageSize)
             {
+                error = EnvelopeAddressError.InvalidProperties;
                 return false;
             }
             normalizedParameters["SIZE"] = sizeText;
@@ -666,6 +693,13 @@ internal sealed class EmailSubmissionSetMethod(
         && value.TryGetValue<string>(out var email)
             ? email
             : string.Empty;
+
+    private enum EnvelopeAddressError
+    {
+        None,
+        InvalidEmail,
+        InvalidProperties,
+    }
 
     private static bool TryBuildDeliveryMessage(byte[] raw, out string value)
     {

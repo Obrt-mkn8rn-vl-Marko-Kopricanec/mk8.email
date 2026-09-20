@@ -1679,6 +1679,13 @@ public sealed class JmapProtocolTests
                   "mailFrom":{"email":"{{{fixture.User.Username}}}","parameters":{"DSN":null}},
                   "rcptTo":[{"email":"{{{fixture.User.Username}}}"}]
                 }
+              },
+              "badRecipientParameter":{
+                "identityId":"{{{identityId}}}", "emailId":"{{{emailId}}}",
+                "envelope":{
+                  "mailFrom":{"email":"{{{fixture.User.Username}}}"},
+                  "rcptTo":[{"email":"{{{fixture.User.Username}}}","parameters":{"SIZE":"1"}}]
+                }
               }
             }
           }, "s1"]]
@@ -1688,6 +1695,10 @@ public sealed class JmapProtocolTests
         Assert.AreEqual(
             "invalidProperties",
             Arguments(submissionResponse)["notCreated"]!["badParameter"]!["type"]!.GetValue<string>());
+        Assert.AreEqual(
+            "invalidProperties",
+            Arguments(submissionResponse)["notCreated"]!["badRecipientParameter"]!["type"]!
+                .GetValue<string>());
 
         using (var scope = fixture.Services.CreateScope())
         {

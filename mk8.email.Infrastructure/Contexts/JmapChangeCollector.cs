@@ -102,6 +102,27 @@ internal static class JmapChangeCollector
                 folderAccounts[entry.Entity.Id] = entry.Entity.InboxId;
         }
 
+        var trackedChangedEmailIds = emailEntries
+            .Select(entry => entry.Entity.Id)
+            .ToArray();
+        var deletedFolderIds = folderEntries
+            .Where(entry => entry.State == EntityState.Deleted)
+            .Select(entry => entry.Entity.Id)
+            .ToArray();
+        var cascadeDeletedEmails = deletedFolderIds.Length == 0
+            ? []
+            : await database.Emails
+                .AsNoTracking()
+                .Where(email => deletedFolderIds.Contains(email.FolderId)
+                    && !trackedChangedEmailIds.Contains(email.Id)
+                    && !email.IsDeleted)
+                .Select(email => new PersistedEmail(
+                    email.Id,
+                    email.FolderId,
+                    email.ThreadObjectId,
+                    email.IsDeleted))
+                .ToListAsync(cancellationToken);
+
         var changes = new Dictionary<ChangeKey, string>();
         var threadDeltas = new Dictionary<ThreadKey, int>();
         foreach (var entry in emailEntries)
@@ -190,6 +211,22 @@ internal static class JmapChangeCollector
                 if (newThreadKey is not null)
                     AddDelta(threadDeltas, newThreadKey, 1);
             }
+        }
+
+        foreach (var email in cascadeDeletedEmails)
+        {
+            if (!folderAccounts.TryGetValue(email.FolderId, out var accountId))
+                continue;
+            AddChange(
+                changes,
+                accountId,
+                EmailType,
+                $"E{email.Id:N}",
+                Destroyed);
+            AddDelta(
+                threadDeltas,
+                new ThreadKey(accountId, NormalizeThreadId(email.ThreadObjectId, email.Id)),
+                -1);
         }
 
         await AddThreadChangesAsync(database, changes, threadDeltas, cancellationToken);

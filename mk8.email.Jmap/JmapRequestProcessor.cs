@@ -1,7 +1,10 @@
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
 using mk8.email.Application.Interfaces;
+using mk8.email.Infrastructure.Data;
 using mk8.email.Infrastructure.Environment;
 
 namespace mk8.email.Jmap;
@@ -10,17 +13,20 @@ public sealed class JmapRequestProcessor
 {
     private readonly IReadOnlyDictionary<string, IJmapMethod> _methods;
     private readonly JmapSessionService _sessions;
+    private readonly EmailDbContext _database;
     private readonly EnvironmentConfig _environment;
     private readonly ILogger<JmapRequestProcessor> _logger;
 
     public JmapRequestProcessor(
         IEnumerable<IJmapMethod> methods,
         JmapSessionService sessions,
+        EmailDbContext database,
         EnvironmentConfig environment,
         ILogger<JmapRequestProcessor> logger)
     {
         _methods = methods.ToDictionary(method => method.Name, StringComparer.Ordinal);
         _sessions = sessions;
+        _database = database;
         _environment = environment;
         _logger = logger;
     }
@@ -89,19 +95,11 @@ public sealed class JmapRequestProcessor
             }
             else
             {
-                try
-                {
-                    response = await method.InvokeAsync(context, resolvedArguments, cancellationToken);
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception exception)
-                {
-                    _logger.LogError(exception, "JMAP method {MethodName} failed", methodName);
-                    response = JmapMethodResponse.Error("serverFail");
-                }
+                response = await InvokeAtomicallyAsync(
+                    method,
+                    context,
+                    resolvedArguments,
+                    cancellationToken);
             }
 
             AddResponse(response);
@@ -141,6 +139,97 @@ public sealed class JmapRequestProcessor
         }
 
         return result;
+    }
+
+    private async Task<JmapMethodResponse> InvokeAtomicallyAsync(
+        IJmapMethod method,
+        JmapInvocationContext context,
+        JsonObject arguments,
+        CancellationToken cancellationToken)
+    {
+        var createdIds = context.CreatedIds.ToDictionary(item => item.Key, item => item.Value);
+        var postCommitMarker = context.MarkPostCommitActions();
+        IDbContextTransaction? transaction = null;
+        try
+        {
+            if (_database.Database.IsRelational())
+                transaction = await _database.Database.BeginTransactionAsync(cancellationToken);
+
+            var response = await method.InvokeAsync(context, arguments, cancellationToken);
+            if (MustRollBack(response))
+            {
+                await RollBackAsync(transaction);
+                RestoreInvocationState(context, createdIds, postCommitMarker);
+                return response;
+            }
+
+            if (transaction is not null)
+                await transaction.CommitAsync(cancellationToken);
+            var actions = context.TakePostCommitActions(postCommitMarker);
+            foreach (var action in actions)
+            {
+                try
+                {
+                    await action(cancellationToken);
+                }
+                catch (Exception exception)
+                {
+                    _logger.LogWarning(exception, "A JMAP post-commit action failed");
+                }
+            }
+            return response;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            await RollBackAsync(transaction);
+            RestoreInvocationState(context, createdIds, postCommitMarker);
+            throw;
+        }
+        catch (Exception exception)
+        {
+            await RollBackAsync(transaction);
+            RestoreInvocationState(context, createdIds, postCommitMarker);
+            _logger.LogError(exception, "JMAP method {MethodName} failed", method.Name);
+            return JmapMethodResponse.Error("serverFail");
+        }
+        finally
+        {
+            if (transaction is not null)
+                await transaction.DisposeAsync();
+        }
+    }
+
+    private static bool MustRollBack(JmapMethodResponse response) =>
+        response.Name == "error"
+        && (!response.Arguments.TryGetPropertyValue("type", out var typeNode)
+            || typeNode is not JsonValue typeValue
+            || !typeValue.TryGetValue<string>(out var type)
+            || type != "serverPartialFail");
+
+    private async Task RollBackAsync(IDbContextTransaction? transaction)
+    {
+        if (transaction is null)
+            return;
+        try
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "Could not roll back a failed JMAP method");
+        }
+    }
+
+    private void RestoreInvocationState(
+        JmapInvocationContext context,
+        IReadOnlyDictionary<string, string> createdIds,
+        int postCommitMarker)
+    {
+        context.CreatedIds.Clear();
+        foreach (var item in createdIds)
+            context.CreatedIds[item.Key] = item.Value;
+        context.DiscardPostCommitActions(postCommitMarker);
+        _database.ChangeTracker.Clear();
     }
 
     private static HashSet<string> ParseCapabilities(JsonArray values)

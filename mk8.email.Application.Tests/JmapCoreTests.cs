@@ -94,6 +94,52 @@ public sealed class JmapCoreTests
     }
 
     [TestMethod]
+    public async Task FailedMethodsRestoreCreationIdsAndDiscardPostCommitActions()
+    {
+        var failedPostCommitCount = 0;
+        var successfulPostCommitCount = 0;
+        await using var fixture = await JmapFixture.CreateAsync(
+            configureServices: services =>
+            {
+                services.AddSingleton<IJmapMethod>(new AtomicityProbeMethod(
+                    "Test/fail",
+                    "transient",
+                    "E11111111111111111111111111111111",
+                    () => failedPostCommitCount++,
+                    true));
+                services.AddSingleton<IJmapMethod>(new AtomicityProbeMethod(
+                    "Test/succeed",
+                    "kept",
+                    "E22222222222222222222222222222222",
+                    () => successfulPostCommitCount++,
+                    false));
+            });
+
+        var response = await fixture.InvokeAsync(
+            """
+            {
+              "using":["urn:ietf:params:jmap:core"],
+              "createdIds":{"existing":"E00000000000000000000000000000000"},
+              "methodCalls":[
+                ["Test/fail",{},"f1"],
+                ["Test/succeed",{},"s1"]
+              ]
+            }
+            """);
+
+        Assert.AreEqual("serverFail", response["methodResponses"]![0]![1]!["type"]!.GetValue<string>());
+        Assert.AreEqual("Test/succeed", response["methodResponses"]![1]![0]!.GetValue<string>());
+        var createdIds = response["createdIds"]!.AsObject();
+        Assert.IsTrue(createdIds.ContainsKey("existing"));
+        Assert.IsFalse(createdIds.ContainsKey("transient"));
+        Assert.AreEqual(
+            "E22222222222222222222222222222222",
+            createdIds["kept"]!.GetValue<string>());
+        Assert.AreEqual(0, failedPostCommitCount);
+        Assert.AreEqual(1, successfulPostCommitCount);
+    }
+
+    [TestMethod]
     public async Task CoreRejectsUnknownCapabilitiesAndInvalidReferences()
     {
         await using var fixture = await JmapFixture.CreateAsync();
@@ -983,5 +1029,32 @@ public sealed class JmapCoreTests
                     ["value"] = "before\ufdd0middle\U0001fffeafter\ud800",
                     ["invalid\ufdefname"] = true,
                 }));
+    }
+
+    private sealed class AtomicityProbeMethod(
+        string name,
+        string creationId,
+        string objectId,
+        Action postCommit,
+        bool fail) : IJmapMethod
+    {
+        public string Name => name;
+        public string Capability => JmapConstants.CoreCapability;
+
+        public Task<JmapMethodResponse> InvokeAsync(
+            JmapInvocationContext context,
+            JsonObject arguments,
+            CancellationToken cancellationToken)
+        {
+            context.CreatedIds[creationId] = objectId;
+            context.AddPostCommitAction(_ =>
+            {
+                postCommit();
+                return Task.CompletedTask;
+            });
+            if (fail)
+                throw new InvalidOperationException("Atomicity probe failure.");
+            return Task.FromResult(new JmapMethodResponse(Name, new JsonObject()));
+        }
     }
 }

@@ -162,23 +162,29 @@ internal sealed class PushSubscriptionSetMethod(
                 var id = JmapId.PushSubscription(subscription.Id);
                 context.CreatedIds[item.Key] = id;
                 created[item.Key] = BuildCreatedResponse(item.Value, subscription);
-                try
+                var verification = new JsonObject
                 {
-                    var verification = new JsonObject
+                    ["@type"] = "PushVerification",
+                    ["pushSubscriptionId"] = id,
+                    ["verificationCode"] = subscription.VerificationCode,
+                };
+                context.AddPostCommitAction(async postCommitCancellationToken =>
+                {
+                    try
                     {
-                        ["@type"] = "PushVerification",
-                        ["pushSubscriptionId"] = id,
-                        ["verificationCode"] = subscription.VerificationCode,
-                    };
-                    _ = await delivery.SendAsync(subscription, verification, cancellationToken);
-                }
-                catch (Exception exception) when (exception is not OperationCanceledException)
-                {
-                    logger.LogWarning(
-                        exception,
-                        "Could not deliver JMAP push verification for {PushSubscriptionId}",
-                        id);
-                }
+                        _ = await delivery.SendAsync(
+                            subscription,
+                            verification,
+                            postCommitCancellationToken);
+                    }
+                    catch (Exception exception) when (exception is not OperationCanceledException)
+                    {
+                        logger.LogWarning(
+                            exception,
+                            "Could not deliver JMAP push verification for {PushSubscriptionId}",
+                            id);
+                    }
+                });
             }
         }
 

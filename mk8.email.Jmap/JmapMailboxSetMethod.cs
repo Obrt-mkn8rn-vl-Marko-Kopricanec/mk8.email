@@ -641,7 +641,8 @@ internal sealed class MailboxSetMethod(
         {
             if (database.Database.IsRelational())
             {
-                transaction = await database.Database.BeginTransactionAsync(cancellationToken);
+                if (database.Database.CurrentTransaction is null)
+                    transaction = await database.Database.BeginTransactionAsync(cancellationToken);
                 foreach (var folder in folders.Where(folder => destroyedIds.Contains(folder.Id)
                              || !string.Equals(
                                  folder.Name,
@@ -872,7 +873,8 @@ internal sealed class MailboxSetMethod(
         {
             if (database.Database.IsRelational())
             {
-                transaction = await database.Database.BeginTransactionAsync(cancellationToken);
+                if (database.Database.CurrentTransaction is null)
+                    transaction = await database.Database.BeginTransactionAsync(cancellationToken);
                 foreach (var folder in changedNames)
                 {
                     var temporaryName = $"__jmap_tmp_{folder.Id:N}";

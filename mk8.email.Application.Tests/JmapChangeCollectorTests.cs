@@ -10,6 +10,74 @@ namespace mk8.email.Application.Tests;
 public sealed class JmapChangeCollectorTests
 {
     [TestMethod]
+    public async Task RecipientOnlyChangePublishesEmailSubmissionUpdate()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        using var scope = fixture.Services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var states = scope.ServiceProvider.GetRequiredService<JmapStateService>();
+        var queueId = Guid.CreateVersion7();
+        var recipientId = Guid.CreateVersion7();
+        var submissionId = Guid.CreateVersion7();
+        database.MailQueueMessages.Add(new MailQueueMessageDB
+        {
+            Id = queueId,
+            EnvelopeSender = fixture.User.Username,
+            RawMessage = "From: user@mk8n.com\r\nTo: recipient@example.net\r\n\r\nbody",
+            Direction = MailQueueDirections.Submission,
+            State = MailQueueStates.Pending,
+            ScanState = MailQueueScanStates.Pending,
+            Recipients =
+            [
+                new MailQueueRecipientDB
+                {
+                    Id = recipientId,
+                    MessageId = queueId,
+                    Recipient = "recipient@example.net",
+                    State = MailQueueRecipientStates.Pending,
+                },
+            ],
+        });
+        database.JmapEmailSubmissions.Add(new JmapEmailSubmissionDB
+        {
+            Id = submissionId,
+            SubmissionObjectId = submissionId.ToString("N"),
+            AccountId = fixture.InboxId,
+            IdentityId = JmapId.Identity(fixture.InboxId),
+            EmailId = JmapId.Email(Guid.CreateVersion7()),
+            ThreadId = JmapId.Thread(Guid.CreateVersion7().ToString("N")),
+            QueueId = queueId,
+            EnvelopeSender = fixture.User.Username,
+            EnvelopeRecipients = ["recipient@example.net"],
+        });
+        await database.SaveChangesAsync();
+        var oldState = await states.GetStateAsync(
+            fixture.InboxId,
+            JmapConstants.EmailSubmissionDataType);
+        database.ChangeTracker.Clear();
+
+        var recipient = await database.MailQueueRecipients.SingleAsync(item => item.Id == recipientId);
+        recipient.State = MailQueueRecipientStates.Delivered;
+        recipient.CompletedAt = DateTime.UtcNow;
+        await database.SaveChangesAsync();
+
+        Assert.AreEqual(
+            EntityState.Unchanged,
+            database.Entry(await database.MailQueueMessages.SingleAsync(item => item.Id == queueId)).State);
+        var changes = await states.GetChangesAsync(
+            fixture.InboxId,
+            JmapConstants.EmailSubmissionDataType,
+            oldState,
+            10,
+            10);
+        Assert.IsNotNull(changes);
+        Assert.AreNotEqual(oldState, changes.NewState);
+        CollectionAssert.AreEqual(
+            new[] { JmapId.Submission(submissionId) },
+            changes.Updated.ToArray());
+    }
+
+    [TestMethod]
     public async Task CascadeMailboxDeletionPublishesEmailAndThreadDestruction()
     {
         await using var fixture = await JmapFixture.CreateAsync();

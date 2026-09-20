@@ -44,6 +44,9 @@ internal static class JmapChangeCollector
             .Where(entry => entry.State is EntityState.Modified or EntityState.Deleted)
             .Select(entry => entry.Entity.Id)
             .ToHashSet();
+        changedQueueIds.UnionWith(database.ChangeTracker.Entries<MailQueueRecipientDB>()
+            .Where(IsChanged)
+            .Select(entry => entry.Entity.MessageId));
 
         if (emailEntries.Count == 0
             && folderEntries.Count == 0

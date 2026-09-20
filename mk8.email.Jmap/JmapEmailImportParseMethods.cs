@@ -170,17 +170,20 @@ internal sealed class EmailImportMethod(
                 notCreated[item.Key] = mailbox.Error;
                 continue;
             }
-            if (!JmapEmailStore.TryParseKeywords(
+            string? keywordError = null;
+            if (item.Value.ContainsKey("keywords") && item.Value["keywords"] is null
+                || !JmapEmailStore.TryParseKeywords(
                     item.Value["keywords"],
                     out var keywords,
-                    out var keywordError))
+                    out keywordError))
             {
                 notCreated[item.Key] = JmapMethodHelpers.SetError(keywordError ?? "invalidProperties");
                 continue;
             }
             var receivedAt = JmapEmailMutationHelpers.DetermineReceivedAt(blob.Content);
             if (item.Value.ContainsKey("receivedAt")
-                && !JmapEmailStore.TryParseReceivedAt(item.Value["receivedAt"], out receivedAt))
+                && (item.Value["receivedAt"] is null
+                    || !JmapEmailStore.TryParseReceivedAt(item.Value["receivedAt"], out receivedAt)))
             {
                 notCreated[item.Key] = JmapMethodHelpers.SetError(
                     "invalidProperties",

@@ -112,7 +112,12 @@ internal sealed class EmailCopyMethod(
             IReadOnlySet<string> keywords;
             if (item.Value.ContainsKey("keywords"))
             {
-                if (!JmapEmailStore.TryParseKeywords(item.Value["keywords"], out keywords, out var keywordError))
+                string? keywordError = null;
+                if (item.Value["keywords"] is null
+                    || !JmapEmailStore.TryParseKeywords(
+                        item.Value["keywords"],
+                        out keywords,
+                        out keywordError))
                 {
                     notCreated[item.Key] = JmapMethodHelpers.SetError(keywordError ?? "invalidProperties");
                     continue;
@@ -126,7 +131,8 @@ internal sealed class EmailCopyMethod(
             }
             var receivedAt = source.ReceivedAt;
             if (item.Value.ContainsKey("receivedAt")
-                && !JmapEmailStore.TryParseReceivedAt(item.Value["receivedAt"], out receivedAt))
+                && (item.Value["receivedAt"] is null
+                    || !JmapEmailStore.TryParseReceivedAt(item.Value["receivedAt"], out receivedAt)))
             {
                 notCreated[item.Key] = JmapMethodHelpers.SetError(
                     "invalidProperties",

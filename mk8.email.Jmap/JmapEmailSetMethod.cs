@@ -85,15 +85,18 @@ internal sealed class EmailSetMethod(
                     notCreated[item.Key] = mailbox.Error;
                     continue;
                 }
-                if (!JmapEmailStore.TryParseKeywords(
+                string? keywordError = null;
+                if (item.Value.ContainsKey("keywords") && item.Value["keywords"] is null
+                    || !JmapEmailStore.TryParseKeywords(
                         item.Value["keywords"],
                         out var keywords,
-                        out var keywordError))
+                        out keywordError))
                 {
                     notCreated[item.Key] = JmapMethodHelpers.SetError(keywordError ?? "invalidProperties");
                     continue;
                 }
-                if (!JmapEmailStore.TryParseReceivedAt(item.Value["receivedAt"], out var receivedAt))
+                if (item.Value.ContainsKey("receivedAt") && item.Value["receivedAt"] is null
+                    || !JmapEmailStore.TryParseReceivedAt(item.Value["receivedAt"], out var receivedAt))
                 {
                     notCreated[item.Key] = JmapMethodHelpers.SetError(
                         "invalidProperties",

@@ -363,6 +363,75 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task EmailWritesRejectNullValuesForNonNullableDefaults()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var blobId = await fixture.StoreBlobAsync(Encoding.ASCII.GetBytes(
+            $"From: sender@example.net\r\nTo: {fixture.User.Username}\r\n\r\nbody"));
+
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [
+            ["Email/set", {
+              "accountId":"{{{fixture.AccountId}}}",
+              "create":{
+                "nullKeywords":{
+                  "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true},
+                  "keywords":null,
+                  "bodyValues":{"1":{"value":"body"}},
+                  "textBody":[{"partId":"1", "type":"text/plain"}]
+                },
+                "nullReceivedAt":{
+                  "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true},
+                  "receivedAt":null,
+                  "bodyValues":{"1":{"value":"body"}},
+                  "textBody":[{"partId":"1", "type":"text/plain"}]
+                },
+                "defaults":{
+                  "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true},
+                  "bodyValues":{"1":{"value":"body"}},
+                  "textBody":[{"partId":"1", "type":"text/plain"}]
+                }
+              }
+            }, "s1"],
+            ["Email/import", {
+              "accountId":"{{{fixture.AccountId}}}",
+              "emails":{
+                "nullKeywords":{
+                  "blobId":"{{{blobId}}}",
+                  "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true},
+                  "keywords":null
+                },
+                "nullReceivedAt":{
+                  "blobId":"{{{blobId}}}",
+                  "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true},
+                  "receivedAt":null
+                },
+                "defaults":{
+                  "blobId":"{{{blobId}}}",
+                  "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true}
+                }
+              }
+            }, "i1"]
+          ]
+        }
+        """);
+
+        foreach (var index in new[] { 0, 1 })
+        {
+            var arguments = Arguments(response, index);
+            Assert.AreEqual(
+                "invalidProperties",
+                arguments["notCreated"]!["nullKeywords"]!["type"]!.GetValue<string>());
+            Assert.AreEqual(
+                "invalidProperties",
+                arguments["notCreated"]!["nullReceivedAt"]!["type"]!.GetValue<string>());
+            Assert.IsNotNull(arguments["created"]!["defaults"]);
+        }
+    }
+
+    [TestMethod]
     public async Task EmailReadsFailInsteadOfHidingCorruptStoredRecords()
     {
         await using var fixture = await JmapFixture.CreateAsync();

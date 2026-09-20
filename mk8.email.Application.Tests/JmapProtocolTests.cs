@@ -1442,6 +1442,52 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task EmailCreationPreservesExplicitEmptyConvenienceHeaders()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var create = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/set", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "create":{"draft":{
+              "mailboxIds":{"{{{fixture.DraftsMailboxId}}}":true},
+              "from":[], "sender":[], "to":[], "cc":[], "bcc":[], "replyTo":[],
+              "messageId":[], "inReplyTo":[], "references":[],
+              "bodyValues":{"1":{"value":"body"}},
+              "textBody":[{"partId":"1", "type":"text/plain"}]
+            }}
+          }, "s1"]]
+        }
+        """);
+        var emailId = Arguments(create)["created"]!["draft"]!["id"]!.GetValue<string>();
+
+        var get = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/get", {
+            "accountId":"{{{fixture.AccountId}}}", "ids":["{{{emailId}}}"],
+            "properties":["headers"]
+          }, "g1"]]
+        }
+        """);
+        var names = Arguments(get)["list"]![0]!["headers"]!.AsArray()
+            .Select(node => node!["name"]!.GetValue<string>())
+            .ToArray();
+        foreach (var name in new[]
+                 {
+                     "From", "Sender", "To", "Cc", "Bcc", "Reply-To",
+                     "Message-ID", "In-Reply-To", "References",
+                 })
+        {
+            Assert.AreEqual(1, names.Count(candidate => string.Equals(
+                candidate,
+                name,
+                StringComparison.OrdinalIgnoreCase)));
+        }
+    }
+
+    [TestMethod]
     public async Task MimeHeadersSupportPermittedParsedForms()
     {
         await using var fixture = await JmapFixture.CreateAsync();

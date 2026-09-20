@@ -478,18 +478,12 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
     {
         switch (property)
         {
-            case "from": return TrySetAddressList(message.From, node);
-            case "to": return TrySetAddressList(message.To, node);
-            case "cc": return TrySetAddressList(message.Cc, node);
-            case "bcc": return TrySetAddressList(message.Bcc, node);
-            case "replyTo": return TrySetAddressList(message.ReplyTo, node);
-            case "sender":
-                if (node is null)
-                    return true;
-                if (!TryParseAddressList(node, out var senders))
-                    return false;
-                message.Headers.Add(HeaderId.Sender, senders.ToString());
-                return true;
+            case "from": return TrySetAddressList(message.Headers, HeaderId.From, node);
+            case "to": return TrySetAddressList(message.Headers, HeaderId.To, node);
+            case "cc": return TrySetAddressList(message.Headers, HeaderId.Cc, node);
+            case "bcc": return TrySetAddressList(message.Headers, HeaderId.Bcc, node);
+            case "replyTo": return TrySetAddressList(message.Headers, HeaderId.ReplyTo, node);
+            case "sender": return TrySetAddressList(message.Headers, HeaderId.Sender, node);
             case "subject":
                 if (node is null) return true;
                 if (node is not JsonValue subjectValue
@@ -515,20 +509,23 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
                     return true;
                 });
             case "inReplyTo":
+                if (node is null)
+                    return true;
                 return TrySetMessageIds(node, ids =>
                 {
-                    if (ids.Count > 0)
-                    {
-                        message.Headers.Add(
-                            HeaderId.InReplyTo,
-                            string.Join(' ', ids.Select(id => $"<{id}>")));
-                    }
+                    message.Headers.Add(
+                        HeaderId.InReplyTo,
+                        string.Join(' ', ids.Select(id => $"<{id}>")));
                     return true;
                 });
             case "references":
+                if (node is null)
+                    return true;
                 return TrySetMessageIds(node, ids =>
                 {
-                    foreach (var id in ids) message.References.Add(id);
+                    message.Headers.Add(
+                        HeaderId.References,
+                        string.Join(' ', ids.Select(id => $"<{id}>")));
                     return true;
                 });
             default:
@@ -536,11 +533,16 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
         }
     }
 
-    private static bool TrySetAddressList(InternetAddressList target, JsonNode? node)
+    private static bool TrySetAddressList(
+        HeaderList headers,
+        HeaderId headerId,
+        JsonNode? node)
     {
+        if (node is null)
+            return true;
         if (!TryParseAddressList(node, out var addresses))
             return false;
-        target.AddRange(addresses);
+        headers.Add(headerId, addresses.ToString());
         return true;
     }
 

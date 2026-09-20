@@ -3509,6 +3509,55 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task PushCreateResponseOmitsUnchangedClientProperties()
+    {
+        using var receiver = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
+        var receiverParameters = receiver.ExportParameters(false);
+        var receiverPublic = new byte[65];
+        receiverPublic[0] = 4;
+        receiverParameters.Q.X!.CopyTo(receiverPublic, 1);
+        receiverParameters.Q.Y!.CopyTo(receiverPublic, 33);
+        var handler = new PushRequestHandler();
+        await using var fixture = await JmapFixture.CreateAsync(
+            configureServices: services => services.AddSingleton(
+                new JmapPushDeliveryService(handler)));
+        var expires = JmapDate.FormatUtc(DateTime.UtcNow.AddDays(2));
+
+        var response = await fixture.InvokeAsync(new JsonObject
+        {
+            ["using"] = new JsonArray(Core),
+            ["methodCalls"] = new JsonArray(new JsonArray(
+                "PushSubscription/set",
+                new JsonObject
+                {
+                    ["create"] = new JsonObject
+                    {
+                        ["push"] = new JsonObject
+                        {
+                            ["deviceClientId"] = "response-test",
+                            ["url"] = "https://1.1.1.1/jmap-push",
+                            ["keys"] = new JsonObject
+                            {
+                                ["p256dh"] = Base64Url(receiverPublic),
+                                ["auth"] = Base64Url(RandomNumberGenerator.GetBytes(16)),
+                            },
+                            ["verificationCode"] = null,
+                            ["expires"] = expires,
+                            ["types"] = new JsonArray("Email"),
+                        },
+                    },
+                },
+                "p1")),
+        });
+
+        CollectionAssert.AreEquivalent(
+            new[] { "id" },
+            Arguments(response)["created"]!["push"]!.AsObject()
+                .Select(property => property.Key).ToArray());
+        Assert.IsTrue(handler.ContentLength > 0);
+    }
+
+    [TestMethod]
     public void WebPushEncryptionRoundTripsWithReceiverKeys()
     {
         using var receiver = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);

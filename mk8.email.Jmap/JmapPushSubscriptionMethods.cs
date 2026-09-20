@@ -161,12 +161,7 @@ internal sealed class PushSubscriptionSetMethod(
                 var subscription = result.Subscription!;
                 var id = JmapId.PushSubscription(subscription.Id);
                 context.CreatedIds[item.Key] = id;
-                created[item.Key] = new JsonObject
-                {
-                    ["id"] = id,
-                    ["keys"] = subscription.KeysJson is null ? null : JsonNode.Parse(subscription.KeysJson),
-                    ["expires"] = PushSubscriptionGetMethod.FormatDate(subscription.ExpiresAt),
-                };
+                created[item.Key] = BuildCreatedResponse(item.Value, subscription);
                 try
                 {
                     var verification = new JsonObject
@@ -287,6 +282,38 @@ internal sealed class PushSubscriptionSetMethod(
             ["notUpdated"] = notUpdated.Count == 0 ? null : notUpdated,
             ["notDestroyed"] = notDestroyed.Count == 0 ? null : notDestroyed,
         });
+    }
+
+    private static JsonObject BuildCreatedResponse(
+        JsonObject requested,
+        JmapPushSubscriptionDB subscription)
+    {
+        var response = new JsonObject
+        {
+            ["id"] = JmapId.PushSubscription(subscription.Id),
+        };
+        if (!requested.ContainsKey("keys"))
+        {
+            response["keys"] = subscription.KeysJson is null
+                ? null
+                : JsonNode.Parse(subscription.KeysJson);
+        }
+        if (!requested.TryGetPropertyValue("expires", out var requestedExpiryNode)
+            || requestedExpiryNode is null
+            || requestedExpiryNode is not JsonValue requestedExpiryValue
+            || !requestedExpiryValue.TryGetValue<string>(out var requestedExpiry)
+            || !JmapDate.TryParseUtcDate(requestedExpiry, out var parsedExpiry)
+            || parsedExpiry.UtcDateTime != subscription.ExpiresAt)
+        {
+            response["expires"] = PushSubscriptionGetMethod.FormatDate(subscription.ExpiresAt);
+        }
+        if (!requested.ContainsKey("types"))
+        {
+            response["types"] = subscription.Types is null
+                ? null
+                : JmapMethodHelpers.ToJsonArray(subscription.Types);
+        }
+        return response;
     }
 
     private async Task<PushCreateResult> CreateAsync(

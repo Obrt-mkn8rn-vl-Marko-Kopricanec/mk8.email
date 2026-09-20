@@ -99,6 +99,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["queue_id"] = "uuid",
             ["envelope_sender"] = "varchar",
             ["envelope_recipients"] = "_text",
+            ["envelope_json"] = "jsonb",
             ["undo_status"] = "varchar",
             ["send_at"] = "timestamptz",
             ["created_at"] = "timestamptz",
@@ -286,11 +287,15 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 queue_id uuid NOT NULL,
                 envelope_sender varchar(320) NOT NULL,
                 envelope_recipients text[] NOT NULL,
+                envelope_json jsonb,
                 undo_status varchar(16) NOT NULL,
                 send_at timestamp with time zone NOT NULL,
                 created_at timestamp with time zone NOT NULL,
                 updated_at timestamp with time zone NOT NULL
             );
+
+            ALTER TABLE jmap_email_submissions
+                ADD COLUMN IF NOT EXISTS envelope_json jsonb;
 
             CREATE TABLE IF NOT EXISTS jmap_push_subscriptions (
                 id uuid PRIMARY KEY,

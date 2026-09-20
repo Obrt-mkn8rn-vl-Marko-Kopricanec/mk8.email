@@ -44,6 +44,9 @@ public sealed class JmapEmailSubmissionDB
     [Column("envelope_recipients", TypeName = "text[]")]
     public string[] EnvelopeRecipients { get; set; } = [];
 
+    [Column("envelope_json", TypeName = "jsonb")]
+    public string? EnvelopeJson { get; set; }
+
     [Required]
     [MaxLength(16)]
     [Column("undo_status")]

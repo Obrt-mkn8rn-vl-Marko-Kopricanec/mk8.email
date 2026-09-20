@@ -219,8 +219,9 @@ internal static class JmapMethodHelpers
             if (mutableProperties.Contains(property))
                 continue;
             if (!source.TryGetPropertyValue(property, out var original)
-                || !result.TryGetPropertyValue(property, out var revised)
-                || !JsonNode.DeepEquals(original, revised))
+                || (result.TryGetPropertyValue(property, out var revised)
+                    ? !JsonNode.DeepEquals(original, revised)
+                    : original is not null))
             {
                 invalid.Add(property);
             }

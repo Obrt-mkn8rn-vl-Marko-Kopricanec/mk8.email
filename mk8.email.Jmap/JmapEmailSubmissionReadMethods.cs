@@ -27,26 +27,7 @@ internal static class JmapEmailSubmissionJson
         if (Wants("emailId")) result["emailId"] = submission.EmailId;
         if (Wants("threadId")) result["threadId"] = submission.ThreadId;
         if (Wants("envelope"))
-        {
-            var recipients = new JsonArray();
-            foreach (var recipient in submission.EnvelopeRecipients)
-            {
-                recipients.Add(new JsonObject
-                {
-                    ["email"] = recipient,
-                    ["parameters"] = null,
-                });
-            }
-            result["envelope"] = new JsonObject
-            {
-                ["mailFrom"] = new JsonObject
-                {
-                    ["email"] = submission.EnvelopeSender,
-                    ["parameters"] = null,
-                },
-                ["rcptTo"] = recipients,
-            };
-        }
+            result["envelope"] = BuildEnvelope(submission);
         if (Wants("sendAt")) result["sendAt"] = JmapEmailCodec.FormatUtcDate(submission.SendAt);
         if (Wants("undoStatus")) result["undoStatus"] = submission.UndoStatus;
         if (Wants("deliveryStatus"))
@@ -56,6 +37,42 @@ internal static class JmapEmailSubmissionJson
         return result;
 
         bool Wants(string name) => properties is null || properties.Contains(name);
+    }
+
+    private static JsonObject BuildEnvelope(JmapEmailSubmissionDB submission)
+    {
+        if (submission.EnvelopeJson is not null)
+        {
+            try
+            {
+                if (JsonNode.Parse(submission.EnvelopeJson) is JsonObject stored)
+                    return stored;
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                // Fall through for rows created before the canonical envelope
+                // column existed or for a damaged optional cache value.
+            }
+        }
+
+        var recipients = new JsonArray();
+        foreach (var recipient in submission.EnvelopeRecipients)
+        {
+            recipients.Add(new JsonObject
+            {
+                ["email"] = recipient,
+                ["parameters"] = null,
+            });
+        }
+        return new JsonObject
+        {
+            ["mailFrom"] = new JsonObject
+            {
+                ["email"] = submission.EnvelopeSender,
+                ["parameters"] = null,
+            },
+            ["rcptTo"] = recipients,
+        };
     }
 
     private static async Task<JsonNode?> DeliveryStatusAsync(

@@ -680,6 +680,87 @@ public sealed class JmapProtocolTests
         """);
         Assert.AreEqual("final", Arguments(read)["list"]![0]!["undoStatus"]!.GetValue<string>());
         Assert.AreEqual(emailId, Arguments(read)["list"]![0]!["emailId"]!.GetValue<string>());
+        var storedSubmission = Arguments(read)["list"]![0]!.AsObject();
+        Assert.AreEqual(
+            emailSize.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            storedSubmission["envelope"]!["mailFrom"]!["parameters"]!["SIZE"]!
+                .GetValue<string>());
+        Assert.IsNull(storedSubmission["envelope"]!["rcptTo"]![0]!["parameters"]);
+
+        var roundTrip = await fixture.InvokeAsync(new JsonObject
+        {
+            ["using"] = new JsonArray(Core, Submission),
+            ["methodCalls"] = new JsonArray(new JsonArray(
+                "EmailSubmission/set",
+                new JsonObject
+                {
+                    ["accountId"] = fixture.AccountId,
+                    ["update"] = new JsonObject
+                    {
+                        [submissionId] = storedSubmission.DeepClone(),
+                    },
+                },
+                "s3")),
+        });
+        Assert.IsNull(Arguments(roundTrip)["notUpdated"]);
+        Assert.IsTrue(Arguments(roundTrip)["updated"]!.AsObject().ContainsKey(submissionId));
+    }
+
+    [TestMethod]
+    public async Task SubmissionGeneratesAndPersistsDeduplicatedEnvelope()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var identityResponse = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Submission}}}"],
+          "methodCalls": [["Identity/get", {"accountId":"{{{fixture.AccountId}}}"}, "i1"]]
+        }
+        """);
+        var identityId = Arguments(identityResponse)["list"]![0]!["id"]!.GetValue<string>();
+        var emailResponse = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/set", {
+            "accountId":"{{{fixture.AccountId}}}", "create":{"generated":{
+              "mailboxIds":{"{{{fixture.DraftsMailboxId}}}":true},
+              "keywords":{"$draft":true},
+              "from":[{"email":"{{{fixture.User.Username}}}"}],
+              "to":[{"email":"{{{fixture.User.Username}}}"}],
+              "cc":[{"email":"{{{fixture.User.Username}}}"}],
+              "bcc":[{"email":"{{{fixture.User.Username}}}"}],
+              "subject":"Generated envelope",
+              "bodyValues":{"1":{"value":"queued"}},
+              "textBody":[{"partId":"1", "type":"text/plain"}]
+            }}
+          }, "e1"]]
+        }
+        """);
+        var emailId = Arguments(emailResponse)["created"]!["generated"]!["id"]!.GetValue<string>();
+        var submission = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Submission}}}"],
+          "methodCalls": [["EmailSubmission/set", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "create":{"generated":{"identityId":"{{{identityId}}}", "emailId":"{{{emailId}}}"}}
+          }, "s1"]]
+        }
+        """);
+        var submissionId = Arguments(submission)["created"]!["generated"]!["id"]!.GetValue<string>();
+        var read = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Submission}}}"],
+          "methodCalls": [["EmailSubmission/get", {
+            "accountId":"{{{fixture.AccountId}}}", "ids":["{{{submissionId}}}"],
+            "properties":["id", "envelope"]
+          }, "s2"]]
+        }
+        """);
+        var envelope = Arguments(read)["list"]![0]!["envelope"]!;
+        Assert.AreEqual(fixture.User.Username, envelope["mailFrom"]!["email"]!.GetValue<string>());
+        Assert.IsNull(envelope["mailFrom"]!["parameters"]);
+        Assert.AreEqual(1, envelope["rcptTo"]!.AsArray().Count);
+        Assert.AreEqual(fixture.User.Username, envelope["rcptTo"]![0]!["email"]!.GetValue<string>());
+        Assert.IsNull(envelope["rcptTo"]![0]!["parameters"]);
     }
 
     [TestMethod]

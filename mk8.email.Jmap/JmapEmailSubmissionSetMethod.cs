@@ -22,6 +22,9 @@ internal sealed class EmailSubmissionSetMethod(
     private static readonly IReadOnlySet<string> CreateProperties = new HashSet<string>(
         ["identityId", "emailId", "envelope"],
         StringComparer.Ordinal);
+    private static readonly IReadOnlySet<string> UpdateProperties = new HashSet<string>(
+        ["undoStatus"],
+        StringComparer.Ordinal);
     private static readonly IReadOnlyDictionary<string, string> SingletonHeaders =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -137,10 +140,33 @@ internal sealed class EmailSubmissionSetMethod(
                     notUpdated[item.Key] = JmapMethodHelpers.SetError("notFound");
                     continue;
                 }
-                if (item.Value.KeysForPatch().Any(property => property != "undoStatus")
-                    || !TryRequestedUndoStatus(item.Value, submission.UndoStatus, out var requestedStatus))
+                var current = await JmapEmailSubmissionJson.BuildAsync(
+                    database,
+                    submission,
+                    null,
+                    cancellationToken);
+                if (!JmapMethodHelpers.TryApplyPatchAllowingUnchangedProperties(
+                        current,
+                        item.Value,
+                        UpdateProperties,
+                        out var patched,
+                        out var invalidProperties))
                 {
-                    notUpdated[item.Key] = JmapMethodHelpers.SetError("invalidProperties");
+                    notUpdated[item.Key] = JmapMethodHelpers.SetError("invalidPatch");
+                    continue;
+                }
+                if (invalidProperties.Count > 0)
+                {
+                    notUpdated[item.Key] = JmapMethodHelpers.SetError(
+                        "invalidProperties",
+                        properties: invalidProperties);
+                    continue;
+                }
+                if (!TryReadUndoStatus(patched, out var requestedStatus))
+                {
+                    notUpdated[item.Key] = JmapMethodHelpers.SetError(
+                        "invalidProperties",
+                        properties: ["undoStatus"]);
                     continue;
                 }
                 if (requestedStatus == "canceled" && submission.UndoStatus != "pending")
@@ -263,6 +289,7 @@ internal sealed class EmailSubmissionSetMethod(
                 environment.Limits.MaxMessageSizeBytes,
                 out var sender,
                 out var recipients,
+                out var envelopeJson,
                 out var envelopeError))
             return new SubmissionCreateResult(null, envelopeError);
         if (!await senderAuthorization.CanSendAsAsync(context.User.Username, sender, cancellationToken))
@@ -332,6 +359,7 @@ internal sealed class EmailSubmissionSetMethod(
             QueueId = queueId,
             EnvelopeSender = sender,
             EnvelopeRecipients = recipients.ToArray(),
+            EnvelopeJson = envelopeJson,
             UndoStatus = "final",
             SendAt = now,
             CreatedAt = now,
@@ -350,10 +378,12 @@ internal sealed class EmailSubmissionSetMethod(
         long maximumMessageSize,
         out string sender,
         out List<string> recipients,
+        out string envelopeJson,
         out JsonObject? error)
     {
         sender = identityEmail;
         recipients = [];
+        envelopeJson = string.Empty;
         error = null;
         if (node is null)
         {
@@ -379,6 +409,11 @@ internal sealed class EmailSubmissionSetMethod(
                     error["invalidRecipients"] = JmapMethodHelpers.ToJsonArray(invalidGeneratedRecipients);
                     return false;
                 }
+                envelopeJson = BuildEnvelopeJson(
+                    sender,
+                    null,
+                    recipients.Select(recipient => (recipient, (JsonObject?)null)))
+                    .ToJsonString(JmapJson.SerializerOptions);
                 return true;
             }
             catch (FormatException)
@@ -395,13 +430,15 @@ internal sealed class EmailSubmissionSetMethod(
                 allowSize: true,
                 raw.LongLength,
                 maximumMessageSize,
-                out sender)
+                out sender,
+                out var senderParameters)
             || envelope["rcptTo"] is not JsonArray recipientArray)
         {
             error = JmapMethodHelpers.SetError("invalidProperties", properties: ["envelope"]);
             return false;
         }
         var invalid = new List<string>();
+        var normalizedRecipients = new List<(string Email, JsonObject? Parameters)>(recipientArray.Count);
         foreach (var item in recipientArray)
         {
             if (!TryEnvelopeAddress(
@@ -410,12 +447,16 @@ internal sealed class EmailSubmissionSetMethod(
                     allowSize: false,
                     raw.LongLength,
                     maximumMessageSize,
-                    out var recipient))
+                    out var recipient,
+                    out var parameters))
             {
                 invalid.Add(TryReadEnvelopeEmail(item));
             }
-            else if (!recipients.Contains(recipient, StringComparer.OrdinalIgnoreCase))
+            else
+            {
                 recipients.Add(recipient);
+                normalizedRecipients.Add((recipient, parameters));
+            }
         }
         if (invalid.Count > 0)
         {
@@ -423,7 +464,34 @@ internal sealed class EmailSubmissionSetMethod(
             error["invalidRecipients"] = JmapMethodHelpers.ToJsonArray(invalid);
             return false;
         }
+        envelopeJson = BuildEnvelopeJson(sender, senderParameters, normalizedRecipients)
+            .ToJsonString(JmapJson.SerializerOptions);
         return true;
+    }
+
+    private static JsonObject BuildEnvelopeJson(
+        string sender,
+        JsonObject? senderParameters,
+        IEnumerable<(string Email, JsonObject? Parameters)> recipients)
+    {
+        var rcptTo = new JsonArray();
+        foreach (var recipient in recipients)
+        {
+            rcptTo.Add(new JsonObject
+            {
+                ["email"] = recipient.Email,
+                ["parameters"] = recipient.Parameters?.DeepClone(),
+            });
+        }
+        return new JsonObject
+        {
+            ["mailFrom"] = new JsonObject
+            {
+                ["email"] = sender,
+                ["parameters"] = senderParameters?.DeepClone(),
+            },
+            ["rcptTo"] = rcptTo,
+        };
     }
 
     private static bool TryValidateSubmissionEmail(
@@ -532,9 +600,11 @@ internal sealed class EmailSubmissionSetMethod(
         bool allowSize,
         long messageSize,
         long maximumMessageSize,
-        out string email)
+        out string email,
+        out JsonObject? normalizedParameters)
     {
         email = string.Empty;
+        normalizedParameters = null;
         if (node is not JsonObject address
             || !JmapMethodHelpers.TryGetRequiredString(address, "email", out email)
             || address.Any(item => item.Key is not ("email" or "parameters")))
@@ -549,6 +619,7 @@ internal sealed class EmailSubmissionSetMethod(
         }
         if (parameterNode is not JsonObject parameters)
             return false;
+        normalizedParameters = new JsonObject();
         var parameterNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var parameter in parameters)
         {
@@ -569,6 +640,7 @@ internal sealed class EmailSubmissionSetMethod(
             {
                 return false;
             }
+            normalizedParameters["SIZE"] = sizeText;
         }
         return true;
     }
@@ -612,16 +684,11 @@ internal sealed class EmailSubmissionSetMethod(
         }
     }
 
-    private static bool TryRequestedUndoStatus(
-        JsonObject patch,
-        string current,
-        out string status)
+    private static bool TryReadUndoStatus(JsonObject value, out string status)
     {
-        status = current;
-        var source = new JsonObject { ["undoStatus"] = current };
-        if (!JmapMethodHelpers.TryApplyPatch(source, patch, out var result)
-            || result["undoStatus"] is not JsonValue value
-            || !value.TryGetValue<string>(out status!)
+        status = string.Empty;
+        if (value["undoStatus"] is not JsonValue statusValue
+            || !statusValue.TryGetValue<string>(out status!)
             || status is not ("pending" or "final" or "canceled"))
             return false;
         return true;

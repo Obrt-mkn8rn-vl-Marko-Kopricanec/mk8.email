@@ -63,4 +63,66 @@ public sealed class JmapChangeCollectorTests
                 .Select(change => change.ChangeKind)
                 .ToListAsync();
     }
+
+    [TestMethod]
+    public async Task PartialMoveDoesNotPublishHiddenEmailAsCreated()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        using var scope = fixture.Services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var sourceFolderId = Guid.CreateVersion7();
+        var destinationFolderId = Guid.CreateVersion7();
+        var emailId = Guid.CreateVersion7();
+        var threadValue = Guid.CreateVersion7().ToString("N");
+        database.Folders.AddRange(
+            new FolderDB
+            {
+                Id = sourceFolderId,
+                InboxId = fixture.InboxId,
+                Name = "Hidden source",
+            },
+            new FolderDB
+            {
+                Id = destinationFolderId,
+                InboxId = fixture.InboxId,
+                Name = "Hidden destination",
+            });
+        database.Emails.Add(new EmailDB
+        {
+            Id = emailId,
+            FolderId = sourceFolderId,
+            Sender = "sender@example.net",
+            Recipient = fixture.User.Username,
+            Subject = "Hidden move",
+            Body = "body",
+            IsDeleted = true,
+            EmailObjectId = emailId.ToString("N"),
+            ThreadObjectId = threadValue,
+            Uid = 1,
+            ModSeq = 1,
+        });
+        await database.SaveChangesAsync();
+        database.ChangeTracker.Clear();
+
+        var partialUpdate = new EmailDB
+        {
+            Id = emailId,
+            FolderId = sourceFolderId,
+        };
+        database.Emails.Attach(partialUpdate);
+        partialUpdate.FolderId = destinationFolderId;
+        database.Entry(partialUpdate).Property(email => email.FolderId).IsModified = true;
+        await database.SaveChangesAsync();
+        database.ChangeTracker.Clear();
+
+        var stored = await database.Emails.AsNoTracking().SingleAsync(email => email.Id == emailId);
+        Assert.AreEqual(destinationFolderId, stored.FolderId);
+        Assert.IsTrue(stored.IsDeleted);
+        Assert.AreEqual(0, await database.JmapChanges.CountAsync(change =>
+            change.AccountId == fixture.InboxId
+            && (change.DataType == JmapConstants.EmailDataType
+                && change.ObjectId == JmapId.Email(emailId)
+                || change.DataType == JmapConstants.ThreadDataType
+                && change.ObjectId == JmapId.Thread(threadValue))));
+    }
 }

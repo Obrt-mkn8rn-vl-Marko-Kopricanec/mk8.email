@@ -146,7 +146,11 @@ internal static class JmapChangeCollector
             var oldVisible = entry.State != EntityState.Added
                 && persisted is not null
                 && !persisted.IsDeleted;
-            var newVisible = entry.State != EntityState.Deleted && !entry.Entity.IsDeleted;
+            var newIsDeleted = (entry.State == EntityState.Added
+                || entry.Property(email => email.IsDeleted).IsModified)
+                ? entry.Entity.IsDeleted
+                : persisted?.IsDeleted ?? entry.Entity.IsDeleted;
+            var newVisible = entry.State != EntityState.Deleted && !newIsDeleted;
 
             var emailObjectId = $"E{entry.Entity.Id:N}";
             if (!oldVisible && newVisible && newAccountId is not null)

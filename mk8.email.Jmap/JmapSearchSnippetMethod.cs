@@ -46,7 +46,10 @@ internal static partial class JmapSearchSnippetFormatter
                 return;
             foreach (Match match in TermRegex().Matches(value))
             {
-                var term = match.Value.Trim('"', '\'');
+                var term = match.Value.Trim('"', '\'')
+                    .Replace("\\\"", "\"", StringComparison.Ordinal)
+                    .Replace("\\'", "'", StringComparison.Ordinal)
+                    .Replace("\\\\", "\\", StringComparison.Ordinal);
                 if (term.Length > 0)
                     result.Add(term);
             }

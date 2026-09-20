@@ -1441,6 +1441,51 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task SearchSnippetDecodesEscapedPhraseTerms()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var raw = Encoding.UTF8.GetBytes(
+            $"From: sender@example.net\r\nTo: {fixture.User.Username}\r\n"
+            + "Subject: Escaped phrase\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n"
+            + "A say \"hello\" \\ path phrase");
+        var blobId = await fixture.StoreBlobAsync(raw);
+        var import = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/import", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "emails":{"escaped-phrase":{"blobId":"{{{blobId}}}",
+              "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true} } }
+          }, "i1"]]
+        }
+        """);
+        var emailId = Arguments(import)["created"]!["escaped-phrase"]!["id"]!
+            .GetValue<string>();
+
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [
+            ["Email/query", {
+              "accountId":"{{{fixture.AccountId}}}",
+              "filter":{"body":"\"say \\\"hello\\\" \\\\ path\""}
+            }, "q1"],
+            ["SearchSnippet/get", {
+              "accountId":"{{{fixture.AccountId}}}",
+              "filter":{"body":"\"say \\\"hello\\\" \\\\ path\""},
+              "emailIds":["{{{emailId}}}"]
+            }, "ss1"]
+          ]
+        }
+        """);
+
+        Assert.AreEqual(emailId, Arguments(response)["ids"]![0]!.GetValue<string>());
+        StringAssert.Contains(
+            Arguments(response, 1)["list"]![0]!["preview"]!.GetValue<string>(),
+            "<mark>say &quot;hello&quot; \\ path</mark>");
+    }
+
+    [TestMethod]
     public async Task SearchSnippetPreservesPlainTextHtmlEntities()
     {
         await using var fixture = await JmapFixture.CreateAsync();

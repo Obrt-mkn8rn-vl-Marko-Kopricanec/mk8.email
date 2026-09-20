@@ -674,6 +674,109 @@ public sealed class JmapCoreTests
     }
 
     [TestMethod]
+    public async Task QueryMethodsIgnoreInactiveWindowArguments()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var emailId = Guid.CreateVersion7();
+        var threadId = Guid.CreateVersion7().ToString("N");
+        var submissionId = Guid.CreateVersion7();
+        var raw = Encoding.ASCII.GetBytes(
+            $"Date: Sat, 19 Sep 2026 12:00:00 +0000\r\n" +
+            $"From: sender@example.net\r\n" +
+            $"To: {fixture.User.Username}\r\n" +
+            $"Message-ID: <{emailId:N}@example.net>\r\n" +
+            "Subject: Query window\r\n\r\nbody\r\n");
+        using (var scope = fixture.Services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            database.Emails.Add(new EmailDB
+            {
+                Id = emailId,
+                Sender = "sender@example.net",
+                Recipient = fixture.User.Username,
+                Subject = "Query window",
+                Body = "body\r\n",
+                RawMessage = raw,
+                SizeBytes = raw.Length,
+                EmailObjectId = emailId.ToString("N"),
+                ThreadObjectId = threadId,
+                MessageId = $"<{emailId:N}@example.net>",
+                ReceivedAt = new DateTime(2026, 9, 19, 12, 0, 0, DateTimeKind.Utc),
+                FolderId = fixture.InboxFolderId,
+                Uid = 1,
+                ModSeq = 1,
+            });
+            database.JmapEmailSubmissions.Add(new JmapEmailSubmissionDB
+            {
+                Id = submissionId,
+                SubmissionObjectId = JmapId.Submission(submissionId),
+                AccountId = fixture.InboxId,
+                IdentityId = JmapId.Identity(fixture.InboxId),
+                EmailId = JmapId.Email(emailId),
+                ThreadId = JmapId.Thread(threadId),
+                QueueId = Guid.CreateVersion7(),
+                EnvelopeSender = fixture.User.Username,
+                EnvelopeRecipients = ["recipient@example.net"],
+                SendAt = new DateTime(2026, 9, 19, 12, 0, 0, DateTimeKind.Utc),
+            });
+            await database.SaveChangesAsync();
+        }
+
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using":[
+            "{{{JmapConstants.CoreCapability}}}",
+            "{{{JmapConstants.MailCapability}}}",
+            "{{{JmapConstants.SubmissionCapability}}}"
+          ],
+          "methodCalls":[
+            ["Mailbox/query",{
+              "accountId":"{{{fixture.AccountId}}}",
+              "anchorOffset":"ignored"
+            },"m1"],
+            ["Mailbox/query",{
+              "accountId":"{{{fixture.AccountId}}}",
+              "anchor":"{{{fixture.InboxMailboxId}}}",
+              "position":"ignored"
+            },"m2"],
+            ["Email/query",{
+              "accountId":"{{{fixture.AccountId}}}",
+              "anchorOffset":"ignored"
+            },"e1"],
+            ["Email/query",{
+              "accountId":"{{{fixture.AccountId}}}",
+              "anchor":"{{{JmapId.Email(emailId)}}}",
+              "position":"ignored"
+            },"e2"],
+            ["EmailSubmission/query",{
+              "accountId":"{{{fixture.AccountId}}}",
+              "anchorOffset":"ignored"
+            },"s1"],
+            ["EmailSubmission/query",{
+              "accountId":"{{{fixture.AccountId}}}",
+              "anchor":"{{{JmapId.Submission(submissionId)}}}",
+              "position":"ignored"
+            },"s2"]
+          ]
+        }
+        """);
+
+        var methodResponses = response["methodResponses"]!.AsArray();
+        Assert.AreEqual(6, methodResponses.Count);
+        foreach (var methodResponse in methodResponses)
+            Assert.AreNotEqual("error", methodResponse![0]!.GetValue<string>());
+        Assert.AreEqual(
+            fixture.InboxMailboxId,
+            methodResponses[1]![1]!["ids"]![0]!.GetValue<string>());
+        Assert.AreEqual(
+            JmapId.Email(emailId),
+            methodResponses[3]![1]!["ids"]![0]!.GetValue<string>());
+        Assert.AreEqual(
+            JmapId.Submission(submissionId),
+            methodResponses[5]![1]!["ids"]![0]!.GetValue<string>());
+    }
+
+    [TestMethod]
     public void StringArrayArgumentsPermitRepeatedProjectionProperties()
     {
         var values = JsonNode.Parse("""{"properties":["id","id","name"]}""")!

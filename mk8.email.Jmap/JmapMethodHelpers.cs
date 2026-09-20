@@ -200,6 +200,26 @@ internal static class JmapMethodHelpers
         return true;
     }
 
+    public static bool TryGetQueryWindow(
+        JsonObject arguments,
+        out long position,
+        out string? anchor,
+        out long anchorOffset)
+    {
+        position = 0;
+        anchor = null;
+        anchorOffset = 0;
+        if (!TryGetOptionalId(arguments, "anchor", out anchor))
+            return false;
+
+        // RFC 8620 requires position to be ignored when an anchor is
+        // supplied, and anchorOffset to be ignored when it is not. Do not
+        // reject a query based on the syntax of an inactive argument.
+        return anchor is null
+            ? TryGetOptionalInt(arguments, "position", 0, out position)
+            : TryGetOptionalInt(arguments, "anchorOffset", 0, out anchorOffset);
+    }
+
     public static bool AreValidCreationIds(IEnumerable<string>? values) =>
         values is null || values.All(JmapId.IsValidId);
 

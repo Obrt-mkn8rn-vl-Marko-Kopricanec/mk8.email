@@ -230,11 +230,13 @@ internal sealed class EmailSubmissionQueryMethod(
                 "limit",
                 "calculateTotal")
             || !JmapMethodHelpers.TryGetRequiredString(arguments, "accountId", out var accountId)
-            || !JmapMethodHelpers.TryGetOptionalInt(arguments, "position", 0, out var position)
-            || !JmapMethodHelpers.TryGetOptionalInt(arguments, "anchorOffset", 0, out var anchorOffset)
+            || !JmapMethodHelpers.TryGetQueryWindow(
+                arguments,
+                out var position,
+                out var anchor,
+                out var anchorOffset)
             || !JmapMethodHelpers.TryGetOptionalUnsignedInt(arguments, "limit", out var requestedLimit)
-            || !JmapMethodHelpers.TryGetOptionalBoolean(arguments, "calculateTotal", false, out var calculateTotal)
-            || !JmapMethodHelpers.TryGetOptionalId(arguments, "anchor", out var anchor))
+            || !JmapMethodHelpers.TryGetOptionalBoolean(arguments, "calculateTotal", false, out var calculateTotal))
             return JmapMethodResponse.Error("invalidArguments");
         var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken);
         if (account is null) return JmapMethodResponse.Error("accountNotFound");

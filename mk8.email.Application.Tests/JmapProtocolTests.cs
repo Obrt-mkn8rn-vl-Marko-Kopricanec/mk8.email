@@ -432,6 +432,37 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task EmailParsedMessageIdsUseRfc5322Syntax()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var raw = Encoding.ASCII.GetBytes(
+            "From: sender@example.net\r\n"
+            + $"To: {fixture.User.Username}\r\n"
+            + "Message-ID: <not a message id>\r\n"
+            + "References: (first) <valid@example.test>\r\n"
+            + " <\"quoted local\"@example.test>\r\n\r\nbody");
+        var blobId = await fixture.StoreBlobAsync(raw);
+
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/parse", {
+            "accountId": "{{{fixture.AccountId}}}",
+            "blobIds": ["{{{blobId}}}"],
+            "properties": ["messageId", "references"]
+          }, "p1"]]
+        }
+        """);
+        var parsed = Arguments(response)["parsed"]![blobId]!;
+        Assert.IsNull(parsed["messageId"]);
+        CollectionAssert.AreEqual(
+            new[] { "valid@example.test", "\"quoted local\"@example.test" },
+            parsed["references"]!.AsArray()
+                .Select(node => node!.GetValue<string>())
+                .ToArray());
+    }
+
+    [TestMethod]
     public async Task DeletingLegacyEmailWithNullThreadDestroysItsFallbackThread()
     {
         await using var fixture = await JmapFixture.CreateAsync();

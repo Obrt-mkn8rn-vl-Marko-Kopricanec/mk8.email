@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using MimeKit;
+using MimeKit.Utils;
 using mk8.email.Infrastructure.Models;
 
 namespace mk8.email.Jmap;
@@ -848,8 +849,12 @@ internal static partial class JmapEmailCodec
     private static JsonNode? ParseMessageIds(string value)
     {
         var result = new JsonArray();
-        foreach (Match match in MessageIdRegex().Matches(value))
-            result.Add(match.Groups[1].Value);
+        foreach (var messageId in MimeUtils.EnumerateReferences(value))
+        {
+            if (!JmapMessageId.TryParseParsedForm(messageId, out var parsed))
+                return null;
+            result.Add(parsed);
+        }
         return result.Count == 0 ? null : result;
     }
 
@@ -954,9 +959,6 @@ internal static partial class JmapEmailCodec
             .Append(email.Body)
             .ToString();
     }
-
-    [GeneratedRegex("<([^<>]+)>", RegexOptions.CultureInvariant)]
-    private static partial Regex MessageIdRegex();
 
     [GeneratedRegex("<([^<>]+)>", RegexOptions.CultureInvariant)]
     private static partial Regex UrlRegex();

@@ -550,36 +550,13 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
         {
             if (item is not JsonValue value
                 || !value.TryGetValue<string>(out var id)
-                || !TryParseMessageId(id, out var parsed))
+                || !JmapMessageId.TryParseParsedForm(id, out var parsed))
             {
                 return false;
             }
             ids.Add(parsed);
         }
         return setter(ids);
-    }
-
-    private static bool TryParseMessageId(string value, out string parsed)
-    {
-        parsed = string.Empty;
-        if (string.IsNullOrEmpty(value)
-            || !string.Equals(value, value.Trim(), StringComparison.Ordinal)
-            || value.IndexOfAny(['<', '>', '\r', '\n']) >= 0)
-        {
-            return false;
-        }
-        try
-        {
-            var candidate = MimeUtils.ParseMessageId($"<{value}>");
-            if (candidate is null || !string.Equals(candidate, value, StringComparison.Ordinal))
-                return false;
-            parsed = candidate;
-            return true;
-        }
-        catch (ParseException)
-        {
-            return false;
-        }
     }
 
     private static bool TryGetPartArray(
@@ -959,7 +936,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
             {
                 if (item is not JsonValue idValue
                     || !idValue.TryGetValue<string>(out var id)
-                    || !TryParseMessageId(id, out var parsedId)) return false;
+                    || !JmapMessageId.TryParseParsedForm(id, out var parsedId)) return false;
                 parsed.Add($"<{parsedId}>");
             }
             value = string.Join(' ', parsed);

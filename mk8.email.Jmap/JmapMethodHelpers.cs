@@ -128,6 +128,64 @@ internal static class JmapMethodHelpers
         return true;
     }
 
+    public static bool TryGetIdArray(
+        JsonObject arguments,
+        string name,
+        JmapInvocationContext context,
+        bool nullable,
+        out IReadOnlyList<string>? values)
+    {
+        values = null;
+        if (!arguments.TryGetPropertyValue(name, out var node) || node is null)
+            return nullable;
+        if (node is not JsonArray array)
+            return false;
+
+        var result = new List<string>(array.Count);
+        foreach (var item in array)
+        {
+            if (item is not JsonValue value
+                || !value.TryGetValue<string>(out var requested)
+                || !TryResolveId(requested, context, out var resolved))
+            {
+                return false;
+            }
+            result.Add(resolved);
+        }
+
+        values = result;
+        return true;
+    }
+
+    public static bool TryGetOptionalId(
+        JsonObject arguments,
+        string name,
+        JmapInvocationContext context,
+        out string? value)
+    {
+        value = null;
+        if (!arguments.TryGetPropertyValue(name, out var node) || node is null)
+            return true;
+        if (node is not JsonValue jsonValue
+            || !jsonValue.TryGetValue<string>(out var requested)
+            || !TryResolveId(requested, context, out var resolved))
+        {
+            return false;
+        }
+
+        value = resolved;
+        return true;
+    }
+
+    private static bool TryResolveId(
+        string? requested,
+        JmapInvocationContext context,
+        out string resolved)
+    {
+        resolved = context.ResolveId(requested) ?? string.Empty;
+        return JmapId.IsValidId(resolved);
+    }
+
     public static JsonArray ToJsonArray(IEnumerable<string> values)
     {
         var result = new JsonArray();

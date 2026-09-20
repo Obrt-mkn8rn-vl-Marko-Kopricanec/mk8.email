@@ -85,7 +85,12 @@ internal sealed class MailboxGetMethod(
         if (properties is not null && properties.Any(property => !JmapMailboxJson.Properties.Contains(property)))
             return JmapMethodResponse.Error("invalidArguments");
 
-        if (!TryReadIds(arguments, context, out var requestedIds))
+        if (!JmapMethodHelpers.TryGetIdArray(
+                arguments,
+                "ids",
+                context,
+                true,
+                out var requestedIds))
             return JmapMethodResponse.Error("invalidArguments");
         if (requestedIds is { Count: > 0 }
             && requestedIds.Count > environment.Jmap.MaxObjectsInGet)
@@ -121,34 +126,6 @@ internal sealed class MailboxGetMethod(
         });
     }
 
-    private static bool TryReadIds(
-        JsonObject arguments,
-        JmapInvocationContext context,
-        out IReadOnlyList<string>? ids)
-    {
-        ids = null;
-        if (!arguments.TryGetPropertyValue("ids", out var node) || node is null)
-            return true;
-        if (node is not JsonArray array)
-            return false;
-
-        var result = new List<string>(array.Count);
-        foreach (var item in array)
-        {
-            if (item is not JsonValue value
-                || !value.TryGetValue<string>(out var parsed)
-                || parsed is null)
-            {
-                return false;
-            }
-            var resolved = context.ResolveId(parsed);
-            if (resolved is null)
-                return false;
-            result.Add(resolved);
-        }
-        ids = result;
-        return true;
-    }
 }
 
 internal sealed class MailboxChangesMethod(

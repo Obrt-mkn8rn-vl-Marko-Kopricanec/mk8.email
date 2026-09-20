@@ -32,7 +32,12 @@ internal sealed class ThreadGetMethod(
         var properties = requestedProperties?.ToHashSet(StringComparer.Ordinal);
         if (properties is not null && properties.Any(property => !Properties.Contains(property)))
             return JmapMethodResponse.Error("invalidArguments");
-        if (!TryGetIds(arguments, context, out var requestedIds))
+        if (!JmapMethodHelpers.TryGetIdArray(
+                arguments,
+                "ids",
+                context,
+                true,
+                out var requestedIds))
             return JmapMethodResponse.Error("invalidArguments");
         if (requestedIds is { Count: > 0 } && requestedIds.Count > environment.Jmap.MaxObjectsInGet)
             return JmapMethodResponse.Error("requestTooLarge");
@@ -89,33 +94,6 @@ internal sealed class ThreadGetMethod(
         });
     }
 
-    private static bool TryGetIds(
-        JsonObject arguments,
-        JmapInvocationContext context,
-        out IReadOnlyList<string>? ids)
-    {
-        ids = null;
-        if (!arguments.TryGetPropertyValue("ids", out var node) || node is null)
-            return true;
-        if (node is not JsonArray array)
-            return false;
-        var parsed = new List<string>(array.Count);
-        foreach (var item in array)
-        {
-            if (item is not JsonValue value
-                || !value.TryGetValue<string>(out var id)
-                || id is null)
-            {
-                return false;
-            }
-            var resolved = context.ResolveId(id);
-            if (resolved is null)
-                return false;
-            parsed.Add(resolved);
-        }
-        ids = parsed;
-        return true;
-    }
 }
 
 internal sealed class ThreadChangesMethod(

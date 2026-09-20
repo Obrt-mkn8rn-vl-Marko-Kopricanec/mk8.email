@@ -463,6 +463,29 @@ public sealed class JmapCoreTests
         CollectionAssert.AreEqual(new[] { "two" }, second.Created.ToArray());
     }
 
+    [TestMethod]
+    public async Task TypedIdArgumentsRejectValuesOutsideTheIdAlphabet()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var response = await fixture.InvokeAsync(
+            """
+            {
+              "using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
+              "methodCalls":[
+                ["Email/get",{"accountId":"ACCOUNT","ids":["not an id"]},"c1"],
+                ["Mailbox/query",{"accountId":"ACCOUNT","anchor":"not/an/id"},"c2"]
+              ]
+            }
+            """.Replace("ACCOUNT", JmapId.Account(fixture.InboxId), StringComparison.Ordinal));
+
+        Assert.AreEqual(
+            "invalidArguments",
+            response["methodResponses"]?[0]?[1]?["type"]?.GetValue<string>());
+        Assert.AreEqual(
+            "invalidArguments",
+            response["methodResponses"]?[1]?[1]?["type"]?.GetValue<string>());
+    }
+
     private sealed class ImplicitResponseMethod : IJmapMethod
     {
         public string Name => "Test/implicit";

@@ -51,29 +51,12 @@ internal static class JmapEmailArguments
         JmapInvocationContext context,
         bool nullable,
         out IReadOnlyList<string>? ids)
-    {
-        ids = null;
-        if (!arguments.TryGetPropertyValue(property, out var node) || node is null)
-            return nullable;
-        if (node is not JsonArray array)
-            return false;
-        var values = new List<string>(array.Count);
-        foreach (var item in array)
-        {
-            if (item is not JsonValue jsonValue
-                || !jsonValue.TryGetValue<string>(out var id)
-                || id is null)
-            {
-                return false;
-            }
-            var resolved = context.ResolveId(id);
-            if (resolved is null)
-                return false;
-            values.Add(resolved);
-        }
-        ids = values;
-        return true;
-    }
+        => JmapMethodHelpers.TryGetIdArray(
+            arguments,
+            property,
+            context,
+            nullable,
+            out ids);
 }
 
 internal sealed class EmailGetMethod(

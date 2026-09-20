@@ -331,7 +331,7 @@ internal sealed class MailboxQueryMethod(
             || !JmapMethodHelpers.TryGetOptionalInt(arguments, "anchorOffset", 0, out var anchorOffset)
             || !JmapMethodHelpers.TryGetOptionalUnsignedInt(arguments, "limit", out var requestedLimit)
             || !JmapMethodHelpers.TryGetOptionalBoolean(arguments, "calculateTotal", false, out var calculateTotal)
-            || !JmapMethodHelpers.TryGetOptionalString(arguments, "anchor", out var anchor))
+            || !JmapMethodHelpers.TryGetOptionalId(arguments, "anchor", context, out var anchor))
         {
             return JmapMethodResponse.Error("invalidArguments");
         }
@@ -361,8 +361,7 @@ internal sealed class MailboxQueryMethod(
         var ids = ordered.Select(mailbox => JmapId.Mailbox(mailbox.Id)).ToList();
         if (anchor is not null)
         {
-            anchor = context.ResolveId(anchor);
-            var anchorIndex = anchor is null ? -1 : ids.IndexOf(anchor);
+            var anchorIndex = ids.IndexOf(anchor);
             if (anchorIndex < 0)
                 return JmapMethodResponse.Error("anchorNotFound");
             position = Math.Min(
@@ -426,7 +425,7 @@ internal sealed class MailboxQueryChangesMethod(
             || !JmapMethodHelpers.TryGetRequiredString(arguments, "sinceQueryState", out var sinceState)
             || !JmapMethodHelpers.TryGetOptionalUnsignedInt(arguments, "maxChanges", out var maxChanges)
             || maxChanges == 0
-            || !JmapMethodHelpers.TryGetOptionalString(arguments, "upToId", out _)
+            || !JmapMethodHelpers.TryGetOptionalId(arguments, "upToId", context, out _)
             || !JmapMethodHelpers.TryGetOptionalBoolean(arguments, "calculateTotal", false, out var calculateTotal))
         {
             return JmapMethodResponse.Error("invalidArguments");

@@ -38,6 +38,10 @@ internal static partial class JmapDate
         if (requireUtc && value[^1] != 'Z')
             return false;
 
+        var isLeapSecond = value.AsSpan(17, 2).SequenceEqual("60");
+        if (isLeapSecond)
+            value = value[..17] + "59" + value[19..];
+
         var fractionSeparator = value.IndexOf('.', StringComparison.Ordinal);
         if (fractionSeparator >= 0)
         {
@@ -54,14 +58,33 @@ internal static partial class JmapDate
         var formats = fractionSeparator < 0
             ? DateFormatsWithoutFraction
             : DateFormatsWithFraction;
-        return DateTimeOffset.TryParseExact(
+        if (!DateTimeOffset.TryParseExact(
             value,
             formats,
             CultureInfo.InvariantCulture,
             value[^1] == 'Z'
                 ? DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal
                 : DateTimeStyles.None,
-            out result);
+            out result))
+        {
+            return false;
+        }
+        if (!isLeapSecond)
+            return true;
+
+        var utc = result.UtcDateTime;
+        if (utc.Hour != 23
+            || utc.Minute != 59
+            || utc.Second != 59
+            || utc.Day != DateTime.DaysInMonth(utc.Year, utc.Month)
+            || utc.Month is not (6 or 12)
+            || result > DateTimeOffset.MaxValue.AddSeconds(-1))
+        {
+            result = default;
+            return false;
+        }
+        result = result.AddSeconds(1);
+        return true;
     }
 
     private static string FormatUtcTicks(long ticks)

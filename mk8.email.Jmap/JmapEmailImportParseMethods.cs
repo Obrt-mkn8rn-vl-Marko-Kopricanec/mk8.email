@@ -74,7 +74,6 @@ internal static class JmapEmailMutationHelpers
         try
         {
             using var message = JmapEmailCodec.Parse(raw);
-            var dates = new List<DateTimeOffset>();
             foreach (var header in message.Headers.Where(header =>
                          header.Field.Equals("Received", StringComparison.OrdinalIgnoreCase)))
             {
@@ -84,10 +83,10 @@ internal static class JmapEmailMutationHelpers
                         header.Value[(separator + 1)..],
                         out var date))
                 {
-                    dates.Add(date);
+                    return date.UtcDateTime;
                 }
             }
-            return dates.Count == 0 ? DateTime.UtcNow : dates.Max().UtcDateTime;
+            return DateTime.UtcNow;
         }
         catch (FormatException)
         {

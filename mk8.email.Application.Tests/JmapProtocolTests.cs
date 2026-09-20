@@ -1691,12 +1691,12 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
-    public async Task ImportDefaultsReceivedAtFromRfcReceivedDates()
+    public async Task ImportDefaultsReceivedAtFromMostRecentReceivedHeader()
     {
         await using var fixture = await JmapFixture.CreateAsync();
         var raw = Encoding.ASCII.GetBytes(
             "Received: from final.example by mx.example; Fri, 2 Jan 2026 03:04:05 EST\r\n"
-            + "Received: from origin.example by final.example; Fri, 2 Jan 2026 07:00:00 +0000\r\n"
+            + "Received: from origin.example by final.example; Fri, 2 Jan 2026 12:00:00 +0000\r\n"
             + "From: sender@example.net\r\n"
             + $"To: {fixture.User.Username}\r\n\r\nbody");
         var blobId = await fixture.StoreBlobAsync(raw);

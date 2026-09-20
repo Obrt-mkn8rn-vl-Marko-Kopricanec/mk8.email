@@ -173,9 +173,9 @@ internal static class JmapChangeCollector
                 newThreadValue = Guid.CreateVersion7().ToString("N");
                 entry.Entity.ThreadObjectId = newThreadValue;
             }
-            var newThread = newThreadValue is null
-                ? null
-                : NormalizeThreadId(newThreadValue, entry.Entity.Id);
+            var newThread = newVisible
+                ? NormalizeThreadId(newThreadValue, entry.Entity.Id)
+                : null;
 
             var oldThreadKey = oldAccountId is null || !oldVisible
                 ? null
@@ -314,20 +314,29 @@ internal static class JmapChangeCollector
             .Select(threadId => threadId[1..])
             .Distinct(StringComparer.Ordinal)
             .ToArray();
+        var fallbackEmailIds = storedThreadIds
+            .Select(value => Guid.TryParseExact(value, "N", out var id) ? id : Guid.Empty)
+            .Where(id => id != Guid.Empty)
+            .ToArray();
         var existing = await database.Emails
             .AsNoTracking()
             .Where(email => accountIds.Contains(email.Folder.InboxId)
                 && !email.IsDeleted
-                && email.ThreadObjectId != null
-                && storedThreadIds.Contains(email.ThreadObjectId))
+                && (email.ThreadObjectId != null
+                    && storedThreadIds.Contains(email.ThreadObjectId)
+                    || email.ThreadObjectId == null
+                    && fallbackEmailIds.Contains(email.Id)))
             .Select(email => new
             {
                 AccountId = email.Folder.InboxId,
+                email.Id,
                 email.ThreadObjectId,
             })
             .ToListAsync(cancellationToken);
         var counts = existing
-            .GroupBy(email => new ThreadKey(email.AccountId, "T" + email.ThreadObjectId!))
+            .GroupBy(email => new ThreadKey(
+                email.AccountId,
+                NormalizeThreadId(email.ThreadObjectId, email.Id)))
             .ToDictionary(group => group.Key, group => group.Count());
 
         foreach (var delta in deltas)

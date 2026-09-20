@@ -432,6 +432,50 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task DeletingLegacyEmailWithNullThreadDestroysItsFallbackThread()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var create = await CreateTextEmailAsync(
+            fixture,
+            "legacyThread",
+            "Legacy thread",
+            "body");
+        var emailId = Arguments(create)["created"]!["legacyThread"]!["id"]!
+            .GetValue<string>();
+        Assert.IsTrue(JmapId.TryParseEmail(emailId, out var databaseId));
+        var fallbackThreadId = JmapId.Thread(databaseId.ToString("N"));
+
+        string beforeDelete;
+        using (var scope = fixture.Services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            var email = await database.Emails.SingleAsync(item => item.Id == databaseId);
+            email.ThreadObjectId = null;
+            await database.SaveChangesAsync();
+            beforeDelete = await scope.ServiceProvider.GetRequiredService<JmapStateService>()
+                .GetStateAsync(fixture.InboxId, JmapConstants.ThreadDataType);
+
+            database.Emails.Remove(email);
+            await database.SaveChangesAsync();
+        }
+
+        var changes = await fixture.InvokeAsync($$$"""
+        {
+          "using":["{{{Core}}}","{{{Mail}}}"],
+          "methodCalls":[["Thread/changes",{
+            "accountId":"{{{fixture.AccountId}}}",
+            "sinceState":"{{{beforeDelete}}}"
+          },"c1"]]
+        }
+        """);
+        CollectionAssert.AreEqual(
+            new[] { fallbackThreadId },
+            Arguments(changes)["destroyed"]!.AsArray()
+                .Select(node => node!.GetValue<string>())
+                .ToArray());
+    }
+
+    [TestMethod]
     public async Task EmailLifecycleProjectsMimeAndPreservesImapState()
     {
         await using var fixture = await JmapFixture.CreateAsync();

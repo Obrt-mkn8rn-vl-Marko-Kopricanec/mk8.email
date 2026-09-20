@@ -3538,6 +3538,74 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task ImportCountsTheRawSizeOfLegacyRowsAgainstQuota()
+    {
+        const long quota = 1_000;
+        await using var fixture = await JmapFixture.CreateAsync();
+        var legacyRaw = Encoding.ASCII.GetBytes(
+            "From: sender@example.net\r\n"
+            + $"To: {fixture.User.Username}\r\n"
+            + "Subject: Legacy quota usage\r\n\r\n"
+            + new string('x', 700));
+        var importedRaw = Encoding.ASCII.GetBytes(
+            "From: sender@example.net\r\n"
+            + $"To: {fixture.User.Username}\r\n"
+            + "Subject: Must exceed quota\r\n\r\n"
+            + new string('y', 300));
+        Assert.IsTrue(legacyRaw.LongLength < quota);
+        Assert.IsTrue(legacyRaw.LongLength + importedRaw.LongLength > quota);
+
+        using (var scope = fixture.Services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            var user = await database.Users.SingleAsync(candidate => candidate.Id == fixture.User.Id);
+            user.QuotaBytes = quota;
+            var inbox = await database.Folders.SingleAsync(folder =>
+                folder.Id == fixture.InboxFolderId);
+            var emailId = Guid.CreateVersion7();
+            database.Emails.Add(new EmailDB
+            {
+                Id = emailId,
+                Sender = "sender@example.net",
+                Recipient = fixture.User.Username,
+                Subject = "Legacy quota usage",
+                Body = Encoding.ASCII.GetString(legacyRaw),
+                RawMessage = legacyRaw,
+                SizeBytes = 0,
+                MessageId = $"<{emailId:N}@example.net>",
+                EmailObjectId = emailId.ToString("N"),
+                ThreadObjectId = emailId.ToString("N"),
+                ReceivedAt = DateTime.UtcNow,
+                FolderId = inbox.Id,
+                Uid = inbox.NextUid++,
+                ModSeq = ++inbox.HighestModSeq,
+            });
+            await database.SaveChangesAsync();
+        }
+
+        var blobId = await fixture.StoreBlobAsync(importedRaw);
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/import", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "emails":{"overQuota":{
+              "blobId":"{{{blobId}}}",
+              "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true}
+            }}
+          }, "i1"]]
+        }
+        """);
+
+        var error = Arguments(response)["notCreated"]!["overQuota"]!;
+        Assert.AreEqual("overQuota", error["type"]!.GetValue<string>());
+        using var verificationScope = fixture.Services.CreateScope();
+        var verificationDatabase = verificationScope.ServiceProvider
+            .GetRequiredService<EmailDbContext>();
+        Assert.AreEqual(1, await verificationDatabase.Emails.CountAsync());
+    }
+
+    [TestMethod]
     public async Task IdentityAndVacationAcceptWholeGetObjectsAsUpdates()
     {
         await using var fixture = await JmapFixture.CreateAsync();

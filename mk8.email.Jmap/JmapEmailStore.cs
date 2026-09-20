@@ -25,11 +25,7 @@ internal sealed class JmapEmailStore(
     {
         if (raw.LongLength > environment.Limits.MaxMessageSizeBytes)
             return new JmapStoredEmailResult(null, JmapMethodHelpers.SetError("tooLarge"));
-        var used = await database.Emails
-            .AsNoTracking()
-            .Where(email => email.Folder.Inbox.OwnerId == account.UserId)
-            .SumAsync(email => (long?)email.SizeBytes, cancellationToken)
-            ?? 0;
+        var used = await GetUsedStorageAsync(account.UserId, cancellationToken);
         if (account.QuotaBytes > 0
             && (used >= account.QuotaBytes || raw.LongLength > account.QuotaBytes - used))
         {
@@ -163,6 +159,28 @@ internal sealed class JmapEmailStore(
         }
         value = parsed.UtcDateTime;
         return true;
+    }
+
+    private async Task<long> GetUsedStorageAsync(
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        var knownSize = await database.Emails
+            .AsNoTracking()
+            .Where(email => email.Folder.Inbox.OwnerId == userId && email.SizeBytes > 0)
+            .SumAsync(email => (long?)email.SizeBytes, cancellationToken)
+            ?? 0;
+        var unknownSize = await database.Emails
+            .AsNoTracking()
+            .Where(email => email.Folder.Inbox.OwnerId == userId && email.SizeBytes <= 0)
+            .ToListAsync(cancellationToken);
+        var used = knownSize;
+        foreach (var email in unknownSize)
+        {
+            var size = JmapEmailCodec.GetRawBytes(email).LongLength;
+            used = size > long.MaxValue - used ? long.MaxValue : used + size;
+        }
+        return used;
     }
 
     private async Task<string> ResolveThreadIdAsync(

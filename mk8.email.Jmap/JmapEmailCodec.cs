@@ -134,7 +134,7 @@ internal static partial class JmapEmailCodec
             return false;
         content = GetDecodedContent(entity);
         contentType = entity.ContentType.MimeType.ToLowerInvariant();
-        name = entity is MimePart part ? part.FileName : null;
+        name = GetPartName(entity);
         return true;
     }
 
@@ -475,7 +475,7 @@ internal static partial class JmapEmailCodec
             languages ??= [];
             languages.AddRange(parsedLanguages);
         }
-        var fileName = entity is MimePart mimePart ? mimePart.FileName : null;
+        var fileName = GetPartName(entity);
         return new PartDescriptor(
             entity,
             partId,
@@ -494,6 +494,9 @@ internal static partial class JmapEmailCodec
             entity.ContentLocation?.ToString(),
             subParts);
     }
+
+    private static string? GetPartName(MimeEntity entity) =>
+        entity.ContentDisposition?.FileName ?? entity.ContentType.Name;
 
     private static byte[] GetDecodedContent(MimeEntity entity)
     {

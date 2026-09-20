@@ -1547,6 +1547,46 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task EmailCreationPreservesMultipartNames()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var create = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/set", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "create":{"multipartName":{
+              "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true},
+              "bodyValues":{"1":{"value":"body"}},
+              "bodyStructure":{
+                "name":"related content",
+                "type":"multipart/related",
+                "subParts":[{"partId":"1", "type":"text/plain"}]
+              }
+            }}
+          }, "s1"]]
+        }
+        """);
+        var emailId = Arguments(create)["created"]!["multipartName"]!["id"]!.GetValue<string>();
+
+        var get = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/get", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "ids":["{{{emailId}}}"],
+            "properties":["bodyStructure"],
+            "bodyProperties":["name", "type", "subParts"]
+          }, "g1"]]
+        }
+        """);
+
+        var bodyStructure = Arguments(get)["list"]![0]!["bodyStructure"]!;
+        Assert.AreEqual("related content", bodyStructure["name"]!.GetValue<string>());
+        Assert.AreEqual("multipart/related", bodyStructure["type"]!.GetValue<string>());
+    }
+
+    [TestMethod]
     public async Task EmailCreationDefersInvalidSenderAndMessageIdCardinalityUntilSubmission()
     {
         await using var fixture = await JmapFixture.CreateAsync();

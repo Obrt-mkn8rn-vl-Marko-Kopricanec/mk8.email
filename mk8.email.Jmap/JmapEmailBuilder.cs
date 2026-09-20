@@ -699,6 +699,17 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
                 return false;
             }
         }
+        else if (name is not null)
+        {
+            try
+            {
+                entity.ContentType.Name = name;
+            }
+            catch (Exception exception) when (exception is ArgumentException or FormatException)
+            {
+                return false;
+            }
+        }
         try
         {
             if (disposition is not null)

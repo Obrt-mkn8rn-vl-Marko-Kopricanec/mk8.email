@@ -897,6 +897,74 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task HtmlSearchAndPreviewIgnoreNonRenderedContent()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var raw = Encoding.UTF8.GetBytes(
+            $"From: sender@example.net\r\nTo: {fixture.User.Username}\r\n"
+            + "Date: Sun, 20 Sep 2026 10:00:00 +0000\r\n"
+            + "Subject: HTML search\r\nContent-Type: text/html; charset=utf-8\r\n\r\n"
+            + "<html><head><title>private-head-token</title></head><body>"
+            + "<style>.private-style-token { display: none }</style>"
+            + "<script>private-script-token</script>"
+            + "<p>Visible &amp; searchable</p></body></html>");
+        var blobId = await fixture.StoreBlobAsync(raw);
+        var import = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/import", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "emails":{"html":{"blobId":"{{{blobId}}}",
+              "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true} } }
+          }, "i1"]]
+        }
+        """);
+        var emailId = Arguments(import)["created"]!["html"]!["id"]!.GetValue<string>();
+
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [
+            ["Email/query", {
+              "accountId":"{{{fixture.AccountId}}}",
+              "filter":{"operator":"OR", "conditions":[
+                {"body":"private-head-token"},
+                {"body":"private-style-token"},
+                {"body":"private-script-token"}
+              ]},
+              "calculateTotal":true
+            }, "q1"],
+            ["Email/query", {
+              "accountId":"{{{fixture.AccountId}}}",
+              "filter":{"body":"Visible & searchable"},
+              "calculateTotal":true
+            }, "q2"],
+            ["Email/get", {
+              "accountId":"{{{fixture.AccountId}}}",
+              "ids":["{{{emailId}}}"],
+              "properties":["preview"]
+            }, "g1"],
+            ["SearchSnippet/get", {
+              "accountId":"{{{fixture.AccountId}}}",
+              "filter":{"body":"searchable"},
+              "emailIds":["{{{emailId}}}"]
+            }, "ss1"]
+          ]
+        }
+        """);
+
+        Assert.AreEqual(0, Arguments(response)["total"]!.GetValue<int>());
+        Assert.AreEqual(1, Arguments(response, 1)["total"]!.GetValue<int>());
+        Assert.AreEqual(emailId, Arguments(response, 1)["ids"]![0]!.GetValue<string>());
+        Assert.AreEqual(
+            "Visible & searchable",
+            Arguments(response, 2)["list"]![0]!["preview"]!.GetValue<string>());
+        var snippet = Arguments(response, 3)["list"]![0]!["preview"]!.GetValue<string>();
+        StringAssert.Contains(snippet, "Visible &amp; <mark>searchable</mark>");
+        Assert.IsFalse(snippet.Contains("private-", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
     public async Task MimeProjectionPreservesNestedStructureAndResolvablePartBlobs()
     {
         await using var fixture = await JmapFixture.CreateAsync();

@@ -346,9 +346,7 @@ internal static partial class JmapEmailQueryEngine
         BodyText(item));
 
     private static string BodyText(JmapEmailQueryItem item) =>
-        (item.Message.TextBody ?? string.Empty) + "\n" + StripHtml(item.Message.HtmlBody ?? string.Empty);
-
-    private static string StripHtml(string html) => HtmlRegex().Replace(html, " ");
+        (item.Message.TextBody ?? string.Empty) + "\n" + JmapHtmlText.Extract(item.Message.HtmlBody);
 
     private static bool MatchesText(string haystack, string query)
     {
@@ -617,9 +615,6 @@ internal static partial class JmapEmailQueryEngine
 
     private static int CompareString(string left, string right, string? collation) =>
         JmapCollation.Compare(left, right, collation);
-
-    [GeneratedRegex("<[^>]*>", RegexOptions.CultureInvariant)]
-    private static partial Regex HtmlRegex();
 
     [GeneratedRegex("(?:\\\"(?:\\\\.|[^\\\"])*\\\"|'(?:\\\\.|[^'])*'|\\S+)", RegexOptions.CultureInvariant)]
     private static partial Regex SearchTokenRegex();

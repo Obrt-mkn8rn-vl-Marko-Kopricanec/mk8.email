@@ -117,8 +117,8 @@ internal static partial class JmapSearchSnippetFormatter
     {
         var value = message.TextBody;
         if (string.IsNullOrWhiteSpace(value))
-            value = HtmlRegex().Replace(message.HtmlBody ?? string.Empty, " ");
-        return WebUtility.HtmlDecode(value ?? string.Empty);
+            return JmapHtmlText.Extract(message.HtmlBody);
+        return WebUtility.HtmlDecode(value);
     }
 
     private static bool ContainsAny(string value, IEnumerable<string> terms) =>
@@ -150,8 +150,6 @@ internal static partial class JmapSearchSnippetFormatter
     [GeneratedRegex("\\s+", RegexOptions.CultureInvariant)]
     private static partial Regex WhiteSpaceRegex();
 
-    [GeneratedRegex("<[^>]*>", RegexOptions.CultureInvariant)]
-    private static partial Regex HtmlRegex();
 }
 
 internal sealed class SearchSnippetGetMethod(

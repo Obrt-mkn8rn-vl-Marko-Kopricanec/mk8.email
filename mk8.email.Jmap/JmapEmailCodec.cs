@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Net;
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -683,7 +682,7 @@ internal static partial class JmapEmailCodec
             return string.Empty;
         var value = DecodeText(source).Text;
         if (source.Type == "text/html")
-            value = WebUtility.HtmlDecode(HtmlTagRegex().Replace(value, " "));
+            value = JmapHtmlText.Extract(value);
         value = WhiteSpaceRegex().Replace(value, " ").Trim();
         return TruncateRunes(value, 256);
     }
@@ -964,9 +963,6 @@ internal static partial class JmapEmailCodec
 
     [GeneratedRegex("<([^<>]+)>", RegexOptions.CultureInvariant)]
     private static partial Regex UrlRegex();
-
-    [GeneratedRegex("<[^>]*>", RegexOptions.CultureInvariant)]
-    private static partial Regex HtmlTagRegex();
 
     [GeneratedRegex("\\s+", RegexOptions.CultureInvariant)]
     private static partial Regex WhiteSpaceRegex();

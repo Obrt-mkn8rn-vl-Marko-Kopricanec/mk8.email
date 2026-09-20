@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using MimeKit;
@@ -81,10 +80,8 @@ internal static class JmapEmailMutationHelpers
             {
                 var separator = header.Value.LastIndexOf(';');
                 if (separator >= 0
-                    && DateTimeOffset.TryParse(
+                    && MimeKit.Utils.DateUtils.TryParse(
                         header.Value[(separator + 1)..],
-                        CultureInfo.InvariantCulture,
-                        DateTimeStyles.AllowWhiteSpaces,
                         out var date))
                 {
                     dates.Add(date);

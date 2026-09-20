@@ -929,6 +929,46 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task ImportDefaultsReceivedAtFromRfcReceivedDates()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var raw = Encoding.ASCII.GetBytes(
+            "Received: from final.example by mx.example; Fri, 2 Jan 2026 03:04:05 EST\r\n"
+            + "Received: from origin.example by final.example; Fri, 2 Jan 2026 07:00:00 +0000\r\n"
+            + "From: sender@example.net\r\n"
+            + $"To: {fixture.User.Username}\r\n\r\nbody");
+        var blobId = await fixture.StoreBlobAsync(raw);
+
+        var import = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/import", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "emails":{
+              "received":{
+                "blobId":"{{{blobId}}}",
+                "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true}
+              }
+            }
+          }, "i1"]]
+        }
+        """);
+        var emailId = Arguments(import)["created"]!["received"]!["id"]!.GetValue<string>();
+        var get = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/get", {
+            "accountId":"{{{fixture.AccountId}}}", "ids":["{{{emailId}}}"],
+            "properties":["receivedAt"]
+          }, "g1"]]
+        }
+        """);
+        Assert.AreEqual(
+            "2026-01-02T08:04:05Z",
+            Arguments(get)["list"]![0]!["receivedAt"]!.GetValue<string>());
+    }
+
+    [TestMethod]
     public async Task HtmlSearchAndPreviewIgnoreNonRenderedContent()
     {
         await using var fixture = await JmapFixture.CreateAsync();

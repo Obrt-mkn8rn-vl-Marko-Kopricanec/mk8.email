@@ -966,6 +966,48 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task EmailCreationPreservesMultipleInReplyToMessageIds()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var create = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/set", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "create":{"reply":{
+              "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true},
+              "inReplyTo":["first@example.test", "second@example.test"],
+              "bodyValues":{"1":{"value":"body"}},
+              "textBody":[{"partId":"1", "type":"text/plain"}]
+            }}
+          }, "s1"]]
+        }
+        """);
+        var emailId = Arguments(create)["created"]!["reply"]!["id"]!.GetValue<string>();
+
+        var get = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/get", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "ids":["{{{emailId}}}"],
+            "properties":["inReplyTo", "header:In-Reply-To:asMessageIds"]
+          }, "g1"]]
+        }
+        """);
+        var email = Arguments(get)["list"]![0]!;
+        var expected = new[] { "first@example.test", "second@example.test" };
+        CollectionAssert.AreEqual(
+            expected,
+            email["inReplyTo"]!.AsArray().Select(node => node!.GetValue<string>()).ToArray());
+        CollectionAssert.AreEqual(
+            expected,
+            email["header:In-Reply-To:asMessageIds"]!.AsArray()
+                .Select(node => node!.GetValue<string>())
+                .ToArray());
+    }
+
+    [TestMethod]
     public async Task UploadBlobCanBeParsedAndImported()
     {
         await using var fixture = await JmapFixture.CreateAsync();

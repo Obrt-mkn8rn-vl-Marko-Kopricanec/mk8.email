@@ -486,8 +486,12 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
             case "inReplyTo":
                 return TrySetMessageIds(node, ids =>
                 {
-                    if (ids.Count > 1) return false;
-                    if (ids.Count == 1) message.InReplyTo = ids[0];
+                    if (ids.Count > 0)
+                    {
+                        message.Headers.Add(
+                            HeaderId.InReplyTo,
+                            string.Join(' ', ids.Select(id => $"<{id}>")));
+                    }
                     return true;
                 });
             case "references":

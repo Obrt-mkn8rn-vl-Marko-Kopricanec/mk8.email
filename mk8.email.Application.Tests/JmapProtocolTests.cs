@@ -1065,6 +1065,54 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task AttachedMessageBlobPreservesExactDecodedOctets()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var nestedRaw = Encoding.UTF8.GetBytes(
+            "From: nested@example.net\n"
+            + $"To: {fixture.User.Username}\n"
+            + "Date: Sun, 20 Sep 2026 11:00:00 +0000\n"
+            + "Subject: LF-only attachment\n"
+            + "Content-Type: text/plain; charset=utf-8\n\n"
+            + "first line\nsecond line");
+        var prefix = Encoding.ASCII.GetBytes(
+            $"From: sender@example.net\r\nTo: {fixture.User.Username}\r\n"
+            + "Date: Sun, 20 Sep 2026 10:00:00 +0000\r\n"
+            + "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=outer\r\n\r\n"
+            + "--outer\r\nContent-Type: message/rfc822\r\n"
+            + "Content-Disposition: attachment; filename=exact.eml\r\n"
+            + "Content-Transfer-Encoding: base64\r\n\r\n");
+        var encodedNested = Encoding.ASCII.GetBytes(Convert.ToBase64String(nestedRaw));
+        var suffix = Encoding.ASCII.GetBytes("\r\n--outer--\r\n");
+        var outerRaw = prefix.Concat(encodedNested).Concat(suffix).ToArray();
+        var outerBlobId = await fixture.StoreBlobAsync(outerRaw);
+
+        var parse = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/parse", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "blobIds":["{{{outerBlobId}}}"],
+            "properties":["attachments"],
+            "bodyProperties":["blobId", "size", "type"]
+          }, "p1"]]
+        }
+        """);
+        var attachment = Arguments(parse)["parsed"]![outerBlobId]!["attachments"]![0]!;
+        Assert.AreEqual("message/rfc822", attachment["type"]!.GetValue<string>());
+        Assert.AreEqual(nestedRaw.Length, attachment["size"]!.GetValue<int>());
+
+        using var scope = fixture.Services.CreateScope();
+        var stored = await scope.ServiceProvider.GetRequiredService<JmapBlobService>()
+            .GetAsync(
+                fixture.InboxId,
+                attachment["blobId"]!.GetValue<string>(),
+                CancellationToken.None);
+        Assert.IsNotNull(stored);
+        CollectionAssert.AreEqual(nestedRaw, stored.Content);
+    }
+
+    [TestMethod]
     public async Task BlobQuotaEvictsOldestUnreferencedUpload()
     {
         const int quota = 1_048_576;

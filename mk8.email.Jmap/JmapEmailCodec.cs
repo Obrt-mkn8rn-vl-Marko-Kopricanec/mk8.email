@@ -886,7 +886,7 @@ internal static partial class JmapEmailCodec
         return form switch
         {
             HeaderForm.Raw => JsonValue.Create(RawHeaderValue(header)),
-            HeaderForm.Text => JsonValue.Create(NormalizeDecodedHeaderText(header.Value)),
+            HeaderForm.Text => JsonValue.Create(NormalizeDecodedHeaderText(header)),
             HeaderForm.Addresses => ParseAddresses(header.Value, grouped: false),
             HeaderForm.GroupedAddresses => ParseAddresses(header.Value, grouped: true),
             HeaderForm.MessageIds => ParseMessageIds(header.Value),
@@ -896,6 +896,75 @@ internal static partial class JmapEmailCodec
             HeaderForm.URLs => ParseUrls(header.Value),
             _ => null,
         };
+    }
+
+    private static string NormalizeDecodedHeaderText(Header header)
+    {
+        var (value, rawTabMarker) = ProtectRawHeaderTabs(header);
+        var normalized = NormalizeDecodedHeaderText(value);
+        return rawTabMarker is null
+            ? normalized
+            : normalized.Replace(rawTabMarker, "\t", StringComparison.Ordinal);
+    }
+
+    private static (string Value, string? RawTabMarker) ProtectRawHeaderTabs(Header header)
+    {
+        var value = header.Value;
+        var raw = header.RawValue;
+        var rawTabCount = raw.Count(character => character == (byte)'\t');
+        if (rawTabCount == 0 || !value.Contains('\t'))
+            return (value, null);
+
+        var marker = "\ue000\ue001";
+        while (value.Contains(marker, StringComparison.Ordinal))
+            marker += '\ue001';
+        var markerBytes = Encoding.UTF8.GetBytes(marker);
+        var protectedRaw = new byte[checked(
+            raw.Length + rawTabCount * (markerBytes.Length - 1))];
+        var destination = 0;
+        foreach (var character in raw)
+        {
+            if (character == (byte)'\t')
+            {
+                markerBytes.CopyTo(protectedRaw, destination);
+                destination += markerBytes.Length;
+            }
+            else
+            {
+                protectedRaw[destination++] = character;
+            }
+        }
+
+        var protectedHeader = header.Clone();
+        protectedHeader.SetRawValue(protectedRaw);
+        var protectedValue = protectedHeader.Value;
+        var candidate = new StringBuilder(protectedValue.Length);
+        var originalIndex = 0;
+        for (var protectedIndex = 0; protectedIndex < protectedValue.Length;)
+        {
+            if (protectedValue.AsSpan(protectedIndex).StartsWith(
+                    marker,
+                    StringComparison.Ordinal))
+            {
+                if (originalIndex < value.Length && value[originalIndex] == '\t')
+                {
+                    candidate.Append(marker);
+                    originalIndex++;
+                }
+                protectedIndex += marker.Length;
+                continue;
+            }
+
+            var character = protectedValue[protectedIndex++];
+            if (originalIndex >= value.Length || value[originalIndex] != character)
+                return (value, null);
+            candidate.Append(character);
+            originalIndex++;
+        }
+
+        return originalIndex == value.Length
+            ? (candidate.ToString(), marker)
+            : (value, null);
     }
 
     private static string RawHeaderValue(Header header)

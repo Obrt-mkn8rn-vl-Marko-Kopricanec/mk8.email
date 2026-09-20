@@ -581,7 +581,7 @@ public sealed class JmapProtocolTests
     public async Task EmailParsedHeaderTextDropsDecodedControlsAndNormalizesUnicode()
     {
         await using var fixture = await JmapFixture.CreateAsync();
-        const string decodedSubject = "Clean\0\u0001 Cafe\u0301";
+        const string decodedSubject = "Clean\0\u0001\t Cafe\u0301";
         const string decodedName = "Sender Cafe\u0301";
         var encodedSubject = Convert.ToBase64String(Encoding.UTF8.GetBytes(decodedSubject));
         var encodedName = Convert.ToBase64String(Encoding.UTF8.GetBytes(decodedName));
@@ -611,6 +611,42 @@ public sealed class JmapProtocolTests
         Assert.AreEqual(
             expectedName,
             parsed["from"]![0]!["name"]!.GetValue<string>());
+    }
+
+    [TestMethod]
+    public async Task EmailParsedHeaderTextPreservesUnfoldedHorizontalTabs()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var raw = Encoding.ASCII.GetBytes(
+            "From: sender@example.net\r\n"
+            + $"To: {fixture.User.Username}\r\n"
+            + "Subject:  First\r\n\tSecond\tThird\r\n"
+            + "Comments: =?utf-8?B?Rmlyc3Q=?=\r\n"
+            + "\t=?utf-8?B?U2Vjb25k?=\r\n\r\nbody");
+        var blobId = await fixture.StoreBlobAsync(raw);
+
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/parse", {
+            "accountId": "{{{fixture.AccountId}}}",
+            "blobIds": ["{{{blobId}}}"],
+            "properties": [
+              "subject",
+              "header:Subject:asText",
+              "header:Comments:asText"
+            ]
+          }, "p1"]]
+        }
+        """);
+        var parsed = Arguments(response)["parsed"]![blobId]!;
+        Assert.AreEqual("First\tSecond\tThird", parsed["subject"]!.GetValue<string>());
+        Assert.AreEqual(
+            "First\tSecond\tThird",
+            parsed["header:Subject:asText"]!.GetValue<string>());
+        Assert.AreEqual(
+            "FirstSecond",
+            parsed["header:Comments:asText"]!.GetValue<string>());
     }
 
     [TestMethod]

@@ -211,7 +211,7 @@ internal sealed class IdentityGetMethod(
         if (!JmapMethodHelpers.HasOnlyProperties(arguments, "accountId", "ids", "properties")
             || !JmapMethodHelpers.TryGetRequiredString(arguments, "accountId", out var accountId)
             || !JmapMethodHelpers.TryGetStringArray(arguments, "properties", true, out var requestedProperties)
-            || !JmapEmailArguments.TryGetIds(arguments, "ids", context, true, out var requestedIds))
+            || !JmapEmailArguments.TryGetIds(arguments, "ids", true, out var requestedIds))
         {
             return JmapMethodResponse.Error("invalidArguments");
         }

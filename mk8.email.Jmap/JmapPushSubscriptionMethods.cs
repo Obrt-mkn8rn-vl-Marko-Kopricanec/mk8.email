@@ -30,7 +30,7 @@ internal sealed class PushSubscriptionGetMethod(
     {
         if (arguments.Any(argument => !Arguments.Contains(argument.Key))
             || !JmapMethodHelpers.TryGetStringArray(arguments, "properties", true, out var requestedProperties)
-            || !JmapEmailArguments.TryGetIds(arguments, "ids", context, true, out var requestedIds))
+            || !JmapEmailArguments.TryGetIds(arguments, "ids", true, out var requestedIds))
             return JmapMethodResponse.Error("invalidArguments");
         var properties = requestedProperties?.ToHashSet(StringComparer.Ordinal);
         if (properties is not null && properties.Any(property => !Properties.Contains(property)))

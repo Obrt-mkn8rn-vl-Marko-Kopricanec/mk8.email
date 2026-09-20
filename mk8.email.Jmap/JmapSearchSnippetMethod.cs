@@ -174,7 +174,7 @@ internal sealed class SearchSnippetGetMethod(
     {
         if (!JmapMethodHelpers.HasOnlyProperties(arguments, "accountId", "filter", "emailIds")
             || !JmapMethodHelpers.TryGetRequiredString(arguments, "accountId", out var accountId)
-            || !JmapEmailArguments.TryGetIds(arguments, "emailIds", context, false, out var emailIds)
+            || !JmapEmailArguments.TryGetIds(arguments, "emailIds", false, out var emailIds)
             || emailIds is null)
         {
             return JmapMethodResponse.Error("invalidArguments");
@@ -191,7 +191,6 @@ internal sealed class SearchSnippetGetMethod(
             if (!JmapEmailQueryEngine.TryFilter(
                     all,
                     arguments["filter"],
-                    context,
                     out _,
                     out var filterError))
             {

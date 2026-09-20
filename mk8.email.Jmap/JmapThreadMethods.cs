@@ -35,7 +35,6 @@ internal sealed class ThreadGetMethod(
         if (!JmapMethodHelpers.TryGetIdArray(
                 arguments,
                 "ids",
-                context,
                 true,
                 out var requestedIds))
             return JmapMethodResponse.Error("invalidArguments");

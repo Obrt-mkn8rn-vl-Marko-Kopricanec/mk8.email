@@ -154,7 +154,6 @@ internal static class JmapMethodHelpers
     public static bool TryGetIdArray(
         JsonObject arguments,
         string name,
-        JmapInvocationContext context,
         bool nullable,
         out IReadOnlyList<string>? values)
     {
@@ -169,11 +168,12 @@ internal static class JmapMethodHelpers
         {
             if (item is not JsonValue value
                 || !value.TryGetValue<string>(out var requested)
-                || !TryResolveId(requested, context, out var resolved))
+                || requested is null
+                || !JmapId.IsValidId(requested))
             {
                 return false;
             }
-            result.Add(resolved);
+            result.Add(requested);
         }
 
         values = result;
@@ -183,7 +183,6 @@ internal static class JmapMethodHelpers
     public static bool TryGetOptionalId(
         JsonObject arguments,
         string name,
-        JmapInvocationContext context,
         out string? value)
     {
         value = null;
@@ -191,22 +190,14 @@ internal static class JmapMethodHelpers
             return true;
         if (node is not JsonValue jsonValue
             || !jsonValue.TryGetValue<string>(out var requested)
-            || !TryResolveId(requested, context, out var resolved))
+            || requested is null
+            || !JmapId.IsValidId(requested))
         {
             return false;
         }
 
-        value = resolved;
+        value = requested;
         return true;
-    }
-
-    private static bool TryResolveId(
-        string? requested,
-        JmapInvocationContext context,
-        out string resolved)
-    {
-        resolved = context.ResolveId(requested) ?? string.Empty;
-        return JmapId.IsValidId(resolved);
     }
 
     public static bool AreValidCreationIds(IEnumerable<string>? values) =>

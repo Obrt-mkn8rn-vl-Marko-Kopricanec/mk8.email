@@ -90,12 +90,11 @@ internal static partial class JmapEmailQueryEngine
     public static bool TryFilter(
         IReadOnlyList<JmapEmailQueryItem> items,
         JsonNode? filter,
-        JmapInvocationContext context,
         out List<JmapEmailQueryItem> result,
         out string error)
     {
         result = [];
-        if (!TryBuildPredicate(items, filter, context, out var predicate, out error))
+        if (!TryBuildPredicate(items, filter, out var predicate, out error))
             return false;
         result = items.Where(predicate).ToList();
         return true;
@@ -196,7 +195,6 @@ internal static partial class JmapEmailQueryEngine
     private static bool TryBuildPredicate(
         IReadOnlyList<JmapEmailQueryItem> all,
         JsonNode? node,
-        JmapInvocationContext context,
         out Func<JmapEmailQueryItem, bool> predicate,
         out string error)
     {
@@ -222,7 +220,7 @@ internal static partial class JmapEmailQueryEngine
             var children = new List<Func<JmapEmailQueryItem, bool>>(conditions.Count);
             foreach (var condition in conditions)
             {
-                if (!TryBuildPredicate(all, condition, context, out var child, out error))
+                if (!TryBuildPredicate(all, condition, out var child, out error))
                     return false;
                 children.Add(child);
             }
@@ -246,7 +244,7 @@ internal static partial class JmapEmailQueryEngine
         Guid? inMailbox = null;
         if (value.TryGetPropertyValue("inMailbox", out var mailboxNode))
         {
-            if (!TryMailboxId(mailboxNode, context, out var parsedMailbox))
+            if (!TryMailboxId(mailboxNode, out var parsedMailbox))
             {
                 error = "invalidArguments";
                 return false;
@@ -264,7 +262,7 @@ internal static partial class JmapEmailQueryEngine
             otherThan = [];
             foreach (var item in otherArray)
             {
-                if (!TryMailboxId(item, context, out var parsedMailbox))
+                if (!TryMailboxId(item, out var parsedMailbox))
                 {
                     error = "invalidArguments";
                     return false;
@@ -387,12 +385,12 @@ internal static partial class JmapEmailQueryEngine
             && (text is null || headers.Any(header => MatchesText(header.Value, text)));
     }
 
-    private static bool TryMailboxId(JsonNode? node, JmapInvocationContext context, out Guid id)
+    private static bool TryMailboxId(JsonNode? node, out Guid id)
     {
         id = Guid.Empty;
         return node is JsonValue value
             && value.TryGetValue<string>(out var stringValue)
-            && JmapId.TryParseMailbox(context.ResolveId(stringValue), out id);
+            && JmapId.TryParseMailbox(stringValue, out id);
     }
 
     private static bool TryUtcDate(JsonObject value, string name, out DateTimeOffset? result)
@@ -655,7 +653,7 @@ internal sealed class EmailQueryMethod(
             || !JmapMethodHelpers.TryGetOptionalInt(arguments, "anchorOffset", 0, out var anchorOffset)
             || !JmapMethodHelpers.TryGetOptionalUnsignedInt(arguments, "limit", out var requestedLimit)
             || !JmapMethodHelpers.TryGetOptionalBoolean(arguments, "calculateTotal", false, out var calculateTotal)
-            || !JmapMethodHelpers.TryGetOptionalId(arguments, "anchor", context, out var anchor))
+            || !JmapMethodHelpers.TryGetOptionalId(arguments, "anchor", out var anchor))
         {
             return JmapMethodResponse.Error("invalidArguments");
         }
@@ -666,7 +664,7 @@ internal sealed class EmailQueryMethod(
         var all = await JmapEmailQueryEngine.LoadAsync(database, account.InboxId, cancellationToken);
         try
         {
-            if (!JmapEmailQueryEngine.TryFilter(all, arguments["filter"], context, out var filtered, out var filterError))
+            if (!JmapEmailQueryEngine.TryFilter(all, arguments["filter"], out var filtered, out var filterError))
                 return JmapMethodResponse.Error(filterError);
             if (!JmapEmailQueryEngine.TryParseSort(arguments["sort"], out var sort, out var sortError))
                 return JmapMethodResponse.Error(sortError);
@@ -747,7 +745,7 @@ internal sealed class EmailQueryChangesMethod(
             || !JmapMethodHelpers.TryGetRequiredString(arguments, "accountId", out var accountId)
             || !JmapMethodHelpers.TryGetRequiredString(arguments, "sinceQueryState", out var sinceState)
             || !JmapMethodHelpers.TryGetOptionalUnsignedInt(arguments, "maxChanges", out var maxChanges)
-            || !JmapMethodHelpers.TryGetOptionalId(arguments, "upToId", context, out _)
+            || !JmapMethodHelpers.TryGetOptionalId(arguments, "upToId", out _)
             || !JmapMethodHelpers.TryGetOptionalBoolean(arguments, "collapseThreads", false, out var collapseThreads)
             || !JmapMethodHelpers.TryGetOptionalBoolean(arguments, "calculateTotal", false, out var calculateTotal))
         {
@@ -759,7 +757,7 @@ internal sealed class EmailQueryChangesMethod(
         var all = await JmapEmailQueryEngine.LoadAsync(database, account.InboxId, cancellationToken);
         try
         {
-            if (!JmapEmailQueryEngine.TryFilter(all, arguments["filter"], context, out var filtered, out var filterError))
+            if (!JmapEmailQueryEngine.TryFilter(all, arguments["filter"], out var filtered, out var filterError))
                 return JmapMethodResponse.Error(filterError);
             if (!JmapEmailQueryEngine.TryParseSort(arguments["sort"], out var sort, out var sortError))
                 return JmapMethodResponse.Error(sortError);

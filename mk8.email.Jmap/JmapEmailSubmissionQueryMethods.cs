@@ -17,12 +17,11 @@ internal static class JmapEmailSubmissionQueryEngine
     public static bool TryFilter(
         IReadOnlyList<JmapEmailSubmissionDB> all,
         JsonNode? node,
-        JmapInvocationContext context,
         out List<JmapEmailSubmissionDB> result,
         out string error)
     {
         result = [];
-        if (!TryPredicate(node, context, out var predicate, out error))
+        if (!TryPredicate(node, out var predicate, out error))
             return false;
         result = all.Where(predicate).ToList();
         return true;
@@ -105,7 +104,6 @@ internal static class JmapEmailSubmissionQueryEngine
 
     private static bool TryPredicate(
         JsonNode? node,
-        JmapInvocationContext context,
         out Func<JmapEmailSubmissionDB, bool> predicate,
         out string error)
     {
@@ -130,7 +128,7 @@ internal static class JmapEmailSubmissionQueryEngine
             var children = new List<Func<JmapEmailSubmissionDB, bool>>();
             foreach (var condition in conditions)
             {
-                if (!TryPredicate(condition, context, out var child, out error)) return false;
+                if (!TryPredicate(condition, out var child, out error)) return false;
                 children.Add(child);
             }
             predicate = operation switch
@@ -147,9 +145,9 @@ internal static class JmapEmailSubmissionQueryEngine
             error = "unsupportedFilter";
             return false;
         }
-        if (!TryIds(value, "identityIds", context, out var identityIds)
-            || !TryIds(value, "emailIds", context, out var emailIds)
-            || !TryIds(value, "threadIds", context, out var threadIds)
+        if (!TryIds(value, "identityIds", out var identityIds)
+            || !TryIds(value, "emailIds", out var emailIds)
+            || !TryIds(value, "threadIds", out var threadIds)
             || !JmapMethodHelpers.TryGetOptionalString(
                 value,
                 "undoStatus",
@@ -175,7 +173,6 @@ internal static class JmapEmailSubmissionQueryEngine
     private static bool TryIds(
         JsonObject value,
         string name,
-        JmapInvocationContext context,
         out HashSet<string>? result)
     {
         result = null;
@@ -186,9 +183,9 @@ internal static class JmapEmailSubmissionQueryEngine
         {
             if (item is not JsonValue jsonValue
                 || !jsonValue.TryGetValue<string>(out var id)
-                || context.ResolveId(id) is not { } resolved
-                || !JmapId.IsValidId(resolved)) return false;
-            result.Add(resolved);
+                || id is null
+                || !JmapId.IsValidId(id)) return false;
+            result.Add(id);
         }
         return true;
     }
@@ -236,14 +233,14 @@ internal sealed class EmailSubmissionQueryMethod(
             || !JmapMethodHelpers.TryGetOptionalInt(arguments, "anchorOffset", 0, out var anchorOffset)
             || !JmapMethodHelpers.TryGetOptionalUnsignedInt(arguments, "limit", out var requestedLimit)
             || !JmapMethodHelpers.TryGetOptionalBoolean(arguments, "calculateTotal", false, out var calculateTotal)
-            || !JmapMethodHelpers.TryGetOptionalId(arguments, "anchor", context, out var anchor))
+            || !JmapMethodHelpers.TryGetOptionalId(arguments, "anchor", out var anchor))
             return JmapMethodResponse.Error("invalidArguments");
         var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken);
         if (account is null) return JmapMethodResponse.Error("accountNotFound");
         var all = await database.JmapEmailSubmissions.AsNoTracking()
             .Where(item => item.AccountId == account.InboxId)
             .ToListAsync(cancellationToken);
-        if (!JmapEmailSubmissionQueryEngine.TryFilter(all, arguments["filter"], context, out var filtered, out var filterError))
+        if (!JmapEmailSubmissionQueryEngine.TryFilter(all, arguments["filter"], out var filtered, out var filterError))
             return JmapMethodResponse.Error(filterError);
         if (!JmapEmailSubmissionQueryEngine.TrySort(arguments["sort"], out var sort, out var sortError))
             return JmapMethodResponse.Error(sortError);
@@ -302,14 +299,14 @@ internal sealed class EmailSubmissionQueryChangesMethod(
             || !JmapMethodHelpers.TryGetRequiredString(arguments, "accountId", out var accountId)
             || !JmapMethodHelpers.TryGetRequiredString(arguments, "sinceQueryState", out var sinceState)
             || !JmapMethodHelpers.TryGetOptionalUnsignedInt(arguments, "maxChanges", out var maxChanges)
-            || !JmapMethodHelpers.TryGetOptionalId(arguments, "upToId", context, out _)
+            || !JmapMethodHelpers.TryGetOptionalId(arguments, "upToId", out _)
             || !JmapMethodHelpers.TryGetOptionalBoolean(arguments, "calculateTotal", false, out var calculateTotal))
             return JmapMethodResponse.Error("invalidArguments");
         var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken);
         if (account is null) return JmapMethodResponse.Error("accountNotFound");
         var all = await database.JmapEmailSubmissions.AsNoTracking()
             .Where(item => item.AccountId == account.InboxId).ToListAsync(cancellationToken);
-        if (!JmapEmailSubmissionQueryEngine.TryFilter(all, arguments["filter"], context, out var filtered, out var filterError))
+        if (!JmapEmailSubmissionQueryEngine.TryFilter(all, arguments["filter"], out var filtered, out var filterError))
             return JmapMethodResponse.Error(filterError);
         if (!JmapEmailSubmissionQueryEngine.TrySort(arguments["sort"], out _, out var sortError))
             return JmapMethodResponse.Error(sortError);

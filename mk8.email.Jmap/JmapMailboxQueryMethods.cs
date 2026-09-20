@@ -331,7 +331,7 @@ internal sealed class MailboxQueryMethod(
             || !JmapMethodHelpers.TryGetOptionalInt(arguments, "anchorOffset", 0, out var anchorOffset)
             || !JmapMethodHelpers.TryGetOptionalUnsignedInt(arguments, "limit", out var requestedLimit)
             || !JmapMethodHelpers.TryGetOptionalBoolean(arguments, "calculateTotal", false, out var calculateTotal)
-            || !JmapMethodHelpers.TryGetOptionalId(arguments, "anchor", context, out var anchor))
+            || !JmapMethodHelpers.TryGetOptionalId(arguments, "anchor", out var anchor))
         {
             return JmapMethodResponse.Error("invalidArguments");
         }
@@ -424,7 +424,7 @@ internal sealed class MailboxQueryChangesMethod(
             || !JmapMethodHelpers.TryGetRequiredString(arguments, "accountId", out var accountId)
             || !JmapMethodHelpers.TryGetRequiredString(arguments, "sinceQueryState", out var sinceState)
             || !JmapMethodHelpers.TryGetOptionalUnsignedInt(arguments, "maxChanges", out var maxChanges)
-            || !JmapMethodHelpers.TryGetOptionalId(arguments, "upToId", context, out _)
+            || !JmapMethodHelpers.TryGetOptionalId(arguments, "upToId", out _)
             || !JmapMethodHelpers.TryGetOptionalBoolean(arguments, "calculateTotal", false, out var calculateTotal))
         {
             return JmapMethodResponse.Error("invalidArguments");

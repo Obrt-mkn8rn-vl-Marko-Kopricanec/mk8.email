@@ -88,7 +88,6 @@ internal sealed class MailboxGetMethod(
         if (!JmapMethodHelpers.TryGetIdArray(
                 arguments,
                 "ids",
-                context,
                 true,
                 out var requestedIds))
             return JmapMethodResponse.Error("invalidArguments");

@@ -244,7 +244,7 @@ internal sealed class EmailParseMethod(
                 "fetchAllBodyValues",
                 "maxBodyValueBytes")
             || !JmapMethodHelpers.TryGetRequiredString(arguments, "accountId", out var accountId)
-            || !JmapEmailArguments.TryGetIds(arguments, "blobIds", context, false, out var blobIds)
+            || !JmapEmailArguments.TryGetIds(arguments, "blobIds", false, out var blobIds)
             || blobIds is null
             || !JmapEmailArguments.TryGetProjectionOptions(
                 arguments,

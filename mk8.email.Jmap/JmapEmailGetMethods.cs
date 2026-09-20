@@ -48,13 +48,11 @@ internal static class JmapEmailArguments
     public static bool TryGetIds(
         JsonObject arguments,
         string property,
-        JmapInvocationContext context,
         bool nullable,
         out IReadOnlyList<string>? ids)
         => JmapMethodHelpers.TryGetIdArray(
             arguments,
             property,
-            context,
             nullable,
             out ids);
 }
@@ -88,7 +86,7 @@ internal sealed class EmailGetMethod(
                 arguments,
                 JmapEmailCodec.DefaultProperties,
                 out var options)
-            || !JmapEmailArguments.TryGetIds(arguments, "ids", context, true, out var requestedIds))
+            || !JmapEmailArguments.TryGetIds(arguments, "ids", true, out var requestedIds))
         {
             return JmapMethodResponse.Error("invalidArguments");
         }

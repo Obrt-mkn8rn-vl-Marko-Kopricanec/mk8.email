@@ -136,7 +136,7 @@ internal sealed class EmailSubmissionGetMethod(
         if (!JmapMethodHelpers.HasOnlyProperties(arguments, "accountId", "ids", "properties")
             || !JmapMethodHelpers.TryGetRequiredString(arguments, "accountId", out var accountId)
             || !JmapMethodHelpers.TryGetStringArray(arguments, "properties", true, out var requestedProperties)
-            || !JmapEmailArguments.TryGetIds(arguments, "ids", context, true, out var requestedIds))
+            || !JmapEmailArguments.TryGetIds(arguments, "ids", true, out var requestedIds))
             return JmapMethodResponse.Error("invalidArguments");
         var properties = requestedProperties?.ToHashSet(StringComparer.Ordinal);
         if (properties is not null && properties.Any(property => !JmapEmailSubmissionJson.Properties.Contains(property)))

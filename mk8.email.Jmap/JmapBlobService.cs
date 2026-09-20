@@ -190,7 +190,7 @@ internal sealed class BlobCopyMethod(
             || !JmapMethodHelpers.TryGetRequiredString(arguments, "fromAccountId", out var fromAccountId)
             || !JmapMethodHelpers.TryGetRequiredString(arguments, "accountId", out var accountId)
             || string.Equals(fromAccountId, accountId, StringComparison.Ordinal)
-            || !JmapEmailArguments.TryGetIds(arguments, "blobIds", context, false, out var blobIds)
+            || !JmapEmailArguments.TryGetIds(arguments, "blobIds", false, out var blobIds)
             || blobIds is null)
         {
             return JmapMethodResponse.Error("invalidArguments");

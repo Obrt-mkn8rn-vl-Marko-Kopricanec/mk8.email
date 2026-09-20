@@ -127,33 +127,33 @@ internal sealed class IdentitySetMethod(
                     notUpdated[item.Key] = JmapMethodHelpers.SetError("notFound");
                     continue;
                 }
-                var invalid = item.Value.KeysForPatch()
-                    .Where(property => !UpdateProperties.Contains(property))
-                    .Distinct(StringComparer.Ordinal)
-                    .ToArray();
-                if (invalid.Length > 0)
-                {
-                    notUpdated[item.Key] = JmapMethodHelpers.SetError("invalidProperties", properties: invalid);
-                    continue;
-                }
-                var current = new JsonObject
-                {
-                    ["name"] = identity.Name,
-                    ["replyTo"] = identity.ReplyToJson is null ? null : JsonNode.Parse(identity.ReplyToJson),
-                    ["bcc"] = identity.BccJson is null ? null : JsonNode.Parse(identity.BccJson),
-                    ["textSignature"] = identity.TextSignature,
-                    ["htmlSignature"] = identity.HtmlSignature,
-                };
+                var current = JmapIdentityService.ToJson(identity);
                 JmapIdentityService.IdentityValues values = default;
                 JsonObject? parseError = null;
-                if (!JmapMethodHelpers.TryApplyPatch(current, item.Value, out var result)
-                    || !JmapIdentityService.TryParseMutable(
+                if (!JmapMethodHelpers.TryApplyPatchAllowingUnchangedProperties(
+                        current,
+                        item.Value,
+                        UpdateProperties,
+                        out var result,
+                        out var invalidProperties))
+                {
+                    notUpdated[item.Key] = JmapMethodHelpers.SetError("invalidPatch");
+                    continue;
+                }
+                if (invalidProperties.Count > 0)
+                {
+                    notUpdated[item.Key] = JmapMethodHelpers.SetError(
+                        "invalidProperties",
+                        properties: invalidProperties);
+                    continue;
+                }
+                if (!JmapIdentityService.TryParseMutable(
                         result,
-                        requireEmail: false,
+                        requireEmail: true,
                         out values,
                         out parseError))
                 {
-                    notUpdated[item.Key] = parseError ?? JmapMethodHelpers.SetError("invalidPatch");
+                    notUpdated[item.Key] = parseError ?? JmapMethodHelpers.SetError("invalidProperties");
                     continue;
                 }
                 identity.Name = values.Name;

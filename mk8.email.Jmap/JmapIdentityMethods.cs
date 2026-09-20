@@ -30,8 +30,38 @@ internal sealed class JmapIdentityService(
             Name = string.Empty,
             MayDelete = false,
         };
+        var preexistingChanges = database.ChangeTracker.Entries<JmapChangeDB>()
+            .Select(entry => entry.Entity)
+            .ToHashSet();
         database.JmapIdentities.Add(identity);
-        await database.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await database.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException)
+        {
+            // Two requests may both observe that the lazy default is absent.
+            // The deterministic primary key makes one insert win; treat the
+            // other as success once the winning row is visible.
+            database.Entry(identity).State = EntityState.Detached;
+            DetachPendingChanges(preexistingChanges);
+            if (!await database.JmapIdentities.AnyAsync(
+                    candidate => candidate.AccountId == account.InboxId,
+                    cancellationToken))
+            {
+                throw;
+            }
+        }
+    }
+
+    private void DetachPendingChanges(IReadOnlySet<JmapChangeDB> preexistingChanges)
+    {
+        foreach (var entry in database.ChangeTracker.Entries<JmapChangeDB>()
+                     .Where(entry => entry.State == EntityState.Added
+                         && !preexistingChanges.Contains(entry.Entity)))
+        {
+            entry.State = EntityState.Detached;
+        }
     }
 
     public async Task<bool> CanUseAddressAsync(

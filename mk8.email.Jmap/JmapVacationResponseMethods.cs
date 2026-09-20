@@ -28,9 +28,31 @@ internal sealed class JmapVacationResponseService(EmailDbContext database)
             IsEnabled = false,
             UpdatedAt = DateTime.UtcNow,
         };
+        var preexistingChanges = database.ChangeTracker.Entries<JmapChangeDB>()
+            .Select(entry => entry.Entity)
+            .ToHashSet();
         database.JmapVacationResponses.Add(response);
-        await database.SaveChangesAsync(cancellationToken);
-        return response;
+        try
+        {
+            await database.SaveChangesAsync(cancellationToken);
+            return response;
+        }
+        catch (DbUpdateException)
+        {
+            database.Entry(response).State = EntityState.Detached;
+            foreach (var entry in database.ChangeTracker.Entries<JmapChangeDB>()
+                         .Where(entry => entry.State == EntityState.Added
+                             && !preexistingChanges.Contains(entry.Entity)))
+            {
+                entry.State = EntityState.Detached;
+            }
+            var stored = await database.JmapVacationResponses.SingleOrDefaultAsync(
+                item => item.AccountId == accountId,
+                cancellationToken);
+            if (stored is null)
+                throw;
+            return stored;
+        }
     }
 
     public static JsonObject ToJson(
@@ -236,27 +258,29 @@ internal sealed class VacationResponseSetMethod(
                     notUpdated[item.Key] = JmapMethodHelpers.SetError("notFound");
                     continue;
                 }
-                var invalid = item.Value.KeysForPatch()
-                    .Where(property => !MutableProperties.Contains(property))
-                    .Distinct(StringComparer.Ordinal)
-                    .ToArray();
                 var current = JmapVacationResponseService.ToJson(response);
-                current.Remove("id");
-                if (invalid.Length > 0)
-                {
-                    notUpdated[item.Key] = JmapMethodHelpers.SetError("invalidProperties", properties: invalid);
-                    continue;
-                }
-                if (!JmapMethodHelpers.TryApplyPatch(current, item.Value, out var patched))
+                if (!JmapMethodHelpers.TryApplyPatchAllowingUnchangedProperties(
+                        current,
+                        item.Value,
+                        MutableProperties,
+                        out var patched,
+                        out var invalidProperties))
                 {
                     notUpdated[item.Key] = JmapMethodHelpers.SetError("invalidPatch");
+                    continue;
+                }
+                if (invalidProperties.Count > 0)
+                {
+                    notUpdated[item.Key] = JmapMethodHelpers.SetError(
+                        "invalidProperties",
+                        properties: invalidProperties);
                     continue;
                 }
                 if (!JmapVacationResponseService.TryParse(
                     patched,
                     environment.Limits.MaxMessageSizeBytes,
                     out var values,
-                    out var invalidProperties))
+                    out invalidProperties))
                 {
                     notUpdated[item.Key] = JmapMethodHelpers.SetError(
                         "invalidProperties",

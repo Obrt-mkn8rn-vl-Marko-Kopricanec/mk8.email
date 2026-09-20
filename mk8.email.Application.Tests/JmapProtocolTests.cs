@@ -745,6 +745,100 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task IdentityAndVacationAcceptWholeGetObjectsAsUpdates()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var get = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Submission}}}", "{{{Vacation}}}"],
+          "methodCalls": [
+            ["Identity/get", {"accountId":"{{{fixture.AccountId}}}"}, "i1"],
+            ["VacationResponse/get", {"accountId":"{{{fixture.AccountId}}}"}, "v1"]
+          ]
+        }
+        """);
+        var identity = (JsonObject)Arguments(get)["list"]![0]!.DeepClone();
+        var identityId = identity["id"]!.GetValue<string>();
+        identity["name"] = "Round Trip";
+        var vacation = (JsonObject)Arguments(get, 1)["list"]![0]!.DeepClone();
+        vacation["isEnabled"] = true;
+        vacation["subject"] = "Whole object update";
+        vacation["textBody"] = "Back later";
+
+        var set = await fixture.InvokeAsync(new JsonObject
+        {
+            ["using"] = new JsonArray(Core, Submission, Vacation),
+            ["methodCalls"] = new JsonArray(
+                new JsonArray(
+                    "Identity/set",
+                    new JsonObject
+                    {
+                        ["accountId"] = fixture.AccountId,
+                        ["update"] = new JsonObject { [identityId] = identity },
+                    },
+                    "i2"),
+                new JsonArray(
+                    "VacationResponse/set",
+                    new JsonObject
+                    {
+                        ["accountId"] = fixture.AccountId,
+                        ["update"] = new JsonObject { ["singleton"] = vacation },
+                    },
+                    "v2")),
+        });
+        Assert.IsNull(Arguments(set)["notUpdated"]);
+        Assert.IsTrue(Arguments(set)["updated"]!.AsObject().ContainsKey(identityId));
+        Assert.IsNull(Arguments(set, 1)["notUpdated"]);
+        Assert.IsTrue(Arguments(set, 1)["updated"]!.AsObject().ContainsKey("singleton"));
+
+        var verify = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Submission}}}", "{{{Vacation}}}"],
+          "methodCalls": [
+            ["Identity/get", {"accountId":"{{{fixture.AccountId}}}", "ids":["{{{identityId}}}"]}, "i3"],
+            ["VacationResponse/get", {"accountId":"{{{fixture.AccountId}}}"}, "v3"]
+          ]
+        }
+        """);
+        Assert.AreEqual("Round Trip", Arguments(verify)["list"]![0]!["name"]!.GetValue<string>());
+        Assert.AreEqual(
+            fixture.User.Username,
+            Arguments(verify)["list"]![0]!["email"]!.GetValue<string>());
+        Assert.AreEqual(
+            "Whole object update",
+            Arguments(verify, 1)["list"]![0]!["subject"]!.GetValue<string>());
+    }
+
+    [TestMethod]
+    public async Task LazySingletonInitializationIsIdempotentAcrossConcurrentRequests()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var request = $$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Submission}}}", "{{{Vacation}}}"],
+          "methodCalls": [
+            ["Identity/get", {"accountId":"{{{fixture.AccountId}}}"}, "i1"],
+            ["VacationResponse/get", {"accountId":"{{{fixture.AccountId}}}"}, "v1"]
+          ]
+        }
+        """;
+        var responses = await Task.WhenAll(
+            Enumerable.Range(0, 8).Select(_ => fixture.InvokeAsync(request)));
+        foreach (var response in responses)
+        {
+            Assert.AreEqual("Identity/get", response["methodResponses"]![0]![0]!.GetValue<string>());
+            Assert.AreEqual("VacationResponse/get", response["methodResponses"]![1]![0]!.GetValue<string>());
+            Assert.AreEqual(1, Arguments(response)["list"]!.AsArray().Count);
+            Assert.AreEqual(1, Arguments(response, 1)["list"]!.AsArray().Count);
+        }
+
+        using var scope = fixture.Services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        Assert.AreEqual(1, await database.JmapIdentities.CountAsync());
+        Assert.AreEqual(1, await database.JmapVacationResponses.CountAsync());
+    }
+
+    [TestMethod]
     public async Task VacationSingletonCanBeConfiguredButNotCreatedOrDestroyed()
     {
         await using var fixture = await JmapFixture.CreateAsync();

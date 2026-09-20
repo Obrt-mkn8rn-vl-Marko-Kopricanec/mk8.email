@@ -105,7 +105,7 @@ public static class JmapEndpointRouteBuilderExtensions
         }
     }
 
-    private static bool TryEventTypes(string value, out IReadOnlySet<string>? types)
+    internal static bool TryEventTypes(string value, out IReadOnlySet<string>? types)
     {
         types = null;
         if (value == "*")
@@ -115,8 +115,9 @@ public static class JmapEndpointRouteBuilderExtensions
         var result = new HashSet<string>(StringComparer.Ordinal);
         foreach (var type in value.Split(','))
         {
-            if (!JmapStateChangeService.SupportedTypes.Contains(type) || !result.Add(type))
+            if (!JmapStateChangeService.SupportedTypes.Contains(type))
                 return false;
+            result.Add(type);
         }
         types = result;
         return true;

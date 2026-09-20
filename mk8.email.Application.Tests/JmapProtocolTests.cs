@@ -3604,6 +3604,67 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task PushTypeFiltersTreatDuplicateNamesAsASet()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var subscriptionId = Guid.CreateVersion7();
+        var wireId = JmapId.PushSubscription(subscriptionId);
+        using (var scope = fixture.Services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            database.JmapPushSubscriptions.Add(new JmapPushSubscriptionDB
+            {
+                Id = subscriptionId,
+                SubscriptionObjectId = wireId,
+                UserId = fixture.User.Id,
+                DeviceClientId = "duplicate-types-device",
+                Url = "https://push.example.net/jmap",
+                VerificationCode = "secret",
+                Types = ["Email"],
+                ExpiresAt = DateTime.UtcNow.AddDays(3),
+                CreatedAt = DateTime.UtcNow.AddMinutes(-1),
+                UpdatedAt = DateTime.UtcNow.AddMinutes(-1),
+            });
+            await database.SaveChangesAsync();
+        }
+
+        var response = await fixture.InvokeAsync(new JsonObject
+        {
+            ["using"] = new JsonArray(Core),
+            ["methodCalls"] = new JsonArray(
+                new JsonArray(
+                    "PushSubscription/set",
+                    new JsonObject
+                    {
+                        ["update"] = new JsonObject
+                        {
+                            [wireId] = new JsonObject
+                            {
+                                ["types"] = new JsonArray("Email", "Email", "Mailbox"),
+                            },
+                        },
+                    },
+                    "p1"),
+                new JsonArray(
+                    "PushSubscription/get",
+                    new JsonObject
+                    {
+                        ["ids"] = new JsonArray(wireId),
+                        ["properties"] = new JsonArray("id", "types"),
+                    },
+                    "p2")),
+        });
+
+        Assert.IsNull(Arguments(response)["notUpdated"]);
+        CollectionAssert.AreEquivalent(
+            new[] { "Email", "Mailbox" },
+            Arguments(response, 1)["list"]![0]!["types"]!
+                .AsArray()
+                .Select(node => node!.GetValue<string>())
+                .ToArray());
+    }
+
+    [TestMethod]
     public async Task PushCreateResponseOmitsUnchangedClientProperties()
     {
         using var receiver = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);

@@ -360,6 +360,17 @@ public sealed class JmapCoreTests
     }
 
     [TestMethod]
+    public void EventSourceTypeFiltersTreatDuplicateNamesAsASet()
+    {
+        Assert.IsTrue(JmapEndpointRouteBuilderExtensions.TryEventTypes(
+            "Email,Email,Mailbox",
+            out var types));
+        CollectionAssert.AreEquivalent(
+            new[] { "Email", "Mailbox" },
+            types!.ToArray());
+    }
+
+    [TestMethod]
     public void EmailBodyMediaTypesUseRfc6838RestrictedNames()
     {
         Assert.IsTrue(JmapMediaType.TryNormalize(

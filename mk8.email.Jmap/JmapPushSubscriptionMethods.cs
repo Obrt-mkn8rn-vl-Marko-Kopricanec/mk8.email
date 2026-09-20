@@ -486,9 +486,9 @@ internal sealed class PushSubscriptionSetMethod(
             if (item is not JsonValue jsonValue
                 || !jsonValue.TryGetValue<string>(out var type)
                 || type is null
-                || !JmapStateChangeService.SupportedTypes.Contains(type)
-                || !parsed.Add(type))
+                || !JmapStateChangeService.SupportedTypes.Contains(type))
                 return false;
+            parsed.Add(type);
         }
         types = parsed.ToArray();
         return true;

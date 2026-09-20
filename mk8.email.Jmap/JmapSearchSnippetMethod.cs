@@ -66,10 +66,19 @@ internal static partial class JmapSearchSnippetFormatter
             return null;
         var index = value.IndexOf(term, StringComparison.InvariantCultureIgnoreCase);
         var start = Math.Max(0, index - 80);
-        var length = Math.Min(value.Length - start, 180);
-        var snippet = WhiteSpaceRegex().Replace(value.Substring(start, length), " ").Trim();
+        if (start > 0 && start < value.Length && char.IsLowSurrogate(value[start]))
+            start++;
+        var end = Math.Min(value.Length, start + 180);
+        if (end > start
+            && end < value.Length
+            && char.IsHighSurrogate(value[end - 1])
+            && char.IsLowSurrogate(value[end]))
+        {
+            end--;
+        }
+        var snippet = WhiteSpaceRegex().Replace(value[start..end], " ").Trim();
         if (start > 0) snippet = "…" + snippet;
-        if (start + length < value.Length) snippet += "…";
+        if (end < value.Length) snippet += "…";
         var highlighted = Highlight(snippet, terms);
         while (Encoding.UTF8.GetByteCount(highlighted) > 255)
         {

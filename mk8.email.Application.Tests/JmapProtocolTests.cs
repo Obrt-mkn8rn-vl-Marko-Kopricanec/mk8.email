@@ -1130,6 +1130,22 @@ public sealed class JmapProtocolTests
         CollectionAssert.AreEqual(plaintext, decrypted);
     }
 
+    [TestMethod]
+    public void SearchSnippetNeverSplitsUnicodeScalars()
+    {
+        var value = new string('x', 10)
+            + "😀"
+            + new string('y', 79)
+            + "needle"
+            + new string('z', 220);
+        var snippet = JmapSearchSnippetFormatter.HighlightPreview(value, ["needle"]);
+
+        Assert.IsNotNull(snippet);
+        Assert.IsTrue(JmapJson.ContainsOnlyUnicodeScalars(snippet));
+        Assert.IsTrue(Encoding.UTF8.GetByteCount(snippet) <= 255);
+        StringAssert.Contains(snippet, "<mark>needle</mark>");
+    }
+
     private static async Task<JsonObject> CreateTextEmailAsync(
         JmapFixture fixture,
         string creationId,

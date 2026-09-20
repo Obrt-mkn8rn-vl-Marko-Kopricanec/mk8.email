@@ -198,6 +198,7 @@ internal static partial class JmapEmailCodec
         var textBody = selection.TextBody;
         var htmlBody = selection.HtmlBody;
         var attachments = selection.Attachments;
+        var headers = MessageHeaders(message);
         var result = new JsonObject();
         foreach (var property in options.Properties)
         {
@@ -237,40 +238,40 @@ internal static partial class JmapEmailCodec
                         : FormatUtcDate(storedEmail.ReceivedAt);
                     break;
                 case "headers":
-                    result[property] = BuildHeaders(message.Headers);
+                    result[property] = BuildHeaders(headers);
                     break;
                 case "messageId":
-                    result[property] = HeaderValue(message.Headers, "Message-ID", HeaderForm.MessageIds, false);
+                    result[property] = HeaderValue(headers, "Message-ID", HeaderForm.MessageIds, false);
                     break;
                 case "inReplyTo":
-                    result[property] = HeaderValue(message.Headers, "In-Reply-To", HeaderForm.MessageIds, false);
+                    result[property] = HeaderValue(headers, "In-Reply-To", HeaderForm.MessageIds, false);
                     break;
                 case "references":
-                    result[property] = HeaderValue(message.Headers, "References", HeaderForm.MessageIds, false);
+                    result[property] = HeaderValue(headers, "References", HeaderForm.MessageIds, false);
                     break;
                 case "sender":
-                    result[property] = HeaderValue(message.Headers, "Sender", HeaderForm.Addresses, false);
+                    result[property] = HeaderValue(headers, "Sender", HeaderForm.Addresses, false);
                     break;
                 case "from":
-                    result[property] = HeaderValue(message.Headers, "From", HeaderForm.Addresses, false);
+                    result[property] = HeaderValue(headers, "From", HeaderForm.Addresses, false);
                     break;
                 case "to":
-                    result[property] = HeaderValue(message.Headers, "To", HeaderForm.Addresses, false);
+                    result[property] = HeaderValue(headers, "To", HeaderForm.Addresses, false);
                     break;
                 case "cc":
-                    result[property] = HeaderValue(message.Headers, "Cc", HeaderForm.Addresses, false);
+                    result[property] = HeaderValue(headers, "Cc", HeaderForm.Addresses, false);
                     break;
                 case "bcc":
-                    result[property] = HeaderValue(message.Headers, "Bcc", HeaderForm.Addresses, false);
+                    result[property] = HeaderValue(headers, "Bcc", HeaderForm.Addresses, false);
                     break;
                 case "replyTo":
-                    result[property] = HeaderValue(message.Headers, "Reply-To", HeaderForm.Addresses, false);
+                    result[property] = HeaderValue(headers, "Reply-To", HeaderForm.Addresses, false);
                     break;
                 case "subject":
-                    result[property] = HeaderValue(message.Headers, "Subject", HeaderForm.Text, false);
+                    result[property] = HeaderValue(headers, "Subject", HeaderForm.Text, false);
                     break;
                 case "sentAt":
-                    result[property] = HeaderValue(message.Headers, "Date", HeaderForm.Date, false);
+                    result[property] = HeaderValue(headers, "Date", HeaderForm.Date, false);
                     break;
                 case "bodyStructure":
                     result[property] = parts is null
@@ -304,7 +305,7 @@ internal static partial class JmapEmailCodec
                     if (TryParseHeaderProperty(property, out var headerProperty))
                     {
                         result[property] = HeaderValue(
-                            message.Headers,
+                            headers,
                             headerProperty.Name,
                             headerProperty.Form,
                             headerProperty.All);
@@ -781,7 +782,13 @@ internal static partial class JmapEmailCodec
         return builder.ToString();
     }
 
-    private static JsonArray BuildHeaders(HeaderList headers)
+    private static IReadOnlyList<Header> MessageHeaders(MimeMessage message) =>
+        message.Headers
+            .Concat(message.Body?.Headers ?? [])
+            .OrderBy(header => header.Offset < 0 ? long.MaxValue : header.Offset)
+            .ToArray();
+
+    private static JsonArray BuildHeaders(IEnumerable<Header> headers)
     {
         var result = new JsonArray();
         foreach (var header in headers)
@@ -796,7 +803,7 @@ internal static partial class JmapEmailCodec
     }
 
     private static JsonNode? HeaderValue(
-        HeaderList headers,
+        IEnumerable<Header> headers,
         string name,
         HeaderForm form,
         bool all)
@@ -1079,10 +1086,7 @@ internal static partial class JmapEmailCodec
             "MESSAGE-ID", "IN-REPLY-TO", "REFERENCES", "SUBJECT", "COMMENTS",
             "KEYWORDS", "RESENT-DATE", "RESENT-FROM", "RESENT-SENDER",
             "RESENT-REPLY-TO", "RESENT-TO", "RESENT-CC", "RESENT-BCC", "RESENT-MESSAGE-ID",
-            "RETURN-PATH", "RECEIVED", "MIME-VERSION", "CONTENT-TYPE",
-            "CONTENT-TRANSFER-ENCODING", "CONTENT-ID", "CONTENT-DESCRIPTION",
-            "CONTENT-DISPOSITION", "CONTENT-LANGUAGE", "CONTENT-LOCATION",
-            "LIST-ID", "LIST-HELP", "LIST-UNSUBSCRIBE", "LIST-SUBSCRIBE",
+            "RETURN-PATH", "RECEIVED", "LIST-HELP", "LIST-UNSUBSCRIBE", "LIST-SUBSCRIBE",
             "LIST-POST", "LIST-OWNER", "LIST-ARCHIVE",
         ],
         StringComparer.Ordinal);

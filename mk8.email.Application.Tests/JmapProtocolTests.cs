@@ -1008,6 +1008,57 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task MimeHeadersSupportPermittedParsedForms()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var create = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/set", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "create":{"mime":{
+              "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true},
+              "bodyValues":{"1":{"value":"body"}},
+              "bodyStructure":{
+                "partId":"1",
+                "type":"text/plain",
+                "header:Content-ID:asMessageIds":["part@example.test"]
+              }
+            }}
+          }, "s1"]]
+        }
+        """);
+        var emailId = Arguments(create)["created"]!["mime"]!["id"]!.GetValue<string>();
+
+        var get = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/get", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "ids":["{{{emailId}}}"],
+            "properties":["headers", "header:Content-Type:asText", "bodyStructure"],
+            "bodyProperties":["cid", "header:Content-ID:asMessageIds"]
+          }, "g1"]]
+        }
+        """);
+        var email = Arguments(get)["list"]![0]!;
+        StringAssert.StartsWith(
+            email["header:Content-Type:asText"]!.GetValue<string>(),
+            "text/plain");
+        var headerNames = email["headers"]!.AsArray()
+            .Select(header => header!["name"]!.GetValue<string>())
+            .ToArray();
+        CollectionAssert.Contains(headerNames, "Content-Type");
+        CollectionAssert.Contains(headerNames, "Content-ID");
+        Assert.AreEqual("part@example.test", email["bodyStructure"]!["cid"]!.GetValue<string>());
+        CollectionAssert.AreEqual(
+            new[] { "part@example.test" },
+            email["bodyStructure"]!["header:Content-ID:asMessageIds"]!.AsArray()
+                .Select(node => node!.GetValue<string>())
+                .ToArray());
+    }
+
+    [TestMethod]
     public async Task UploadBlobCanBeParsedAndImported()
     {
         await using var fixture = await JmapFixture.CreateAsync();

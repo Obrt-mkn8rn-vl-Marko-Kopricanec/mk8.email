@@ -344,7 +344,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
         MimePart part;
         if (partId is not null)
         {
-            if (charset is not null
+            if (value.ContainsKey("charset")
                 || value.ContainsKey("size")
                 || !TryGetBodyValue(bodyValues, partId, out var textValue)
                 || mediaType != "text")

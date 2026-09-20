@@ -895,6 +895,11 @@ public sealed class JmapProtocolTests
                 "bodyValues":{"1":{"value":"body"}},
                 "textBody":[{"partId":"1", "size":4, "type":"text/plain"}]
               },
+              "partCharsetNull": {
+                "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true},
+                "bodyValues":{"1":{"value":"body"}},
+                "textBody":[{"partId":"1", "charset":null, "type":"text/plain"}]
+              },
               "emptyTextBody": {
                 "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true},
                 "textBody":[]
@@ -968,6 +973,7 @@ public sealed class JmapProtocolTests
         Assert.AreEqual("invalidProperties", failures["wrongForm"]!["type"]!.GetValue<string>());
         Assert.AreEqual("invalidProperties", failures["duplicateRoot"]!["type"]!.GetValue<string>());
         Assert.AreEqual("invalidProperties", failures["partSize"]!["type"]!.GetValue<string>());
+        Assert.AreEqual("invalidProperties", failures["partCharsetNull"]!["type"]!.GetValue<string>());
         Assert.AreEqual("invalidProperties", failures["emptyTextBody"]!["type"]!.GetValue<string>());
         Assert.AreEqual("invalidProperties", failures["nullTextBody"]!["type"]!.GetValue<string>());
         Assert.AreEqual("invalidProperties", failures["invalidBodyValue"]!["type"]!.GetValue<string>());

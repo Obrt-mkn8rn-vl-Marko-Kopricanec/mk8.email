@@ -1866,6 +1866,33 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task VacationResponseAllowsAnEmptyDateWindow()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Vacation}}}"],
+          "methodCalls": [["VacationResponse/set", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "update":{"singleton":{
+              "isEnabled":true,
+              "fromDate":"2026-09-30T00:00:00Z",
+              "toDate":"2026-09-20T00:00:00Z"
+            }}
+          }, "v1"], ["VacationResponse/get", {
+            "accountId":"{{{fixture.AccountId}}}", "ids":["singleton"]
+          }, "v2"]]
+        }
+        """);
+
+        Assert.IsNull(Arguments(response)["notUpdated"]);
+        Assert.IsTrue(Arguments(response)["updated"]!.AsObject().ContainsKey("singleton"));
+        var vacation = Arguments(response, 1)["list"]![0]!;
+        Assert.AreEqual("2026-09-30T00:00:00Z", vacation["fromDate"]!.GetValue<string>());
+        Assert.AreEqual("2026-09-20T00:00:00Z", vacation["toDate"]!.GetValue<string>());
+    }
+
+    [TestMethod]
     public async Task PushMethodsRejectAccountStateAndDoNotPartiallyApplyInvalidPatch()
     {
         await using var fixture = await JmapFixture.CreateAsync();

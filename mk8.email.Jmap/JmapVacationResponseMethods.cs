@@ -97,11 +97,6 @@ internal sealed class JmapVacationResponseService(EmailDbContext database)
             invalid.Add("textBody");
             invalid.Add("htmlBody");
         }
-        if (fromDate is not null && toDate is not null && fromDate >= toDate)
-        {
-            invalid.Add("fromDate");
-            invalid.Add("toDate");
-        }
         invalidProperties = invalid.Distinct(StringComparer.Ordinal).ToArray();
         if (invalidProperties.Count > 0)
             return false;

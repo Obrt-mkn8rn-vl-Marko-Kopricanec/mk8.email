@@ -1617,6 +1617,37 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task SearchSnippetDoesNotHighlightNegatedTerms()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var create = await CreateTextEmailAsync(
+            fixture,
+            "snippet-negation",
+            "Allowed subject",
+            "wanted blocked");
+        var emailId = Arguments(create)["created"]!["snippet-negation"]!["id"]!
+            .GetValue<string>();
+
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["SearchSnippet/get", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "filter":{"operator":"AND", "conditions":[
+              {"body":"wanted"},
+              {"operator":"NOT", "conditions":[{"subject":"blocked"}]}
+            ]},
+            "emailIds":["{{{emailId}}}"]
+          }, "ss1"]]
+        }
+        """);
+
+        var preview = Arguments(response)["list"]![0]!["preview"]!.GetValue<string>();
+        StringAssert.Contains(preview, "<mark>wanted</mark> blocked");
+        Assert.IsFalse(preview.Contains("<mark>blocked</mark>", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
     public async Task MimeProjectionPreservesNestedStructureAndResolvablePartBlobs()
     {
         await using var fixture = await JmapFixture.CreateAsync();

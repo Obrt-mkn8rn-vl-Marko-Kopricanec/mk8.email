@@ -12,18 +12,27 @@ internal static partial class JmapSearchSnippetFormatter
     public static IReadOnlyList<string> ExtractTerms(JsonNode? filter)
     {
         var result = new HashSet<string>(StringComparer.InvariantCultureIgnoreCase);
-        Visit(filter);
+        Visit(filter, negated: false);
         return result.OrderByDescending(term => term.Length).ToArray();
 
-        void Visit(JsonNode? node)
+        void Visit(JsonNode? node, bool negated)
         {
             if (node is not JsonObject value)
                 return;
+            var childNegated = negated;
+            if (value["operator"] is JsonValue operatorValue
+                && operatorValue.TryGetValue<string>(out var operation)
+                && operation == "NOT")
+            {
+                childNegated = !childNegated;
+            }
             if (value["conditions"] is JsonArray conditions)
             {
                 foreach (var condition in conditions)
-                    Visit(condition);
+                    Visit(condition, childNegated);
             }
+            if (negated)
+                return;
             foreach (var name in new[] { "text", "from", "to", "cc", "bcc", "subject", "body" })
             {
                 if (value[name] is JsonValue textValue

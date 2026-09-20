@@ -729,8 +729,11 @@ internal sealed class EmailSubmissionSetMethod(
     {
         if (allowEmpty && email.Length == 0)
             return true;
-        return email.Length <= 320
-            && email.All(char.IsAscii)
+        if (email.Length > 254 || !email.All(char.IsAscii))
+            return false;
+        var separator = email.LastIndexOf('@');
+        return separator is > 0 and <= 64
+            && email.Length - separator - 1 is > 0 and <= 255
             && MailboxAddress.TryParse(email, out var mailbox)
             && string.Equals(mailbox.Address, email, StringComparison.OrdinalIgnoreCase);
     }

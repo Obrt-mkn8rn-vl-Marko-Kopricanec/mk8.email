@@ -1891,6 +1891,7 @@ public sealed class JmapProtocolTests
         var createdEmail = Arguments(emailResponse)["created"]!["send"]!;
         var emailId = createdEmail["id"]!.GetValue<string>();
         var emailSize = createdEmail["size"]!.GetValue<int>();
+        var oversizedMailFrom = new string('a', 65) + "@example.net";
 
         var submissionResponse = await fixture.InvokeAsync($$$"""
         {
@@ -1931,6 +1932,13 @@ public sealed class JmapProtocolTests
                   "mailFrom":{"email":"{{{fixture.User.Username}}}"},
                   "rcptTo":[{"email":"not an address"}]
                 }
+              },
+              "oversizedMailFrom":{
+                "identityId":"{{{identityId}}}", "emailId":"{{{emailId}}}",
+                "envelope":{
+                  "mailFrom":{"email":"{{{oversizedMailFrom}}}"},
+                  "rcptTo":[{"email":"{{{fixture.User.Username}}}"}]
+                }
               }
             }
           }, "s1"]]
@@ -1953,6 +1961,10 @@ public sealed class JmapProtocolTests
         Assert.AreEqual(
             "not an address",
             invalidRecipient["invalidRecipients"]![0]!.GetValue<string>());
+        Assert.AreEqual(
+            "invalidProperties",
+            Arguments(submissionResponse)["notCreated"]!["oversizedMailFrom"]!["type"]!
+                .GetValue<string>());
 
         using (var scope = fixture.Services.CreateScope())
         {

@@ -130,6 +130,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
             return new JmapBuildResult(null, error);
         }
 
+        var partIds = new HashSet<string>(StringComparer.Ordinal);
         MimeEntity? body;
         if (value.TryGetPropertyValue("bodyStructure", out var bodyStructureNode))
         {
@@ -146,6 +147,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
                 context,
                 bodyStructure,
                 bodyValues,
+                partIds,
                 cancellationToken,
                 rootForbiddenHeaders);
             if (built.Error is not null)
@@ -162,6 +164,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
                 context,
                 value,
                 bodyValues,
+                partIds,
                 cancellationToken);
             if (flat.Error is not null)
             {
@@ -222,6 +225,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
         JmapInvocationContext context,
         JsonObject value,
         JsonObject? bodyValues,
+        ISet<string> partIds,
         CancellationToken cancellationToken)
     {
         if (!TryGetPartArray(value, "textBody", out var textParts)
@@ -239,7 +243,13 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
         {
             if (!HasType(textParts[0], "text/plain"))
                 return PartBuildResult.Failed("invalidProperties", properties: ["textBody"]);
-            var built = await BuildPartAsync(accountId, context, textParts[0], bodyValues, cancellationToken);
+            var built = await BuildPartAsync(
+                accountId,
+                context,
+                textParts[0],
+                bodyValues,
+                partIds,
+                cancellationToken);
             if (built.Error is not null) return built;
             text = built.Entity;
         }
@@ -247,7 +257,13 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
         {
             if (!HasType(htmlParts[0], "text/html"))
                 return PartBuildResult.Failed("invalidProperties", properties: ["htmlBody"]);
-            var built = await BuildPartAsync(accountId, context, htmlParts[0], bodyValues, cancellationToken);
+            var built = await BuildPartAsync(
+                accountId,
+                context,
+                htmlParts[0],
+                bodyValues,
+                partIds,
+                cancellationToken);
             if (built.Error is not null) return built;
             html = built.Entity;
         }
@@ -270,7 +286,13 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
                 mixed.Add(body);
             foreach (var attachment in attachmentParts)
             {
-                var built = await BuildPartAsync(accountId, context, attachment, bodyValues, cancellationToken);
+                var built = await BuildPartAsync(
+                    accountId,
+                    context,
+                    attachment,
+                    bodyValues,
+                    partIds,
+                    cancellationToken);
                 if (built.Error is not null) return built;
                 mixed.Add(built.Entity!);
             }
@@ -284,6 +306,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
         JmapInvocationContext context,
         JsonObject value,
         JsonObject? bodyValues,
+        ISet<string> partIds,
         CancellationToken cancellationToken,
         IReadOnlySet<string>? forbiddenHeaders = null)
     {
@@ -319,7 +342,13 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
             {
                 if (item is not JsonObject child)
                     return PartBuildResult.Failed("invalidProperties");
-                var built = await BuildPartAsync(accountId, context, child, bodyValues, cancellationToken);
+                var built = await BuildPartAsync(
+                    accountId,
+                    context,
+                    child,
+                    bodyValues,
+                    partIds,
+                    cancellationToken);
                 if (built.Error is not null)
                     return built;
                 multipart.Add(built.Entity!);
@@ -347,7 +376,8 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
             if (value.ContainsKey("charset")
                 || value.ContainsKey("size")
                 || !TryGetBodyValue(bodyValues, partId, out var textValue)
-                || mediaType != "text")
+                || mediaType != "text"
+                || !partIds.Add(partId))
             {
                 return PartBuildResult.Failed("invalidProperties");
             }

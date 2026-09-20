@@ -1630,6 +1630,175 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task EmailQueryChangesReturnsOrderedCreateUpdateAndDestroyDeltas()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        const string sort = "\"sort\":[{\"property\":\"hasKeyword\","
+            + "\"keyword\":\"$flagged\",\"isAscending\":true}]";
+        var initial = await fixture.InvokeAsync($$$"""
+        {
+          "using":["{{{Core}}}","{{{Mail}}}"],
+          "methodCalls":[["Email/query",{
+            "accountId":"{{{fixture.AccountId}}}",{{{sort}}}
+          },"q1"]]
+        }
+        """);
+        Assert.IsTrue(Arguments(initial)["canCalculateChanges"]!.GetValue<bool>());
+        var initialState = Arguments(initial)["queryState"]!.GetValue<string>();
+
+        var create = await CreateTextEmailAsync(
+            fixture,
+            "queryDelta",
+            "Query delta",
+            "body");
+        var emailId = Arguments(create)["created"]!["queryDelta"]!["id"]!.GetValue<string>();
+        var createdChanges = await fixture.InvokeAsync($$$"""
+        {
+          "using":["{{{Core}}}","{{{Mail}}}"],
+          "methodCalls":[["Email/queryChanges",{
+            "accountId":"{{{fixture.AccountId}}}",{{{sort}}},
+            "sinceQueryState":"{{{initialState}}}","calculateTotal":true
+          },"qc1"]]
+        }
+        """);
+        var createdArguments = Arguments(createdChanges);
+        Assert.AreEqual(0, createdArguments["removed"]!.AsArray().Count);
+        Assert.AreEqual(emailId, createdArguments["added"]![0]!["id"]!.GetValue<string>());
+        Assert.AreEqual(0, createdArguments["added"]![0]!["index"]!.GetValue<int>());
+        Assert.AreEqual(1, createdArguments["total"]!.GetValue<int>());
+        var createdState = createdArguments["newQueryState"]!.GetValue<string>();
+
+        await fixture.InvokeAsync($$$"""
+        {
+          "using":["{{{Core}}}","{{{Mail}}}"],
+          "methodCalls":[["Email/set",{
+            "accountId":"{{{fixture.AccountId}}}",
+            "update":{"{{{emailId}}}":{"keywords/$flagged":true}}
+          },"s1"]]
+        }
+        """);
+        var limited = await fixture.InvokeAsync($$$"""
+        {
+          "using":["{{{Core}}}","{{{Mail}}}"],
+          "methodCalls":[["Email/queryChanges",{
+            "accountId":"{{{fixture.AccountId}}}",{{{sort}}},
+            "sinceQueryState":"{{{createdState}}}","maxChanges":1
+          },"qc2"]]
+        }
+        """);
+        Assert.AreEqual("tooManyChanges", Arguments(limited)["type"]!.GetValue<string>());
+
+        var updatedChanges = await fixture.InvokeAsync($$$"""
+        {
+          "using":["{{{Core}}}","{{{Mail}}}"],
+          "methodCalls":[["Email/queryChanges",{
+            "accountId":"{{{fixture.AccountId}}}",{{{sort}}},
+            "sinceQueryState":"{{{createdState}}}"
+          },"qc3"]]
+        }
+        """);
+        var updatedArguments = Arguments(updatedChanges);
+        CollectionAssert.AreEqual(
+            new[] { emailId },
+            updatedArguments["removed"]!.AsArray()
+                .Select(node => node!.GetValue<string>()).ToArray());
+        Assert.AreEqual(emailId, updatedArguments["added"]![0]!["id"]!.GetValue<string>());
+        Assert.AreEqual(0, updatedArguments["added"]![0]!["index"]!.GetValue<int>());
+        var updatedState = updatedArguments["newQueryState"]!.GetValue<string>();
+
+        await fixture.InvokeAsync($$$"""
+        {
+          "using":["{{{Core}}}","{{{Mail}}}"],
+          "methodCalls":[["Email/set",{
+            "accountId":"{{{fixture.AccountId}}}","destroy":["{{{emailId}}}"]
+          },"s2"]]
+        }
+        """);
+        var destroyedChanges = await fixture.InvokeAsync($$$"""
+        {
+          "using":["{{{Core}}}","{{{Mail}}}"],
+          "methodCalls":[["Email/queryChanges",{
+            "accountId":"{{{fixture.AccountId}}}",{{{sort}}},
+            "sinceQueryState":"{{{updatedState}}}"
+          },"qc4"]]
+        }
+        """);
+        CollectionAssert.AreEqual(
+            new[] { emailId },
+            Arguments(destroyedChanges)["removed"]!.AsArray()
+                .Select(node => node!.GetValue<string>()).ToArray());
+        Assert.AreEqual(0, Arguments(destroyedChanges)["added"]!.AsArray().Count);
+    }
+
+    [TestMethod]
+    public async Task EmailQueryChangesRecalculatesEveryEmailAffectedByThreadKeywords()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var first = await CreateTextEmailAsync(fixture, "first", "Thread first", "first");
+        var second = await CreateTextEmailAsync(fixture, "second", "Thread second", "second");
+        var firstId = Arguments(first)["created"]!["first"]!["id"]!.GetValue<string>();
+        var secondId = Arguments(second)["created"]!["second"]!["id"]!.GetValue<string>();
+        Assert.IsTrue(JmapId.TryParseEmail(firstId, out var firstDatabaseId));
+        Assert.IsTrue(JmapId.TryParseEmail(secondId, out var secondDatabaseId));
+        using (var scope = fixture.Services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            var emails = await database.Emails
+                .Where(email => email.Id == firstDatabaseId || email.Id == secondDatabaseId)
+                .ToListAsync();
+            var threadId = Guid.CreateVersion7().ToString("N");
+            foreach (var email in emails)
+                email.ThreadObjectId = threadId;
+            await database.SaveChangesAsync();
+        }
+
+        var initial = await fixture.InvokeAsync($$$"""
+        {
+          "using":["{{{Core}}}","{{{Mail}}}"],
+          "methodCalls":[["Email/query",{
+            "accountId":"{{{fixture.AccountId}}}",
+            "filter":{"someInThreadHaveKeyword":"$flagged"}
+          },"q1"]]
+        }
+        """);
+        Assert.AreEqual(0, Arguments(initial)["ids"]!.AsArray().Count);
+        var initialState = Arguments(initial)["queryState"]!.GetValue<string>();
+
+        await fixture.InvokeAsync($$$"""
+        {
+          "using":["{{{Core}}}","{{{Mail}}}"],
+          "methodCalls":[["Email/set",{
+            "accountId":"{{{fixture.AccountId}}}",
+            "update":{"{{{firstId}}}":{"keywords/$flagged":true}}
+          },"s1"]]
+        }
+        """);
+        var changes = await fixture.InvokeAsync($$$"""
+        {
+          "using":["{{{Core}}}","{{{Mail}}}"],
+          "methodCalls":[["Email/queryChanges",{
+            "accountId":"{{{fixture.AccountId}}}",
+            "filter":{"someInThreadHaveKeyword":"$flagged"},
+            "sinceQueryState":"{{{initialState}}}"
+          },"qc1"]]
+        }
+        """);
+        var arguments = Arguments(changes);
+        CollectionAssert.AreEquivalent(
+            new[] { firstId, secondId },
+            arguments["removed"]!.AsArray()
+                .Select(node => node!.GetValue<string>()).ToArray());
+        CollectionAssert.AreEquivalent(
+            new[] { firstId, secondId },
+            arguments["added"]!.AsArray()
+                .Select(node => node!["id"]!.GetValue<string>()).ToArray());
+        CollectionAssert.AreEqual(
+            new[] { 0, 1 },
+            arguments["added"]!.AsArray()
+                .Select(node => node!["index"]!.GetValue<int>()).ToArray());
+    }
+
+    [TestMethod]
     public async Task EmailCreationRejectsAmbiguousHeadersAndInvalidBodyParts()
     {
         await using var fixture = await JmapFixture.CreateAsync();

@@ -48,6 +48,16 @@ internal static partial class JmapEmailQueryEngine
             "allInThreadHaveKeyword", "someInThreadHaveKeyword",
         ],
         StringComparer.Ordinal);
+    private static readonly IReadOnlySet<string> MutableFilterProperties = new HashSet<string>(
+        [
+            "inMailbox", "inMailboxOtherThan", "allInThreadHaveKeyword",
+            "someInThreadHaveKeyword", "noneInThreadHaveKeyword", "hasKeyword",
+            "notKeyword",
+        ],
+        StringComparer.Ordinal);
+    private static readonly IReadOnlySet<string> ThreadFilterProperties = new HashSet<string>(
+        ["allInThreadHaveKeyword", "someInThreadHaveKeyword", "noneInThreadHaveKeyword"],
+        StringComparer.Ordinal);
 
     public static async Task<List<JmapEmailQueryItem>> LoadAsync(
         EmailDbContext database,
@@ -196,6 +206,31 @@ internal static partial class JmapEmailQueryEngine
             return left.Email.Id.CompareTo(right.Email.Id);
         });
         return filtered.Order(comparer).ToList();
+    }
+
+    public static bool UsesMutableFilter(JsonNode? filter) =>
+        FilterUsesAnyProperty(filter, MutableFilterProperties);
+
+    public static bool UsesThreadProperties(
+        JsonNode? filter,
+        IReadOnlyList<JmapEmailComparator> comparators) =>
+        FilterUsesAnyProperty(filter, ThreadFilterProperties)
+        || comparators.Any(comparator => comparator.Property is
+            "allInThreadHaveKeyword" or "someInThreadHaveKeyword");
+
+    public static bool UsesMutableSort(IReadOnlyList<JmapEmailComparator> comparators) =>
+        comparators.Any(comparator => comparator.Property is
+            "hasKeyword" or "allInThreadHaveKeyword" or "someInThreadHaveKeyword");
+
+    private static bool FilterUsesAnyProperty(
+        JsonNode? node,
+        IReadOnlySet<string> properties)
+    {
+        if (node is not JsonObject value)
+            return false;
+        if (value["conditions"] is JsonArray conditions)
+            return conditions.Any(condition => FilterUsesAnyProperty(condition, properties));
+        return value.Any(item => properties.Contains(item.Key));
     }
 
     private static bool TryBuildPredicate(
@@ -720,7 +755,7 @@ internal sealed class EmailQueryMethod(
                     account.InboxId,
                     JmapConstants.EmailDataType,
                     cancellationToken),
-                ["canCalculateChanges"] = false,
+                ["canCalculateChanges"] = true,
                 ["position"] = position,
                 ["ids"] = JmapMethodHelpers.ToJsonArray(page),
             };
@@ -780,29 +815,81 @@ internal sealed class EmailQueryChangesMethod(
                 return JmapMethodResponse.Error(filterError);
             if (!JmapEmailQueryEngine.TryParseSort(arguments["sort"], out var sort, out var sortError))
                 return JmapMethodResponse.Error(sortError);
-            var currentState = await states.GetStateAsync(
+            var changes = await states.GetChangesAsync(
                 account.InboxId,
                 JmapConstants.EmailDataType,
+                sinceState,
+                null,
+                int.MaxValue,
                 cancellationToken);
-            if (!string.Equals(currentState, sinceState, StringComparison.Ordinal))
+            if (changes is null)
                 return JmapMethodResponse.Error("cannotCalculateChanges");
+
+            var ordered = JmapEmailQueryEngine.Sort(all, filtered, sort);
+            if (collapseThreads)
+                ordered = ordered.DistinctBy(item => item.ThreadId, StringComparer.Ordinal).ToList();
+            var currentIds = ordered.Select(item => JmapId.Email(item.Email.Id)).ToList();
+            var currentIdSet = currentIds.ToHashSet(StringComparer.Ordinal);
+            var mutableFilter = JmapEmailQueryEngine.UsesMutableFilter(arguments["filter"]);
+            var mutableSort = JmapEmailQueryEngine.UsesMutableSort(sort);
+            var threadProperties = JmapEmailQueryEngine.UsesThreadProperties(
+                arguments["filter"],
+                sort);
+            var hasMembershipChanges = changes.Created.Count > 0 || changes.Destroyed.Count > 0;
+            var resetQuery = threadProperties
+                || collapseThreads && (hasMembershipChanges || mutableFilter && changes.Updated.Count > 0);
+
+            string[] removed;
+            HashSet<string> addedIds;
+            if (resetQuery)
+            {
+                var createdIds = changes.Created.ToHashSet(StringComparer.Ordinal);
+                var oldCandidates = mutableFilter
+                    ? all.Select(item => JmapId.Email(item.Email.Id))
+                    : JmapEmailQueryEngine.Sort(all, filtered, sort)
+                        .Select(item => JmapId.Email(item.Email.Id));
+                removed = oldCandidates
+                    .Where(id => !createdIds.Contains(id))
+                    .Concat(changes.Destroyed)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+                addedIds = currentIdSet;
+            }
+            else
+            {
+                var includeUpdates = mutableFilter || mutableSort;
+                removed = changes.Destroyed
+                    .Concat(includeUpdates ? changes.Updated : [])
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+                addedIds = changes.Created
+                    .Concat(includeUpdates ? changes.Updated : [])
+                    .Where(currentIdSet.Contains)
+                    .ToHashSet(StringComparer.Ordinal);
+            }
+            var added = currentIds
+                .Select((id, index) => new { Id = id, Index = index })
+                .Where(item => addedIds.Contains(item.Id))
+                .ToArray();
+            if (maxChanges is not null && removed.LongLength + added.LongLength > maxChanges.Value)
+                return JmapMethodResponse.Error("tooManyChanges");
 
             var response = new JsonObject
             {
                 ["accountId"] = accountId,
                 ["oldQueryState"] = sinceState,
-                ["newQueryState"] = currentState,
-                ["removed"] = new JsonArray(),
-                ["added"] = new JsonArray(),
+                ["newQueryState"] = changes.NewState,
+                ["removed"] = JmapMethodHelpers.ToJsonArray(removed),
+                ["added"] = new JsonArray(added
+                    .Select(item => (JsonNode)new JsonObject
+                    {
+                        ["id"] = item.Id,
+                        ["index"] = item.Index,
+                    })
+                    .ToArray()),
             };
             if (calculateTotal)
-            {
-                response["total"] = collapseThreads
-                    ? JmapEmailQueryEngine.Sort(all, filtered, sort)
-                        .DistinctBy(item => item.ThreadId, StringComparer.Ordinal)
-                        .Count()
-                    : filtered.Count;
-            }
+                response["total"] = currentIds.Count;
             return new JmapMethodResponse(Name, response);
         }
         finally

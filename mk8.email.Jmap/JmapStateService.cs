@@ -266,11 +266,33 @@ public sealed class JmapStateService(
             AddBaselineChange(accountId, JmapConstants.ThreadDataType, JmapId.Thread(threadId), now);
         }
 
-        AddBaselineChange(
-            accountId,
-            JmapConstants.IdentityDataType,
-            JmapId.Identity(accountId),
-            now);
+        var identityIds = await database.JmapIdentities
+            .AsNoTracking()
+            .Where(identity => identity.AccountId == accountId)
+            .Select(identity => identity.Id)
+            .ToListAsync(cancellationToken);
+        foreach (var identityId in identityIds)
+        {
+            AddBaselineChange(
+                accountId,
+                JmapConstants.IdentityDataType,
+                JmapId.Identity(identityId),
+                now);
+        }
+
+        var submissionIds = await database.JmapEmailSubmissions
+            .AsNoTracking()
+            .Where(submission => submission.AccountId == accountId)
+            .Select(submission => submission.Id)
+            .ToListAsync(cancellationToken);
+        foreach (var submissionId in submissionIds)
+        {
+            AddBaselineChange(
+                accountId,
+                JmapConstants.EmailSubmissionDataType,
+                JmapId.Submission(submissionId),
+                now);
+        }
         if (await database.JmapVacationResponses.AsNoTracking().AnyAsync(
             response => response.AccountId == accountId,
             cancellationToken))

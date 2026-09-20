@@ -704,6 +704,77 @@ public sealed class JmapCoreTests
     }
 
     [TestMethod]
+    public async Task BaselineIncludesAllPersistedIdentitiesAndSubmissions()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var defaultIdentityId = fixture.InboxId;
+        var additionalIdentityId = Guid.CreateVersion7();
+        var submissionId = Guid.CreateVersion7();
+        using var scope = fixture.Services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        database.JmapIdentities.AddRange(
+            new JmapIdentityDB
+            {
+                Id = defaultIdentityId,
+                IdentityObjectId = JmapId.Identity(defaultIdentityId),
+                AccountId = fixture.InboxId,
+                Email = fixture.User.Username,
+                MayDelete = false,
+            },
+            new JmapIdentityDB
+            {
+                Id = additionalIdentityId,
+                IdentityObjectId = JmapId.Identity(additionalIdentityId),
+                AccountId = fixture.InboxId,
+                Email = fixture.User.Username,
+            });
+        database.JmapEmailSubmissions.Add(new JmapEmailSubmissionDB
+        {
+            Id = submissionId,
+            SubmissionObjectId = JmapId.Submission(submissionId),
+            AccountId = fixture.InboxId,
+            IdentityId = JmapId.Identity(defaultIdentityId),
+            EmailId = JmapId.Email(Guid.CreateVersion7()),
+            ThreadId = JmapId.Thread(Guid.CreateVersion7().ToString("N")),
+            QueueId = Guid.CreateVersion7(),
+            EnvelopeSender = fixture.User.Username,
+            EnvelopeRecipients = ["recipient@example.net"],
+        });
+        await database.SaveChangesAsync();
+
+        database.JmapChanges.RemoveRange(database.JmapChanges.Where(change =>
+            change.AccountId == fixture.InboxId
+            && (change.DataType == JmapConstants.IdentityDataType
+                || change.DataType == JmapConstants.EmailSubmissionDataType)));
+        await database.SaveChangesAsync();
+
+        var states = scope.ServiceProvider.GetRequiredService<JmapStateService>();
+        var identityChanges = await states.GetChangesAsync(
+            fixture.InboxId,
+            JmapConstants.IdentityDataType,
+            "s0",
+            null,
+            100,
+            CancellationToken.None);
+        var submissionChanges = await states.GetChangesAsync(
+            fixture.InboxId,
+            JmapConstants.EmailSubmissionDataType,
+            "s0",
+            null,
+            100,
+            CancellationToken.None);
+
+        Assert.IsNotNull(identityChanges);
+        CollectionAssert.AreEquivalent(
+            new[] { JmapId.Identity(defaultIdentityId), JmapId.Identity(additionalIdentityId) },
+            identityChanges.Created.ToArray());
+        Assert.IsNotNull(submissionChanges);
+        CollectionAssert.AreEqual(
+            new[] { JmapId.Submission(submissionId) },
+            submissionChanges.Created.ToArray());
+    }
+
+    [TestMethod]
     public async Task ChangesRequirePositiveLimitButQueryChangesAcceptsZero()
     {
         await using var fixture = await JmapFixture.CreateAsync();

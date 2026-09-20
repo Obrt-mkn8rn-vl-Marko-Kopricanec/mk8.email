@@ -71,6 +71,59 @@ public sealed class MailAdministrationTests
     }
 
     [TestMethod]
+    public async Task DeliveryThreadsRepliesWithinTheDestinationAccount()
+    {
+        await using var database = CreateDatabase();
+        var administration = new MailAdministrationService(database);
+        await administration.EnsureDomainAsync("Example", "example.com");
+        await administration.CreateAccountAsync(
+            "alice@example.com",
+            "alice-password-value",
+            UserRole.User);
+        await administration.CreateAccountAsync(
+            "bob@example.com",
+            "bob-password-value",
+            UserRole.User);
+        await administration.SetDomainActiveAsync("example.com", true);
+
+        const string originalMessageId = "<shared-original@example.net>";
+        var mail = new EmailService(database);
+        Assert.IsTrue(await mail.DeliverAsync(
+            "sender@example.net",
+            "alice@example.com",
+            $"From: sender@example.net\r\nTo: alice@example.com\r\n"
+                + $"Message-ID: {originalMessageId}\r\nSubject: original\r\n\r\nbody\r\n"));
+        Assert.IsTrue(await mail.DeliverAsync(
+            "sender@example.net",
+            "bob@example.com",
+            $"From: sender@example.net\r\nTo: bob@example.com\r\n"
+                + $"Message-ID: {originalMessageId}\r\nSubject: original\r\n\r\nbody\r\n"));
+        Assert.IsTrue(await mail.DeliverAsync(
+            "sender@example.net",
+            "bob@example.com",
+            "From: sender@example.net\r\nTo: bob@example.com\r\n"
+                + "Message-ID: <reply@example.net>\r\n"
+                + $"In-Reply-To: {originalMessageId}\r\nSubject: Re: original\r\n\r\nreply\r\n"));
+
+        var messages = await database.Emails
+            .AsNoTracking()
+            .Select(email => new
+            {
+                Account = email.Folder.Inbox.Name,
+                email.MessageId,
+                email.ThreadObjectId,
+            })
+            .ToListAsync();
+        var aliceOriginal = messages.Single(message => message.Account == "alice");
+        var bobMessages = messages.Where(message => message.Account == "bob").ToArray();
+        var bobOriginal = bobMessages.Single(message => message.MessageId == originalMessageId);
+        var bobReply = bobMessages.Single(message => message.MessageId == "<reply@example.net>");
+
+        Assert.AreNotEqual(aliceOriginal.ThreadObjectId, bobOriginal.ThreadObjectId);
+        Assert.AreEqual(bobOriginal.ThreadObjectId, bobReply.ThreadObjectId);
+    }
+
+    [TestMethod]
     public async Task ProvisioningRejectsUnsafeMailboxNames()
     {
         await using var database = CreateDatabase();

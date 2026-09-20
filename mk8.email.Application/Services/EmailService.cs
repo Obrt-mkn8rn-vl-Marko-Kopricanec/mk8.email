@@ -71,7 +71,11 @@ public class EmailService(EmailDbContext db) : IEmailService
             messageId = $"<{Guid.NewGuid()}@{target.Domain}>";
 
         var inReplyTo = MailMessageParser.ExtractHeaderValue(headers, "In-Reply-To");
-        var threadId = await ResolveThreadObjectIdAsync(inReplyTo, messageId, cancellationToken);
+        var threadId = await ResolveThreadObjectIdAsync(
+            target.Id,
+            inReplyTo,
+            messageId,
+            cancellationToken);
 
         db.Emails.Add(new EmailDB
         {
@@ -146,6 +150,7 @@ public class EmailService(EmailDbContext db) : IEmailService
 
         var sentInReplyTo = MailMessageParser.ExtractHeaderValue(headers, "In-Reply-To");
         var sentThreadId = await ResolveThreadObjectIdAsync(
+            target.Id,
             sentInReplyTo,
             sentMessageId,
             cancellationToken);
@@ -245,6 +250,7 @@ public class EmailService(EmailDbContext db) : IEmailService
     }
 
     private async Task<string> ResolveThreadObjectIdAsync(
+        Guid inboxId,
         string? inReplyTo,
         string? messageId,
         CancellationToken cancellationToken)
@@ -253,7 +259,10 @@ public class EmailService(EmailDbContext db) : IEmailService
         if (!string.IsNullOrEmpty(inReplyTo))
         {
             var parent = await db.Emails.AsNoTracking()
-                .FirstOrDefaultAsync(e => e.MessageId == inReplyTo, cancellationToken);
+                .FirstOrDefaultAsync(
+                    email => email.Folder.InboxId == inboxId
+                        && email.MessageId == inReplyTo,
+                    cancellationToken);
             if (parent?.ThreadObjectId is not null)
                 return parent.ThreadObjectId;
         }
@@ -263,7 +272,9 @@ public class EmailService(EmailDbContext db) : IEmailService
         {
             var child = await db.Emails.AsNoTracking()
                 .FirstOrDefaultAsync(
-                    e => e.InReplyTo == messageId && e.ThreadObjectId != null,
+                    email => email.Folder.InboxId == inboxId
+                        && email.InReplyTo == messageId
+                        && email.ThreadObjectId != null,
                     cancellationToken);
             if (child?.ThreadObjectId is not null)
                 return child.ThreadObjectId;

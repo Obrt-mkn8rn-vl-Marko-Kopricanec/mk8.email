@@ -782,7 +782,7 @@ internal static partial class JmapEmailCodec
         return builder.ToString();
     }
 
-    private static IReadOnlyList<Header> MessageHeaders(MimeMessage message) =>
+    internal static IReadOnlyList<Header> MessageHeaders(MimeMessage message) =>
         message.Headers
             .Concat(message.Body?.Headers ?? [])
             .OrderBy(header => header.Offset < 0 ? long.MaxValue : header.Offset)

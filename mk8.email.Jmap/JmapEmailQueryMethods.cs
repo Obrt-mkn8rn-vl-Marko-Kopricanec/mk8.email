@@ -369,7 +369,7 @@ internal static partial class JmapEmailQueryEngine
 
     private static bool MatchesHeader(MimeMessage message, string name, string? text)
     {
-        var headers = message.Headers
+        var headers = JmapEmailCodec.MessageHeaders(message)
             .Where(header => header.Field.Equals(name, StringComparison.OrdinalIgnoreCase))
             .ToArray();
         return headers.Length > 0

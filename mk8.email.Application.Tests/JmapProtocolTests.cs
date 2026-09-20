@@ -1076,6 +1076,21 @@ public sealed class JmapProtocolTests
             email["bodyStructure"]!["header:Content-ID:asMessageIds"]!.AsArray()
                 .Select(node => node!.GetValue<string>())
                 .ToArray());
+
+        var query = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/query", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "filter":{"header":["Content-Type", "text/plain"]}
+          }, "q1"]]
+        }
+        """);
+        CollectionAssert.AreEqual(
+            new[] { emailId },
+            Arguments(query)["ids"]!.AsArray()
+                .Select(node => node!.GetValue<string>())
+                .ToArray());
     }
 
     [TestMethod]

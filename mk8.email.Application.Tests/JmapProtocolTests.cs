@@ -2631,6 +2631,58 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task DeepMimePartBlobIdsRemainResolvableWithinTheIdLimit()
+    {
+        const int depth = 70;
+        await using var fixture = await JmapFixture.CreateAsync();
+        var raw = new StringBuilder(
+            $"From: sender@example.net\r\nTo: {fixture.User.Username}\r\n"
+            + "MIME-Version: 1.0\r\n"
+            + "Content-Type: multipart/mixed; boundary=b0\r\n\r\n");
+        for (var index = 0; index < depth; index++)
+        {
+            raw.Append("--b").Append(index).Append("\r\n");
+            if (index == depth - 1)
+            {
+                raw.Append("Content-Type: text/plain; charset=us-ascii\r\n\r\n")
+                    .Append("Deep payload\r\n");
+            }
+            else
+            {
+                raw.Append("Content-Type: multipart/mixed; boundary=b")
+                    .Append(index + 1)
+                    .Append("\r\n\r\n");
+            }
+        }
+        for (var index = depth - 1; index >= 0; index--)
+            raw.Append("--b").Append(index).Append("--\r\n");
+        var uploadedBlobId = await fixture.StoreBlobAsync(Encoding.ASCII.GetBytes(raw.ToString()));
+
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/parse", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "blobIds":["{{{uploadedBlobId}}}"],
+            "properties":["textBody"],
+            "bodyProperties":["partId", "blobId"]
+          }, "p1"]]
+        }
+        """);
+
+        var part = Arguments(response)["parsed"]![uploadedBlobId]!["textBody"]![0]!;
+        var partId = part["partId"]!.GetValue<string>();
+        var partBlobId = part["blobId"]!.GetValue<string>();
+        Assert.IsTrue(partId.Length > 128);
+        Assert.IsTrue(JmapId.IsValidId(partBlobId));
+        using var scope = fixture.Services.CreateScope();
+        var content = await scope.ServiceProvider.GetRequiredService<JmapBlobService>()
+            .GetAsync(fixture.InboxId, partBlobId, CancellationToken.None);
+        Assert.IsNotNull(content);
+        Assert.AreEqual("Deep payload", Encoding.ASCII.GetString(content.Content).Trim());
+    }
+
+    [TestMethod]
     public async Task MimeProjectionPreservesSequentialBodyOrderOutsideAlternatives()
     {
         await using var fixture = await JmapFixture.CreateAsync();

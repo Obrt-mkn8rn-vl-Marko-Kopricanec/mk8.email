@@ -49,7 +49,7 @@ public static class JmapId
     {
         emailId = Guid.Empty;
         partId = string.Empty;
-        if (string.IsNullOrEmpty(value) || value[0] != 'R')
+        if (string.IsNullOrEmpty(value) || value[0] != 'R' || !IsValidId(value))
             return false;
 
         var separator = value.IndexOf('_');
@@ -64,7 +64,7 @@ public static class JmapId
         try
         {
             partId = new UTF8Encoding(false, true).GetString(bytes);
-            return partId.Length is > 0 and <= 128;
+            return partId.Length > 0;
         }
         catch (DecoderFallbackException)
         {

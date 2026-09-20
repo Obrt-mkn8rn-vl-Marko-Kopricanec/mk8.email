@@ -933,20 +933,56 @@ internal static partial class JmapEmailCodec
     private static JsonNode? ParseMessageIds(string value)
     {
         var result = new JsonArray();
-        foreach (var messageId in MimeUtils.EnumerateReferences(value))
+        var index = 0;
+        while (index < value.Length)
         {
-            if (!JmapMessageId.TryParseParsedForm(messageId, out var parsed))
+            if (!TrySkipHeaderCfws(value, ref index))
                 return null;
+            if (index == value.Length)
+                break;
+            if (value[index] != '<'
+                || !TryParseBracketedMessageId(value, index, out var parsed, out index))
+            {
+                return null;
+            }
             result.Add(parsed);
         }
         return result.Count == 0 ? null : result;
+    }
+
+    private static bool TryParseBracketedMessageId(
+        string value,
+        int start,
+        out string parsed,
+        out int end)
+    {
+        parsed = string.Empty;
+        end = start;
+        var close = start;
+        while ((close = value.IndexOf('>', close + 1)) >= 0)
+        {
+            try
+            {
+                var candidate = MimeUtils.ParseMessageId(value[start..(close + 1)]);
+                if (candidate is not null
+                    && JmapMessageId.TryParseParsedForm(candidate, out parsed))
+                {
+                    end = close + 1;
+                    return true;
+                }
+            }
+            catch (ParseException)
+            {
+            }
+        }
+        return false;
     }
 
     private static JsonNode? ParseUrls(string value)
     {
         var result = new JsonArray();
         var index = 0;
-        if (!TrySkipListHeaderCfws(value, ref index))
+        if (!TrySkipHeaderCfws(value, ref index))
             return null;
 
         while (index < value.Length)
@@ -963,19 +999,19 @@ internal static partial class JmapEmailCodec
             result.Add(url);
 
             index = close + 1;
-            if (!TrySkipListHeaderCfws(value, ref index) || index == value.Length)
+            if (!TrySkipHeaderCfws(value, ref index) || index == value.Length)
                 return result;
             if (value[index] != ',')
                 return result;
 
             index++;
-            if (!TrySkipListHeaderCfws(value, ref index) || index == value.Length)
+            if (!TrySkipHeaderCfws(value, ref index) || index == value.Length)
                 return result;
         }
         return result.Count == 0 ? null : result;
     }
 
-    private static bool TrySkipListHeaderCfws(string value, ref int index)
+    private static bool TrySkipHeaderCfws(string value, ref int index)
     {
         while (index < value.Length)
         {

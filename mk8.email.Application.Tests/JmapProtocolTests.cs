@@ -587,7 +587,8 @@ public sealed class JmapProtocolTests
             + $"To: {fixture.User.Username}\r\n"
             + "Message-ID: <not a message id>\r\n"
             + "References: (first) <valid@example.test>\r\n"
-            + " <\"quoted local\"@example.test>\r\n\r\nbody");
+            + " <\"quoted local\"@example.test>\r\n"
+            + "Resent-Message-ID: <valid@example.test> invalid\r\n\r\nbody");
         var blobId = await fixture.StoreBlobAsync(raw);
 
         var response = await fixture.InvokeAsync($$$"""
@@ -596,7 +597,11 @@ public sealed class JmapProtocolTests
           "methodCalls": [["Email/parse", {
             "accountId": "{{{fixture.AccountId}}}",
             "blobIds": ["{{{blobId}}}"],
-            "properties": ["messageId", "references"]
+            "properties": [
+              "messageId",
+              "references",
+              "header:Resent-Message-ID:asMessageIds"
+            ]
           }, "p1"]]
         }
         """);
@@ -607,6 +612,7 @@ public sealed class JmapProtocolTests
             parsed["references"]!.AsArray()
                 .Select(node => node!.GetValue<string>())
                 .ToArray());
+        Assert.IsNull(parsed["header:Resent-Message-ID:asMessageIds"]);
     }
 
     [TestMethod]

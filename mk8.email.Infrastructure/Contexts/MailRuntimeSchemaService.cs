@@ -60,7 +60,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
         {
             ["jmap_role"] = "varchar",
             ["suppress_default_jmap_role"] = "bool",
-            ["sort_order"] = "int4",
+            ["sort_order"] = "int8",
         };
 
     private static readonly IReadOnlyDictionary<string, string> RequiredJmapChangeColumns =
@@ -240,7 +240,9 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ALTER TABLE folders
                 ADD COLUMN IF NOT EXISTS suppress_default_jmap_role boolean NOT NULL DEFAULT false;
             ALTER TABLE folders
-                ADD COLUMN IF NOT EXISTS sort_order integer NOT NULL DEFAULT 0;
+                ADD COLUMN IF NOT EXISTS sort_order bigint NOT NULL DEFAULT 0;
+            ALTER TABLE folders
+                ALTER COLUMN sort_order TYPE bigint;
             ALTER TABLE folders
                 ALTER COLUMN name TYPE varchar(5049);
 

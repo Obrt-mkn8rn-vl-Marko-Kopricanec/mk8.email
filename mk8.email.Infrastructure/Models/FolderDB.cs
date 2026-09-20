@@ -47,7 +47,7 @@ public class FolderDB
     public bool SuppressDefaultJmapRole { get; set; }
 
     [Column("sort_order")]
-    public int SortOrder { get; set; }
+    public long SortOrder { get; set; }
 
     [Column("inbox_id")]
     public Guid InboxId { get; set; }

@@ -69,7 +69,7 @@ internal static class JmapMethodHelpers
             return false;
 
         return node is JsonValue jsonValue
-            && jsonValue.TryGetValue<long>(out value)
+            && TryGetInteger(jsonValue, out value)
             && value is >= MinimumInt and <= MaximumInt;
     }
 
@@ -85,7 +85,7 @@ internal static class JmapMethodHelpers
         if (node is null)
             return allowNull;
         if (node is not JsonValue jsonValue
-            || !jsonValue.TryGetValue<long>(out var parsed)
+            || !TryGetInteger(jsonValue, out var parsed)
             || parsed is < 0 or > MaximumInt)
         {
             return false;
@@ -93,6 +93,29 @@ internal static class JmapMethodHelpers
 
         value = parsed;
         return true;
+    }
+
+    private static bool TryGetInteger(JsonValue value, out long parsed)
+    {
+        if (value.TryGetValue<long>(out parsed))
+            return true;
+        if (value.TryGetValue<int>(out var signed))
+        {
+            parsed = signed;
+            return true;
+        }
+        if (value.TryGetValue<uint>(out var unsigned))
+        {
+            parsed = unsigned;
+            return true;
+        }
+        if (value.TryGetValue<ulong>(out var wideUnsigned) && wideUnsigned <= long.MaxValue)
+        {
+            parsed = checked((long)wideUnsigned);
+            return true;
+        }
+        parsed = 0;
+        return false;
     }
 
     public static int ClampToServerLimit(long? requested, int serverMaximum) =>

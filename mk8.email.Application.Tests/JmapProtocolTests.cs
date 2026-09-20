@@ -143,6 +143,36 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task MailboxSortOrderSupportsTheFullUnsignedIntRange()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [
+            ["Mailbox/set", {
+              "accountId": "{{{fixture.AccountId}}}",
+              "create": {
+                "maximum": {"name":"Maximum order", "sortOrder":9007199254740991}
+              }
+            }, "m1"],
+            ["Mailbox/get", {
+              "accountId": "{{{fixture.AccountId}}}",
+              "ids": ["#maximum"],
+              "properties": ["sortOrder"]
+            }, "g1"]
+          ]
+        }
+        """);
+
+        var mailboxId = Arguments(response)["created"]!["maximum"]!["id"]!.GetValue<string>();
+        Assert.AreEqual(mailboxId, Arguments(response, 1)["list"]![0]!["id"]!.GetValue<string>());
+        Assert.AreEqual(
+            JmapMethodHelpers.MaximumInt,
+            Arguments(response, 1)["list"]![0]!["sortOrder"]!.GetValue<long>());
+    }
+
+    [TestMethod]
     public async Task MailboxWithNullRoleDoesNotInferOneFromItsName()
     {
         await using var fixture = await JmapFixture.CreateAsync();
@@ -278,7 +308,7 @@ public sealed class JmapProtocolTests
             .ToDictionary(mailbox => mailbox["id"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual("Beta", swapped[alphaId]["name"]!.GetValue<string>());
         Assert.AreEqual("important", swapped[alphaId]["role"]!.GetValue<string>());
-        Assert.AreEqual(11, swapped[alphaId]["sortOrder"]!.GetValue<int>());
+        Assert.AreEqual(11L, swapped[alphaId]["sortOrder"]!.GetValue<long>());
         Assert.AreEqual("Alpha", swapped[betaId]["name"]!.GetValue<string>());
         Assert.AreEqual("flagged", swapped[betaId]["role"]!.GetValue<string>());
     }

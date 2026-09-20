@@ -10,7 +10,7 @@ internal sealed record JmapMailboxView(
     string Name,
     Guid? ParentId,
     string? Role,
-    int SortOrder,
+    long SortOrder,
     bool IsSubscribed,
     int TotalEmails,
     int UnreadEmails,

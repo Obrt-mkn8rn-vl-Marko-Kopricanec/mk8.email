@@ -1124,16 +1124,19 @@ internal sealed class MailboxSetMethod(
         return true;
     }
 
-    private static bool TryParseSortOrder(JsonObject value, out int sortOrder)
+    private static bool TryParseSortOrder(JsonObject value, out long sortOrder)
     {
         sortOrder = 0;
-        if (!value.TryGetPropertyValue("sortOrder", out var node))
-            return true;
-        if (node is null)
+        if (!JmapMethodHelpers.TryGetOptionalUnsignedInt(
+                value,
+                "sortOrder",
+                out var parsed,
+                allowNull: false))
+        {
             return false;
-        return node is JsonValue jsonValue
-            && jsonValue.TryGetValue<int>(out sortOrder)
-            && sortOrder >= 0;
+        }
+        sortOrder = parsed ?? 0;
+        return true;
     }
 
     private static bool IsValidFullName(string name)
@@ -1153,7 +1156,7 @@ internal sealed class MailboxSetMethod(
         string Name,
         Guid? ParentId,
         string? Role,
-        int SortOrder,
+        long SortOrder,
         bool IsSubscribed);
 
     private sealed record MailboxCreatePlan(
@@ -1165,7 +1168,7 @@ internal sealed class MailboxSetMethod(
         string Name,
         Guid? ParentId,
         string? Role,
-        int SortOrder,
+        long SortOrder,
         bool IsSubscribed);
 
     private sealed record CreateResult(FolderDB? Folder, Guid? ParentId, JsonObject? Error)

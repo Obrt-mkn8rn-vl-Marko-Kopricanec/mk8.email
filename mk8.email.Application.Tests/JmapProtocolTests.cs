@@ -695,6 +695,32 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task EmailParsedAddressesPreserveRawButNotEncodedHorizontalTabs()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var encodedName = Convert.ToBase64String(Encoding.UTF8.GetBytes("Encoded\tTab"));
+        var raw = Encoding.ASCII.GetBytes(
+            "From: \"Raw\tTab\" <raw@example.net>, "
+            + $"=?utf-8?B?{encodedName}?= <encoded@example.net>\r\n"
+            + $"To: {fixture.User.Username}\r\n\r\nbody");
+        var blobId = await fixture.StoreBlobAsync(raw);
+
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/parse", {
+            "accountId": "{{{fixture.AccountId}}}",
+            "blobIds": ["{{{blobId}}}"],
+            "properties": ["from"]
+          }, "p1"]]
+        }
+        """);
+        var addresses = Arguments(response)["parsed"]![blobId]!["from"]!.AsArray();
+        Assert.AreEqual("Raw\tTab", addresses[0]!["name"]!.GetValue<string>());
+        Assert.AreEqual("EncodedTab", addresses[1]!["name"]!.GetValue<string>());
+    }
+
+    [TestMethod]
     public async Task EmailParsedMessageIdsUseRfc5322Syntax()
     {
         await using var fixture = await JmapFixture.CreateAsync();

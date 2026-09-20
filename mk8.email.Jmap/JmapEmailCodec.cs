@@ -887,8 +887,8 @@ internal static partial class JmapEmailCodec
         {
             HeaderForm.Raw => JsonValue.Create(RawHeaderValue(header)),
             HeaderForm.Text => JsonValue.Create(NormalizeDecodedHeaderText(header)),
-            HeaderForm.Addresses => ParseAddresses(header.Value, grouped: false),
-            HeaderForm.GroupedAddresses => ParseAddresses(header.Value, grouped: true),
+            HeaderForm.Addresses => ParseAddresses(header, grouped: false),
+            HeaderForm.GroupedAddresses => ParseAddresses(header, grouped: true),
             HeaderForm.MessageIds => ParseMessageIds(header.Value),
             HeaderForm.Date => DateUtils.TryParse(header.Value, out var date)
                 ? JsonValue.Create(FormatDate(date))
@@ -975,15 +975,17 @@ internal static partial class JmapEmailCodec
         return value;
     }
 
-    private static JsonNode? ParseAddresses(string value, bool grouped)
+    private static JsonNode? ParseAddresses(Header header, bool grouped)
     {
+        var (value, rawTabMarker) = ProtectRawHeaderTabs(header);
+        value = NormalizeDecodedHeaderText(value);
         if (!InternetAddressList.TryParse(value, out var addresses))
             return null;
         if (!grouped)
         {
             var flattened = new JsonArray();
             foreach (var mailbox in addresses.Mailboxes)
-                flattened.Add(BuildAddress(mailbox));
+                flattened.Add(BuildAddress(mailbox, rawTabMarker));
             return flattened;
         }
 
@@ -999,11 +1001,11 @@ internal static partial class JmapEmailCodec
             FlushUngrouped();
             if (address is GroupAddress group)
             {
-                var groupName = NormalizeDecodedHeaderText(group.Name);
+                var groupName = NormalizeAddressText(group.Name, rawTabMarker);
                 groups.Add(new JsonObject
                 {
                     ["name"] = string.IsNullOrEmpty(groupName) ? null : groupName,
-                    ["addresses"] = BuildAddressArray(group.Members.Mailboxes),
+                    ["addresses"] = BuildAddressArray(group.Members.Mailboxes, rawTabMarker),
                 });
             }
         }
@@ -1017,28 +1019,38 @@ internal static partial class JmapEmailCodec
             groups.Add(new JsonObject
             {
                 ["name"] = null,
-                ["addresses"] = BuildAddressArray(ungrouped),
+                ["addresses"] = BuildAddressArray(ungrouped, rawTabMarker),
             });
             ungrouped.Clear();
         }
     }
 
-    private static JsonArray BuildAddressArray(IEnumerable<MailboxAddress> mailboxes)
+    private static JsonArray BuildAddressArray(
+        IEnumerable<MailboxAddress> mailboxes,
+        string? rawTabMarker)
     {
         var result = new JsonArray();
         foreach (var mailbox in mailboxes)
-            result.Add(BuildAddress(mailbox));
+            result.Add(BuildAddress(mailbox, rawTabMarker));
         return result;
     }
 
-    private static JsonObject BuildAddress(MailboxAddress mailbox)
+    private static JsonObject BuildAddress(MailboxAddress mailbox, string? rawTabMarker)
     {
-        var name = NormalizeDecodedHeaderText(mailbox.Name);
+        var name = NormalizeAddressText(mailbox.Name, rawTabMarker);
         return new JsonObject
         {
             ["name"] = string.IsNullOrEmpty(name) ? null : name,
             ["email"] = mailbox.Address,
         };
+    }
+
+    private static string NormalizeAddressText(string? value, string? rawTabMarker)
+    {
+        var normalized = NormalizeDecodedHeaderText(value);
+        return rawTabMarker is null
+            ? normalized
+            : normalized.Replace(rawTabMarker, "\t", StringComparison.Ordinal);
     }
 
     private static string NormalizeDecodedHeaderText(string? value)

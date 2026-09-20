@@ -1079,6 +1079,12 @@ internal static partial class JmapEmailCodec
         return result.Count == 0 ? null : result;
     }
 
+    internal static bool IsValidMessageIdsHeader(string value, bool requireSingle)
+    {
+        var parsed = ParseMessageIds(value) as JsonArray;
+        return parsed is not null && (!requireSingle || parsed.Count == 1);
+    }
+
     private static bool TryParseBracketedMessageId(
         string value,
         int start,

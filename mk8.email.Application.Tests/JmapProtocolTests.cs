@@ -2044,23 +2044,38 @@ public sealed class JmapProtocolTests
             + $"To: {fixture.User.Username}\r\n"
             + "Subject: Invalid singleton headers\r\n\r\nbody");
         var blobId = await fixture.StoreBlobAsync(malformedRaw);
+        var malformedIds = Encoding.UTF8.GetBytes(
+            "Date: Sun, 20 Sep 2026 10:00:00 +0000\r\n"
+            + $"From: {fixture.User.Username}\r\n"
+            + $"To: {fixture.User.Username}\r\n"
+            + "Message-ID: missing-brackets@example.com\r\n"
+            + "In-Reply-To: <parent@example.com> trailing-junk\r\n"
+            + "References: (comment only)\r\n"
+            + "Subject: Invalid message ids\r\n\r\nbody");
+        var malformedIdsBlobId = await fixture.StoreBlobAsync(malformedIds);
         var import = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
           "methodCalls": [["Email/import", {
             "accountId":"{{{fixture.AccountId}}}",
             "emails":{"bad":{"blobId":"{{{blobId}}}",
+              "mailboxIds":{"{{{fixture.DraftsMailboxId}}}":true} },
+              "badIds":{"blobId":"{{{malformedIdsBlobId}}}",
               "mailboxIds":{"{{{fixture.DraftsMailboxId}}}":true} } }
           }, "i1"]]
         }
         """);
         var emailId = Arguments(import)["created"]!["bad"]!["id"]!.GetValue<string>();
+        var malformedIdsEmailId = Arguments(import)["created"]!["badIds"]!["id"]!.GetValue<string>();
         var submission = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Submission}}}"],
           "methodCalls": [["EmailSubmission/set", {
             "accountId":"{{{fixture.AccountId}}}",
             "create":{"bad":{"identityId":"{{{identityId}}}", "emailId":"{{{emailId}}}",
+              "envelope":{"mailFrom":{"email":"{{{fixture.User.Username}}}"},
+                "rcptTo":[{"email":"{{{fixture.User.Username}}}"}]} },
+              "badIds":{"identityId":"{{{identityId}}}", "emailId":"{{{malformedIdsEmailId}}}",
               "envelope":{"mailFrom":{"email":"{{{fixture.User.Username}}}"},
                 "rcptTo":[{"email":"{{{fixture.User.Username}}}"}]} } }
           }, "s2"]]
@@ -2071,6 +2086,11 @@ public sealed class JmapProtocolTests
         CollectionAssert.AreEquivalent(
             new[] { "from", "sentAt" },
             error["properties"]!.AsArray().Select(node => node!.GetValue<string>()).ToArray());
+        var idError = Arguments(submission)["notCreated"]!["badIds"]!;
+        Assert.AreEqual("invalidEmail", idError["type"]!.GetValue<string>());
+        CollectionAssert.AreEquivalent(
+            new[] { "inReplyTo", "messageId", "references" },
+            idError["properties"]!.AsArray().Select(node => node!.GetValue<string>()).ToArray());
     }
 
     [TestMethod]

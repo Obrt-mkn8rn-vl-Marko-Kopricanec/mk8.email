@@ -558,6 +558,24 @@ internal sealed class EmailSubmissionSetMethod(
             ValidateAddressHeader(message.Headers, "To", "to", invalid);
             ValidateAddressHeader(message.Headers, "Cc", "cc", invalid);
             ValidateAddressHeader(message.Headers, "Bcc", "bcc", invalid);
+            ValidateMessageIdsHeader(
+                message.Headers,
+                "Message-ID",
+                "messageId",
+                requireSingle: true,
+                invalid);
+            ValidateMessageIdsHeader(
+                message.Headers,
+                "In-Reply-To",
+                "inReplyTo",
+                requireSingle: false,
+                invalid);
+            ValidateMessageIdsHeader(
+                message.Headers,
+                "References",
+                "references",
+                requireSingle: false,
+                invalid);
 
             if (message.Headers
                 .Where(header => SingletonMimeHeaders.Contains(header.Field))
@@ -590,6 +608,21 @@ internal sealed class EmailSubmissionSetMethod(
         var matching = Headers(headers, headerName);
         if (matching.Length == 1
             && !InternetAddressList.TryParse(matching[0].Value, out _))
+        {
+            invalid.Add(propertyName);
+        }
+    }
+
+    private static void ValidateMessageIdsHeader(
+        HeaderList headers,
+        string headerName,
+        string propertyName,
+        bool requireSingle,
+        ISet<string> invalid)
+    {
+        var matching = Headers(headers, headerName);
+        if (matching.Length == 1
+            && !JmapEmailCodec.IsValidMessageIdsHeader(matching[0].Value, requireSingle))
         {
             invalid.Add(propertyName);
         }

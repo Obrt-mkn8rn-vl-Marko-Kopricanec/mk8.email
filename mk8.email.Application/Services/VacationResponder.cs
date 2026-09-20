@@ -164,10 +164,14 @@ public sealed class VacationResponder(
 
     private static bool MustSuppress(MimeMessage message)
     {
-        var autoSubmitted = message.Headers[HeaderId.AutoSubmitted];
-        if (!string.IsNullOrWhiteSpace(autoSubmitted)
-            && !autoSubmitted.Trim().Equals("no", StringComparison.OrdinalIgnoreCase))
+        if (message.Headers
+            .Where(header => header.Field.Equals(
+                "Auto-Submitted",
+                StringComparison.OrdinalIgnoreCase))
+            .Any(header => !IsManualSubmission(header.Value)))
+        {
             return true;
+        }
         var precedence = message.Headers["Precedence"]?.Trim();
         if (precedence is not null
             && (precedence.Equals("bulk", StringComparison.OrdinalIgnoreCase)
@@ -186,6 +190,123 @@ public sealed class VacationResponder(
                 || token.Equals("oof", StringComparison.OrdinalIgnoreCase)
                 || token.Equals("autoreply", StringComparison.OrdinalIgnoreCase);
         }) == true;
+    }
+
+    private static bool IsManualSubmission(string value)
+    {
+        var index = 0;
+        if (!TrySkipCommentsAndWhitespace(value, ref index))
+            return false;
+
+        var keywordStart = index;
+        while (index < value.Length && IsMimeTokenCharacter(value[index]))
+            index++;
+        if (!value.AsSpan(keywordStart, index - keywordStart)
+            .Equals("no", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        while (true)
+        {
+            if (!TrySkipCommentsAndWhitespace(value, ref index))
+                return false;
+            if (index == value.Length)
+                return true;
+            if (value[index++] != ';'
+                || !TrySkipCommentsAndWhitespace(value, ref index)
+                || !TryReadMimeToken(value, ref index)
+                || !TrySkipCommentsAndWhitespace(value, ref index)
+                || index == value.Length
+                || value[index++] != '='
+                || !TrySkipCommentsAndWhitespace(value, ref index)
+                || !TryReadParameterValue(value, ref index))
+            {
+                return false;
+            }
+        }
+    }
+
+    private static bool TryReadParameterValue(string value, ref int index)
+    {
+        if (index == value.Length)
+            return false;
+        if (value[index] != '"')
+            return TryReadMimeToken(value, ref index);
+
+        index++;
+        while (index < value.Length)
+        {
+            var character = value[index++];
+            if (character == '"')
+                return true;
+            if (character == '\\')
+            {
+                if (index == value.Length)
+                    return false;
+                index++;
+            }
+            else if (character is '\r' or '\n' or '\0')
+            {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    private static bool TryReadMimeToken(string value, ref int index)
+    {
+        var start = index;
+        while (index < value.Length && IsMimeTokenCharacter(value[index]))
+            index++;
+        return index > start;
+    }
+
+    private static bool IsMimeTokenCharacter(char character) =>
+        character is >= (char)33 and <= (char)126
+        && character is not ('(' or ')' or '<' or '>' or '@' or ',' or ';'
+            or ':' or '\\' or '"' or '/' or '[' or ']' or '?' or '=');
+
+    private static bool TrySkipCommentsAndWhitespace(string value, ref int index)
+    {
+        while (index < value.Length)
+        {
+            if (value[index] is ' ' or '\t' or '\r' or '\n')
+            {
+                index++;
+                continue;
+            }
+            if (value[index] != '(')
+                return true;
+
+            var depth = 1;
+            index++;
+            while (index < value.Length && depth > 0)
+            {
+                var character = value[index++];
+                if (character == '\\')
+                {
+                    if (index == value.Length)
+                        return false;
+                    index++;
+                }
+                else if (character == '(')
+                {
+                    depth++;
+                }
+                else if (character == ')')
+                {
+                    depth--;
+                }
+                else if (character == '\0')
+                {
+                    return false;
+                }
+            }
+            if (depth != 0)
+                return false;
+        }
+        return true;
     }
 
     private static bool IsAutomatedAddress(string address)

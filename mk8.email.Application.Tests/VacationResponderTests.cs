@@ -103,6 +103,50 @@ public sealed class VacationResponderTests
             response.References.ToArray());
     }
 
+    [TestMethod]
+    public async Task ParameterizedManualAutoSubmittedHeaderStillReceivesAResponse()
+    {
+        await using var fixture = await VacationFixture.CreateAsync(includeAlias: false);
+        var rawMessage =
+            "From: sender@example.net\r\n" +
+            "To: admin@mk8n.com\r\n" +
+            "Auto-Submitted: (origin) no (manual); x-client=\"mail app\"\r\n" +
+            "Subject: parameter check\r\n\r\n" +
+            "body\r\n";
+
+        Assert.IsTrue(await fixture.Responder.QueueResponseAsync(
+            SenderAddress,
+            AccountAddress,
+            rawMessage,
+            DefaultFolders.Inbox,
+            Guid.CreateVersion7()));
+
+        Assert.IsNotNull(fixture.Queue.Submission);
+    }
+
+    [TestMethod]
+    public async Task AnyAutomaticAutoSubmittedHeaderSuppressesAResponse()
+    {
+        await using var fixture = await VacationFixture.CreateAsync(includeAlias: false);
+        var rawMessage =
+            "From: sender@example.net\r\n" +
+            "To: admin@mk8n.com\r\n" +
+            "Auto-Submitted: no\r\n" +
+            "Auto-Submitted: auto-generated; x-source=scheduler\r\n" +
+            "Subject: loop check\r\n\r\n" +
+            "body\r\n";
+
+        Assert.IsTrue(await fixture.Responder.QueueResponseAsync(
+            SenderAddress,
+            AccountAddress,
+            rawMessage,
+            DefaultFolders.Inbox,
+            Guid.CreateVersion7()));
+
+        Assert.IsNull(fixture.Queue.Submission);
+        Assert.AreEqual(0, await fixture.Database.JmapVacationReplies.CountAsync());
+    }
+
     private sealed class VacationFixture(
         EmailDbContext database,
         CapturingQueue queue,

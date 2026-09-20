@@ -938,14 +938,80 @@ internal static partial class JmapEmailCodec
     private static JsonNode? ParseUrls(string value)
     {
         var result = new JsonArray();
-        foreach (Match match in UrlRegex().Matches(value))
+        var index = 0;
+        if (!TrySkipListHeaderCfws(value, ref index))
+            return null;
+
+        while (index < value.Length)
         {
-            var url = match.Groups[1].Value;
+            if (value[index] != '<')
+                return result.Count == 0 ? null : result;
+
+            var close = value.IndexOf('>', ++index);
+            if (close < 0)
+                return null;
+            var url = RemoveListHeaderWhitespace(value[index..close]);
             if (!JmapHeaderUrl.IsValidParsedForm(url))
                 return null;
             result.Add(url);
+
+            index = close + 1;
+            if (!TrySkipListHeaderCfws(value, ref index) || index == value.Length)
+                return result;
+            if (value[index] != ',')
+                return result;
+
+            index++;
+            if (!TrySkipListHeaderCfws(value, ref index) || index == value.Length)
+                return result;
         }
         return result.Count == 0 ? null : result;
+    }
+
+    private static bool TrySkipListHeaderCfws(string value, ref int index)
+    {
+        while (index < value.Length)
+        {
+            if (value[index] is ' ' or '\t' or '\r' or '\n')
+            {
+                index++;
+                continue;
+            }
+            if (value[index] != '(')
+                return true;
+
+            var depth = 1;
+            index++;
+            while (index < value.Length && depth > 0)
+            {
+                switch (value[index++])
+                {
+                    case '\\' when index < value.Length:
+                        index++;
+                        break;
+                    case '(':
+                        depth++;
+                        break;
+                    case ')':
+                        depth--;
+                        break;
+                }
+            }
+            if (depth > 0)
+                return false;
+        }
+        return true;
+    }
+
+    private static string RemoveListHeaderWhitespace(string value)
+    {
+        var builder = new StringBuilder(value.Length);
+        foreach (var character in value)
+        {
+            if (character is not (' ' or '\t' or '\r' or '\n'))
+                builder.Append(character);
+        }
+        return builder.ToString();
     }
 
     private static bool TryParseHeaderProperty(
@@ -1041,9 +1107,6 @@ internal static partial class JmapEmailCodec
             .Append(email.Body)
             .ToString();
     }
-
-    [GeneratedRegex("<([^<>]+)>", RegexOptions.CultureInvariant)]
-    private static partial Regex UrlRegex();
 
     [GeneratedRegex("\\s+", RegexOptions.CultureInvariant)]
     private static partial Regex WhiteSpaceRegex();

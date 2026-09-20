@@ -617,7 +617,10 @@ public sealed class JmapProtocolTests
             "From: sender@example.net\r\n"
             + $"To: {fixture.User.Username}\r\n"
             + "List-Unsubscribe: <not a url>\r\n"
-            + "List-Help: <https://example.test/help>, <mailto:help@example.test>\r\n\r\nbody");
+            + "List-Help: (preferred) <https://example.test/help>, <mailto:help@example.test>\r\n"
+            + "List-Subscribe: <https://example.test/sub scribe>\r\n"
+            + "List-Owner: invalid <mailto:owner@example.test>\r\n"
+            + "List-Archive: <https://example.test/first>, invalid, <https://example.test/last>\r\n\r\nbody");
         var blobId = await fixture.StoreBlobAsync(raw);
 
         var response = await fixture.InvokeAsync($$$"""
@@ -628,7 +631,10 @@ public sealed class JmapProtocolTests
             "blobIds": ["{{{blobId}}}"],
             "properties": [
               "header:List-Unsubscribe:asURLs",
-              "header:List-Help:asURLs"
+              "header:List-Help:asURLs",
+              "header:List-Subscribe:asURLs",
+              "header:List-Owner:asURLs",
+              "header:List-Archive:asURLs"
             ]
           }, "p1"]]
         }
@@ -638,6 +644,17 @@ public sealed class JmapProtocolTests
         CollectionAssert.AreEqual(
             new[] { "https://example.test/help", "mailto:help@example.test" },
             parsed["header:List-Help:asURLs"]!.AsArray()
+                .Select(node => node!.GetValue<string>())
+                .ToArray());
+        CollectionAssert.AreEqual(
+            new[] { "https://example.test/subscribe" },
+            parsed["header:List-Subscribe:asURLs"]!.AsArray()
+                .Select(node => node!.GetValue<string>())
+                .ToArray());
+        Assert.IsNull(parsed["header:List-Owner:asURLs"]);
+        CollectionAssert.AreEqual(
+            new[] { "https://example.test/first" },
+            parsed["header:List-Archive:asURLs"]!.AsArray()
                 .Select(node => node!.GetValue<string>())
                 .ToArray());
     }

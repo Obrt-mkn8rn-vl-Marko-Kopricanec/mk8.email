@@ -143,7 +143,7 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
-    public async Task MailboxSortOrderSupportsTheFullUnsignedIntRange()
+    public async Task MailboxSortOrderIsLimitedToTheRfc8621Range()
     {
         await using var fixture = await JmapFixture.CreateAsync();
         var response = await fixture.InvokeAsync($$$"""
@@ -153,7 +153,8 @@ public sealed class JmapProtocolTests
             ["Mailbox/set", {
               "accountId": "{{{fixture.AccountId}}}",
               "create": {
-                "maximum": {"name":"Maximum order", "sortOrder":9007199254740991}
+                "maximum": {"name":"Maximum order", "sortOrder":2147483647},
+                "tooLarge": {"name":"Too large", "sortOrder":2147483648}
               }
             }, "m1"],
             ["Mailbox/get", {
@@ -167,9 +168,10 @@ public sealed class JmapProtocolTests
 
         var mailboxId = Arguments(response)["created"]!["maximum"]!["id"]!.GetValue<string>();
         Assert.AreEqual(mailboxId, Arguments(response, 1)["list"]![0]!["id"]!.GetValue<string>());
+        Assert.AreEqual(int.MaxValue, Arguments(response, 1)["list"]![0]!["sortOrder"]!.GetValue<long>());
         Assert.AreEqual(
-            JmapMethodHelpers.MaximumInt,
-            Arguments(response, 1)["list"]![0]!["sortOrder"]!.GetValue<long>());
+            "invalidProperties",
+            Arguments(response)["notCreated"]!["tooLarge"]!["type"]!.GetValue<string>());
     }
 
     [TestMethod]

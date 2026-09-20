@@ -1136,7 +1136,7 @@ internal sealed class MailboxSetMethod(
             return false;
         }
         sortOrder = parsed ?? 0;
-        return true;
+        return sortOrder <= int.MaxValue;
     }
 
     private static bool IsValidFullName(string name)

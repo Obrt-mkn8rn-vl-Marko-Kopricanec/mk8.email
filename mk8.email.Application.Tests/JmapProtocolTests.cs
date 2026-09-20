@@ -2113,6 +2113,44 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task MimeProjectionPreservesSequentialBodyOrderOutsideAlternatives()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var raw = Encoding.ASCII.GetBytes(
+            $"From: sender@example.net\r\nTo: {fixture.User.Username}\r\n"
+            + "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=body\r\n\r\n"
+            + "--body\r\nContent-Type: text/plain\r\n\r\nFirst\r\n"
+            + "--body\r\nContent-Type: image/png\r\nContent-Disposition: inline\r\n\r\npng\r\n"
+            + "--body\r\nContent-Type: text/html\r\n\r\n<p>Last</p>\r\n"
+            + "--body--\r\n");
+        var blobId = await fixture.StoreBlobAsync(raw);
+
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/parse", {
+            "accountId":"{{{fixture.AccountId}}}", "blobIds":["{{{blobId}}}"],
+            "properties":["textBody", "htmlBody", "attachments"],
+            "bodyProperties":["type"]
+          }, "p1"]]
+        }
+        """);
+        var email = Arguments(response)["parsed"]![blobId]!;
+        var expected = new[] { "text/plain", "image/png", "text/html" };
+        CollectionAssert.AreEqual(
+            expected,
+            email["textBody"]!.AsArray()
+                .Select(node => node!["type"]!.GetValue<string>())
+                .ToArray());
+        CollectionAssert.AreEqual(
+            expected,
+            email["htmlBody"]!.AsArray()
+                .Select(node => node!["type"]!.GetValue<string>())
+                .ToArray());
+        Assert.AreEqual(0, email["attachments"]!.AsArray().Count);
+    }
+
+    [TestMethod]
     public async Task AttachedMessageBlobPreservesExactDecodedOctets()
     {
         await using var fixture = await JmapFixture.CreateAsync();

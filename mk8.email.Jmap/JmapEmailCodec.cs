@@ -557,15 +557,21 @@ internal static partial class JmapEmailCodec
         var htmlCandidates = leafParts
             .Where(part => IsInlineBodyPart(part) && part.Type == "text/html")
             .ToArray();
-        var inlineMedia = leafParts
-            .Where(part => IsInlineBodyPart(part) && IsInlineMedia(part.Type))
-            .ToArray();
-        var textBody = (textCandidates.Length > 0 ? textCandidates : htmlCandidates)
-            .Concat(inlineMedia)
+        var textBodyValues = new List<PartDescriptor>();
+        var htmlBodyValues = new List<PartDescriptor>();
+        if (root is not null)
+        {
+            SelectDisplayedParts(
+                [root],
+                "mixed",
+                inAlternative: false,
+                htmlBodyValues,
+                textBodyValues);
+        }
+        var textBody = textBodyValues
             .DistinctBy(part => part.PartId, StringComparer.Ordinal)
             .ToArray();
-        var htmlBody = (htmlCandidates.Length > 0 ? htmlCandidates : textCandidates)
-            .Concat(inlineMedia)
+        var htmlBody = htmlBodyValues
             .DistinctBy(part => part.PartId, StringComparer.Ordinal)
             .ToArray();
         var bodyIds = textBody.Concat(htmlBody)
@@ -584,6 +590,70 @@ internal static partial class JmapEmailCodec
             textBody,
             htmlBody,
             attachments);
+    }
+
+    private static void SelectDisplayedParts(
+        IReadOnlyList<PartDescriptor> parts,
+        string multipartType,
+        bool inAlternative,
+        List<PartDescriptor>? htmlBody,
+        List<PartDescriptor>? textBody)
+    {
+        var textLength = textBody?.Count ?? -1;
+        var htmlLength = htmlBody?.Count ?? -1;
+        for (var index = 0; index < parts.Count; index++)
+        {
+            var part = parts[index];
+            if (part.Type.StartsWith("multipart/", StringComparison.Ordinal))
+            {
+                var subtype = part.Type["multipart/".Length..];
+                SelectDisplayedParts(
+                    part.SubParts,
+                    subtype,
+                    inAlternative || subtype == "alternative",
+                    htmlBody,
+                    textBody);
+                continue;
+            }
+
+            var inlineMedia = IsInlineMedia(part.Type);
+            var isInline = !string.Equals(
+                    part.Disposition,
+                    "attachment",
+                    StringComparison.OrdinalIgnoreCase)
+                && (part.Type is "text/plain" or "text/html" || inlineMedia)
+                && (index == 0
+                    || multipartType != "related"
+                        && (inlineMedia || part.Name is null));
+            if (!isInline)
+                continue;
+
+            if (multipartType == "alternative")
+            {
+                if (part.Type == "text/plain")
+                    textBody?.Add(part);
+                else if (part.Type == "text/html")
+                    htmlBody?.Add(part);
+                continue;
+            }
+
+            if (inAlternative)
+            {
+                if (part.Type == "text/plain")
+                    htmlBody = null;
+                else if (part.Type == "text/html")
+                    textBody = null;
+            }
+            textBody?.Add(part);
+            htmlBody?.Add(part);
+        }
+
+        if (multipartType != "alternative" || textBody is null || htmlBody is null)
+            return;
+        if (textBody.Count == textLength && htmlBody.Count != htmlLength)
+            textBody.AddRange(htmlBody.Skip(htmlLength));
+        if (htmlBody.Count == htmlLength && textBody.Count != textLength)
+            htmlBody.AddRange(textBody.Skip(textLength));
     }
 
     private static JsonArray BuildPartList(

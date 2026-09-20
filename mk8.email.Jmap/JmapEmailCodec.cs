@@ -614,7 +614,10 @@ internal static partial class JmapEmailCodec
             var (text, encodingProblem) = DecodeText(part);
             text = text.Replace("\r\n", "\n", StringComparison.Ordinal)
                 .Replace('\r', '\n');
-            var truncated = TruncateUtf8(text, options.MaxBodyValueBytes);
+            var truncated = TruncateUtf8(
+                text,
+                options.MaxBodyValueBytes,
+                avoidOpenHtmlTag: part.Type == "text/html");
             result[part.PartId!] = new JsonObject
             {
                 ["value"] = truncated.Value,
@@ -666,20 +669,89 @@ internal static partial class JmapEmailCodec
             or "uuencode" or "x-uuencode" or "uue" or "x-uue");
     }
 
-    private static (string Value, bool IsTruncated) TruncateUtf8(string value, int maximumBytes)
+    private static (string Value, bool IsTruncated) TruncateUtf8(
+        string value,
+        int maximumBytes,
+        bool avoidOpenHtmlTag)
     {
         if (maximumBytes <= 0 || Encoding.UTF8.GetByteCount(value) <= maximumBytes)
             return (value, false);
-        var builder = new StringBuilder();
-        var used = 0;
+        var usedBytes = 0;
+        var usedCharacters = 0;
         foreach (var rune in value.EnumerateRunes())
         {
-            if (used + rune.Utf8SequenceLength > maximumBytes)
+            if (usedBytes + rune.Utf8SequenceLength > maximumBytes)
                 break;
-            builder.Append(rune.ToString());
-            used += rune.Utf8SequenceLength;
+            usedBytes += rune.Utf8SequenceLength;
+            usedCharacters += rune.Utf16SequenceLength;
         }
-        return (builder.ToString(), true);
+
+        if (avoidOpenHtmlTag)
+        {
+            var openTagStart = FindOpenHtmlTagStart(value, usedCharacters);
+            if (openTagStart >= 0)
+                usedCharacters = openTagStart;
+        }
+        return (value[..usedCharacters], true);
+    }
+
+    private static int FindOpenHtmlTagStart(string value, int endExclusive)
+    {
+        var tagStart = -1;
+        var quote = '\0';
+        var comment = false;
+        for (var index = 0; index < endExclusive; index++)
+        {
+            var character = value[index];
+            if (tagStart < 0)
+            {
+                if (character != '<' || !LooksLikeHtmlTag(value, index))
+                    continue;
+                tagStart = index;
+                comment = index + 3 < value.Length
+                    && value[index + 1] == '!'
+                    && value[index + 2] == '-'
+                    && value[index + 3] == '-';
+                continue;
+            }
+
+            if (comment)
+            {
+                if (character == '-'
+                    && index + 2 < endExclusive
+                    && value[index + 1] == '-'
+                    && value[index + 2] == '>')
+                {
+                    tagStart = -1;
+                    comment = false;
+                    index += 2;
+                }
+                continue;
+            }
+
+            if (quote != '\0')
+            {
+                if (character == quote)
+                    quote = '\0';
+                continue;
+            }
+            if (character is '\'' or '"')
+            {
+                quote = character;
+                continue;
+            }
+            if (character == '>')
+                tagStart = -1;
+        }
+        return tagStart;
+    }
+
+    private static bool LooksLikeHtmlTag(string value, int index)
+    {
+        if (index + 1 >= value.Length)
+            return false;
+        var next = value[index + 1];
+        return char.IsAsciiLetter(next) || next is '/' or '!' or '?';
     }
 
     private static string BuildPreview(

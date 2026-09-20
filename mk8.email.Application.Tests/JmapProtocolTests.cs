@@ -442,6 +442,38 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task HtmlBodyValueTruncationStopsBeforeAnOpenTag()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var raw = Encoding.ASCII.GetBytes(
+            "From: sender@example.net\r\n"
+            + $"To: {fixture.User.Username}\r\n"
+            + "Content-Type: text/html; charset=us-ascii\r\n\r\n"
+            + "<p>Hello</p><a title=\"1 > 0\" href=\"https://example.com\">world</a>");
+        var blobId = await fixture.StoreBlobAsync(raw);
+
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [["Email/parse", {
+            "accountId": "{{{fixture.AccountId}}}",
+            "blobIds": ["{{{blobId}}}"],
+            "properties": ["htmlBody", "bodyValues"],
+            "fetchHTMLBodyValues": true,
+            "maxBodyValueBytes": 30
+          }, "p1"]]
+        }
+        """);
+        var parsed = Arguments(response)["parsed"]![blobId]!;
+        var partId = parsed["htmlBody"]![0]!["partId"]!.GetValue<string>();
+        var bodyValue = parsed["bodyValues"]![partId]!;
+        var value = bodyValue["value"]!.GetValue<string>();
+        Assert.AreEqual("<p>Hello</p>", value);
+        Assert.IsTrue(bodyValue["isTruncated"]!.GetValue<bool>());
+        Assert.IsTrue(Encoding.UTF8.GetByteCount(value) <= 30);
+    }
+
+    [TestMethod]
     public async Task EmailParsedHeaderTextDropsDecodedControlsAndNormalizesUnicode()
     {
         await using var fixture = await JmapFixture.CreateAsync();

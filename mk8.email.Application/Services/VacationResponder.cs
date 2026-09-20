@@ -79,7 +79,7 @@ public sealed class VacationResponder(
                 cancellationToken);
             var sent = await database.JmapVacationReplies.SingleOrDefaultAsync(
                 reply => reply.AccountId == route.AccountId
-                    && reply.SenderAddress == senderMailbox.Address.ToLower(),
+                    && reply.SenderAddress == senderMailbox.Address.ToLowerInvariant(),
                 cancellationToken);
             if (sent?.LastDeliveryId == deliveryId
                 || sent is not null && now - sent.LastSentAt < RepeatInterval)

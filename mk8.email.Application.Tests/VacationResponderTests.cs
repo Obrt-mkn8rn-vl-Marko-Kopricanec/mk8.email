@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -145,6 +146,44 @@ public sealed class VacationResponderTests
 
         Assert.IsNull(fixture.Queue.Submission);
         Assert.AreEqual(0, await fixture.Database.JmapVacationReplies.CountAsync());
+    }
+
+    [TestMethod]
+    public async Task RepeatSuppressionUsesCultureInvariantSenderKeys()
+    {
+        await using var fixture = await VacationFixture.CreateAsync(includeAlias: true);
+        const string sender = "INFO@example.net";
+        var rawMessage =
+            "From: INFO@example.net\r\n" +
+            "To: support@mk8n.com\r\n" +
+            "Subject: culture check\r\n\r\n" +
+            "body\r\n";
+        var originalCulture = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("tr-TR");
+            Assert.IsTrue(await fixture.Responder.QueueResponseAsync(
+                sender,
+                AliasAddress,
+                rawMessage,
+                DefaultFolders.Inbox,
+                Guid.CreateVersion7()));
+            Assert.IsNotNull(fixture.Queue.Submission);
+            await fixture.Database.SaveChangesAsync();
+            Assert.IsTrue(await fixture.Responder.QueueResponseAsync(
+                sender,
+                AliasAddress,
+                rawMessage,
+                DefaultFolders.Inbox,
+                Guid.CreateVersion7()));
+            await fixture.Database.SaveChangesAsync();
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = originalCulture;
+        }
+
+        Assert.AreEqual(1, await fixture.Database.JmapVacationReplies.CountAsync());
     }
 
     private sealed class VacationFixture(

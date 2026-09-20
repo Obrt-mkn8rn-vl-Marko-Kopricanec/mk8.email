@@ -875,13 +875,18 @@ public sealed class JmapProtocolTests
             + "Content-Transfer-Encoding: 8bit\r\n\r\n"
             + string.Concat(Enumerable.Repeat("😀", 300)));
         var previewBlobId = await fixture.StoreBlobAsync(previewRaw);
+        var htmlPreviewBlobId = await fixture.StoreBlobAsync(Encoding.UTF8.GetBytes(
+            "From: sender@example.net\r\nTo: user@mk8n.com\r\n"
+            + "Date: Sun, 20 Sep 2026 10:00:00 +0000\r\n"
+            + "Content-Type: text/html; charset=utf-8\r\n\r\n"
+            + "<p>Hello &amp; welcome</p>"));
 
         var projection = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
           "methodCalls": [["Email/parse", {
             "accountId":"{{{fixture.AccountId}}}",
-            "blobIds":["{{{relatedBlobId}}}", "{{{previewBlobId}}}"],
+            "blobIds":["{{{relatedBlobId}}}", "{{{previewBlobId}}}", "{{{htmlPreviewBlobId}}}"],
             "properties":["bodyStructure", "attachments", "hasAttachment", "preview"],
             "bodyProperties":["partId", "blobId", "type", "disposition"]
           }, "p1"]]
@@ -899,6 +904,10 @@ public sealed class JmapProtocolTests
                 .GetValue<string>()
                 .EnumerateRunes()
                 .Count());
+        Assert.AreEqual(
+            "Hello & welcome",
+            Arguments(projection)["parsed"]![htmlPreviewBlobId]!["preview"]!
+                .GetValue<string>());
 
         var attachedRaw = Encoding.UTF8.GetBytes(
             "From: sender@example.net\r\nTo: user@mk8n.com\r\n"

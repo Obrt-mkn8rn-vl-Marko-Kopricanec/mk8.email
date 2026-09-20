@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net;
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -682,7 +683,7 @@ internal static partial class JmapEmailCodec
             return string.Empty;
         var value = DecodeText(source).Text;
         if (source.Type == "text/html")
-            value = HtmlTagRegex().Replace(value, " ");
+            value = WebUtility.HtmlDecode(HtmlTagRegex().Replace(value, " "));
         value = WhiteSpaceRegex().Replace(value, " ").Trim();
         return TruncateRunes(value, 256);
     }

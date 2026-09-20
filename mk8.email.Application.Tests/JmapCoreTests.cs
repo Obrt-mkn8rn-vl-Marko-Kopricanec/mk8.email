@@ -390,6 +390,22 @@ public sealed class JmapCoreTests
     }
 
     [TestMethod]
+    public void StringArrayArgumentsPermitRepeatedProjectionProperties()
+    {
+        var values = JsonNode.Parse("""{"properties":["id","id","name"]}""")!
+            .AsObject();
+
+        Assert.IsTrue(JmapMethodHelpers.TryGetStringArray(
+            values,
+            "properties",
+            true,
+            out var properties));
+        CollectionAssert.AreEqual(
+            new[] { "id", "id", "name" },
+            properties!.ToArray());
+    }
+
+    [TestMethod]
     public async Task ChangesLimitCountsFoldedObjectIdsRatherThanLogRows()
     {
         await using var fixture = await JmapFixture.CreateAsync();

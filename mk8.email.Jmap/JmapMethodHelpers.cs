@@ -113,13 +113,11 @@ internal static class JmapMethodHelpers
             return false;
 
         var result = new List<string>(array.Count);
-        var unique = new HashSet<string>(StringComparer.Ordinal);
         foreach (var item in array)
         {
             if (item is not JsonValue value
                 || !value.TryGetValue<string>(out var parsed)
-                || parsed is null
-                || !unique.Add(parsed))
+                || parsed is null)
             {
                 return false;
             }

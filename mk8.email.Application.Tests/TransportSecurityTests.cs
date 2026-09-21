@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.IO.Compression;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -498,13 +499,13 @@ public sealed class TransportSecurityTests
         StringAssert.Contains(capability, "IMAP4rev1 LITERAL+ IDLE NAMESPACE SPECIAL-USE UIDPLUS");
         StringAssert.Contains(capability, "LIST-EXTENDED LIST-STATUS");
         StringAssert.Contains(capability, "ID ENABLE MOVE UNSELECT QUOTA CONDSTORE QRESYNC ESEARCH");
-        StringAssert.Contains(capability, "MULTIAPPEND STATUS=SIZE APPENDLIMIT=65536");
+        StringAssert.Contains(capability, "MULTIAPPEND STATUS=SIZE COMPRESS=DEFLATE APPENDLIMIT=65536");
         StringAssert.Contains(capability, "LOGINDISABLED");
         StringAssert.Contains(capability, "STARTTLS");
         Assert.IsFalse(capability.Contains("AUTH=PLAIN", StringComparison.Ordinal));
         foreach (var unverifiedExtension in new[]
                  {
-                     "COMPRESS=DEFLATE", "BINARY", "OBJECTID", "SORT", "THREAD=REFERENCES",
+                     "BINARY", "OBJECTID", "SORT", "THREAD=REFERENCES",
                  })
         {
             Assert.IsFalse(
@@ -655,6 +656,35 @@ public sealed class TransportSecurityTests
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a3 BAD", StringComparison.Ordinal));
         await connection.WriteLineAsync("a4 NOOP");
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a4 OK", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    [Timeout(10_000)]
+    public async Task ImapCompressesCommandsAndResponsesAfterNegotiation()
+    {
+        var port = ReservePort();
+        var environment = CreateEnvironment(imapPort: port);
+        await using var server = await ServerFixture.StartImapAsync(environment, port);
+        await using var connection = await ProtocolConnection.ConnectAsync(port);
+
+        await connection.ReadLineAsync();
+        await connection.WriteLineAsync("a1 STARTTLS");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a1 OK", StringComparison.Ordinal));
+        await connection.UpgradeToTlsAsync("email.mk8n.com");
+        await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a2 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a3 COMPRESS DEFLATE");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a3 OK", StringComparison.Ordinal));
+        await connection.UpgradeToDeflateAsync();
+
+        await connection.WriteLineAsync("a4 NOOP");
+        Assert.AreEqual("a4 OK NOOP completed", await connection.ReadLineAsync());
+        await connection.WriteLineAsync("a5 COMPRESS DEFLATE");
+        Assert.AreEqual("a5 BAD COMPRESS already active", await connection.ReadLineAsync());
+        await connection.WriteLineAsync("a6 LOGOUT");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("* BYE", StringComparison.Ordinal));
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a6 OK", StringComparison.Ordinal));
     }
 
     [TestMethod]
@@ -2573,6 +2603,20 @@ public sealed class TransportSecurityTests
             _writer = CreateWriter(_stream);
         }
 
+        public async Task UpgradeToDeflateAsync()
+        {
+            await _writer.FlushAsync();
+            _reader.Dispose();
+            await _writer.DisposeAsync();
+
+            var transport = _stream;
+            var inflater = new DeflateStream(transport, CompressionMode.Decompress, leaveOpen: true);
+            var deflater = new DeflateStream(transport, CompressionLevel.Fastest, leaveOpen: true);
+            _stream = new TestDuplexStream(inflater, deflater, transport);
+            _reader = CreateReader(_stream);
+            _writer = CreateWriter(_stream);
+        }
+
         public async ValueTask DisposeAsync()
         {
             _reader.Dispose();
@@ -2590,6 +2634,68 @@ public sealed class TransportSecurityTests
                 AutoFlush = true,
                 NewLine = "\r\n",
             };
+    }
+
+    private sealed class TestDuplexStream(
+        Stream readStream,
+        Stream writeStream,
+        Stream transport) : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) =>
+            readStream.Read(buffer, offset, count);
+
+        public override ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default) =>
+            readStream.ReadAsync(buffer, cancellationToken);
+
+        public override void Write(byte[] buffer, int offset, int count) =>
+            writeStream.Write(buffer, offset, count);
+
+        public override ValueTask WriteAsync(
+            ReadOnlyMemory<byte> buffer,
+            CancellationToken cancellationToken = default) =>
+            writeStream.WriteAsync(buffer, cancellationToken);
+
+        public override void Flush() => writeStream.Flush();
+
+        public override Task FlushAsync(CancellationToken cancellationToken) =>
+            writeStream.FlushAsync(cancellationToken);
+
+        public override long Seek(long offset, SeekOrigin origin) =>
+            throw new NotSupportedException();
+
+        public override void SetLength(long value) =>
+            throw new NotSupportedException();
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                readStream.Dispose();
+                writeStream.Dispose();
+                transport.Dispose();
+            }
+            base.Dispose(disposing);
+        }
+
+        public override async ValueTask DisposeAsync()
+        {
+            await readStream.DisposeAsync();
+            await writeStream.DisposeAsync();
+            await transport.DisposeAsync();
+            GC.SuppressFinalize(this);
+        }
     }
 
     private sealed record CapturedLog(LogLevel Level, string Message, Exception? Exception);

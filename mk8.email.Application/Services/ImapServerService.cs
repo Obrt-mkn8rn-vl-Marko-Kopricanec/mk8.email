@@ -628,7 +628,7 @@ ILogger<ImapServerService> logger) : BackgroundService
                     }
                     if (session.CompressEnabled)
                     {
-                        await writer.WriteLineAsync($"{tag} NO COMPRESS already active");
+                        await writer.WriteLineAsync($"{tag} BAD COMPRESS already active");
                         break;
                     }
                     if (!await HandleCompressAsync(writer, tag, args))
@@ -829,7 +829,7 @@ ILogger<ImapServerService> logger) : BackgroundService
         var caps =
             "IMAP4rev1 LITERAL+ IDLE NAMESPACE SPECIAL-USE UIDPLUS LIST-EXTENDED LIST-STATUS " +
             "ID ENABLE MOVE UNSELECT QUOTA CONDSTORE QRESYNC ESEARCH " +
-            $"MULTIAPPEND STATUS=SIZE APPENDLIMIT={config.MaxMessageSizeBytes}";
+            $"MULTIAPPEND STATUS=SIZE COMPRESS=DEFLATE APPENDLIMIT={config.MaxMessageSizeBytes}";
         if (session.IsSecure)
         {
             caps += " AUTH=PLAIN SASL-IR";

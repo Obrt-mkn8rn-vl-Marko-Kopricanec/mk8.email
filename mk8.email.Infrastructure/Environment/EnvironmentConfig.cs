@@ -13,6 +13,7 @@ public sealed class EnvironmentConfig
     public ImapConfig Imap { get; init; } = new();
     public Pop3Config Pop3 { get; init; } = new();
     public JmapConfig Jmap { get; init; } = new();
+    public DavConfig Dav { get; init; } = new();
     public TlsConfig Tls { get; init; } = new();
     public DkimConfig Dkim { get; init; } = new();
     public SecurityConfig Security { get; init; } = new();
@@ -58,10 +59,14 @@ public sealed class EnvironmentConfig
         AddEnabledPort(enabledPorts, Imap.EnableImplicitTls, "Imap.ImplicitTlsPort", Imap.ImplicitTlsPort);
         AddEnabledPort(enabledPorts, Pop3.EnablePop3, "Pop3.Port", Pop3.Port);
         AddEnabledPort(enabledPorts, Pop3.EnableImplicitTls, "Pop3.ImplicitTlsPort", Pop3.ImplicitTlsPort);
-        AddEnabledPort(enabledPorts, Jmap.EnableJmap, "Jmap.Port", Jmap.Port);
+        AddEnabledPort(
+            enabledPorts,
+            Jmap.EnableJmap || Dav.EnableDav,
+            "Jmap.Port",
+            Jmap.Port);
 
         if (enabledPorts.Count == 0)
-            errors.Add("Enable at least one SMTP, IMAP, POP3, or JMAP listener.");
+            errors.Add("Enable at least one SMTP, IMAP, POP3, JMAP, or DAV listener.");
 
         foreach (var enabledPort in enabledPorts)
             RequirePort(errors, enabledPort.Port, enabledPort.Name);
@@ -120,6 +125,16 @@ public sealed class EnvironmentConfig
                     + "Jmap.MaxUploadSizeBytes and Limits.MaxMessageSizeBytes, and no greater than "
                     + "9007199254740991.");
             }
+        }
+
+        if (Dav.EnableDav)
+        {
+            if (Dav.MaxResourceSizeBytes is < 65_536 or > 107_374_1824)
+                errors.Add("Dav.MaxResourceSizeBytes must be from 65536 through 1073741824.");
+            if (Dav.MaxCollectionsPerUser is < 1 or > 1000)
+                errors.Add("Dav.MaxCollectionsPerUser must be from 1 through 1000.");
+            if (Dav.MaxResourcesPerCollection is < 1 or > 1_000_000)
+                errors.Add("Dav.MaxResourcesPerCollection must be from 1 through 1000000.");
         }
 
         var needsCertificate = Smtp.EnableStartTls
@@ -344,6 +359,14 @@ public sealed class JmapConfig
             : PublicBaseUrl;
         return new Uri(value.TrimEnd('/') + "/", UriKind.Absolute);
     }
+}
+
+public sealed class DavConfig
+{
+    public bool EnableDav { get; init; } = true;
+    public int MaxResourceSizeBytes { get; init; } = 10 * 1024 * 1024;
+    public int MaxCollectionsPerUser { get; init; } = 100;
+    public int MaxResourcesPerCollection { get; init; } = 100_000;
 }
 
 public sealed class TlsConfig

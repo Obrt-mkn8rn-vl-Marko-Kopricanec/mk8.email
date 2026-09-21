@@ -10,6 +10,7 @@ using mk8.email.Application;
 using mk8.email.Application.Interfaces;
 using mk8.email.CLI;
 using mk8.email.Contracts.Enums;
+using mk8.email.Dav;
 using mk8.email.Infrastructure;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Infrastructure.Environment;
@@ -180,7 +181,7 @@ static IHost BuildProtocolHost(
     EnvironmentConfig environmentConfig,
     bool isDevelopment)
 {
-    if (!environmentConfig.Jmap.EnableJmap)
+    if (!environmentConfig.Jmap.EnableJmap && !environmentConfig.Dav.EnableDav)
         return BuildHost(arguments, environmentConfig, includeMailServers: true);
 
     var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions
@@ -196,9 +197,18 @@ static IHost BuildProtocolHost(
     {
         options.AddServerHeader = false;
         options.Listen(IPAddress.Loopback, environmentConfig.Jmap.Port);
-        options.Limits.MaxRequestBodySize = Math.Max(
-            environmentConfig.Jmap.MaxRequestSizeBytes,
-            environmentConfig.Jmap.MaxUploadSizeBytes);
+        var maximumRequestBodySize = environmentConfig.Jmap.EnableJmap
+            ? Math.Max(
+                environmentConfig.Jmap.MaxRequestSizeBytes,
+                environmentConfig.Jmap.MaxUploadSizeBytes)
+            : 0;
+        if (environmentConfig.Dav.EnableDav)
+        {
+            maximumRequestBodySize = Math.Max(
+                maximumRequestBodySize,
+                environmentConfig.Dav.MaxResourceSizeBytes);
+        }
+        options.Limits.MaxRequestBodySize = maximumRequestBodySize;
         options.Limits.RequestHeadersTimeout = TimeSpan.FromSeconds(15);
         options.Limits.KeepAliveTimeout = TimeSpan.FromMinutes(2);
     });
@@ -206,7 +216,10 @@ static IHost BuildProtocolHost(
     builder.Services.AddInfrastructure(environmentConfig);
     builder.Services.AddApplication();
     builder.Services.AddMailProtocolServers();
-    builder.Services.AddJmapProtocol();
+    if (environmentConfig.Jmap.EnableJmap)
+        builder.Services.AddJmapProtocol();
+    if (environmentConfig.Dav.EnableDav)
+        builder.Services.AddDavProtocol();
     builder.Services.Configure<ForwardedHeadersOptions>(options =>
     {
         options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
@@ -237,6 +250,9 @@ static IHost BuildProtocolHost(
 
         await next(context);
     });
-    app.MapJmapEndpoints();
+    if (environmentConfig.Jmap.EnableJmap)
+        app.MapJmapEndpoints();
+    if (environmentConfig.Dav.EnableDav)
+        app.MapDavEndpoints();
     return app;
 }

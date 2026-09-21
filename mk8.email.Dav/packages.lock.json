@@ -87,25 +87,11 @@
       "mk8.email.contracts": {
         "type": "Project"
       },
-      "mk8.email.dav": {
-        "type": "Project",
-        "dependencies": {
-          "mk8.email.Application.Core": "[1.0.0, )",
-          "mk8.email.Infrastructure": "[1.0.0, )"
-        }
-      },
       "mk8.email.infrastructure": {
         "type": "Project",
         "dependencies": {
           "Microsoft.EntityFrameworkCore": "[10.0.4, )",
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.1, )"
-        }
-      },
-      "mk8.email.jmap": {
-        "type": "Project",
-        "dependencies": {
-          "mk8.email.Application.Core": "[1.0.0, )",
-          "mk8.email.Infrastructure": "[1.0.0, )"
         }
       },
       "mk8.email.utils": {

@@ -89,6 +89,26 @@ public sealed class EnvironmentConfigTests
     }
 
     [TestMethod]
+    public void DavResourceAndCollectionLimitsMustBeBounded()
+    {
+        var errors = CreateValidConfiguration(
+            davMaxResourceSizeBytes: 1024,
+            davMaxCollectionsPerUser: 0,
+            davMaxResourcesPerCollection: 1_000_001).Validate();
+
+        var joined = string.Join('|', errors);
+        StringAssert.Contains(
+            joined,
+            "Dav.MaxResourceSizeBytes must be from 65536 through 1073741824.");
+        StringAssert.Contains(
+            joined,
+            "Dav.MaxCollectionsPerUser must be from 1 through 1000.");
+        StringAssert.Contains(
+            joined,
+            "Dav.MaxResourcesPerCollection must be from 1 through 1000000.");
+    }
+
+    [TestMethod]
     public void LoaderReadsPasswordsFromSecretFiles()
     {
         var databasePasswordPath = WriteFile("database-password", "database-secret-value");
@@ -123,7 +143,10 @@ public sealed class EnvironmentConfigTests
         string rspamdEndpoint = "http://127.0.0.1:11333/checkv2",
         int queueMaxAttempts = 20,
         bool enablePop3 = false,
-        bool enablePop3StartTls = true)
+        bool enablePop3StartTls = true,
+        int davMaxResourceSizeBytes = 10 * 1024 * 1024,
+        int davMaxCollectionsPerUser = 100,
+        int davMaxResourcesPerCollection = 100_000)
     {
         return new EnvironmentConfig
         {
@@ -164,6 +187,13 @@ public sealed class EnvironmentConfigTests
                 EnablePop3 = enablePop3,
                 EnableImplicitTls = false,
                 EnableStartTls = enablePop3StartTls,
+            },
+            Dav = new DavConfig
+            {
+                EnableDav = true,
+                MaxResourceSizeBytes = davMaxResourceSizeBytes,
+                MaxCollectionsPerUser = davMaxCollectionsPerUser,
+                MaxResourcesPerCollection = davMaxResourcesPerCollection,
             },
             Tls = new TlsConfig
             {

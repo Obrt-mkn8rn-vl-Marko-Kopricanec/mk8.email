@@ -56,7 +56,9 @@ ILogger<ImapServerService> logger) : BackgroundService
         public bool SelectedReadOnly { get; set; }
         public bool CondstoreEnabled { get; set; }
         public bool QresyncEnabled { get; set; }
+        public bool Utf8Enabled { get; set; }
         public bool CompressEnabled { get; set; }
+        public HashSet<int> SavedSearchUids { get; set; } = [];
         public required string RemoteIp { get; init; }
         public int AuthenticationFailures { get; set; }
     }
@@ -828,7 +830,7 @@ ILogger<ImapServerService> logger) : BackgroundService
     {
         var caps =
             "IMAP4rev1 LITERAL+ IDLE NAMESPACE SPECIAL-USE UIDPLUS LIST-EXTENDED LIST-STATUS " +
-            "ID ENABLE MOVE UNSELECT QUOTA CONDSTORE QRESYNC ESEARCH " +
+            "ID ENABLE MOVE UNSELECT QUOTA CONDSTORE QRESYNC ESEARCH SEARCHRES UTF8=ACCEPT " +
             $"MULTIAPPEND STATUS=SIZE COMPRESS=DEFLATE APPENDLIMIT={config.MaxMessageSizeBytes}";
         if (session.IsSecure)
         {
@@ -1019,7 +1021,7 @@ ILogger<ImapServerService> logger) : BackgroundService
 
     private async Task HandleListAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
-        if (!TryParseListCommand(args, out var options, out var failureResponse))
+        if (!TryParseListCommand(args, session.Utf8Enabled, out var options, out var failureResponse))
         {
             await writer.WriteLineAsync($"{tag} BAD {failureResponse}");
             return;
@@ -1070,7 +1072,7 @@ ILogger<ImapServerService> logger) : BackgroundService
                 ? $" (CHILDINFO ({BuildChildInfoCriteria(options)}))"
                 : string.Empty;
             await writer.WriteLineAsync(
-                $"* LIST ({attrs}) \"/\" \"{EscapeImapString(FormatWireMailboxName(entry.FullName))}\"{childInfo}");
+                $"* LIST ({attrs}) \"/\" \"{EscapeImapString(FormatWireMailboxName(entry.FullName, session.Utf8Enabled))}\"{childInfo}");
 
             if (entry.IsSelectable
                 && matchesSelection
@@ -1082,7 +1084,7 @@ ILogger<ImapServerService> logger) : BackgroundService
                 {
                     var statusResult = await BuildStatusResultAsync(db, folder, options.StatusItems, ct);
                     await writer.WriteLineAsync(
-                        $"* STATUS \"{EscapeImapString(FormatWireMailboxName(entry.FullName))}\" ({statusResult})");
+                        $"* STATUS \"{EscapeImapString(FormatWireMailboxName(entry.FullName, session.Utf8Enabled))}\" ({statusResult})");
                 }
             }
         }
@@ -1092,7 +1094,7 @@ ILogger<ImapServerService> logger) : BackgroundService
 
     private async Task HandleLsubAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
-        if (!TryParseMailboxArgs(args, out var reference, out var pattern))
+        if (!TryParseMailboxArgs(args, session.Utf8Enabled, out var reference, out var pattern))
         {
             await writer.WriteLineAsync($"{tag} BAD Invalid mailbox name");
             return;
@@ -1109,7 +1111,7 @@ ILogger<ImapServerService> logger) : BackgroundService
                     entry.IsSelectable,
                     entry.HasChildren);
                 await writer.WriteLineAsync(
-                    $"* LSUB ({attrs}) \"/\" \"{EscapeImapString(FormatWireMailboxName(entry.FullName))}\"");
+                    $"* LSUB ({attrs}) \"/\" \"{EscapeImapString(FormatWireMailboxName(entry.FullName, session.Utf8Enabled))}\"");
             }
         }
 
@@ -1155,7 +1157,7 @@ ILogger<ImapServerService> logger) : BackgroundService
             selectArgs = selectArgs[..parenIdx].Trim();
         }
 
-        if (!TryParseMailboxName(selectArgs, out var mailboxName))
+        if (!TryParseMailboxName(selectArgs, session.Utf8Enabled, out var mailboxName))
         {
             await writer.WriteLineAsync($"{tag} BAD Invalid mailbox name");
             return;
@@ -1188,6 +1190,7 @@ ILogger<ImapServerService> logger) : BackgroundService
         session.SelectedFolderId = folder.Id;
         session.SelectedFolderName = mailboxName;
         session.SelectedReadOnly = readOnly;
+        session.SavedSearchUids = [];
         session.State = ImapState.Selected;
 
         await writer.WriteLineAsync($"* {totalCount} EXISTS");
@@ -1300,7 +1303,7 @@ ILogger<ImapServerService> logger) : BackgroundService
 
     private async Task HandleCreateAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
-        if (!TryParseMailboxName(args.Trim(), out var mailboxName))
+        if (!TryParseMailboxName(args.Trim(), session.Utf8Enabled, out var mailboxName))
         {
             await writer.WriteLineAsync($"{tag} BAD Invalid mailbox name");
             return;
@@ -1339,7 +1342,7 @@ ILogger<ImapServerService> logger) : BackgroundService
 
     private async Task HandleDeleteAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
-        if (!TryParseMailboxName(args.Trim(), out var mailboxName))
+        if (!TryParseMailboxName(args.Trim(), session.Utf8Enabled, out var mailboxName))
         {
             await writer.WriteLineAsync($"{tag} BAD Invalid mailbox name");
             return;
@@ -1376,7 +1379,7 @@ ILogger<ImapServerService> logger) : BackgroundService
 
     private async Task HandleRenameAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
-        var parsedArgs = ParseTwoMailboxArgs(args);
+        var parsedArgs = ParseTwoMailboxArgs(args, session.Utf8Enabled);
         if (parsedArgs is null)
         {
             await writer.WriteLineAsync($"{tag} BAD Syntax error");
@@ -1456,7 +1459,7 @@ ILogger<ImapServerService> logger) : BackgroundService
             return;
         }
 
-        if (!TryParseMailboxName(args[..parenIdx].Trim(), out var mailboxName))
+        if (!TryParseMailboxName(args[..parenIdx].Trim(), session.Utf8Enabled, out var mailboxName))
         {
             await writer.WriteLineAsync($"{tag} BAD Invalid mailbox name");
             return;
@@ -1477,7 +1480,7 @@ ILogger<ImapServerService> logger) : BackgroundService
         var statusResult = await BuildStatusResultAsync(db, folder, statusItems, ct);
 
         await writer.WriteLineAsync(
-            $"* STATUS \"{EscapeImapString(FormatWireMailboxName(mailboxName))}\" ({statusResult})");
+            $"* STATUS \"{EscapeImapString(FormatWireMailboxName(mailboxName, session.Utf8Enabled))}\" ({statusResult})");
         await writer.WriteLineAsync($"{tag} OK STATUS completed");
     }
 
@@ -1585,10 +1588,20 @@ ILogger<ImapServerService> logger) : BackgroundService
         var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
         var folderId = session.SelectedFolderId!.Value;
         var messageQuery = db.Emails.AsNoTracking().Where(email => email.FolderId == folderId);
+        var orderedUids = await messageQuery
+            .OrderBy(email => email.Uid)
+            .Select(email => email.Uid)
+            .ToListAsync(ct);
         var maximumIdentifier = useUid
-            ? await messageQuery.MaxAsync(email => (int?)email.Uid, ct) ?? 0
-            : await messageQuery.CountAsync(ct);
-        if (!TryParseMessageSet(messageSet, maximumIdentifier, out var parsedMessageSet))
+            ? orderedUids.LastOrDefault()
+            : orderedUids.Count;
+        if (!TryResolveMessageSet(
+                messageSet,
+                maximumIdentifier,
+                orderedUids,
+                useUid,
+                session.SavedSearchUids,
+                out var parsedMessageSet))
         {
             await writer.WriteLineAsync($"{tag} BAD Invalid message set");
             return;
@@ -1661,7 +1674,13 @@ ILogger<ImapServerService> logger) : BackgroundService
         var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
 
         var emails = await GetEmailMetadataInFolderAsync(db, session.SelectedFolderId!.Value, ct);
-        if (!TryParseMessageSet(sequenceSet, emails.Count, out var parsedMessageSet))
+        if (!TryResolveMessageSet(
+                sequenceSet,
+                emails.Count,
+                emails.Select(email => email.Uid).ToList(),
+                useUid: false,
+                session.SavedSearchUids,
+                out var parsedMessageSet))
         {
             await writer.WriteLineAsync($"{tag} BAD Invalid message set");
             return;
@@ -1755,6 +1774,9 @@ ILogger<ImapServerService> logger) : BackgroundService
     {
         if (!_searchCommandLimiter.Wait(0))
         {
+            var (returnOptions, _) = ParseEsearchReturn(args);
+            if (returnOptions?.Any(option => option.Equals("SAVE", StringComparison.OrdinalIgnoreCase)) == true)
+                session.SavedSearchUids = [];
             await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Too many concurrent SEARCH commands");
             return;
         }
@@ -1778,6 +1800,23 @@ ILogger<ImapServerService> logger) : BackgroundService
         CancellationToken ct)
     {
         var (returnOptions, searchCriteria) = ParseEsearchReturn(args);
+        var normalizedReturnOptions = returnOptions?
+            .Select(option => option.ToUpperInvariant())
+            .ToArray();
+        if (normalizedReturnOptions is not null
+            && normalizedReturnOptions.Any(option => option is not ("MIN" or "MAX" or "COUNT" or "ALL" or "SAVE")))
+        {
+            await writer.WriteLineAsync($"{tag} BAD Unsupported SEARCH return option");
+            return;
+        }
+
+        var saveResults = normalizedReturnOptions?.Contains("SAVE") == true;
+        if (session.Utf8Enabled && StartsWithCharsetSearchKey(searchCriteria))
+        {
+            await writer.WriteLineAsync($"{tag} BAD SEARCH CHARSET is not permitted after UTF8=ACCEPT");
+            return;
+        }
+
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
         await using var transaction = db.Database.IsRelational()
@@ -1786,9 +1825,19 @@ ILogger<ImapServerService> logger) : BackgroundService
         var query = db.Emails
             .AsNoTracking()
             .Where(email => email.FolderId == session.SelectedFolderId!.Value);
-        var searchResult = await FindSearchCandidatesAsync(query, searchCriteria.Trim(), ct);
+        var searchResult = await FindSearchCandidatesAsync(
+            query,
+            searchCriteria.Trim(),
+            session.SavedSearchUids,
+            session.Utf8Enabled,
+            ct);
         if (searchResult.FailureResponse is not null)
         {
+            if (saveResults
+                && searchResult.FailureResponse.StartsWith("NO", StringComparison.OrdinalIgnoreCase))
+            {
+                session.SavedSearchUids = [];
+            }
             await writer.WriteLineAsync($"{tag} {searchResult.FailureResponse}");
             return;
         }
@@ -1799,13 +1848,24 @@ ILogger<ImapServerService> logger) : BackgroundService
         if (transaction is not null)
             await transaction.CommitAsync(ct);
 
-        if (returnOptions is not null)
+        if (saveResults)
         {
-            var result = BuildEsearchResult(returnOptions, numbers);
-            var uidMarker = useUid ? " UID" : string.Empty;
-            await writer.WriteLineAsync($"* ESEARCH (TAG \"{tag}\"){uidMarker} {result}");
+            session.SavedSearchUids = SelectSavedSearchUids(
+                normalizedReturnOptions!,
+                searchResult.Matches);
         }
-        else
+
+        var responseOptions = normalizedReturnOptions?
+            .Where(option => option != "SAVE")
+            .ToArray();
+        if (responseOptions is { Length: > 0 })
+        {
+            var result = BuildEsearchResult(responseOptions, numbers);
+            var uidMarker = useUid ? " UID" : string.Empty;
+            var resultSuffix = result.Length > 0 ? $" {result}" : string.Empty;
+            await writer.WriteLineAsync($"* ESEARCH (TAG \"{tag}\"){uidMarker}{resultSuffix}");
+        }
+        else if (returnOptions is null)
         {
             await writer.WriteLineAsync($"* SEARCH {string.Join(' ', numbers)}");
         }
@@ -1917,7 +1977,7 @@ ILogger<ImapServerService> logger) : BackgroundService
         }
 
         var messageSet = args[..spaceIdx];
-        if (!TryParseMailboxName(args[(spaceIdx + 1)..].Trim(), out var destMailbox))
+        if (!TryParseMailboxName(args[(spaceIdx + 1)..].Trim(), session.Utf8Enabled, out var destMailbox))
         {
             await writer.WriteLineAsync($"{tag} BAD Invalid destination mailbox name");
             return;
@@ -1940,7 +2000,13 @@ ILogger<ImapServerService> logger) : BackgroundService
         var maximumIdentifier = useUid
             ? (emails.Count > 0 ? emails[^1].Uid : 0)
             : emails.Count;
-        if (!TryParseMessageSet(messageSet, maximumIdentifier, out var parsedMessageSet))
+        if (!TryResolveMessageSet(
+                messageSet,
+                maximumIdentifier,
+                emails.Select(email => email.Uid).ToList(),
+                useUid,
+                session.SavedSearchUids,
+                out var parsedMessageSet))
         {
             await writer.WriteLineAsync($"{tag} BAD Invalid message set");
             return;
@@ -1951,6 +2017,13 @@ ILogger<ImapServerService> logger) : BackgroundService
                 parsedMessageSet,
                 useUid ? email.Uid : index + 1))
             .ToList();
+
+        var commandName = useUid ? "UID COPY" : "COPY";
+        if (selected.Count == 0)
+        {
+            await writer.WriteLineAsync($"{tag} OK {commandName} completed");
+            return;
+        }
 
         if (!TryGetTotalStoredSize(selected, out var addedBytes))
         {
@@ -1969,7 +2042,6 @@ ILogger<ImapServerService> logger) : BackgroundService
         if (transaction is not null)
             await transaction.CommitAsync(ct);
 
-        var commandName = useUid ? "UID COPY" : "COPY";
         await writer.WriteLineAsync(
             $"{tag} OK [COPYUID {destFolder.UidValidity} {FormatUidSet(srcUids)} {FormatUidSet(dstUids)}] {commandName} completed");
     }
@@ -2074,7 +2146,13 @@ ILogger<ImapServerService> logger) : BackgroundService
 
         var emails = await GetEmailMetadataInFolderAsync(db, session.SelectedFolderId!.Value, ct);
         var maxUid = emails.Count > 0 ? emails[^1].Uid : 0;
-        if (!TryParseMessageSet(storeUidSet, maxUid, out var parsedMessageSet))
+        if (!TryResolveMessageSet(
+                storeUidSet,
+                maxUid,
+                emails.Select(email => email.Uid).ToList(),
+                useUid: true,
+                session.SavedSearchUids,
+                out var parsedMessageSet))
         {
             await writer.WriteLineAsync($"{tag} BAD Invalid message set");
             return;
@@ -2165,6 +2243,11 @@ ILogger<ImapServerService> logger) : BackgroundService
                 session.CondstoreEnabled = true;
                 enabled.Add("QRESYNC");
             }
+            else if (ext.Equals("UTF8=ACCEPT", StringComparison.OrdinalIgnoreCase))
+            {
+                session.Utf8Enabled = true;
+                enabled.Add("UTF8=ACCEPT");
+            }
         }
 
         var enabledStr = enabled.Count > 0 ? string.Join(' ', enabled) : "";
@@ -2175,7 +2258,7 @@ ILogger<ImapServerService> logger) : BackgroundService
     private async Task HandleSubscribeAsync(
         StreamWriter writer, string tag, string args, ImapSession session, bool subscribe, CancellationToken ct)
     {
-        if (!TryParseMailboxName(args.Trim(), out var mailboxName))
+        if (!TryParseMailboxName(args.Trim(), session.Utf8Enabled, out var mailboxName))
         {
             await writer.WriteLineAsync($"{tag} BAD Invalid mailbox name");
             return;
@@ -3246,6 +3329,38 @@ ILogger<ImapServerService> logger) : BackgroundService
         return true;
     }
 
+    private static bool TryResolveMessageSet(
+        string value,
+        int maximumIdentifier,
+        IReadOnlyList<int> orderedUids,
+        bool useUid,
+        IReadOnlySet<int> savedSearchUids,
+        out List<MessageSetRange> ranges)
+    {
+        if (!value.Equals("$", StringComparison.Ordinal))
+            return TryParseMessageSet(value, maximumIdentifier, out ranges);
+
+        ranges = [];
+        for (var index = 0; index < orderedUids.Count; index++)
+        {
+            var uid = orderedUids[index];
+            if (!savedSearchUids.Contains(uid))
+                continue;
+
+            var identifier = useUid ? uid : index + 1;
+            if (ranges.Count > 0 && identifier == ranges[^1].End + 1)
+            {
+                ranges[^1] = new MessageSetRange(ranges[^1].Start, identifier);
+            }
+            else
+            {
+                ranges.Add(new MessageSetRange(identifier, identifier));
+            }
+        }
+
+        return true;
+    }
+
     private static bool TryParseMessageSetEndpoint(
         string value,
         int maximumIdentifier,
@@ -3303,6 +3418,7 @@ ILogger<ImapServerService> logger) : BackgroundService
 
     private static bool TryParseListCommand(
         string args,
+        bool utf8Enabled,
         out ListCommandOptions options,
         out string failureResponse)
     {
@@ -3334,7 +3450,7 @@ ILogger<ImapServerService> logger) : BackgroundService
         }
 
         if (!TryReadListAtom(tokens, ref index, out var wireReference)
-            || !ImapMailboxEncoding.TryDecode(wireReference, out var reference))
+            || !TryParseMailboxName(wireReference, utf8Enabled, out var reference))
         {
             failureResponse = "Invalid LIST reference name";
             return false;
@@ -3359,7 +3475,7 @@ ILogger<ImapServerService> logger) : BackgroundService
         var patterns = new List<string>(wirePatterns.Count);
         foreach (var wirePattern in wirePatterns)
         {
-            if (!ImapMailboxEncoding.TryDecode(wirePattern, out var pattern))
+            if (!TryParseMailboxName(wirePattern, utf8Enabled, out var pattern))
             {
                 failureResponse = "Invalid LIST mailbox pattern";
                 return false;
@@ -3535,13 +3651,14 @@ ILogger<ImapServerService> logger) : BackgroundService
 
     private static bool TryParseMailboxArgs(
         string args,
+        bool utf8Enabled,
         out string reference,
         out string pattern)
     {
         var tokens = ParseImapTokens(args);
         if (tokens.Count < 2
-            || !TryParseMailboxName(tokens[0], out reference)
-            || !TryParseMailboxName(tokens[1], out pattern))
+            || !TryParseMailboxName(tokens[0], utf8Enabled, out reference)
+            || !TryParseMailboxName(tokens[1], utf8Enabled, out pattern))
         {
             reference = string.Empty;
             pattern = string.Empty;
@@ -3551,12 +3668,14 @@ ILogger<ImapServerService> logger) : BackgroundService
         return true;
     }
 
-    private static (string oldName, string newName)? ParseTwoMailboxArgs(string args)
+    private static (string oldName, string newName)? ParseTwoMailboxArgs(
+        string args,
+        bool utf8Enabled)
     {
         var tokens = ParseImapTokens(args);
         if (tokens.Count < 2) return null;
-        if (!TryParseMailboxName(tokens[0], out var oldName)
-            || !TryParseMailboxName(tokens[1], out var newName))
+        if (!TryParseMailboxName(tokens[0], utf8Enabled, out var oldName)
+            || !TryParseMailboxName(tokens[1], utf8Enabled, out var newName))
         {
             return null;
         }
@@ -3564,11 +3683,58 @@ ILogger<ImapServerService> logger) : BackgroundService
         return (oldName, newName);
     }
 
-    private static bool TryParseMailboxName(string value, out string mailboxName) =>
-        ImapMailboxEncoding.TryDecode(UnquoteArg(value), out mailboxName);
+    private static bool TryParseMailboxName(
+        string value,
+        bool utf8Enabled,
+        out string mailboxName)
+    {
+        var wireName = UnquoteArg(value);
+        if (!utf8Enabled)
+            return ImapMailboxEncoding.TryDecode(wireName, out mailboxName);
 
-    private static string FormatWireMailboxName(string mailboxName) =>
-        ImapMailboxEncoding.Encode(mailboxName);
+        if (!TryDecodeUtf8WireValue(wireName, out mailboxName)
+            || !IsValidNetUnicodeMailboxName(mailboxName))
+        {
+            mailboxName = string.Empty;
+            return false;
+        }
+
+        mailboxName = mailboxName.Normalize(NormalizationForm.FormC);
+        return true;
+    }
+
+    private static string FormatWireMailboxName(string mailboxName, bool utf8Enabled)
+    {
+        if (!utf8Enabled)
+            return ImapMailboxEncoding.Encode(mailboxName);
+
+        return ProtocolEncoding.GetString(
+            StrictUtf8.GetBytes(mailboxName.Normalize(NormalizationForm.FormC)));
+    }
+
+    private static bool TryDecodeUtf8WireValue(string value, out string decoded)
+    {
+        decoded = string.Empty;
+        if (value.Any(character => character > byte.MaxValue))
+            return false;
+
+        try
+        {
+            decoded = StrictUtf8.GetString(ProtocolEncoding.GetBytes(value));
+            return true;
+        }
+        catch (DecoderFallbackException)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsValidNetUnicodeMailboxName(string value) =>
+        value.All(character => character is not (>= '\u0000' and <= '\u001f')
+            and not '\u007f'
+            and not (>= '\u0080' and <= '\u009f')
+            and not '\u2028'
+            and not '\u2029');
 
     private static List<string> ParseImapTokens(string input)
     {
@@ -3679,7 +3845,7 @@ ILogger<ImapServerService> logger) : BackgroundService
     private async Task HandleGetQuotaRootAsync(
         StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
-        if (!TryParseMailboxName(args.Trim(), out var mailboxName))
+        if (!TryParseMailboxName(args.Trim(), session.Utf8Enabled, out var mailboxName))
         {
             await writer.WriteLineAsync($"{tag} BAD Invalid mailbox name");
             return;
@@ -3704,7 +3870,7 @@ ILogger<ImapServerService> logger) : BackgroundService
         var quotaBytes = user?.QuotaBytes ?? 0;
 
         await writer.WriteLineAsync(
-            $"* QUOTAROOT \"{EscapeImapString(FormatWireMailboxName(mailboxName))}\" \"\"");
+            $"* QUOTAROOT \"{EscapeImapString(FormatWireMailboxName(mailboxName, session.Utf8Enabled))}\" \"\"");
         if (quotaBytes > 0)
             await writer.WriteLineAsync(
                 $"* QUOTA \"\" (STORAGE {ToQuotaStorageUnits(usedBytes)} {ToQuotaStorageUnits(quotaBytes)})");
@@ -3921,7 +4087,9 @@ ILogger<ImapServerService> logger) : BackgroundService
     private sealed class SearchParser(
         IReadOnlyList<SearchToken> tokens,
         int maximumSequenceNumber,
-        int maximumUid)
+        int maximumUid,
+        IReadOnlySet<int> savedSearchUids,
+        bool utf8Enabled)
     {
         private int _index;
         private string _failureResponse = "BAD Invalid search criteria";
@@ -3945,9 +4113,12 @@ ILogger<ImapServerService> logger) : BackgroundService
                     return false;
                 }
 
-                if (!charset.Equals("US-ASCII", StringComparison.OrdinalIgnoreCase))
+                var supportedCharset = utf8Enabled ? "UTF-8" : "US-ASCII";
+                if (!charset.Equals(supportedCharset, StringComparison.OrdinalIgnoreCase))
                 {
-                    failureResponse = "NO [BADCHARSET (US-ASCII)] Unsupported search charset";
+                    failureResponse = utf8Enabled
+                        ? "BAD SEARCH charset conflicts with UTF8=ACCEPT"
+                        : "NO [BADCHARSET (US-ASCII)] Unsupported search charset";
                     return false;
                 }
             }
@@ -4021,6 +4192,14 @@ ILogger<ImapServerService> logger) : BackgroundService
 
             if (token.Kind != SearchTokenKind.Atom)
                 return false;
+
+            if (token.Value == "$")
+            {
+                predicate = new SearchPredicate(
+                    SearchDataRequirements.None,
+                    (message, _) => savedSearchUids.Contains(message.Uid));
+                return true;
+            }
 
             if (LooksLikeMessageSet(token.Value))
             {
@@ -4182,11 +4361,21 @@ ILogger<ImapServerService> logger) : BackgroundService
                         (message, _) => message.SizeBytes < smaller);
                     return true;
                 case "UID":
-                    if (!TryReadValue(out var uidSet)
-                        || !TryParseMessageSet(uidSet, maximumUid, out var uidRanges))
+                    if (!TryReadValue(out var uidSet))
                     {
                         return false;
                     }
+
+                    if (uidSet == "$")
+                    {
+                        predicate = new SearchPredicate(
+                            SearchDataRequirements.None,
+                            (message, _) => savedSearchUids.Contains(message.Uid));
+                        return true;
+                    }
+
+                    if (!TryParseMessageSet(uidSet, maximumUid, out var uidRanges))
+                        return false;
 
                     predicate = new SearchPredicate(
                         SearchDataRequirements.None,
@@ -4342,8 +4531,17 @@ ILogger<ImapServerService> logger) : BackgroundService
     private static async Task<SearchExecutionResult> FindSearchCandidatesAsync(
         IQueryable<EmailDB> query,
         string criteria,
+        IReadOnlySet<int> savedSearchUids,
+        bool utf8Enabled,
         CancellationToken cancellationToken)
     {
+        if (utf8Enabled && !TryDecodeUtf8WireValue(criteria, out criteria))
+        {
+            return new SearchExecutionResult(
+                [],
+                "BAD Invalid UTF-8 in search criteria");
+        }
+
         var bounds = await query
             .GroupBy(_ => 1)
             .Select(group => new
@@ -4362,7 +4560,12 @@ ILogger<ImapServerService> logger) : BackgroundService
                 "BAD Invalid search criteria");
         }
 
-        var parser = new SearchParser(tokens, maximumSequenceNumber, maximumUid);
+        var parser = new SearchParser(
+            tokens,
+            maximumSequenceNumber,
+            maximumUid,
+            savedSearchUids,
+            utf8Enabled);
         if (!parser.TryParse(out var predicate, out var failureResponse))
             return new SearchExecutionResult([], failureResponse);
 
@@ -4491,7 +4694,7 @@ ILogger<ImapServerService> logger) : BackgroundService
         var index = 0;
         while (index < criteria.Length)
         {
-            while (index < criteria.Length && char.IsWhiteSpace(criteria[index]))
+            while (index < criteria.Length && criteria[index] == ' ')
                 index++;
 
             if (index >= criteria.Length)
@@ -4512,7 +4715,7 @@ ILogger<ImapServerService> logger) : BackgroundService
                 tokens.Add(new SearchToken(SearchTokenKind.CloseParenthesis, ")"));
                 index++;
                 if (index < criteria.Length
-                    && !char.IsWhiteSpace(criteria[index])
+                    && criteria[index] != ' '
                     && criteria[index] != ')')
                 {
                     return false;
@@ -4551,7 +4754,7 @@ ILogger<ImapServerService> logger) : BackgroundService
                 if (!terminated)
                     return false;
                 if (index < criteria.Length
-                    && !char.IsWhiteSpace(criteria[index])
+                    && criteria[index] != ' '
                     && criteria[index] != ')')
                 {
                     return false;
@@ -4563,7 +4766,7 @@ ILogger<ImapServerService> logger) : BackgroundService
 
             var start = index;
             while (index < criteria.Length
-                   && !char.IsWhiteSpace(criteria[index])
+                   && criteria[index] != ' '
                    && criteria[index] is not '(' and not ')')
             {
                 if (criteria[index] is '\r' or '\n' or '\0')
@@ -4796,6 +4999,34 @@ ILogger<ImapServerService> logger) : BackgroundService
 
     // — ESEARCH helpers (RFC 4731) —
 
+    private static bool StartsWithCharsetSearchKey(string criteria)
+    {
+        var trimmed = criteria.TrimStart();
+        return trimmed.Equals("CHARSET", StringComparison.OrdinalIgnoreCase)
+            || trimmed.StartsWith("CHARSET ", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static HashSet<int> SelectSavedSearchUids(
+        IReadOnlyCollection<string> returnOptions,
+        IReadOnlyList<SearchCandidate> matches)
+    {
+        var saveAll = returnOptions.Contains("ALL")
+            || returnOptions.Contains("COUNT")
+            || !returnOptions.Contains("MIN") && !returnOptions.Contains("MAX");
+        if (saveAll)
+            return matches.Select(match => match.Uid).ToHashSet();
+
+        var saved = new HashSet<int>();
+        if (matches.Count == 0)
+            return saved;
+
+        if (returnOptions.Contains("MIN"))
+            saved.Add(matches[0].Uid);
+        if (returnOptions.Contains("MAX"))
+            saved.Add(matches[^1].Uid);
+        return saved;
+    }
+
     private static (string[]? returnOpts, string searchCriteria) ParseEsearchReturn(string args)
     {
         var trimmed = args.TrimStart();
@@ -4889,7 +5120,12 @@ ILogger<ImapServerService> logger) : BackgroundService
         var folderQuery = db.Emails
             .AsNoTracking()
             .Where(email => email.FolderId == session.SelectedFolderId!.Value);
-        var searchResult = await FindSearchCandidatesAsync(folderQuery, searchCriteria, ct);
+        var searchResult = await FindSearchCandidatesAsync(
+            folderQuery,
+            searchCriteria,
+            session.SavedSearchUids,
+            session.Utf8Enabled,
+            ct);
         if (searchResult.FailureResponse is not null)
         {
             await writer.WriteLineAsync($"{tag} {searchResult.FailureResponse}");
@@ -4981,7 +5217,12 @@ ILogger<ImapServerService> logger) : BackgroundService
         var folderQuery = db.Emails
             .AsNoTracking()
             .Where(email => email.FolderId == session.SelectedFolderId!.Value);
-        var searchResult = await FindSearchCandidatesAsync(folderQuery, searchCriteria, ct);
+        var searchResult = await FindSearchCandidatesAsync(
+            folderQuery,
+            searchCriteria,
+            session.SavedSearchUids,
+            session.Utf8Enabled,
+            ct);
         if (searchResult.FailureResponse is not null)
         {
             await writer.WriteLineAsync($"{tag} {searchResult.FailureResponse}");
@@ -5183,7 +5424,13 @@ ILogger<ImapServerService> logger) : BackgroundService
 
         var folder = await db.Folders.FindAsync([session.SelectedFolderId!.Value], ct);
         var maxUid = emails.Count > 0 ? emails[^1].Uid : 0;
-        if (!TryParseMessageSet(uidSetArg, maxUid, out var parsedMessageSet))
+        if (!TryResolveMessageSet(
+                uidSetArg,
+                maxUid,
+                emails.Select(email => email.Uid).ToList(),
+                useUid: true,
+                session.SavedSearchUids,
+                out var parsedMessageSet))
         {
             await writer.WriteLineAsync($"{tag} BAD Invalid message set");
             return;
@@ -5268,7 +5515,7 @@ ILogger<ImapServerService> logger) : BackgroundService
         }
 
         var messageSet = args[..spaceIdx];
-        if (!TryParseMailboxName(args[(spaceIdx + 1)..].Trim(), out var destMailbox))
+        if (!TryParseMailboxName(args[(spaceIdx + 1)..].Trim(), session.Utf8Enabled, out var destMailbox))
         {
             await writer.WriteLineAsync($"{tag} BAD Invalid destination mailbox name");
             return;
@@ -5298,7 +5545,13 @@ ILogger<ImapServerService> logger) : BackgroundService
         var maximumIdentifier = useUid
             ? (emails.Count > 0 ? emails[^1].Uid : 0)
             : emails.Count;
-        if (!TryParseMessageSet(messageSet, maximumIdentifier, out var parsedMessageSet))
+        if (!TryResolveMessageSet(
+                messageSet,
+                maximumIdentifier,
+                emails.Select(email => email.Uid).ToList(),
+                useUid,
+                session.SavedSearchUids,
+                out var parsedMessageSet))
         {
             await writer.WriteLineAsync($"{tag} BAD Invalid message set");
             return;
@@ -5310,6 +5563,13 @@ ILogger<ImapServerService> logger) : BackgroundService
                 parsedMessageSet,
                 useUid ? item.Email.Uid : item.SequenceNumber))
             .ToList();
+
+        var commandName = useUid ? "UID MOVE" : "MOVE";
+        if (selected.Count == 0)
+        {
+            await writer.WriteLineAsync($"{tag} OK {commandName} completed");
+            return;
+        }
 
         var srcUids = new List<int>(selected.Count);
         var dstUids = new List<int>(selected.Count);
@@ -5352,7 +5612,6 @@ ILogger<ImapServerService> logger) : BackgroundService
                 await writer.WriteLineAsync($"* {sequenceNumber} EXPUNGE");
         }
 
-        var commandName = useUid ? "UID MOVE" : "MOVE";
         await writer.WriteLineAsync(
             $"{tag} OK [COPYUID {destFolder.UidValidity} {FormatUidSet(srcUids)} {FormatUidSet(dstUids)}] {commandName} completed");
     }
@@ -5421,7 +5680,9 @@ ILogger<ImapServerService> logger) : BackgroundService
 
         while (true)
         {
-            var (mailboxName, flags, internalDate, literalSize) = ParseAppendArgs(remaining);
+            var (mailboxName, flags, internalDate, literalSize) = ParseAppendArgs(
+                remaining,
+                session.Utf8Enabled);
 
             if (mailboxName is null || literalSize is null)
             {
@@ -5536,11 +5797,41 @@ ILogger<ImapServerService> logger) : BackgroundService
             var messageData = new string(buffer, 0, totalRead);
             if (messageData.Contains('\0'))
             {
+                if (!await ConsumeRejectedAppendRemainderAsync(
+                        reader,
+                        writer,
+                        session,
+                        timeout,
+                        connectionTimeoutSeconds,
+                        ct))
+                {
+                    return;
+                }
                 await writer.WriteLineAsync($"{tag} NO APPEND content contains a NUL byte");
                 return;
             }
 
-            var (subject, body, headers) = MailMessageParser.Parse(messageData);
+            if (!TryPrepareAppendMessageForParsing(
+                    messageData,
+                    session.Utf8Enabled,
+                    out var messageForParsing,
+                    out var utf8Failure))
+            {
+                if (!await ConsumeRejectedAppendRemainderAsync(
+                        reader,
+                        writer,
+                        session,
+                        timeout,
+                        connectionTimeoutSeconds,
+                        ct))
+                {
+                    return;
+                }
+                await writer.WriteLineAsync($"{tag} NO [CANNOT] {utf8Failure}");
+                return;
+            }
+
+            var (subject, body, headers) = MailMessageParser.Parse(messageForParsing);
             var sender = MailMessageParser.ExtractHeaderValue(headers, "From");
             var recipient = MailMessageParser.ExtractHeaderValue(headers, "To");
 
@@ -5593,7 +5884,7 @@ ILogger<ImapServerService> logger) : BackgroundService
             }
 
             remaining =
-                $"\"{EscapeImapString(FormatWireMailboxName(targetMailbox))}\" {nextLine.Trim()}";
+                $"\"{EscapeImapString(FormatWireMailboxName(targetMailbox, session.Utf8Enabled))}\" {nextLine.Trim()}";
         }
 
         db.ChangeTracker.Clear();
@@ -5630,6 +5921,79 @@ ILogger<ImapServerService> logger) : BackgroundService
 
         var uidSetStr = FormatUidRange(allUids);
         await writer.WriteLineAsync($"{tag} OK [APPENDUID {folder.UidValidity} {uidSetStr}] APPEND completed");
+    }
+
+    private static bool TryPrepareAppendMessageForParsing(
+        string messageData,
+        bool utf8Enabled,
+        out string messageForParsing,
+        out string failure)
+    {
+        messageForParsing = messageData;
+        failure = string.Empty;
+
+        if (utf8Enabled && TryDecodeUtf8WireValue(messageData, out var decodedMessage))
+        {
+            messageForParsing = decodedMessage;
+            return true;
+        }
+
+        var separatorIndex = messageData.IndexOf("\r\n\r\n", StringComparison.Ordinal);
+        if (separatorIndex < 0)
+            separatorIndex = messageData.IndexOf("\n\n", StringComparison.Ordinal);
+
+        var headerLength = separatorIndex >= 0 ? separatorIndex : messageData.Length;
+        var wireHeaders = messageData[..headerLength];
+        if (!wireHeaders.Any(character => character > 0x7f))
+            return true;
+
+        if (!utf8Enabled)
+        {
+            failure = "Internationalized headers require ENABLE UTF8=ACCEPT";
+            return false;
+        }
+
+        if (!TryDecodeUtf8WireValue(wireHeaders, out var decodedHeaders))
+        {
+            failure = "Message headers are not valid UTF-8";
+            return false;
+        }
+
+        messageForParsing = decodedHeaders + messageData[headerLength..];
+        return true;
+    }
+
+    private static async Task<bool> ConsumeRejectedAppendRemainderAsync(
+        BoundedLineReader reader,
+        StreamWriter writer,
+        ImapSession session,
+        CancellationTokenSource timeout,
+        int connectionTimeoutSeconds,
+        CancellationToken ct)
+    {
+        timeout.CancelAfter(TimeSpan.FromSeconds(connectionTimeoutSeconds));
+        var remainder = await reader.ReadLineAsync(MaximumCommandLineCharacters, ct);
+        if (remainder.IsTooLong)
+        {
+            await writer.WriteLineAsync("* BYE APPEND continuation is too long");
+            session.State = ImapState.Logout;
+            return false;
+        }
+
+        if (remainder.Value is null)
+        {
+            session.State = ImapState.Logout;
+            return false;
+        }
+
+        if (remainder.Value.Length > 0)
+        {
+            await writer.WriteLineAsync("* BYE APPEND rejected with pending continuation data");
+            session.State = ImapState.Logout;
+            return false;
+        }
+
+        return true;
     }
 
     private static async Task RejectAppendBeforeLiteralAsync(
@@ -5680,13 +6044,15 @@ ILogger<ImapServerService> logger) : BackgroundService
     [GeneratedRegex(@"\{([0-9]+)(\+)?\}$")]
     private static partial Regex CommandLiteralRegex();
 
-    private static (string? mailboxName, List<string> flags, DateTime? internalDate, int? literalSize) ParseAppendArgs(string args)
+    private static (string? mailboxName, List<string> flags, DateTime? internalDate, int? literalSize) ParseAppendArgs(
+        string args,
+        bool utf8Enabled)
     {
         var tokens = ParseImapTokens(args);
         if (tokens.Count < 1)
             return (null, [], null, null);
 
-        if (!TryParseMailboxName(tokens[0], out var mailboxName))
+        if (!TryParseMailboxName(tokens[0], utf8Enabled, out var mailboxName))
             return (null, [], null, null);
         var flags = new List<string>();
         DateTime? internalDate = null;

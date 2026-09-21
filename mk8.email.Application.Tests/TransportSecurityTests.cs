@@ -500,6 +500,7 @@ public sealed class TransportSecurityTests
         StringAssert.Contains(capability, "IMAP4rev1 LITERAL+ IDLE NAMESPACE SPECIAL-USE UIDPLUS");
         StringAssert.Contains(capability, "LIST-EXTENDED LIST-STATUS");
         StringAssert.Contains(capability, "ID ENABLE MOVE UNSELECT QUOTA CONDSTORE QRESYNC ESEARCH");
+        StringAssert.Contains(capability, "SEARCHRES UTF8=ACCEPT");
         StringAssert.Contains(capability, "MULTIAPPEND STATUS=SIZE COMPRESS=DEFLATE APPENDLIMIT=65536");
         StringAssert.Contains(capability, "LOGINDISABLED");
         StringAssert.Contains(capability, "STARTTLS");
@@ -628,8 +629,8 @@ public sealed class TransportSecurityTests
         await connection.WriteLineAsync($"a3 LOGIN \"{TestUsername}\" \"{TestPassword}\"");
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a3 OK", StringComparison.Ordinal));
 
-        await connection.WriteLineAsync("a4 ENABLE QRESYNC CONDSTORE UNKNOWN");
-        Assert.AreEqual("* ENABLED QRESYNC CONDSTORE", await connection.ReadLineAsync());
+        await connection.WriteLineAsync("a4 ENABLE QRESYNC CONDSTORE UTF8=ACCEPT UNKNOWN");
+        Assert.AreEqual("* ENABLED QRESYNC CONDSTORE UTF8=ACCEPT", await connection.ReadLineAsync());
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a4 OK", StringComparison.Ordinal));
         await connection.WriteLineAsync("a5 SELECT INBOX");
         await ReadUntilTaggedResponseAsync(connection, "a5");
@@ -1123,6 +1124,109 @@ public sealed class TransportSecurityTests
     }
 
     [TestMethod]
+    [Timeout(20_000)]
+    public async Task ImapUtf8AcceptUsesDirectMailboxNamesSearchAndInternationalizedHeaders()
+    {
+        var port = ReservePort();
+        var environment = CreateEnvironment(imapPort: port);
+        await using var server = await ServerFixture.StartImapAsync(environment, port);
+        await using var connection = await ProtocolConnection.ConnectAsync(port);
+
+        await connection.ReadLineAsync();
+        await connection.WriteLineAsync("a1 STARTTLS");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a1 OK", StringComparison.Ordinal));
+        await connection.UpgradeToTlsAsync("email.mk8n.com");
+        await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a2 OK", StringComparison.Ordinal));
+
+        await connection.WriteUtf8LineAsync("a3 CREATE \"Projects/Žuta pošta\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a3 BAD", StringComparison.Ordinal));
+
+        const string internationalMessage =
+            "From: user@mk8n.com\r\n" +
+            "To: user@mk8n.com\r\n" +
+            "Subject: Žuta pošta\r\n" +
+            "\r\n" +
+            "Pozdrav\r\n";
+        var internationalMessageSize = Encoding.UTF8.GetByteCount(internationalMessage);
+        await connection.WriteLineAsync($"a4 APPEND INBOX {{{internationalMessageSize}}}");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("+ ", StringComparison.Ordinal));
+        await connection.WriteUtf8RawAsync(internationalMessage);
+        await connection.WriteLineAsync(string.Empty);
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a4 NO [CANNOT]", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a5 ENABLE UTF8=ACCEPT");
+        Assert.AreEqual("* ENABLED UTF8=ACCEPT", await connection.ReadLineAsync());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a5 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a6 CREATE Projects");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a6 OK", StringComparison.Ordinal));
+        await connection.WriteUtf8LineAsync("a7 CREATE \"Projects/Cafe\u0301\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a7 OK", StringComparison.Ordinal));
+        await connection.WriteUtf8LineAsync("a8 CREATE \"Projects/Žuta pošta\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a8 OK", StringComparison.Ordinal));
+
+        var invalidUtf8Command = Encoding.ASCII.GetBytes("a9 CREATE \"Projects/")
+            .Concat(new byte[] { 0xc3, 0x28 })
+            .Concat(Encoding.ASCII.GetBytes("\"\r\n"))
+            .ToArray();
+        await connection.WriteBytesAsync(invalidUtf8Command);
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a9 BAD", StringComparison.Ordinal));
+
+        await connection.WriteUtf8LineAsync("a10 CREATE \"Projects/bad\u2028name\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a10 BAD", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a11 LIST \"\" \"Projects/*\"");
+        var listed = new List<string>();
+        string line;
+        do
+        {
+            line = await connection.ReadUtf8LineAsync();
+            listed.Add(line);
+        }
+        while (!line.StartsWith("a11 ", StringComparison.Ordinal));
+        Assert.IsTrue(listed.Any(value => value.EndsWith("\"Projects/Café\"", StringComparison.Ordinal)));
+        Assert.IsTrue(listed.Any(value => value.EndsWith("\"Projects/Žuta pošta\"", StringComparison.Ordinal)));
+
+        await connection.WriteUtf8LineAsync("a12 STATUS \"Projects/Žuta pošta\" (MESSAGES)");
+        Assert.AreEqual(
+            "* STATUS \"Projects/Žuta pošta\" (MESSAGES 0)",
+            await connection.ReadUtf8LineAsync());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a12 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync($"a13 APPEND INBOX {{{internationalMessageSize}}}");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("+ ", StringComparison.Ordinal));
+        await connection.WriteUtf8RawAsync(internationalMessage);
+        await connection.WriteLineAsync(string.Empty);
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a13 OK [APPENDUID", StringComparison.Ordinal));
+        Assert.AreEqual("Žuta pošta", (await server.GetStoredEmailAsync(DefaultFolders.Inbox)).Subject);
+
+        var invalidHeaderPrefix = Encoding.ASCII.GetBytes(
+            "From: user@mk8n.com\r\nTo: user@mk8n.com\r\nSubject: ");
+        var invalidHeaderMessage = invalidHeaderPrefix
+            .Concat(new byte[] { 0xc3, 0x28 })
+            .Concat(Encoding.ASCII.GetBytes("\r\n\r\nbody\r\n"))
+            .ToArray();
+        await connection.WriteLineAsync($"a14 APPEND INBOX {{{invalidHeaderMessage.Length}}}");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("+ ", StringComparison.Ordinal));
+        await connection.WriteBytesAsync(invalidHeaderMessage);
+        await connection.WriteLineAsync(string.Empty);
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a14 NO [CANNOT]", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a15 SELECT INBOX");
+        await ReadUntilTaggedResponseAsync(connection, "a15");
+        await connection.WriteLineAsync("a16 UID SEARCH CHARSET UTF-8 ALL");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a16 BAD", StringComparison.Ordinal));
+        await connection.WriteUtf8LineAsync("a17 UID SEARCH SUBJECT \"Žuta\"");
+        Assert.AreEqual("* SEARCH 1", await connection.ReadLineAsync());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a17 OK", StringComparison.Ordinal));
+
+        await connection.WriteUtf8LineAsync("a18 SELECT \"Projects/Žuta pošta\"");
+        var selected = await ReadUntilTaggedResponseAsync(connection, "a18");
+        Assert.IsTrue(selected[^1].StartsWith("a18 OK [READ-WRITE]", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
     [Timeout(15_000)]
     public async Task ImapListExtendedCombinesSubscriptionsSpecialUseAndStatus()
     {
@@ -1305,6 +1409,96 @@ public sealed class TransportSecurityTests
     }
 
     [TestMethod]
+    [Timeout(20_000)]
+    public async Task ImapSearchResSavesUidStableResultsAcrossCommandsAndExpunges()
+    {
+        var port = ReservePort();
+        var environment = CreateEnvironment(imapPort: port);
+        await using var server = await ServerFixture.StartImapAsync(environment, port);
+        await server.SeedInboxMessagesForSearchAsync();
+        await using var connection = await ProtocolConnection.ConnectAsync(port);
+
+        await connection.ReadLineAsync();
+        await connection.WriteLineAsync("a1 STARTTLS");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a1 OK", StringComparison.Ordinal));
+        await connection.UpgradeToTlsAsync("email.mk8n.com");
+        await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a2 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a3 SELECT INBOX");
+        await ReadUntilTaggedResponseAsync(connection, "a3");
+
+        await connection.WriteLineAsync(
+            "a4 UID SEARCH RETURN (SAVE) OR SUBJECT MixedCaseSubject SUBJECT \"Other subject\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a4 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a5 SEARCH $");
+        Assert.AreEqual("* SEARCH 1 2", await connection.ReadLineAsync());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a5 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a6 UID SEARCH UID $");
+        Assert.AreEqual("* SEARCH 1 2", await connection.ReadLineAsync());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a6 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a7 UID SEARCH RETURN (SAVE MIN MAX) ALL");
+        Assert.AreEqual(
+            "* ESEARCH (TAG \"a7\") UID MIN 1 MAX 3",
+            await connection.ReadLineAsync());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a7 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a8 FETCH $ (UID)");
+        var fetched = await ReadUntilTaggedResponseAsync(connection, "a8");
+        Assert.IsTrue(fetched.Any(line => line.StartsWith("* 1 FETCH (UID 1", StringComparison.Ordinal)));
+        Assert.IsTrue(fetched.Any(line => line.StartsWith("* 3 FETCH (UID 3", StringComparison.Ordinal)));
+        Assert.AreEqual(3, fetched.Count);
+
+        await connection.WriteLineAsync("a9 STORE $ +FLAGS.SILENT (\\Flagged)");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a9 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a10 UID SEARCH FLAGGED");
+        Assert.AreEqual("* SEARCH 1 3", await connection.ReadLineAsync());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a10 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a11 UID STORE 1 +FLAGS.SILENT (\\Deleted)");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a11 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a12 EXPUNGE");
+        Assert.AreEqual("* 1 EXPUNGE", await connection.ReadLineAsync());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a12 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a13 UID FETCH $ (UID)");
+        fetched = await ReadUntilTaggedResponseAsync(connection, "a13");
+        Assert.AreEqual(2, fetched.Count);
+        Assert.IsTrue(fetched[0].StartsWith("* 2 FETCH (UID 3", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a14 UID SEARCH RETURN (SAVE) SUBJECT absent-marker");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a14 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a15 COPY $ Trash");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a15 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a16 UID FETCH $ (UID)");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a16 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a17 UID SEARCH RETURN (SAVE) UID 2");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a17 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a18 UID SEARCH RETURN (SAVE UNKNOWN) ALL");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a18 BAD", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a19 UID FETCH $ (UID)");
+        fetched = await ReadUntilTaggedResponseAsync(connection, "a19");
+        Assert.AreEqual(2, fetched.Count);
+        Assert.IsTrue(fetched[0].StartsWith("* 1 FETCH (UID 2", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a20 UID SEARCH RETURN (SAVE) CHARSET KOI8-R ALL");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith(
+            "a20 NO [BADCHARSET",
+            StringComparison.Ordinal));
+        await connection.WriteLineAsync("a21 UID FETCH $ (UID)");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a21 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a22 UID SEARCH RETURN (SAVE) UID 2");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a22 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a23 SELECT INBOX");
+        await ReadUntilTaggedResponseAsync(connection, "a23");
+        await connection.WriteLineAsync("a24 UID FETCH $ (UID)");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a24 OK", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
     [Timeout(15_000)]
     public async Task ImapSearchUsesHeaderBodyInternalAndSentDateSemantics()
     {
@@ -1438,16 +1632,22 @@ public sealed class TransportSecurityTests
             "Subject: café\r\n" +
             "\r\n" +
             "\r\nbody é\r\n";
-        await connection.WriteLineAsync($"a3 APPEND \"Sent\" {{{message.Length}}}");
+        await connection.WriteLineAsync("a3 ENABLE UTF8=ACCEPT");
+        Assert.AreEqual("* ENABLED UTF8=ACCEPT", await connection.ReadLineAsync());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a3 OK", StringComparison.Ordinal));
+
+        var messageSize = Encoding.UTF8.GetByteCount(message);
+        await connection.WriteLineAsync($"a4 APPEND \"Sent\" {{{messageSize}}}");
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("+ ", StringComparison.Ordinal));
-        await connection.WriteRawAsync(message);
+        await connection.WriteUtf8RawAsync(message);
         await connection.WriteLineAsync(string.Empty);
-        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a3 OK [APPENDUID", StringComparison.Ordinal));
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a4 OK [APPENDUID", StringComparison.Ordinal));
 
         var stored = await server.GetStoredEmailAsync(DefaultFolders.Sent);
         Assert.AreEqual("café", stored.Subject);
         Assert.AreEqual("\r\nbody é\r\n", stored.Body);
-        Assert.AreEqual(message.Length, stored.SizeBytes);
+        Assert.AreEqual(messageSize, stored.SizeBytes);
+        CollectionAssert.AreEqual(Encoding.UTF8.GetBytes(message), stored.RawMessage!);
     }
 
     [TestMethod]
@@ -2767,6 +2967,31 @@ public sealed class TransportSecurityTests
         {
             await _writer.WriteAsync(value);
             await _writer.FlushAsync();
+        }
+
+        public Task WriteUtf8LineAsync(string line) => WriteUtf8RawAsync(line + "\r\n");
+
+        public async Task WriteUtf8RawAsync(string value)
+        {
+            await _writer.FlushAsync();
+            await _stream.WriteAsync(Encoding.UTF8.GetBytes(value));
+            await _stream.FlushAsync();
+        }
+
+        public async Task WriteBytesAsync(ReadOnlyMemory<byte> value)
+        {
+            await _writer.FlushAsync();
+            await _stream.WriteAsync(value);
+            await _stream.FlushAsync();
+        }
+
+        public async Task<string> ReadUtf8LineAsync()
+        {
+            var wireValue = await ReadLineAsync();
+            return new UTF8Encoding(
+                    encoderShouldEmitUTF8Identifier: false,
+                    throwOnInvalidBytes: true)
+                .GetString(Encoding.Latin1.GetBytes(wireValue));
         }
 
         public async Task UpgradeToTlsAsync(string hostName)

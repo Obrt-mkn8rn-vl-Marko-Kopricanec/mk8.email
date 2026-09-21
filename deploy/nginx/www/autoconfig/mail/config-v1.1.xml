@@ -1,9 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<clientConfig version="1.1">
+<clientConfig version="1.2">
   <emailProvider id="mk8n.com">
     <domain>mk8n.com</domain>
     <displayName>mk8n Mail</displayName>
     <displayShortName>mk8n</displayShortName>
+    <incomingServer type="jmap">
+      <url>https://email.mk8n.com/.well-known/jmap</url>
+      <authentication system="http">Basic</authentication>
+      <username>%EMAILADDRESS%</username>
+    </incomingServer>
     <incomingServer type="imap">
       <hostname>email.mk8n.com</hostname>
       <port>993</port>
@@ -26,4 +31,14 @@
       <username>%EMAILADDRESS%</username>
     </outgoingServer>
   </emailProvider>
+  <calendar type="caldav">
+    <url>https://email.mk8n.com/.well-known/caldav</url>
+    <authentication system="http">Basic</authentication>
+    <username>%EMAILADDRESS%</username>
+  </calendar>
+  <addressbook type="carddav">
+    <url>https://email.mk8n.com/.well-known/carddav</url>
+    <authentication system="http">Basic</authentication>
+    <username>%EMAILADDRESS%</username>
+  </addressbook>
 </clientConfig>

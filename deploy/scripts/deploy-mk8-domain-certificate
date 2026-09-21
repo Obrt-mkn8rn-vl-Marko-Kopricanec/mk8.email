@@ -236,6 +236,15 @@ server {
         try_files \$uri =404;
     }
 
+    location = /.well-known/autoconfig/ {
+        return 308 /mail/config-v1.1.xml;
+    }
+
+    location = /.well-known/autoconfig/mail/config-v1.1.xml {
+        alias $web_root/autoconfig/mail/config-v1.1.xml;
+        default_type application/xml;
+    }
+
     location / {
         return 404;
     }
@@ -324,6 +333,11 @@ curl --silent --fail --insecure --max-time 10 --noproxy '*' \
     --resolve "autoconfig.$domain:443:127.0.0.1" \
     "https://autoconfig.$domain/mail/config-v1.1.xml" >/dev/null \
     || fail "The autoconfiguration endpoint is not ready."
+curl --silent --fail --insecure --max-time 10 --noproxy '*' \
+    --resolve "autoconfig.$domain:443:127.0.0.1" \
+    "https://autoconfig.$domain/.well-known/autoconfig/mail/config-v1.1.xml" \
+    >/dev/null \
+    || fail "The well-known autoconfiguration endpoint is not ready."
 curl --silent --fail --insecure --max-time 10 --noproxy '*' \
     --resolve "mta-sts.$domain:443:127.0.0.1" \
     "https://mta-sts.$domain/.well-known/mta-sts.txt" >/dev/null \

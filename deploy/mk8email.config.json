@@ -47,6 +47,12 @@
     "UploadRetentionHours": 24,
     "MaxUnreferencedBlobBytesPerAccount": 104857600
   },
+  "Dav": {
+    "EnableDav": true,
+    "MaxResourceSizeBytes": 10485760,
+    "MaxCollectionsPerUser": 100,
+    "MaxResourcesPerCollection": 100000
+  },
   "Tls": {
     "CertificatePath": "/run/secrets/tls_certificate",
     "CertificateKeyPath": "/run/secrets/tls_private_key"

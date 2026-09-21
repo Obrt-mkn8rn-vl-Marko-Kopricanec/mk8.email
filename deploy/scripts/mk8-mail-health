@@ -288,6 +288,11 @@ curl --silent --fail --insecure --max-time 10 \
     --resolve admin.mk8n.com:8443:@@MK8_SERVER_IPV4@@ \
     https://admin.mk8n.com:8443/health/ready >/dev/null \
     || record_error "The administrator dashboard is not ready."
+curl --silent --fail --insecure --max-time 10 --noproxy '*' \
+    --request OPTIONS \
+    --resolve email.mk8n.com:443:127.0.0.1 \
+    https://email.mk8n.com/dav/ >/dev/null \
+    || record_error "The public DAV service is not ready."
 
 active_domains=$(runuser -u postgres -- psql --dbname=mk8email --no-psqlrc \
     --tuples-only --no-align \
@@ -340,6 +345,11 @@ for active_domain in $active_domains; do
         --resolve "autoconfig.$active_domain:443:127.0.0.1" \
         "https://autoconfig.$active_domain/mail/config-v1.1.xml" >/dev/null \
         || record_error "The autoconfiguration endpoint for $active_domain is not ready."
+    curl --silent --fail --insecure --max-time 10 --noproxy '*' \
+        --resolve "autoconfig.$active_domain:443:127.0.0.1" \
+        "https://autoconfig.$active_domain/.well-known/autoconfig/mail/config-v1.1.xml" \
+        >/dev/null \
+        || record_error "The well-known autoconfiguration endpoint for $active_domain is not ready."
     curl --silent --fail --insecure --max-time 10 --noproxy '*' \
         --resolve "mta-sts.$active_domain:443:127.0.0.1" \
         "https://mta-sts.$active_domain/.well-known/mta-sts.txt" >/dev/null \

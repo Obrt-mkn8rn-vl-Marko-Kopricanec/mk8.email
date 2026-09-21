@@ -4,6 +4,10 @@ $TTL 300
 @                               IN MX 10 email.mk8n.com.
 _jmap._tcp                      IN SRV 0 1 443 email.mk8n.com.
 _imaps._tcp                     IN SRV 0 1 993 email.mk8n.com.
+_caldavs._tcp                   IN SRV 0 1 443 email.mk8n.com.
+_caldavs._tcp                   IN TXT "path=/dav/"
+_carddavs._tcp                  IN SRV 0 1 443 email.mk8n.com.
+_carddavs._tcp                  IN TXT "path=/dav/"
 _pop3._tcp                      IN SRV 0 1 110 email.mk8n.com.
 _pop3s._tcp                     IN SRV 0 1 995 email.mk8n.com.
 _submission._tcp                IN SRV 0 1 587 email.mk8n.com.

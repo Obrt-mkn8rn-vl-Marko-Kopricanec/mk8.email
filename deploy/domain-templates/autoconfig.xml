@@ -1,9 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<clientConfig version="1.1">
+<clientConfig version="1.2">
   <emailProvider id="@@DOMAIN@@">
     <domain>@@DOMAIN@@</domain>
     <displayName>@@DOMAIN@@ Mail</displayName>
     <displayShortName>@@DOMAIN@@</displayShortName>
+    <incomingServer type="jmap">
+      <url>https://@@CANONICAL_MAIL_HOST@@/.well-known/jmap</url>
+      <authentication system="http">Basic</authentication>
+      <username>%EMAILADDRESS%</username>
+    </incomingServer>
     <incomingServer type="imap">
       <hostname>@@CANONICAL_MAIL_HOST@@</hostname>
       <port>993</port>
@@ -26,4 +31,14 @@
       <username>%EMAILADDRESS%</username>
     </outgoingServer>
   </emailProvider>
+  <calendar type="caldav">
+    <url>https://@@CANONICAL_MAIL_HOST@@/.well-known/caldav</url>
+    <authentication system="http">Basic</authentication>
+    <username>%EMAILADDRESS%</username>
+  </calendar>
+  <addressbook type="carddav">
+    <url>https://@@CANONICAL_MAIL_HOST@@/.well-known/carddav</url>
+    <authentication system="http">Basic</authentication>
+    <username>%EMAILADDRESS%</username>
+  </addressbook>
 </clientConfig>

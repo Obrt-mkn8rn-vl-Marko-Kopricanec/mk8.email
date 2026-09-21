@@ -392,6 +392,10 @@ write_domain_assets() {
         printf '@ IN MX 10 %s.\n' "$canonical_mail_host"
         printf '_jmap._tcp IN SRV 0 1 443 %s.\n' "$canonical_mail_host"
         printf '_imaps._tcp IN SRV 0 1 993 %s.\n' "$canonical_mail_host"
+        printf '_caldavs._tcp IN SRV 0 1 443 %s.\n' "$canonical_mail_host"
+        printf '_caldavs._tcp IN TXT "path=/dav/"\n'
+        printf '_carddavs._tcp IN SRV 0 1 443 %s.\n' "$canonical_mail_host"
+        printf '_carddavs._tcp IN TXT "path=/dav/"\n'
         printf '_pop3._tcp IN SRV 0 1 110 %s.\n' "$canonical_mail_host"
         printf '_pop3s._tcp IN SRV 0 1 995 %s.\n' "$canonical_mail_host"
         printf '_submission._tcp IN SRV 0 1 587 %s.\n' "$canonical_mail_host"
@@ -516,6 +520,22 @@ verify_public_dns() {
         | tr '\t' ' ' | sed 's/  */ /g' | tr -d '\r')
     [ "$mx" = "10 $canonical_mail_host." ] \
         || fail "The domain MX record is not ready."
+    caldavs=$(dig +time=5 +tries=2 +short SRV "_caldavs._tcp.$domain" \
+        | tr '\t' ' ' | sed 's/  */ /g' | tr -d '\r')
+    [ "$caldavs" = "0 1 443 $canonical_mail_host." ] \
+        || fail "The domain CalDAV service record is not ready."
+    carddavs=$(dig +time=5 +tries=2 +short SRV "_carddavs._tcp.$domain" \
+        | tr '\t' ' ' | sed 's/  */ /g' | tr -d '\r')
+    [ "$carddavs" = "0 1 443 $canonical_mail_host." ] \
+        || fail "The domain CardDAV service record is not ready."
+    caldavs_path=$(dns_txt_value "path=" "_caldavs._tcp.$domain") \
+        || fail "The domain CalDAV path record is not ready."
+    [ "$caldavs_path" = "path=/dav/" ] \
+        || fail "The domain CalDAV path is not ready."
+    carddavs_path=$(dns_txt_value "path=" "_carddavs._tcp.$domain") \
+        || fail "The domain CardDAV path record is not ready."
+    [ "$carddavs_path" = "path=/dav/" ] \
+        || fail "The domain CardDAV path is not ready."
     for service_name in "autoconfig.$domain" "mta-sts.$domain"; do
         dns_routes_to_public_address "$service_name" \
             || fail "Public DNS is not ready for $service_name."
@@ -577,6 +597,20 @@ verify_domain_web_services() {
     grep -F "<hostname>$canonical_mail_host</hostname>" \
         "$work/autoconfig-check.xml" >/dev/null \
         || fail "The autoconfiguration service name is not correct."
+    grep -F "<url>https://$canonical_mail_host/.well-known/jmap</url>" \
+        "$work/autoconfig-check.xml" >/dev/null \
+        || fail "The autoconfiguration JMAP endpoint is not correct."
+    grep -F "<url>https://$canonical_mail_host/.well-known/caldav</url>" \
+        "$work/autoconfig-check.xml" >/dev/null \
+        || fail "The autoconfiguration CalDAV endpoint is not correct."
+    grep -F "<url>https://$canonical_mail_host/.well-known/carddav</url>" \
+        "$work/autoconfig-check.xml" >/dev/null \
+        || fail "The autoconfiguration CardDAV endpoint is not correct."
+    curl --silent --show-error --fail --max-time 15 --noproxy '*' \
+        --resolve "autoconfig.$domain:443:127.0.0.1" \
+        "https://autoconfig.$domain/.well-known/autoconfig/mail/config-v1.1.xml" \
+        | cmp --silent - "$work/autoconfig-check.xml" \
+        || fail "The well-known autoconfiguration endpoint is not ready."
     curl --silent --show-error --fail --max-time 15 --noproxy '*' \
         --resolve "mta-sts.$domain:443:127.0.0.1" \
         "https://mta-sts.$domain/.well-known/mta-sts.txt" \

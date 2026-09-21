@@ -129,9 +129,23 @@ grep -Fx "_pop3._tcp IN SRV 0 1 110 email.mk8n.com." \
     "$domain_directory/cloudflare-import.zone" >/dev/null
 grep -Fx "_pop3s._tcp IN SRV 0 1 995 email.mk8n.com." \
     "$domain_directory/cloudflare-import.zone" >/dev/null
+grep -Fx "_caldavs._tcp IN SRV 0 1 443 email.mk8n.com." \
+    "$domain_directory/cloudflare-import.zone" >/dev/null
+grep -Fx '_caldavs._tcp IN TXT "path=/dav/"' \
+    "$domain_directory/cloudflare-import.zone" >/dev/null
+grep -Fx "_carddavs._tcp IN SRV 0 1 443 email.mk8n.com." \
+    "$domain_directory/cloudflare-import.zone" >/dev/null
+grep -Fx '_carddavs._tcp IN TXT "path=/dav/"' \
+    "$domain_directory/cloudflare-import.zone" >/dev/null
 grep -Fx "autoconfig IN CNAME email.mk8n.com. ; cf_tags=cf-proxied:false" \
     "$domain_directory/cloudflare-import.zone" >/dev/null
 grep -F '<incomingServer type="pop3">' \
+    "$web_directory/autoconfig/mail/config-v1.1.xml" >/dev/null
+grep -F '<incomingServer type="jmap">' \
+    "$web_directory/autoconfig/mail/config-v1.1.xml" >/dev/null
+grep -F '<calendar type="caldav">' \
+    "$web_directory/autoconfig/mail/config-v1.1.xml" >/dev/null
+grep -F '<addressbook type="carddav">' \
     "$web_directory/autoconfig/mail/config-v1.1.xml" >/dev/null
 grep -Fx "$domain $selector" /etc/rspamd/dkim_selectors.map >/dev/null
 grep -Fx "$domain $selector_key" /etc/rspamd/dkim_paths.map >/dev/null

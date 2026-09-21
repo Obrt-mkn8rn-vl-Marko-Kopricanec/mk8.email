@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 import argparse
+import base64
+import http.client
 import imaplib
 import poplib
 import re
+import socket
 import smtplib
 import ssl
 import subprocess
 import time
 import uuid
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from email.parser import BytesParser
@@ -18,6 +22,7 @@ from pathlib import Path
 
 LOCAL_HOST = "127.0.0.1"
 INBOUND_HOST = "@@MK8_SERVER_IPV4@@"
+PUBLIC_MAIL_HOST = "email.mk8n.com"
 
 
 def require(condition: bool, message: str) -> None:
@@ -30,6 +35,210 @@ def tls_context() -> ssl.SSLContext:
     context.check_hostname = False
     context.verify_mode = ssl.CERT_NONE
     return context
+
+
+class LocalHttpsConnection(http.client.HTTPSConnection):
+    def connect(self) -> None:
+        raw_socket = socket.create_connection(
+            (LOCAL_HOST, self.port),
+            self.timeout,
+            self.source_address,
+        )
+        self.sock = self._context.wrap_socket(
+            raw_socket,
+            server_hostname=self.host,
+        )
+
+
+def dav_request(
+    method: str,
+    path: str,
+    account: str | None = None,
+    password: str | None = None,
+    body: str | None = None,
+    headers: dict[str, str] | None = None,
+) -> tuple[int, http.client.HTTPMessage, bytes]:
+    request_headers = dict(headers or {})
+    if account is not None:
+        require(password is not None, "The DAV password is missing.")
+        credentials = base64.b64encode(
+            f"{account}:{password}".encode("utf-8")
+        ).decode("ascii")
+        request_headers["Authorization"] = f"Basic {credentials}"
+    encoded_body = body.encode("utf-8") if body is not None else None
+    connection = LocalHttpsConnection(
+        PUBLIC_MAIL_HOST,
+        443,
+        timeout=20,
+        context=tls_context(),
+    )
+    try:
+        connection.request(method, path, body=encoded_body, headers=request_headers)
+        response = connection.getresponse()
+        response_body = response.read()
+        return response.status, response.headers, response_body
+    finally:
+        connection.close()
+
+
+def test_dav(account: str, password: str) -> None:
+    status, headers, _ = dav_request("OPTIONS", "/dav/")
+    require(status == 200, "The public DAV endpoint did not answer OPTIONS.")
+    require(
+        "calendar-access" in (headers.get("DAV") or ""),
+        "The public DAV endpoint did not advertise CalDAV.",
+    )
+    require(
+        "addressbook" in (headers.get("DAV") or ""),
+        "The public DAV endpoint did not advertise CardDAV.",
+    )
+    for discovery_path in ("/.well-known/caldav", "/.well-known/carddav"):
+        status, discovery_headers, _ = dav_request("PROPFIND", discovery_path)
+        require(status == 301, f"{discovery_path} did not redirect.")
+        require(
+            discovery_headers.get("Location") == "/dav/",
+            f"{discovery_path} redirected to the wrong DAV context.",
+        )
+
+    propfind = """<?xml version="1.0" encoding="utf-8"?>
+<D:propfind xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav" xmlns:A="urn:ietf:params:xml:ns:carddav">
+  <D:prop><D:current-user-principal/><C:calendar-home-set/><A:addressbook-home-set/></D:prop>
+</D:propfind>"""
+    status, _, discovery_body = dav_request(
+        "PROPFIND",
+        "/dav/",
+        account,
+        password,
+        propfind,
+        {"Content-Type": "application/xml", "Depth": "1"},
+    )
+    require(status == 207, "Authenticated DAV discovery failed.")
+    discovery_xml = ET.fromstring(discovery_body)
+    hrefs = [
+        element.text or ""
+        for element in discovery_xml.findall(".//{DAV:}href")
+    ]
+    calendar_homes = [
+        href
+        for href in hrefs
+        if re.fullmatch(r"/dav/calendars/[0-9a-f]{32}/", href)
+    ]
+    addressbook_homes = [
+        href
+        for href in hrefs
+        if re.fullmatch(r"/dav/addressbooks/[0-9a-f]{32}/", href)
+    ]
+    require(len(set(calendar_homes)) == 1, "DAV discovery returned no unique calendar home.")
+    require(len(set(addressbook_homes)) == 1, "DAV discovery returned no unique address-book home.")
+
+    suffix = uuid.uuid4().hex
+    calendar_collection = f"{calendar_homes[0]}smoke-{suffix}/"
+    calendar_resource = f"{calendar_collection}event.ics"
+    addressbook_collection = f"{addressbook_homes[0]}smoke-{suffix}/"
+    addressbook_resource = f"{addressbook_collection}contact.vcf"
+    created_collections: list[str] = []
+    try:
+        mkcalendar = """<C:mkcalendar xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:set><D:prop><D:displayname>Deployment smoke calendar</D:displayname></D:prop></D:set>
+</C:mkcalendar>"""
+        status, _, _ = dav_request(
+            "MKCALENDAR",
+            calendar_collection,
+            account,
+            password,
+            mkcalendar,
+            {"Content-Type": "application/xml"},
+        )
+        require(status == 201, "The CalDAV smoke collection could not be created.")
+        created_collections.append(calendar_collection)
+
+        calendar = (
+            "BEGIN:VCALENDAR\r\n"
+            "VERSION:2.0\r\n"
+            "PRODID:-//mk8.email//Deployment smoke//EN\r\n"
+            "BEGIN:VEVENT\r\n"
+            f"UID:{suffix}@mk8.email\r\n"
+            "DTSTAMP:20260921T080000Z\r\n"
+            "DTSTART:20260922T100000Z\r\n"
+            "DTEND:20260922T103000Z\r\n"
+            "SUMMARY:Deployment smoke event\r\n"
+            "END:VEVENT\r\n"
+            "END:VCALENDAR\r\n"
+        )
+        status, calendar_headers, _ = dav_request(
+            "PUT",
+            calendar_resource,
+            account,
+            password,
+            calendar,
+            {"Content-Type": "text/calendar", "If-None-Match": "*"},
+        )
+        require(status == 201, "The CalDAV smoke event could not be stored.")
+        require(bool(calendar_headers.get("ETag")), "The CalDAV smoke event has no ETag.")
+
+        sync_report = """<D:sync-collection xmlns:D="DAV:">
+  <D:sync-token/><D:sync-level>1</D:sync-level><D:prop><D:getetag/></D:prop>
+</D:sync-collection>"""
+        status, _, sync_body = dav_request(
+            "REPORT",
+            calendar_collection,
+            account,
+            password,
+            sync_report,
+            {"Content-Type": "application/xml", "Depth": "1"},
+        )
+        require(status == 207, "CalDAV incremental synchronization failed.")
+        require(
+            calendar_resource.encode("utf-8") in sync_body and b"sync-token" in sync_body,
+            "CalDAV synchronization omitted its resource or token.",
+        )
+
+        mkcol = """<D:mkcol xmlns:D="DAV:" xmlns:A="urn:ietf:params:xml:ns:carddav">
+  <D:set><D:prop><D:resourcetype><D:collection/><A:addressbook/></D:resourcetype><D:displayname>Deployment smoke contacts</D:displayname></D:prop></D:set>
+</D:mkcol>"""
+        status, _, _ = dav_request(
+            "MKCOL",
+            addressbook_collection,
+            account,
+            password,
+            mkcol,
+            {"Content-Type": "application/xml"},
+        )
+        require(status == 201, "The CardDAV smoke collection could not be created.")
+        created_collections.append(addressbook_collection)
+
+        vcard = (
+            "BEGIN:VCARD\r\n"
+            "VERSION:4.0\r\n"
+            f"UID:{suffix}@mk8.email\r\n"
+            "KIND:individual\r\n"
+            "FN:Deployment Smoke\r\n"
+            "EMAIL:deployment-smoke@example.invalid\r\n"
+            "END:VCARD\r\n"
+        )
+        status, _, _ = dav_request(
+            "PUT",
+            addressbook_resource,
+            account,
+            password,
+            vcard,
+            {"Content-Type": "text/vcard", "If-None-Match": "*"},
+        )
+        require(status == 201, "The CardDAV smoke contact could not be stored.")
+        status, _, stored_vcard = dav_request(
+            "GET",
+            addressbook_resource,
+            account,
+            password,
+        )
+        require(
+            status == 200 and stored_vcard == vcard.encode("utf-8"),
+            "The CardDAV smoke contact did not round-trip.",
+        )
+    finally:
+        for collection in reversed(created_collections):
+            status, _, _ = dav_request("DELETE", collection, account, password)
+            require(status in (204, 404), "A DAV smoke collection could not be cleaned up.")
 
 
 def new_message(sender: str, recipient: str, marker: str) -> EmailMessage:
@@ -547,6 +756,7 @@ def test_active(domain: str, account: str, password: str, selector: str) -> None
     test_move_tombstone(account, password)
     test_search(account, password)
     test_command_literals(account, password)
+    test_dav(account, password)
 
 
 def main() -> None:
@@ -569,7 +779,7 @@ def main() -> None:
 
     require(arguments.selector is not None, "The active test requires a DKIM selector.")
     test_active(arguments.domain, arguments.account, password, arguments.selector)
-    print("The second domain passed delivery, catch-all, login, sender, DKIM, COPY, MOVE, SEARCH, and literal tests.")
+    print("The second domain passed mail, IMAP extension, CalDAV, and CardDAV tests.")
 
 
 if __name__ == "__main__":

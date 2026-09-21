@@ -125,6 +125,14 @@ try {
         'IN MX 10 email.mk8n.com.',
         [StringComparison]::Ordinal)) `
         'The rendered MX record has the wrong mail hostname.'
+    Assert-True ($renderedDns.Contains(
+        '_caldavs._tcp                   IN SRV 0 1 443 email.mk8n.com.',
+        [StringComparison]::Ordinal)) `
+        'The rendered DNS records omit CalDAV discovery.'
+    Assert-True ($renderedDns.Contains(
+        '_carddavs._tcp                  IN SRV 0 1 443 email.mk8n.com.',
+        [StringComparison]::Ordinal)) `
+        'The rendered DNS records omit CardDAV discovery.'
     foreach ($routerFile in @('mk8-web-preflight.rsc', 'mk8-public-services.rsc')) {
         $renderedRouter = Get-Content `
             -LiteralPath (Join-Path $renderedRoot "deploy/routeros/$routerFile") -Raw
@@ -143,6 +151,18 @@ try {
         '<hostname>email.mk8n.com</hostname>',
         [StringComparison]::Ordinal)) `
         'The rendered client configuration has the wrong mail hostname.'
+    Assert-True ($renderedAutoconfig.Contains(
+        '<url>https://email.mk8n.com/.well-known/jmap</url>',
+        [StringComparison]::Ordinal)) `
+        'The rendered client configuration omits the preferred JMAP endpoint.'
+    Assert-True ($renderedAutoconfig.Contains(
+        '<url>https://email.mk8n.com/.well-known/caldav</url>',
+        [StringComparison]::Ordinal)) `
+        'The rendered client configuration omits CalDAV.'
+    Assert-True ($renderedAutoconfig.Contains(
+        '<url>https://email.mk8n.com/.well-known/carddav</url>',
+        [StringComparison]::Ordinal)) `
+        'The rendered client configuration omits CardDAV.'
     $sourceNginx = Get-Content -LiteralPath (Join-Path $testDeploy 'nginx/mk8-admin.conf') -Raw
     Assert-True ($sourceNginx.Contains('@@MK8_SERVER_IPV4@@', [StringComparison]::Ordinal)) `
         'Rendering changed the deployment source.'

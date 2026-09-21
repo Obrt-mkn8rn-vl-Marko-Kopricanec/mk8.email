@@ -59,7 +59,7 @@ public sealed class PostgresMailSubmissionQueue(
             recipientRequiresSmtpUtf8 |= addressRequiresSmtpUtf8;
 
             if (recipients.All(item => !string.Equals(item.Address, address, StringComparison.OrdinalIgnoreCase)))
-                recipients.Add(new MailEnvelopeRecipient(address, recipient.IsLocal));
+                recipients.Add(new MailEnvelopeRecipient(address, recipient.IsLocal, recipient.Dsn));
         }
 
         var authenticatedUser = submission.AuthenticatedUser;
@@ -67,6 +67,22 @@ public sealed class PostgresMailSubmissionQueue(
             && !SmtpAddress.TryNormalize(authenticatedUser, allowEmpty: false, out authenticatedUser))
         {
             throw new ArgumentException("The authenticated user is not valid.", nameof(submission));
+        }
+
+        string? dsnReturnContent = null;
+        string? dsnEnvelopeId = null;
+        if (submission.Dsn?.ReturnContent is not null
+            && !SmtpDsn.TryNormalizeReturnContent(
+                submission.Dsn.ReturnContent,
+                out dsnReturnContent))
+        {
+            throw new ArgumentException("The DSN return-content request is not valid.", nameof(submission));
+        }
+        if (submission.Dsn?.EnvelopeId is not null)
+        {
+            if (!SmtpDsn.TryValidateEnvelopeId(submission.Dsn.EnvelopeId))
+                throw new ArgumentException("The DSN envelope identifier is not valid.", nameof(submission));
+            dsnEnvelopeId = submission.Dsn.EnvelopeId;
         }
 
         var now = DateTime.UtcNow;
@@ -79,6 +95,8 @@ public sealed class PostgresMailSubmissionQueue(
                 || senderRequiresSmtpUtf8
                 || recipientRequiresSmtpUtf8
                 || SmtpInternationalization.HeadersRequireSmtpUtf8(submission.RawMessage),
+            DsnReturnContent = dsnReturnContent,
+            DsnEnvelopeId = dsnEnvelopeId,
             ClientIp = NormalizeMetadata(submission.ClientIp, 45),
             Helo = NormalizeMetadata(submission.Helo, 255),
             AuthenticatedUser = authenticatedUser,
@@ -93,6 +111,26 @@ public sealed class PostgresMailSubmissionQueue(
 
         foreach (var recipient in recipients)
         {
+            string? dsnNotify = null;
+            string? dsnOriginalRecipient = null;
+            if (recipient.Dsn?.Notify is not null
+                && !SmtpDsn.TryNormalizeNotify(recipient.Dsn.Notify, out dsnNotify))
+            {
+                throw new ArgumentException("A DSN notification request is not valid.", nameof(submission));
+            }
+            if (recipient.Dsn?.OriginalRecipient is not null)
+            {
+                if (!SmtpDsn.TryValidateOriginalRecipient(
+                        recipient.Dsn.OriginalRecipient,
+                        message.RequiresSmtpUtf8,
+                        out _,
+                        out _))
+                {
+                    throw new ArgumentException("A DSN original recipient is not valid.", nameof(submission));
+                }
+                dsnOriginalRecipient = recipient.Dsn.OriginalRecipient;
+            }
+
             message.Recipients.Add(new MailQueueRecipientDB
             {
                 Id = Guid.CreateVersion7(),
@@ -101,6 +139,8 @@ public sealed class PostgresMailSubmissionQueue(
                 State = MailQueueRecipientStates.Pending,
                 NextAttemptAt = now,
                 RedirectHistory = [recipient.Address],
+                DsnNotify = dsnNotify,
+                DsnOriginalRecipient = dsnOriginalRecipient,
             });
         }
 

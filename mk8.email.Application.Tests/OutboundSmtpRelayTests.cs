@@ -195,6 +195,8 @@ public sealed class OutboundSmtpRelayTests
         await server.WaitForCompletionAsync();
 
         Assert.AreEqual(OutboundDeliveryStatus.PermanentFailure, result.Status);
+        Assert.AreEqual("5.1.1", result.EnhancedStatusCode);
+        Assert.AreEqual("localhost", result.RemoteMta);
         Assert.IsFalse(server.Session!.Commands.Contains("DATA"));
     }
 
@@ -330,6 +332,112 @@ public sealed class OutboundSmtpRelayTests
         Assert.AreEqual(OutboundDeliveryStatus.PermanentFailure, result.Status);
         Assert.IsFalse(
             server.Session!.Commands.Any(command => command.StartsWith("MAIL ", StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
+    [Timeout(10_000)]
+    public async Task RelayForwardsDeliveryStatusParametersWhenAdvertised()
+    {
+        await using var server = new ScriptedSmtpServer(async session =>
+        {
+            await session.WriteLineAsync("220 receiver.test ESMTP");
+            session.Commands.Add(await session.ReadLineAsync());
+            await session.WriteLineAsync("250-receiver.test");
+            await session.WriteLineAsync("250 DSN");
+            session.Commands.Add(await session.ReadLineAsync());
+            await session.WriteLineAsync("250 2.1.0 Sender accepted");
+            session.Commands.Add(await session.ReadLineAsync());
+            await session.WriteLineAsync("250 2.1.5 Recipient accepted");
+            session.Commands.Add(await session.ReadLineAsync());
+            await session.WriteLineAsync("354 Send message");
+            while (await session.ReadLineAsync() is { } line && line != ".")
+                session.DataLines.Add(line);
+            await session.WriteLineAsync("250 2.0.0 Queued");
+            session.Commands.Add(await session.ReadLineAsync());
+        });
+        var relay = CreateRelay(new StubResolver(Available(server.Port)));
+
+        var result = await relay.RelayAsync(
+            "sender@mk8n.com",
+            "recipient@example.com",
+            "Subject: DSN forwarding\r\n\r\nbody\r\n",
+            new OutboundMailOptions(
+                Dsn: new MailDsnEnvelope("hdrs", "job+2B42"),
+                RecipientDsn: new MailDsnRecipient(
+                    "success,failure",
+                    "rfc822;old+2Btag+40example.com")));
+        await server.WaitForCompletionAsync();
+
+        Assert.AreEqual(OutboundDeliveryStatus.Delivered, result.Status);
+        Assert.IsTrue(result.DsnParametersForwarded);
+        Assert.AreEqual("2.0.0", result.EnhancedStatusCode);
+        Assert.AreEqual("localhost", result.RemoteMta);
+        CollectionAssert.Contains(
+            server.Session!.Commands,
+            "MAIL FROM:<sender@mk8n.com> RET=HDRS ENVID=job+2B42");
+        CollectionAssert.Contains(
+            server.Session.Commands,
+            "RCPT TO:<recipient@example.com> " +
+            "NOTIFY=SUCCESS,FAILURE ORCPT=rfc822;old+2Btag+40example.com");
+    }
+
+    [TestMethod]
+    [Timeout(10_000)]
+    public async Task RelayOmitsDeliveryStatusParametersWhenNotAdvertised()
+    {
+        await using var server = new ScriptedSmtpServer(
+            session => RunSuccessfulDeliveryAsync(
+                session,
+                useStartTls: false,
+                certificatePath: null));
+        var relay = CreateRelay(new StubResolver(Available(server.Port)));
+
+        var result = await relay.RelayAsync(
+            "sender@mk8n.com",
+            "recipient@example.com",
+            "Subject: DSN fallback\r\n\r\nbody\r\n",
+            new OutboundMailOptions(
+                Dsn: new MailDsnEnvelope("FULL", "job+2B42"),
+                RecipientDsn: new MailDsnRecipient(
+                    "SUCCESS,FAILURE",
+                    "rfc822;old+2Btag+40example.com")));
+        await server.WaitForCompletionAsync();
+
+        Assert.AreEqual(OutboundDeliveryStatus.Delivered, result.Status);
+        Assert.IsFalse(result.DsnParametersForwarded);
+        CollectionAssert.Contains(server.Session!.Commands, "MAIL FROM:<sender@mk8n.com>");
+        CollectionAssert.Contains(server.Session.Commands, "RCPT TO:<recipient@example.com>");
+        Assert.IsFalse(server.Session.Commands.Any(command =>
+            command.Contains("RET=", StringComparison.Ordinal)
+            || command.Contains("ENVID=", StringComparison.Ordinal)
+            || command.Contains("NOTIFY=", StringComparison.Ordinal)
+            || command.Contains("ORCPT=", StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
+    [Timeout(10_000)]
+    public async Task RelayUsesNullReversePathForNeverAgainstLegacyServer()
+    {
+        await using var server = new ScriptedSmtpServer(
+            session => RunSuccessfulDeliveryAsync(
+                session,
+                useStartTls: false,
+                certificatePath: null));
+        var relay = CreateRelay(new StubResolver(Available(server.Port)));
+
+        var result = await relay.RelayAsync(
+            "sender@mk8n.com",
+            "recipient@example.com",
+            "Subject: no legacy bounce\r\n\r\nbody\r\n",
+            new OutboundMailOptions(
+                RecipientDsn: new MailDsnRecipient("NEVER")));
+        await server.WaitForCompletionAsync();
+
+        Assert.AreEqual(OutboundDeliveryStatus.Delivered, result.Status);
+        Assert.IsFalse(result.DsnParametersForwarded);
+        CollectionAssert.Contains(server.Session!.Commands, "MAIL FROM:<>");
+        Assert.IsFalse(server.Session.Commands.Any(command =>
+            command.Contains("NOTIFY=", StringComparison.Ordinal)));
     }
 
     [TestMethod]

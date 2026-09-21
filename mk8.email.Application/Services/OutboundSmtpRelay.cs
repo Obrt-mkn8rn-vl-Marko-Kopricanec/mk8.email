@@ -52,7 +52,8 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay
         {
             return new OutboundDeliveryResult(
                 OutboundDeliveryStatus.PermanentFailure,
-                "The message is not in the mail wire byte representation.");
+                "The message is not in the mail wire byte representation.",
+                EnhancedStatusCode: "5.6.0");
         }
 
         if (!SmtpAddress.TryNormalize(sender, allowEmpty: true, out sender, out var senderIsInternational)
@@ -65,13 +66,21 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay
         {
             return new OutboundDeliveryResult(
                 OutboundDeliveryStatus.PermanentFailure,
-                "The envelope address is not valid.");
+                "The envelope address is not valid.",
+                EnhancedStatusCode: "5.1.3");
         }
 
         var requiresSmtpUtf8 = options?.RequiresSmtpUtf8 == true
             || senderIsInternational
             || recipientIsInternational
             || SmtpInternationalization.HeadersRequireSmtpUtf8(rawMessage);
+        if (!TryNormalizeDsnOptions(options, requiresSmtpUtf8, out options))
+        {
+            return new OutboundDeliveryResult(
+                OutboundDeliveryStatus.PermanentFailure,
+                "The delivery status notification options are not valid.",
+                EnhancedStatusCode: "5.5.4");
+        }
 
         var timeoutSeconds = Math.Clamp(_environment.Limits.ConnectionTimeoutSeconds, 10, 60);
         using var lookupTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -83,12 +92,16 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay
             return route.Status == MailRoutingStatus.DoesNotAcceptMail
                 ? new OutboundDeliveryResult(
                     OutboundDeliveryStatus.PermanentFailure,
-                    "The recipient domain does not accept mail.")
+                    "The recipient domain does not accept mail.",
+                    EnhancedStatusCode: "5.1.2")
                 : new OutboundDeliveryResult(
                     OutboundDeliveryStatus.TemporaryFailure,
-                    "Mail routing is temporarily unavailable.");
+                    "Mail routing is temporarily unavailable.",
+                    EnhancedStatusCode: "4.4.3");
         }
 
+        DeliveryAttempt? lastTemporaryFailure = null;
+        string? lastTemporaryHost = null;
         foreach (var endpoint in route.Exchanges
                      .Where(IsUsableEndpoint)
                      .OrderBy(endpoint => endpoint.Preference)
@@ -108,36 +121,53 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay
                 recipient,
                 rawMessage,
                 requiresSmtpUtf8,
+                options,
                 attemptTimeout.Token);
 
-            if (result == DeliveryAttemptResult.Delivered)
+            if (result.Status == DeliveryAttemptStatus.Delivered)
             {
                 _logger.LogInformation("Outbound SMTP delivery through {Host} completed", endpoint.Host);
                 return new OutboundDeliveryResult(
                     OutboundDeliveryStatus.Delivered,
-                    "The remote mail server accepted the message.");
+                    "The remote mail server accepted the message.",
+                    result.DsnParametersForwarded,
+                    endpoint.Host,
+                    result.EnhancedStatusCode);
             }
 
-            _logger.LogWarning("Outbound SMTP delivery through {Host} ended with {Result}", endpoint.Host, result);
-            if (result == DeliveryAttemptResult.PermanentFailure)
+            _logger.LogWarning(
+                "Outbound SMTP delivery through {Host} ended with {Result}",
+                endpoint.Host,
+                result.Status);
+            if (result.Status == DeliveryAttemptStatus.PermanentFailure)
             {
                 return new OutboundDeliveryResult(
                     OutboundDeliveryStatus.PermanentFailure,
-                    "The remote mail server rejected the message permanently.");
+                    result.Detail
+                        ?? "The remote mail server rejected the message permanently.",
+                    RemoteMta: endpoint.Host,
+                    EnhancedStatusCode: result.EnhancedStatusCode);
             }
+
+            lastTemporaryFailure = result;
+            lastTemporaryHost = endpoint.Host;
         }
 
         return new OutboundDeliveryResult(
             OutboundDeliveryStatus.TemporaryFailure,
-            "All remote delivery attempts failed temporarily.");
+            lastTemporaryFailure?.Detail
+                ?? "All remote delivery attempts failed temporarily.",
+            RemoteMta: lastTemporaryHost,
+            EnhancedStatusCode: lastTemporaryFailure?.EnhancedStatusCode ?? "4.4.1");
     }
 
-    private async Task<DeliveryAttemptResult> TryDeliverAsync(
+    private async Task<DeliveryAttempt> TryDeliverAsync(
         MailExchangeEndpoint endpoint,
         string sender,
         string recipient,
         string rawMessage,
         bool requiresSmtpUtf8,
+        OutboundMailOptions? options,
         CancellationToken cancellationToken)
     {
         try
@@ -156,7 +186,7 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay
                 $"EHLO {_environment.Smtp.Hostname}",
                 cancellationToken);
             if (ehlo is null)
-                return DeliveryAttemptResult.TryNextHost;
+                return new DeliveryAttempt(DeliveryAttemptStatus.TryNextHost);
 
             if (ehlo.Code != 250)
             {
@@ -174,7 +204,7 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay
             {
                 var startTls = await SendCommandAsync(connection, "STARTTLS", cancellationToken);
                 if (startTls?.Code != 220)
-                    return DeliveryAttemptResult.TryNextHost;
+                    return new DeliveryAttempt(DeliveryAttemptStatus.TryNextHost);
 
                 await connection.UpgradeToTlsAsync(endpoint.Host, cancellationToken);
                 ehlo = await SendCommandAsync(
@@ -188,21 +218,36 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay
             if (requiresSmtpUtf8
                 && (ehlo.Code != 250 || !HasCapability(ehlo, "SMTPUTF8")))
             {
-                return DeliveryAttemptResult.PermanentFailure;
+                return new DeliveryAttempt(
+                    DeliveryAttemptStatus.PermanentFailure,
+                    "5.6.7",
+                    Detail: "550 5.6.7 The next hop does not support SMTPUTF8.");
             }
 
             var containsEightBit = SmtpInternationalization.ContainsEightBit(rawMessage);
             if (containsEightBit
                 && (ehlo.Code != 250 || !HasCapability(ehlo, "8BITMIME")))
             {
-                return DeliveryAttemptResult.PermanentFailure;
+                return new DeliveryAttempt(
+                    DeliveryAttemptStatus.PermanentFailure,
+                    "5.6.3",
+                    Detail: "550 5.6.3 The next hop does not support 8BITMIME.");
             }
 
-            var mailCommand = new StringBuilder($"MAIL FROM:<{sender}>");
+            var supportsDsn = ehlo.Code == 250 && HasCapability(ehlo, "DSN");
+            var transmittedSender = !supportsDsn
+                && SmtpDsn.SuppressesAll(options?.RecipientDsn?.Notify)
+                    ? string.Empty
+                    : sender;
+            var mailCommand = new StringBuilder($"MAIL FROM:<{transmittedSender}>");
             if (containsEightBit)
                 mailCommand.Append(" BODY=8BITMIME");
             if (requiresSmtpUtf8)
                 mailCommand.Append(" SMTPUTF8");
+            if (supportsDsn && options?.Dsn?.ReturnContent is not null)
+                mailCommand.Append(" RET=").Append(options.Dsn.ReturnContent);
+            if (supportsDsn && options?.Dsn?.EnvelopeId is not null)
+                mailCommand.Append(" ENVID=").Append(options.Dsn.EnvelopeId);
             var mail = await SendCommandAsync(
                 connection,
                 mailCommand.ToString(),
@@ -211,9 +256,14 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay
             if (mail?.Code / 100 != 2)
                 return Classify(mail);
 
+            var recipientCommand = new StringBuilder($"RCPT TO:<{recipient}>");
+            if (supportsDsn && options?.RecipientDsn?.Notify is not null)
+                recipientCommand.Append(" NOTIFY=").Append(options.RecipientDsn.Notify);
+            if (supportsDsn && options?.RecipientDsn?.OriginalRecipient is not null)
+                recipientCommand.Append(" ORCPT=").Append(options.RecipientDsn.OriginalRecipient);
             var recipientResponse = await SendCommandAsync(
                 connection,
-                $"RCPT TO:<{recipient}>",
+                recipientCommand.ToString(),
                 requiresSmtpUtf8,
                 cancellationToken);
             if (recipientResponse?.Code / 100 != 2)
@@ -229,7 +279,15 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay
                 return Classify(completion);
 
             await connection.WriteLineAsync("QUIT", cancellationToken);
-            return DeliveryAttemptResult.Delivered;
+            var dsnForwarded = supportsDsn
+                && (options?.Dsn?.ReturnContent is not null
+                    || options?.Dsn?.EnvelopeId is not null
+                    || options?.RecipientDsn?.Notify is not null
+                    || options?.RecipientDsn?.OriginalRecipient is not null);
+            return new DeliveryAttempt(
+                DeliveryAttemptStatus.Delivered,
+                GetEnhancedStatusCode(completion),
+                dsnForwarded);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -239,7 +297,7 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay
             exception is SocketException or IOException or AuthenticationException or OperationCanceledException)
         {
             _logger.LogWarning(exception, "Outbound SMTP attempt failed through {Host}", endpoint.Host);
-            return DeliveryAttemptResult.TryNextHost;
+            return new DeliveryAttempt(DeliveryAttemptStatus.TryNextHost);
         }
     }
 
@@ -262,11 +320,78 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay
         CancellationToken cancellationToken) =>
         SendCommandAsync(connection, command, utf8: false, cancellationToken);
 
-    private static DeliveryAttemptResult Classify(SmtpResponse? response)
+    private static DeliveryAttempt Classify(SmtpResponse? response)
     {
-        return response?.Code / 100 == 5
-            ? DeliveryAttemptResult.PermanentFailure
-            : DeliveryAttemptResult.TryNextHost;
+        return new DeliveryAttempt(
+            response?.Code / 100 == 5
+                ? DeliveryAttemptStatus.PermanentFailure
+                : DeliveryAttemptStatus.TryNextHost,
+            GetEnhancedStatusCode(response),
+            Detail: response?.Lines.LastOrDefault());
+    }
+
+    private static string? GetEnhancedStatusCode(SmtpResponse? response)
+    {
+        var line = response?.Lines.LastOrDefault();
+        if (line is null || line.Length <= 4)
+            return null;
+        var token = line[4..].TrimStart().Split(' ', 2)[0];
+        var parts = token.Split('.');
+        return parts.Length == 3
+            && parts[0] is "2" or "4" or "5"
+            && parts.Skip(1).All(part =>
+                part.Length is >= 1 and <= 3
+                && part.All(char.IsAsciiDigit))
+            ? token
+            : null;
+    }
+
+    private static bool TryNormalizeDsnOptions(
+        OutboundMailOptions? source,
+        bool requiresSmtpUtf8,
+        out OutboundMailOptions? normalized)
+    {
+        normalized = source;
+        if (source is null)
+            return true;
+
+        string? returnContent = null;
+        if (source.Dsn?.ReturnContent is not null
+            && !SmtpDsn.TryNormalizeReturnContent(source.Dsn.ReturnContent, out returnContent))
+        {
+            return false;
+        }
+        if (source.Dsn?.EnvelopeId is not null
+            && !SmtpDsn.TryValidateEnvelopeId(source.Dsn.EnvelopeId))
+        {
+            return false;
+        }
+
+        string? notify = null;
+        if (source.RecipientDsn?.Notify is not null
+            && !SmtpDsn.TryNormalizeNotify(source.RecipientDsn.Notify, out notify))
+        {
+            return false;
+        }
+        if (source.RecipientDsn?.OriginalRecipient is not null
+            && !SmtpDsn.TryValidateOriginalRecipient(
+                source.RecipientDsn.OriginalRecipient,
+                requiresSmtpUtf8,
+                out _,
+                out _))
+        {
+            return false;
+        }
+
+        normalized = new OutboundMailOptions(
+            source.RequiresSmtpUtf8,
+            source.Dsn is null
+                ? null
+                : new MailDsnEnvelope(returnContent, source.Dsn.EnvelopeId),
+            source.RecipientDsn is null
+                ? null
+                : new MailDsnRecipient(notify, source.RecipientDsn.OriginalRecipient));
+        return true;
     }
 
     private static bool HasCapability(SmtpResponse response, string capability)
@@ -296,12 +421,18 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay
             && Uri.CheckHostName(endpoint.Host) is UriHostNameType.Dns or UriHostNameType.IPv4 or UriHostNameType.IPv6;
     }
 
-    private enum DeliveryAttemptResult
+    private enum DeliveryAttemptStatus
     {
         Delivered,
         TryNextHost,
         PermanentFailure,
     }
+
+    private sealed record DeliveryAttempt(
+        DeliveryAttemptStatus Status,
+        string? EnhancedStatusCode = null,
+        bool DsnParametersForwarded = false,
+        string? Detail = null);
 
     private sealed record SmtpResponse(int Code, IReadOnlyList<string> Lines);
 

@@ -386,6 +386,7 @@ def test_open_relay() -> None:
         client.ehlo("probe.debian.org")
         require(client.has_extn("8bitmime"), "mk8.email did not advertise 8BITMIME.")
         require(client.has_extn("smtputf8"), "mk8.email did not advertise SMTPUTF8.")
+        require(client.has_extn("dsn"), "mk8.email did not advertise DSN.")
         require(client.mail("probe@debian.org")[0] == 250, "The relay test sender was not accepted.")
         code, _ = client.rcpt("recipient@debian.org")
         require(code in (550, 554), "mk8.email accepted an unauthenticated relay recipient.")

@@ -62,6 +62,7 @@ public sealed class TransportSecurityTests
         Assert.IsFalse(capability.Contains("AUTH", StringComparison.Ordinal));
         StringAssert.Contains(capability, "250-8BITMIME");
         StringAssert.Contains(capability, "250-SMTPUTF8");
+        StringAssert.Contains(capability, "250-DSN");
 
         await connection.WriteLineAsync("AUTH PLAIN AGZvbwBiYXI=");
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("538 ", StringComparison.Ordinal));
@@ -316,7 +317,8 @@ public sealed class TransportSecurityTests
         await connection.WriteUtf8LineAsync(
             "MAIL FROM:<josé@example.com> BODY=8BITMIME SMTPUTF8");
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("250 ", StringComparison.Ordinal));
-        await connection.WriteUtf8LineAsync("RCPT TO:<δοκιμή@mk8n.com>");
+        await connection.WriteUtf8LineAsync(
+            @"RCPT TO:<δοκιμή@mk8n.com> ORCPT=utf-8;\x{3B4}\x{3BF}\x{3BA}\x{3B9}\x{3BC}\x{3AE}@mk8n.com");
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("250 ", StringComparison.Ordinal));
         await connection.WriteLineAsync("DATA");
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("354 ", StringComparison.Ordinal));
@@ -331,11 +333,94 @@ public sealed class TransportSecurityTests
         var submission = server.MailQueue.LastSubmission!;
         Assert.IsTrue(submission.RequiresSmtpUtf8);
         Assert.AreEqual("josé@example.com", submission.EnvelopeSender);
-        Assert.AreEqual("δοκιμή@mk8n.com", submission.Recipients.Single().Address);
+        var recipient = submission.Recipients.Single();
+        Assert.AreEqual("δοκιμή@mk8n.com", recipient.Address);
+        Assert.AreEqual(
+            @"utf-8;\x{3B4}\x{3BF}\x{3BA}\x{3B9}\x{3BC}\x{3AE}@mk8n.com",
+            recipient.Dsn!.OriginalRecipient);
         var decoded = Encoding.UTF8.GetString(
             Encoding.Latin1.GetBytes(submission.RawMessage));
         StringAssert.Contains(decoded, "with UTF8SMTP");
         StringAssert.Contains(decoded, "Subject: Žuta pošta");
+    }
+
+    [TestMethod]
+    [Timeout(10_000)]
+    public async Task SmtpAcceptsAndQueuesDeliveryStatusParameters()
+    {
+        var port = ReservePort();
+        var environment = CreateEnvironment(smtpPort: port);
+        await using var server = await ServerFixture.StartSmtpAsync(environment, port);
+        await using var connection = await ProtocolConnection.ConnectAsync(port);
+
+        await connection.ReadLineAsync();
+        await connection.WriteLineAsync("EHLO client.example");
+        StringAssert.Contains(await connection.ReadSmtpResponseAsync(), "250-DSN");
+        await connection.WriteLineAsync(
+            "MAIL FROM:<sender@example.com> RET=hdrs ENVID=job+2B42+3Ddone");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("250 ", StringComparison.Ordinal));
+        await connection.WriteLineAsync(
+            "RCPT TO:<postmaster@mk8n.com> " +
+            "NOTIFY=success,failure,delay " +
+            "ORCPT=rfc822;old+2Btag+40example.com");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("250 ", StringComparison.Ordinal));
+        await connection.WriteLineAsync("DATA");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("354 ", StringComparison.Ordinal));
+        await connection.WriteLineAsync("Subject: DSN request");
+        await connection.WriteLineAsync(string.Empty);
+        await connection.WriteLineAsync("body");
+        await connection.WriteLineAsync(".");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("250 ", StringComparison.Ordinal));
+
+        var submission = server.MailQueue.LastSubmission!;
+        Assert.AreEqual("HDRS", submission.Dsn!.ReturnContent);
+        Assert.AreEqual("job+2B42+3Ddone", submission.Dsn.EnvelopeId);
+        var recipient = submission.Recipients.Single();
+        Assert.AreEqual("SUCCESS,FAILURE,DELAY", recipient.Dsn!.Notify);
+        Assert.AreEqual("rfc822;old+2Btag+40example.com", recipient.Dsn.OriginalRecipient);
+    }
+
+    [TestMethod]
+    [Timeout(10_000)]
+    public async Task SmtpRejectsMalformedOrMisplacedDeliveryStatusParameters()
+    {
+        var port = ReservePort();
+        var environment = CreateEnvironment(smtpPort: port);
+        await using var server = await ServerFixture.StartSmtpAsync(environment, port);
+        await using var connection = await ProtocolConnection.ConnectAsync(port);
+
+        await connection.ReadLineAsync();
+        await connection.WriteLineAsync("HELO client.example");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("250 ", StringComparison.Ordinal));
+        await connection.WriteLineAsync("MAIL FROM:<sender@example.com> RET=HDRS");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("555 5.5.4", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("EHLO client.example");
+        await connection.ReadSmtpResponseAsync();
+        await connection.WriteLineAsync(
+            "MAIL FROM:<sender@example.com> RET=HDRS RET=FULL");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("501 5.5.4", StringComparison.Ordinal));
+        await connection.WriteLineAsync("MAIL FROM:<sender@example.com> ENVID=job+2b42");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("501 5.5.4", StringComparison.Ordinal));
+        await connection.WriteLineAsync("MAIL FROM:<sender@example.com>");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("250 ", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync(
+            "RCPT TO:<postmaster@mk8n.com> NOTIFY=NEVER,FAILURE");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("501 5.5.4", StringComparison.Ordinal));
+        await connection.WriteLineAsync(
+            "RCPT TO:<postmaster@mk8n.com> " +
+            "ORCPT=rfc822;one@example.com ORCPT=rfc822;two@example.com");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("501 5.5.4", StringComparison.Ordinal));
+        await connection.WriteUtf8LineAsync(
+            "RCPT TO:<postmaster@mk8n.com> ORCPT=utf-8;δοκιμή@example.com");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("501 5.5.4", StringComparison.Ordinal));
+        await connection.WriteLineAsync(
+            @"RCPT TO:<postmaster@mk8n.com> ORCPT=utf-8;\x{3B4}\x{3BF}\x{3BA}\x{3B9}\x{3BC}\x{3AE}@example.com");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("250 ", StringComparison.Ordinal));
+        await connection.WriteLineAsync("RCPT TO:<postmaster@mk8n.com> FUTURE=value");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("555 5.5.4", StringComparison.Ordinal));
+        Assert.AreEqual(0, server.MailQueue.EnqueueCalls);
     }
 
     [TestMethod]

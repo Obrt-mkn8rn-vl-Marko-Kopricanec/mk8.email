@@ -1,6 +1,17 @@
 namespace mk8.email.Application.Interfaces;
 
-public sealed record MailEnvelopeRecipient(string Address, bool IsLocal);
+public sealed record MailDsnEnvelope(
+    string? ReturnContent = null,
+    string? EnvelopeId = null);
+
+public sealed record MailDsnRecipient(
+    string? Notify = null,
+    string? OriginalRecipient = null);
+
+public sealed record MailEnvelopeRecipient(
+    string Address,
+    bool IsLocal,
+    MailDsnRecipient? Dsn = null);
 
 public sealed record MailSubmission(
     Guid QueueId,
@@ -10,7 +21,8 @@ public sealed record MailSubmission(
     string? ClientIp,
     string? Helo,
     string? AuthenticatedUser,
-    bool RequiresSmtpUtf8 = false);
+    bool RequiresSmtpUtf8 = false,
+    MailDsnEnvelope? Dsn = null);
 
 public interface IMailSubmissionQueue
 {

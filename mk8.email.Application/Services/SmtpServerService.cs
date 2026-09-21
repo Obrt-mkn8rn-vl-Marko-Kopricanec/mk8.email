@@ -46,6 +46,8 @@ public class SmtpServerService(
         public string? DataFailureResponse { get; set; }
         public bool SmtpUtf8 { get; set; }
         public bool BodyIsEightBit { get; set; }
+        public string? DsnReturnContent { get; set; }
+        public string? DsnEnvelopeId { get; set; }
         public bool InDataMode { get; set; }
         public int AuthenticationFailures { get; set; }
         private SemaphoreSlim? DataSemaphore { get; set; }
@@ -76,6 +78,8 @@ public class SmtpServerService(
             DataFailureResponse = null;
             SmtpUtf8 = false;
             BodyIsEightBit = false;
+            DsnReturnContent = null;
+            DsnEnvelopeId = null;
             InDataMode = false;
         }
     }
@@ -339,7 +343,10 @@ public class SmtpServerService(
                                     clientIp,
                                     session.Helo,
                                     session.AuthenticatedUser,
-                                    session.SmtpUtf8),
+                                    session.SmtpUtf8,
+                                    new MailDsnEnvelope(
+                                        session.DsnReturnContent,
+                                        session.DsnEnvelopeId)),
                                 timeout.Token);
                         }
                         catch (OperationCanceledException) when (timeout.IsCancellationRequested)
@@ -498,6 +505,8 @@ public class SmtpServerService(
                     session.HasMailFrom = true;
                     session.SmtpUtf8 = mailCommand.SmtpUtf8;
                     session.BodyIsEightBit = mailCommand.BodyIsEightBit;
+                    session.DsnReturnContent = mailCommand.DsnReturnContent;
+                    session.DsnEnvelopeId = mailCommand.DsnEnvelopeId;
                     await writer.WriteLineAsync("250 2.1.0 OK");
                     break;
 
@@ -523,9 +532,14 @@ public class SmtpServerService(
                         await writer.WriteLineAsync("501 5.1.3 Recipient address syntax is invalid");
                         break;
                     }
-                    if (rcptParameters.Count > 0)
+                    if (!TryParseRecipientDsnParameters(
+                            rcptParameters,
+                            session.IsExtendedSmtp,
+                            session.SmtpUtf8,
+                            out var recipientDsn,
+                            out var rcptFailure))
                     {
-                        await writer.WriteLineAsync("555 5.5.4 Unsupported RCPT TO parameter");
+                        await writer.WriteLineAsync(rcptFailure);
                         break;
                     }
                     if (rcptRequiresSmtpUtf8 && !session.SmtpUtf8)
@@ -537,12 +551,12 @@ public class SmtpServerService(
                     var isLocal = await emailService.CanReceiveAsync(rcpt, timeout.Token);
                     if (isLocal)
                     {
-                        AddRecipient(session, rcpt, isLocal: true);
+                        AddRecipient(session, rcpt, isLocal: true, recipientDsn);
                         await writer.WriteLineAsync("250 2.1.5 OK");
                     }
                     else if (session.IsAuthenticated && config.AllowRelay)
                     {
-                        AddRecipient(session, rcpt, isLocal: false);
+                        AddRecipient(session, rcpt, isLocal: false, recipientDsn);
                         await writer.WriteLineAsync("250 2.1.5 OK");
                     }
                     else
@@ -656,6 +670,7 @@ public class SmtpServerService(
         await writer.WriteLineAsync($"250-SIZE {config.MaxMessageSizeBytes}");
         await writer.WriteLineAsync("250-8BITMIME");
         await writer.WriteLineAsync("250-SMTPUTF8");
+        await writer.WriteLineAsync("250-DSN");
         await writer.WriteLineAsync("250-PIPELINING");
         await writer.WriteLineAsync("250-ENHANCEDSTATUSCODES");
         if (config.EnableStartTls && !isSecure)
@@ -824,19 +839,25 @@ public class SmtpServerService(
             clientIp);
     }
 
-    private static void AddRecipient(SmtpSession session, string recipient, bool isLocal)
+    private static void AddRecipient(
+        SmtpSession session,
+        string recipient,
+        bool isLocal,
+        MailDsnRecipient? dsn)
     {
         if (session.Recipients.Any(item =>
                 string.Equals(item.Address, recipient, StringComparison.OrdinalIgnoreCase)))
             return;
 
-        session.Recipients.Add(new MailEnvelopeRecipient(recipient, isLocal));
+        session.Recipients.Add(new MailEnvelopeRecipient(recipient, isLocal, dsn));
     }
 
     private sealed record ParsedMailCommand(
         string Address,
         bool SmtpUtf8,
-        bool BodyIsEightBit);
+        bool BodyIsEightBit,
+        string? DsnReturnContent,
+        string? DsnEnvelopeId);
 
     private static bool TryParseMailCommand(
         string line,
@@ -846,7 +867,7 @@ public class SmtpServerService(
         out ParsedMailCommand command,
         out string failureResponse)
     {
-        command = new ParsedMailCommand(string.Empty, false, false);
+        command = new ParsedMailCommand(string.Empty, false, false, null, null);
         failureResponse = "501 5.1.7 Sender address syntax is invalid";
         if (!TryExtractPath(
                 line,
@@ -863,6 +884,8 @@ public class SmtpServerService(
         var bodyIsEightBit = false;
         var seenBody = false;
         var seenSize = false;
+        string? dsnReturnContent = null;
+        string? dsnEnvelopeId = null;
         foreach (var parameter in parameters)
         {
             if (!isExtendedSmtp)
@@ -918,6 +941,27 @@ public class SmtpServerService(
                     }
                     break;
 
+                case "RET":
+                    if (dsnReturnContent is not null
+                        || value is null
+                        || !SmtpDsn.TryNormalizeReturnContent(value, out dsnReturnContent))
+                    {
+                        failureResponse = "501 5.5.4 Invalid RET parameter";
+                        return false;
+                    }
+                    break;
+
+                case "ENVID":
+                    if (dsnEnvelopeId is not null
+                        || value is null
+                        || !SmtpDsn.TryValidateEnvelopeId(value))
+                    {
+                        failureResponse = "501 5.5.4 Invalid ENVID parameter";
+                        return false;
+                    }
+                    dsnEnvelopeId = value;
+                    break;
+
                 default:
                     failureResponse = "555 5.5.4 Unsupported MAIL FROM parameter";
                     return false;
@@ -930,7 +974,71 @@ public class SmtpServerService(
             return false;
         }
 
-        command = new ParsedMailCommand(address, smtpUtf8, bodyIsEightBit);
+        command = new ParsedMailCommand(
+            address,
+            smtpUtf8,
+            bodyIsEightBit,
+            dsnReturnContent,
+            dsnEnvelopeId);
+        return true;
+    }
+
+    private static bool TryParseRecipientDsnParameters(
+        IReadOnlyList<string> parameters,
+        bool isExtendedSmtp,
+        bool smtpUtf8,
+        out MailDsnRecipient? dsn,
+        out string failureResponse)
+    {
+        dsn = null;
+        failureResponse = "501 5.5.4 Invalid RCPT TO parameter";
+        string? notify = null;
+        string? originalRecipient = null;
+        foreach (var parameter in parameters)
+        {
+            if (!isExtendedSmtp)
+            {
+                failureResponse = "555 5.5.4 RCPT TO parameters require EHLO";
+                return false;
+            }
+
+            var equals = parameter.IndexOf('=');
+            var name = (equals < 0 ? parameter : parameter[..equals]).ToUpperInvariant();
+            var value = equals < 0 ? null : parameter[(equals + 1)..];
+            switch (name)
+            {
+                case "NOTIFY":
+                    if (notify is not null
+                        || value is null
+                        || !SmtpDsn.TryNormalizeNotify(value, out notify))
+                    {
+                        return false;
+                    }
+                    break;
+
+                case "ORCPT":
+                    if (originalRecipient is not null
+                        || value is null
+                        || parameter.Length > 500
+                        || !SmtpDsn.TryValidateOriginalRecipient(
+                            value,
+                            smtpUtf8,
+                            out _,
+                            out _))
+                    {
+                        return false;
+                    }
+                    originalRecipient = value;
+                    break;
+
+                default:
+                    failureResponse = "555 5.5.4 Unsupported RCPT TO parameter";
+                    return false;
+            }
+        }
+
+        if (notify is not null || originalRecipient is not null)
+            dsn = new MailDsnRecipient(notify, originalRecipient);
         return true;
     }
 
@@ -1017,8 +1125,8 @@ public class SmtpServerService(
     }
 
     private static bool IsSafeEsmtpParameter(string value) =>
-        value.Length is > 0 and <= 256
-        && value.All(char.IsAscii)
+        value.Length is > 0 and <= 1024
+        && !value.Any(character => char.IsControl(character) || char.IsWhiteSpace(character))
         && !value.ContainsAny(['\r', '\n', '\0', '<', '>']);
 
     private static bool TryGetGreeting(string line, out string greeting)

@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System.Text;
+using MimeKit;
 using mk8.email.Application.Interfaces;
 using mk8.email.Application.Services;
 using mk8.email.Contracts.Enums;
@@ -43,13 +44,19 @@ public sealed class MailQueueTests
                 queueId,
                 "sender@example.net",
                 [
-                    new MailEnvelopeRecipient(TestAccount, true),
+                    new MailEnvelopeRecipient(
+                        TestAccount,
+                        true,
+                        new MailDsnRecipient(
+                            "failure,delay",
+                            "rfc822;admin+40mk8n.com")),
                     new MailEnvelopeRecipient("ADMIN@MK8N.COM", true),
                 ],
                 RawMessage,
                 "192.0.2.10",
                 "sender.example.net",
-                null));
+                null,
+                Dsn: new MailDsnEnvelope("hdrs", "queue+2Btest")));
         }
 
         using var verificationScope = services.CreateScope();
@@ -64,6 +71,12 @@ public sealed class MailQueueTests
         Assert.AreEqual(1, queued.Recipients.Count);
         Assert.AreEqual(TestAccount, queued.Recipients.Single().Recipient);
         Assert.IsFalse(queued.RequiresSmtpUtf8);
+        Assert.AreEqual("HDRS", queued.DsnReturnContent);
+        Assert.AreEqual("queue+2Btest", queued.DsnEnvelopeId);
+        Assert.AreEqual("FAILURE,DELAY", queued.Recipients.Single().DsnNotify);
+        Assert.AreEqual(
+            "rfc822;admin+40mk8n.com",
+            queued.Recipients.Single().DsnOriginalRecipient);
     }
 
     [TestMethod]
@@ -311,7 +324,222 @@ public sealed class MailQueueTests
             new[] { DefaultFolders.Inbox, DefaultFolders.Sent },
             stored.Select(message => message.Folder.Name).ToArray());
         Assert.IsTrue(stored.Any(message => message.QueueDeliveryId == queueId));
-        Assert.IsTrue(stored.Any(message => message.QueueDeliveryId == queued.Recipients.Single().Id));
+        var failureNotice = stored.Single(message => message.Folder.Name == DefaultFolders.Inbox);
+        Assert.AreNotEqual(queued.Recipients.Single().Id, failureNotice.QueueDeliveryId);
+        using var parsedNotice = MimeMessage.Load(new MemoryStream(failureNotice.RawMessage!));
+        Assert.AreEqual("Delivery Status Notification (Failure)", parsedNotice.Subject);
+        var report = Assert.IsInstanceOfType<MultipartReport>(parsedNotice.Body);
+        Assert.AreEqual("delivery-status", report.ContentType.Parameters["report-type"]);
+        var deliveryStatus = Assert.IsInstanceOfType<MessageDeliveryStatus>(report[1]);
+        Assert.AreEqual("failed", deliveryStatus.StatusGroups[1]["Action"]);
+        Assert.AreEqual("5.0.0", deliveryStatus.StatusGroups[1]["Status"]);
+        Assert.AreEqual("rfc822; recipient@example.net", deliveryStatus.StatusGroups[1]["Final-Recipient"]);
+    }
+
+    [TestMethod]
+    public async Task WorkerSuppressesFailureNoticeWhenNotifyIsNever()
+    {
+        var environment = CreateEnvironment();
+        var relay = new StubRelay(OutboundDeliveryStatus.PermanentFailure);
+        await using var services = CreateServices(environment, CleanScan(), relay);
+        await SeedAccountAsync(services, includeCatchAll: false);
+        var queueId = await EnqueueAsync(
+            services,
+            TestAccount,
+            "recipient@example.net",
+            isLocal: false,
+            authenticatedUser: TestAccount,
+            recipientDsn: new MailDsnRecipient("NEVER"));
+
+        Assert.IsTrue(await ProcessOneAsync(services, environment));
+
+        using var scope = services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var queued = await database.MailQueueMessages
+            .Include(message => message.Recipients)
+            .SingleAsync(message => message.Id == queueId);
+        Assert.AreEqual(MailQueueStates.Completed, queued.State);
+        Assert.IsTrue(queued.Recipients.Single().FailureNoticeCreated);
+        Assert.AreEqual(1, relay.CallCount);
+        Assert.AreEqual(1, await database.Emails.CountAsync());
+        Assert.AreEqual(DefaultFolders.Sent, (await database.Emails.Include(message => message.Folder).SingleAsync()).Folder.Name);
+    }
+
+    [TestMethod]
+    public async Task WorkerNeverCreatesDsnForNullReversePath()
+    {
+        var environment = CreateEnvironment();
+        var relay = new StubRelay(OutboundDeliveryStatus.PermanentFailure);
+        await using var services = CreateServices(environment, CleanScan(), relay);
+        var queueId = await EnqueueAsync(
+            services,
+            string.Empty,
+            "recipient@example.net",
+            isLocal: false,
+            authenticatedUser: null,
+            recipientDsn: new MailDsnRecipient("FAILURE"));
+
+        Assert.IsTrue(await ProcessOneAsync(services, environment));
+
+        using var scope = services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var queued = await database.MailQueueMessages
+            .Include(message => message.Recipients)
+            .SingleAsync(message => message.Id == queueId);
+        Assert.AreEqual(MailQueueStates.Dead, queued.State);
+        Assert.IsTrue(queued.Recipients.Single().FailureNoticeCreated);
+        Assert.AreEqual(1, relay.CallCount);
+        Assert.AreEqual(0, await database.Emails.CountAsync());
+    }
+
+    [TestMethod]
+    public async Task WorkerCreatesSuccessNoticeForRequestedLocalDelivery()
+    {
+        var environment = CreateEnvironment();
+        await using var services = CreateServices(
+            environment,
+            CleanScan(),
+            new StubRelay(OutboundDeliveryStatus.Delivered));
+        await SeedAccountAsync(services, includeCatchAll: false);
+        var queueId = await EnqueueAsync(
+            services,
+            TestAccount,
+            TestAccount,
+            isLocal: true,
+            authenticatedUser: null,
+            recipientDsn: new MailDsnRecipient("SUCCESS"));
+
+        Assert.IsTrue(await ProcessOneAsync(services, environment));
+
+        using var scope = services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var queued = await database.MailQueueMessages
+            .Include(message => message.Recipients)
+            .SingleAsync(message => message.Id == queueId);
+        Assert.AreEqual(MailQueueStates.Completed, queued.State);
+        Assert.IsTrue(queued.Recipients.Single().SuccessNoticeCreated);
+        var delivered = await database.Emails.ToListAsync();
+        Assert.AreEqual(2, delivered.Count);
+        Assert.IsTrue(delivered.Any(message =>
+            message.Subject == "Delivery Status Notification (Success)"));
+    }
+
+    [TestMethod]
+    public async Task WorkerDoesNotDuplicateSuccessNoticeForwardedToNextHop()
+    {
+        var environment = CreateEnvironment();
+        var relay = new StubRelay(
+            OutboundDeliveryStatus.Delivered,
+            dsnParametersForwarded: true,
+            enhancedStatusCode: "2.0.0",
+            remoteMta: "mx.example.net");
+        await using var services = CreateServices(environment, CleanScan(), relay);
+        await SeedAccountAsync(services, includeCatchAll: false);
+        var queueId = await EnqueueAsync(
+            services,
+            TestAccount,
+            "recipient@example.net",
+            isLocal: false,
+            authenticatedUser: TestAccount,
+            recipientDsn: new MailDsnRecipient("SUCCESS"));
+
+        Assert.IsTrue(await ProcessOneAsync(services, environment));
+
+        using var scope = services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var queued = await database.MailQueueMessages
+            .Include(message => message.Recipients)
+            .SingleAsync(message => message.Id == queueId);
+        var recipient = queued.Recipients.Single();
+        Assert.AreEqual(MailQueueStates.Completed, queued.State);
+        Assert.IsTrue(recipient.DsnForwarded);
+        Assert.IsTrue(recipient.SuccessNoticeCreated);
+        Assert.AreEqual("2.0.0", recipient.LastEnhancedStatusCode);
+        Assert.AreEqual("mx.example.net", recipient.LastRemoteMta);
+        Assert.AreEqual(1, relay.CallCount);
+        Assert.AreEqual(1, await database.Emails.CountAsync());
+    }
+
+    [TestMethod]
+    public async Task WorkerCreatesRelayedNoticeWhenNextHopLacksDsn()
+    {
+        var environment = CreateEnvironment();
+        var relay = new StubRelay(
+            OutboundDeliveryStatus.Delivered,
+            enhancedStatusCode: "2.0.0",
+            remoteMta: "legacy-mx.example.net");
+        await using var services = CreateServices(environment, CleanScan(), relay);
+        await SeedAccountAsync(services, includeCatchAll: false);
+        var queueId = await EnqueueAsync(
+            services,
+            TestAccount,
+            "recipient@example.net",
+            isLocal: false,
+            authenticatedUser: TestAccount,
+            recipientDsn: new MailDsnRecipient("SUCCESS"));
+
+        Assert.IsTrue(await ProcessOneAsync(services, environment));
+
+        using var scope = services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var queued = await database.MailQueueMessages
+            .Include(message => message.Recipients)
+            .SingleAsync(message => message.Id == queueId);
+        Assert.AreEqual(MailQueueStates.Completed, queued.State);
+        Assert.IsFalse(queued.Recipients.Single().DsnForwarded);
+        var notice = await database.Emails.SingleAsync(message =>
+            message.Subject == "Delivery Status Notification (Relayed)");
+        using var parsedNotice = MimeMessage.Load(new MemoryStream(notice.RawMessage!));
+        var report = Assert.IsInstanceOfType<MultipartReport>(parsedNotice.Body);
+        var deliveryStatus = Assert.IsInstanceOfType<MessageDeliveryStatus>(report[1]);
+        Assert.AreEqual("relayed", deliveryStatus.StatusGroups[1]["Action"]);
+        Assert.AreEqual("dns; legacy-mx.example.net", deliveryStatus.StatusGroups[1]["Remote-MTA"]);
+        Assert.AreEqual(1, relay.CallCount);
+    }
+
+    [TestMethod]
+    public async Task WorkerCreatesOneDelayNoticeAfterFourHours()
+    {
+        var environment = CreateEnvironment();
+        var relay = new StubRelay(
+            OutboundDeliveryStatus.TemporaryFailure,
+            enhancedStatusCode: "4.4.1",
+            remoteMta: "mx.example.net");
+        await using var services = CreateServices(environment, CleanScan(), relay);
+        await SeedAccountAsync(services, includeCatchAll: false);
+        var queueId = await EnqueueAsync(
+            services,
+            TestAccount,
+            "recipient@example.net",
+            isLocal: false,
+            authenticatedUser: null,
+            recipientDsn: new MailDsnRecipient("DELAY,FAILURE"));
+        using (var setupScope = services.CreateScope())
+        {
+            var setupDatabase = setupScope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            var queued = await setupDatabase.MailQueueMessages.SingleAsync(message => message.Id == queueId);
+            queued.ReceivedAt = DateTime.UtcNow.AddHours(-5);
+            queued.NextAttemptAt = DateTime.UtcNow.AddMinutes(-1);
+            await setupDatabase.SaveChangesAsync();
+        }
+
+        Assert.IsTrue(await ProcessOneAsync(services, environment));
+
+        using var scope = services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var message = await database.MailQueueMessages
+            .Include(item => item.Recipients)
+            .SingleAsync(item => item.Id == queueId);
+        Assert.AreEqual(MailQueueStates.Pending, message.State);
+        Assert.IsTrue(message.Recipients.Single().DelayNoticeCreated);
+        var notice = await database.Emails.SingleAsync();
+        Assert.AreEqual("Delivery Status Notification (Delay)", notice.Subject);
+        using var parsedNotice = MimeMessage.Load(new MemoryStream(notice.RawMessage!));
+        var report = Assert.IsInstanceOfType<MultipartReport>(parsedNotice.Body);
+        var deliveryStatus = Assert.IsInstanceOfType<MessageDeliveryStatus>(report[1]);
+        Assert.AreEqual("delayed", deliveryStatus.StatusGroups[1]["Action"]);
+        Assert.AreEqual("4.4.1", deliveryStatus.StatusGroups[1]["Status"]);
+        Assert.AreEqual("dns; mx.example.net", deliveryStatus.StatusGroups[1]["Remote-MTA"]);
     }
 
     [TestMethod]
@@ -616,6 +844,48 @@ public sealed class MailQueueTests
     }
 
     [TestMethod]
+    public async Task SieveExpansionIssuesOneSuccessDsnAndPropagatesFailureOnly()
+    {
+        var environment = CreateEnvironment();
+        var relay = new StubRelay(OutboundDeliveryStatus.Delivered);
+        await using var services = CreateServices(environment, CleanScan(), relay);
+        await SeedAccountAsync(services, includeCatchAll: false);
+        await ActivateScriptAsync(
+            services,
+            TestAccount,
+            "redirect \"archive@example.org\";");
+        var queueId = await EnqueueAsync(
+            services,
+            TestAccount,
+            TestAccount,
+            isLocal: true,
+            authenticatedUser: null,
+            recipientDsn: new MailDsnRecipient("SUCCESS,FAILURE"));
+
+        Assert.IsTrue(await ProcessOneAsync(services, environment));
+        Assert.IsTrue(await ProcessOneAsync(services, environment));
+
+        using var scope = services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var queued = await database.MailQueueMessages
+            .Include(message => message.Recipients)
+            .SingleAsync(message => message.Id == queueId);
+        Assert.AreEqual(MailQueueStates.Completed, queued.State);
+        var redirect = queued.Recipients.Single(recipient =>
+            recipient.Recipient == "archive@example.org");
+        Assert.AreEqual("FAILURE", redirect.DsnNotify);
+        Assert.AreEqual("FAILURE", relay.LastOptions!.RecipientDsn!.Notify);
+        var notices = await database.Emails
+            .Where(message => message.Subject == "Delivery Status Notification (Expanded)")
+            .ToListAsync();
+        Assert.HasCount(1, notices);
+        using var parsedNotice = MimeMessage.Load(new MemoryStream(notices[0].RawMessage!));
+        var report = Assert.IsInstanceOfType<MultipartReport>(parsedNotice.Body);
+        var deliveryStatus = Assert.IsInstanceOfType<MessageDeliveryStatus>(report[1]);
+        Assert.AreEqual("expanded", deliveryStatus.StatusGroups[1]["Action"]);
+    }
+
+    [TestMethod]
     public async Task SieveRedirectLoopFallsBackToKeepAtLastRecipient()
     {
         const string secondAccount = "second@mk8n.com";
@@ -690,6 +960,7 @@ public sealed class MailQueueTests
         Assert.AreEqual(1, relay.CallCount);
         Assert.AreEqual(string.Empty, relay.LastSender);
         Assert.AreEqual("sender@example.net", relay.LastRecipient);
+        Assert.AreEqual("NEVER", relay.LastOptions!.RecipientDsn!.Notify);
         StringAssert.Contains(relay.LastRawMessage!, "This mailbox does not accept automated reports.");
         StringAssert.Contains(relay.LastRawMessage!, "Auto-Submitted: auto-replied");
     }
@@ -738,7 +1009,9 @@ public sealed class MailQueueTests
         string sender,
         string recipient,
         bool isLocal,
-        string? authenticatedUser)
+        string? authenticatedUser,
+        MailDsnEnvelope? dsn = null,
+        MailDsnRecipient? recipientDsn = null)
     {
         using var scope = services.CreateScope();
         var queue = scope.ServiceProvider.GetRequiredService<IMailSubmissionQueue>();
@@ -746,11 +1019,12 @@ public sealed class MailQueueTests
         await queue.EnqueueAsync(new MailSubmission(
             queueId,
             sender,
-            [new MailEnvelopeRecipient(recipient, isLocal)],
+            [new MailEnvelopeRecipient(recipient, isLocal, recipientDsn)],
             RawMessage,
             "192.0.2.10",
             "sender.example.net",
-            authenticatedUser));
+            authenticatedUser,
+            Dsn: dsn));
         return queueId;
     }
 
@@ -843,7 +1117,11 @@ public sealed class MailQueueTests
         }
     }
 
-    private sealed class StubRelay(OutboundDeliveryStatus status) : IOutboundMailRelay
+    private sealed class StubRelay(
+        OutboundDeliveryStatus status,
+        bool dsnParametersForwarded = false,
+        string? enhancedStatusCode = null,
+        string? remoteMta = null) : IOutboundMailRelay
     {
         public int CallCount { get; private set; }
         public string? LastSender { get; private set; }
@@ -863,7 +1141,12 @@ public sealed class MailQueueTests
             LastRecipient = recipient;
             LastRawMessage = rawMessage;
             LastOptions = options;
-            return Task.FromResult(new OutboundDeliveryResult(status, "Test delivery result."));
+            return Task.FromResult(new OutboundDeliveryResult(
+                status,
+                "Test delivery result.",
+                dsnParametersForwarded,
+                remoteMta,
+                enhancedStatusCode));
         }
     }
 }

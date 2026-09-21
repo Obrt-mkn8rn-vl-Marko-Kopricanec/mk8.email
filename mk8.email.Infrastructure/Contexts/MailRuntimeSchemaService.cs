@@ -12,6 +12,8 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["envelope_sender"] = "varchar",
             ["raw_message"] = "text",
             ["requires_smtp_utf8"] = "bool",
+            ["dsn_return_content"] = "varchar",
+            ["dsn_envelope_id"] = "varchar",
             ["client_ip"] = "varchar",
             ["helo"] = "varchar",
             ["authenticated_user"] = "varchar",
@@ -44,7 +46,14 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["next_attempt_at"] = "timestamptz",
             ["last_attempt_at"] = "timestamptz",
             ["last_error"] = "text",
+            ["last_enhanced_status_code"] = "varchar",
+            ["last_remote_mta"] = "varchar",
             ["failure_notice_created"] = "bool",
+            ["success_notice_created"] = "bool",
+            ["delay_notice_created"] = "bool",
+            ["dsn_notify"] = "varchar",
+            ["dsn_original_recipient"] = "varchar",
+            ["dsn_forwarded"] = "bool",
             ["redirect_depth"] = "int4",
             ["redirect_history"] = "_text",
             ["completed_at"] = "timestamptz",
@@ -244,6 +253,8 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 envelope_sender varchar(320) NOT NULL,
                 raw_message text NOT NULL,
                 requires_smtp_utf8 boolean NOT NULL DEFAULT false,
+                dsn_return_content varchar(4),
+                dsn_envelope_id varchar(100),
                 client_ip varchar(45),
                 helo varchar(255),
                 authenticated_user varchar(320),
@@ -282,7 +293,14 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 next_attempt_at timestamp with time zone NOT NULL,
                 last_attempt_at timestamp with time zone,
                 last_error text,
+                last_enhanced_status_code varchar(16),
+                last_remote_mta varchar(255),
                 failure_notice_created boolean NOT NULL DEFAULT false,
+                success_notice_created boolean NOT NULL DEFAULT false,
+                delay_notice_created boolean NOT NULL DEFAULT false,
+                dsn_notify varchar(28),
+                dsn_original_recipient varchar(500),
+                dsn_forwarded boolean NOT NULL DEFAULT false,
                 redirect_depth integer NOT NULL DEFAULT 0,
                 redirect_history text[] NOT NULL DEFAULT ARRAY[]::text[],
                 completed_at timestamp with time zone,
@@ -300,6 +318,24 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 ADD COLUMN IF NOT EXISTS redirect_history text[] NOT NULL DEFAULT ARRAY[]::text[];
             ALTER TABLE mail_queue_messages
                 ADD COLUMN IF NOT EXISTS requires_smtp_utf8 boolean NOT NULL DEFAULT false;
+            ALTER TABLE mail_queue_messages
+                ADD COLUMN IF NOT EXISTS dsn_return_content varchar(4);
+            ALTER TABLE mail_queue_messages
+                ADD COLUMN IF NOT EXISTS dsn_envelope_id varchar(100);
+            ALTER TABLE mail_queue_recipients
+                ADD COLUMN IF NOT EXISTS success_notice_created boolean NOT NULL DEFAULT false;
+            ALTER TABLE mail_queue_recipients
+                ADD COLUMN IF NOT EXISTS delay_notice_created boolean NOT NULL DEFAULT false;
+            ALTER TABLE mail_queue_recipients
+                ADD COLUMN IF NOT EXISTS dsn_notify varchar(28);
+            ALTER TABLE mail_queue_recipients
+                ADD COLUMN IF NOT EXISTS dsn_original_recipient varchar(500);
+            ALTER TABLE mail_queue_recipients
+                ADD COLUMN IF NOT EXISTS dsn_forwarded boolean NOT NULL DEFAULT false;
+            ALTER TABLE mail_queue_recipients
+                ADD COLUMN IF NOT EXISTS last_enhanced_status_code varchar(16);
+            ALTER TABLE mail_queue_recipients
+                ADD COLUMN IF NOT EXISTS last_remote_mta varchar(255);
 
             ALTER TABLE emails
                 ADD COLUMN IF NOT EXISTS queue_delivery_id uuid;

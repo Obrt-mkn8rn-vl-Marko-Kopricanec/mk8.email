@@ -9,9 +9,15 @@ public enum OutboundDeliveryStatus
 
 public sealed record OutboundDeliveryResult(
     OutboundDeliveryStatus Status,
-    string Detail);
+    string Detail,
+    bool DsnParametersForwarded = false,
+    string? RemoteMta = null,
+    string? EnhancedStatusCode = null);
 
-public sealed record OutboundMailOptions(bool RequiresSmtpUtf8 = false);
+public sealed record OutboundMailOptions(
+    bool RequiresSmtpUtf8 = false,
+    MailDsnEnvelope? Dsn = null,
+    MailDsnRecipient? RecipientDsn = null);
 
 public interface IOutboundMailRelay
 {

@@ -22,6 +22,14 @@ public sealed class MailQueueMessageDB
     [Column("requires_smtp_utf8")]
     public bool RequiresSmtpUtf8 { get; set; }
 
+    [MaxLength(4)]
+    [Column("dsn_return_content")]
+    public string? DsnReturnContent { get; set; }
+
+    [MaxLength(100)]
+    [Column("dsn_envelope_id")]
+    public string? DsnEnvelopeId { get; set; }
+
     [MaxLength(45)]
     [Column("client_ip")]
     public string? ClientIp { get; set; }

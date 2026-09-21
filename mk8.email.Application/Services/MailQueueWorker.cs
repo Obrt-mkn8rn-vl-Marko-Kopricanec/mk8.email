@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using mk8.email.Application.Interfaces;
+using mk8.email.Application.Protocol;
 using mk8.email.Contracts.Enums;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Infrastructure.Environment;
@@ -21,6 +22,7 @@ public sealed class MailQueueWorker(
 {
     private const int MaximumSieveRedirectDepth = 10;
     private const int MaximumSieveRedirectRecipients = 100;
+    private static readonly TimeSpan DeliveryDelayNotificationThreshold = TimeSpan.FromHours(4);
     private DateTimeOffset _nextCleanup = DateTimeOffset.MinValue;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -191,22 +193,96 @@ public sealed class MailQueueWorker(
                 cancellationToken);
         }
 
-        foreach (var recipient in message.Recipients.Where(item =>
-                     item.State == MailQueueRecipientStates.PermanentFailure
-                     && !item.FailureNoticeCreated))
+        foreach (var recipient in message.Recipients.OrderBy(item => item.Id))
         {
-            if (!await CreateFailureNoticeAsync(
+            if (recipient.State == MailQueueRecipientStates.Delivered)
+            {
+                if (recipient.DsnForwarded
+                    || !ShouldNotifySuccess(recipient)
+                    || string.IsNullOrEmpty(message.EnvelopeSender))
+                {
+                    recipient.SuccessNoticeCreated = true;
+                }
+                else if (!recipient.SuccessNoticeCreated)
+                {
+                    var action = recipient.IsLocal
+                        ? WasExpanded(message, recipient)
+                            ? DeliveryStatusAction.Expanded
+                            : DeliveryStatusAction.Delivered
+                        : DeliveryStatusAction.Relayed;
+                    if (await SendDeliveryStatusNotificationAsync(
+                            message,
+                            recipient,
+                            action,
+                            delivery,
+                            relay,
+                            now,
+                            cancellationToken))
+                    {
+                        recipient.SuccessNoticeCreated = true;
+                    }
+                    else if (IsExpired(message.AttemptCount, message.ReceivedAt, now))
+                    {
+                        recipient.SuccessNoticeCreated = true;
+                        logger.LogWarning(
+                            "Abandoned the success DSN for queue recipient {RecipientId} after queue expiry",
+                            recipient.Id);
+                    }
+                    else
+                    {
+                        ScheduleNoticeRetry(recipient, now);
+                    }
+                }
+            }
+            else if (recipient.State == MailQueueRecipientStates.PermanentFailure)
+            {
+                if (!ShouldNotifyFailure(recipient)
+                    || string.IsNullOrEmpty(message.EnvelopeSender))
+                {
+                    recipient.FailureNoticeCreated = true;
+                }
+                else if (!recipient.FailureNoticeCreated)
+                {
+                    if (await SendDeliveryStatusNotificationAsync(
+                            message,
+                            recipient,
+                            DeliveryStatusAction.Failed,
+                            delivery,
+                            relay,
+                            now,
+                            cancellationToken))
+                    {
+                        recipient.FailureNoticeCreated = true;
+                    }
+                    else if (IsExpired(message.AttemptCount, message.ReceivedAt, now))
+                    {
+                        recipient.FailureNoticeCreated = true;
+                        logger.LogWarning(
+                            "Abandoned the failure DSN for queue recipient {RecipientId} after queue expiry",
+                            recipient.Id);
+                    }
+                    else
+                    {
+                        ScheduleNoticeRetry(recipient, now);
+                    }
+                }
+            }
+            else if (recipient.State == MailQueueRecipientStates.Pending
+                && !recipient.DelayNoticeCreated
+                && ShouldNotifyDelay(recipient)
+                && now - message.ReceivedAt >= DeliveryDelayNotificationThreshold
+                && !string.IsNullOrEmpty(message.EnvelopeSender)
+                && await SendDeliveryStatusNotificationAsync(
                     message,
                     recipient,
+                    DeliveryStatusAction.Delayed,
                     delivery,
+                    relay,
+                    now,
                     cancellationToken))
             {
-                MarkDead(message, "A delivery failure notice could not be stored.", now);
-                await database.SaveChangesAsync(cancellationToken);
-                return;
+                recipient.DelayNoticeCreated = true;
             }
-
-            recipient.FailureNoticeCreated = true;
         }
 
         FinalizeMessageState(message, now);
@@ -264,6 +340,7 @@ public sealed class MailQueueWorker(
                             now);
                         return;
                     }
+                    recipient.SuccessNoticeCreated = true;
                     MarkDelivered(recipient, now);
                     return;
                 }
@@ -336,21 +413,42 @@ public sealed class MailQueueWorker(
                 message.EnvelopeSender,
                 recipient.Recipient,
                 rawMessage,
-                new OutboundMailOptions(message.RequiresSmtpUtf8),
+                new OutboundMailOptions(
+                    message.RequiresSmtpUtf8,
+                    new MailDsnEnvelope(
+                        message.DsnReturnContent,
+                        message.DsnEnvelopeId),
+                    new MailDsnRecipient(
+                        recipient.DsnNotify,
+                        recipient.DsnOriginalRecipient)),
                 cancellationToken);
             if (result.Status == OutboundDeliveryStatus.Delivered)
             {
+                recipient.DsnForwarded = result.DsnParametersForwarded;
+                recipient.LastEnhancedStatusCode = result.EnhancedStatusCode;
+                recipient.LastRemoteMta = result.RemoteMta;
                 MarkDelivered(recipient, now);
                 return;
             }
 
             if (result.Status == OutboundDeliveryStatus.PermanentFailure)
             {
-                MarkPermanentFailure(recipient, result.Detail, now);
+                MarkPermanentFailure(
+                    recipient,
+                    result.Detail,
+                    now,
+                    result.EnhancedStatusCode,
+                    result.RemoteMta);
                 return;
             }
 
-            ScheduleRecipientRetry(message, recipient, result.Detail, now);
+            ScheduleRecipientRetry(
+                message,
+                recipient,
+                result.Detail,
+                now,
+                result.EnhancedStatusCode,
+                result.RemoteMta);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -413,6 +511,8 @@ public sealed class MailQueueWorker(
                 NextAttemptAt = now,
                 RedirectDepth = source.RedirectDepth + 1,
                 RedirectHistory = redirectHistory,
+                DsnNotify = RemoveSuccessNotification(source.DsnNotify),
+                DsnOriginalRecipient = source.DsnOriginalRecipient,
             });
             added++;
         }
@@ -463,7 +563,8 @@ public sealed class MailQueueWorker(
             rawNotice,
             new OutboundMailOptions(
                 message.RequiresSmtpUtf8
-                || message.EnvelopeSender.Any(character => !char.IsAscii(character))),
+                || message.EnvelopeSender.Any(character => !char.IsAscii(character)),
+                RecipientDsn: new MailDsnRecipient("NEVER")),
             cancellationToken);
         return result.Status is OutboundDeliveryStatus.Delivered
             or OutboundDeliveryStatus.PermanentFailure;
@@ -480,40 +581,49 @@ public sealed class MailQueueWorker(
         return new Guid(hash.AsSpan(0, 16));
     }
 
-    private async Task<bool> CreateFailureNoticeAsync(
+    private async Task<bool> SendDeliveryStatusNotificationAsync(
         MailQueueMessageDB message,
         MailQueueRecipientDB recipient,
+        DeliveryStatusAction action,
         IEmailService delivery,
+        IOutboundMailRelay relay,
+        DateTime now,
         CancellationToken cancellationToken)
     {
-        if (message.Direction != MailQueueDirections.Submission
-            || string.IsNullOrEmpty(message.AuthenticatedUser))
-        {
-            recipient.FailureNoticeCreated = true;
+        if (string.IsNullOrEmpty(message.EnvelopeSender))
             return true;
+
+        var report = DeliveryStatusNotificationBuilder.Build(
+            message,
+            recipient,
+            action,
+            environment.Smtp.Hostname,
+            new DateTimeOffset(DateTime.SpecifyKind(now, DateTimeKind.Utc)),
+            recipient.LastError,
+            recipient.LastEnhancedStatusCode,
+            recipient.LastRemoteMta);
+
+        if (await delivery.CanReceiveAsync(message.EnvelopeSender, cancellationToken))
+        {
+            return await delivery.DeliverAsync(
+                string.Empty,
+                message.EnvelopeSender,
+                report.RawMessage,
+                DefaultFolders.Inbox,
+                DeriveQueueDeliveryId(recipient.Id, $"dsn-{action}"),
+                cancellationToken);
         }
 
-        var host = environment.Smtp.Hostname;
-        var failureDetail = SanitizeError(recipient.LastError ?? "Delivery failed.");
-        var noticeText =
-            $"From: Mail Delivery System <mailer-daemon@{host}>\r\n" +
-            $"To: {message.AuthenticatedUser}\r\n" +
-            "Subject: Mail delivery failed\r\n" +
-            $"Date: {timeProvider.GetUtcNow():r}\r\n" +
-            $"Message-ID: <failure-{recipient.Id:N}@{host}>\r\n" +
-            "Auto-Submitted: auto-replied\r\n" +
-            "Content-Type: text/plain; charset=utf-8\r\n" +
-            "Content-Transfer-Encoding: 8bit\r\n\r\n" +
-            $"Delivery to {recipient.Recipient} failed.\r\n\r\n{failureDetail}\r\n";
-        var rawNotice = Encoding.Latin1.GetString(Encoding.UTF8.GetBytes(noticeText));
-
-        return await delivery.DeliverAsync(
-            $"mailer-daemon@{host}",
-            message.AuthenticatedUser,
-            rawNotice,
-            DefaultFolders.Inbox,
-            recipient.Id,
+        var result = await relay.RelayAsync(
+            string.Empty,
+            message.EnvelopeSender,
+            report.RawMessage,
+            new OutboundMailOptions(
+                report.RequiresSmtpUtf8,
+                RecipientDsn: new MailDsnRecipient("NEVER")),
             cancellationToken);
+        return result.Status is OutboundDeliveryStatus.Delivered
+            or OutboundDeliveryStatus.PermanentFailure;
     }
 
     private async Task QuarantineAsync(
@@ -660,11 +770,20 @@ public sealed class MailQueueWorker(
         MailQueueMessageDB message,
         MailQueueRecipientDB recipient,
         string detail,
-        DateTime now)
+        DateTime now,
+        string? enhancedStatusCode = null,
+        string? remoteMta = null)
     {
+        recipient.LastEnhancedStatusCode = NormalizeOptionalMetadata(enhancedStatusCode, 16);
+        recipient.LastRemoteMta = NormalizeOptionalMetadata(remoteMta, 255);
         if (IsExpired(recipient.AttemptCount, message.ReceivedAt, now))
         {
-            MarkPermanentFailure(recipient, detail, now);
+            MarkPermanentFailure(
+                recipient,
+                detail,
+                now,
+                recipient.LastEnhancedStatusCode,
+                recipient.LastRemoteMta);
             return;
         }
 
@@ -674,18 +793,21 @@ public sealed class MailQueueWorker(
 
     private void FinalizeMessageState(MailQueueMessageDB message, DateTime now)
     {
-        var hasPendingNotice = message.Recipients.Any(item =>
-            item.State == MailQueueRecipientStates.PermanentFailure
-            && !item.FailureNoticeCreated);
+        var pendingNotices = message.Recipients.Where(item =>
+                (item.State == MailQueueRecipientStates.PermanentFailure
+                    && !item.FailureNoticeCreated)
+                || (item.State == MailQueueRecipientStates.Delivered
+                    && !item.SuccessNoticeCreated))
+            .ToList();
         var pending = message.Recipients
             .Where(item => item.State == MailQueueRecipientStates.Pending)
             .ToList();
-        if (pending.Count > 0 || hasPendingNotice)
+        if (pending.Count > 0 || pendingNotices.Count > 0)
         {
             message.State = MailQueueStates.Pending;
-            message.NextAttemptAt = pending.Count > 0
-                ? pending.Min(item => item.NextAttemptAt)
-                : now;
+            message.NextAttemptAt = pending
+                .Concat(pendingNotices)
+                .Min(item => item.NextAttemptAt);
             message.LeaseToken = null;
             message.LeaseExpiresAt = null;
             return;
@@ -712,16 +834,70 @@ public sealed class MailQueueWorker(
         recipient.CompletedAt = now;
         recipient.LastError = null;
         recipient.FailureNoticeCreated = true;
+        recipient.DelayNoticeCreated = true;
     }
 
     private static void MarkPermanentFailure(
         MailQueueRecipientDB recipient,
         string detail,
-        DateTime now)
+        DateTime now,
+        string? enhancedStatusCode = null,
+        string? remoteMta = null)
     {
         recipient.State = MailQueueRecipientStates.PermanentFailure;
         recipient.CompletedAt = now;
         recipient.LastError = SanitizeError(detail);
+        recipient.LastEnhancedStatusCode = NormalizeOptionalMetadata(enhancedStatusCode, 16);
+        recipient.LastRemoteMta = NormalizeOptionalMetadata(remoteMta, 255);
+        recipient.SuccessNoticeCreated = true;
+        recipient.DelayNoticeCreated = true;
+    }
+
+    private static bool ShouldNotifySuccess(MailQueueRecipientDB recipient) =>
+        !SmtpDsn.SuppressesAll(recipient.DsnNotify)
+        && SmtpDsn.Requests(recipient.DsnNotify, "SUCCESS");
+
+    private static bool ShouldNotifyFailure(MailQueueRecipientDB recipient) =>
+        !SmtpDsn.SuppressesAll(recipient.DsnNotify)
+        && (recipient.DsnNotify is null
+            || SmtpDsn.Requests(recipient.DsnNotify, "FAILURE"));
+
+    private static bool ShouldNotifyDelay(MailQueueRecipientDB recipient) =>
+        !SmtpDsn.SuppressesAll(recipient.DsnNotify)
+        && SmtpDsn.Requests(recipient.DsnNotify, "DELAY");
+
+    private static bool WasExpanded(
+        MailQueueMessageDB message,
+        MailQueueRecipientDB recipient) =>
+        message.Recipients.Any(candidate =>
+            candidate.Id != recipient.Id
+            && candidate.RedirectDepth == recipient.RedirectDepth + 1
+            && candidate.RedirectHistory
+                .Take(Math.Max(0, candidate.RedirectHistory.Length - 1))
+                .Contains(recipient.Recipient, StringComparer.OrdinalIgnoreCase));
+
+    private static string? RemoveSuccessNotification(string? notify)
+    {
+        if (notify is null || SmtpDsn.SuppressesAll(notify))
+            return notify;
+
+        var remaining = notify.Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Where(value => !value.Equals("SUCCESS", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        return remaining.Length == 0 ? "NEVER" : string.Join(',', remaining);
+    }
+
+    private static void ScheduleNoticeRetry(MailQueueRecipientDB recipient, DateTime now)
+    {
+        recipient.NextAttemptAt = now + GetRetryDelay(Math.Max(1, recipient.AttemptCount));
+    }
+
+    private static string? NormalizeOptionalMetadata(string? value, int maximumLength)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+        var sanitized = SanitizeError(value);
+        return sanitized.Length <= maximumLength ? sanitized : sanitized[..maximumLength];
     }
 
     private static void MarkDead(MailQueueMessageDB message, string detail, DateTime now)

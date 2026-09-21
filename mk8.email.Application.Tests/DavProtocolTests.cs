@@ -1,5 +1,7 @@
 using System.Net;
+using System.Text.Json.Nodes;
 using System.Xml.Linq;
+using mk8.email.Jmap;
 
 namespace mk8.email.Application.Tests;
 
@@ -280,7 +282,7 @@ public sealed class DavProtocolTests
         const string alice = """
         BEGIN:VCARD
         VERSION:4.0
-        UID:alice@example.net
+        UID;VALUE=text:alice@example.net
         KIND:individual
         FN:Alice Example
         N:Example;Alice;;;
@@ -299,7 +301,7 @@ public sealed class DavProtocolTests
         const string group = """
         BEGIN:VCARD
         VERSION:4.0
-        UID:engineering@example.net
+        UID;VALUE=text:engineering@example.net
         KIND:group
         FN:Engineering
         MEMBER:urn:uuid:alice@example.net
@@ -364,6 +366,126 @@ public sealed class DavProtocolTests
             Propfind("<D:displayname/>"),
             headers: Header("Depth", "0"));
         Assert.AreEqual(HttpStatusCode.NotFound, foreign.StatusCode);
+    }
+
+    [TestMethod]
+    public async Task CardDavHttpAndJmapHttpRoundTripRfc9555ContactData()
+    {
+        await using var fixture = await DavFixture.CreateAsync();
+        var collection = fixture.AddressBookHomePath + "jmap-roundtrip/";
+        const string createAddressBook = """
+            <D:mkcol xmlns:D="DAV:" xmlns:A="urn:ietf:params:xml:ns:carddav">
+              <D:set><D:prop>
+                <D:resourcetype><D:collection/><A:addressbook/></D:resourcetype>
+                <D:displayname>JMAP round trip</D:displayname>
+              </D:prop></D:set>
+            </D:mkcol>
+            """;
+        using var createdAddressBook = await fixture.SendAsync(
+            "MKCOL",
+            collection,
+            createAddressBook);
+        Assert.AreEqual(HttpStatusCode.Created, createdAddressBook.StatusCode);
+
+        const string vcard = """
+            BEGIN:VCARD
+            VERSION:4.0
+            UID;VALUE=text:carddav-http-roundtrip
+            KIND:individual
+            FN:Dr. John Philip Stevenson Jr.
+            N:Stevenson;John;Philip,Paul;Dr.;Jr.,M.D.,A.C.P.;;Jr.
+            ORG:ABC\, Inc.;North American Division;Marketing
+            EMAIL;TYPE=work:john.stevenson@example.net
+            END:VCARD
+            """;
+        var resource = collection + "john.vcf";
+        using var created = await fixture.SendAsync(
+            "PUT",
+            resource,
+            vcard,
+            "text/vcard; charset=utf-8",
+            Header("If-None-Match", "*"));
+        Assert.AreEqual(HttpStatusCode.Created, created.StatusCode);
+
+        var query = await fixture.SendJmapAsync(new JsonObject
+        {
+            ["using"] = new JsonArray(JmapConstants.CoreCapability, JmapConstants.ContactsCapability),
+            ["methodCalls"] = new JsonArray(new JsonArray(
+                "ContactCard/query",
+                new JsonObject
+                {
+                    ["accountId"] = fixture.AccountId,
+                    ["filter"] = new JsonObject { ["uid"] = "carddav-http-roundtrip" },
+                },
+                "q1")),
+        });
+        var queryArguments = query["methodResponses"]!.AsArray()[0]!.AsArray()[1]!.AsObject();
+        var cardId = queryArguments["ids"]!.AsArray().Single()!.GetValue<string>();
+
+        var get = await fixture.SendJmapAsync(new JsonObject
+        {
+            ["using"] = new JsonArray(JmapConstants.CoreCapability, JmapConstants.ContactsCapability),
+            ["methodCalls"] = new JsonArray(new JsonArray(
+                "ContactCard/get",
+                new JsonObject
+                {
+                    ["accountId"] = fixture.AccountId,
+                    ["ids"] = new JsonArray(cardId),
+                },
+                "g1")),
+        });
+        var card = get["methodResponses"]!.AsArray()[0]!.AsArray()[1]!["list"]![0]!;
+        Assert.AreEqual("Dr. John Philip Stevenson Jr.", card["name"]!["full"]!.GetValue<string>());
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                "surname", "given", "given2", "given2", "title", "credential",
+                "credential", "generation",
+            },
+            card["name"]!["components"]!.AsArray()
+                .Select(component => component!["kind"]!.GetValue<string>()).ToArray());
+        CollectionAssert.AreEqual(
+            new[] { "North American Division", "Marketing" },
+            card["organizations"]!.AsObject().Single().Value!["units"]!.AsArray()
+                .Select(unit => unit!["name"]!.GetValue<string>()).ToArray());
+
+        var update = await fixture.SendJmapAsync(new JsonObject
+        {
+            ["using"] = new JsonArray(JmapConstants.CoreCapability, JmapConstants.ContactsCapability),
+            ["methodCalls"] = new JsonArray(new JsonArray(
+                "ContactCard/set",
+                new JsonObject
+                {
+                    ["accountId"] = fixture.AccountId,
+                    ["update"] = new JsonObject
+                    {
+                        [cardId] = new JsonObject { ["name/full"] = "Updated over JMAP" },
+                    },
+                },
+                "s1")),
+        });
+        var updateArguments = update["methodResponses"]!.AsArray()[0]!.AsArray()[1]!;
+        Assert.IsTrue(updateArguments["updated"]!.AsObject().ContainsKey(cardId));
+
+        using var readBack = await fixture.SendAsync("GET", resource);
+        Assert.AreEqual(HttpStatusCode.OK, readBack.StatusCode);
+        StringAssert.Contains(await readBack.Content.ReadAsStringAsync(), "FN:Updated over JMAP");
+
+        const string invalidMember = """
+            BEGIN:VCARD
+            VERSION:4.0
+            UID;VALUE=text:invalid-member
+            KIND:group
+            FN:Invalid Member
+            MEMBER:relative-member
+            END:VCARD
+            """;
+        using var rejected = await fixture.SendAsync(
+            "PUT",
+            collection + "invalid.vcf",
+            invalidMember,
+            "text/vcard; charset=utf-8");
+        Assert.AreEqual(HttpStatusCode.UnsupportedMediaType, rejected.StatusCode);
     }
 
     [TestMethod]
@@ -563,7 +685,7 @@ public sealed class DavProtocolTests
         const string contact = """
         BEGIN:VCARD
         VERSION:4.0
-        UID:shared-contact@example.net
+        UID;VALUE=text:shared-contact@example.net
         FN:Shared Contact
         EMAIL:shared-contact@example.net
         END:VCARD

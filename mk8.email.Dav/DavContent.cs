@@ -143,25 +143,68 @@ internal static class DavContent
         if (lines.Count < 4
             || !lines[0].Equals("BEGIN:VCARD", StringComparison.OrdinalIgnoreCase)
             || !lines[^1].Equals("END:VCARD", StringComparison.OrdinalIgnoreCase)
-            || !(HasPropertyValue(lines, "VERSION", "3.0")
-                || HasPropertyValue(lines, "VERSION", "4.0")))
+            || lines.Count(line => line.Equals("BEGIN:VCARD", StringComparison.OrdinalIgnoreCase)) != 1
+            || lines.Count(line => line.Equals("END:VCARD", StringComparison.OrdinalIgnoreCase)) != 1)
         {
             failure = "The resource is not a complete vCard 3.0 or 4.0 object.";
             return false;
         }
 
+        var parsed = new List<VCardProperty>(lines.Count);
         var properties = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
         foreach (var line in lines)
         {
-            if (!TryParseProperty(line, out var name, out var value))
-                continue;
-            AddProperty(properties, name, value);
+            if (!TryParseVCardProperty(line, out var property))
+            {
+                failure = "The vCard contains an invalid content line.";
+                return false;
+            }
+            parsed.Add(property);
+            AddProperty(properties, property.Name, property.Value);
         }
-        if (!properties.TryGetValue("UID", out var uidValues)
-            || uidValues.Select(value => value.Trim()).Where(value => value.Length > 0)
-                .Distinct(StringComparer.Ordinal).ToArray() is not [var uid])
+
+        var versions = parsed.Where(property => property.Name == "VERSION").ToArray();
+        if (versions.Length != 1 || versions[0].Value is not ("3.0" or "4.0"))
         {
-            failure = "A vCard resource must contain exactly one UID.";
+            failure = "The resource must contain exactly one supported vCard VERSION.";
+            return false;
+        }
+        var version = versions[0].Value;
+
+        var uidProperties = parsed.Where(property => property.Name == "UID").ToArray();
+        if (uidProperties.Length != 1
+            || !TryVCardUid(uidProperties[0], version, out var uid)
+            || string.IsNullOrWhiteSpace(uid)
+            || StrictUtf8.GetByteCount(uid) > 255)
+        {
+            failure = "A vCard resource must contain exactly one valid UID with matching VALUE semantics.";
+            return false;
+        }
+
+        if (!parsed.Any(property => property.Name == "FN"
+                && UnescapeText(property.Value).Length > 0))
+        {
+            failure = "A vCard resource must contain a non-empty FN property.";
+            return false;
+        }
+
+        var kinds = parsed.Where(property => property.Name == "KIND").ToArray();
+        if (kinds.Length > 1)
+        {
+            failure = "A vCard resource must not contain multiple KIND properties.";
+            return false;
+        }
+        var members = parsed.Where(property => property.Name == "MEMBER").ToArray();
+        var isGroup = kinds.Length == 1
+            && UnescapeText(kinds[0].Value).Equals("group", StringComparison.OrdinalIgnoreCase);
+        if (members.Length > 0 && !isGroup)
+        {
+            failure = "MEMBER properties are only valid on group vCards.";
+            return false;
+        }
+        if (members.Any(member => !HasUriValueType(member) || !IsAbsoluteUri(member.Value)))
+        {
+            failure = "Every MEMBER property must contain a single absolute URI value.";
             return false;
         }
 
@@ -172,6 +215,64 @@ internal static class DavContent
             text,
             ToReadOnlyProperties(properties));
         return true;
+    }
+
+    private static bool TryVCardUid(VCardProperty property, string version, out string uid)
+    {
+        uid = string.Empty;
+        var valueType = ParameterValue(property, "VALUE");
+        if (valueType is not null
+            && valueType is not ("text" or "uri"))
+        {
+            return false;
+        }
+
+        if (valueType == "uri" || version == "4.0" && valueType is null)
+        {
+            if (!IsAbsoluteUri(property.Value))
+                return false;
+            uid = property.Value;
+            return true;
+        }
+
+        uid = UnescapeText(property.Value);
+        return uid.Length > 0;
+    }
+
+    private static bool HasUriValueType(VCardProperty property)
+    {
+        var valueType = ParameterValue(property, "VALUE");
+        return valueType is null or "uri";
+    }
+
+    private static string? ParameterValue(VCardProperty property, string name) =>
+        property.Parameters.TryGetValue(name, out var value)
+            ? value.Trim().Trim('"').ToLowerInvariant()
+            : null;
+
+    private static bool IsAbsoluteUri(string value) =>
+        value.Length > 0
+        && !value.Any(character => char.IsWhiteSpace(character)
+            || char.IsControl(character)
+            || character == '\\')
+        && Uri.TryCreate(value, UriKind.Absolute, out var uri)
+        && !string.IsNullOrEmpty(uri.Scheme);
+
+    private static string UnescapeText(string value)
+    {
+        var result = new StringBuilder(value.Length);
+        for (var index = 0; index < value.Length; index++)
+        {
+            if (value[index] != '\\' || index + 1 >= value.Length)
+            {
+                result.Append(value[index]);
+                continue;
+            }
+
+            var next = value[++index];
+            result.Append(next is 'n' or 'N' ? '\n' : next);
+        }
+        return result.ToString();
     }
 
     internal static IReadOnlyList<string> UnfoldLines(string text)
@@ -201,35 +302,89 @@ internal static class DavContent
 
     internal static bool TryParseProperty(string line, out string name, out string value)
     {
+        if (TryParseVCardProperty(line, out var property))
+        {
+            name = property.Name;
+            value = property.Value;
+            return true;
+        }
         name = string.Empty;
         value = string.Empty;
+        return false;
+    }
+
+    private static bool TryParseVCardProperty(string line, out VCardProperty property)
+    {
+        property = default!;
         var separator = FindUnescapedColon(line);
         if (separator <= 0)
             return false;
 
-        var nameEnd = line.IndexOf(';');
-        if (nameEnd < 0 || nameEnd > separator)
-            nameEnd = separator;
-        name = line[..nameEnd];
+        var headerParts = SplitHeader(line[..separator]);
+        var name = headerParts[0];
         var groupSeparator = name.LastIndexOf('.');
         if (groupSeparator >= 0)
             name = name[(groupSeparator + 1)..];
-        value = line[(separator + 1)..];
-        return name.Length > 0;
+        if (name.Length == 0)
+            return false;
+
+        var parameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var parameter in headerParts.Skip(1))
+        {
+            var equals = parameter.IndexOf('=');
+            if (equals <= 0 || equals == parameter.Length - 1)
+                return false;
+            parameters[parameter[..equals].ToUpperInvariant()] = parameter[(equals + 1)..];
+        }
+
+        property = new VCardProperty(
+            name.ToUpperInvariant(),
+            parameters,
+            line[(separator + 1)..]);
+        return true;
     }
 
     private static int FindUnescapedColon(string line)
     {
         var escaped = false;
+        var quoted = false;
         for (var index = 0; index < line.Length; index++)
         {
-            if (!escaped && line[index] == ':')
+            if (!escaped && line[index] == '"')
+            {
+                quoted = !quoted;
+                continue;
+            }
+            if (!escaped && !quoted && line[index] == ':')
                 return index;
             escaped = !escaped && line[index] == '\\';
             if (line[index] != '\\')
                 escaped = false;
         }
         return -1;
+    }
+
+    private static IReadOnlyList<string> SplitHeader(string value)
+    {
+        var result = new List<string>();
+        var start = 0;
+        var escaped = false;
+        var quoted = false;
+        for (var index = 0; index < value.Length; index++)
+        {
+            if (!escaped && value[index] == '"')
+                quoted = !quoted;
+            else if (!escaped && !quoted && value[index] == ';')
+            {
+                result.Add(value[start..index]);
+                start = index + 1;
+            }
+            escaped = !escaped && value[index] == '\\';
+            if (value[index] != '\\')
+                escaped = false;
+        }
+        result.Add(value[start..]);
+        return result;
     }
 
     private static bool HasPropertyValue(
@@ -266,4 +421,9 @@ internal static class DavContent
             .Trim()
             .ToLowerInvariant();
     }
+
+    private sealed record VCardProperty(
+        string Name,
+        IReadOnlyDictionary<string, string> Parameters,
+        string Value);
 }

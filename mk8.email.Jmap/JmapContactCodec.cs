@@ -57,7 +57,7 @@ internal static class JmapContactCodec
         PopulateFromVCard(card, coreLines, resource);
         if (!TryString(card, "uid", out var uid) || string.IsNullOrWhiteSpace(uid))
             card["uid"] = resource.Uid;
-        return card;
+        return ValidatedProjection(card, resource);
     }
 
     public static byte[] Encode(JsonObject value)
@@ -72,7 +72,7 @@ internal static class JmapContactCodec
             "BEGIN:VCARD",
             "VERSION:4.0",
             "PRODID:" + EscapeText(StringValue(card["prodId"]) ?? "-//mk8.email//JMAP Contacts 1.0//EN"),
-            "UID:" + EscapeText(uid),
+            IsAbsoluteUri(uid) ? "UID:" + uid : "UID;VALUE=text:" + EscapeText(uid),
         };
 
         var kind = StringValue(card["kind"]) ?? "individual";
@@ -94,8 +94,11 @@ internal static class JmapContactCodec
         AddKeywords(core, card["keywords"] as JsonObject);
         if (card["members"] is JsonObject members)
         {
-            foreach (var member in members.Where(item => item.Value?.GetValue<bool>() == true))
-                core.Add("MEMBER:" + EscapeText(member.Key));
+            foreach (var member in members.Where(item => item.Value?.GetValue<bool>() == true
+                && IsAbsoluteUri(item.Key)))
+            {
+                core.Add("MEMBER:" + member.Key);
+            }
         }
         if (StringValue(card["created"]) is { } created)
             core.Add("CREATED:" + EscapeText(created));
@@ -126,6 +129,48 @@ internal static class JmapContactCodec
         ["created"] = JmapDate.FormatUtc(resource.CreatedAt),
         ["updated"] = JmapDate.FormatUtc(resource.UpdatedAt),
     };
+
+    private static JsonObject ValidatedProjection(JsonObject card, DavResourceDB resource)
+    {
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            if (TryValidate(card, out var invalidProperties))
+                return card;
+
+            foreach (var property in invalidProperties)
+            {
+                switch (property)
+                {
+                    case "@type":
+                        card["@type"] = "Card";
+                        break;
+                    case "version":
+                        card["version"] = "1.0";
+                        break;
+                    case "uid":
+                        card["uid"] = resource.Uid;
+                        break;
+                    case "created":
+                        card["created"] = JmapDate.FormatUtc(resource.CreatedAt);
+                        break;
+                    case "updated":
+                        card["updated"] = JmapDate.FormatUtc(resource.UpdatedAt);
+                        break;
+                    default:
+                        card.Remove(property);
+                        break;
+                }
+            }
+        }
+
+        var minimal = MinimalCard(resource);
+        return TryValidate(minimal, out _) ? minimal : new JsonObject
+        {
+            ["@type"] = "Card",
+            ["version"] = "1.0",
+            ["uid"] = $"urn:uuid:{resource.Id:D}",
+        };
+    }
 
     private static void PopulateFromVCard(
         JsonObject card,
@@ -172,11 +217,7 @@ internal static class JmapContactCodec
                     name ??= new JsonObject();
                     var components = SplitEscaped(property.Value, ';');
                     var nameComponents = new JsonArray();
-                    AddNameComponent(nameComponents, "surname", components.ElementAtOrDefault(0));
-                    AddNameComponent(nameComponents, "given", components.ElementAtOrDefault(1));
-                    AddNameComponent(nameComponents, "given2", components.ElementAtOrDefault(2));
-                    AddNameComponent(nameComponents, "prefix", components.ElementAtOrDefault(3));
-                    AddNameComponent(nameComponents, "suffix", components.ElementAtOrDefault(4));
+                    AddStructuredNameComponents(nameComponents, components);
                     if (nameComponents.Count > 0)
                     {
                         name["components"] = nameComponents;
@@ -189,17 +230,23 @@ internal static class JmapContactCodec
                     break;
                 case "ORG":
                     var organizationParts = SplitEscaped(property.Value, ';');
-                    var organization = new JsonObject
-                    {
-                        ["name"] = UnescapeText(organizationParts.ElementAtOrDefault(0) ?? string.Empty),
-                    };
+                    var organization = new JsonObject();
+                    var organizationName = UnescapeText(
+                        organizationParts.ElementAtOrDefault(0) ?? string.Empty);
+                    if (organizationName.Length > 0)
+                        organization["name"] = organizationName;
                     var units = organizationParts.Skip(1)
                         .Select(UnescapeText)
                         .Where(item => item.Length > 0)
                         .ToArray();
                     if (units.Length > 0)
-                        organization["units"] = JmapMethodHelpers.ToJsonArray(units);
-                    organizations[$"o{index++}"] = organization;
+                    {
+                        organization["units"] = new JsonArray(units
+                            .Select(unit => (JsonNode)new JsonObject { ["name"] = unit })
+                            .ToArray());
+                    }
+                    if (organization.Count > 0)
+                        organizations[$"o{index++}"] = organization;
                     break;
                 case "TITLE":
                 case "ROLE":
@@ -236,7 +283,8 @@ internal static class JmapContactCodec
                     notes[$"x{index++}"] = new JsonObject { ["note"] = value };
                     break;
                 case "MEMBER":
-                    members[value] = true;
+                    if (IsAbsoluteUri(property.Value))
+                        members[property.Value] = true;
                     break;
                 case "BDAY":
                 case "ANNIVERSARY":
@@ -498,18 +546,30 @@ internal static class JmapContactCodec
     {
         if (name?["components"] is not JsonArray components)
             return;
-        string Values(params string[] kinds) => string.Join(" ", components
+        string[] Values(params string[] kinds) => components
             .OfType<JsonObject>()
             .Where(component => kinds.Contains(StringValue(component["kind"]), StringComparer.Ordinal))
             .Select(component => StringValue(component["value"]))
-            .Where(value => !string.IsNullOrEmpty(value)));
-        var family = Values("surname", "surname2");
-        var given = Values("given");
-        var additional = Values("given2");
-        var prefix = Values("prefix");
-        var suffix = Values("suffix");
-        lines.Add("N:" + string.Join(';', new[] { family, given, additional, prefix, suffix }
-            .Select(EscapeText)));
+            .Where(value => !string.IsNullOrEmpty(value))
+            .Cast<string>()
+            .ToArray();
+        static string ListValue(IEnumerable<string> values) => string.Join(',', values.Select(EscapeText));
+
+        var surnames = Values("surname");
+        var secondarySurnames = Values("surname2");
+        var credentials = Values("credential");
+        var generations = Values("generation");
+        var fields = new[]
+        {
+            ListValue(surnames.Concat(secondarySurnames)),
+            ListValue(Values("given")),
+            ListValue(Values("given2")),
+            ListValue(Values("title")),
+            ListValue(credentials.Concat(generations)),
+            ListValue(secondarySurnames),
+            ListValue(generations),
+        };
+        lines.Add("N:" + string.Join(';', fields));
     }
 
     private static void AddOrganizations(List<string> lines, JsonObject? values)
@@ -518,15 +578,19 @@ internal static class JmapContactCodec
             return;
         foreach (var value in values.Select(item => item.Value).OfType<JsonObject>())
         {
-            var name = StringValue(value["name"]);
-            if (string.IsNullOrEmpty(name))
+            var name = StringValue(value["name"]) ?? string.Empty;
+            var units = value["units"] is JsonArray unitValues
+                ? unitValues.OfType<JsonObject>()
+                    .Select(unit => StringValue(unit["name"]))
+                    .Where(unit => !string.IsNullOrEmpty(unit))
+                    .Cast<string>()
+                    .ToArray()
+                : [];
+            if (name.Length == 0 && units.Length == 0)
                 continue;
             var parts = new List<string> { EscapeText(name) };
-            if (value["units"] is JsonArray units)
-            {
-                parts.AddRange(units.Select(unit => EscapeText(StringValue(unit) ?? string.Empty)));
-            }
-            lines.Add("ORG:" + string.Join(';', parts));
+            parts.AddRange(units.Select(EscapeText));
+            lines.Add("ORG" + Parameters(value) + ":" + string.Join(';', parts));
         }
     }
 
@@ -638,7 +702,7 @@ internal static class JmapContactCodec
         {
             var uri = StringValue(value["uri"]);
             if (!string.IsNullOrEmpty(uri))
-                lines.Add(property + Parameters(value) + ":" + EscapeText(uri));
+                lines.Add(property + Parameters(value) + ":" + uri);
         }
     }
 
@@ -976,12 +1040,51 @@ internal static class JmapContactCodec
             && text is not null;
     }
 
-    private static void AddNameComponent(JsonArray values, string kind, string? value)
+    private static void AddStructuredNameComponents(JsonArray result, IReadOnlyList<string> values)
     {
-        var decoded = value is null ? null : UnescapeText(value);
-        if (!string.IsNullOrEmpty(decoded))
-            values.Add(new JsonObject { ["kind"] = kind, ["value"] = decoded });
+        var secondarySurnames = StructuredValues(values.ElementAtOrDefault(5));
+        var generations = StructuredValues(values.ElementAtOrDefault(6));
+
+        AddNameComponents(
+            result,
+            "surname",
+            StructuredValues(values.ElementAtOrDefault(0))
+                .Where(value => !secondarySurnames.Contains(value, StringComparer.Ordinal)));
+        AddNameComponents(result, "given", StructuredValues(values.ElementAtOrDefault(1)));
+        AddNameComponents(result, "given2", StructuredValues(values.ElementAtOrDefault(2)));
+        AddNameComponents(result, "title", StructuredValues(values.ElementAtOrDefault(3)));
+        AddNameComponents(
+            result,
+            "credential",
+            StructuredValues(values.ElementAtOrDefault(4))
+                .Where(value => !generations.Contains(value, StringComparer.Ordinal)));
+        AddNameComponents(result, "surname2", secondarySurnames);
+        AddNameComponents(result, "generation", generations);
     }
+
+    private static string[] StructuredValues(string? value) => string.IsNullOrEmpty(value)
+        ? []
+        : SplitEscaped(value, ',')
+            .Select(UnescapeText)
+            .Where(item => item.Length > 0)
+            .ToArray();
+
+    private static void AddNameComponents(
+        JsonArray result,
+        string kind,
+        IEnumerable<string> values)
+    {
+        foreach (var value in values)
+            result.Add(new JsonObject { ["kind"] = kind, ["value"] = value });
+    }
+
+    private static bool IsAbsoluteUri(string value) =>
+        value.Length > 0
+        && !value.Any(character => char.IsWhiteSpace(character)
+            || char.IsControl(character)
+            || character == '\\')
+        && Uri.TryCreate(value, UriKind.Absolute, out var uri)
+        && !string.IsNullOrEmpty(uri.Scheme);
 
     private static void AddIfNotEmpty(JsonObject card, string name, JsonObject value)
     {

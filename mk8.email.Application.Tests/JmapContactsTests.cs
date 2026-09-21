@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
@@ -377,116 +376,6 @@ public sealed class JmapContactsTests
     }
 
     [TestMethod]
-    public async Task CardDavUpdatesAreVisibleThroughJmapWithSharedState()
-    {
-        await using var fixture = await JmapFixture.CreateAsync();
-        var defaultBookId = await GetDefaultAddressBookIdAsync(fixture);
-        var create = Arguments(await InvokeAsync(fixture, "ContactCard/set", new JsonObject
-        {
-            ["accountId"] = fixture.AccountId,
-            ["create"] = new JsonObject
-            {
-                ["card"] = Card(
-                    defaultBookId,
-                    "carddav-roundtrip",
-                    "Original Name",
-                    "Original",
-                    "Name",
-                    "original@example.net"),
-            },
-        }));
-        var cardId = create["created"]!["card"]!["id"]!.GetValue<string>();
-        var beforeDavUpdate = create["newState"]!.GetValue<string>();
-
-        using (var scope = fixture.Services.CreateScope())
-        {
-            var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-            var resource = await database.DavResources
-                .SingleAsync(item => item.Uid == "carddav-roundtrip");
-            var collection = await database.DavCollections
-                .SingleAsync(item => item.Id == resource.CollectionId);
-            var content = Encoding.UTF8.GetBytes(
-                "BEGIN:VCARD\r\n"
-                + "VERSION:4.0\r\n"
-                + "UID:carddav-roundtrip\r\n"
-                + "FN:Updated over CardDAV\r\n"
-                + "N:Contact;CardDAV;;;\r\n"
-                + "EMAIL;TYPE=work:carddav@example.net\r\n"
-                + "ADR;TYPE=work;LABEL=\"1 Main St, Zagreb\":;;1 Main St;Zagreb;;10000;Croatia\r\n"
-                + "IMPP:xmpp:carddav@example.net\r\n"
-                + "CATEGORIES:engineering,friends\r\n"
-                + "BDAY:1985-04\r\n"
-                + "ANNIVERSARY:--02-29\r\n"
-                + "PHOTO;ENCODING=b;TYPE=PNG:iVBORw0KGgo=\r\n"
-                + "NOTE:Shared storage update\r\n"
-                + "END:VCARD\r\n");
-            var changedAt = DateTime.UtcNow.AddSeconds(1);
-            var sequence = checked(++collection.SyncToken);
-            resource.Content = content;
-            resource.ContentType = "text/vcard";
-            resource.Etag = Convert.ToHexStringLower(SHA256.HashData(content));
-            resource.SizeBytes = content.Length;
-            resource.ChangeSequence = sequence;
-            resource.UpdatedAt = changedAt;
-            collection.UpdatedAt = changedAt;
-            database.DavChanges.Add(new DavChangeDB
-            {
-                Id = Guid.CreateVersion7(),
-                CollectionId = collection.Id,
-                Sequence = sequence,
-                ResourceName = resource.ResourceName,
-                IsDeleted = false,
-                Etag = resource.Etag,
-                ChangedAt = changedAt,
-            });
-            await database.SaveChangesAsync();
-        }
-
-        var get = Arguments(await InvokeAsync(fixture, "ContactCard/get", new JsonObject
-        {
-            ["accountId"] = fixture.AccountId,
-            ["ids"] = new JsonArray(cardId),
-        }));
-        var card = get["list"]![0]!;
-        Assert.AreEqual("Updated over CardDAV", card["name"]?["full"]?.GetValue<string>());
-        Assert.AreEqual(
-            "carddav@example.net",
-            card["emails"]!.AsObject().First().Value!["address"]!.GetValue<string>());
-        Assert.AreEqual(
-            "Shared storage update",
-            card["notes"]!.AsObject().First().Value!["note"]!.GetValue<string>());
-        Assert.AreEqual(
-            "1 Main St, Zagreb",
-            card["addresses"]!.AsObject().First().Value!["full"]!.GetValue<string>());
-        Assert.AreEqual(
-            "xmpp:carddav@example.net",
-            card["onlineServices"]!.AsObject().First().Value!["uri"]!.GetValue<string>());
-        Assert.IsTrue(card["keywords"]!["engineering"]!.GetValue<bool>());
-        var anniversaries = card["anniversaries"]!.AsObject().Select(item => item.Value!).ToArray();
-        var birthday = anniversaries.Single(item => item["kind"]!.GetValue<string>() == "birth");
-        Assert.AreEqual(1985, birthday["date"]!["year"]!.GetValue<int>());
-        Assert.AreEqual(4, birthday["date"]!["month"]!.GetValue<int>());
-        Assert.IsNull(birthday["date"]!["day"]);
-        var wedding = anniversaries.Single(item => item["kind"]!.GetValue<string>() == "wedding");
-        Assert.AreEqual(2, wedding["date"]!["month"]!.GetValue<int>());
-        Assert.AreEqual(29, wedding["date"]!["day"]!.GetValue<int>());
-        Assert.IsNull(wedding["date"]!["year"]);
-        Assert.AreEqual(
-            "image/png",
-            card["media"]!.AsObject().First().Value!["mediaType"]!.GetValue<string>());
-        StringAssert.StartsWith(
-            card["media"]!.AsObject().First().Value!["uri"]!.GetValue<string>(),
-            "data:image/png;base64,");
-
-        var changes = Arguments(await InvokeAsync(fixture, "ContactCard/changes", new JsonObject
-        {
-            ["accountId"] = fixture.AccountId,
-            ["sinceState"] = beforeDavUpdate,
-        }));
-        CollectionAssert.Contains(StringValues(changes["updated"]!), cardId);
-    }
-
-    [TestMethod]
     public async Task ContactMediaAcceptsTypedUploadsAndRejectsMismatches()
     {
         await using var fixture = await JmapFixture.CreateAsync();
@@ -696,10 +585,10 @@ public sealed class JmapContactsTests
         JmapFixture fixture,
         string method,
         JsonObject arguments) => fixture.InvokeAsync(new JsonObject
-    {
-        ["using"] = new JsonArray(Core, Contacts),
-        ["methodCalls"] = new JsonArray(new JsonArray(method, arguments, "c1")),
-    });
+        {
+            ["using"] = new JsonArray(Core, Contacts),
+            ["methodCalls"] = new JsonArray(new JsonArray(method, arguments, "c1")),
+        });
 
     private static JsonObject Arguments(JsonObject response) =>
         response["methodResponses"]![0]![1]!.AsObject();

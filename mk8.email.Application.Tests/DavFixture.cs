@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
@@ -14,6 +15,7 @@ using mk8.email.Dav;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Infrastructure.Environment;
 using mk8.email.Infrastructure.Models;
+using mk8.email.Jmap;
 using mk8.email.Utils;
 
 namespace mk8.email.Application.Tests;
@@ -31,6 +33,7 @@ internal sealed class DavFixture : IAsyncDisposable
         WebApplication application,
         HttpClient client,
         Guid userId,
+        Guid inboxId,
         Guid attendeeUserId,
         Guid outsiderUserId,
         CapturingMailSubmissionQueue submissionQueue)
@@ -39,15 +42,18 @@ internal sealed class DavFixture : IAsyncDisposable
         this.submissionQueue = submissionQueue;
         Client = client;
         UserId = userId;
+        InboxId = inboxId;
         AttendeeUserId = attendeeUserId;
         OutsiderUserId = outsiderUserId;
     }
 
     public HttpClient Client { get; }
     public Guid UserId { get; }
+    public Guid InboxId { get; }
     public Guid AttendeeUserId { get; }
     public Guid OutsiderUserId { get; }
     public string PrimaryAddress => Username;
+    public string AccountId => JmapId.Account(InboxId);
     public string AttendeeAddress => AttendeeUsername;
     public string PrincipalPath => $"/dav/principals/{UserId:N}/";
     public string AttendeePrincipalPath => $"/dav/principals/{AttendeeUserId:N}/";
@@ -77,6 +83,12 @@ internal sealed class DavFixture : IAsyncDisposable
                 MaxCollectionsPerUser = 20,
                 MaxResourcesPerCollection = 1_000,
             },
+            Jmap = new JmapConfig
+            {
+                EnableJmap = true,
+                IsDefault = true,
+                PublicBaseUrl = "https://email.mk8n.com",
+            },
         };
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
         {
@@ -93,11 +105,14 @@ internal sealed class DavFixture : IAsyncDisposable
         var submissionQueue = new CapturingMailSubmissionQueue();
         builder.Services.AddSingleton<IMailSubmissionQueue>(submissionQueue);
         builder.Services.AddDavProtocol();
+        builder.Services.AddJmapProtocol();
 
         var application = builder.Build();
         application.MapDavEndpoints();
+        application.MapJmapEndpoints();
 
         var userId = Guid.CreateVersion7();
+        var inboxId = Guid.CreateVersion7();
         var attendeeUserId = Guid.CreateVersion7();
         var outsiderUserId = Guid.CreateVersion7();
         using (var scope = application.Services.CreateScope())
@@ -108,20 +123,29 @@ internal sealed class DavFixture : IAsyncDisposable
                 Id = Guid.CreateVersion7(),
                 Name = "DAV Protocol Test",
             };
-            database.Addresses.Add(new AddressDB
+            var primaryAddress = new AddressDB
             {
                 Id = Guid.CreateVersion7(),
                 Domain = "mk8n.com",
                 Company = company,
                 IsActive = true,
-            });
-            database.Users.Add(new UserDB
+            };
+            var primaryUser = new UserDB
             {
                 Id = userId,
                 Username = Username,
                 PasswordHash = PasswordHasher.Hash(Password),
                 Role = "User",
                 Company = company,
+            };
+            database.Addresses.Add(primaryAddress);
+            database.Users.Add(primaryUser);
+            database.Inboxes.Add(new InboxDB
+            {
+                Id = inboxId,
+                Name = "dav.user",
+                Address = primaryAddress,
+                Owner = primaryUser,
             });
             database.Users.Add(new UserDB
             {
@@ -174,9 +198,22 @@ internal sealed class DavFixture : IAsyncDisposable
             application,
             client,
             userId,
+            inboxId,
             attendeeUserId,
             outsiderUserId,
             submissionQueue);
+    }
+
+    public async Task<JsonObject> SendJmapAsync(JsonObject request)
+    {
+        using var response = await SendAsync(
+            "POST",
+            "/jmap/api",
+            request.ToJsonString(JmapJson.SerializerOptions),
+            "application/json");
+        Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
+        return Assert.IsInstanceOfType<JsonObject>(
+            JsonNode.Parse(await response.Content.ReadAsStringAsync()));
     }
 
     public Task<HttpResponseMessage> SendAsync(

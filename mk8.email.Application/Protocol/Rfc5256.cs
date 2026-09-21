@@ -7,18 +7,22 @@ public static class Rfc5256
 {
     private static readonly TextInfo InvariantTextInfo = CultureInfo.InvariantCulture.TextInfo;
 
-    public static string BaseSubject(string? value)
+    public static string BaseSubject(string? value) => AnalyzeSubject(value).BaseSubject;
+
+    public static (string BaseSubject, bool IsReplyOrForward) AnalyzeSubject(string? value)
     {
         var subject = NormalizeSubjectWhitespace(value);
+        var isReplyOrForward = false;
         while (true)
         {
-            subject = RemoveSubjectTrailers(subject);
+            subject = RemoveSubjectTrailers(subject, ref isReplyOrForward);
 
             while (true)
             {
-                var leaderEnd = SubjectLeaderEnd(subject);
+                var leaderEnd = SubjectLeaderEnd(subject, out var removedReplyOrForward);
                 if (leaderEnd > 0)
                 {
+                    isReplyOrForward |= removedReplyOrForward;
                     subject = subject[leaderEnd..];
                     continue;
                 }
@@ -36,11 +40,12 @@ public static class Rfc5256
             if (subject.StartsWith("[fwd:", StringComparison.OrdinalIgnoreCase)
                 && subject.EndsWith(']'))
             {
+                isReplyOrForward = true;
                 subject = subject[5..^1];
                 continue;
             }
 
-            return subject;
+            return (subject, isReplyOrForward);
         }
     }
 
@@ -82,19 +87,21 @@ public static class Rfc5256
         return result.ToString();
     }
 
-    private static string RemoveSubjectTrailers(string subject)
+    private static string RemoveSubjectTrailers(string subject, ref bool isReplyOrForward)
     {
         while (true)
         {
             subject = subject.TrimEnd(' ');
             if (!subject.EndsWith("(fwd)", StringComparison.OrdinalIgnoreCase))
                 return subject;
+            isReplyOrForward = true;
             subject = subject[..^5];
         }
     }
 
-    private static int SubjectLeaderEnd(string subject)
+    private static int SubjectLeaderEnd(string subject, out bool isReplyOrForward)
     {
+        isReplyOrForward = false;
         var index = 0;
         while (index < subject.Length && subject[index] == ' ')
             index++;
@@ -103,9 +110,10 @@ public static class Rfc5256
 
         while (TryReadSubjectBlob(subject, index, out var blobEnd))
             index = blobEnd;
-        return TryReadReplyOrForward(subject, index, out var leaderEnd)
-            ? leaderEnd
-            : 0;
+        if (!TryReadReplyOrForward(subject, index, out var leaderEnd))
+            return 0;
+        isReplyOrForward = true;
+        return leaderEnd;
     }
 
     private static bool TryReadReplyOrForward(string subject, int start, out int end)

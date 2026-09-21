@@ -832,7 +832,7 @@ ILogger<ImapServerService> logger) : BackgroundService
         var caps =
             "IMAP4rev1 LITERAL+ IDLE NAMESPACE SPECIAL-USE UIDPLUS LIST-EXTENDED LIST-STATUS " +
             "ID ENABLE MOVE UNSELECT QUOTA CONDSTORE QRESYNC ESEARCH SEARCHRES UTF8=ACCEPT " +
-            $"SORT THREAD=ORDEREDSUBJECT MULTIAPPEND STATUS=SIZE COMPRESS=DEFLATE " +
+            $"SORT THREAD=ORDEREDSUBJECT THREAD=REFERENCES MULTIAPPEND STATUS=SIZE COMPRESS=DEFLATE " +
             $"APPENDLIMIT={config.MaxMessageSizeBytes}";
         if (session.IsSecure)
         {
@@ -4168,6 +4168,16 @@ ILogger<ImapServerService> logger) : BackgroundService
         byte[] CcSortKey,
         byte[] SubjectSortKey);
 
+    private sealed record ThreadStoredMessage(
+        Guid Id,
+        int Uid,
+        int SequenceNumber,
+        DateTime ReceivedAt,
+        string Subject,
+        string? RawHeaders,
+        string? MessageId,
+        string? InReplyTo);
+
     private sealed record SearchPredicate(
         SearchDataRequirements Requirements,
         Func<SearchStoredMessage, int, bool> IsMatch);
@@ -5397,85 +5407,36 @@ ILogger<ImapServerService> logger) : BackgroundService
             return;
         }
 
-        var identifierById = searchResult.Matches.ToDictionary(
+        var referenceSequenceById = searchResult.Matches.ToDictionary(
             candidate => candidate.Id,
-            candidate => useUid ? candidate.Uid : candidate.SequenceNumber);
-        var emails = await folderQuery
+            candidate => candidate.SequenceNumber);
+        var referenceStoredMessages = await folderQuery
             .Where(email => matchedIds.Contains(email.Id))
-            .OrderBy(e => e.ReceivedAt)
-            .Select(e => new { e.Id, e.Uid, e.MessageId, e.InReplyTo, e.Subject })
+            .Select(email => new ThreadStoredMessage(
+                email.Id,
+                email.Uid,
+                0,
+                email.ReceivedAt,
+                email.Subject,
+                email.RawHeaders,
+                email.MessageId,
+                email.InReplyTo))
             .ToListAsync(ct);
         if (transaction is not null)
             await transaction.CommitAsync(ct);
 
-        var messageIdToIndex = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        for (var i = 0; i < emails.Count; i++)
-        {
-            if (!string.IsNullOrEmpty(emails[i].MessageId))
-                messageIdToIndex.TryAdd(emails[i].MessageId!, i);
-        }
-
-        var parentOf = new int[emails.Count];
-        for (var i = 0; i < parentOf.Length; i++)
-            parentOf[i] = -1;
-
-        for (var i = 0; i < emails.Count; i++)
-        {
-            if (!string.IsNullOrEmpty(emails[i].InReplyTo)
-                && messageIdToIndex.TryGetValue(emails[i].InReplyTo!, out var parentIdx))
-            {
-                parentOf[i] = parentIdx;
-            }
-        }
-
-        var roots = new List<int>();
-        for (var i = 0; i < parentOf.Length; i++)
-        {
-            if (parentOf[i] < 0)
-                roots.Add(i);
-        }
-
-        var builder = new StringBuilder();
-        foreach (var root in roots)
-        {
-            BuildThreadTree(builder, root, parentOf, emails.Count,
-                i => identifierById[emails[i].Id].ToString());
-        }
-
-        var referenceThreads = builder.ToString();
+        var referenceMessages = referenceStoredMessages
+            .Select(message => CreateReferenceThreadMessage(
+                message with { SequenceNumber = referenceSequenceById[message.Id] },
+                useUid))
+            .ToArray();
+        var referenceThreads = Rfc5256Threading.BuildReferences(referenceMessages);
         var referenceSuffix = referenceThreads.Length == 0
             ? string.Empty
             : $" {referenceThreads}";
         await writer.WriteLineAsync($"* THREAD{referenceSuffix}");
         await writer.WriteLineAsync(
             $"{tag} OK {(useUid ? "UID THREAD" : "THREAD")} completed");
-    }
-
-    private static void BuildThreadTree(
-        StringBuilder sb, int nodeIdx, int[] parentOf, int count,
-        Func<int, string> idFunc)
-    {
-        var children = new List<int>();
-        for (var i = 0; i < count; i++)
-        {
-            if (parentOf[i] == nodeIdx)
-                children.Add(i);
-        }
-
-        if (children.Count == 0)
-        {
-            sb.Append($"({idFunc(nodeIdx)})");
-        }
-        else
-        {
-            sb.Append($"({idFunc(nodeIdx)}");
-            foreach (var child in children)
-            {
-                sb.Append(' ');
-                BuildThreadTree(sb, child, parentOf, count, idFunc);
-            }
-            sb.Append(')');
-        }
     }
 
     private static bool TryParseSortArguments(
@@ -5683,6 +5644,81 @@ ILogger<ImapServerService> logger) : BackgroundService
 
     private static int ThreadIdentifier(SortMessage message, bool useUid) =>
         useUid ? message.Uid : message.SequenceNumber;
+
+    private static Rfc5256ThreadMessage CreateReferenceThreadMessage(
+        ThreadStoredMessage stored,
+        bool useUid)
+    {
+        var sentAt = stored.ReceivedAt;
+        var subject = stored.Subject;
+        var messageId = Rfc5256Threading.ParseFirstMessageId(stored.MessageId);
+        IReadOnlyList<string> references = Rfc5256Threading.ParseMessageIds(stored.InReplyTo)
+            .Take(1)
+            .ToArray();
+
+        if (!string.IsNullOrEmpty(stored.RawHeaders))
+        {
+            try
+            {
+                var rawHeaders = stored.RawHeaders.EndsWith("\r\n\r\n", StringComparison.Ordinal)
+                    || stored.RawHeaders.EndsWith("\n\n", StringComparison.Ordinal)
+                    ? stored.RawHeaders
+                    : stored.RawHeaders + "\r\n\r\n";
+                using var stream = new MemoryStream(
+                    MailWireEncoding.Instance.GetBytes(rawHeaders),
+                    writable: false);
+                using var message = MimeMessage.Load(stream, persistent: false);
+                subject = message.Subject ?? string.Empty;
+                var dateHeader = message.Headers.FirstOrDefault(header =>
+                    header.Field.Equals("Date", StringComparison.OrdinalIgnoreCase));
+                if (dateHeader is not null
+                    && MimeKit.Utils.DateUtils.TryParse(dateHeader.Value, out var parsedDate))
+                {
+                    sentAt = parsedDate.UtcDateTime;
+                }
+
+                messageId = MessageIdsFromHeaders(message, "Message-ID")
+                    .FirstOrDefault();
+                var headerReferences = MessageIdsFromHeaders(message, "References");
+                references = headerReferences.Count > 0
+                    ? headerReferences
+                    : MessageIdsFromHeaders(message, "In-Reply-To")
+                        .Take(1)
+                        .ToArray();
+            }
+            catch (Exception exception) when (
+                exception is FormatException or IOException or ParseException)
+            {
+                // Legacy rows can contain malformed raw headers. Their normalized
+                // columns remain a deterministic fallback for REFERENCES.
+            }
+        }
+
+        var analyzedSubject = Rfc5256.AnalyzeSubject(subject);
+        return new Rfc5256ThreadMessage(
+            useUid ? stored.Uid : stored.SequenceNumber,
+            stored.SequenceNumber,
+            sentAt,
+            Convert.ToBase64String(
+                Rfc5256.UnicodeCasemapSortKey(analyzedSubject.BaseSubject)),
+            analyzedSubject.IsReplyOrForward,
+            messageId,
+            references);
+    }
+
+    private static IReadOnlyList<string> MessageIdsFromHeaders(
+        MimeMessage message,
+        string fieldName)
+    {
+        var result = new List<string>();
+        foreach (var header in message.Headers)
+        {
+            if (!header.Field.Equals(fieldName, StringComparison.OrdinalIgnoreCase))
+                continue;
+            result.AddRange(Rfc5256Threading.ParseMessageIds(header.Value));
+        }
+        return result;
+    }
 
     private static SortMessage CreateSortMessage(SortStoredMessage stored)
     {

@@ -757,13 +757,14 @@ public sealed class TransportSecurityTests
         StringAssert.Contains(capability, "SEARCHRES UTF8=ACCEPT");
         StringAssert.Contains(
             capability,
-            "SORT THREAD=ORDEREDSUBJECT MULTIAPPEND STATUS=SIZE COMPRESS=DEFLATE APPENDLIMIT=65536");
+            "SORT THREAD=ORDEREDSUBJECT THREAD=REFERENCES MULTIAPPEND STATUS=SIZE " +
+            "COMPRESS=DEFLATE APPENDLIMIT=65536");
         StringAssert.Contains(capability, "LOGINDISABLED");
         StringAssert.Contains(capability, "STARTTLS");
         Assert.IsFalse(capability.Contains("AUTH=PLAIN", StringComparison.Ordinal));
         foreach (var unverifiedExtension in new[]
                  {
-                     "BINARY", "OBJECTID", "THREAD=REFERENCES",
+                     "BINARY", "OBJECTID",
                  })
         {
             Assert.IsFalse(
@@ -1999,6 +2000,75 @@ public sealed class TransportSecurityTests
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a12 BAD", StringComparison.Ordinal));
         await connection.WriteLineAsync("a13 NOOP");
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a13 OK", StringComparison.Ordinal));
+
+        async Task AssertThreadAsync(string command, string expected)
+        {
+            await connection.WriteLineAsync(command);
+            Assert.AreEqual(expected, await connection.ReadLineAsync());
+            var tag = command[..command.IndexOf(' ')];
+            Assert.IsTrue((await connection.ReadLineAsync()).StartsWith(
+                $"{tag} OK",
+                StringComparison.Ordinal));
+        }
+    }
+
+    [TestMethod]
+    [Timeout(30_000)]
+    public async Task ImapReferencesThreadingImplementsTheCompleteContainerAlgorithm()
+    {
+        var port = ReservePort();
+        var environment = CreateEnvironment(imapPort: port);
+        await using var server = await ServerFixture.StartImapAsync(environment, port);
+        await server.SeedInboxMessagesForReferencesAsync();
+        await using var connection = await ProtocolConnection.ConnectAsync(port);
+
+        await connection.ReadLineAsync();
+        await connection.WriteLineAsync("a1 STARTTLS");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a1 OK", StringComparison.Ordinal));
+        await connection.UpgradeToTlsAsync("email.mk8n.com");
+        await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a2 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a3 SELECT INBOX");
+        await ReadUntilTaggedResponseAsync(connection, "a3");
+
+        await AssertThreadAsync(
+            "a4 UID THREAD REFERENCES US-ASCII UID 101:119",
+            "* THREAD (101 (103)(102))((104)(105))(106 107)(108)" +
+            "(110 109)(111 113)(112)(114)(115)(117 116)(118 119)");
+        await AssertThreadAsync(
+            "a5 THREAD REFERENCES US-ASCII UID 101:119",
+            "* THREAD (1 (3)(2))((4)(5))(6 7)(8)(10 9)" +
+            "(11 13)(12)(14)(15)(17 16)(18 19)");
+        await AssertThreadAsync(
+            "a6 UID THREAD REFERENCES US-ASCII UID 102:103",
+            "* THREAD ((103)(102))");
+        await AssertThreadAsync(
+            "a7 UID THREAD REFERENCES US-ASCII UID 102",
+            "* THREAD (102)");
+        await AssertThreadAsync(
+            "a8 UID THREAD REFERENCES US-ASCII UID 201:203",
+            "* THREAD ((201 202)(203))");
+        await AssertThreadAsync(
+            "a9 UID THREAD REFERENCES US-ASCII UID 204:205",
+            "* THREAD (205 204)");
+        await AssertThreadAsync(
+            "a10 UID THREAD REFERENCES US-ASCII UID 206:207",
+            "* THREAD (206)(207)");
+        await AssertThreadAsync(
+            "a11 UID THREAD REFERENCES US-ASCII UID 208:212",
+            "* THREAD ((208)(209)(210)(211)(212))");
+        await connection.WriteUtf8LineAsync(
+            "a12 UID THREAD REFERENCES UTF-8 SUBJECT \"Äpfel\"");
+        Assert.AreEqual("* THREAD (118 119)", await connection.ReadLineAsync());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a12 OK", StringComparison.Ordinal));
+        await AssertThreadAsync(
+            "a13 UID THREAD REFERENCES US-ASCII UID 118:119 MODSEQ 18",
+            "* THREAD (118 119)");
+        await AssertThreadAsync(
+            "a14 UID THREAD REFERENCES US-ASCII SUBJECT absent-marker",
+            "* THREAD");
+        await connection.WriteLineAsync("a15 NOOP");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a15 OK", StringComparison.Ordinal));
 
         async Task AssertThreadAsync(string command, string expected)
         {
@@ -3412,6 +3482,65 @@ public sealed class TransportSecurityTests
             await database.SaveChangesAsync();
         }
 
+        public async Task SeedInboxMessagesForReferencesAsync()
+        {
+            using var scope = services.CreateScope();
+            var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            var folder = await database.Folders.SingleAsync(item => item.Name == DefaultFolders.Inbox);
+            database.Emails.AddRange(
+                CreateThreadEmail(folder.Id, 101, 1, "Project", "<root@example.net>"),
+                CreateThreadEmail(folder.Id, 102, 3, "Re: Project", "<reply@example.net>",
+                    references: "<root@example.net>"),
+                CreateThreadEmail(folder.Id, 103, 2, "Re: Project", "<branch@example.net>",
+                    references: "<root@example.net>"),
+                CreateThreadEmail(folder.Id, 104, 4, "Orphan A", "<orphan-a@example.net>",
+                    references: "<missing@example.net>"),
+                CreateThreadEmail(folder.Id, 105, 5, "Orphan B", "<orphan-b@example.net>",
+                    references: "<missing@example.net>"),
+                CreateThreadEmail(folder.Id, 106, 6, "Quoted root",
+                    """<"quoted"@example.net>"""),
+                CreateThreadEmail(folder.Id, 107, 7, "Quoted child", "<quoted-child@example.net>",
+                    references: "<quoted@example.net>"),
+                CreateThreadEmail(folder.Id, 108, 8, "Duplicate", "<root@example.net>"),
+                CreateThreadEmail(folder.Id, 109, 10, "Fallback child", "<fallback-child@example.net>",
+                    references: "not-a-message-id", inReplyTo: "<fallback@example.net>"),
+                CreateThreadEmail(folder.Id, 110, 9, "Fallback parent", "<fallback@example.net>"),
+                CreateThreadEmail(folder.Id, 111, 11, "Preferred parent", "<preferred@example.net>"),
+                CreateThreadEmail(folder.Id, 112, 12, "Ignored parent", "<ignored@example.net>"),
+                CreateThreadEmail(folder.Id, 113, 13, "Re: Preferred parent",
+                    "<preferred-child@example.net>", references: "<preferred@example.net>",
+                    inReplyTo: "<ignored@example.net>"),
+                CreateThreadEmail(folder.Id, 114, 14, "Upper case ID", "<Case@example.net>"),
+                CreateThreadEmail(folder.Id, 115, 15, "Lower case reference",
+                    "<case-child@example.net>", references: "<case@example.net>"),
+                CreateThreadEmail(folder.Id, 116, 16, "Loop A", "<loop-a@example.net>",
+                    references: "<loop-b@example.net>"),
+                CreateThreadEmail(folder.Id, 117, 17, "Loop B", "<loop-b@example.net>",
+                    references: "<loop-a@example.net>"),
+                CreateThreadEmail(folder.Id, 118, 18, "Äpfel", "<unicode-root@example.net>"),
+                CreateThreadEmail(folder.Id, 119, 19, "Re: Äpfel", "<unicode-child@example.net>",
+                    references: "<unicode-root@example.net>"),
+                CreateThreadEmail(folder.Id, 201, 20, "Topic", "<subject-one@example.net>"),
+                CreateThreadEmail(folder.Id, 202, 21, "Re: topic", "<subject-two@example.net>"),
+                CreateThreadEmail(folder.Id, 203, 22, "TOPIC", "<subject-three@example.net>"),
+                CreateThreadEmail(folder.Id, 204, 23, "Re: Promote", "<promote-reply@example.net>"),
+                CreateThreadEmail(folder.Id, 205, 24, "Promote", "<promote-original@example.net>"),
+                CreateThreadEmail(folder.Id, 206, 25, "Re:", "<empty-one@example.net>"),
+                CreateThreadEmail(folder.Id, 207, 26, "Fwd:", "<empty-two@example.net>"),
+                CreateThreadEmail(folder.Id, 208, 27, "Shared", "<dummy-one@example.net>",
+                    references: "<missing-a@example.net>"),
+                CreateThreadEmail(folder.Id, 209, 28, "Other A", "<dummy-two@example.net>",
+                    references: "<missing-a@example.net>"),
+                CreateThreadEmail(folder.Id, 210, 29, "Re: Shared", "<dummy-three@example.net>",
+                    references: "<missing-b@example.net>"),
+                CreateThreadEmail(folder.Id, 211, 30, "Other B", "<dummy-four@example.net>",
+                    references: "<missing-b@example.net>"),
+                CreateThreadEmail(folder.Id, 212, 31, "SHARED", "<dummy-five@example.net>"));
+            folder.NextUid = 213;
+            folder.HighestModSeq = 31;
+            await database.SaveChangesAsync();
+        }
+
         private static EmailDB CreateSortEmail(
             Guid folderId,
             int uid,
@@ -3433,6 +3562,65 @@ public sealed class TransportSecurityTests
             FolderId = folderId,
             ReceivedAt = receivedAt,
         };
+
+        private static EmailDB CreateThreadEmail(
+            Guid folderId,
+            int uid,
+            int sentDay,
+            string subject,
+            string messageId,
+            string? references = null,
+            string? inReplyTo = null)
+        {
+            var sentAt = new DateTimeOffset(
+                2026,
+                1,
+                sentDay,
+                12,
+                0,
+                0,
+                TimeSpan.Zero);
+            var headerSubject = subject switch
+            {
+                "Äpfel" => "=?UTF-8?Q?=C3=84pfel?=",
+                "Re: Äpfel" => "=?UTF-8?Q?Re=3A_=C3=84pfel?=",
+                _ => subject,
+            };
+            var headers = new StringBuilder()
+                .Append("From: sender@example.net\r\n")
+                .Append($"To: {TestUsername}\r\n")
+                .Append($"Date: {sentAt:R}\r\n")
+                .Append($"Subject: {headerSubject}\r\n")
+                .Append($"Message-ID: {messageId}\r\n");
+            if (references is not null)
+                headers.Append($"References: {references}\r\n");
+            if (inReplyTo is not null)
+                headers.Append($"In-Reply-To: {inReplyTo}\r\n");
+
+            return new EmailDB
+            {
+                Id = Guid.CreateVersion7(),
+                Sender = "normalized-column-must-not-win@example.net",
+                Recipient = TestUsername,
+                Subject = subject,
+                Body = "body\r\n",
+                RawHeaders = headers.ToString().TrimEnd('\r', '\n'),
+                MessageId = $"<column-{uid}@must-not-win.example>",
+                InReplyTo = "<column-parent@must-not-win.example>",
+                SizeBytes = 100,
+                Uid = uid,
+                ModSeq = uid < 200 ? uid - 100 : uid - 181,
+                FolderId = folderId,
+                ReceivedAt = new DateTime(
+                    2027,
+                    1,
+                    32 - sentDay,
+                    0,
+                    0,
+                    0,
+                    DateTimeKind.Utc),
+            };
+        }
 
         private static EmailDB CreateStoredEmail(Guid folderId, int uid, DateTime receivedAt) => new()
         {

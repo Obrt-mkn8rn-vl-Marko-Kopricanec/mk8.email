@@ -545,6 +545,125 @@ public sealed class JmapContactsTests
     }
 
     [TestMethod]
+    public async Task ContactMediaAuthorizesEveryLocalizedBlobBeforePersistingIt()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var defaultBookId = await GetDefaultAddressBookIdAsync(fixture);
+        var localizedBlobId = await fixture.StoreBlobAsync(
+            [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+            "image/png");
+        var foreignBlobId = await fixture.StoreBlobAsync([0x47, 0x49, 0x46], "image/gif");
+        var expiredBlobId = await fixture.StoreBlobAsync([0x52, 0x49, 0x46, 0x46], "audio/wav");
+        var wrongTypeBlobId = await fixture.StoreBlobAsync(
+            Encoding.ASCII.GetBytes("not an image"),
+            "application/pdf");
+        using (var scope = fixture.Services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            var foreign = await database.JmapBlobs.SingleAsync(blob => blob.BlobId == foreignBlobId);
+            foreign.AccountId = Guid.CreateVersion7();
+            var expired = await database.JmapBlobs.SingleAsync(blob => blob.BlobId == expiredBlobId);
+            expired.ExpiresAt = DateTime.UtcNow.AddMinutes(-1);
+            await database.SaveChangesAsync();
+        }
+
+        var localized = Card(
+            defaultBookId,
+            "localized-photo",
+            "Localized Photo",
+            "Localized",
+            "Photo",
+            "localized@example.net");
+        localized["localizations"] = new JsonObject
+        {
+            ["fr"] = new JsonObject
+            {
+                ["media"] = Media(localizedBlobId, "photo"),
+            },
+        };
+        var missing = WithMedia("missing-photo", JmapId.UploadedBlob(Guid.CreateVersion7()), "photo");
+        var foreignCard = WithMedia("foreign-photo", foreignBlobId, "photo");
+        var expiredCard = WithMedia("expired-sound", expiredBlobId, "sound");
+        var wrongType = WithMedia("wrong-type-photo", wrongTypeBlobId, "photo");
+        var localizedMissing = Card(
+            defaultBookId,
+            "localized-missing-photo",
+            "Localized Missing",
+            "Localized",
+            "Missing",
+            "localized-missing@example.net");
+        localizedMissing["localizations"] = new JsonObject
+        {
+            ["de"] = new JsonObject
+            {
+                ["media"] = Media(JmapId.UploadedBlob(Guid.CreateVersion7()), "photo"),
+            },
+        };
+
+        var set = Arguments(await InvokeAsync(fixture, "ContactCard/set", new JsonObject
+        {
+            ["accountId"] = fixture.AccountId,
+            ["create"] = new JsonObject
+            {
+                ["localized"] = localized,
+                ["missing"] = missing,
+                ["foreign"] = foreignCard,
+                ["expired"] = expiredCard,
+                ["wrongType"] = wrongType,
+                ["localizedMissing"] = localizedMissing,
+            },
+        }));
+
+        var cardId = set["created"]!["localized"]!["id"]!.GetValue<string>();
+        foreach (var expected in new Dictionary<string, string>
+        {
+            ["missing"] = "media/photo/blobId",
+            ["foreign"] = "media/photo/blobId",
+            ["expired"] = "media/sound/blobId",
+            ["wrongType"] = "media/photo/blobId",
+        })
+        {
+            Assert.AreEqual(
+                "invalidProperties",
+                set["notCreated"]![expected.Key]!["type"]!.GetValue<string>());
+            CollectionAssert.Contains(
+                StringValues(set["notCreated"]![expected.Key]!["properties"]!),
+                expected.Value);
+        }
+        CollectionAssert.Contains(
+            StringValues(set["notCreated"]!["localizedMissing"]!["properties"]!),
+            "localizations/de/media/photo/blobId");
+
+        var get = Arguments(await InvokeAsync(fixture, "ContactCard/get", new JsonObject
+        {
+            ["accountId"] = fixture.AccountId,
+            ["ids"] = new JsonArray(cardId),
+        }));
+        var normalized = get["list"]![0]!["localizations"]!["fr"]!["media"]!["photo"]!;
+        Assert.IsNull(normalized["blobId"]);
+        Assert.AreEqual("image/png", normalized["mediaType"]!.GetValue<string>());
+        StringAssert.StartsWith(normalized["uri"]!.GetValue<string>(), "data:image/png;base64,");
+
+        JsonObject WithMedia(string uid, string blobId, string kind)
+        {
+            var card = Card(
+                defaultBookId,
+                uid,
+                uid,
+                "Media",
+                "Test",
+                $"{uid}@example.net");
+            card["media"] = Media(blobId, kind);
+            return card;
+        }
+
+        static JsonObject Media(string blobId, string kind) => new()
+        {
+            [kind] = new JsonObject { ["kind"] = kind, ["blobId"] = blobId },
+        };
+    }
+
+    [TestMethod]
     public async Task ContactValidationRejectsMalformedRegisteredDataAndFoldsUtf8Vcards()
     {
         await using var fixture = await JmapFixture.CreateAsync();

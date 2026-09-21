@@ -143,6 +143,33 @@ internal static class JmapContactValidator
                 StringComparison.OrdinalIgnoreCase))
             && IsValidExtensionProperty(property);
 
+    internal static bool TryGetLocalizedCards(
+        JsonObject card,
+        out IReadOnlyDictionary<string, JsonObject> localizedCards)
+    {
+        var result = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+        localizedCards = result;
+        if (!card.TryGetPropertyValue("localizations", out var node))
+            return true;
+        if (node is not JsonObject localizations)
+            return false;
+
+        var source = (JsonObject)card.DeepClone();
+        source.Remove("localizations");
+        foreach (var localization in localizations)
+        {
+            if (!IsLanguageTag(localization.Key)
+                || localization.Value is not JsonObject patch
+                || !TryApplyLocalizationPatch(source, patch, out var localized))
+            {
+                localizedCards = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+                return false;
+            }
+            result[localization.Key] = localized;
+        }
+        return true;
+    }
+
     private static void ValidateCard(
         JsonObject card,
         ISet<string> invalid,
@@ -630,23 +657,19 @@ internal static class JmapContactValidator
     {
         if (!card.TryGetPropertyValue("localizations", out var node))
             return;
-        if (node is not JsonObject localizations)
+        if (node is not JsonObject)
         {
             invalid.Add("localizations");
             return;
         }
 
-        var source = (JsonObject)card.DeepClone();
-        source.Remove("localizations");
-        foreach (var localization in localizations)
+        if (!TryGetLocalizedCards(card, out var localizedCards))
         {
-            if (!IsLanguageTag(localization.Key)
-                || localization.Value is not JsonObject patch
-                || !TryApplyLocalizationPatch(source, patch, out var localized))
-            {
-                invalid.Add("localizations");
-                return;
-            }
+            invalid.Add("localizations");
+            return;
+        }
+        foreach (var localized in localizedCards.Values)
+        {
             var localizedInvalid = new HashSet<string>(StringComparer.Ordinal);
             ValidateCard(localized, localizedInvalid, validateLocalizations: false);
             if (localizedInvalid.Count > 0)

@@ -1,4 +1,6 @@
 using System.Net;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json.Nodes;
 using System.Xml.Linq;
 using mk8.email.Jmap;
@@ -486,6 +488,165 @@ public sealed class DavProtocolTests
             invalidMember,
             "text/vcard; charset=utf-8");
         Assert.AreEqual(HttpStatusCode.UnsupportedMediaType, rejected.StatusCode);
+    }
+
+    [TestMethod]
+    public async Task CardDavEmbeddedJsContactCannotForgeUidOrLocalizedBlobAccess()
+    {
+        await using var fixture = await DavFixture.CreateAsync();
+        var collection = fixture.AddressBookHomePath + "embedded-guards/";
+        const string createAddressBook = """
+            <D:mkcol xmlns:D="DAV:" xmlns:A="urn:ietf:params:xml:ns:carddav">
+              <D:set><D:prop>
+                <D:resourcetype><D:collection/><A:addressbook/></D:resourcetype>
+                <D:displayname>Embedded guards</D:displayname>
+              </D:prop></D:set>
+            </D:mkcol>
+            """;
+        using var createdAddressBook = await fixture.SendAsync("MKCOL", collection, createAddressBook);
+        Assert.AreEqual(HttpStatusCode.Created, createdAddressBook.StatusCode);
+
+        var duplicateEmbedded = new JsonObject
+        {
+            ["@type"] = "Card",
+            ["version"] = "1.0",
+            ["uid"] = "forged-shared-uid",
+            ["kind"] = "individual",
+            ["name"] = new JsonObject { ["full"] = "Forged Shared" },
+        };
+        using var first = await fixture.SendAsync(
+            "PUT",
+            collection + "first.vcf",
+            ForgedVCard("indexed-first-uid", "Indexed First", duplicateEmbedded),
+            "text/vcard; charset=utf-8");
+        using var second = await fixture.SendAsync(
+            "PUT",
+            collection + "second.vcf",
+            ForgedVCard("indexed-second-uid", "Indexed Second", duplicateEmbedded),
+            "text/vcard; charset=utf-8");
+        Assert.AreEqual(HttpStatusCode.Created, first.StatusCode);
+        Assert.AreEqual(HttpStatusCode.Created, second.StatusCode);
+
+        var mismatchedProjection = new JsonObject
+        {
+            ["@type"] = "Card",
+            ["version"] = "1.0",
+            ["uid"] = "indexed-semantic-uid",
+            ["kind"] = "individual",
+            ["name"] = new JsonObject { ["full"] = "Forged Semantic" },
+        };
+        using var semantic = await fixture.SendAsync(
+            "PUT",
+            collection + "semantic.vcf",
+            ForgedVCard(
+                "indexed-semantic-uid",
+                "Indexed Semantic",
+                mismatchedProjection,
+                includeProdId: true),
+            "text/vcard; charset=utf-8");
+        Assert.AreEqual(HttpStatusCode.Created, semantic.StatusCode);
+
+        var blobId = JmapId.UploadedBlob(Guid.CreateVersion7());
+        var localizedBlob = new JsonObject
+        {
+            ["@type"] = "Card",
+            ["version"] = "1.0",
+            ["uid"] = "indexed-localized-uid",
+            ["kind"] = "individual",
+            ["name"] = new JsonObject { ["full"] = "Indexed Localized" },
+            ["localizations"] = new JsonObject
+            {
+                ["fr"] = new JsonObject
+                {
+                    ["media"] = new JsonObject
+                    {
+                        ["photo"] = new JsonObject
+                        {
+                            ["kind"] = "photo",
+                            ["blobId"] = blobId,
+                        },
+                    },
+                },
+            },
+        };
+        using var localized = await fixture.SendAsync(
+            "PUT",
+            collection + "localized.vcf",
+            ForgedVCard("indexed-localized-uid", "Indexed Localized", localizedBlob, includeProdId: true),
+            "text/vcard; charset=utf-8");
+        Assert.AreEqual(HttpStatusCode.Created, localized.StatusCode);
+
+        var response = await fixture.SendJmapAsync(new JsonObject
+        {
+            ["using"] = new JsonArray(JmapConstants.CoreCapability, JmapConstants.ContactsCapability),
+            ["methodCalls"] = new JsonArray(
+                Query("forged", "forged-shared-uid"),
+                Query("first", "indexed-first-uid"),
+                Query("second", "indexed-second-uid"),
+                Query("semantic", "indexed-semantic-uid"),
+                Query("localized", "indexed-localized-uid")),
+        });
+        var methodResponses = response["methodResponses"]!.AsArray();
+        Assert.AreEqual(0, methodResponses[0]![1]!["ids"]!.AsArray().Count);
+        Assert.AreEqual(1, methodResponses[1]![1]!["ids"]!.AsArray().Count);
+        Assert.AreEqual(1, methodResponses[2]![1]!["ids"]!.AsArray().Count);
+        var semanticId = methodResponses[3]![1]!["ids"]![0]!.GetValue<string>();
+        var localizedId = methodResponses[4]![1]!["ids"]![0]!.GetValue<string>();
+
+        var get = await fixture.SendJmapAsync(new JsonObject
+        {
+            ["using"] = new JsonArray(JmapConstants.CoreCapability, JmapConstants.ContactsCapability),
+            ["methodCalls"] = new JsonArray(new JsonArray(
+                "ContactCard/get",
+                new JsonObject
+                {
+                    ["accountId"] = fixture.AccountId,
+                    ["ids"] = new JsonArray(semanticId, localizedId),
+                },
+                "get")),
+        });
+        var projected = get["methodResponses"]![0]![1]!["list"]!.AsArray();
+        var semanticProjection = projected.Single(card =>
+            card!["uid"]!.GetValue<string>() == "indexed-semantic-uid")!;
+        Assert.AreEqual("Indexed Semantic", semanticProjection["name"]!["full"]!.GetValue<string>());
+        var localizedProjection = projected.Single(card =>
+            card!["uid"]!.GetValue<string>() == "indexed-localized-uid")!;
+        Assert.IsNull(localizedProjection["localizations"]);
+        Assert.IsNull(localizedProjection["media"]);
+
+        JsonArray Query(string callId, string uid) => new(
+            "ContactCard/query",
+            new JsonObject
+            {
+                ["accountId"] = fixture.AccountId,
+                ["filter"] = new JsonObject { ["uid"] = uid },
+            },
+            callId);
+    }
+
+    private static string ForgedVCard(
+        string uid,
+        string fullName,
+        JsonObject embedded,
+        bool includeProdId = false)
+    {
+        var core = new List<string> { "BEGIN:VCARD", "VERSION:4.0" };
+        if (includeProdId)
+            core.Add("PRODID:-//mk8.email//JMAP Contacts 1.0//EN");
+        core.Add($"UID;VALUE=text:{uid}");
+        core.Add("KIND:individual");
+        core.Add($"FN:{fullName}");
+        core.Add("END:VCARD");
+        var hash = Convert.ToHexStringLower(SHA256.HashData(
+            Encoding.UTF8.GetBytes(string.Join("\r\n", core) + "\r\n")));
+        var encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(
+                embedded.ToJsonString(JmapJson.SerializerOptions)))
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_');
+        core.Insert(core.Count - 1, "X-MK8-JSCONTACT-HASH:" + hash);
+        core.Insert(core.Count - 1, "X-MK8-JSCONTACT:" + encoded);
+        return string.Join("\r\n", core) + "\r\n";
     }
 
     [TestMethod]

@@ -11,14 +11,6 @@ internal static class JmapContactCodec
     private const string JsonProperty = "X-MK8-JSCONTACT";
     private const string HashProperty = "X-MK8-JSCONTACT-HASH";
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
-    private static readonly IReadOnlySet<string> MappedProperties = new HashSet<string>(
-        [
-            "uid", "kind", "name", "nicknames", "organizations", "titles", "emails",
-            "phones", "onlineServices", "addresses", "links", "media", "members",
-            "anniversaries", "keywords", "notes", "prodId", "created", "updated",
-        ],
-        StringComparer.Ordinal);
-
     public static bool TryValidate(JsonObject card, out IReadOnlyList<string> invalidProperties)
         => JmapContactValidator.TryValidate(card, out invalidProperties);
 
@@ -42,21 +34,23 @@ internal static class JmapContactCodec
         var actualHash = HashCore(coreLines);
         if (embedded is not null
             && string.Equals(storedHash, actualHash, StringComparison.OrdinalIgnoreCase)
-            && TryValidate(embedded, out _))
+            && TryValidate(embedded, out _)
+            && TryString(embedded, "uid", out var embeddedUid)
+            && string.Equals(embeddedUid, resource.Uid, StringComparison.Ordinal)
+            && !ContainsProtocolBlobId(embedded)
+            && string.Equals(
+                HashCore(BuildCore(embedded)),
+                actualHash,
+                StringComparison.OrdinalIgnoreCase))
         {
             return embedded;
         }
 
-        var card = embedded is null
-            ? new JsonObject()
-            : (JsonObject)embedded.DeepClone();
-        foreach (var property in MappedProperties)
-            card.Remove(property);
+        var card = new JsonObject();
         card["@type"] = "Card";
         card["version"] = "1.0";
         PopulateFromVCard(card, coreLines, resource);
-        if (!TryString(card, "uid", out var uid) || string.IsNullOrWhiteSpace(uid))
-            card["uid"] = resource.Uid;
+        card["uid"] = resource.Uid;
         return ValidatedProjection(card, resource);
     }
 
@@ -66,6 +60,25 @@ internal static class JmapContactCodec
         card.Remove("id");
         card.Remove("addressBookIds");
 
+        var core = BuildCore(card);
+
+        var canonicalJson = card.ToJsonString(JmapJson.SerializerOptions);
+        var encodedJson = Base64UrlEncode(Encoding.UTF8.GetBytes(canonicalJson));
+        var hash = HashCore(core);
+        core.Insert(core.Count - 1, HashProperty + ":" + hash);
+        core.Insert(core.Count - 1, JsonProperty + ":" + encodedJson);
+
+        var output = new StringBuilder();
+        foreach (var line in core)
+        {
+            foreach (var folded in Fold(line))
+                output.Append(folded).Append("\r\n");
+        }
+        return Encoding.UTF8.GetBytes(output.ToString());
+    }
+
+    private static List<string> BuildCore(JsonObject card)
+    {
         var uid = StringValue(card["uid"]) ?? Guid.CreateVersion7().ToString("N");
         var core = new List<string>
         {
@@ -105,20 +118,20 @@ internal static class JmapContactCodec
         if (StringValue(card["updated"]) is { } updated)
             core.Add("REV:" + EscapeText(updated));
         core.Add("END:VCARD");
+        return core;
+    }
 
-        var canonicalJson = card.ToJsonString(JmapJson.SerializerOptions);
-        var encodedJson = Base64UrlEncode(Encoding.UTF8.GetBytes(canonicalJson));
-        var hash = HashCore(core);
-        core.Insert(core.Count - 1, HashProperty + ":" + hash);
-        core.Insert(core.Count - 1, JsonProperty + ":" + encodedJson);
-
-        var output = new StringBuilder();
-        foreach (var line in core)
+    private static bool ContainsProtocolBlobId(JsonNode node)
+    {
+        if (node is JsonObject value)
         {
-            foreach (var folded in Fold(line))
-                output.Append(folded).Append("\r\n");
+            if (value.ContainsKey("blobId"))
+                return true;
+            return value.Any(property => property.Value is not null
+                && ContainsProtocolBlobId(property.Value));
         }
-        return Encoding.UTF8.GetBytes(output.ToString());
+        return node is JsonArray array
+            && array.Any(item => item is not null && ContainsProtocolBlobId(item));
     }
 
     private static JsonObject MinimalCard(DavResourceDB resource) => new()

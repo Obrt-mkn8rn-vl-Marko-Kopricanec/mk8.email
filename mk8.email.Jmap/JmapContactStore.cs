@@ -20,6 +20,8 @@ public sealed class JmapContactStore(
     EmailDbContext database,
     EnvironmentConfig environment)
 {
+    private readonly JmapBlobService blobs = new(database, environment);
+
     public async Task EnsureDefaultAddressBookAsync(
         AuthenticatedMailUser user,
         CancellationToken cancellationToken)
@@ -124,38 +126,44 @@ public sealed class JmapContactStore(
         if (!JmapContactCodec.TryValidate(card, out var validationErrors))
             invalid.UnionWith(validationErrors);
 
-        if (card["media"] is JsonObject media)
+        IReadOnlyDictionary<string, JsonObject> localizedCards =
+            new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+        if (invalid.Count == 0
+            && !JmapContactValidator.TryGetLocalizedCards(card, out localizedCards))
         {
-            foreach (var entry in media)
+            invalid.Add("localizations");
+        }
+
+        if (invalid.Count == 0)
+            await NormalizeMediaAsync(accountId, card, "media", invalid, cancellationToken);
+
+        if (invalid.Count == 0 && localizedCards.Count > 0)
+        {
+            foreach (var localized in localizedCards)
             {
-                if (entry.Value is not JsonObject value
-                    || !value.TryGetPropertyValue("blobId", out var blobNode))
-                {
-                    continue;
-                }
-                if (blobNode is not JsonValue blobValue
-                    || !blobValue.TryGetValue<string>(out var blobId)
-                    || blobId is null)
-                {
-                    invalid.Add($"media/{entry.Key}/blobId");
-                    continue;
-                }
-                var uploaded = JmapId.TryParseUploadedBlob(blobId, out var uploadedId)
-                    ? await database.JmapBlobs.AsNoTracking().SingleOrDefaultAsync(blob =>
-                        blob.Id == uploadedId
-                        && blob.AccountId == accountId
-                        && blob.ExpiresAt > DateTime.UtcNow,
-                        cancellationToken)
-                    : null;
-                if (uploaded is null || !IsRecognizedMedia(value, uploaded.ContentType))
-                {
-                    invalid.Add($"media/{entry.Key}/blobId");
-                    continue;
-                }
-                value.Remove("blobId");
-                value["uri"] = $"data:{uploaded.ContentType};base64,{Convert.ToBase64String(uploaded.Content)}";
-                value["mediaType"] = uploaded.ContentType;
+                await NormalizeMediaAsync(
+                    accountId,
+                    localized.Value,
+                    $"localizations/{EscapePatchToken(localized.Key)}/media",
+                    invalid,
+                    cancellationToken);
             }
+        }
+
+        if (invalid.Count == 0 && localizedCards.Count > 0)
+        {
+            var normalizedSource = (JsonObject)card.DeepClone();
+            normalizedSource.Remove("localizations");
+            var normalizedLocalizations = new JsonObject();
+            foreach (var localized in localizedCards)
+            {
+                normalizedLocalizations[localized.Key] = BuildTopLevelPatch(
+                    normalizedSource,
+                    localized.Value);
+            }
+            card["localizations"] = normalizedLocalizations;
+            if (!JmapContactCodec.TryValidate(card, out var normalizedErrors))
+                invalid.UnionWith(normalizedErrors);
         }
 
         var encoded = invalid.Count == 0 ? JmapContactCodec.Encode(card) : [];
@@ -165,6 +173,66 @@ public sealed class JmapContactStore(
             ? (card, [])
             : (null, invalid.Order(StringComparer.Ordinal).ToArray());
     }
+
+    private async Task NormalizeMediaAsync(
+        Guid accountId,
+        JsonObject card,
+        string path,
+        ISet<string> invalid,
+        CancellationToken cancellationToken)
+    {
+        if (card["media"] is not JsonObject media)
+            return;
+        foreach (var entry in media)
+        {
+            if (entry.Value is not JsonObject value
+                || !value.TryGetPropertyValue("blobId", out var blobNode))
+            {
+                continue;
+            }
+            var invalidPath = $"{path}/{EscapePatchToken(entry.Key)}/blobId";
+            if (blobNode is not JsonValue blobValue
+                || !blobValue.TryGetValue<string>(out var blobId)
+                || blobId is null)
+            {
+                invalid.Add(invalidPath);
+                continue;
+            }
+            var blob = await blobs.GetAsync(accountId, blobId, cancellationToken);
+            if (blob is null || !IsRecognizedMedia(value, blob.ContentType))
+            {
+                invalid.Add(invalidPath);
+                continue;
+            }
+            value.Remove("blobId");
+            value["uri"] = $"data:{blob.ContentType};base64,{Convert.ToBase64String(blob.Content)}";
+            value["mediaType"] = blob.ContentType;
+        }
+    }
+
+    private static JsonObject BuildTopLevelPatch(JsonObject source, JsonObject localized)
+    {
+        var patch = new JsonObject();
+        var properties = source.Select(item => item.Key)
+            .Concat(localized.Select(item => item.Key))
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal);
+        foreach (var property in properties)
+        {
+            source.TryGetPropertyValue(property, out var sourceValue);
+            var hasLocalized = localized.TryGetPropertyValue(property, out var localizedValue);
+            if (hasLocalized && JsonNode.DeepEquals(sourceValue, localizedValue))
+                continue;
+            patch[EscapePatchToken(property)] = hasLocalized
+                ? localizedValue?.DeepClone()
+                : null;
+        }
+        return patch;
+    }
+
+    private static string EscapePatchToken(string value) => value
+        .Replace("~", "~0", StringComparison.Ordinal)
+        .Replace("/", "~1", StringComparison.Ordinal);
 
     internal static JsonObject BuildAddressBook(
         DavCollectionDB collection,

@@ -181,10 +181,9 @@ internal static class DavContent
             return false;
         }
 
-        if (!parsed.Any(property => property.Name == "FN"
-                && UnescapeText(property.Value).Length > 0))
+        if (!parsed.Any(property => property.Name == "FN"))
         {
-            failure = "A vCard resource must contain a non-empty FN property.";
+            failure = "A vCard resource must contain an FN property.";
             return false;
         }
 

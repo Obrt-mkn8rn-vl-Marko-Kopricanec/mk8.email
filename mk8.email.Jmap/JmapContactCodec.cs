@@ -38,10 +38,14 @@ internal static class JmapContactCodec
             && TryString(embedded, "uid", out var embeddedUid)
             && string.Equals(embeddedUid, resource.Uid, StringComparison.Ordinal)
             && !ContainsProtocolBlobId(embedded)
-            && string.Equals(
-                HashCore(BuildCore(embedded)),
-                actualHash,
-                StringComparison.OrdinalIgnoreCase))
+            && (string.Equals(
+                    HashCore(BuildCore(embedded)),
+                    actualHash,
+                    StringComparison.OrdinalIgnoreCase)
+                || string.Equals(
+                    HashCore(BuildLegacyCore(embedded)),
+                    actualHash,
+                    StringComparison.OrdinalIgnoreCase)))
         {
             return embedded;
         }
@@ -90,8 +94,10 @@ internal static class JmapContactCodec
 
         var kind = StringValue(card["kind"]) ?? "individual";
         core.Add("KIND:" + EscapeText(kind));
-        var fullName = FullName(card) ?? uid;
-        core.Add("FN:" + EscapeText(fullName));
+        if (ExplicitFullName(card) is { } fullName)
+            core.Add("FN:" + EscapeText(fullName));
+        else
+            core.Add("FN;DERIVED=TRUE:" + EscapeText(DerivedFullName(card) ?? string.Empty));
         AddStructuredName(core, card["name"] as JsonObject);
         AddSimpleMap(core, card["nicknames"] as JsonObject, "NICKNAME", "name");
         AddOrganizations(core, card["organizations"] as JsonObject);
@@ -132,6 +138,56 @@ internal static class JmapContactCodec
         }
         return node is JsonArray array
             && array.Any(item => item is not null && ContainsProtocolBlobId(item));
+    }
+
+    private static List<string> BuildLegacyCore(JsonObject card)
+    {
+        var uid = StringValue(card["uid"]) ?? Guid.CreateVersion7().ToString("N");
+        var result = BuildCore(card);
+        for (var index = 0; index < result.Count; index++)
+        {
+            const string parameter = ";PROP-ID=";
+            var parameterStart = result[index].IndexOf(parameter, StringComparison.Ordinal);
+            if (parameterStart >= 0)
+            {
+                var valueStart = parameterStart + parameter.Length;
+                var parameterEnd = result[index].IndexOfAny([';', ':'], valueStart);
+                if (parameterEnd > valueStart)
+                    result[index] = result[index].Remove(parameterStart, parameterEnd - parameterStart);
+            }
+            if (result[index].StartsWith("FN;DERIVED=TRUE:", StringComparison.Ordinal))
+            {
+                result[index] = "FN:" + EscapeText(LegacyFullName(card) ?? uid);
+            }
+        }
+        return result;
+    }
+
+    private static string? LegacyFullName(JsonObject card)
+    {
+        if (card["name"] is JsonObject name)
+        {
+            if (StringValue(name["full"]) is { Length: > 0 } full)
+                return full;
+            if (name["components"] is JsonArray components)
+            {
+                var values = components.OfType<JsonObject>()
+                    .Where(component => StringValue(component["kind"]) != "separator")
+                    .Select(component => StringValue(component["value"]))
+                    .Where(value => !string.IsNullOrWhiteSpace(value));
+                var joined = string.Join(' ', values!);
+                if (joined.Length > 0)
+                    return joined;
+            }
+        }
+        if (card["organizations"] is JsonObject organizations)
+        {
+            return organizations.Select(item => item.Value)
+                .OfType<JsonObject>()
+                .Select(value => StringValue(value["name"]))
+                .FirstOrDefault(value => !string.IsNullOrEmpty(value));
+        }
+        return null;
     }
 
     private static JsonObject MinimalCard(DavResourceDB resource) => new()
@@ -223,8 +279,12 @@ internal static class JmapContactCodec
                     card["prodId"] = value;
                     break;
                 case "FN":
-                    name ??= new JsonObject();
-                    name["full"] = value;
+                    if (!property.Parameters.TryGetValue("DERIVED", out var derived)
+                        || !derived.Equals("true", StringComparison.OrdinalIgnoreCase))
+                    {
+                        name ??= new JsonObject();
+                        name["full"] = value;
+                    }
                     break;
                 case "N":
                     name ??= new JsonObject();
@@ -239,7 +299,10 @@ internal static class JmapContactCodec
                     break;
                 case "NICKNAME":
                     foreach (var nickname in SplitEscaped(property.Value, ','))
-                        nicknames[$"n{index++}"] = new JsonObject { ["name"] = UnescapeText(nickname) };
+                    {
+                        nicknames[ObjectId(property, nicknames, "n", ref index)] =
+                            new JsonObject { ["name"] = UnescapeText(nickname) };
+                    }
                     break;
                 case "ORG":
                     var organizationParts = SplitEscaped(property.Value, ';');
@@ -259,41 +322,46 @@ internal static class JmapContactCodec
                             .ToArray());
                     }
                     if (organization.Count > 0)
-                        organizations[$"o{index++}"] = organization;
+                        organizations[ObjectId(property, organizations, "o", ref index)] = organization;
                     break;
                 case "TITLE":
                 case "ROLE":
-                    titles[$"t{index++}"] = new JsonObject
+                    titles[ObjectId(property, titles, "t", ref index)] = new JsonObject
                     {
                         ["name"] = value,
                         ["kind"] = property.Name == "ROLE" ? "role" : "title",
                     };
                     break;
                 case "EMAIL":
-                    emails[$"e{index++}"] = ContactValue(property, "address", value);
+                    emails[ObjectId(property, emails, "e", ref index)] =
+                        ContactValue(property, "address", value);
                     break;
                 case "TEL":
-                    phones[$"p{index++}"] = ContactValue(property, "number", value);
+                    phones[ObjectId(property, phones, "p", ref index)] =
+                        ContactValue(property, "number", value);
                     break;
                 case "IMPP":
-                    onlineServices[$"i{index++}"] = ResourceValue(property, value, null);
+                    onlineServices[ObjectId(property, onlineServices, "i", ref index)] =
+                        ResourceValue(property, value, null);
                     break;
                 case "ADR":
-                    addresses[$"d{index++}"] = AddressValue(property);
+                    addresses[ObjectId(property, addresses, "d", ref index)] = AddressValue(property);
                     break;
                 case "URL":
-                    links[$"l{index++}"] = ResourceValue(property, value, null);
+                    links[ObjectId(property, links, "l", ref index)] =
+                        ResourceValue(property, value, null);
                     break;
                 case "PHOTO":
                 case "LOGO":
                 case "SOUND":
-                    media[$"m{index++}"] = ResourceValue(
+                    media[ObjectId(property, media, "m", ref index)] = ResourceValue(
                         property,
                         value,
                         property.Name.ToLowerInvariant());
                     break;
                 case "NOTE":
-                    notes[$"x{index++}"] = new JsonObject { ["note"] = value };
+                    notes[ObjectId(property, notes, "x", ref index)] =
+                        new JsonObject { ["note"] = value };
                     break;
                 case "MEMBER":
                     if (IsAbsoluteUri(property.Value))
@@ -302,7 +370,9 @@ internal static class JmapContactCodec
                 case "BDAY":
                 case "ANNIVERSARY":
                     if (AnniversaryValue(property.Name, value) is { } anniversary)
-                        anniversaries[$"a{index++}"] = anniversary;
+                    {
+                        anniversaries[ObjectId(property, anniversaries, "a", ref index)] = anniversary;
+                    }
                     break;
                 case "CATEGORIES":
                     foreach (var keyword in SplitEscaped(property.Value, ','))
@@ -337,6 +407,28 @@ internal static class JmapContactCodec
         AddIfNotEmpty(card, "keywords", keywords);
         card["created"] ??= JmapDate.FormatUtc(resource.CreatedAt);
         card["updated"] ??= JmapDate.FormatUtc(resource.UpdatedAt);
+    }
+
+    private static string ObjectId(
+        VCardProperty property,
+        JsonObject values,
+        string prefix,
+        ref int index)
+    {
+        if (property.Parameters.TryGetValue("PROP-ID", out var propertyId)
+            && JmapId.IsValidId(propertyId)
+            && !values.ContainsKey(propertyId))
+        {
+            return propertyId;
+        }
+
+        string generated;
+        do
+        {
+            generated = prefix + (index++).ToString(CultureInfo.InvariantCulture);
+        }
+        while (values.ContainsKey(generated));
+        return generated;
     }
 
     private static JsonObject ContactValue(VCardProperty property, string name, string value)
@@ -589,8 +681,10 @@ internal static class JmapContactCodec
     {
         if (values is null)
             return;
-        foreach (var value in values.Select(item => item.Value).OfType<JsonObject>())
+        foreach (var item in values)
         {
+            if (item.Value is not JsonObject value)
+                continue;
             var name = StringValue(value["name"]) ?? string.Empty;
             var units = value["units"] is JsonArray unitValues
                 ? unitValues.OfType<JsonObject>()
@@ -603,7 +697,7 @@ internal static class JmapContactCodec
                 continue;
             var parts = new List<string> { EscapeText(name) };
             parts.AddRange(units.Select(EscapeText));
-            lines.Add("ORG" + Parameters(value) + ":" + string.Join(';', parts));
+            lines.Add("ORG" + Parameters(item.Key, value) + ":" + string.Join(';', parts));
         }
     }
 
@@ -611,12 +705,16 @@ internal static class JmapContactCodec
     {
         if (values is null)
             return;
-        foreach (var value in values.Select(item => item.Value).OfType<JsonObject>())
+        foreach (var item in values)
         {
+            if (item.Value is not JsonObject value)
+                continue;
             var name = StringValue(value["name"]);
             if (string.IsNullOrEmpty(name))
                 continue;
-            lines.Add((StringValue(value["kind"]) == "role" ? "ROLE:" : "TITLE:")
+            lines.Add((StringValue(value["kind"]) == "role" ? "ROLE" : "TITLE")
+                + PropertyIdParameter(item.Key)
+                + ":"
                 + EscapeText(name));
         }
     }
@@ -635,19 +733,21 @@ internal static class JmapContactCodec
     {
         if (values is null)
             return;
-        foreach (var value in values.Select(item => item.Value).OfType<JsonObject>())
+        foreach (var item in values)
         {
+            if (item.Value is not JsonObject value)
+                continue;
             var text = StringValue(value[valueProperty]);
             if (string.IsNullOrEmpty(text))
                 continue;
-            var parameters = Parameters(value);
+            var parameters = Parameters(item.Key, value);
             lines.Add(property + parameters + ":" + EscapeText(text));
         }
     }
 
-    private static string Parameters(JsonObject value)
+    private static string Parameters(string id, JsonObject value)
     {
-        var result = new StringBuilder();
+        var result = new StringBuilder(PropertyIdParameter(id));
         if (value["contexts"] is JsonObject contexts)
         {
             var types = contexts.Where(item => item.Value?.GetValue<bool>() == true)
@@ -676,8 +776,10 @@ internal static class JmapContactCodec
     {
         if (values is null)
             return;
-        foreach (var value in values.Select(item => item.Value).OfType<JsonObject>())
+        foreach (var item in values)
         {
+            if (item.Value is not JsonObject value)
+                continue;
             var fields = new string[7];
             if (value["components"] is JsonArray components)
             {
@@ -698,7 +800,7 @@ internal static class JmapContactCodec
             var label = StringValue(value["full"]);
             if (fields.All(string.IsNullOrEmpty) && string.IsNullOrEmpty(label))
                 continue;
-            lines.Add("ADR" + Parameters(value)
+            lines.Add("ADR" + Parameters(item.Key, value)
                 + (string.IsNullOrEmpty(label) ? string.Empty : ";LABEL=\"" + EscapeParameter(label) + '"')
                 + ":" + string.Join(';', fields.Select(EscapeText)));
         }
@@ -711,11 +813,13 @@ internal static class JmapContactCodec
     {
         if (values is null)
             return;
-        foreach (var value in values.Select(item => item.Value).OfType<JsonObject>())
+        foreach (var item in values)
         {
+            if (item.Value is not JsonObject value)
+                continue;
             var uri = StringValue(value["uri"]);
             if (!string.IsNullOrEmpty(uri))
-                lines.Add(property + Parameters(value) + ":" + uri);
+                lines.Add(property + Parameters(item.Key, value) + ":" + uri);
         }
     }
 
@@ -723,8 +827,10 @@ internal static class JmapContactCodec
     {
         if (values is null)
             return;
-        foreach (var value in values.Select(item => item.Value).OfType<JsonObject>())
+        foreach (var item in values)
         {
+            if (item.Value is not JsonObject value)
+                continue;
             var uri = StringValue(value["uri"]);
             if (string.IsNullOrEmpty(uri))
                 continue;
@@ -737,7 +843,7 @@ internal static class JmapContactCodec
             var mediaType = StringValue(value["mediaType"]);
             lines.Add(property
                 + (string.IsNullOrEmpty(mediaType) ? string.Empty : ";MEDIATYPE=" + mediaType)
-                + Parameters(value)
+                + Parameters(item.Key, value)
                 + ":" + uri);
         }
     }
@@ -746,14 +852,18 @@ internal static class JmapContactCodec
     {
         if (values is null)
             return;
-        foreach (var value in values.Select(item => item.Value).OfType<JsonObject>())
+        foreach (var item in values)
         {
+            if (item.Value is not JsonObject value)
+                continue;
             var date = value["date"] is JsonObject dateObject
                 ? FormatAnniversaryDate(dateObject)
                 : null;
             if (string.IsNullOrEmpty(date))
                 continue;
-            lines.Add((StringValue(value["kind"]) == "birth" ? "BDAY:" : "ANNIVERSARY:")
+            lines.Add((StringValue(value["kind"]) == "birth" ? "BDAY" : "ANNIVERSARY")
+                + PropertyIdParameter(item.Key)
+                + ":"
                 + EscapeText(date));
         }
     }
@@ -811,20 +921,23 @@ internal static class JmapContactCodec
     {
         if (values is null)
             return;
-        foreach (var value in values.Select(item => item.Value).OfType<JsonObject>())
+        foreach (var item in values)
         {
+            if (item.Value is not JsonObject value)
+                continue;
             var text = StringValue(value[valueProperty]);
             if (!string.IsNullOrEmpty(text))
-                lines.Add(property + ":" + EscapeText(text));
+                lines.Add(property + Parameters(item.Key, value) + ":" + EscapeText(text));
         }
     }
 
-    private static string? FullName(JsonObject card)
+    private static string? ExplicitFullName(JsonObject card) =>
+        card["name"] is JsonObject name ? StringValue(name["full"]) : null;
+
+    private static string? DerivedFullName(JsonObject card)
     {
         if (card["name"] is JsonObject name)
         {
-            if (StringValue(name["full"]) is { Length: > 0 } full)
-                return full;
             if (name["components"] is JsonArray components)
             {
                 var values = components.OfType<JsonObject>()
@@ -836,15 +949,10 @@ internal static class JmapContactCodec
                     return joined;
             }
         }
-        if (card["organizations"] is JsonObject organizations)
-        {
-            return organizations.Select(item => item.Value)
-                .OfType<JsonObject>()
-                .Select(value => StringValue(value["name"]))
-                .FirstOrDefault(value => !string.IsNullOrEmpty(value));
-        }
         return null;
     }
+
+    private static string PropertyIdParameter(string id) => ";PROP-ID=" + id;
 
     private static JsonObject? DecodeEmbedded(IReadOnlyList<string> lines)
     {

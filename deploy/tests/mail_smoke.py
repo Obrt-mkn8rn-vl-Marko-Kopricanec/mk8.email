@@ -384,6 +384,8 @@ def delete_queue_message(marker: str) -> None:
 def test_open_relay() -> None:
     with smtplib.SMTP(INBOUND_HOST, 25, timeout=30) as client:
         client.ehlo("probe.debian.org")
+        require(client.has_extn("8bitmime"), "mk8.email did not advertise 8BITMIME.")
+        require(client.has_extn("smtputf8"), "mk8.email did not advertise SMTPUTF8.")
         require(client.mail("probe@debian.org")[0] == 250, "The relay test sender was not accepted.")
         code, _ = client.rcpt("recipient@debian.org")
         require(code in (550, 554), "mk8.email accepted an unauthenticated relay recipient.")

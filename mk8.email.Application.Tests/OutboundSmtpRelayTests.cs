@@ -257,6 +257,82 @@ public sealed class OutboundSmtpRelayTests
     }
 
     [TestMethod]
+    [Timeout(10_000)]
+    public async Task RelayUsesSmtpUtf8ForInternationalizedEnvelopeAndHeaders()
+    {
+        await using var server = new ScriptedSmtpServer(async session =>
+        {
+            await session.WriteLineAsync("220 receiver.test ESMTP");
+            session.Commands.Add(await session.ReadLineAsync());
+            await session.WriteLineAsync("250-receiver.test");
+            await session.WriteLineAsync("250-8BITMIME");
+            await session.WriteLineAsync("250 SMTPUTF8");
+            session.Commands.Add(await session.ReadUtf8LineAsync());
+            await session.WriteLineAsync("250 Sender accepted");
+            session.Commands.Add(await session.ReadUtf8LineAsync());
+            await session.WriteLineAsync("250 Recipient accepted");
+            session.Commands.Add(await session.ReadLineAsync());
+            await session.WriteLineAsync("354 Send message");
+            while (await session.ReadUtf8LineAsync() is { } line && line != ".")
+                session.DataLines.Add(line);
+            await session.WriteLineAsync("250 Queued");
+            session.Commands.Add(await session.ReadLineAsync());
+        });
+        var resolver = new StubResolver(Available(server.Port));
+        var relay = CreateRelay(resolver);
+        const string message =
+            "From: José <josé@mk8n.com>\r\n" +
+            "To: δοκιμή@bücher.example\r\n" +
+            "Subject: Žuta pošta\r\n\r\n" +
+            "Pozdrav\r\n";
+        var wireMessage = Encoding.Latin1.GetString(Encoding.UTF8.GetBytes(message));
+
+        var result = await relay.RelayAsync(
+            "josé@mk8n.com",
+            "δοκιμή@bücher.example",
+            wireMessage,
+            new OutboundMailOptions(RequiresSmtpUtf8: true));
+        await server.WaitForCompletionAsync();
+
+        Assert.AreEqual(OutboundDeliveryStatus.Delivered, result.Status);
+        Assert.AreEqual("xn--bcher-kva.example", resolver.LastDomain);
+        CollectionAssert.Contains(
+            server.Session!.Commands,
+            "MAIL FROM:<josé@mk8n.com> BODY=8BITMIME SMTPUTF8");
+        CollectionAssert.Contains(
+            server.Session.Commands,
+            "RCPT TO:<δοκιμή@xn--bcher-kva.example>");
+        CollectionAssert.Contains(server.Session.DataLines, "Subject: Žuta pošta");
+    }
+
+    [TestMethod]
+    [Timeout(10_000)]
+    public async Task RelayDoesNotSendInternationalizedMessageWithoutRemoteSmtpUtf8()
+    {
+        await using var server = new ScriptedSmtpServer(async session =>
+        {
+            await session.WriteLineAsync("220 receiver.test ESMTP");
+            session.Commands.Add(await session.ReadLineAsync());
+            await session.WriteLineAsync("250-receiver.test");
+            await session.WriteLineAsync("250 8BITMIME");
+        });
+        var relay = CreateRelay(new StubResolver(Available(server.Port)));
+        var wireMessage = Encoding.Latin1.GetString(
+            Encoding.UTF8.GetBytes("Subject: Žuta pošta\r\n\r\nbody\r\n"));
+
+        var result = await relay.RelayAsync(
+            "sender@mk8n.com",
+            "recipient@example.com",
+            wireMessage,
+            new OutboundMailOptions(RequiresSmtpUtf8: true));
+        await server.WaitForCompletionAsync();
+
+        Assert.AreEqual(OutboundDeliveryStatus.PermanentFailure, result.Status);
+        Assert.IsFalse(
+            server.Session!.Commands.Any(command => command.StartsWith("MAIL ", StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
     public async Task RelayRejectsCommandInjectionBeforeDnsLookup()
     {
         var resolver = new StubResolver(Available(25));
@@ -330,10 +406,12 @@ public sealed class OutboundSmtpRelayTests
     private sealed class StubResolver(MailRoutingResult result) : IMailExchangeResolver
     {
         public int CallCount { get; private set; }
+        public string? LastDomain { get; private set; }
 
         public Task<MailRoutingResult> ResolveAsync(string domain, CancellationToken cancellationToken)
         {
             CallCount++;
+            LastDomain = domain;
             return Task.FromResult(result);
         }
     }
@@ -404,6 +482,15 @@ public sealed class OutboundSmtpRelayTests
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
             return await _reader.ReadLineAsync(timeout.Token)
                 ?? throw new EndOfStreamException("The relay closed the test connection.");
+        }
+
+        public async Task<string> ReadUtf8LineAsync()
+        {
+            var wireValue = await ReadLineAsync();
+            return new UTF8Encoding(
+                    encoderShouldEmitUTF8Identifier: false,
+                    throwOnInvalidBytes: true)
+                .GetString(Encoding.Latin1.GetBytes(wireValue));
         }
 
         public Task WriteLineAsync(string line) => _writer.WriteLineAsync(line);

@@ -9,6 +9,10 @@ internal readonly record struct ParsedMailMessage(
 
 internal static class MailMessageParser
 {
+    private static readonly UTF8Encoding StrictUtf8 = new(
+        encoderShouldEmitUTF8Identifier: false,
+        throwOnInvalidBytes: true);
+
     public static ParsedMailMessage Parse(string rawMessage)
     {
         var separatorIndex = rawMessage.IndexOf("\r\n\r\n", StringComparison.Ordinal);
@@ -19,12 +23,14 @@ internal static class MailMessageParser
             separatorLength = 2;
         }
 
-        var headers = separatorIndex >= 0
+        var wireHeaders = separatorIndex >= 0
             ? rawMessage[..separatorIndex]
             : rawMessage;
-        var body = separatorIndex >= 0
+        var wireBody = separatorIndex >= 0
             ? rawMessage[(separatorIndex + separatorLength)..]
             : string.Empty;
+        var headers = DecodeUtf8WireValue(wireHeaders);
+        var body = DecodeUtf8WireValue(wireBody);
         return new ParsedMailMessage(
             ExtractHeaderValue(headers, "Subject"),
             body,
@@ -57,5 +63,23 @@ internal static class MailMessageParser
         }
 
         return value.ToString();
+    }
+
+    private static string DecodeUtf8WireValue(string value)
+    {
+        if (!value.Any(character => character > sbyte.MaxValue)
+            || value.Any(character => character > byte.MaxValue))
+        {
+            return value;
+        }
+
+        try
+        {
+            return StrictUtf8.GetString(MailWireEncoding.Instance.GetBytes(value));
+        }
+        catch (DecoderFallbackException)
+        {
+            return value;
+        }
     }
 }

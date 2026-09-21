@@ -20,7 +20,8 @@ public sealed class PostgresMailSubmissionQueue(
         if (!SmtpAddress.TryNormalize(
                 submission.EnvelopeSender,
                 allowEmpty: submission.AuthenticatedUser is null,
-                out var sender))
+                out var sender,
+                out var senderRequiresSmtpUtf8))
         {
             throw new ArgumentException("The envelope sender is not valid.", nameof(submission));
         }
@@ -31,14 +32,31 @@ public sealed class PostgresMailSubmissionQueue(
             throw new ArgumentException("The recipient count is not valid.", nameof(submission));
         }
 
+        if (submission.RawMessage.Any(character => character > byte.MaxValue))
+            throw new ArgumentException("The message is not in the mail wire byte representation.", nameof(submission));
+        if (SmtpInternationalization.HeadersRequireSmtpUtf8(submission.RawMessage)
+            && !SmtpInternationalization.HasValidUtf8Headers(submission.RawMessage))
+        {
+            throw new ArgumentException("Internationalized headers are not valid UTF-8.", nameof(submission));
+        }
+
         if (MailWireEncoding.Instance.GetByteCount(submission.RawMessage) > environment.Limits.MaxMessageSizeBytes)
             throw new ArgumentException("The message is larger than the configured limit.", nameof(submission));
 
         var recipients = new List<MailEnvelopeRecipient>();
+        var recipientRequiresSmtpUtf8 = false;
         foreach (var recipient in submission.Recipients)
         {
-            if (!SmtpAddress.TryNormalize(recipient.Address, allowEmpty: false, out var address))
+            if (!SmtpAddress.TryNormalize(
+                    recipient.Address,
+                    allowEmpty: false,
+                    out var address,
+                    out var addressRequiresSmtpUtf8))
+            {
                 throw new ArgumentException("A recipient address is not valid.", nameof(submission));
+            }
+
+            recipientRequiresSmtpUtf8 |= addressRequiresSmtpUtf8;
 
             if (recipients.All(item => !string.Equals(item.Address, address, StringComparison.OrdinalIgnoreCase)))
                 recipients.Add(new MailEnvelopeRecipient(address, recipient.IsLocal));
@@ -57,6 +75,10 @@ public sealed class PostgresMailSubmissionQueue(
             Id = submission.QueueId,
             EnvelopeSender = sender,
             RawMessage = submission.RawMessage,
+            RequiresSmtpUtf8 = submission.RequiresSmtpUtf8
+                || senderRequiresSmtpUtf8
+                || recipientRequiresSmtpUtf8
+                || SmtpInternationalization.HeadersRequireSmtpUtf8(submission.RawMessage),
             ClientIp = NormalizeMetadata(submission.ClientIp, 45),
             Helo = NormalizeMetadata(submission.Helo, 255),
             AuthenticatedUser = authenticatedUser,

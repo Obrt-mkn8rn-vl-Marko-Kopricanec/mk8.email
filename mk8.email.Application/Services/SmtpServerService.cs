@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -33,6 +34,7 @@ public class SmtpServerService(
         public bool IsSecure { get; set; }
         public string? Helo { get; set; }
         public bool HasGreeting => Helo is not null;
+        public bool IsExtendedSmtp { get; set; }
         public string? AuthenticatedUser { get; set; }
         public bool IsAuthenticated => AuthenticatedUser is not null;
         public string? Sender { get; set; }
@@ -42,6 +44,8 @@ public class SmtpServerService(
         public int DataByteCount { get; set; }
         public bool MessageTooLarge { get; set; }
         public string? DataFailureResponse { get; set; }
+        public bool SmtpUtf8 { get; set; }
+        public bool BodyIsEightBit { get; set; }
         public bool InDataMode { get; set; }
         public int AuthenticationFailures { get; set; }
         private SemaphoreSlim? DataSemaphore { get; set; }
@@ -70,6 +74,8 @@ public class SmtpServerService(
             DataByteCount = 0;
             MessageTooLarge = false;
             DataFailureResponse = null;
+            SmtpUtf8 = false;
+            BodyIsEightBit = false;
             InDataMode = false;
         }
     }
@@ -254,11 +260,11 @@ public class SmtpServerService(
                 continue;
             }
 
-            var line = readResult.Value!;
+            var wireLine = readResult.Value!;
 
             if (session.InDataMode)
             {
-                if (line == ".")
+                if (wireLine == ".")
                 {
                     session.InDataMode = false;
                     if (session.MessageTooLarge)
@@ -274,6 +280,31 @@ public class SmtpServerService(
                     else
                     {
                         var raw = session.DataBuilder.ToString();
+
+                        if (SmtpInternationalization.HeadersRequireSmtpUtf8(raw)
+                            && !session.SmtpUtf8)
+                        {
+                            await writer.WriteLineAsync(
+                                "554 5.6.9 UTF-8 header message requires SMTPUTF8");
+                            session.Reset();
+                            continue;
+                        }
+                        if (session.SmtpUtf8
+                            && !SmtpInternationalization.HasValidUtf8Headers(raw))
+                        {
+                            await writer.WriteLineAsync(
+                                "554 5.6.0 Internationalized headers are not valid UTF-8");
+                            session.Reset();
+                            continue;
+                        }
+                        if (SmtpInternationalization.ContainsEightBit(raw)
+                            && !session.BodyIsEightBit)
+                        {
+                            await writer.WriteLineAsync(
+                                "554 5.6.3 Eight-bit content requires BODY=8BITMIME");
+                            session.Reset();
+                            continue;
+                        }
 
                         if (session.IsAuthenticated
                             && (!await senderAuthorization.CanSendAsAsync(
@@ -294,7 +325,9 @@ public class SmtpServerService(
                             session.Helo,
                             clientIp,
                             session.IsSecure,
-                            session.IsAuthenticated) + raw;
+                            session.IsAuthenticated,
+                            session.IsExtendedSmtp,
+                            session.SmtpUtf8) + raw;
                         try
                         {
                             await submissionQueue.EnqueueAsync(
@@ -305,7 +338,8 @@ public class SmtpServerService(
                                     receivedMessage,
                                     clientIp,
                                     session.Helo,
-                                    session.AuthenticatedUser),
+                                    session.AuthenticatedUser,
+                                    session.SmtpUtf8),
                                 timeout.Token);
                         }
                         catch (OperationCanceledException) when (timeout.IsCancellationRequested)
@@ -330,7 +364,9 @@ public class SmtpServerService(
                 }
                 else
                 {
-                    var messageLine = line.StartsWith("..", StringComparison.Ordinal) ? line[1..] : line;
+                    var messageLine = wireLine.StartsWith("..", StringComparison.Ordinal)
+                        ? wireLine[1..]
+                        : wireLine;
                     var lineByteCount = MailWireEncoding.Instance.GetByteCount(messageLine) + 2;
 
                     if (messageLine.Contains('\0'))
@@ -357,6 +393,12 @@ public class SmtpServerService(
                 continue;
             }
 
+            if (!SmtpInternationalization.TryDecodeCommandLine(wireLine, out var line))
+            {
+                await writer.WriteLineAsync("500 5.5.2 Command line is not valid UTF-8");
+                continue;
+            }
+
             var spaceIdx = line.IndexOf(' ');
             var verb = (spaceIdx > 0 ? line[..spaceIdx] : line).ToUpperInvariant();
 
@@ -370,6 +412,7 @@ public class SmtpServerService(
                     }
                     session.Reset();
                     session.Helo = ehlo;
+                    session.IsExtendedSmtp = true;
                     await WriteEhloAsync(writer, config, session.IsSecure);
                     break;
 
@@ -381,6 +424,7 @@ public class SmtpServerService(
                     }
                     session.Reset();
                     session.Helo = helo;
+                    session.IsExtendedSmtp = false;
                     await writer.WriteLineAsync($"250 {config.SmtpHostname}");
                     break;
 
@@ -432,20 +476,28 @@ public class SmtpServerService(
                         break;
                     }
                     session.Reset();
-                    if (!TryExtractPath(line, "FROM", allowEmpty: !session.IsAuthenticated, out var sender))
+                    if (!TryParseMailCommand(
+                            line,
+                            session.IsExtendedSmtp,
+                            allowEmpty: !session.IsAuthenticated,
+                            config.MaxMessageSizeBytes,
+                            out var mailCommand,
+                            out var mailFailure))
                     {
-                        await writer.WriteLineAsync("501 5.1.7 Sender address syntax is invalid");
+                        await writer.WriteLineAsync(mailFailure);
                         break;
                     }
                     if (session.IsAuthenticated
                         && !await senderAuthorization.CanSendAsAsync(
-                            session.AuthenticatedUser!, sender, timeout.Token))
+                            session.AuthenticatedUser!, mailCommand.Address, timeout.Token))
                     {
                         await writer.WriteLineAsync("553 5.7.1 Sender address is not authorized");
                         break;
                     }
-                    session.Sender = sender;
+                    session.Sender = mailCommand.Address;
                     session.HasMailFrom = true;
+                    session.SmtpUtf8 = mailCommand.SmtpUtf8;
+                    session.BodyIsEightBit = mailCommand.BodyIsEightBit;
                     await writer.WriteLineAsync("250 2.1.0 OK");
                     break;
 
@@ -460,9 +512,26 @@ public class SmtpServerService(
                         await writer.WriteLineAsync("452 4.5.3 Too many recipients");
                         break;
                     }
-                    if (!TryExtractPath(line, "TO", allowEmpty: false, out var rcpt))
+                    if (!TryExtractPath(
+                            line,
+                            "TO",
+                            allowEmpty: false,
+                            out var rcpt,
+                            out var rcptRequiresSmtpUtf8,
+                            out var rcptParameters))
                     {
                         await writer.WriteLineAsync("501 5.1.3 Recipient address syntax is invalid");
+                        break;
+                    }
+                    if (rcptParameters.Count > 0)
+                    {
+                        await writer.WriteLineAsync("555 5.5.4 Unsupported RCPT TO parameter");
+                        break;
+                    }
+                    if (rcptRequiresSmtpUtf8 && !session.SmtpUtf8)
+                    {
+                        await writer.WriteLineAsync(
+                            "553 5.6.7 Non-ASCII recipient requires SMTPUTF8");
                         break;
                     }
                     var isLocal = await emailService.CanReceiveAsync(rcpt, timeout.Token);
@@ -531,6 +600,7 @@ public class SmtpServerService(
                         session.Reset();
                         session.AuthenticatedUser = null;
                         session.Helo = null;
+                        session.IsExtendedSmtp = false;
                         session.IsSecure = true;
 
                         await RunSmtpSessionAsync(
@@ -585,6 +655,7 @@ public class SmtpServerService(
         await writer.WriteLineAsync($"250-{config.SmtpHostname}");
         await writer.WriteLineAsync($"250-SIZE {config.MaxMessageSizeBytes}");
         await writer.WriteLineAsync("250-8BITMIME");
+        await writer.WriteLineAsync("250-SMTPUTF8");
         await writer.WriteLineAsync("250-PIPELINING");
         await writer.WriteLineAsync("250-ENHANCEDSTATUSCODES");
         if (config.EnableStartTls && !isSecure)
@@ -762,13 +833,118 @@ public class SmtpServerService(
         session.Recipients.Add(new MailEnvelopeRecipient(recipient, isLocal));
     }
 
+    private sealed record ParsedMailCommand(
+        string Address,
+        bool SmtpUtf8,
+        bool BodyIsEightBit);
+
+    private static bool TryParseMailCommand(
+        string line,
+        bool isExtendedSmtp,
+        bool allowEmpty,
+        int maximumMessageSize,
+        out ParsedMailCommand command,
+        out string failureResponse)
+    {
+        command = new ParsedMailCommand(string.Empty, false, false);
+        failureResponse = "501 5.1.7 Sender address syntax is invalid";
+        if (!TryExtractPath(
+                line,
+                "FROM",
+                allowEmpty,
+                out var address,
+                out var addressRequiresSmtpUtf8,
+                out var parameters))
+        {
+            return false;
+        }
+
+        var smtpUtf8 = false;
+        var bodyIsEightBit = false;
+        var seenBody = false;
+        var seenSize = false;
+        foreach (var parameter in parameters)
+        {
+            if (!isExtendedSmtp)
+            {
+                failureResponse = "555 5.5.4 MAIL FROM parameters require EHLO";
+                return false;
+            }
+
+            var equals = parameter.IndexOf('=');
+            var name = (equals < 0 ? parameter : parameter[..equals]).ToUpperInvariant();
+            var value = equals < 0 ? null : parameter[(equals + 1)..];
+            switch (name)
+            {
+                case "SMTPUTF8":
+                    if (smtpUtf8 || value is not null)
+                    {
+                        failureResponse = "501 5.5.4 Invalid SMTPUTF8 parameter";
+                        return false;
+                    }
+                    smtpUtf8 = true;
+                    break;
+
+                case "BODY":
+                    if (seenBody
+                        || value is null
+                        || (!value.Equals("7BIT", StringComparison.OrdinalIgnoreCase)
+                            && !value.Equals("8BITMIME", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        failureResponse = "501 5.5.4 Invalid BODY parameter";
+                        return false;
+                    }
+                    seenBody = true;
+                    bodyIsEightBit = value.Equals("8BITMIME", StringComparison.OrdinalIgnoreCase);
+                    break;
+
+                case "SIZE":
+                    if (seenSize
+                        || value is null
+                        || !long.TryParse(
+                            value,
+                            NumberStyles.None,
+                            CultureInfo.InvariantCulture,
+                            out var declaredSize))
+                    {
+                        failureResponse = "501 5.5.4 Invalid SIZE parameter";
+                        return false;
+                    }
+                    seenSize = true;
+                    if (declaredSize > maximumMessageSize)
+                    {
+                        failureResponse = "552 5.3.4 Message exceeds server limits";
+                        return false;
+                    }
+                    break;
+
+                default:
+                    failureResponse = "555 5.5.4 Unsupported MAIL FROM parameter";
+                    return false;
+            }
+        }
+
+        if (addressRequiresSmtpUtf8 && !smtpUtf8)
+        {
+            failureResponse = "550 5.6.7 Non-ASCII sender requires SMTPUTF8";
+            return false;
+        }
+
+        command = new ParsedMailCommand(address, smtpUtf8, bodyIsEightBit);
+        return true;
+    }
+
     private static bool TryExtractPath(
         string line,
         string pathName,
         bool allowEmpty,
-        out string address)
+        out string address,
+        out bool requiresSmtpUtf8,
+        out IReadOnlyList<string> parameters)
     {
         address = string.Empty;
+        requiresSmtpUtf8 = false;
+        parameters = [];
         var colon = line.IndexOf(':');
         if (colon < 0)
             return false;
@@ -781,7 +957,7 @@ public class SmtpServerService(
         string candidate;
         if (remainder.StartsWith('<'))
         {
-            var close = remainder.IndexOf('>');
+            var close = FindPathClose(remainder);
             if (close < 0)
                 return false;
             candidate = remainder[1..close];
@@ -794,14 +970,50 @@ public class SmtpServerService(
             remainder = separator < 0 ? string.Empty : remainder[separator..];
         }
 
-        if (!string.IsNullOrWhiteSpace(remainder)
-            && remainder.TrimStart().Split(' ', StringSplitOptions.RemoveEmptyEntries)
-                .Any(parameter => !IsSafeEsmtpParameter(parameter)))
+        if (remainder.Length > 0 && remainder[0] is not (' ' or '\t'))
+            return false;
+
+        var parsedParameters = remainder.TrimStart()
+            .Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
+        if (parsedParameters.Any(parameter => !IsSafeEsmtpParameter(parameter)))
         {
             return false;
         }
 
-        return SmtpAddress.TryNormalize(candidate, allowEmpty, out address);
+        parameters = parsedParameters;
+        return SmtpAddress.TryNormalize(
+            candidate,
+            allowEmpty,
+            out address,
+            out requiresSmtpUtf8);
+    }
+
+    private static int FindPathClose(string value)
+    {
+        var quoted = false;
+        var escaped = false;
+        for (var index = 1; index < value.Length; index++)
+        {
+            var character = value[index];
+            if (escaped)
+            {
+                escaped = false;
+                continue;
+            }
+            if (quoted && character == '\\')
+            {
+                escaped = true;
+                continue;
+            }
+            if (character == '"')
+            {
+                quoted = !quoted;
+                continue;
+            }
+            if (!quoted && character == '>')
+                return index;
+        }
+        return -1;
     }
 
     private static bool IsSafeEsmtpParameter(string value) =>
@@ -834,9 +1046,15 @@ public class SmtpServerService(
         string? helo,
         string? clientIp,
         bool isSecure,
-        bool isAuthenticated)
+        bool isAuthenticated,
+        bool isExtendedSmtp,
+        bool smtpUtf8)
     {
-        var protocol = isSecure ? "ESMTPS" : "ESMTP";
+        var protocol = smtpUtf8
+            ? "UTF8SMTP"
+            : isExtendedSmtp ? "ESMTP" : "SMTP";
+        if (isSecure)
+            protocol += "S";
         if (isAuthenticated)
             protocol += "A";
 

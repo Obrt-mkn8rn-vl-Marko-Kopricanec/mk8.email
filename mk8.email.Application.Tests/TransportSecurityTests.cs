@@ -61,6 +61,7 @@ public sealed class TransportSecurityTests
         StringAssert.Contains(capability, "250-STARTTLS");
         Assert.IsFalse(capability.Contains("AUTH", StringComparison.Ordinal));
         StringAssert.Contains(capability, "250-8BITMIME");
+        StringAssert.Contains(capability, "250-SMTPUTF8");
 
         await connection.WriteLineAsync("AUTH PLAIN AGZvbwBiYXI=");
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("538 ", StringComparison.Ordinal));
@@ -285,14 +286,116 @@ public sealed class TransportSecurityTests
         await connection.WriteLineAsync(".");
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("554 5.6.0", StringComparison.Ordinal));
 
-        await BeginInboundMessageAsync(connection);
-        await connection.WriteLineAsync("Subject: café");
+        await connection.WriteLineAsync("MAIL FROM:<sender@example.com> BODY=8BITMIME");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("250 ", StringComparison.Ordinal));
+        await connection.WriteLineAsync("RCPT TO:<postmaster@mk8n.com>");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("250 ", StringComparison.Ordinal));
+        await connection.WriteLineAsync("DATA");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("354 ", StringComparison.Ordinal));
+        await connection.WriteLineAsync("Subject: eight-bit body");
         await connection.WriteLineAsync(string.Empty);
-        await connection.WriteLineAsync("body");
+        await connection.WriteLineAsync("body café");
         await connection.WriteLineAsync(".");
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("250 ", StringComparison.Ordinal));
         Assert.AreEqual(1, server.MailQueue.EnqueueCalls);
         StringAssert.Contains(server.MailQueue.LastSubmission!.RawMessage, "café");
+    }
+
+    [TestMethod]
+    [Timeout(10_000)]
+    public async Task SmtpAcceptsInternationalizedEnvelopeAndHeadersWithSmtpUtf8()
+    {
+        var port = ReservePort();
+        var environment = CreateEnvironment(smtpPort: port);
+        await using var server = await ServerFixture.StartSmtpAsync(environment, port);
+        await using var connection = await ProtocolConnection.ConnectAsync(port);
+
+        await connection.ReadLineAsync();
+        await connection.WriteLineAsync("EHLO client.example");
+        StringAssert.Contains(await connection.ReadSmtpResponseAsync(), "250-SMTPUTF8");
+        await connection.WriteUtf8LineAsync(
+            "MAIL FROM:<josé@example.com> BODY=8BITMIME SMTPUTF8");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("250 ", StringComparison.Ordinal));
+        await connection.WriteUtf8LineAsync("RCPT TO:<δοκιμή@mk8n.com>");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("250 ", StringComparison.Ordinal));
+        await connection.WriteLineAsync("DATA");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("354 ", StringComparison.Ordinal));
+        await connection.WriteUtf8LineAsync("From: José <josé@example.com>");
+        await connection.WriteUtf8LineAsync("To: δοκιμή@mk8n.com");
+        await connection.WriteUtf8LineAsync("Subject: Žuta pošta");
+        await connection.WriteLineAsync(string.Empty);
+        await connection.WriteUtf8LineAsync("Pozdrav iz Zagreba");
+        await connection.WriteLineAsync(".");
+
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("250 ", StringComparison.Ordinal));
+        var submission = server.MailQueue.LastSubmission!;
+        Assert.IsTrue(submission.RequiresSmtpUtf8);
+        Assert.AreEqual("josé@example.com", submission.EnvelopeSender);
+        Assert.AreEqual("δοκιμή@mk8n.com", submission.Recipients.Single().Address);
+        var decoded = Encoding.UTF8.GetString(
+            Encoding.Latin1.GetBytes(submission.RawMessage));
+        StringAssert.Contains(decoded, "with UTF8SMTP");
+        StringAssert.Contains(decoded, "Subject: Žuta pošta");
+    }
+
+    [TestMethod]
+    [Timeout(10_000)]
+    public async Task SmtpRejectsUndeclaredInternationalizedContentAndInvalidParameters()
+    {
+        var port = ReservePort();
+        var environment = CreateEnvironment(smtpPort: port);
+        await using var server = await ServerFixture.StartSmtpAsync(environment, port);
+        await using var connection = await ProtocolConnection.ConnectAsync(port);
+
+        await connection.ReadLineAsync();
+        await connection.WriteLineAsync("EHLO client.example");
+        await connection.ReadSmtpResponseAsync();
+
+        await connection.WriteUtf8LineAsync("MAIL FROM:<josé@example.com> BODY=8BITMIME");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("550 5.6.7", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("MAIL FROM:<sender@example.com> BODY=8BITMIME");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("250 ", StringComparison.Ordinal));
+        await connection.WriteUtf8LineAsync("RCPT TO:<δοκιμή@mk8n.com>");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("553 5.6.7", StringComparison.Ordinal));
+        await connection.WriteLineAsync("RCPT TO:<postmaster@mk8n.com>");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("250 ", StringComparison.Ordinal));
+        await connection.WriteLineAsync("DATA");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("354 ", StringComparison.Ordinal));
+        await connection.WriteUtf8LineAsync("Subject: Žuta pošta");
+        await connection.WriteLineAsync(string.Empty);
+        await connection.WriteLineAsync("body");
+        await connection.WriteLineAsync(".");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("554 5.6.9", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("MAIL FROM:<sender@example.com> FUTURE=value");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("555 5.5.4", StringComparison.Ordinal));
+        await connection.WriteLineAsync("MAIL FROM:<sender@example.com> SMTPUTF8=value");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("501 5.5.4", StringComparison.Ordinal));
+        await connection.WriteLineAsync("MAIL FROM:<sender@example.com> SIZE=999999999");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("552 5.3.4", StringComparison.Ordinal));
+        Assert.AreEqual(0, server.MailQueue.EnqueueCalls);
+    }
+
+    [TestMethod]
+    [Timeout(10_000)]
+    public async Task SmtpRejectsInvalidUtf8CommandOctets()
+    {
+        var port = ReservePort();
+        var environment = CreateEnvironment(smtpPort: port);
+        await using var server = await ServerFixture.StartSmtpAsync(environment, port);
+        await using var connection = await ProtocolConnection.ConnectAsync(port);
+
+        await connection.ReadLineAsync();
+        await connection.WriteBytesAsync(
+            Encoding.ASCII.GetBytes("EHLO client.")
+                .Concat(new byte[] { 0xc3, 0x28 })
+                .Concat("\r\n"u8.ToArray())
+                .ToArray());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("500 5.5.2", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("EHLO client.example");
+        StringAssert.Contains(await connection.ReadSmtpResponseAsync(), "250-SMTPUTF8");
     }
 
     [TestMethod]

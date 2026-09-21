@@ -45,14 +45,33 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay
         string sender,
         string recipient,
         string rawMessage,
+        OutboundMailOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        if (!IsSafeEnvelopeSender(sender) || !TryGetDomain(recipient, out var domain))
+        if (rawMessage.Any(character => character > byte.MaxValue))
+        {
+            return new OutboundDeliveryResult(
+                OutboundDeliveryStatus.PermanentFailure,
+                "The message is not in the mail wire byte representation.");
+        }
+
+        if (!SmtpAddress.TryNormalize(sender, allowEmpty: true, out sender, out var senderIsInternational)
+            || !SmtpAddress.TryNormalize(
+                recipient,
+                allowEmpty: false,
+                out recipient,
+                out var recipientIsInternational)
+            || !TryGetDomain(recipient, out var domain))
         {
             return new OutboundDeliveryResult(
                 OutboundDeliveryStatus.PermanentFailure,
                 "The envelope address is not valid.");
         }
+
+        var requiresSmtpUtf8 = options?.RequiresSmtpUtf8 == true
+            || senderIsInternational
+            || recipientIsInternational
+            || SmtpInternationalization.HeadersRequireSmtpUtf8(rawMessage);
 
         var timeoutSeconds = Math.Clamp(_environment.Limits.ConnectionTimeoutSeconds, 10, 60);
         using var lookupTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -88,6 +107,7 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay
                 sender,
                 recipient,
                 rawMessage,
+                requiresSmtpUtf8,
                 attemptTimeout.Token);
 
             if (result == DeliveryAttemptResult.Delivered)
@@ -117,6 +137,7 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay
         string sender,
         string recipient,
         string rawMessage,
+        bool requiresSmtpUtf8,
         CancellationToken cancellationToken)
     {
         try
@@ -164,18 +185,28 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay
                     return Classify(ehlo);
             }
 
-            var containsEightBit = rawMessage.Any(character => character > 127);
+            if (requiresSmtpUtf8
+                && (ehlo.Code != 250 || !HasCapability(ehlo, "SMTPUTF8")))
+            {
+                return DeliveryAttemptResult.PermanentFailure;
+            }
+
+            var containsEightBit = SmtpInternationalization.ContainsEightBit(rawMessage);
             if (containsEightBit
                 && (ehlo.Code != 250 || !HasCapability(ehlo, "8BITMIME")))
             {
                 return DeliveryAttemptResult.PermanentFailure;
             }
 
+            var mailCommand = new StringBuilder($"MAIL FROM:<{sender}>");
+            if (containsEightBit)
+                mailCommand.Append(" BODY=8BITMIME");
+            if (requiresSmtpUtf8)
+                mailCommand.Append(" SMTPUTF8");
             var mail = await SendCommandAsync(
                 connection,
-                containsEightBit
-                    ? $"MAIL FROM:<{sender}> BODY=8BITMIME"
-                    : $"MAIL FROM:<{sender}>",
+                mailCommand.ToString(),
+                requiresSmtpUtf8,
                 cancellationToken);
             if (mail?.Code / 100 != 2)
                 return Classify(mail);
@@ -183,6 +214,7 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay
             var recipientResponse = await SendCommandAsync(
                 connection,
                 $"RCPT TO:<{recipient}>",
+                requiresSmtpUtf8,
                 cancellationToken);
             if (recipientResponse?.Code / 100 != 2)
                 return Classify(recipientResponse);
@@ -214,11 +246,21 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay
     private static async Task<SmtpResponse?> SendCommandAsync(
         SmtpConnection connection,
         string command,
+        bool utf8,
         CancellationToken cancellationToken)
     {
-        await connection.WriteLineAsync(command, cancellationToken);
+        if (utf8)
+            await connection.WriteUtf8LineAsync(command, cancellationToken);
+        else
+            await connection.WriteLineAsync(command, cancellationToken);
         return await connection.ReadResponseAsync(cancellationToken);
     }
+
+    private static Task<SmtpResponse?> SendCommandAsync(
+        SmtpConnection connection,
+        string command,
+        CancellationToken cancellationToken) =>
+        SendCommandAsync(connection, command, utf8: false, cancellationToken);
 
     private static DeliveryAttemptResult Classify(SmtpResponse? response)
     {
@@ -237,22 +279,9 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay
         });
     }
 
-    private static bool IsSafeMailbox(string mailbox)
-    {
-        return !string.IsNullOrWhiteSpace(mailbox)
-            && mailbox.Length <= 320
-            && !mailbox.ContainsAny(['\r', '\n', '<', '>']);
-    }
-
-    private static bool IsSafeEnvelopeSender(string sender) =>
-        sender.Length == 0 || IsSafeMailbox(sender);
-
     private static bool TryGetDomain(string recipient, out string domain)
     {
         domain = string.Empty;
-        if (!IsSafeMailbox(recipient))
-            return false;
-
         var separator = recipient.LastIndexOf('@');
         if (separator <= 0 || separator == recipient.Length - 1)
             return false;
@@ -348,6 +377,14 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay
 
         public Task WriteLineAsync(string line, CancellationToken cancellationToken) =>
             _writer.WriteLineAsync(line.AsMemory(), cancellationToken);
+
+        public async Task WriteUtf8LineAsync(string line, CancellationToken cancellationToken)
+        {
+            await _writer.FlushAsync(cancellationToken);
+            var bytes = Encoding.UTF8.GetBytes(line + "\r\n");
+            await _stream.WriteAsync(bytes, cancellationToken);
+            await _stream.FlushAsync(cancellationToken);
+        }
 
         public async Task WriteMessageAsync(string rawMessage, CancellationToken cancellationToken)
         {

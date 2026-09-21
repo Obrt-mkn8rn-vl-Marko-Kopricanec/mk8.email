@@ -11,6 +11,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["id"] = "uuid",
             ["envelope_sender"] = "varchar",
             ["raw_message"] = "text",
+            ["requires_smtp_utf8"] = "bool",
             ["client_ip"] = "varchar",
             ["helo"] = "varchar",
             ["authenticated_user"] = "varchar",
@@ -242,6 +243,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 id uuid PRIMARY KEY,
                 envelope_sender varchar(320) NOT NULL,
                 raw_message text NOT NULL,
+                requires_smtp_utf8 boolean NOT NULL DEFAULT false,
                 client_ip varchar(45),
                 helo varchar(255),
                 authenticated_user varchar(320),
@@ -296,6 +298,8 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 ADD COLUMN IF NOT EXISTS redirect_depth integer NOT NULL DEFAULT 0;
             ALTER TABLE mail_queue_recipients
                 ADD COLUMN IF NOT EXISTS redirect_history text[] NOT NULL DEFAULT ARRAY[]::text[];
+            ALTER TABLE mail_queue_messages
+                ADD COLUMN IF NOT EXISTS requires_smtp_utf8 boolean NOT NULL DEFAULT false;
 
             ALTER TABLE emails
                 ADD COLUMN IF NOT EXISTS queue_delivery_id uuid;

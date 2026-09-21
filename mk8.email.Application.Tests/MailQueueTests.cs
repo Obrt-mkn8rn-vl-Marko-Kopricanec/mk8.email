@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using System.Text;
 using mk8.email.Application.Interfaces;
 using mk8.email.Application.Services;
 using mk8.email.Contracts.Enums;
@@ -62,6 +63,113 @@ public sealed class MailQueueTests
         Assert.AreEqual(MailQueueDirections.Inbound, queued.Direction);
         Assert.AreEqual(1, queued.Recipients.Count);
         Assert.AreEqual(TestAccount, queued.Recipients.Single().Recipient);
+        Assert.IsFalse(queued.RequiresSmtpUtf8);
+    }
+
+    [TestMethod]
+    public async Task QueuePersistsAndRelaysSmtpUtf8Requirement()
+    {
+        var environment = CreateEnvironment();
+        var relay = new StubRelay(OutboundDeliveryStatus.Delivered);
+        await using var services = CreateServices(environment, CleanScan(), relay);
+        var queueId = Guid.CreateVersion7();
+        var rawMessage = Encoding.Latin1.GetString(Encoding.UTF8.GetBytes(
+            "From: josé@example.net\r\n" +
+            "To: recipient@example.com\r\n" +
+            "Subject: Žuta pošta\r\n\r\n" +
+            "body\r\n"));
+
+        using (var scope = services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            await database.Database.EnsureCreatedAsync();
+            var queue = scope.ServiceProvider.GetRequiredService<IMailSubmissionQueue>();
+            await queue.EnqueueAsync(new MailSubmission(
+                queueId,
+                "josé@example.net",
+                [new MailEnvelopeRecipient("recipient@example.com", false)],
+                rawMessage,
+                "192.0.2.10",
+                "sender.example.net",
+                null,
+                RequiresSmtpUtf8: true));
+        }
+
+        Assert.IsTrue(await ProcessOneAsync(services, environment));
+
+        using var verificationScope = services.CreateScope();
+        var verificationDatabase = verificationScope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var queued = await verificationDatabase.MailQueueMessages.SingleAsync(
+            message => message.Id == queueId);
+        Assert.IsTrue(queued.RequiresSmtpUtf8);
+        Assert.IsNotNull(relay.LastOptions);
+        Assert.IsTrue(relay.LastOptions.RequiresSmtpUtf8);
+    }
+
+    [TestMethod]
+    public async Task QueueDecodesSmtpUtf8HeadersAndBodyForLocalMailboxMetadata()
+    {
+        var environment = CreateEnvironment();
+        await using var services = CreateServices(
+            environment,
+            CleanScan(),
+            new StubRelay(OutboundDeliveryStatus.Delivered));
+        await SeedAccountAsync(services, includeCatchAll: false);
+        var rawMessage = Encoding.Latin1.GetString(Encoding.UTF8.GetBytes(
+            "From: José <josé@example.net>\r\n" +
+            $"To: {TestAccount}\r\n" +
+            "Subject: Žuta pošta\r\n\r\n" +
+            "Pozdrav iz Zagreba\r\n"));
+
+        using (var scope = services.CreateScope())
+        {
+            var queue = scope.ServiceProvider.GetRequiredService<IMailSubmissionQueue>();
+            await queue.EnqueueAsync(new MailSubmission(
+                Guid.CreateVersion7(),
+                "josé@example.net",
+                [new MailEnvelopeRecipient(TestAccount, true)],
+                rawMessage,
+                "192.0.2.10",
+                "sender.example.net",
+                null,
+                RequiresSmtpUtf8: true));
+        }
+
+        Assert.IsTrue(await ProcessOneAsync(services, environment));
+
+        using var verificationScope = services.CreateScope();
+        var database = verificationScope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var delivered = await database.Emails.SingleAsync();
+        Assert.AreEqual("Žuta pošta", delivered.Subject);
+        StringAssert.Contains(delivered.Body, "Pozdrav iz Zagreba");
+    }
+
+    [TestMethod]
+    public async Task SubmissionQueueRejectsMalformedInternationalizedHeaders()
+    {
+        var environment = CreateEnvironment();
+        await using var services = CreateServices(
+            environment,
+            CleanScan(),
+            new StubRelay(OutboundDeliveryStatus.Delivered));
+        using var scope = services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        await database.Database.EnsureCreatedAsync();
+        var queue = scope.ServiceProvider.GetRequiredService<IMailSubmissionQueue>();
+        var malformed = "From: sender@example.net\r\nSubject: "
+            + Encoding.Latin1.GetString([0xc3, 0x28])
+            + "\r\n\r\nbody\r\n";
+
+        await Assert.ThrowsExactlyAsync<ArgumentException>(() => queue.EnqueueAsync(
+            new MailSubmission(
+                Guid.CreateVersion7(),
+                "sender@example.net",
+                [new MailEnvelopeRecipient(TestAccount, true)],
+                malformed,
+                "192.0.2.10",
+                "sender.example.net",
+                null,
+                RequiresSmtpUtf8: true)));
     }
 
     [TestMethod]
@@ -741,17 +849,20 @@ public sealed class MailQueueTests
         public string? LastSender { get; private set; }
         public string? LastRecipient { get; private set; }
         public string? LastRawMessage { get; private set; }
+        public OutboundMailOptions? LastOptions { get; private set; }
 
         public Task<OutboundDeliveryResult> RelayAsync(
             string sender,
             string recipient,
             string rawMessage,
+            OutboundMailOptions? options = null,
             CancellationToken cancellationToken = default)
         {
             CallCount++;
             LastSender = sender;
             LastRecipient = recipient;
             LastRawMessage = rawMessage;
+            LastOptions = options;
             return Task.FromResult(new OutboundDeliveryResult(status, "Test delivery result."));
         }
     }

@@ -9,7 +9,8 @@ public sealed record MailSubmission(
     string RawMessage,
     string? ClientIp,
     string? Helo,
-    string? AuthenticatedUser);
+    string? AuthenticatedUser,
+    bool RequiresSmtpUtf8 = false);
 
 public interface IMailSubmissionQueue
 {

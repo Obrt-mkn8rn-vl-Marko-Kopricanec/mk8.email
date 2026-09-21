@@ -19,6 +19,9 @@ public sealed class MailQueueMessageDB
     [Column("raw_message")]
     public string RawMessage { get; set; } = string.Empty;
 
+    [Column("requires_smtp_utf8")]
+    public bool RequiresSmtpUtf8 { get; set; }
+
     [MaxLength(45)]
     [Column("client_ip")]
     public string? ClientIp { get; set; }

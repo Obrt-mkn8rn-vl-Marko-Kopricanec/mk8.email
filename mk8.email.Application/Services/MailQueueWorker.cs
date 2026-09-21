@@ -336,6 +336,7 @@ public sealed class MailQueueWorker(
                 message.EnvelopeSender,
                 recipient.Recipient,
                 rawMessage,
+                new OutboundMailOptions(message.RequiresSmtpUtf8),
                 cancellationToken);
             if (result.Status == OutboundDeliveryStatus.Delivered)
             {
@@ -432,7 +433,7 @@ public sealed class MailQueueWorker(
         var host = environment.Smtp.Hostname;
         var safeReason = SanitizeError(reason);
         var sender = $"mailer-daemon@{host}";
-        var rawNotice =
+        var noticeText =
             $"From: Mail Delivery System <{sender}>\r\n" +
             $"To: {message.EnvelopeSender}\r\n" +
             "Subject: Message rejected by recipient policy\r\n" +
@@ -443,6 +444,7 @@ public sealed class MailQueueWorker(
             "Content-Transfer-Encoding: 8bit\r\n\r\n" +
             $"Delivery to {recipient.Recipient} was rejected by the recipient's mail policy.\r\n\r\n" +
             $"{safeReason}\r\n";
+        var rawNotice = Encoding.Latin1.GetString(Encoding.UTF8.GetBytes(noticeText));
 
         if (await delivery.CanReceiveAsync(message.EnvelopeSender, cancellationToken))
         {
@@ -459,6 +461,9 @@ public sealed class MailQueueWorker(
             string.Empty,
             message.EnvelopeSender,
             rawNotice,
+            new OutboundMailOptions(
+                message.RequiresSmtpUtf8
+                || message.EnvelopeSender.Any(character => !char.IsAscii(character))),
             cancellationToken);
         return result.Status is OutboundDeliveryStatus.Delivered
             or OutboundDeliveryStatus.PermanentFailure;
@@ -490,7 +495,7 @@ public sealed class MailQueueWorker(
 
         var host = environment.Smtp.Hostname;
         var failureDetail = SanitizeError(recipient.LastError ?? "Delivery failed.");
-        var rawNotice =
+        var noticeText =
             $"From: Mail Delivery System <mailer-daemon@{host}>\r\n" +
             $"To: {message.AuthenticatedUser}\r\n" +
             "Subject: Mail delivery failed\r\n" +
@@ -500,6 +505,7 @@ public sealed class MailQueueWorker(
             "Content-Type: text/plain; charset=utf-8\r\n" +
             "Content-Transfer-Encoding: 8bit\r\n\r\n" +
             $"Delivery to {recipient.Recipient} failed.\r\n\r\n{failureDetail}\r\n";
+        var rawNotice = Encoding.Latin1.GetString(Encoding.UTF8.GetBytes(noticeText));
 
         return await delivery.DeliverAsync(
             $"mailer-daemon@{host}",

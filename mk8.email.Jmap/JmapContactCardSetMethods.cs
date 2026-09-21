@@ -126,7 +126,9 @@ internal sealed class ContactCardSetMethod(
                 cardCountsByUid[uid] = cardCountsByUid.GetValueOrDefault(uid) + 1;
                 counts[book.Id] = counts.GetValueOrDefault(book.Id) + 1;
                 context.CreatedIds[item.Key] = idString;
-                created[item.Key] = new JsonObject { ["id"] = idString };
+                var createdResponse = ServerChanges(storedRequest, prepared.Card);
+                createdResponse["id"] = idString;
+                created[item.Key] = createdResponse;
             }
         }
 
@@ -214,7 +216,8 @@ internal sealed class ContactCardSetMethod(
                     cardCountsByUid[newUid] = cardCountsByUid.GetValueOrDefault(newUid) + 1;
                 }
                 cardsById[resolved] = new JmapContactCardView(existing.Resource, prepared.Card);
-                updated[resolved] = null;
+                var serverChanges = ServerChanges(storedRequest, prepared.Card);
+                updated[resolved] = serverChanges.Count == 0 ? null : serverChanges;
             }
         }
 
@@ -281,6 +284,25 @@ internal sealed class ContactCardSetMethod(
 
     private static JsonObject Invalid(IEnumerable<string> properties) =>
         JmapMethodHelpers.SetError("invalidProperties", properties: properties);
+
+    private static JsonObject ServerChanges(JsonObject requested, JsonObject stored)
+    {
+        var changes = new JsonObject();
+        foreach (var property in stored)
+        {
+            if (!requested.TryGetPropertyValue(property.Key, out var requestedValue)
+                || !JsonNode.DeepEquals(requestedValue, property.Value))
+            {
+                changes[property.Key] = property.Value?.DeepClone();
+            }
+        }
+        foreach (var property in requested)
+        {
+            if (!stored.ContainsKey(property.Key))
+                changes[property.Key] = null;
+        }
+        return changes;
+    }
 
     private static void DecrementUidCount(Dictionary<string, int> counts, string uid)
     {

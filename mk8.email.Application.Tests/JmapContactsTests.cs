@@ -342,6 +342,7 @@ public sealed class JmapContactsTests
             },
         }));
         Assert.IsTrue(move["updated"]!.AsObject().ContainsKey(aliceId));
+        Assert.IsNull(move["updated"]![aliceId]);
         var movedState = move["newState"]!.GetValue<string>();
 
         var movedQuery = Arguments(await InvokeAsync(fixture, "ContactCard/query", new JsonObject
@@ -511,13 +512,22 @@ public sealed class JmapContactsTests
         {
             ["photo"] = new JsonObject { ["kind"] = "photo", ["blobId"] = documentBlobId },
         };
+        var expectedCache = (JsonObject)good.DeepClone();
 
         var set = Arguments(await InvokeAsync(fixture, "ContactCard/set", new JsonObject
         {
             ["accountId"] = fixture.AccountId,
             ["create"] = new JsonObject { ["good"] = good, ["bad"] = bad },
         }));
-        var cardId = set["created"]!["good"]!["id"]!.GetValue<string>();
+        var created = set["created"]!["good"]!.AsObject();
+        var cardId = created["id"]!.GetValue<string>();
+        var createdPhoto = created["media"]!["photo"]!;
+        Assert.IsNull(createdPhoto["blobId"]);
+        Assert.AreEqual("image/png", createdPhoto["mediaType"]!.GetValue<string>());
+        StringAssert.StartsWith(
+            createdPhoto["uri"]!.GetValue<string>(),
+            "data:image/png;base64,");
+        ApplyServerProperties(expectedCache, created);
         Assert.AreEqual(
             "invalidProperties",
             set["notCreated"]!["bad"]!["type"]!.GetValue<string>());
@@ -534,6 +544,38 @@ public sealed class JmapContactsTests
         Assert.AreEqual("image/png", photo["mediaType"]!.GetValue<string>());
         StringAssert.StartsWith(photo["uri"]!.GetValue<string>(), "data:image/png;base64,");
         Assert.IsNull(photo["blobId"]);
+        Assert.IsTrue(JsonNode.DeepEquals(expectedCache, get["list"]![0]));
+
+        var replacementBlobId = await fixture.StoreBlobAsync(
+            [0x47, 0x49, 0x46, 0x38, 0x39, 0x61],
+            "image/gif");
+        var clientPatch = new JsonObject
+        {
+            ["media/photo"] = new JsonObject
+            {
+                ["kind"] = "photo",
+                ["blobId"] = replacementBlobId,
+            },
+        };
+        Assert.IsTrue(JmapMethodHelpers.TryApplyPatch(expectedCache, clientPatch, out var patchedCache));
+        var update = Arguments(await InvokeAsync(fixture, "ContactCard/set", new JsonObject
+        {
+            ["accountId"] = fixture.AccountId,
+            ["update"] = new JsonObject { [cardId] = clientPatch },
+        }));
+        var updated = update["updated"]![cardId]!.AsObject();
+        var updatedPhoto = updated["media"]!["photo"]!;
+        Assert.IsNull(updatedPhoto["blobId"]);
+        Assert.AreEqual("image/gif", updatedPhoto["mediaType"]!.GetValue<string>());
+        StringAssert.StartsWith(updatedPhoto["uri"]!.GetValue<string>(), "data:image/gif;base64,");
+        ApplyServerProperties(patchedCache, updated);
+
+        var updatedGet = Arguments(await InvokeAsync(fixture, "ContactCard/get", new JsonObject
+        {
+            ["accountId"] = fixture.AccountId,
+            ["ids"] = new JsonArray(cardId),
+        }));
+        Assert.IsTrue(JsonNode.DeepEquals(patchedCache, updatedGet["list"]![0]));
 
         using var scope = fixture.Services.CreateScope();
         var content = await scope.ServiceProvider.GetRequiredService<EmailDbContext>()
@@ -541,7 +583,7 @@ public sealed class JmapContactsTests
             .Where(resource => resource.Uid == "photo-contact")
             .Select(resource => resource.Content)
             .SingleAsync();
-        StringAssert.Contains(Encoding.UTF8.GetString(content), "data:image/png;base64,");
+        StringAssert.Contains(Encoding.UTF8.GetString(content), "data:image/gif;base64,");
     }
 
     [TestMethod]
@@ -615,6 +657,11 @@ public sealed class JmapContactsTests
         }));
 
         var cardId = set["created"]!["localized"]!["id"]!.GetValue<string>();
+        var createdLocalization = set["created"]!["localized"]!["localizations"]!["fr"]!;
+        Assert.IsNull(createdLocalization["media"]!["photo"]!["blobId"]);
+        StringAssert.StartsWith(
+            createdLocalization["media"]!["photo"]!["uri"]!.GetValue<string>(),
+            "data:image/png;base64,");
         foreach (var expected in new Dictionary<string, string>
         {
             ["missing"] = "media/photo/blobId",
@@ -813,6 +860,17 @@ public sealed class JmapContactsTests
 
     private static JsonObject Arguments(JsonObject response) =>
         response["methodResponses"]![0]![1]!.AsObject();
+
+    private static void ApplyServerProperties(JsonObject target, JsonObject serverProperties)
+    {
+        foreach (var property in serverProperties)
+        {
+            if (property.Value is null)
+                target.Remove(property.Key);
+            else
+                target[property.Key] = property.Value.DeepClone();
+        }
+    }
 
     private static string[] StringValues(JsonNode node) => node.AsArray()
         .Select(item => item!.GetValue<string>()).ToArray();

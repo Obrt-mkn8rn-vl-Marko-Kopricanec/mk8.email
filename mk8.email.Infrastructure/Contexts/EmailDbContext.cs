@@ -27,6 +27,9 @@ public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContex
     public DbSet<JmapVacationResponseDB> JmapVacationResponses => Set<JmapVacationResponseDB>();
     public DbSet<JmapVacationReplyDB> JmapVacationReplies => Set<JmapVacationReplyDB>();
     public DbSet<JmapIdentityDB> JmapIdentities => Set<JmapIdentityDB>();
+    public DbSet<DavCollectionDB> DavCollections => Set<DavCollectionDB>();
+    public DbSet<DavResourceDB> DavResources => Set<DavResourceDB>();
+    public DbSet<DavChangeDB> DavChanges => Set<DavChangeDB>();
 
     private static readonly Guid GlobalConfigSeedId = Guid.Parse("00000000-0000-0000-0000-000000000001");
     private static readonly Guid GlobalLimitsSeedId = Guid.Parse("00000000-0000-0000-0000-000000000002");
@@ -197,6 +200,46 @@ public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContex
         {
             entity.HasIndex(identity => identity.IdentityObjectId).IsUnique();
             entity.HasIndex(identity => new { identity.AccountId, identity.Email });
+        });
+
+        modelBuilder.Entity<DavCollectionDB>(entity =>
+        {
+            entity.HasIndex(collection => new
+            {
+                collection.UserId,
+                collection.CollectionType,
+                collection.Slug,
+            }).IsUnique();
+
+            entity.HasOne(collection => collection.User)
+                .WithMany()
+                .HasForeignKey(collection => collection.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<DavResourceDB>(entity =>
+        {
+            entity.HasIndex(resource => new { resource.CollectionId, resource.ResourceName })
+                .IsUnique();
+            entity.HasIndex(resource => new { resource.CollectionId, resource.Uid })
+                .IsUnique();
+            entity.HasIndex(resource => new { resource.CollectionId, resource.ChangeSequence });
+
+            entity.HasOne(resource => resource.Collection)
+                .WithMany(collection => collection.Resources)
+                .HasForeignKey(resource => resource.CollectionId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<DavChangeDB>(entity =>
+        {
+            entity.HasIndex(change => new { change.CollectionId, change.Sequence }).IsUnique();
+            entity.HasIndex(change => change.ChangedAt);
+
+            entity.HasOne(change => change.Collection)
+                .WithMany(collection => collection.Changes)
+                .HasForeignKey(change => change.CollectionId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<ExpungedUidDB>(entity =>

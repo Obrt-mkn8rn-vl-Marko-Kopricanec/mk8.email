@@ -167,6 +167,51 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["updated_at"] = "timestamptz",
         };
 
+    private static readonly IReadOnlyDictionary<string, string> RequiredDavCollectionColumns =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["id"] = "uuid",
+            ["user_id"] = "uuid",
+            ["collection_type"] = "varchar",
+            ["slug"] = "varchar",
+            ["display_name"] = "varchar",
+            ["description"] = "varchar",
+            ["color"] = "varchar",
+            ["sort_order"] = "int4",
+            ["components"] = "_text",
+            ["sync_token"] = "int8",
+            ["created_at"] = "timestamptz",
+            ["updated_at"] = "timestamptz",
+        };
+
+    private static readonly IReadOnlyDictionary<string, string> RequiredDavResourceColumns =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["id"] = "uuid",
+            ["collection_id"] = "uuid",
+            ["resource_name"] = "varchar",
+            ["uid"] = "varchar",
+            ["content_type"] = "varchar",
+            ["content"] = "bytea",
+            ["etag"] = "varchar",
+            ["size_bytes"] = "int4",
+            ["change_sequence"] = "int8",
+            ["created_at"] = "timestamptz",
+            ["updated_at"] = "timestamptz",
+        };
+
+    private static readonly IReadOnlyDictionary<string, string> RequiredDavChangeColumns =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["id"] = "uuid",
+            ["collection_id"] = "uuid",
+            ["sequence"] = "int8",
+            ["resource_name"] = "varchar",
+            ["is_deleted"] = "bool",
+            ["etag"] = "varchar",
+            ["changed_at"] = "timestamptz",
+        };
+
     public async Task EnsureAsync(CancellationToken cancellationToken = default)
     {
         if (!string.Equals(
@@ -360,6 +405,52 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 updated_at timestamp with time zone NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS dav_collections (
+                id uuid PRIMARY KEY,
+                user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                collection_type varchar(16) NOT NULL,
+                slug varchar(128) NOT NULL,
+                display_name varchar(255) NOT NULL,
+                description varchar(1024),
+                color varchar(32),
+                sort_order integer NOT NULL DEFAULT 0,
+                components text[] NOT NULL DEFAULT ARRAY[]::text[],
+                sync_token bigint NOT NULL DEFAULT 0,
+                created_at timestamp with time zone NOT NULL,
+                updated_at timestamp with time zone NOT NULL,
+                CONSTRAINT ck_dav_collections_type
+                    CHECK (collection_type IN ('calendar', 'addressbook')),
+                CONSTRAINT ck_dav_collections_sync_token
+                    CHECK (sync_token >= 0)
+            );
+
+            CREATE TABLE IF NOT EXISTS dav_resources (
+                id uuid PRIMARY KEY,
+                collection_id uuid NOT NULL REFERENCES dav_collections(id) ON DELETE CASCADE,
+                resource_name varchar(255) NOT NULL,
+                uid varchar(255) NOT NULL,
+                content_type varchar(255) NOT NULL,
+                content bytea NOT NULL,
+                etag varchar(64) NOT NULL,
+                size_bytes integer NOT NULL,
+                change_sequence bigint NOT NULL,
+                created_at timestamp with time zone NOT NULL,
+                updated_at timestamp with time zone NOT NULL,
+                CONSTRAINT ck_dav_resources_size CHECK (size_bytes >= 0),
+                CONSTRAINT ck_dav_resources_change_sequence CHECK (change_sequence > 0)
+            );
+
+            CREATE TABLE IF NOT EXISTS dav_changes (
+                id uuid PRIMARY KEY,
+                collection_id uuid NOT NULL REFERENCES dav_collections(id) ON DELETE CASCADE,
+                sequence bigint NOT NULL,
+                resource_name varchar(255) NOT NULL,
+                is_deleted boolean NOT NULL,
+                etag varchar(64),
+                changed_at timestamp with time zone NOT NULL,
+                CONSTRAINT ck_dav_changes_sequence CHECK (sequence > 0)
+            );
+
             CREATE UNIQUE INDEX IF NOT EXISTS ix_emails_queue_delivery_id
                 ON emails (queue_delivery_id)
                 WHERE queue_delivery_id IS NOT NULL;
@@ -414,6 +505,18 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 ON jmap_identities (identity_object_id);
             CREATE INDEX IF NOT EXISTS ix_jmap_identities_account_email
                 ON jmap_identities (account_id, email);
+            CREATE UNIQUE INDEX IF NOT EXISTS ix_dav_collections_user_type_slug
+                ON dav_collections (user_id, collection_type, slug);
+            CREATE UNIQUE INDEX IF NOT EXISTS ix_dav_resources_collection_name
+                ON dav_resources (collection_id, resource_name);
+            CREATE UNIQUE INDEX IF NOT EXISTS ix_dav_resources_collection_uid
+                ON dav_resources (collection_id, uid);
+            CREATE INDEX IF NOT EXISTS ix_dav_resources_collection_sequence
+                ON dav_resources (collection_id, change_sequence);
+            CREATE UNIQUE INDEX IF NOT EXISTS ix_dav_changes_collection_sequence
+                ON dav_changes (collection_id, sequence);
+            CREATE INDEX IF NOT EXISTS ix_dav_changes_changed_at
+                ON dav_changes (changed_at);
             """,
             cancellationToken);
 
@@ -460,6 +563,18 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
         await ValidateTableAsync(
             "jmap_identities",
             RequiredJmapIdentityColumns,
+            cancellationToken);
+        await ValidateTableAsync(
+            "dav_collections",
+            RequiredDavCollectionColumns,
+            cancellationToken);
+        await ValidateTableAsync(
+            "dav_resources",
+            RequiredDavResourceColumns,
+            cancellationToken);
+        await ValidateTableAsync(
+            "dav_changes",
+            RequiredDavChangeColumns,
             cancellationToken);
     }
 

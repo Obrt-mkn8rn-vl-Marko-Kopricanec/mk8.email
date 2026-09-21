@@ -311,6 +311,10 @@ public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContex
                 .IsUnique();
             entity.HasIndex(resource => new { resource.CollectionId, resource.Uid })
                 .IsUnique();
+            entity.HasIndex(resource => new { resource.AddressBookUserId, resource.Uid })
+                .IsUnique()
+                .HasDatabaseName("ix_dav_resources_addressbook_user_uid")
+                .HasFilter("addressbook_user_id IS NOT NULL");
             entity.HasIndex(resource => new { resource.CollectionId, resource.ChangeSequence });
 
             entity.HasOne(resource => resource.Collection)

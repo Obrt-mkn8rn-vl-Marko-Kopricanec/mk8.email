@@ -234,6 +234,7 @@ public sealed class JmapContactStore(
             Id = id,
             CollectionId = collection.Id,
             Collection = collection,
+            AddressBookUserId = DavContactUidInvariant.ScopeFor(collection),
             ResourceName = resourceName,
             Uid = card["uid"]!.GetValue<string>(),
             ContentType = "text/vcard",
@@ -269,6 +270,7 @@ public sealed class JmapContactStore(
         newCollection.UpdatedAt = now;
         resource.CollectionId = newCollection.Id;
         resource.Collection = newCollection;
+        resource.AddressBookUserId = DavContactUidInvariant.ScopeFor(newCollection);
         resource.Uid = card["uid"]!.GetValue<string>();
         resource.Content = content;
         resource.ContentType = "text/vcard";

@@ -38,6 +38,12 @@ public sealed class DavSchemaTests
             nameof(DavResourceDB.ResourceName));
         AssertUniqueIndex(resource, nameof(DavResourceDB.CollectionId),
             nameof(DavResourceDB.Uid));
+        var accountUidIndex = resource.GetIndexes().SingleOrDefault(candidate =>
+            candidate.Properties.Select(property => property.Name).SequenceEqual(
+                [nameof(DavResourceDB.AddressBookUserId), nameof(DavResourceDB.Uid)])
+            && candidate.GetFilter() == "addressbook_user_id IS NOT NULL");
+        Assert.IsNotNull(accountUidIndex, "Missing account-wide ContactCard UID index.");
+        Assert.IsTrue(accountUidIndex.IsUnique);
         AssertUniqueIndex(change, nameof(DavChangeDB.CollectionId),
             nameof(DavChangeDB.Sequence));
         AssertUniqueIndex(share, nameof(DavShareDB.CollectionId),

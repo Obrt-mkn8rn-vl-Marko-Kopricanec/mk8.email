@@ -16,6 +16,12 @@ public sealed class DavResourceDB
     [ForeignKey(nameof(CollectionId))]
     public DavCollectionDB Collection { get; set; } = null!;
 
+    // Denormalized by the database from the owning address-book collection. This
+    // is null for calendar resources and gives PostgreSQL a row-local key with
+    // which to enforce the RFC 9610 account-wide ContactCard UID invariant.
+    [Column("addressbook_user_id")]
+    public Guid? AddressBookUserId { get; set; }
+
     [Required]
     [MaxLength(255)]
     [Column("resource_name")]

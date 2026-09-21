@@ -710,6 +710,13 @@ internal sealed class DavStore(EmailDbContext database, EnvironmentConfig enviro
             cancellationToken);
         if (collection is null)
             return new DavResourceWriteResult(DavResourceWriteStatus.Forbidden);
+        if (collection.CollectionType == DavCollectionDB.AddressBookType)
+        {
+            await DavContactUidInvariant.AcquireAccountLockAsync(
+                database,
+                collection.UserId,
+                cancellationToken);
+        }
 
         var existing = await database.DavResources.SingleOrDefaultAsync(
             resource => resource.CollectionId == collection.Id
@@ -759,6 +766,7 @@ internal sealed class DavStore(EmailDbContext database, EnvironmentConfig enviro
             {
                 Id = Guid.CreateVersion7(),
                 CollectionId = collection.Id,
+                AddressBookUserId = DavContactUidInvariant.ScopeFor(collection),
                 ResourceName = resourceName,
                 CreatedAt = now,
             };
@@ -772,6 +780,7 @@ internal sealed class DavStore(EmailDbContext database, EnvironmentConfig enviro
         }
 
         resource.Uid = uid;
+        resource.AddressBookUserId = DavContactUidInvariant.ScopeFor(collection);
         resource.ContentType = contentType;
         resource.Content = content;
         resource.Etag = etag;

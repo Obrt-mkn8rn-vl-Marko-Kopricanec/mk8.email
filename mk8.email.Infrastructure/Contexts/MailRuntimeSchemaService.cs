@@ -1,5 +1,6 @@
 using System.Data;
 using Microsoft.EntityFrameworkCore;
+using mk8.email.Infrastructure.Models;
 
 namespace mk8.email.Infrastructure.Data;
 
@@ -218,6 +219,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
         {
             ["id"] = "uuid",
             ["collection_id"] = "uuid",
+            ["addressbook_user_id"] = "uuid",
             ["resource_name"] = "varchar",
             ["uid"] = "varchar",
             ["content_type"] = "varchar",
@@ -627,6 +629,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             CREATE TABLE IF NOT EXISTS dav_resources (
                 id uuid PRIMARY KEY,
                 collection_id uuid NOT NULL REFERENCES dav_collections(id) ON DELETE CASCADE,
+                addressbook_user_id uuid,
                 resource_name varchar(255) NOT NULL,
                 uid varchar(255) NOT NULL,
                 content_type varchar(255) NOT NULL,
@@ -821,6 +824,8 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 ADD COLUMN IF NOT EXISTS is_default boolean NOT NULL DEFAULT false;
             ALTER TABLE dav_collections
                 ADD COLUMN IF NOT EXISTS is_subscribed boolean NOT NULL DEFAULT true;
+            ALTER TABLE dav_resources
+                ADD COLUMN IF NOT EXISTS addressbook_user_id uuid;
             UPDATE dav_collections
                 SET is_default = true
                 WHERE collection_type = 'addressbook'
@@ -877,6 +882,8 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 ON mfa_recovery_codes (credential_id, used_at);
             """,
             cancellationToken);
+
+        await EnsureContactUidInvariantAsync(cancellationToken);
 
         await ValidateTableAsync(
             "mail_queue_messages",
@@ -1002,6 +1009,177 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                     $"The {tableName}.{requiredColumn.Key} database column is missing or invalid.");
             }
         }
+    }
+
+    private async Task EnsureContactUidInvariantAsync(CancellationToken cancellationToken)
+    {
+        await using var transaction = await database.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable,
+            cancellationToken);
+
+        // Keep the backfill, duplicate repair, triggers, and unique index in one
+        // atomic boundary. The lock also prevents a protocol write from slipping
+        // between legacy-data repair and index creation during an upgrade.
+        await database.Database.ExecuteSqlRawAsync(
+            "LOCK TABLE dav_resources IN SHARE ROW EXCLUSIVE MODE",
+            cancellationToken);
+        await database.Database.ExecuteSqlRawAsync(
+            """
+            UPDATE dav_resources resource
+            SET addressbook_user_id = CASE
+                WHEN collection.collection_type = 'addressbook' THEN collection.user_id
+                ELSE NULL
+            END
+            FROM dav_collections collection
+            WHERE collection.id = resource.collection_id
+              AND resource.addressbook_user_id IS DISTINCT FROM CASE
+                  WHEN collection.collection_type = 'addressbook' THEN collection.user_id
+                  ELSE NULL
+              END
+            """,
+            cancellationToken);
+
+        var duplicates = await database.DavResources
+            .FromSqlRaw(
+                """
+                SELECT resource.*
+                FROM dav_resources resource
+                JOIN (
+                    SELECT ranked.id
+                    FROM (
+                        SELECT candidate.id,
+                               row_number() OVER (
+                                   PARTITION BY collection.user_id, candidate.uid
+                                   ORDER BY candidate.created_at, candidate.id) AS duplicate_rank
+                        FROM dav_resources candidate
+                        JOIN dav_collections collection
+                          ON collection.id = candidate.collection_id
+                        WHERE collection.collection_type = 'addressbook'
+                    ) ranked
+                    WHERE ranked.duplicate_rank > 1
+                ) duplicate ON duplicate.id = resource.id
+                ORDER BY resource.created_at, resource.id
+                """)
+            .Include(resource => resource.Collection)
+            .ToListAsync(cancellationToken);
+
+        if (duplicates.Count > 0)
+        {
+            var affectedUsers = duplicates
+                .Select(resource => resource.AddressBookUserId!.Value)
+                .Distinct()
+                .ToArray();
+            var occupiedRows = await database.DavResources
+                .AsNoTracking()
+                .Where(resource => resource.AddressBookUserId != null
+                    && affectedUsers.Contains(resource.AddressBookUserId.Value))
+                .Select(resource => new { resource.AddressBookUserId, resource.Uid })
+                .ToListAsync(cancellationToken);
+            var occupied = occupiedRows
+                .GroupBy(row => row.AddressBookUserId!.Value)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.Select(row => row.Uid).ToHashSet(StringComparer.Ordinal));
+
+            foreach (var resource in duplicates)
+            {
+                var userId = resource.AddressBookUserId!.Value;
+                var userUids = occupied[userId];
+                var replacement = $"urn:uuid:{resource.Id:D}";
+                for (var suffix = 2; userUids.Contains(replacement); suffix++)
+                    replacement = $"urn:uuid:{resource.Id:D}#legacy-{suffix}";
+
+                var content = DavContactUidMigration.Rewrite(resource.Content, replacement);
+                var now = DateTime.UtcNow;
+                var sequence = checked(++resource.Collection.SyncToken);
+                resource.Uid = replacement;
+                resource.Content = content;
+                resource.Etag = Convert.ToHexStringLower(
+                    System.Security.Cryptography.SHA256.HashData(content));
+                resource.SizeBytes = content.Length;
+                resource.ChangeSequence = sequence;
+                resource.UpdatedAt = now;
+                resource.Collection.UpdatedAt = now;
+                database.DavChanges.Add(new DavChangeDB
+                {
+                    Id = Guid.CreateVersion7(),
+                    CollectionId = resource.CollectionId,
+                    Collection = resource.Collection,
+                    Sequence = sequence,
+                    ResourceName = resource.ResourceName,
+                    IsDeleted = false,
+                    Etag = resource.Etag,
+                    ChangedAt = now,
+                });
+                userUids.Add(replacement);
+            }
+
+            await database.SaveChangesAsync(cancellationToken);
+        }
+
+        await database.Database.ExecuteSqlRawAsync(
+            """
+            CREATE OR REPLACE FUNCTION set_dav_resource_addressbook_user_id()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $function$
+            DECLARE
+                owning_user uuid;
+                owning_type varchar(16);
+            BEGIN
+                SELECT user_id, collection_type
+                INTO STRICT owning_user, owning_type
+                FROM dav_collections
+                WHERE id = NEW.collection_id;
+                NEW.addressbook_user_id := CASE
+                    WHEN owning_type = 'addressbook' THEN owning_user
+                    ELSE NULL
+                END;
+                RETURN NEW;
+            END;
+            $function$;
+
+            DROP TRIGGER IF EXISTS set_dav_resource_addressbook_user_id
+                ON dav_resources;
+            CREATE TRIGGER set_dav_resource_addressbook_user_id
+                BEFORE INSERT OR UPDATE OF collection_id, addressbook_user_id
+                ON dav_resources
+                FOR EACH ROW
+                EXECUTE FUNCTION set_dav_resource_addressbook_user_id();
+
+            CREATE OR REPLACE FUNCTION propagate_dav_collection_uid_scope()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $function$
+            BEGIN
+                IF OLD.user_id IS DISTINCT FROM NEW.user_id
+                   OR OLD.collection_type IS DISTINCT FROM NEW.collection_type THEN
+                    UPDATE dav_resources
+                    SET addressbook_user_id = CASE
+                        WHEN NEW.collection_type = 'addressbook' THEN NEW.user_id
+                        ELSE NULL
+                    END
+                    WHERE collection_id = NEW.id;
+                END IF;
+                RETURN NEW;
+            END;
+            $function$;
+
+            DROP TRIGGER IF EXISTS propagate_dav_collection_uid_scope
+                ON dav_collections;
+            CREATE TRIGGER propagate_dav_collection_uid_scope
+                AFTER UPDATE OF user_id, collection_type
+                ON dav_collections
+                FOR EACH ROW
+                EXECUTE FUNCTION propagate_dav_collection_uid_scope();
+
+            CREATE UNIQUE INDEX IF NOT EXISTS ix_dav_resources_addressbook_user_uid
+                ON dav_resources (addressbook_user_id, uid)
+                WHERE addressbook_user_id IS NOT NULL;
+            """,
+            cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
     }
 
 }

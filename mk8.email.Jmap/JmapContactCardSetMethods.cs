@@ -43,6 +43,10 @@ internal sealed class ContactCardSetMethod(
             return JmapMethodResponse.Error(await accounts.GetContactAccountErrorAsync(
                 context.User, accountId, cancellationToken));
         await contacts.EnsureDefaultAddressBookAsync(context.User, cancellationToken);
+        await DavContactUidInvariant.AcquireAccountLockAsync(
+            database,
+            account.UserId,
+            cancellationToken);
         var oldState = await states.GetStateAsync(
             account.InboxId,
             JmapConstants.ContactCardDataType,

@@ -15,6 +15,7 @@ public sealed class EnvironmentConfig
     public SieveConfig Sieve { get; init; } = new();
     public JmapConfig Jmap { get; init; } = new();
     public DavConfig Dav { get; init; } = new();
+    public OAuthConfig OAuth { get; init; } = new();
     public TlsConfig Tls { get; init; } = new();
     public DkimConfig Dkim { get; init; } = new();
     public SecurityConfig Security { get; init; } = new();
@@ -143,6 +144,11 @@ public sealed class EnvironmentConfig
             if (Dav.MaxResourcesPerCollection is < 1 or > 1_000_000)
                 errors.Add("Dav.MaxResourcesPerCollection must be from 1 through 1000000.");
         }
+
+        if (OAuth.AccessTokenMinutes is < 1 or > 60)
+            errors.Add("OAuth.AccessTokenMinutes must be from 1 through 60.");
+        if (OAuth.RefreshTokenDays is < 1 or > 365)
+            errors.Add("OAuth.RefreshTokenDays must be from 1 through 365.");
 
         var needsCertificate = Smtp.EnableStartTls
             || Smtp.EnableImplicitTls
@@ -383,6 +389,12 @@ public sealed class DavConfig
     public int MaxResourceSizeBytes { get; init; } = 10 * 1024 * 1024;
     public int MaxCollectionsPerUser { get; init; } = 100;
     public int MaxResourcesPerCollection { get; init; } = 100_000;
+}
+
+public sealed class OAuthConfig
+{
+    public int AccessTokenMinutes { get; init; } = 10;
+    public int RefreshTokenDays { get; init; } = 90;
 }
 
 public sealed class TlsConfig

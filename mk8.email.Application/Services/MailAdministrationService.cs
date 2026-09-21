@@ -214,6 +214,7 @@ public sealed partial class MailAdministrationService(EmailDbContext db) : IMail
                 .Select(user => user.Id)
                 .ToArrayAsync(cancellationToken);
             await RevokePushSubscriptionsAsync(affectedUserIds, cancellationToken);
+            await RevokeOAuthGrantsAsync(affectedUserIds, cancellationToken);
         }
         await db.SaveChangesAsync(cancellationToken);
         return Success(isActive ? "The domain was activated." : "The domain was deactivated.", mailDomain.Id);
@@ -231,7 +232,10 @@ public sealed partial class MailAdministrationService(EmailDbContext db) : IMail
         user.IsActive = isActive;
         user.UpdatedAt = DateTime.UtcNow;
         if (!isActive)
+        {
             await RevokePushSubscriptionsAsync(user.Id, cancellationToken);
+            await RevokeOAuthGrantsAsync([user.Id], cancellationToken);
+        }
         await db.SaveChangesAsync(cancellationToken);
         return Success(isActive ? "The account was enabled." : "The account was disabled.", user.Id);
     }
@@ -252,6 +256,7 @@ public sealed partial class MailAdministrationService(EmailDbContext db) : IMail
         user.UpdatedAt = DateTime.UtcNow;
         await RevokePushSubscriptionsAsync(user.Id, cancellationToken);
         await RevokeApplicationPasswordsAsync(user.Id, cancellationToken);
+        await RevokeOAuthGrantsAsync([user.Id], cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
         return Success("The password was changed.", user.Id);
     }
@@ -266,6 +271,27 @@ public sealed partial class MailAdministrationService(EmailDbContext db) : IMail
             .ToListAsync(cancellationToken);
         foreach (var password in passwords)
             password.RevokedAt = now;
+    }
+
+    private async Task RevokeOAuthGrantsAsync(
+        IReadOnlyCollection<Guid> userIds,
+        CancellationToken cancellationToken)
+    {
+        if (userIds.Count == 0)
+            return;
+
+        var now = DateTime.UtcNow;
+        var grants = await db.OAuthGrants
+            .Where(grant => userIds.Contains(grant.UserId) && grant.RevokedAt == null)
+            .ToListAsync(cancellationToken);
+        foreach (var grant in grants)
+            grant.RevokedAt = now;
+
+        var tokens = await db.OAuthTokens
+            .Where(token => userIds.Contains(token.Grant.UserId) && token.RevokedAt == null)
+            .ToListAsync(cancellationToken);
+        foreach (var token in tokens)
+            token.RevokedAt = now;
     }
 
     private async Task RevokePushSubscriptionsAsync(

@@ -33,6 +33,8 @@ public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContex
     public DbSet<DavShareDB> DavShares => Set<DavShareDB>();
     public DbSet<SieveScriptDB> SieveScripts => Set<SieveScriptDB>();
     public DbSet<ApplicationPasswordDB> ApplicationPasswords => Set<ApplicationPasswordDB>();
+    public DbSet<OAuthGrantDB> OAuthGrants => Set<OAuthGrantDB>();
+    public DbSet<OAuthTokenDB> OAuthTokens => Set<OAuthTokenDB>();
 
     private static readonly Guid GlobalConfigSeedId = Guid.Parse("00000000-0000-0000-0000-000000000001");
     private static readonly Guid GlobalLimitsSeedId = Guid.Parse("00000000-0000-0000-0000-000000000002");
@@ -182,6 +184,28 @@ public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContex
             entity.HasOne(password => password.User)
                 .WithMany()
                 .HasForeignKey(password => password.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<OAuthGrantDB>(entity =>
+        {
+            entity.HasIndex(grant => new { grant.UserId, grant.ClientId });
+            entity.HasIndex(grant => grant.UserId);
+
+            entity.HasOne(grant => grant.User)
+                .WithMany()
+                .HasForeignKey(grant => grant.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<OAuthTokenDB>(entity =>
+        {
+            entity.HasIndex(token => new { token.GrantId, token.TokenType });
+            entity.HasIndex(token => token.ExpiresAt);
+
+            entity.HasOne(token => token.Grant)
+                .WithMany(grant => grant.Tokens)
+                .HasForeignKey(token => token.GrantId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 

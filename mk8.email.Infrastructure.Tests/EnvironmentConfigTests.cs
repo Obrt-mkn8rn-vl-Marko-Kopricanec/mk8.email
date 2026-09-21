@@ -134,6 +134,18 @@ public sealed class EnvironmentConfigTests
     }
 
     [TestMethod]
+    public void OAuthTokenLifetimesMustBeBounded()
+    {
+        var errors = CreateValidConfiguration(
+            oauthAccessTokenMinutes: 0,
+            oauthRefreshTokenDays: 366).Validate();
+
+        var joined = string.Join('|', errors);
+        StringAssert.Contains(joined, "OAuth.AccessTokenMinutes must be from 1 through 60.");
+        StringAssert.Contains(joined, "OAuth.RefreshTokenDays must be from 1 through 365.");
+    }
+
+    [TestMethod]
     public void LoaderReadsPasswordsFromSecretFiles()
     {
         var databasePasswordPath = WriteFile("database-password", "database-secret-value");
@@ -175,7 +187,9 @@ public sealed class EnvironmentConfigTests
         int sieveMaxScripts = 64,
         int davMaxResourceSizeBytes = 10 * 1024 * 1024,
         int davMaxCollectionsPerUser = 100,
-        int davMaxResourcesPerCollection = 100_000)
+        int davMaxResourcesPerCollection = 100_000,
+        int oauthAccessTokenMinutes = 10,
+        int oauthRefreshTokenDays = 90)
     {
         return new EnvironmentConfig
         {
@@ -230,6 +244,11 @@ public sealed class EnvironmentConfigTests
                 MaxResourceSizeBytes = davMaxResourceSizeBytes,
                 MaxCollectionsPerUser = davMaxCollectionsPerUser,
                 MaxResourcesPerCollection = davMaxResourcesPerCollection,
+            },
+            OAuth = new OAuthConfig
+            {
+                AccessTokenMinutes = oauthAccessTokenMinutes,
+                RefreshTokenDays = oauthRefreshTokenDays,
             },
             Tls = new TlsConfig
             {

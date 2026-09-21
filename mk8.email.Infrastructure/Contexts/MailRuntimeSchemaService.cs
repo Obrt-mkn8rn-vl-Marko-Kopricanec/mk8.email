@@ -259,6 +259,33 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["revoked_at"] = "timestamptz",
         };
 
+    private static readonly IReadOnlyDictionary<string, string> RequiredOAuthGrantColumns =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["id"] = "uuid",
+            ["user_id"] = "uuid",
+            ["client_id"] = "varchar",
+            ["device_name"] = "varchar",
+            ["scopes"] = "_text",
+            ["created_at"] = "timestamptz",
+            ["last_used_at"] = "timestamptz",
+            ["revoked_at"] = "timestamptz",
+        };
+
+    private static readonly IReadOnlyDictionary<string, string> RequiredOAuthTokenColumns =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["id"] = "uuid",
+            ["grant_id"] = "uuid",
+            ["token_type"] = "varchar",
+            ["token_hash"] = "bytea",
+            ["created_at"] = "timestamptz",
+            ["expires_at"] = "timestamptz",
+            ["last_used_at"] = "timestamptz",
+            ["revoked_at"] = "timestamptz",
+            ["replaced_by_token_id"] = "uuid",
+        };
+
     public async Task EnsureAsync(CancellationToken cancellationToken = default)
     {
         if (!string.Equals(
@@ -568,6 +595,33 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 revoked_at timestamp with time zone
             );
 
+            CREATE TABLE IF NOT EXISTS oauth_grants (
+                id uuid PRIMARY KEY,
+                user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                client_id varchar(128) NOT NULL,
+                device_name varchar(128) NOT NULL,
+                scopes text[] NOT NULL,
+                created_at timestamp with time zone NOT NULL,
+                last_used_at timestamp with time zone,
+                revoked_at timestamp with time zone
+            );
+
+            CREATE TABLE IF NOT EXISTS oauth_tokens (
+                id uuid PRIMARY KEY,
+                grant_id uuid NOT NULL REFERENCES oauth_grants(id) ON DELETE CASCADE,
+                token_type varchar(16) NOT NULL,
+                token_hash bytea NOT NULL,
+                created_at timestamp with time zone NOT NULL,
+                expires_at timestamp with time zone NOT NULL,
+                last_used_at timestamp with time zone,
+                revoked_at timestamp with time zone,
+                replaced_by_token_id uuid,
+                CONSTRAINT ck_oauth_tokens_type
+                    CHECK (token_type IN ('access', 'refresh')),
+                CONSTRAINT ck_oauth_tokens_hash_length
+                    CHECK (octet_length(token_hash) = 32)
+            );
+
             CREATE UNIQUE INDEX IF NOT EXISTS ix_emails_queue_delivery_id
                 ON emails (queue_delivery_id)
                 WHERE queue_delivery_id IS NOT NULL;
@@ -649,6 +703,14 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 ON application_passwords (user_id, name);
             CREATE INDEX IF NOT EXISTS ix_application_passwords_user_id
                 ON application_passwords (user_id);
+            CREATE INDEX IF NOT EXISTS ix_oauth_grants_user_client
+                ON oauth_grants (user_id, client_id);
+            CREATE INDEX IF NOT EXISTS ix_oauth_grants_user_id
+                ON oauth_grants (user_id);
+            CREATE INDEX IF NOT EXISTS ix_oauth_tokens_grant_type
+                ON oauth_tokens (grant_id, token_type);
+            CREATE INDEX IF NOT EXISTS ix_oauth_tokens_expires_at
+                ON oauth_tokens (expires_at);
             """,
             cancellationToken);
 
@@ -719,6 +781,14 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
         await ValidateTableAsync(
             "application_passwords",
             RequiredApplicationPasswordColumns,
+            cancellationToken);
+        await ValidateTableAsync(
+            "oauth_grants",
+            RequiredOAuthGrantColumns,
+            cancellationToken);
+        await ValidateTableAsync(
+            "oauth_tokens",
+            RequiredOAuthTokenColumns,
             cancellationToken);
     }
 

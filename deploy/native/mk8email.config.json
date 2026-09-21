@@ -59,6 +59,10 @@
     "MaxCollectionsPerUser": 100,
     "MaxResourcesPerCollection": 100000
   },
+  "OAuth": {
+    "AccessTokenMinutes": 10,
+    "RefreshTokenDays": 90
+  },
   "Tls": {
     "CertificatePath": "/etc/mk8email/tls/fullchain.pem",
     "CertificateKeyPath": "/etc/mk8email/tls/privkey.pem"

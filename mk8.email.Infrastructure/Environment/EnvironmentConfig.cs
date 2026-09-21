@@ -11,6 +11,7 @@ public sealed class EnvironmentConfig
     public DatabaseConfig Database { get; init; } = new();
     public SmtpConfig Smtp { get; init; } = new();
     public ImapConfig Imap { get; init; } = new();
+    public Pop3Config Pop3 { get; init; } = new();
     public JmapConfig Jmap { get; init; } = new();
     public TlsConfig Tls { get; init; } = new();
     public DkimConfig Dkim { get; init; } = new();
@@ -55,10 +56,12 @@ public sealed class EnvironmentConfig
         AddEnabledPort(enabledPorts, Smtp.EnableImplicitTls, "Smtp.ImplicitTlsPort", Smtp.ImplicitTlsPort);
         AddEnabledPort(enabledPorts, Imap.EnableImap, "Imap.Port", Imap.Port);
         AddEnabledPort(enabledPorts, Imap.EnableImplicitTls, "Imap.ImplicitTlsPort", Imap.ImplicitTlsPort);
+        AddEnabledPort(enabledPorts, Pop3.EnablePop3, "Pop3.Port", Pop3.Port);
+        AddEnabledPort(enabledPorts, Pop3.EnableImplicitTls, "Pop3.ImplicitTlsPort", Pop3.ImplicitTlsPort);
         AddEnabledPort(enabledPorts, Jmap.EnableJmap, "Jmap.Port", Jmap.Port);
 
         if (enabledPorts.Count == 0)
-            errors.Add("Enable at least one SMTP, IMAP, or JMAP listener.");
+            errors.Add("Enable at least one SMTP, IMAP, POP3, or JMAP listener.");
 
         foreach (var enabledPort in enabledPorts)
             RequirePort(errors, enabledPort.Port, enabledPort.Name);
@@ -74,6 +77,8 @@ public sealed class EnvironmentConfig
             errors.Add("Smtp.RequireTls requires STARTTLS or implicit TLS.");
         if (!isDevelopment && Imap.EnableImap && !Smtp.EnableStartTls)
             errors.Add("The production IMAP listener requires STARTTLS.");
+        if (!isDevelopment && Pop3.EnablePop3 && !Pop3.EnableStartTls)
+            errors.Add("The production POP3 listener requires STLS.");
 
         if (Jmap.IsDefault && !Jmap.EnableJmap)
             errors.Add("Jmap.IsDefault requires Jmap.EnableJmap.");
@@ -117,7 +122,11 @@ public sealed class EnvironmentConfig
             }
         }
 
-        var needsCertificate = Smtp.EnableStartTls || Smtp.EnableImplicitTls || Imap.EnableImplicitTls;
+        var needsCertificate = Smtp.EnableStartTls
+            || Smtp.EnableImplicitTls
+            || Imap.EnableImplicitTls
+            || Pop3.EnableStartTls
+            || Pop3.EnableImplicitTls;
         if (needsCertificate)
             RequireFile(errors, Tls.CertificatePath, "Tls.CertificatePath");
         if (!string.IsNullOrWhiteSpace(Tls.CertificateKeyPath))
@@ -301,6 +310,15 @@ public sealed class ImapConfig
     public int ImplicitTlsPort { get; init; } = 993;
     public bool EnableImap { get; init; } = true;
     public bool EnableImplicitTls { get; init; }
+}
+
+public sealed class Pop3Config
+{
+    public int Port { get; init; } = 110;
+    public int ImplicitTlsPort { get; init; } = 995;
+    public bool EnablePop3 { get; init; }
+    public bool EnableImplicitTls { get; init; }
+    public bool EnableStartTls { get; init; }
 }
 
 public sealed class JmapConfig

@@ -42,6 +42,7 @@ public static class ApplicationServiceExtensions
         services.AddHostedService<MailQueueWorker>();
         services.AddHostedService<SmtpServerService>();
         services.AddHostedService<ImapServerService>();
+        services.AddHostedService<Pop3ServerService>();
 
         return services;
     }

@@ -41,6 +41,16 @@ public sealed class EnvironmentConfigTests
     }
 
     [TestMethod]
+    public void ProductionPop3RequiresStls()
+    {
+        var errors = CreateValidConfiguration(
+            enablePop3: true,
+            enablePop3StartTls: false).Validate();
+
+        StringAssert.Contains(string.Join('|', errors), "The production POP3 listener requires STLS.");
+    }
+
+    [TestMethod]
     public void ProductionRejectsSimplifiedInboundAuthenticationChecks()
     {
         var errors = CreateValidConfiguration(enableSpfCheck: true).Validate();
@@ -111,7 +121,9 @@ public sealed class EnvironmentConfigTests
         bool enableDkimSigning = false,
         string dkimSelector = "default",
         string rspamdEndpoint = "http://127.0.0.1:11333/checkv2",
-        int queueMaxAttempts = 20)
+        int queueMaxAttempts = 20,
+        bool enablePop3 = false,
+        bool enablePop3StartTls = true)
     {
         return new EnvironmentConfig
         {
@@ -144,6 +156,14 @@ public sealed class EnvironmentConfigTests
                 ImplicitTlsPort = 2993,
                 EnableImap = enableImap,
                 EnableImplicitTls = true,
+            },
+            Pop3 = new Pop3Config
+            {
+                Port = 2110,
+                ImplicitTlsPort = 2995,
+                EnablePop3 = enablePop3,
+                EnableImplicitTls = false,
+                EnableStartTls = enablePop3StartTls,
             },
             Tls = new TlsConfig
             {

@@ -10,6 +10,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using mk8.email.Application.Interfaces;
+using mk8.email.Application.Protocol;
 using mk8.email.Application.Services;
 using mk8.email.Contracts.Enums;
 using mk8.email.Infrastructure.Data;
@@ -685,6 +686,100 @@ public sealed class TransportSecurityTests
         await connection.WriteLineAsync("a6 LOGOUT");
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("* BYE", StringComparison.Ordinal));
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a6 OK", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    [Timeout(15_000)]
+    public async Task Pop3StartTlsSupportsThunderbirdRetrievalAndTransactionalDeletion()
+    {
+        var port = ReservePort();
+        var environment = CreateEnvironment(pop3Port: port);
+        await using var server = await ServerFixture.StartPop3Async(environment, port);
+        await server.SeedPop3MessagesAsync();
+        await using var connection = await ProtocolConnection.ConnectAsync(port);
+
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("+OK ", StringComparison.Ordinal));
+        await connection.WriteLineAsync("CAPA");
+        var clearCapabilities = await ReadPop3MultilineAsync(connection);
+        CollectionAssert.Contains(clearCapabilities, "STLS");
+        CollectionAssert.Contains(clearCapabilities, "UIDL");
+        CollectionAssert.Contains(clearCapabilities, "TOP");
+        Assert.IsFalse(clearCapabilities.Any(line => line.StartsWith("SASL", StringComparison.Ordinal)));
+
+        await connection.WriteLineAsync($"USER {TestUsername}");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("-ERR [AUTH]", StringComparison.Ordinal));
+        await connection.WriteLineAsync("STLS");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("+OK ", StringComparison.Ordinal));
+        await connection.UpgradeToTlsAsync("email.mk8n.com");
+
+        await connection.WriteLineAsync("CAPA");
+        var secureCapabilities = await ReadPop3MultilineAsync(connection);
+        CollectionAssert.Contains(secureCapabilities, "SASL PLAIN");
+        Assert.IsFalse(secureCapabilities.Contains("STLS"));
+
+        await connection.WriteLineAsync($"USER {TestUsername}");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("+OK ", StringComparison.Ordinal));
+        await connection.WriteLineAsync($"PASS {TestPassword}");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("+OK maildrop has 2 messages", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("UIDL");
+        var uidls = await ReadPop3MultilineAsync(connection);
+        Assert.HasCount(3, uidls);
+        Assert.IsTrue(uidls[1].StartsWith("1 E", StringComparison.Ordinal));
+        Assert.IsTrue(uidls[2].StartsWith("2 E", StringComparison.Ordinal));
+        Assert.AreNotEqual(uidls[1].Split(' ')[1], uidls[2].Split(' ')[1]);
+
+        await connection.WriteLineAsync("TOP 1 1");
+        var top = await ReadPop3MultilineAsync(connection);
+        Assert.IsTrue(top[0].StartsWith("+OK ", StringComparison.Ordinal));
+        CollectionAssert.Contains(top, "Subject: POP first");
+        CollectionAssert.Contains(top, "..leading dot");
+        Assert.IsFalse(top.Contains("second body line"));
+
+        await connection.WriteLineAsync("RETR 1");
+        var retrieved = await ReadPop3MultilineAsync(connection);
+        Assert.IsTrue(retrieved[0].StartsWith("+OK ", StringComparison.Ordinal));
+        CollectionAssert.Contains(retrieved, "..leading dot");
+        CollectionAssert.Contains(retrieved, "second body line");
+
+        await connection.WriteLineAsync("DELE 1");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("+OK ", StringComparison.Ordinal));
+        await connection.WriteLineAsync("STAT");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("+OK 1 ", StringComparison.Ordinal));
+        await connection.WriteLineAsync("RSET");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("+OK 2 ", StringComparison.Ordinal));
+        await connection.WriteLineAsync("DELE 1");
+        await connection.ReadLineAsync();
+        await connection.WriteLineAsync("QUIT");
+        Assert.AreEqual("+OK goodbye (1 messages deleted)", await connection.ReadLineAsync());
+
+        Assert.AreEqual(1, await server.CountStoredEmailsAsync());
+        Assert.AreEqual(1, await server.CountExpungedUidsAsync());
+    }
+
+    [TestMethod]
+    [Timeout(15_000)]
+    public async Task Pop3ImplicitTlsSupportsSaslPlainAndRollsBackAnAbandonedDelete()
+    {
+        var port = ReservePort();
+        var environment = CreateEnvironment(pop3ImplicitTlsPort: port);
+        await using var server = await ServerFixture.StartPop3Async(environment, port);
+        await server.SeedPop3MessagesAsync();
+
+        await using (var connection = await ProtocolConnection.ConnectAsync(port))
+        {
+            await connection.UpgradeToTlsAsync("email.mk8n.com");
+            Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("+OK ", StringComparison.Ordinal));
+            var credentials = Convert.ToBase64String(
+                Encoding.UTF8.GetBytes($"\0{TestUsername}\0{TestPassword}"));
+            await connection.WriteLineAsync($"AUTH PLAIN {credentials}");
+            Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("+OK maildrop has 2 messages", StringComparison.Ordinal));
+            await connection.WriteLineAsync("DELE 2");
+            Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("+OK ", StringComparison.Ordinal));
+        }
+
+        Assert.AreEqual(2, await server.CountStoredEmailsAsync());
+        Assert.AreEqual(0, await server.CountExpungedUidsAsync());
     }
 
     [TestMethod]
@@ -2111,12 +2206,26 @@ public sealed class TransportSecurityTests
         return responses;
     }
 
+    private static async Task<List<string>> ReadPop3MultilineAsync(ProtocolConnection connection)
+    {
+        var response = new List<string>();
+        while (true)
+        {
+            var line = await connection.ReadLineAsync();
+            if (line == ".")
+                return response;
+            response.Add(line);
+        }
+    }
+
     private EnvironmentConfig CreateEnvironment(
         int? smtpPort = null,
         int? submissionPort = null,
         int? imapPort = null,
+        int? pop3Port = null,
         int? smtpImplicitTlsPort = null,
         int? imapImplicitTlsPort = null,
+        int? pop3ImplicitTlsPort = null,
         string? certificatePath = null,
         int connectionTimeoutSeconds = 10)
     {
@@ -2141,6 +2250,14 @@ public sealed class TransportSecurityTests
                 ImplicitTlsPort = imapImplicitTlsPort ?? ReservePort(),
                 EnableImap = imapPort.HasValue,
                 EnableImplicitTls = imapImplicitTlsPort.HasValue,
+            },
+            Pop3 = new Pop3Config
+            {
+                Port = pop3Port ?? ReservePort(),
+                ImplicitTlsPort = pop3ImplicitTlsPort ?? ReservePort(),
+                EnablePop3 = pop3Port.HasValue,
+                EnableImplicitTls = pop3ImplicitTlsPort.HasValue,
+                EnableStartTls = true,
             },
             Tls = new TlsConfig
             {
@@ -2272,6 +2389,21 @@ public sealed class TransportSecurityTests
             return fixture;
         }
 
+        public static async Task<ServerFixture> StartPop3Async(
+            EnvironmentConfig environment,
+            int port,
+            ILogger<Pop3ServerService>? logger = null)
+        {
+            var (services, emailService, mailQueue) = CreateServices();
+            var hostedService = new Pop3ServerService(
+                services.GetRequiredService<IServiceScopeFactory>(),
+                environment,
+                logger ?? NullLogger<Pop3ServerService>.Instance);
+            var fixture = new ServerFixture(services, hostedService, emailService, mailQueue);
+            await fixture.StartAsync(port);
+            return fixture;
+        }
+
         public async ValueTask DisposeAsync()
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -2302,6 +2434,13 @@ public sealed class TransportSecurityTests
             using var scope = services.CreateScope();
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
             return await database.Emails.CountAsync();
+        }
+
+        public async Task<int> CountExpungedUidsAsync()
+        {
+            using var scope = services.CreateScope();
+            var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            return await database.ExpungedUids.CountAsync();
         }
 
         private static (
@@ -2437,6 +2576,53 @@ public sealed class TransportSecurityTests
             database.Emails.AddRange(
                 CreateStoredEmail(folder.Id, uid: 1, new DateTime(2026, 2, 1, 0, 0, 0, DateTimeKind.Utc)),
                 CreateStoredEmail(folder.Id, uid: 2, new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)));
+            folder.NextUid = 3;
+            folder.HighestModSeq = 2;
+            await database.SaveChangesAsync();
+        }
+
+        public async Task SeedPop3MessagesAsync()
+        {
+            using var scope = services.CreateScope();
+            var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            var folder = await database.Folders.SingleAsync(item => item.Name == DefaultFolders.Inbox);
+            var firstRaw =
+                $"From: sender@example.net\r\nTo: {TestUsername}\r\nSubject: POP first\r\n\r\n" +
+                ".leading dot\r\nsecond body line\r\n";
+            var secondRaw =
+                $"From: sender@example.net\nTo: {TestUsername}\nSubject: POP second\n\n" +
+                "second message without canonical endings";
+            database.Emails.AddRange(
+                new EmailDB
+                {
+                    Id = Guid.CreateVersion7(),
+                    Sender = "sender@example.net",
+                    Recipient = TestUsername,
+                    Subject = "POP first",
+                    Body = ".leading dot\r\nsecond body line\r\n",
+                    RawHeaders = $"From: sender@example.net\r\nTo: {TestUsername}\r\nSubject: POP first",
+                    RawMessage = MailWireEncoding.Instance.GetBytes(firstRaw),
+                    SizeBytes = MailWireEncoding.Instance.GetByteCount(firstRaw),
+                    Uid = 1,
+                    ModSeq = 1,
+                    FolderId = folder.Id,
+                    ReceivedAt = DateTime.UtcNow.AddMinutes(-1),
+                },
+                new EmailDB
+                {
+                    Id = Guid.CreateVersion7(),
+                    Sender = "sender@example.net",
+                    Recipient = TestUsername,
+                    Subject = "POP second",
+                    Body = "second message without canonical endings",
+                    RawHeaders = $"From: sender@example.net\nTo: {TestUsername}\nSubject: POP second",
+                    RawMessage = MailWireEncoding.Instance.GetBytes(secondRaw),
+                    SizeBytes = MailWireEncoding.Instance.GetByteCount(secondRaw),
+                    Uid = 2,
+                    ModSeq = 2,
+                    FolderId = folder.Id,
+                    ReceivedAt = DateTime.UtcNow,
+                });
             folder.NextUid = 3;
             folder.HighestModSeq = 2;
             await database.SaveChangesAsync();

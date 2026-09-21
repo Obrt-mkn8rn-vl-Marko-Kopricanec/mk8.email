@@ -302,6 +302,32 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["consumed_at"] = "timestamptz",
         };
 
+    private static readonly IReadOnlyDictionary<string, string> RequiredMfaTotpCredentialColumns =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["id"] = "uuid",
+            ["user_id"] = "uuid",
+            ["name"] = "varchar",
+            ["encrypted_secret"] = "bytea",
+            ["encryption_nonce"] = "bytea",
+            ["encryption_tag"] = "bytea",
+            ["created_at"] = "timestamptz",
+            ["verified_at"] = "timestamptz",
+            ["last_used_at"] = "timestamptz",
+            ["last_accepted_time_step"] = "int8",
+            ["revoked_at"] = "timestamptz",
+        };
+
+    private static readonly IReadOnlyDictionary<string, string> RequiredMfaRecoveryCodeColumns =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["id"] = "uuid",
+            ["credential_id"] = "uuid",
+            ["code_hash"] = "bytea",
+            ["created_at"] = "timestamptz",
+            ["used_at"] = "timestamptz",
+        };
+
     public async Task EnsureAsync(CancellationToken cancellationToken = default)
     {
         if (!string.Equals(
@@ -654,6 +680,36 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                     CHECK (octet_length(code_hash) = 32)
             );
 
+            CREATE TABLE IF NOT EXISTS mfa_totp_credentials (
+                id uuid PRIMARY KEY,
+                user_id uuid NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+                name varchar(128) NOT NULL,
+                encrypted_secret bytea NOT NULL,
+                encryption_nonce bytea NOT NULL,
+                encryption_tag bytea NOT NULL,
+                created_at timestamp with time zone NOT NULL,
+                verified_at timestamp with time zone,
+                last_used_at timestamp with time zone,
+                last_accepted_time_step bigint,
+                revoked_at timestamp with time zone,
+                CONSTRAINT ck_mfa_totp_secret_length
+                    CHECK (octet_length(encrypted_secret) = 20),
+                CONSTRAINT ck_mfa_totp_nonce_length
+                    CHECK (octet_length(encryption_nonce) = 12),
+                CONSTRAINT ck_mfa_totp_tag_length
+                    CHECK (octet_length(encryption_tag) = 16)
+            );
+
+            CREATE TABLE IF NOT EXISTS mfa_recovery_codes (
+                id uuid PRIMARY KEY,
+                credential_id uuid NOT NULL REFERENCES mfa_totp_credentials(id) ON DELETE CASCADE,
+                code_hash bytea NOT NULL,
+                created_at timestamp with time zone NOT NULL,
+                used_at timestamp with time zone,
+                CONSTRAINT ck_mfa_recovery_code_hash_length
+                    CHECK (octet_length(code_hash) = 32)
+            );
+
             CREATE UNIQUE INDEX IF NOT EXISTS ix_emails_queue_delivery_id
                 ON emails (queue_delivery_id)
                 WHERE queue_delivery_id IS NOT NULL;
@@ -745,6 +801,8 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 ON oauth_tokens (expires_at);
             CREATE INDEX IF NOT EXISTS ix_oauth_authorization_codes_expires_at
                 ON oauth_authorization_codes (expires_at);
+            CREATE INDEX IF NOT EXISTS ix_mfa_recovery_codes_credential_used
+                ON mfa_recovery_codes (credential_id, used_at);
             """,
             cancellationToken);
 
@@ -827,6 +885,14 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
         await ValidateTableAsync(
             "oauth_authorization_codes",
             RequiredOAuthAuthorizationCodeColumns,
+            cancellationToken);
+        await ValidateTableAsync(
+            "mfa_totp_credentials",
+            RequiredMfaTotpCredentialColumns,
+            cancellationToken);
+        await ValidateTableAsync(
+            "mfa_recovery_codes",
+            RequiredMfaRecoveryCodeColumns,
             cancellationToken);
     }
 

@@ -67,6 +67,12 @@
     "RefreshTokenDays": 90,
     "AuthorizationCodeMinutes": 5
   },
+  "Mfa": {
+    "EnableTotp": true,
+    "Issuer": "mk8.email",
+    "EncryptionKeyFile": "/etc/mk8email/secrets/mfa_encryption_key",
+    "RecoveryCodeCount": 10
+  },
   "Tls": {
     "CertificatePath": "/etc/mk8email/tls/fullchain.pem",
     "CertificateKeyPath": "/etc/mk8email/tls/privkey.pem"

@@ -190,6 +190,42 @@ public sealed class OAuthEndpointTests
         Assert.AreEqual(HttpStatusCode.BadRequest, missingCsrf.StatusCode);
     }
 
+    [TestMethod]
+    [Timeout(15_000)]
+    public async Task AuthorizationEndpointRequiresEnrolledMfaAndAcceptsRecoveryCode()
+    {
+        await using var fixture = await OAuthFixture.CreateAsync();
+        var recoveryCode = await fixture.EnrollMfaAsync();
+        var verifier = new string('m', 64);
+        var values = new Dictionary<string, string>
+        {
+            ["response_type"] = "code",
+            ["client_id"] = "thunderbird",
+            ["redirect_uri"] = "http://127.0.0.1:49152/",
+            ["scope"] = "offline_access imap",
+            ["state"] = "mfa-state-123456789",
+            ["code_challenge"] = OAuthProtocolValues.CreatePkceChallenge(verifier),
+            ["code_challenge_method"] = "S256",
+            ["login_hint"] = Username,
+        };
+        var query = string.Join('&', values.Select(value =>
+            $"{WebUtility.UrlEncode(value.Key)}={WebUtility.UrlEncode(value.Value)}"));
+        using var begin = await fixture.Client.GetAsync($"/oauth/authorize?{query}");
+        var csrf = GetCookie(begin, "__Host-mk8oauth");
+        values["csrf"] = csrf;
+        values["username"] = Username;
+        values["password"] = Password;
+        values["device_name"] = "Thunderbird MFA test";
+
+        using var missingCode = await SendAuthorizationAsync(fixture.Client, values, csrf);
+        Assert.AreEqual(HttpStatusCode.Unauthorized, missingCode.StatusCode);
+
+        values["mfa_code"] = recoveryCode;
+        using var authorized = await SendAuthorizationAsync(fixture.Client, values, csrf);
+        Assert.AreEqual(HttpStatusCode.Redirect, authorized.StatusCode);
+        Assert.IsTrue(authorized.Headers.Location?.Query.Contains("code=", StringComparison.Ordinal));
+    }
+
     private static async Task<TokenResponse> ExchangeAsync(
         HttpClient client,
         IReadOnlyDictionary<string, string> values)
@@ -211,6 +247,19 @@ public sealed class OAuthEndpointTests
         var header = response.Headers.GetValues("Set-Cookie")
             .Single(value => value.StartsWith(name + "=", StringComparison.Ordinal));
         return header[(name.Length + 1)..].Split(';', 2)[0];
+    }
+
+    private static Task<HttpResponseMessage> SendAuthorizationAsync(
+        HttpClient client,
+        IReadOnlyDictionary<string, string> values,
+        string csrf)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "/oauth/authorize")
+        {
+            Content = new FormUrlEncodedContent(values),
+        };
+        request.Headers.TryAddWithoutValidation("Cookie", $"__Host-mk8oauth={csrf}");
+        return client.SendAsync(request);
     }
 
     private static Dictionary<string, string> ParseQuery(string query) =>
@@ -253,6 +302,13 @@ public sealed class OAuthEndpointTests
                     AccessTokenMinutes = 10,
                     RefreshTokenDays = 90,
                     AuthorizationCodeMinutes = 5,
+                },
+                Mfa = new MfaConfig
+                {
+                    EnableTotp = true,
+                    Issuer = "mk8.email test",
+                    EncryptionKey = Convert.ToBase64String(Enumerable.Repeat((byte)0x5a, 32).ToArray()),
+                    RecoveryCodeCount = 5,
                 },
             };
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions
@@ -328,6 +384,20 @@ public sealed class OAuthEndpointTests
                 Timeout = TimeSpan.FromSeconds(10),
             };
             return new OAuthFixture(application, client);
+        }
+
+        public async Task<string> EnrollMfaAsync()
+        {
+            using var scope = Services.CreateScope();
+            var service = scope.ServiceProvider.GetRequiredService<IMfaService>();
+            var enrollment = await service.BeginTotpEnrollmentAsync(Username, "Test authenticator");
+            Assert.IsTrue(enrollment.Succeeded);
+            Assert.IsTrue(TotpMfa.TryDecodeSecret(enrollment.Secret!, out var secret));
+            var confirmation = await service.ConfirmTotpEnrollmentAsync(
+                Username,
+                TotpMfa.ComputeCode(secret, DateTime.UtcNow));
+            Assert.IsTrue(confirmation.Succeeded);
+            return confirmation.RecoveryCodes![0];
         }
 
         public async ValueTask DisposeAsync()

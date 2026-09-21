@@ -84,6 +84,7 @@ public static class OAuthEndpointRouteBuilderExtensions
     private static async Task CompleteAuthorizationAsync(
         HttpContext context,
         IMailAuthenticator authenticator,
+        IMfaService mfaService,
         IOAuthAuthorizationService authorizationService,
         EnvironmentConfig environment,
         CancellationToken cancellationToken)
@@ -119,15 +120,17 @@ public static class OAuthEndpointRouteBuilderExtensions
 
         var username = form["username"].ToString();
         var password = form["password"].ToString();
+        var mfaCode = form["mfa_code"].ToString();
         var deviceName = form["device_name"].ToString().Trim();
         if (username.Length > 320 || password.Length > 1024
+            || mfaCode.Length > 128
             || deviceName.Length is < 1 or > 128)
         {
             await WriteLoginPageAsync(
                 context,
                 request!,
                 csrf,
-                "The email address, password, or device name is not valid.",
+                "The email address, password, verification code, or device name is not valid.",
                 cancellationToken,
                 StatusCodes.Status400BadRequest);
             return;
@@ -144,6 +147,22 @@ public static class OAuthEndpointRouteBuilderExtensions
                 request!,
                 csrf,
                 "The email address or password is not valid.",
+                cancellationToken,
+                StatusCodes.Status401Unauthorized);
+            return;
+        }
+
+        var mfaResult = await mfaService.VerifyForAuthenticationAsync(
+            user.Id,
+            mfaCode,
+            cancellationToken);
+        if (mfaResult == MfaVerificationResult.Failed)
+        {
+            await WriteLoginPageAsync(
+                context,
+                request!,
+                csrf,
+                "The email address, password, or verification code is not valid.",
                 cancellationToken,
                 StatusCodes.Status401Unauthorized);
             return;
@@ -383,6 +402,7 @@ public static class OAuthEndpointRouteBuilderExtensions
             {Hidden("csrf", csrf)}
             <p><label>Email address <input name="username" type="email" autocomplete="username" value="{encode(request.LoginHint)}" maxlength="320" required></label></p>
             <p><label>Password <input name="password" type="password" autocomplete="current-password" maxlength="1024" required></label></p>
+            <p><label>Authenticator or recovery code (if enabled) <input name="mfa_code" autocomplete="one-time-code" maxlength="128"></label></p>
             <p><label>Device name <input name="device_name" value="Thunderbird" maxlength="128" required></label></p>
             <button type="submit">Authorize</button>
             </form>

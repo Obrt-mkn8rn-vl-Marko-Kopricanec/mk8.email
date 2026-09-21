@@ -189,6 +189,78 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
             return revoked ? 0 : 1;
         }
 
+        if (arguments.Length == 3 && arguments[0] == "--enroll-totp")
+        {
+            using var host = BuildHost(arguments, environmentConfig, includeMailServers: false);
+            using var scope = host.Services.CreateScope();
+            var result = await scope.ServiceProvider.GetRequiredService<IMfaService>()
+                .BeginTotpEnrollmentAsync(arguments[1], arguments[2]);
+            Console.WriteLine(result.Message);
+            if (!result.Succeeded)
+                return 1;
+            Console.WriteLine($"Secret: {result.Secret}");
+            Console.WriteLine($"URI: {result.ProvisioningUri}");
+            return 0;
+        }
+
+        if (arguments.Length == 3 && arguments[0] == "--confirm-totp")
+        {
+            using var host = BuildHost(arguments, environmentConfig, includeMailServers: false);
+            using var scope = host.Services.CreateScope();
+            var result = await scope.ServiceProvider.GetRequiredService<IMfaService>()
+                .ConfirmTotpEnrollmentAsync(arguments[1], arguments[2]);
+            Console.WriteLine(result.Message);
+            if (!result.Succeeded)
+                return 1;
+            foreach (var recoveryCode in result.RecoveryCodes ?? [])
+                Console.WriteLine($"Recovery: {recoveryCode}");
+            return 0;
+        }
+
+        if (arguments.Length == 2 && arguments[0] == "--totp-status")
+        {
+            using var host = BuildHost(arguments, environmentConfig, includeMailServers: false);
+            using var scope = host.Services.CreateScope();
+            var status = await scope.ServiceProvider.GetRequiredService<IMfaService>()
+                .GetStatusAsync(arguments[1]);
+            Console.WriteLine(status.IsEnrolled ? "TOTP MFA is enabled." : "TOTP MFA is not enabled.");
+            if (status.Name is not null)
+            {
+                Console.WriteLine($"Name: {status.Name}");
+                Console.WriteLine($"Created: {status.CreatedAt:O}");
+                Console.WriteLine($"Verified: {status.VerifiedAt:O}");
+                Console.WriteLine($"Last used: {status.LastUsedAt:O}");
+                Console.WriteLine($"Recovery codes: {status.RemainingRecoveryCodes}");
+            }
+            return status.IsEnrolled ? 0 : 1;
+        }
+
+        if (arguments.Length == 2 && arguments[0] == "--regenerate-recovery-codes")
+        {
+            using var host = BuildHost(arguments, environmentConfig, includeMailServers: false);
+            using var scope = host.Services.CreateScope();
+            var result = await scope.ServiceProvider.GetRequiredService<IMfaService>()
+                .RegenerateRecoveryCodesAsync(arguments[1]);
+            Console.WriteLine(result.Message);
+            if (!result.Succeeded)
+                return 1;
+            foreach (var recoveryCode in result.RecoveryCodes ?? [])
+                Console.WriteLine($"Recovery: {recoveryCode}");
+            return 0;
+        }
+
+        if (arguments.Length == 2 && arguments[0] == "--disable-totp")
+        {
+            using var host = BuildHost(arguments, environmentConfig, includeMailServers: false);
+            using var scope = host.Services.CreateScope();
+            var disabled = await scope.ServiceProvider.GetRequiredService<IMfaService>()
+                .DisableTotpAsync(arguments[1]);
+            Console.WriteLine(disabled
+                ? "TOTP MFA is disabled and OAuth device grants are revoked."
+                : "The account does not have a TOTP enrollment.");
+            return disabled ? 0 : 1;
+        }
+
         using var protocolHost = BuildProtocolHost(arguments, environmentConfig, isDevelopment);
         using (var scope = protocolHost.Services.CreateScope())
             await scope.ServiceProvider.GetRequiredService<ISeederService>().SeedAsync();
@@ -213,6 +285,11 @@ static bool IsSupportedCommand(string[] arguments) =>
     || arguments.Length == 3 && arguments[0] == "--create-app-password"
     || arguments.Length == 2 && arguments[0] == "--list-app-passwords"
     || arguments.Length == 3 && arguments[0] == "--revoke-app-password"
+    || arguments.Length == 3 && arguments[0] == "--enroll-totp"
+    || arguments.Length == 3 && arguments[0] == "--confirm-totp"
+    || arguments.Length == 2 && arguments[0] == "--totp-status"
+    || arguments.Length == 2 && arguments[0] == "--regenerate-recovery-codes"
+    || arguments.Length == 2 && arguments[0] == "--disable-totp"
     || arguments.SequenceEqual(["--serve"]);
 
 static void WriteUsage()

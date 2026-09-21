@@ -151,6 +151,7 @@ run_unit "mk8-build-$short_commit-$$" yes /bin/sh -eu -c '
     test ! -w "$stable_source"
     test ! -w "$run_root/source"
     test ! -r /etc/mk8email/secrets/database_password
+    test ! -r /etc/mk8email/secrets/mfa_encryption_key
     test ! -r /etc/ssh/ssh_host_ed25519_key
     test ! -w /opt/mk8email-build/sdk
     "$sdk" build mk8.email.slnx --configuration Release --no-restore \

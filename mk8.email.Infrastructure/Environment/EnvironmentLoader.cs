@@ -49,6 +49,10 @@ public static class EnvironmentLoader
             config.Database.Password,
             config.Database.PasswordFile,
             "database password");
+        config.Mfa.EncryptionKey = ResolveSecret(
+            config.Mfa.EncryptionKey,
+            config.Mfa.EncryptionKeyFile,
+            "MFA encryption key");
         var errors = config.Validate(isDevelopment);
         if (errors.Count > 0)
         {
@@ -68,7 +72,7 @@ public static class EnvironmentLoader
             throw new InvalidOperationException($"Configure the {name} as a value or a file, but not both.");
 
         if (!hasFilePath)
-            return directValue;
+        return directValue ?? string.Empty;
 
         var fullPath = Path.GetFullPath(filePath!);
         if (!File.Exists(fullPath))

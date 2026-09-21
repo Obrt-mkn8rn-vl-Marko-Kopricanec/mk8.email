@@ -36,6 +36,8 @@ public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContex
     public DbSet<OAuthGrantDB> OAuthGrants => Set<OAuthGrantDB>();
     public DbSet<OAuthTokenDB> OAuthTokens => Set<OAuthTokenDB>();
     public DbSet<OAuthAuthorizationCodeDB> OAuthAuthorizationCodes => Set<OAuthAuthorizationCodeDB>();
+    public DbSet<MfaTotpCredentialDB> MfaTotpCredentials => Set<MfaTotpCredentialDB>();
+    public DbSet<MfaRecoveryCodeDB> MfaRecoveryCodes => Set<MfaRecoveryCodeDB>();
 
     private static readonly Guid GlobalConfigSeedId = Guid.Parse("00000000-0000-0000-0000-000000000001");
     private static readonly Guid GlobalLimitsSeedId = Guid.Parse("00000000-0000-0000-0000-000000000002");
@@ -217,6 +219,26 @@ public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContex
             entity.HasOne(code => code.User)
                 .WithMany()
                 .HasForeignKey(code => code.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<MfaTotpCredentialDB>(entity =>
+        {
+            entity.HasIndex(credential => credential.UserId).IsUnique();
+
+            entity.HasOne(credential => credential.User)
+                .WithMany()
+                .HasForeignKey(credential => credential.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<MfaRecoveryCodeDB>(entity =>
+        {
+            entity.HasIndex(code => new { code.CredentialId, code.UsedAt });
+
+            entity.HasOne(code => code.Credential)
+                .WithMany(credential => credential.RecoveryCodes)
+                .HasForeignKey(code => code.CredentialId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 

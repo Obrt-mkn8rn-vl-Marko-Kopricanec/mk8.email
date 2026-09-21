@@ -16,6 +16,7 @@ public sealed class EnvironmentConfig
     public JmapConfig Jmap { get; init; } = new();
     public DavConfig Dav { get; init; } = new();
     public OAuthConfig OAuth { get; init; } = new();
+    public MfaConfig Mfa { get; init; } = new();
     public TlsConfig Tls { get; init; } = new();
     public DkimConfig Dkim { get; init; } = new();
     public SecurityConfig Security { get; init; } = new();
@@ -169,6 +170,27 @@ public sealed class EnvironmentConfig
             {
                 errors.Add("OAuth.PublicBaseUrl must be an absolute HTTPS URL without a query or fragment.");
             }
+        }
+
+        if (Mfa.EnableTotp)
+        {
+            if (!OAuth.EnableOAuth)
+                errors.Add("Mfa.EnableTotp requires OAuth.EnableOAuth.");
+            if (string.IsNullOrEmpty(Mfa.Issuer)
+                || Mfa.Issuer.Length > 128
+                || Mfa.Issuer.Any(char.IsControl))
+                errors.Add("Mfa.Issuer must contain from 1 through 128 non-control characters.");
+            try
+            {
+                if (Convert.FromBase64String(Mfa.EncryptionKey ?? string.Empty).Length != 32)
+                    errors.Add("Mfa.EncryptionKey must be a base64-encoded 256-bit key.");
+            }
+            catch (Exception exception) when (exception is FormatException or ArgumentNullException)
+            {
+                errors.Add("Mfa.EncryptionKey must be a base64-encoded 256-bit key.");
+            }
+            if (Mfa.RecoveryCodeCount is < 5 or > 20)
+                errors.Add("Mfa.RecoveryCodeCount must be from 5 through 20.");
         }
 
         var needsCertificate = Smtp.EnableStartTls
@@ -428,6 +450,15 @@ public sealed class OAuthConfig
             : PublicBaseUrl;
         return new Uri(value.TrimEnd('/') + "/", UriKind.Absolute);
     }
+}
+
+public sealed class MfaConfig
+{
+    public bool EnableTotp { get; init; }
+    public string Issuer { get; init; } = "mk8.email";
+    public string EncryptionKey { get; set; } = string.Empty;
+    public string? EncryptionKeyFile { get; init; }
+    public int RecoveryCodeCount { get; init; } = 10;
 }
 
 public sealed class TlsConfig

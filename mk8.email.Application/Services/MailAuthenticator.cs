@@ -59,6 +59,10 @@ public sealed class MailAuthenticator(EmailDbContext database) : IMailAuthentica
                 user.Id,
                 user.Username,
                 user.PasswordHash,
+                HasActiveMfa = database.MfaTotpCredentials.Any(credential =>
+                    credential.UserId == user.Id
+                    && credential.VerifiedAt != null
+                    && credential.RevokedAt == null),
             })
             .SingleOrDefaultAsync(cancellationToken);
 
@@ -67,7 +71,7 @@ public sealed class MailAuthenticator(EmailDbContext database) : IMailAuthentica
             candidate?.PasswordHash ?? DummyPasswordHash);
         if (candidate is null)
             return null;
-        if (accountPasswordMatches)
+        if (accountPasswordMatches && (!allowApplicationPassword || !candidate.HasActiveMfa))
             return new AuthenticatedMailUser(candidate.Id, candidate.Username);
 
         if (!allowApplicationPassword

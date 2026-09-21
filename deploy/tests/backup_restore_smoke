@@ -100,6 +100,8 @@ tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
     | grep -Fx 'etc/mk8email/domains/mk8n.com/dkim-selector' >/dev/null
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
+    | grep -Fx 'etc/mk8email/secrets/mfa_encryption_key' >/dev/null
+tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
     | grep -E '^etc/mk8email/dkim/mk8n[.]com/[a-z0-9]+[.]private[.]pem$' >/dev/null
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
     | grep -Fx 'etc/mk8email/domains/mk8n.com/tls/fullchain.pem' >/dev/null

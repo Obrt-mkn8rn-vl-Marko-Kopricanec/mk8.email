@@ -8,10 +8,16 @@ fi
 
 asset_root=$1
 primary_lineage=
+mfa_key_work=
 cleanup() {
     if [ -n "$primary_lineage" ]; then
         case "$primary_lineage" in
             /run/mk8-primary-lineage.*) rm -rf -- "$primary_lineage" ;;
+        esac
+    fi
+    if [ -n "$mfa_key_work" ]; then
+        case "$mfa_key_work" in
+            /run/mk8-mfa-key.*) rm -f -- "$mfa_key_work" ;;
         esac
     fi
 }
@@ -25,7 +31,7 @@ fi
 sh "$asset_root/deploy/scripts/verify-host-prerequisites" \
     "$asset_root/deploy/prerequisites"
 
-for command_name in rspamadm clamd freshclam valkey-server nginx nft fail2ban-client psql s-nail; do
+for command_name in rspamadm clamd freshclam valkey-server nginx nft fail2ban-client psql s-nail openssl; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         printf '%s\n' "A required mail command is missing: $command_name" >&2
         exit 1
@@ -89,6 +95,26 @@ usermod --append --groups dkimkeys,clamav _rspamd
 
 install -d -o root -g mk8email -m 0751 /etc/mk8email
 install -d -o root -g mk8email -m 0750 /etc/mk8email/secrets
+mfa_key=/etc/mk8email/secrets/mfa_encryption_key
+if [ -L "$mfa_key" ] || { [ -e "$mfa_key" ] && [ ! -f "$mfa_key" ]; }; then
+    printf '%s\n' "The MFA encryption key path is unsafe." >&2
+    exit 1
+fi
+if [ ! -e "$mfa_key" ]; then
+    mfa_key_work=$(mktemp /run/mk8-mfa-key.XXXXXX)
+    openssl rand -base64 32 > "$mfa_key_work"
+    install -o root -g mk8email -m 0640 "$mfa_key_work" "$mfa_key"
+    rm -f -- "$mfa_key_work"
+    mfa_key_work=
+fi
+[ "$(stat -c '%U:%G %a %h' "$mfa_key")" = "root:mk8email 640 1" ] || {
+    printf '%s\n' "The MFA encryption key has unsafe metadata." >&2
+    exit 1
+}
+[ "$(openssl base64 -d -A -in "$mfa_key" | wc -c | tr -d ' ')" -eq 32 ] || {
+    printf '%s\n' "The MFA encryption key is not a base64-encoded 256-bit key." >&2
+    exit 1
+}
 install -o root -g mk8email -m 0640 "$asset_root/deploy/native/mk8email.config.json" /etc/mk8email/mk8email.config.json
 install -o root -g root -m 0644 "$asset_root/deploy/mk8email-public-ipv4" /etc/mk8email/public-ipv4
 

@@ -161,6 +161,22 @@ public sealed class EnvironmentConfigTests
     }
 
     [TestMethod]
+    public void TotpMfaRequiresOAuthAndAValidEncryptionKey()
+    {
+        var errors = CreateValidConfiguration(
+            mfaEnable: true,
+            mfaEncryptionKey: "not-base64",
+            mfaIssuer: "",
+            mfaRecoveryCodeCount: 4).Validate();
+
+        var joined = string.Join('|', errors);
+        StringAssert.Contains(joined, "Mfa.EnableTotp requires OAuth.EnableOAuth.");
+        StringAssert.Contains(joined, "Mfa.Issuer must contain from 1 through 128 non-control characters.");
+        StringAssert.Contains(joined, "Mfa.EncryptionKey must be a base64-encoded 256-bit key.");
+        StringAssert.Contains(joined, "Mfa.RecoveryCodeCount must be from 5 through 20.");
+    }
+
+    [TestMethod]
     public void LoaderReadsPasswordsFromSecretFiles()
     {
         var databasePasswordPath = WriteFile("database-password", "database-secret-value");
@@ -172,6 +188,24 @@ public sealed class EnvironmentConfigTests
         var loaded = EnvironmentLoader.LoadFromFile(configurationPath);
 
         Assert.AreEqual("database-secret-value", loaded.Database.Password);
+    }
+
+    [TestMethod]
+    public void LoaderReadsMfaEncryptionKeyFromSecretFile()
+    {
+        var encodedKey = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+        var keyPath = WriteFile("mfa-encryption-key", encodedKey);
+        var configuration = CreateValidConfiguration(
+            oauthEnable: true,
+            mfaEnable: true,
+            mfaEncryptionKeyFile: keyPath);
+        var configurationPath = WriteFile(
+            "mk8email-mfa.config.json",
+            JsonSerializer.Serialize(configuration));
+
+        var loaded = EnvironmentLoader.LoadFromFile(configurationPath);
+
+        Assert.AreEqual(encodedKey, loaded.Mfa.EncryptionKey);
     }
 
     [TestMethod]
@@ -208,7 +242,12 @@ public sealed class EnvironmentConfigTests
         bool oauthEnable = false,
         string? oauthPublicBaseUrl = null,
         string oauthClientId = "thunderbird",
-        int oauthAuthorizationCodeMinutes = 5)
+        int oauthAuthorizationCodeMinutes = 5,
+        bool mfaEnable = false,
+        string mfaEncryptionKey = "",
+        string? mfaEncryptionKeyFile = null,
+        string mfaIssuer = "mk8.email",
+        int mfaRecoveryCodeCount = 10)
     {
         return new EnvironmentConfig
         {
@@ -272,6 +311,14 @@ public sealed class EnvironmentConfigTests
                 AccessTokenMinutes = oauthAccessTokenMinutes,
                 RefreshTokenDays = oauthRefreshTokenDays,
                 AuthorizationCodeMinutes = oauthAuthorizationCodeMinutes,
+            },
+            Mfa = new MfaConfig
+            {
+                EnableTotp = mfaEnable,
+                EncryptionKey = mfaEncryptionKey,
+                EncryptionKeyFile = mfaEncryptionKeyFile,
+                Issuer = mfaIssuer,
+                RecoveryCodeCount = mfaRecoveryCodeCount,
             },
             Tls = new TlsConfig
             {

@@ -38,6 +38,7 @@ runuser -u mk8build -- git --git-dir="$repository" \
     show-ref --verify --quiet refs/remotes/origin/main
 
 runuser -u mk8build -- test ! -r /etc/mk8email/secrets/database_password
+runuser -u mk8build -- test ! -r /etc/mk8email/secrets/mfa_encryption_key
 runuser -u mk8build -- test ! -r /etc/ssh/ssh_host_ed25519_key
 runuser -u mk8build -- test ! -w /opt/mk8email-build/sdk
 

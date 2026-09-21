@@ -755,7 +755,9 @@ public sealed class TransportSecurityTests
         StringAssert.Contains(capability, "LIST-EXTENDED LIST-STATUS");
         StringAssert.Contains(capability, "ID ENABLE MOVE UNSELECT QUOTA CONDSTORE QRESYNC ESEARCH");
         StringAssert.Contains(capability, "SEARCHRES UTF8=ACCEPT");
-        StringAssert.Contains(capability, "SORT MULTIAPPEND STATUS=SIZE COMPRESS=DEFLATE APPENDLIMIT=65536");
+        StringAssert.Contains(
+            capability,
+            "SORT THREAD=ORDEREDSUBJECT MULTIAPPEND STATUS=SIZE COMPRESS=DEFLATE APPENDLIMIT=65536");
         StringAssert.Contains(capability, "LOGINDISABLED");
         StringAssert.Contains(capability, "STARTTLS");
         Assert.IsFalse(capability.Contains("AUTH=PLAIN", StringComparison.Ordinal));
@@ -1935,6 +1937,70 @@ public sealed class TransportSecurityTests
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a18 OK", StringComparison.Ordinal));
 
         async Task AssertSortAsync(string command, string expected)
+        {
+            await connection.WriteLineAsync(command);
+            Assert.AreEqual(expected, await connection.ReadLineAsync());
+            var tag = command[..command.IndexOf(' ')];
+            Assert.IsTrue((await connection.ReadLineAsync()).StartsWith(
+                $"{tag} OK",
+                StringComparison.Ordinal));
+        }
+    }
+
+    [TestMethod]
+    [Timeout(20_000)]
+    public async Task ImapOrderedSubjectThreadingUsesBaseSubjectSentDateAndSiblingBranches()
+    {
+        var port = ReservePort();
+        var environment = CreateEnvironment(imapPort: port);
+        await using var server = await ServerFixture.StartImapAsync(environment, port);
+        await server.SeedInboxMessagesForSortAsync();
+        await using var connection = await ProtocolConnection.ConnectAsync(port);
+
+        await connection.ReadLineAsync();
+        await connection.WriteLineAsync("a1 STARTTLS");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a1 OK", StringComparison.Ordinal));
+        await connection.UpgradeToTlsAsync("email.mk8n.com");
+        await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a2 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a3 SELECT INBOX");
+        await ReadUntilTaggedResponseAsync(connection, "a3");
+
+        await AssertThreadAsync(
+            "a4 THREAD ORDEREDSUBJECT US-ASCII ALL",
+            "* THREAD (3)(4)(1 (5)(2))");
+        await AssertThreadAsync(
+            "a5 UID THREAD ORDEREDSUBJECT \"US-ASCII\" ALL",
+            "* THREAD (30)(40)(10 (50)(20))");
+        await AssertThreadAsync(
+            "a6 UID THREAD ORDEREDSUBJECT UTF-8 SUBJECT topic",
+            "* THREAD (10 (50)(20))");
+        await connection.WriteUtf8LineAsync(
+            "a7 UID THREAD ORDEREDSUBJECT UTF-8 SUBJECT \"Äpfel\"");
+        Assert.AreEqual("* THREAD (30)", await connection.ReadLineAsync());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a7 OK", StringComparison.Ordinal));
+        await AssertThreadAsync(
+            "a8 UID THREAD ORDEREDSUBJECT US-ASCII MODSEQ 4",
+            "* THREAD (40)(50)");
+        await AssertThreadAsync(
+            "a8b UID THREAD ORDEREDSUBJECT US-ASCII UID 10,20",
+            "* THREAD (10 20)");
+        await AssertThreadAsync(
+            "a9 UID THREAD ORDEREDSUBJECT US-ASCII SUBJECT absent-marker",
+            "* THREAD");
+
+        await connection.WriteLineAsync("a10 UID THREAD ORDEREDSUBJECT KOI8-R ALL");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith(
+            "a10 NO [BADCHARSET (US-ASCII UTF-8)]",
+            StringComparison.Ordinal));
+        await connection.WriteLineAsync("a11 UID THREAD UNKNOWN US-ASCII ALL");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a11 BAD", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a12 UID THREAD ORDEREDSUBJECT US-ASCII");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a12 BAD", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a13 NOOP");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a13 OK", StringComparison.Ordinal));
+
+        async Task AssertThreadAsync(string command, string expected)
         {
             await connection.WriteLineAsync(command);
             Assert.AreEqual(expected, await connection.ReadLineAsync());

@@ -832,7 +832,8 @@ ILogger<ImapServerService> logger) : BackgroundService
         var caps =
             "IMAP4rev1 LITERAL+ IDLE NAMESPACE SPECIAL-USE UIDPLUS LIST-EXTENDED LIST-STATUS " +
             "ID ENABLE MOVE UNSELECT QUOTA CONDSTORE QRESYNC ESEARCH SEARCHRES UTF8=ACCEPT " +
-            $"SORT MULTIAPPEND STATUS=SIZE COMPRESS=DEFLATE APPENDLIMIT={config.MaxMessageSizeBytes}";
+            $"SORT THREAD=ORDEREDSUBJECT MULTIAPPEND STATUS=SIZE COMPRESS=DEFLATE " +
+            $"APPENDLIMIT={config.MaxMessageSizeBytes}";
         if (session.IsSecure)
         {
             caps += " AUTH=PLAIN SASL-IR";
@@ -5315,28 +5316,26 @@ ILogger<ImapServerService> logger) : BackgroundService
     private async Task HandleThreadCoreAsync(
         StreamWriter writer, string tag, string args, ImapSession session, bool useUid, CancellationToken ct)
     {
-        var spaceIdx = args.IndexOf(' ');
-        if (spaceIdx <= 0)
+        if (!TryParseThreadArguments(
+                args,
+                out var algorithm,
+                out var charset,
+                out var searchCriteria))
         {
             await writer.WriteLineAsync($"{tag} BAD Syntax error");
             return;
         }
-
-        var algorithm = args[..spaceIdx].ToUpperInvariant();
-        var rest = args[(spaceIdx + 1)..].Trim();
-
-        var charsetSpaceIdx = rest.IndexOf(' ');
-        if (charsetSpaceIdx <= 0 || string.IsNullOrWhiteSpace(rest[(charsetSpaceIdx + 1)..]))
-        {
-            await writer.WriteLineAsync($"{tag} BAD Syntax error");
-            return;
-        }
-
-        var searchCriteria = $"CHARSET {rest[..charsetSpaceIdx]} {rest[(charsetSpaceIdx + 1)..].Trim()}";
 
         if (algorithm is not "REFERENCES" and not "ORDEREDSUBJECT")
         {
             await writer.WriteLineAsync($"{tag} BAD Unknown threading algorithm");
+            return;
+        }
+        if (!charset.Equals("US-ASCII", StringComparison.OrdinalIgnoreCase)
+            && !charset.Equals("UTF-8", StringComparison.OrdinalIgnoreCase))
+        {
+            await writer.WriteLineAsync(
+                $"{tag} NO [BADCHARSET (US-ASCII UTF-8)] Unsupported thread charset");
             return;
         }
 
@@ -5354,7 +5353,8 @@ ILogger<ImapServerService> logger) : BackgroundService
             searchCriteria,
             session.SavedSearchUids,
             session.Utf8Enabled,
-            ct);
+            ct,
+            charset);
         if (searchResult.FailureResponse is not null)
         {
             await writer.WriteLineAsync($"{tag} {searchResult.FailureResponse}");
@@ -5362,10 +5362,44 @@ ILogger<ImapServerService> logger) : BackgroundService
         }
 
         var matchedIds = searchResult.Matches.Select(candidate => candidate.Id).ToArray();
+
+        if (algorithm == "ORDEREDSUBJECT")
+        {
+            var sequenceById = searchResult.Matches.ToDictionary(
+                candidate => candidate.Id,
+                candidate => candidate.SequenceNumber);
+            var storedMessages = await folderQuery
+                .Where(email => matchedIds.Contains(email.Id))
+                .Select(email => new SortStoredMessage(
+                    email.Id,
+                    email.Uid,
+                    0,
+                    email.ReceivedAt,
+                    email.SizeBytes,
+                    email.Sender,
+                    email.Recipient,
+                    email.Cc,
+                    email.Subject,
+                    email.RawHeaders))
+                .ToListAsync(ct);
+            if (transaction is not null)
+                await transaction.CommitAsync(ct);
+
+            var messages = storedMessages
+                .Select(message => CreateSortMessage(
+                    message with { SequenceNumber = sequenceById[message.Id] }))
+                .ToList();
+            var threads = BuildOrderedSubjectThreads(messages, useUid);
+            var responseSuffix = threads.Length == 0 ? string.Empty : $" {threads}";
+            await writer.WriteLineAsync($"* THREAD{responseSuffix}");
+            await writer.WriteLineAsync(
+                $"{tag} OK {(useUid ? "UID THREAD" : "THREAD")} completed");
+            return;
+        }
+
         var identifierById = searchResult.Matches.ToDictionary(
             candidate => candidate.Id,
             candidate => useUid ? candidate.Uid : candidate.SequenceNumber);
-
         var emails = await folderQuery
             .Where(email => matchedIds.Contains(email.Id))
             .OrderBy(e => e.ReceivedAt)
@@ -5374,76 +5408,47 @@ ILogger<ImapServerService> logger) : BackgroundService
         if (transaction is not null)
             await transaction.CommitAsync(ct);
 
-        if (algorithm == "REFERENCES")
+        var messageIdToIndex = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < emails.Count; i++)
         {
-            var messageIdToIndex = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            for (var i = 0; i < emails.Count; i++)
-            {
-                if (!string.IsNullOrEmpty(emails[i].MessageId))
-                    messageIdToIndex.TryAdd(emails[i].MessageId!, i);
-            }
-
-            var parentOf = new int[emails.Count];
-            for (var i = 0; i < parentOf.Length; i++) parentOf[i] = -1;
-
-            for (var i = 0; i < emails.Count; i++)
-            {
-                if (!string.IsNullOrEmpty(emails[i].InReplyTo) &&
-                    messageIdToIndex.TryGetValue(emails[i].InReplyTo!, out var parentIdx))
-                {
-                    parentOf[i] = parentIdx;
-                }
-            }
-
-            var roots = new List<int>();
-            for (var i = 0; i < parentOf.Length; i++)
-            {
-                if (parentOf[i] < 0) roots.Add(i);
-            }
-
-            var sb = new StringBuilder();
-            foreach (var root in roots)
-            {
-                BuildThreadTree(sb, root, parentOf, emails.Count,
-                    i => identifierById[emails[i].Id].ToString());
-            }
-
-            var cmdPrefix = useUid ? "UID THREAD" : "THREAD";
-            await writer.WriteLineAsync($"* THREAD {sb}");
-            await writer.WriteLineAsync($"{tag} OK {cmdPrefix} completed");
+            if (!string.IsNullOrEmpty(emails[i].MessageId))
+                messageIdToIndex.TryAdd(emails[i].MessageId!, i);
         }
-        else
+
+        var parentOf = new int[emails.Count];
+        for (var i = 0; i < parentOf.Length; i++)
+            parentOf[i] = -1;
+
+        for (var i = 0; i < emails.Count; i++)
         {
-            var groups = emails
-                .GroupBy(e => NormalizeSubject(e.Subject))
-                .OrderBy(g => g.Min(e => e.Uid));
-
-            var sb = new StringBuilder();
-            foreach (var group in groups)
+            if (!string.IsNullOrEmpty(emails[i].InReplyTo)
+                && messageIdToIndex.TryGetValue(emails[i].InReplyTo!, out var parentIdx))
             {
-                var members = group.OrderBy(e => e.Uid).ToList();
-                if (members.Count == 1)
-                {
-                    var id = identifierById[members[0].Id];
-                    sb.Append($"({id})");
-                }
-                else
-                {
-                    sb.Append('(');
-                    for (var j = 0; j < members.Count; j++)
-                    {
-                        var id = identifierById[members[j].Id];
-                        if (j > 0) sb.Append(' ');
-                        sb.Append(id);
-                    }
-                    sb.Append(')');
-                }
+                parentOf[i] = parentIdx;
             }
-
-            var cmdPrefix = useUid ? "UID THREAD" : "THREAD";
-            await writer.WriteLineAsync($"* THREAD {sb}");
-            await writer.WriteLineAsync($"{tag} OK {cmdPrefix} completed");
         }
+
+        var roots = new List<int>();
+        for (var i = 0; i < parentOf.Length; i++)
+        {
+            if (parentOf[i] < 0)
+                roots.Add(i);
+        }
+
+        var builder = new StringBuilder();
+        foreach (var root in roots)
+        {
+            BuildThreadTree(builder, root, parentOf, emails.Count,
+                i => identifierById[emails[i].Id].ToString());
+        }
+
+        var referenceThreads = builder.ToString();
+        var referenceSuffix = referenceThreads.Length == 0
+            ? string.Empty
+            : $" {referenceThreads}";
+        await writer.WriteLineAsync($"* THREAD{referenceSuffix}");
+        await writer.WriteLineAsync(
+            $"{tag} OK {(useUid ? "UID THREAD" : "THREAD")} completed");
     }
 
     private static void BuildThreadTree(
@@ -5472,8 +5477,6 @@ ILogger<ImapServerService> logger) : BackgroundService
             sb.Append(')');
         }
     }
-
-    private static string NormalizeSubject(string subject) => Rfc5256.BaseSubject(subject);
 
     private static bool TryParseSortArguments(
         string args,
@@ -5524,14 +5527,36 @@ ILogger<ImapServerService> logger) : BackgroundService
         }
 
         var remainder = value[(closeParen + 1)..].TrimStart(' ');
-        if (!TryReadSortCharset(remainder, out charset, out searchCriteria))
+        if (!TryReadCharsetAndSearchCriteria(remainder, out charset, out searchCriteria))
             return false;
 
         criteria = parsed;
         return true;
     }
 
-    private static bool TryReadSortCharset(
+    private static bool TryParseThreadArguments(
+        string args,
+        out string algorithm,
+        out string charset,
+        out string searchCriteria)
+    {
+        algorithm = string.Empty;
+        charset = string.Empty;
+        searchCriteria = string.Empty;
+
+        var value = args.TrimStart(' ');
+        var separator = value.IndexOf(' ');
+        if (separator <= 0)
+            return false;
+
+        algorithm = value[..separator].ToUpperInvariant();
+        return TryReadCharsetAndSearchCriteria(
+            value[(separator + 1)..].TrimStart(' '),
+            out charset,
+            out searchCriteria);
+    }
+
+    private static bool TryReadCharsetAndSearchCriteria(
         string value,
         out string charset,
         out string searchCriteria)
@@ -5598,6 +5623,67 @@ ILogger<ImapServerService> logger) : BackgroundService
         return true;
     }
 
+    private static string BuildOrderedSubjectThreads(
+        List<SortMessage> messages,
+        bool useUid)
+    {
+        messages.Sort(static (left, right) =>
+        {
+            var subjectComparison = left.SubjectSortKey.AsSpan().SequenceCompareTo(
+                right.SubjectSortKey);
+            return subjectComparison != 0
+                ? subjectComparison
+                : CompareThreadSentDate(left, right);
+        });
+
+        var groups = new List<List<SortMessage>>();
+        for (var index = 0; index < messages.Count;)
+        {
+            var group = new List<SortMessage> { messages[index++] };
+            while (index < messages.Count
+                   && group[0].SubjectSortKey.AsSpan().SequenceEqual(
+                       messages[index].SubjectSortKey))
+            {
+                group.Add(messages[index++]);
+            }
+            groups.Add(group);
+        }
+        groups.Sort(static (left, right) => CompareThreadSentDate(left[0], right[0]));
+
+        var result = new StringBuilder();
+        foreach (var group in groups)
+        {
+            result.Append('(').Append(ThreadIdentifier(group[0], useUid));
+            if (group.Count == 2)
+            {
+                result.Append(' ').Append(ThreadIdentifier(group[1], useUid));
+            }
+            else if (group.Count > 2)
+            {
+                result.Append(' ');
+                for (var index = 1; index < group.Count; index++)
+                {
+                    result.Append('(')
+                        .Append(ThreadIdentifier(group[index], useUid))
+                        .Append(')');
+                }
+            }
+            result.Append(')');
+        }
+        return result.ToString();
+    }
+
+    private static int CompareThreadSentDate(SortMessage left, SortMessage right)
+    {
+        var dateComparison = left.SentAt.CompareTo(right.SentAt);
+        return dateComparison != 0
+            ? dateComparison
+            : left.SequenceNumber.CompareTo(right.SequenceNumber);
+    }
+
+    private static int ThreadIdentifier(SortMessage message, bool useUid) =>
+        useUid ? message.Uid : message.SequenceNumber;
+
     private static SortMessage CreateSortMessage(SortStoredMessage stored)
     {
         var sentAt = stored.ReceivedAt;
@@ -5634,7 +5720,7 @@ ILogger<ImapServerService> logger) : BackgroundService
                 exception is FormatException or IOException or ParseException)
             {
                 // Legacy rows can contain malformed raw headers. Their normalized
-                // columns remain a deterministic fallback for SORT.
+                // columns remain a deterministic fallback for SORT and THREAD.
             }
         }
 

@@ -163,6 +163,9 @@ public class SmtpServerService(
                 var submissionQueue = scope.ServiceProvider.GetRequiredService<IMailSubmissionQueue>();
                 var senderAuthorization = scope.ServiceProvider.GetRequiredService<ISenderAuthorizationService>();
                 var mailAuthenticator = scope.ServiceProvider.GetRequiredService<IMailAuthenticator>();
+                var oauthTokenService = env.OAuth.EnableOAuth
+                    ? scope.ServiceProvider.GetRequiredService<IOAuthTokenService>()
+                    : null;
 
                 Stream stream = client.GetStream();
 
@@ -210,6 +213,7 @@ public class SmtpServerService(
                         submissionQueue,
                         senderAuthorization,
                         mailAuthenticator,
+                        oauthTokenService,
                         config,
                         timeout,
                         stream,
@@ -235,7 +239,8 @@ public class SmtpServerService(
         BoundedLineReader reader, StreamWriter writer, SmtpSession session,
         IEmailService emailService, IMailSubmissionQueue submissionQueue,
         ISenderAuthorizationService senderAuthorization,
-        IMailAuthenticator mailAuthenticator, GlobalConfigDB config,
+        IMailAuthenticator mailAuthenticator, IOAuthTokenService? oauthTokenService,
+        GlobalConfigDB config,
         CancellationTokenSource timeout, Stream? upgradableStream = null, string? clientIp = null)
     {
 
@@ -457,6 +462,7 @@ public class SmtpServerService(
                         writer,
                         session,
                         mailAuthenticator,
+                        oauthTokenService,
                         clientIp ?? "unknown",
                         timeout.Token);
                     if (session.AuthenticationFailures >= 5)
@@ -625,6 +631,7 @@ public class SmtpServerService(
                             submissionQueue,
                             senderAuthorization,
                             mailAuthenticator,
+                            oauthTokenService,
                             config,
                             timeout,
                             clientIp: clientIp);
@@ -664,7 +671,7 @@ public class SmtpServerService(
         }
     }
 
-    private static async Task WriteEhloAsync(StreamWriter writer, GlobalConfigDB config, bool isSecure)
+    private async Task WriteEhloAsync(StreamWriter writer, GlobalConfigDB config, bool isSecure)
     {
         await writer.WriteLineAsync($"250-{config.SmtpHostname}");
         await writer.WriteLineAsync($"250-SIZE {config.MaxMessageSizeBytes}");
@@ -676,7 +683,12 @@ public class SmtpServerService(
         if (config.EnableStartTls && !isSecure)
             await writer.WriteLineAsync("250-STARTTLS");
         if (isSecure)
-            await writer.WriteLineAsync("250-AUTH PLAIN LOGIN");
+        {
+            var mechanisms = env.OAuth.EnableOAuth
+                ? "PLAIN LOGIN XOAUTH2"
+                : "PLAIN LOGIN";
+            await writer.WriteLineAsync($"250-AUTH {mechanisms}");
+        }
         await writer.WriteLineAsync("250 OK");
     }
 
@@ -720,6 +732,7 @@ public class SmtpServerService(
     private async Task HandleAuthAsync(
         string line, BoundedLineReader reader, StreamWriter writer,
         SmtpSession session, IMailAuthenticator mailAuthenticator,
+        IOAuthTokenService? oauthTokenService,
         string clientIp, CancellationToken ct)
     {
         if (session.IsAuthenticated)
@@ -742,6 +755,52 @@ public class SmtpServerService(
 
         switch (mechanism)
         {
+            case "XOAUTH2" when env.OAuth.EnableOAuth && oauthTokenService is not null:
+                {
+                    var encoded = parts.Length == 3 ? parts[2] : null;
+                    if (encoded is null)
+                    {
+                        await writer.WriteLineAsync("334 ");
+                        var encodedResult = await reader.ReadLineAsync(MaximumCommandLineCharacters, ct);
+                        encoded = encodedResult.Value;
+                        if (encodedResult.IsTooLong)
+                        {
+                            await writer.WriteLineAsync("501 Authentication response is too long");
+                            return;
+                        }
+                    }
+                    if (encoded is null or "*")
+                    {
+                        await writer.WriteLineAsync("501 Authentication cancelled");
+                        return;
+                    }
+                    if (!OAuthSasl.TryParseXOAuth2(encoded, out var oauthUsername, out var accessToken))
+                    {
+                        RecordAuthenticationFailure(session, clientIp);
+                        await writer.WriteLineAsync("535 5.7.8 Authentication failed");
+                        return;
+                    }
+
+                    var oauthUser = await oauthTokenService.AuthenticateAccessTokenAsync(
+                        accessToken,
+                        "smtp",
+                        ct);
+                    if (oauthUser is null
+                        || !string.Equals(
+                            oauthUsername,
+                            oauthUser.Username,
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        RecordAuthenticationFailure(session, clientIp);
+                        await writer.WriteLineAsync("535 5.7.8 Authentication failed");
+                        return;
+                    }
+
+                    session.AuthenticatedUser = oauthUser.Username;
+                    await writer.WriteLineAsync("235 2.7.0 Authentication successful");
+                    return;
+                }
+
             case "PLAIN":
                 {
                     var encoded = parts.Length == 3 ? parts[2] : null;

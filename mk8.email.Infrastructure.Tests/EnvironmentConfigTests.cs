@@ -146,6 +146,21 @@ public sealed class EnvironmentConfigTests
     }
 
     [TestMethod]
+    public void EnabledOAuthRequiresBoundedCodesAndSecurePublicMetadata()
+    {
+        var configuration = CreateValidConfiguration(
+            oauthEnable: true,
+            oauthPublicBaseUrl: "http://email.mk8n.com?unsafe=true",
+            oauthClientId: "",
+            oauthAuthorizationCodeMinutes: 16);
+
+        var joined = string.Join('|', configuration.Validate());
+        StringAssert.Contains(joined, "OAuth.AuthorizationCodeMinutes must be from 1 through 15.");
+        StringAssert.Contains(joined, "OAuth.ClientId must contain from 1 through 128 visible ASCII characters.");
+        StringAssert.Contains(joined, "OAuth.PublicBaseUrl must be an absolute HTTPS URL without a query or fragment.");
+    }
+
+    [TestMethod]
     public void LoaderReadsPasswordsFromSecretFiles()
     {
         var databasePasswordPath = WriteFile("database-password", "database-secret-value");
@@ -189,7 +204,11 @@ public sealed class EnvironmentConfigTests
         int davMaxCollectionsPerUser = 100,
         int davMaxResourcesPerCollection = 100_000,
         int oauthAccessTokenMinutes = 10,
-        int oauthRefreshTokenDays = 90)
+        int oauthRefreshTokenDays = 90,
+        bool oauthEnable = false,
+        string? oauthPublicBaseUrl = null,
+        string oauthClientId = "thunderbird",
+        int oauthAuthorizationCodeMinutes = 5)
     {
         return new EnvironmentConfig
         {
@@ -247,8 +266,12 @@ public sealed class EnvironmentConfigTests
             },
             OAuth = new OAuthConfig
             {
+                EnableOAuth = oauthEnable,
+                PublicBaseUrl = oauthPublicBaseUrl,
+                ClientId = oauthClientId,
                 AccessTokenMinutes = oauthAccessTokenMinutes,
                 RefreshTokenDays = oauthRefreshTokenDays,
+                AuthorizationCodeMinutes = oauthAuthorizationCodeMinutes,
             },
             Tls = new TlsConfig
             {

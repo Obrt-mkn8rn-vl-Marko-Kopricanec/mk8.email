@@ -353,7 +353,9 @@ public sealed class ManageSieveServerService(
             await WriteNoAsync(stream, "AUTHENTICATE requires a mechanism and optional initial response.", cancellationToken: cancellationToken);
             return;
         }
-        if (!string.Equals(command.Arguments[0].Value, "PLAIN", StringComparison.OrdinalIgnoreCase))
+        var mechanism = command.Arguments[0].Value.ToUpperInvariant();
+        if (mechanism != "PLAIN"
+            && (mechanism != "XOAUTH2" || !environment.OAuth.EnableOAuth))
         {
             await WriteNoAsync(stream, "The requested SASL mechanism is not supported.", cancellationToken: cancellationToken);
             return;
@@ -400,19 +402,61 @@ public sealed class ManageSieveServerService(
             return;
         }
 
-        if (!TryDecodePlainCredentials(payload, out var authorizationIdentity, out var username, out var password)
-            || authorizationIdentity.Length > 0
-                && !string.Equals(authorizationIdentity, username, StringComparison.OrdinalIgnoreCase))
-        {
-            await RecordAuthenticationFailureAsync(stream, session, "Authentication failed.", cancellationToken);
-            return;
-        }
-
         AuthenticatedMailUser? authenticated;
-        using (var scope = scopeFactory.CreateScope())
+        if (mechanism == "XOAUTH2")
         {
+            if (!OAuthSasl.TryParseXOAuth2(payload, out var username, out var accessToken))
+            {
+                await RecordAuthenticationFailureAsync(
+                    stream,
+                    session,
+                    "Authentication failed.",
+                    cancellationToken);
+                return;
+            }
+
+            using var scope = scopeFactory.CreateScope();
+            var tokenService = scope.ServiceProvider.GetRequiredService<IOAuthTokenService>();
+            authenticated = await tokenService.AuthenticateAccessTokenAsync(
+                accessToken,
+                "sieve",
+                cancellationToken);
+            if (authenticated is not null
+                && !string.Equals(
+                    username,
+                    authenticated.Username,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                authenticated = null;
+            }
+        }
+        else
+        {
+            if (!TryDecodePlainCredentials(
+                    payload,
+                    out var authorizationIdentity,
+                    out var username,
+                    out var password)
+                || authorizationIdentity.Length > 0
+                    && !string.Equals(
+                        authorizationIdentity,
+                        username,
+                        StringComparison.OrdinalIgnoreCase))
+            {
+                await RecordAuthenticationFailureAsync(
+                    stream,
+                    session,
+                    "Authentication failed.",
+                    cancellationToken);
+                return;
+            }
+
+            using var scope = scopeFactory.CreateScope();
             var authenticator = scope.ServiceProvider.GetRequiredService<IMailAuthenticator>();
-            authenticated = await authenticator.AuthenticateAsync(username, password, cancellationToken);
+            authenticated = await authenticator.AuthenticateAsync(
+                username,
+                password,
+                cancellationToken);
         }
         if (authenticated is null)
         {
@@ -690,7 +734,9 @@ public sealed class ManageSieveServerService(
         await WriteCapabilityAsync(
             stream,
             "SASL",
-            session.IsSecure ? "PLAIN" : string.Empty,
+            session.IsSecure
+                ? environment.OAuth.EnableOAuth ? "PLAIN XOAUTH2" : "PLAIN"
+                : string.Empty,
             cancellationToken);
         await WriteCapabilityAsync(
             stream,

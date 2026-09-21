@@ -380,7 +380,10 @@ public sealed class Pop3ServerService(
         {
             await writer.WriteLineAsync("USER");
             if (session.IsSecure)
-                await writer.WriteLineAsync("SASL PLAIN");
+            {
+                var mechanisms = environment.OAuth.EnableOAuth ? "PLAIN XOAUTH2" : "PLAIN";
+                await writer.WriteLineAsync($"SASL {mechanisms}");
+            }
             else if (environment.Pop3.EnableStartTls
                 && environment.Tls.CertificatePath is not null)
                 await writer.WriteLineAsync("STLS");
@@ -465,13 +468,16 @@ public sealed class Pop3ServerService(
         {
             await writer.WriteLineAsync("+OK Supported SASL mechanisms");
             await writer.WriteLineAsync("PLAIN");
+            if (environment.OAuth.EnableOAuth)
+                await writer.WriteLineAsync("XOAUTH2");
             await writer.WriteLineAsync(".");
             return;
         }
 
         var separator = argument.IndexOf(' ');
         var mechanism = (separator < 0 ? argument : argument[..separator]).ToUpperInvariant();
-        if (mechanism != "PLAIN")
+        if (mechanism is not ("PLAIN" or "XOAUTH2")
+            || mechanism == "XOAUTH2" && !environment.OAuth.EnableOAuth)
         {
             await writer.WriteLineAsync("-ERR [AUTH] unsupported SASL mechanism");
             return;
@@ -494,6 +500,36 @@ public sealed class Pop3ServerService(
         if (encoded == "*")
         {
             await writer.WriteLineAsync("-ERR [AUTH] authentication cancelled");
+            return;
+        }
+
+        if (mechanism == "XOAUTH2")
+        {
+            if (!OAuthSasl.TryParseXOAuth2(encoded, out var oauthUsername, out var accessToken))
+            {
+                RecordAuthenticationFailure(session);
+                await writer.WriteLineAsync("-ERR [AUTH] authentication failed");
+                return;
+            }
+
+            using var scope = scopeFactory.CreateScope();
+            var tokenService = scope.ServiceProvider.GetRequiredService<IOAuthTokenService>();
+            var oauthUser = await tokenService.AuthenticateAccessTokenAsync(
+                accessToken,
+                "pop",
+                cancellationToken);
+            if (oauthUser is null
+                || !string.Equals(
+                    oauthUsername,
+                    oauthUser.Username,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                RecordAuthenticationFailure(session);
+                await writer.WriteLineAsync("-ERR [AUTH] authentication failed");
+                return;
+            }
+
+            await OpenMaildropAsync(writer, oauthUser, session, cancellationToken);
             return;
         }
 
@@ -553,6 +589,16 @@ public sealed class Pop3ServerService(
             await writer.WriteLineAsync("-ERR [AUTH] authentication failed");
             return;
         }
+
+        await OpenMaildropAsync(writer, user, session, cancellationToken);
+    }
+
+    private async Task OpenMaildropAsync(
+        StreamWriter writer,
+        AuthenticatedMailUser user,
+        Pop3Session session,
+        CancellationToken cancellationToken)
+    {
         if (!_activeMaildrops.TryAdd(user.Id, 0))
         {
             await writer.WriteLineAsync("-ERR [IN-USE] maildrop is already locked");

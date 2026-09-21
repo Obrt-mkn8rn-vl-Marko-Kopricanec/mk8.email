@@ -292,6 +292,12 @@ public sealed partial class MailAdministrationService(EmailDbContext db) : IMail
             .ToListAsync(cancellationToken);
         foreach (var token in tokens)
             token.RevokedAt = now;
+
+        var authorizationCodes = await db.OAuthAuthorizationCodes
+            .Where(code => userIds.Contains(code.UserId) && code.ConsumedAt == null)
+            .ToListAsync(cancellationToken);
+        foreach (var authorizationCode in authorizationCodes)
+            authorizationCode.ConsumedAt = now;
     }
 
     private async Task RevokePushSubscriptionsAsync(

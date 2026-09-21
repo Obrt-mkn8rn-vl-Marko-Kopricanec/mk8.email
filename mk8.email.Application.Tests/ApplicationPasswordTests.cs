@@ -32,9 +32,12 @@ public sealed class ApplicationPasswordTests
 
         var authenticated = await new MailAuthenticator(database)
             .AuthenticateAsync(Username, created.Password);
+        var primaryAuthentication = await new MailAuthenticator(database)
+            .AuthenticatePrimaryAsync(Username, created.Password);
 
         Assert.IsNotNull(authenticated);
         Assert.AreEqual(Username, authenticated.Username);
+        Assert.IsNull(primaryAuthentication);
         Assert.IsNotNull(stored.LastUsedAt);
     }
 

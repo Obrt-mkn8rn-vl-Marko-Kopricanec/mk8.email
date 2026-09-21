@@ -64,12 +64,12 @@ public sealed class EnvironmentConfig
         AddEnabledPort(enabledPorts, Sieve.EnableManageSieve, "Sieve.Port", Sieve.Port);
         AddEnabledPort(
             enabledPorts,
-            Jmap.EnableJmap || Dav.EnableDav,
+            Jmap.EnableJmap || Dav.EnableDav || OAuth.EnableOAuth,
             "Jmap.Port",
             Jmap.Port);
 
         if (enabledPorts.Count == 0)
-            errors.Add("Enable at least one SMTP, IMAP, POP3, ManageSieve, JMAP, or DAV listener.");
+            errors.Add("Enable at least one SMTP, IMAP, POP3, ManageSieve, JMAP, DAV, or OAuth listener.");
 
         foreach (var enabledPort in enabledPorts)
             RequirePort(errors, enabledPort.Port, enabledPort.Name);
@@ -149,6 +149,27 @@ public sealed class EnvironmentConfig
             errors.Add("OAuth.AccessTokenMinutes must be from 1 through 60.");
         if (OAuth.RefreshTokenDays is < 1 or > 365)
             errors.Add("OAuth.RefreshTokenDays must be from 1 through 365.");
+        if (OAuth.AuthorizationCodeMinutes is < 1 or > 15)
+            errors.Add("OAuth.AuthorizationCodeMinutes must be from 1 through 15.");
+        if (OAuth.EnableOAuth)
+        {
+            if (string.IsNullOrEmpty(OAuth.ClientId)
+                || OAuth.ClientId.Length > 128
+                || OAuth.ClientId.Any(character => character is < '!' or > '~'))
+            {
+                errors.Add("OAuth.ClientId must contain from 1 through 128 visible ASCII characters.");
+            }
+            var publicBaseUrl = string.IsNullOrWhiteSpace(OAuth.PublicBaseUrl)
+                ? Jmap.PublicBaseUrl ?? $"https://{Smtp.Hostname}"
+                : OAuth.PublicBaseUrl;
+            if (!Uri.TryCreate(publicBaseUrl, UriKind.Absolute, out var oauthBaseUri)
+                || oauthBaseUri.Scheme != Uri.UriSchemeHttps
+                || !string.IsNullOrEmpty(oauthBaseUri.Query)
+                || !string.IsNullOrEmpty(oauthBaseUri.Fragment))
+            {
+                errors.Add("OAuth.PublicBaseUrl must be an absolute HTTPS URL without a query or fragment.");
+            }
+        }
 
         var needsCertificate = Smtp.EnableStartTls
             || Smtp.EnableImplicitTls
@@ -393,8 +414,20 @@ public sealed class DavConfig
 
 public sealed class OAuthConfig
 {
+    public bool EnableOAuth { get; init; }
+    public string? PublicBaseUrl { get; init; }
+    public string ClientId { get; init; } = "thunderbird";
     public int AccessTokenMinutes { get; init; } = 10;
     public int RefreshTokenDays { get; init; } = 90;
+    public int AuthorizationCodeMinutes { get; init; } = 5;
+
+    public Uri GetPublicBaseUri(string smtpHostname, string? jmapPublicBaseUrl)
+    {
+        var value = string.IsNullOrWhiteSpace(PublicBaseUrl)
+            ? jmapPublicBaseUrl ?? $"https://{smtpHostname}"
+            : PublicBaseUrl;
+        return new Uri(value.TrimEnd('/') + "/", UriKind.Absolute);
+    }
 }
 
 public sealed class TlsConfig

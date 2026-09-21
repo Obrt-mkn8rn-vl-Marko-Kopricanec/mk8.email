@@ -108,6 +108,13 @@
           "mk8.email.Infrastructure": "[1.0.0, )"
         }
       },
+      "mk8.email.oauth": {
+        "type": "Project",
+        "dependencies": {
+          "mk8.email.Application.Core": "[1.0.0, )",
+          "mk8.email.Infrastructure": "[1.0.0, )"
+        }
+      },
       "mk8.email.utils": {
         "type": "Project",
         "dependencies": {

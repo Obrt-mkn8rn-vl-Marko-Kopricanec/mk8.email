@@ -286,6 +286,22 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["replaced_by_token_id"] = "uuid",
         };
 
+    private static readonly IReadOnlyDictionary<string, string> RequiredOAuthAuthorizationCodeColumns =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["id"] = "uuid",
+            ["user_id"] = "uuid",
+            ["client_id"] = "varchar",
+            ["redirect_uri"] = "varchar",
+            ["device_name"] = "varchar",
+            ["scopes"] = "_text",
+            ["code_challenge"] = "varchar",
+            ["code_hash"] = "bytea",
+            ["created_at"] = "timestamptz",
+            ["expires_at"] = "timestamptz",
+            ["consumed_at"] = "timestamptz",
+        };
+
     public async Task EnsureAsync(CancellationToken cancellationToken = default)
     {
         if (!string.Equals(
@@ -622,6 +638,22 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                     CHECK (octet_length(token_hash) = 32)
             );
 
+            CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
+                id uuid PRIMARY KEY,
+                user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                client_id varchar(128) NOT NULL,
+                redirect_uri varchar(2048) NOT NULL,
+                device_name varchar(128) NOT NULL,
+                scopes text[] NOT NULL,
+                code_challenge varchar(128) NOT NULL,
+                code_hash bytea NOT NULL,
+                created_at timestamp with time zone NOT NULL,
+                expires_at timestamp with time zone NOT NULL,
+                consumed_at timestamp with time zone,
+                CONSTRAINT ck_oauth_authorization_codes_hash_length
+                    CHECK (octet_length(code_hash) = 32)
+            );
+
             CREATE UNIQUE INDEX IF NOT EXISTS ix_emails_queue_delivery_id
                 ON emails (queue_delivery_id)
                 WHERE queue_delivery_id IS NOT NULL;
@@ -711,6 +743,8 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 ON oauth_tokens (grant_id, token_type);
             CREATE INDEX IF NOT EXISTS ix_oauth_tokens_expires_at
                 ON oauth_tokens (expires_at);
+            CREATE INDEX IF NOT EXISTS ix_oauth_authorization_codes_expires_at
+                ON oauth_authorization_codes (expires_at);
             """,
             cancellationToken);
 
@@ -789,6 +823,10 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
         await ValidateTableAsync(
             "oauth_tokens",
             RequiredOAuthTokenColumns,
+            cancellationToken);
+        await ValidateTableAsync(
+            "oauth_authorization_codes",
+            RequiredOAuthAuthorizationCodeColumns,
             cancellationToken);
     }
 

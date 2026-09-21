@@ -4,8 +4,16 @@
     <domain>mk8n.com</domain>
     <displayName>mk8n Mail</displayName>
     <displayShortName>mk8n</displayShortName>
+    <oAuth2>
+      <issuer>https://email.mk8n.com</issuer>
+      <scope>offline_access imap smtp pop jmap dav sieve</scope>
+      <authURL>https://email.mk8n.com/oauth/authorize</authURL>
+      <tokenURL>https://email.mk8n.com/oauth/token</tokenURL>
+      <clientID>thunderbird</clientID>
+    </oAuth2>
     <incomingServer type="jmap">
       <url>https://email.mk8n.com/.well-known/jmap</url>
+      <authentication>OAuth2</authentication>
       <authentication system="http">Basic</authentication>
       <username>%EMAILADDRESS%</username>
     </incomingServer>
@@ -13,6 +21,7 @@
       <hostname>email.mk8n.com</hostname>
       <port>993</port>
       <socketType>SSL</socketType>
+      <authentication>OAuth2</authentication>
       <authentication>password-cleartext</authentication>
       <username>%EMAILADDRESS%</username>
     </incomingServer>
@@ -20,6 +29,7 @@
       <hostname>email.mk8n.com</hostname>
       <port>995</port>
       <socketType>SSL</socketType>
+      <authentication>OAuth2</authentication>
       <authentication>password-cleartext</authentication>
       <username>%EMAILADDRESS%</username>
     </incomingServer>
@@ -27,17 +37,20 @@
       <hostname>email.mk8n.com</hostname>
       <port>587</port>
       <socketType>STARTTLS</socketType>
+      <authentication>OAuth2</authentication>
       <authentication>password-cleartext</authentication>
       <username>%EMAILADDRESS%</username>
     </outgoingServer>
   </emailProvider>
   <calendar type="caldav">
     <url>https://email.mk8n.com/.well-known/caldav</url>
+    <authentication>OAuth2</authentication>
     <authentication system="http">Basic</authentication>
     <username>%EMAILADDRESS%</username>
   </calendar>
   <addressbook type="carddav">
     <url>https://email.mk8n.com/.well-known/carddav</url>
+    <authentication>OAuth2</authentication>
     <authentication system="http">Basic</authentication>
     <username>%EMAILADDRESS%</username>
   </addressbook>

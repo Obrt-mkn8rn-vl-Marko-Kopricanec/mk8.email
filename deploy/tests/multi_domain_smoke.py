@@ -3,6 +3,7 @@ import argparse
 import base64
 import http.client
 import imaplib
+import json
 import poplib
 import re
 import socket
@@ -247,6 +248,33 @@ def test_dav(account: str, password: str) -> None:
         for collection in reversed(created_collections):
             status, _, _ = dav_request("DELETE", collection, account, password)
             require(status in (204, 404), "A DAV smoke collection could not be cleaned up.")
+
+
+def test_oauth_metadata() -> None:
+    status, headers, body = dav_request("GET", "/.well-known/oauth-authorization-server")
+    require(status == 200, "The public OAuth metadata endpoint is not ready.")
+    require(
+        (headers.get("Content-Type") or "").startswith("application/json"),
+        "The OAuth metadata endpoint returned the wrong media type.",
+    )
+    metadata = json.loads(body)
+    require(
+        metadata.get("issuer") == f"https://{PUBLIC_MAIL_HOST}",
+        "The OAuth issuer is not the canonical mail host.",
+    )
+    require(
+        metadata.get("authorization_endpoint")
+        == f"https://{PUBLIC_MAIL_HOST}/oauth/authorize",
+        "The OAuth authorization endpoint is not canonical.",
+    )
+    require(
+        metadata.get("token_endpoint") == f"https://{PUBLIC_MAIL_HOST}/oauth/token",
+        "The OAuth token endpoint is not canonical.",
+    )
+    require(
+        metadata.get("code_challenge_methods_supported") == ["S256"],
+        "The OAuth service did not require PKCE S256.",
+    )
 
 
 def new_message(sender: str, recipient: str, marker: str) -> EmailMessage:
@@ -765,6 +793,7 @@ def test_active(domain: str, account: str, password: str, selector: str) -> None
     test_search(account, password)
     test_command_literals(account, password)
     test_dav(account, password)
+    test_oauth_metadata()
 
 
 def main() -> None:
@@ -787,7 +816,7 @@ def main() -> None:
 
     require(arguments.selector is not None, "The active test requires a DKIM selector.")
     test_active(arguments.domain, arguments.account, password, arguments.selector)
-    print("The second domain passed mail, IMAP extension, CalDAV, and CardDAV tests.")
+    print("The second domain passed mail, IMAP extension, DAV, and OAuth discovery tests.")
 
 
 if __name__ == "__main__":

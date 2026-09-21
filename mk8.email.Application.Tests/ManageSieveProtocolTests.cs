@@ -22,6 +22,7 @@ public sealed class ManageSieveProtocolTests
 {
     private const string TestUsername = "user@mk8n.com";
     private const string TestPassword = "correct horse battery staple";
+    private const string TestAccessToken = "sieve-access-token";
     private static readonly Guid TestUserId = Guid.Parse("01994f34-9776-7d2d-898c-d0273d6832ef");
     private string _testDirectory = null!;
     private string _certificatePath = null!;
@@ -188,6 +189,28 @@ public sealed class ManageSieveProtocolTests
         }
     }
 
+    [TestMethod]
+    [Timeout(10_000)]
+    public async Task OAuthEnabledSessionAdvertisesAndAcceptsXOAuth2()
+    {
+        var port = ReservePort();
+        await using var server = await ServerFixture.StartAsync(
+            CreateEnvironment(port, enableOAuth: true),
+            port);
+        await using var connection = await ProtocolConnection.ConnectAsync(port);
+        await connection.ReadCapabilityResponseAsync();
+        await connection.WriteLineAsync("STARTTLS");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("OK ", StringComparison.Ordinal));
+        await connection.UpgradeToTlsAsync("email.mk8n.com");
+        var capabilities = await connection.ReadCapabilityResponseAsync();
+        CollectionAssert.Contains(capabilities, "\"SASL\" \"PLAIN XOAUTH2\"");
+
+        await connection.WriteLineAsync(
+            $"AUTHENTICATE \"XOAUTH2\" \"{XOAuth2Credentials()}\"");
+
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("OK ", StringComparison.Ordinal));
+    }
+
     private async Task<ProtocolConnection> ConnectAuthenticatedAsync(int port)
     {
         var connection = await ConnectTlsAsync(port);
@@ -214,7 +237,10 @@ public sealed class ManageSieveProtocolTests
         return connection;
     }
 
-    private EnvironmentConfig CreateEnvironment(int port, int maximumScripts = 64) => new()
+    private EnvironmentConfig CreateEnvironment(
+        int port,
+        int maximumScripts = 64,
+        bool enableOAuth = false) => new()
     {
         Smtp = new SmtpConfig
         {
@@ -242,6 +268,11 @@ public sealed class ManageSieveProtocolTests
         {
             EnableDav = false,
         },
+        OAuth = new OAuthConfig
+        {
+            EnableOAuth = enableOAuth,
+            PublicBaseUrl = "https://email.mk8n.com",
+        },
         Tls = new TlsConfig
         {
             CertificatePath = _certificatePath,
@@ -257,6 +288,10 @@ public sealed class ManageSieveProtocolTests
 
     private static string PlainCredentials() =>
         Convert.ToBase64String(Encoding.UTF8.GetBytes($"\0{TestUsername}\0{TestPassword}"));
+
+    private static string XOAuth2Credentials() =>
+        Convert.ToBase64String(Encoding.UTF8.GetBytes(
+            $"user={TestUsername}\u0001auth=Bearer {TestAccessToken}\u0001\u0001"));
 
     private static int ReservePort()
     {
@@ -278,6 +313,7 @@ public sealed class ManageSieveProtocolTests
             var serviceCollection = new ServiceCollection();
             var databaseName = $"manage-sieve-{Guid.NewGuid():N}";
             serviceCollection.AddSingleton<IMailAuthenticator>(new StubMailAuthenticator());
+            serviceCollection.AddSingleton<IOAuthTokenService>(new StubOAuthTokenService());
             serviceCollection.AddScoped<ISieveScriptService, SieveScriptService>();
             serviceCollection.AddDbContext<EmailDbContext>(options =>
                 options.UseInMemoryDatabase(databaseName)
@@ -358,6 +394,44 @@ public sealed class ManageSieveProtocolTests
                     : null;
             return Task.FromResult(user);
         }
+    }
+
+    private sealed class StubOAuthTokenService : IOAuthTokenService
+    {
+        public Task<AuthenticatedMailUser?> AuthenticateAccessTokenAsync(
+            string accessToken,
+            string requiredScope,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<AuthenticatedMailUser?>(
+                accessToken == TestAccessToken && requiredScope == "sieve"
+                    ? new(TestUserId, TestUsername)
+                    : null);
+
+        public Task<OAuthTokenPair?> CreateGrantAsync(
+            Guid userId,
+            string clientId,
+            string deviceName,
+            IReadOnlyCollection<string> scopes,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public Task<OAuthTokenPair?> RefreshAsync(
+            string refreshToken,
+            string clientId,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<OAuthGrantSummary>> ListGrantsAsync(
+            Guid userId,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public Task<bool> RevokeGrantAsync(
+            Guid userId,
+            Guid grantId,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public Task RevokeTokenAsync(
+            string token,
+            string clientId,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 
     private sealed class ProtocolConnection : IAsyncDisposable

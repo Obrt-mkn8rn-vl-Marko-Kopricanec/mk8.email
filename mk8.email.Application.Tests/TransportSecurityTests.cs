@@ -116,6 +116,72 @@ public sealed class TransportSecurityTests
     }
 
     [TestMethod]
+    [Timeout(20_000)]
+    public async Task ThunderbirdXOAuth2AuthenticatesSmtpImapAndPop3()
+    {
+        var smtpPort = ReservePort();
+        var imapPort = ReservePort();
+        var pop3Port = ReservePort();
+        var environment = CreateEnvironment(
+            smtpPort: smtpPort,
+            imapPort: imapPort,
+            pop3Port: pop3Port,
+            enableOAuth: true);
+        await using var smtpServer = await ServerFixture.StartSmtpAsync(environment, smtpPort);
+        await using var imapServer = await ServerFixture.StartImapAsync(environment, imapPort);
+        await using var pop3Server = await ServerFixture.StartPop3Async(environment, pop3Port);
+
+        var smtpToken = await smtpServer.CreateOAuthAccessTokenAsync("smtp");
+        await using (var smtp = await ProtocolConnection.ConnectAsync(smtpPort))
+        {
+            await smtp.ReadLineAsync();
+            await smtp.WriteLineAsync("EHLO client.example");
+            await smtp.ReadSmtpResponseAsync();
+            await smtp.WriteLineAsync("STARTTLS");
+            Assert.IsTrue((await smtp.ReadLineAsync()).StartsWith("220 ", StringComparison.Ordinal));
+            await smtp.UpgradeToTlsAsync("email.mk8n.com");
+            await smtp.WriteLineAsync("EHLO client.example");
+            StringAssert.Contains(await smtp.ReadSmtpResponseAsync(), "XOAUTH2");
+            await smtp.WriteLineAsync($"AUTH XOAUTH2 {CreateXOAuth2Response(smtpToken)}");
+            Assert.IsTrue((await smtp.ReadLineAsync()).StartsWith("235 ", StringComparison.Ordinal));
+        }
+
+        var imapToken = await imapServer.CreateOAuthAccessTokenAsync("imap");
+        await using (var imap = await ProtocolConnection.ConnectAsync(imapPort))
+        {
+            await imap.ReadLineAsync();
+            await imap.WriteLineAsync("a1 STARTTLS");
+            Assert.IsTrue((await imap.ReadLineAsync()).StartsWith("a1 OK", StringComparison.Ordinal));
+            await imap.UpgradeToTlsAsync("email.mk8n.com");
+            await imap.WriteLineAsync("a2 CAPABILITY");
+            StringAssert.Contains(await imap.ReadLineAsync(), "AUTH=XOAUTH2");
+            Assert.IsTrue((await imap.ReadLineAsync()).StartsWith("a2 OK", StringComparison.Ordinal));
+            await imap.WriteLineAsync(
+                $"a3 AUTHENTICATE XOAUTH2 {CreateXOAuth2Response(imapToken)}");
+            Assert.IsTrue((await imap.ReadLineAsync()).StartsWith("a3 OK", StringComparison.Ordinal));
+        }
+
+        var pop3Token = await pop3Server.CreateOAuthAccessTokenAsync("pop");
+        await using (var pop3 = await ProtocolConnection.ConnectAsync(pop3Port))
+        {
+            await pop3.ReadLineAsync();
+            await pop3.WriteLineAsync("STLS");
+            Assert.IsTrue((await pop3.ReadLineAsync()).StartsWith("+OK ", StringComparison.Ordinal));
+            await pop3.UpgradeToTlsAsync("email.mk8n.com");
+            await pop3.WriteLineAsync("CAPA");
+            CollectionAssert.Contains(
+                await ReadPop3MultilineAsync(pop3),
+                "SASL PLAIN XOAUTH2");
+            await pop3.WriteLineAsync("AUTH XOAUTH2");
+            Assert.AreEqual("+ ", await pop3.ReadLineAsync());
+            await pop3.WriteLineAsync(CreateXOAuth2Response(pop3Token));
+            Assert.IsTrue((await pop3.ReadLineAsync()).StartsWith(
+                "+OK maildrop has 0 messages",
+                StringComparison.Ordinal));
+        }
+    }
+
+    [TestMethod]
     [Timeout(10_000)]
     public async Task ImplicitTlsPeerFailuresDoNotProduceWarningLogs()
     {
@@ -2634,7 +2700,8 @@ public sealed class TransportSecurityTests
         int? imapImplicitTlsPort = null,
         int? pop3ImplicitTlsPort = null,
         string? certificatePath = null,
-        int connectionTimeoutSeconds = 10)
+        int connectionTimeoutSeconds = 10,
+        bool enableOAuth = false)
     {
         return new EnvironmentConfig
         {
@@ -2665,6 +2732,12 @@ public sealed class TransportSecurityTests
                 EnablePop3 = pop3Port.HasValue,
                 EnableImplicitTls = pop3ImplicitTlsPort.HasValue,
                 EnableStartTls = true,
+            },
+            OAuth = new OAuthConfig
+            {
+                EnableOAuth = enableOAuth,
+                PublicBaseUrl = "https://email.mk8n.com",
+                ClientId = "thunderbird",
             },
             Tls = new TlsConfig
             {
@@ -2728,6 +2801,10 @@ public sealed class TransportSecurityTests
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("235 ", StringComparison.Ordinal));
     }
 
+    private static string CreateXOAuth2Response(string accessToken) =>
+        Convert.ToBase64String(Encoding.UTF8.GetBytes(
+            $"user={TestUsername}\u0001auth=Bearer {accessToken}\u0001\u0001"));
+
     private static async Task BeginInboundMessageAsync(ProtocolConnection connection)
     {
         await BeginInboundEnvelopeAsync(connection);
@@ -2771,7 +2848,7 @@ public sealed class TransportSecurityTests
             int port,
             ILogger<SmtpServerService>? logger = null)
         {
-            var (services, emailService, mailQueue) = CreateServices();
+            var (services, emailService, mailQueue) = CreateServices(environment);
             var hostedService = new SmtpServerService(
                 services.GetRequiredService<IServiceScopeFactory>(),
                 environment,
@@ -2786,7 +2863,7 @@ public sealed class TransportSecurityTests
             int port,
             ILogger<ImapServerService>? logger = null)
         {
-            var (services, emailService, mailQueue) = CreateServices();
+            var (services, emailService, mailQueue) = CreateServices(environment);
             var hostedService = new ImapServerService(
                 services.GetRequiredService<IServiceScopeFactory>(),
                 environment,
@@ -2801,7 +2878,7 @@ public sealed class TransportSecurityTests
             int port,
             ILogger<Pop3ServerService>? logger = null)
         {
-            var (services, emailService, mailQueue) = CreateServices();
+            var (services, emailService, mailQueue) = CreateServices(environment);
             var hostedService = new Pop3ServerService(
                 services.GetRequiredService<IServiceScopeFactory>(),
                 environment,
@@ -2850,19 +2927,39 @@ public sealed class TransportSecurityTests
             return await database.ExpungedUids.CountAsync();
         }
 
+        public async Task<string> CreateOAuthAccessTokenAsync(string scopeName)
+        {
+            using var scope = services.CreateScope();
+            var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            var userId = await database.Users
+                .Where(user => user.Username == TestUsername)
+                .Select(user => user.Id)
+                .SingleAsync();
+            var pair = await scope.ServiceProvider.GetRequiredService<IOAuthTokenService>()
+                .CreateGrantAsync(
+                    userId,
+                    "thunderbird",
+                    "Thunderbird protocol test",
+                    ["offline_access", scopeName]);
+            return pair?.AccessToken
+                ?? throw new InvalidOperationException("The OAuth access token was not created.");
+        }
+
         private static (
             ServiceProvider Services,
             StubEmailService EmailService,
-            StubMailSubmissionQueue MailQueue) CreateServices()
+            StubMailSubmissionQueue MailQueue) CreateServices(EnvironmentConfig environment)
         {
             var emailService = new StubEmailService();
             var mailQueue = new StubMailSubmissionQueue();
             var databaseName = $"transport-{Guid.NewGuid():N}";
             var serviceCollection = new ServiceCollection();
+            serviceCollection.AddSingleton(environment);
             serviceCollection.AddSingleton<IEmailService>(emailService);
             serviceCollection.AddSingleton<IMailSubmissionQueue>(mailQueue);
             serviceCollection.AddScoped<ISenderAuthorizationService, SenderAuthorizationService>();
             serviceCollection.AddScoped<IMailAuthenticator, MailAuthenticator>();
+            serviceCollection.AddScoped<IOAuthTokenService, OAuthTokenService>();
             serviceCollection.AddDbContext<EmailDbContext>(options =>
                 options.UseInMemoryDatabase(databaseName));
             var services = serviceCollection.BuildServiceProvider();

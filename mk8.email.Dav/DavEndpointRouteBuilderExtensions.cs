@@ -62,10 +62,14 @@ public static class DavEndpointRouteBuilderExtensions
         var user = await DavHttpAuthentication.AuthenticateAsync(
             context,
             authenticator,
+            environment,
             cancellationToken);
         if (user is null)
         {
-            await DavHttpAuthentication.WriteUnauthorizedAsync(context, cancellationToken);
+            await DavHttpAuthentication.WriteUnauthorizedAsync(
+                context,
+                environment,
+                cancellationToken);
             return;
         }
 

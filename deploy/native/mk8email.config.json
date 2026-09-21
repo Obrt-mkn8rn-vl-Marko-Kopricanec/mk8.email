@@ -60,8 +60,12 @@
     "MaxResourcesPerCollection": 100000
   },
   "OAuth": {
+    "EnableOAuth": true,
+    "PublicBaseUrl": "https://email.mk8n.com",
+    "ClientId": "thunderbird",
     "AccessTokenMinutes": 10,
-    "RefreshTokenDays": 90
+    "RefreshTokenDays": 90,
+    "AuthorizationCodeMinutes": 5
   },
   "Tls": {
     "CertificatePath": "/etc/mk8email/tls/fullchain.pem",

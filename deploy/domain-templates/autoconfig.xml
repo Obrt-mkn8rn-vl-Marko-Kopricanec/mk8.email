@@ -4,8 +4,16 @@
     <domain>@@DOMAIN@@</domain>
     <displayName>@@DOMAIN@@ Mail</displayName>
     <displayShortName>@@DOMAIN@@</displayShortName>
+    <oAuth2>
+      <issuer>https://@@CANONICAL_MAIL_HOST@@</issuer>
+      <scope>offline_access imap smtp pop jmap dav sieve</scope>
+      <authURL>https://@@CANONICAL_MAIL_HOST@@/oauth/authorize</authURL>
+      <tokenURL>https://@@CANONICAL_MAIL_HOST@@/oauth/token</tokenURL>
+      <clientID>thunderbird</clientID>
+    </oAuth2>
     <incomingServer type="jmap">
       <url>https://@@CANONICAL_MAIL_HOST@@/.well-known/jmap</url>
+      <authentication>OAuth2</authentication>
       <authentication system="http">Basic</authentication>
       <username>%EMAILADDRESS%</username>
     </incomingServer>
@@ -13,6 +21,7 @@
       <hostname>@@CANONICAL_MAIL_HOST@@</hostname>
       <port>993</port>
       <socketType>SSL</socketType>
+      <authentication>OAuth2</authentication>
       <authentication>password-cleartext</authentication>
       <username>%EMAILADDRESS%</username>
     </incomingServer>
@@ -20,6 +29,7 @@
       <hostname>@@CANONICAL_MAIL_HOST@@</hostname>
       <port>995</port>
       <socketType>SSL</socketType>
+      <authentication>OAuth2</authentication>
       <authentication>password-cleartext</authentication>
       <username>%EMAILADDRESS%</username>
     </incomingServer>
@@ -27,17 +37,20 @@
       <hostname>@@CANONICAL_MAIL_HOST@@</hostname>
       <port>587</port>
       <socketType>STARTTLS</socketType>
+      <authentication>OAuth2</authentication>
       <authentication>password-cleartext</authentication>
       <username>%EMAILADDRESS%</username>
     </outgoingServer>
   </emailProvider>
   <calendar type="caldav">
     <url>https://@@CANONICAL_MAIL_HOST@@/.well-known/caldav</url>
+    <authentication>OAuth2</authentication>
     <authentication system="http">Basic</authentication>
     <username>%EMAILADDRESS%</username>
   </calendar>
   <addressbook type="carddav">
     <url>https://@@CANONICAL_MAIL_HOST@@/.well-known/carddav</url>
+    <authentication>OAuth2</authentication>
     <authentication system="http">Basic</authentication>
     <username>%EMAILADDRESS%</username>
   </addressbook>

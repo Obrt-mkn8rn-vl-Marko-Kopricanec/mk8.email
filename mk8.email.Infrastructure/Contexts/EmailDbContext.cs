@@ -35,6 +35,7 @@ public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContex
     public DbSet<ApplicationPasswordDB> ApplicationPasswords => Set<ApplicationPasswordDB>();
     public DbSet<OAuthGrantDB> OAuthGrants => Set<OAuthGrantDB>();
     public DbSet<OAuthTokenDB> OAuthTokens => Set<OAuthTokenDB>();
+    public DbSet<OAuthAuthorizationCodeDB> OAuthAuthorizationCodes => Set<OAuthAuthorizationCodeDB>();
 
     private static readonly Guid GlobalConfigSeedId = Guid.Parse("00000000-0000-0000-0000-000000000001");
     private static readonly Guid GlobalLimitsSeedId = Guid.Parse("00000000-0000-0000-0000-000000000002");
@@ -206,6 +207,16 @@ public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContex
             entity.HasOne(token => token.Grant)
                 .WithMany(grant => grant.Tokens)
                 .HasForeignKey(token => token.GrantId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<OAuthAuthorizationCodeDB>(entity =>
+        {
+            entity.HasIndex(code => code.ExpiresAt);
+
+            entity.HasOne(code => code.User)
+                .WithMany()
+                .HasForeignKey(code => code.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 

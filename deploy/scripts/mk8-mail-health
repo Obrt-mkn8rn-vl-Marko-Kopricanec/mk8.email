@@ -293,6 +293,11 @@ curl --silent --fail --insecure --max-time 10 --noproxy '*' \
     --resolve email.mk8n.com:443:127.0.0.1 \
     https://email.mk8n.com/dav/ >/dev/null \
     || record_error "The public DAV service is not ready."
+curl --silent --fail --insecure --max-time 10 --noproxy '*' \
+    --resolve email.mk8n.com:443:127.0.0.1 \
+    https://email.mk8n.com/.well-known/oauth-authorization-server \
+    | grep -F '"code_challenge_methods_supported":["S256"]' >/dev/null \
+    || record_error "The public OAuth discovery service is not ready."
 
 active_domains=$(runuser -u postgres -- psql --dbname=mk8email --no-psqlrc \
     --tuples-only --no-align \

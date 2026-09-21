@@ -1,7 +1,9 @@
 using System.Net.Http.Headers;
 using System.Text;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using mk8.email.Application.Interfaces;
+using mk8.email.Infrastructure.Environment;
 
 namespace mk8.email.Jmap;
 
@@ -10,16 +12,29 @@ internal static class JmapHttpAuthentication
     public static async Task<AuthenticatedMailUser?> AuthenticateAsync(
         HttpContext context,
         IMailAuthenticator authenticator,
+        EnvironmentConfig environment,
         CancellationToken cancellationToken)
     {
         var header = context.Request.Headers.Authorization.ToString();
         if (header.Length is 0 or > 4096
             || !AuthenticationHeaderValue.TryParse(header, out var authentication)
-            || !authentication.Scheme.Equals("Basic", StringComparison.OrdinalIgnoreCase)
             || string.IsNullOrEmpty(authentication.Parameter))
         {
             return null;
         }
+
+        if (authentication.Scheme.Equals("Bearer", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!environment.OAuth.EnableOAuth)
+                return null;
+            var tokenService = context.RequestServices.GetRequiredService<IOAuthTokenService>();
+            return await tokenService.AuthenticateAccessTokenAsync(
+                authentication.Parameter,
+                "jmap",
+                cancellationToken);
+        }
+        if (!authentication.Scheme.Equals("Basic", StringComparison.OrdinalIgnoreCase))
+            return null;
 
         string credentials;
         try
@@ -46,9 +61,13 @@ internal static class JmapHttpAuthentication
             cancellationToken);
     }
 
-    public static IResult Unauthorized(HttpContext context)
+    public static IResult Unauthorized(HttpContext context, EnvironmentConfig environment)
     {
-        context.Response.Headers.WWWAuthenticate = "Basic realm=\"mk8.email JMAP\", charset=\"UTF-8\"";
+        if (environment.OAuth.EnableOAuth)
+            context.Response.Headers.Append("WWW-Authenticate", "Bearer realm=\"mk8.email JMAP\"");
+        context.Response.Headers.Append(
+            "WWW-Authenticate",
+            "Basic realm=\"mk8.email JMAP\", charset=\"UTF-8\"");
         return Results.Json(
             new
             {

@@ -8,4 +8,10 @@ public interface IMailAuthenticator
         string username,
         string password,
         CancellationToken cancellationToken = default);
+
+    Task<AuthenticatedMailUser?> AuthenticatePrimaryAsync(
+        string username,
+        string password,
+        CancellationToken cancellationToken = default) =>
+        AuthenticateAsync(username, password, cancellationToken);
 }

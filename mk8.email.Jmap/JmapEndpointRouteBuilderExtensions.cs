@@ -25,12 +25,17 @@ public static class JmapEndpointRouteBuilderExtensions
         HttpContext context,
         IMailAuthenticator authenticator,
         JmapStateChangeService stateChanges,
+        EnvironmentConfig environment,
         CancellationToken cancellationToken)
     {
-        var user = await JmapHttpAuthentication.AuthenticateAsync(context, authenticator, cancellationToken);
+        var user = await JmapHttpAuthentication.AuthenticateAsync(
+            context,
+            authenticator,
+            environment,
+            cancellationToken);
         if (user is null)
         {
-            await JmapHttpAuthentication.Unauthorized(context).ExecuteAsync(context);
+            await JmapHttpAuthentication.Unauthorized(context, environment).ExecuteAsync(context);
             return;
         }
         if (!TryEventTypes(context.Request.Query["types"].ToString(), out var types)
@@ -152,9 +157,13 @@ public static class JmapEndpointRouteBuilderExtensions
         EnvironmentConfig environment,
         CancellationToken cancellationToken)
     {
-        var user = await JmapHttpAuthentication.AuthenticateAsync(context, authenticator, cancellationToken);
+        var user = await JmapHttpAuthentication.AuthenticateAsync(
+            context,
+            authenticator,
+            environment,
+            cancellationToken);
         if (user is null)
-            return JmapHttpAuthentication.Unauthorized(context);
+            return JmapHttpAuthentication.Unauthorized(context, environment);
         var account = await accounts.GetAccountAsync(user, accountId, cancellationToken);
         if (account is null)
             return ResourceNotFound("The account or upload resource was not found.");
@@ -211,11 +220,16 @@ public static class JmapEndpointRouteBuilderExtensions
         IMailAuthenticator authenticator,
         JmapAccountService accounts,
         JmapBlobService blobs,
+        EnvironmentConfig environment,
         CancellationToken cancellationToken)
     {
-        var user = await JmapHttpAuthentication.AuthenticateAsync(context, authenticator, cancellationToken);
+        var user = await JmapHttpAuthentication.AuthenticateAsync(
+            context,
+            authenticator,
+            environment,
+            cancellationToken);
         if (user is null)
-            return JmapHttpAuthentication.Unauthorized(context);
+            return JmapHttpAuthentication.Unauthorized(context, environment);
         var account = await accounts.GetAccountAsync(user, accountId, cancellationToken);
         if (account is null)
             return ResourceNotFound("The account or blob was not found.");
@@ -276,14 +290,16 @@ public static class JmapEndpointRouteBuilderExtensions
         HttpContext context,
         IMailAuthenticator authenticator,
         JmapSessionService sessions,
+        EnvironmentConfig environment,
         CancellationToken cancellationToken)
     {
         var user = await JmapHttpAuthentication.AuthenticateAsync(
             context,
             authenticator,
+            environment,
             cancellationToken);
         if (user is null)
-            return JmapHttpAuthentication.Unauthorized(context);
+            return JmapHttpAuthentication.Unauthorized(context, environment);
 
         SetJmapResponseHeaders(context.Response);
         var session = await sessions.BuildAsync(user, cancellationToken);
@@ -304,9 +320,10 @@ public static class JmapEndpointRouteBuilderExtensions
         var user = await JmapHttpAuthentication.AuthenticateAsync(
             context,
             authenticator,
+            environment,
             cancellationToken);
         if (user is null)
-            return JmapHttpAuthentication.Unauthorized(context);
+            return JmapHttpAuthentication.Unauthorized(context, environment);
 
         SetJmapResponseHeaders(context.Response);
         if (!HasJmapJsonContentType(context.Request))

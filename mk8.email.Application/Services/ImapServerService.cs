@@ -822,7 +822,7 @@ ILogger<ImapServerService> logger) : BackgroundService
         return true;
     }
 
-    private static async Task HandleCapabilityAsync(
+    private async Task HandleCapabilityAsync(
         StreamWriter writer,
         string tag,
         GlobalConfigDB config,
@@ -835,6 +835,8 @@ ILogger<ImapServerService> logger) : BackgroundService
         if (session.IsSecure)
         {
             caps += " AUTH=PLAIN SASL-IR";
+            if (env.OAuth.EnableOAuth)
+                caps += " AUTH=XOAUTH2";
         }
         else
         {
@@ -905,7 +907,8 @@ ILogger<ImapServerService> logger) : BackgroundService
 
         var mechanism = authenticationArgs[0].ToUpperInvariant();
 
-        if (mechanism != "PLAIN")
+        if (mechanism is not ("PLAIN" or "XOAUTH2")
+            || mechanism == "XOAUTH2" && !env.OAuth.EnableOAuth)
         {
             await writer.WriteLineAsync($"{tag} NO Unsupported authentication mechanism");
             return;
@@ -939,6 +942,39 @@ ILogger<ImapServerService> logger) : BackgroundService
         if (encoded is null || encoded == "*")
         {
             await writer.WriteLineAsync($"{tag} BAD Authentication cancelled");
+            return;
+        }
+
+        if (mechanism == "XOAUTH2")
+        {
+            if (!OAuthSasl.TryParseXOAuth2(encoded, out var oauthUsername, out var accessToken))
+            {
+                RecordAuthenticationFailure(session);
+                await writer.WriteLineAsync($"{tag} NO Authentication failed");
+                return;
+            }
+
+            using var scope = scopeFactory.CreateScope();
+            var tokenService = scope.ServiceProvider.GetRequiredService<IOAuthTokenService>();
+            var oauthUser = await tokenService.AuthenticateAccessTokenAsync(
+                accessToken,
+                "imap",
+                ct);
+            if (oauthUser is null
+                || !string.Equals(
+                    oauthUsername,
+                    oauthUser.Username,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                RecordAuthenticationFailure(session);
+                await writer.WriteLineAsync($"{tag} NO Authentication failed");
+                return;
+            }
+
+            session.UserId = oauthUser.Id;
+            session.UserName = oauthUser.Username;
+            session.State = ImapState.Authenticated;
+            await writer.WriteLineAsync($"{tag} OK AUTHENTICATE completed");
             return;
         }
 

@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using mk8.email.Application.Interfaces;
+using mk8.email.Application.Protocol;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Infrastructure.Environment;
 using mk8.email.Infrastructure.Models;
@@ -15,10 +16,6 @@ public sealed class OAuthTokenService(
 {
     public const string AccessTokenType = "access";
     public const string RefreshTokenType = "refresh";
-    public static readonly IReadOnlySet<string> SupportedScopes = new HashSet<string>(
-        ["openid", "offline_access", "imap", "smtp", "pop", "jmap", "dav", "sieve"],
-        StringComparer.Ordinal);
-
     private static readonly byte[] DummyHash = new byte[32];
 
     public async Task<OAuthTokenPair?> CreateGrantAsync(
@@ -120,7 +117,7 @@ public sealed class OAuthTokenService(
         string requiredScope,
         CancellationToken cancellationToken = default)
     {
-        if (!SupportedScopes.Contains(requiredScope)
+        if (!OAuthProtocolValues.SupportedScopes.Contains(requiredScope)
             || !TryParseTokenId(accessToken, "mk8_at_", out var tokenId))
         {
             return null;
@@ -183,6 +180,30 @@ public sealed class OAuthTokenService(
         await RevokeGrantEntityAsync(grant, DateTime.UtcNow, cancellationToken);
         await database.SaveChangesAsync(cancellationToken);
         return true;
+    }
+
+    public async Task RevokeTokenAsync(
+        string token,
+        string clientId,
+        CancellationToken cancellationToken = default)
+    {
+        var parsed = TryParseTokenId(token, "mk8_at_", out var tokenId)
+            || TryParseTokenId(token, "mk8_rt_", out tokenId);
+        if (!parsed)
+            return;
+
+        var stored = await database.OAuthTokens
+            .Include(candidate => candidate.Grant)
+            .SingleOrDefaultAsync(candidate => candidate.Id == tokenId, cancellationToken);
+        if (stored is null
+            || !TokenHashMatches(token, stored.TokenHash)
+            || !string.Equals(stored.Grant.ClientId, clientId, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        await RevokeGrantEntityAsync(stored.Grant, DateTime.UtcNow, cancellationToken);
+        await database.SaveChangesAsync(cancellationToken);
     }
 
     private IssuedPair IssueTokenPair(OAuthGrantDB grant, DateTime now)
@@ -281,7 +302,7 @@ public sealed class OAuthTokenService(
             .Distinct(StringComparer.Ordinal)
             .Order(StringComparer.Ordinal)
             .ToArray();
-        return normalized.Length > 0 && normalized.All(SupportedScopes.Contains)
+        return normalized.Length > 0 && normalized.All(OAuthProtocolValues.SupportedScopes.Contains)
             ? normalized
             : null;
     }

@@ -15,6 +15,7 @@ using mk8.email.Infrastructure;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Infrastructure.Environment;
 using mk8.email.Jmap;
+using mk8.email.OAuth;
 
 return await RunManagementCommandAsync(args);
 
@@ -241,7 +242,9 @@ static IHost BuildProtocolHost(
     EnvironmentConfig environmentConfig,
     bool isDevelopment)
 {
-    if (!environmentConfig.Jmap.EnableJmap && !environmentConfig.Dav.EnableDav)
+    if (!environmentConfig.Jmap.EnableJmap
+        && !environmentConfig.Dav.EnableDav
+        && !environmentConfig.OAuth.EnableOAuth)
         return BuildHost(arguments, environmentConfig, includeMailServers: true);
 
     var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions
@@ -268,6 +271,8 @@ static IHost BuildProtocolHost(
                 maximumRequestBodySize,
                 environmentConfig.Dav.MaxResourceSizeBytes);
         }
+        if (environmentConfig.OAuth.EnableOAuth)
+            maximumRequestBodySize = Math.Max(maximumRequestBodySize, 64 * 1024);
         options.Limits.MaxRequestBodySize = maximumRequestBodySize;
         options.Limits.RequestHeadersTimeout = TimeSpan.FromSeconds(15);
         options.Limits.KeepAliveTimeout = TimeSpan.FromMinutes(2);
@@ -280,6 +285,8 @@ static IHost BuildProtocolHost(
         builder.Services.AddJmapProtocol();
     if (environmentConfig.Dav.EnableDav)
         builder.Services.AddDavProtocol();
+    if (environmentConfig.OAuth.EnableOAuth)
+        builder.Services.AddOAuthProtocol();
     builder.Services.Configure<ForwardedHeadersOptions>(options =>
     {
         options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
@@ -294,7 +301,8 @@ static IHost BuildProtocolHost(
     {
         context.Response.Headers["X-Content-Type-Options"] = "nosniff";
         context.Response.Headers["Referrer-Policy"] = "no-referrer";
-        context.Response.Headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'";
+        context.Response.Headers["Content-Security-Policy"] =
+            "default-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
         if (!isDevelopment && !context.Request.IsHttps)
         {
             context.Response.StatusCode = StatusCodes.Status400BadRequest;
@@ -310,9 +318,14 @@ static IHost BuildProtocolHost(
 
         await next(context);
     });
+    app.UseRouting();
+    if (environmentConfig.OAuth.EnableOAuth)
+        app.UseRateLimiter();
     if (environmentConfig.Jmap.EnableJmap)
         app.MapJmapEndpoints();
     if (environmentConfig.Dav.EnableDav)
         app.MapDavEndpoints();
+    if (environmentConfig.OAuth.EnableOAuth)
+        app.MapOAuthEndpoints();
     return app;
 }

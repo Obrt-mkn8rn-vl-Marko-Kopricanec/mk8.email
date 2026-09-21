@@ -611,6 +611,18 @@ verify_domain_web_services() {
     grep -F "<url>https://$canonical_mail_host/.well-known/carddav</url>" \
         "$work/autoconfig-check.xml" >/dev/null \
         || fail "The autoconfiguration CardDAV endpoint is not correct."
+    grep -F "<issuer>https://$canonical_mail_host</issuer>" \
+        "$work/autoconfig-check.xml" >/dev/null \
+        || fail "The autoconfiguration OAuth issuer is not correct."
+    grep -F "<authURL>https://$canonical_mail_host/oauth/authorize</authURL>" \
+        "$work/autoconfig-check.xml" >/dev/null \
+        || fail "The autoconfiguration OAuth authorization endpoint is not correct."
+    grep -F "<tokenURL>https://$canonical_mail_host/oauth/token</tokenURL>" \
+        "$work/autoconfig-check.xml" >/dev/null \
+        || fail "The autoconfiguration OAuth token endpoint is not correct."
+    grep -F "<clientID>thunderbird</clientID>" \
+        "$work/autoconfig-check.xml" >/dev/null \
+        || fail "The autoconfiguration OAuth client is not correct."
     curl --silent --show-error --fail --max-time 15 --noproxy '*' \
         --resolve "autoconfig.$domain:443:127.0.0.1" \
         "https://autoconfig.$domain/.well-known/autoconfig/mail/config-v1.1.xml" \

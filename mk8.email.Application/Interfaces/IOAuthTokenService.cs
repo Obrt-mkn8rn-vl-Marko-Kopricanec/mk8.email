@@ -43,4 +43,9 @@ public interface IOAuthTokenService
         Guid userId,
         Guid grantId,
         CancellationToken cancellationToken = default);
+
+    Task RevokeTokenAsync(
+        string token,
+        string clientId,
+        CancellationToken cancellationToken = default);
 }

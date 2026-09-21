@@ -14,7 +14,28 @@ public sealed class MailAuthenticator(EmailDbContext database) : IMailAuthentica
     public async Task<AuthenticatedMailUser?> AuthenticateAsync(
         string username,
         string password,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        await AuthenticateInternalAsync(
+            username,
+            password,
+            allowApplicationPassword: true,
+            cancellationToken);
+
+    public async Task<AuthenticatedMailUser?> AuthenticatePrimaryAsync(
+        string username,
+        string password,
+        CancellationToken cancellationToken = default) =>
+        await AuthenticateInternalAsync(
+            username,
+            password,
+            allowApplicationPassword: false,
+            cancellationToken);
+
+    private async Task<AuthenticatedMailUser?> AuthenticateInternalAsync(
+        string username,
+        string password,
+        bool allowApplicationPassword,
+        CancellationToken cancellationToken)
     {
         var normalized = SmtpAddress.TryNormalize(username, allowEmpty: false, out var mailbox)
             ? mailbox
@@ -49,7 +70,8 @@ public sealed class MailAuthenticator(EmailDbContext database) : IMailAuthentica
         if (accountPasswordMatches)
             return new AuthenticatedMailUser(candidate.Id, candidate.Username);
 
-        if (!TryParseApplicationPasswordId(password, out var applicationPasswordId))
+        if (!allowApplicationPassword
+            || !TryParseApplicationPasswordId(password, out var applicationPasswordId))
             return null;
 
         var applicationPassword = await database.ApplicationPasswords

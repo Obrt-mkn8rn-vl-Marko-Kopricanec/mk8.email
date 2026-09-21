@@ -16,6 +16,7 @@ public static class ApplicationServiceExtensions
         services.AddScoped<IMailAdministrationService, MailAdministrationService>();
         services.AddScoped<IApplicationPasswordService, ApplicationPasswordService>();
         services.AddScoped<IOAuthTokenService, OAuthTokenService>();
+        services.AddScoped<IOAuthAuthorizationService, OAuthAuthorizationService>();
         services.AddScoped<IMailSystemStatusService, MailSystemStatusService>();
         services.AddScoped<ISeederService, SeederService>();
         services.AddScoped<IDatabaseInitializationService, DatabaseInitializationService>();

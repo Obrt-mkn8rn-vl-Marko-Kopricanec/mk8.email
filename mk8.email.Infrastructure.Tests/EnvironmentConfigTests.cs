@@ -51,6 +51,31 @@ public sealed class EnvironmentConfigTests
     }
 
     [TestMethod]
+    public void ProductionManageSieveRequiresStartTls()
+    {
+        var errors = CreateValidConfiguration(
+            enableSieve: true,
+            enableSieveStartTls: false).Validate();
+
+        StringAssert.Contains(
+            string.Join('|', errors),
+            "The ManageSieve listener requires STARTTLS.");
+    }
+
+    [TestMethod]
+    public void ManageSieveQuotaAndListenerPortAreValidated()
+    {
+        var errors = CreateValidConfiguration(
+            enableSieve: true,
+            sievePort: 2525,
+            sieveMaxScripts: 0).Validate();
+
+        var joined = string.Join('|', errors);
+        StringAssert.Contains(joined, "Enabled listeners cannot share port 2525.");
+        StringAssert.Contains(joined, "Sieve.MaxScriptsPerUser must be from 1 through 1000.");
+    }
+
+    [TestMethod]
     public void ProductionRejectsSimplifiedInboundAuthenticationChecks()
     {
         var errors = CreateValidConfiguration(enableSpfCheck: true).Validate();
@@ -144,6 +169,10 @@ public sealed class EnvironmentConfigTests
         int queueMaxAttempts = 20,
         bool enablePop3 = false,
         bool enablePop3StartTls = true,
+        bool enableSieve = false,
+        bool enableSieveStartTls = true,
+        int sievePort = 4190,
+        int sieveMaxScripts = 64,
         int davMaxResourceSizeBytes = 10 * 1024 * 1024,
         int davMaxCollectionsPerUser = 100,
         int davMaxResourcesPerCollection = 100_000)
@@ -187,6 +216,13 @@ public sealed class EnvironmentConfigTests
                 EnablePop3 = enablePop3,
                 EnableImplicitTls = false,
                 EnableStartTls = enablePop3StartTls,
+            },
+            Sieve = new SieveConfig
+            {
+                Port = sievePort,
+                EnableManageSieve = enableSieve,
+                EnableStartTls = enableSieveStartTls,
+                MaxScriptsPerUser = sieveMaxScripts,
             },
             Dav = new DavConfig
             {

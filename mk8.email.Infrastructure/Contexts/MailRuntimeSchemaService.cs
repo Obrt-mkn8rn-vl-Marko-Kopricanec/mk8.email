@@ -477,7 +477,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             CREATE TABLE IF NOT EXISTS sieve_scripts (
                 id uuid PRIMARY KEY,
                 user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                name varchar(128) NOT NULL,
+                name varchar(512) NOT NULL,
                 content text NOT NULL,
                 is_active boolean NOT NULL DEFAULT false,
                 created_at timestamp with time zone NOT NULL,
@@ -552,6 +552,8 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 ON dav_changes (changed_at);
             CREATE UNIQUE INDEX IF NOT EXISTS ix_sieve_scripts_user_name
                 ON sieve_scripts (user_id, name);
+            ALTER TABLE sieve_scripts
+                ALTER COLUMN name TYPE varchar(512);
             CREATE UNIQUE INDEX IF NOT EXISTS ix_sieve_scripts_user_active
                 ON sieve_scripts (user_id)
                 WHERE is_active;

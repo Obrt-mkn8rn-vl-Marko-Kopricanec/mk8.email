@@ -45,6 +45,7 @@ public static class ApplicationServiceExtensions
         services.AddHostedService<SmtpServerService>();
         services.AddHostedService<ImapServerService>();
         services.AddHostedService<Pop3ServerService>();
+        services.AddHostedService<ManageSieveServerService>();
 
         return services;
     }

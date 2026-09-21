@@ -12,6 +12,7 @@ public sealed class EnvironmentConfig
     public SmtpConfig Smtp { get; init; } = new();
     public ImapConfig Imap { get; init; } = new();
     public Pop3Config Pop3 { get; init; } = new();
+    public SieveConfig Sieve { get; init; } = new();
     public JmapConfig Jmap { get; init; } = new();
     public DavConfig Dav { get; init; } = new();
     public TlsConfig Tls { get; init; } = new();
@@ -59,6 +60,7 @@ public sealed class EnvironmentConfig
         AddEnabledPort(enabledPorts, Imap.EnableImplicitTls, "Imap.ImplicitTlsPort", Imap.ImplicitTlsPort);
         AddEnabledPort(enabledPorts, Pop3.EnablePop3, "Pop3.Port", Pop3.Port);
         AddEnabledPort(enabledPorts, Pop3.EnableImplicitTls, "Pop3.ImplicitTlsPort", Pop3.ImplicitTlsPort);
+        AddEnabledPort(enabledPorts, Sieve.EnableManageSieve, "Sieve.Port", Sieve.Port);
         AddEnabledPort(
             enabledPorts,
             Jmap.EnableJmap || Dav.EnableDav,
@@ -66,7 +68,7 @@ public sealed class EnvironmentConfig
             Jmap.Port);
 
         if (enabledPorts.Count == 0)
-            errors.Add("Enable at least one SMTP, IMAP, POP3, JMAP, or DAV listener.");
+            errors.Add("Enable at least one SMTP, IMAP, POP3, ManageSieve, JMAP, or DAV listener.");
 
         foreach (var enabledPort in enabledPorts)
             RequirePort(errors, enabledPort.Port, enabledPort.Name);
@@ -84,6 +86,11 @@ public sealed class EnvironmentConfig
             errors.Add("The production IMAP listener requires STARTTLS.");
         if (!isDevelopment && Pop3.EnablePop3 && !Pop3.EnableStartTls)
             errors.Add("The production POP3 listener requires STLS.");
+        if (Sieve.EnableManageSieve && !Sieve.EnableStartTls)
+            errors.Add("The ManageSieve listener requires STARTTLS.");
+
+        if (Sieve.MaxScriptsPerUser is < 1 or > 1000)
+            errors.Add("Sieve.MaxScriptsPerUser must be from 1 through 1000.");
 
         if (Jmap.IsDefault && !Jmap.EnableJmap)
             errors.Add("Jmap.IsDefault requires Jmap.EnableJmap.");
@@ -141,7 +148,8 @@ public sealed class EnvironmentConfig
             || Smtp.EnableImplicitTls
             || Imap.EnableImplicitTls
             || Pop3.EnableStartTls
-            || Pop3.EnableImplicitTls;
+            || Pop3.EnableImplicitTls
+            || (Sieve.EnableManageSieve && Sieve.EnableStartTls);
         if (needsCertificate)
             RequireFile(errors, Tls.CertificatePath, "Tls.CertificatePath");
         if (!string.IsNullOrWhiteSpace(Tls.CertificateKeyPath))
@@ -334,6 +342,14 @@ public sealed class Pop3Config
     public bool EnablePop3 { get; init; }
     public bool EnableImplicitTls { get; init; }
     public bool EnableStartTls { get; init; }
+}
+
+public sealed class SieveConfig
+{
+    public int Port { get; init; } = 4190;
+    public bool EnableManageSieve { get; init; }
+    public bool EnableStartTls { get; init; } = true;
+    public int MaxScriptsPerUser { get; init; } = 64;
 }
 
 public sealed class JmapConfig

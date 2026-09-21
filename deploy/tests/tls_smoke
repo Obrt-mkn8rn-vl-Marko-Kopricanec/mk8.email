@@ -38,6 +38,7 @@ reject_protocol "submissions" -connect 127.0.0.1:465 -tls1
 reject_protocol "submission" -connect 127.0.0.1:587 -starttls smtp -tls1
 reject_protocol "POP3S" -connect 127.0.0.1:995 -tls1
 reject_protocol "POP3 STLS" -connect 127.0.0.1:110 -starttls pop3 -tls1
+reject_protocol "ManageSieve STARTTLS" -connect 127.0.0.1:4190 -starttls sieve -tls1
 
 accept_protocol "IMAPS" "TLSv1.2" -connect 127.0.0.1:993 -tls1_2
 accept_protocol "IMAPS" "TLSv1.3" -connect 127.0.0.1:993 -tls1_3
@@ -49,5 +50,7 @@ accept_protocol "POP3S" "TLSv1.2" -connect 127.0.0.1:995 -tls1_2
 accept_protocol "POP3S" "TLSv1.3" -connect 127.0.0.1:995 -tls1_3
 accept_protocol "POP3 STLS" "TLSv1.2" -connect 127.0.0.1:110 -starttls pop3 -tls1_2
 accept_protocol "POP3 STLS" "TLSv1.3" -connect 127.0.0.1:110 -starttls pop3 -tls1_3
+accept_protocol "ManageSieve STARTTLS" "TLSv1.2" -connect 127.0.0.1:4190 -starttls sieve -tls1_2
+accept_protocol "ManageSieve STARTTLS" "TLSv1.3" -connect 127.0.0.1:4190 -starttls sieve -tls1_3
 
 echo "TLS protocol tests passed."

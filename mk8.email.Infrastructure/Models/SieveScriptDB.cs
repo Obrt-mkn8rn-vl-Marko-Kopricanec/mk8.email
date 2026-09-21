@@ -17,7 +17,7 @@ public sealed class SieveScriptDB
     public UserDB User { get; set; } = null!;
 
     [Required]
-    [MaxLength(128)]
+    [MaxLength(512)]
     [Column("name")]
     public string Name { get; set; } = string.Empty;
 

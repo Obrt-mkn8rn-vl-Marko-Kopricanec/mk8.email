@@ -3,6 +3,7 @@ import argparse
 import base64
 import imaplib
 import poplib
+import socket
 import smtplib
 import ssl
 import subprocess
@@ -200,6 +201,99 @@ def wait_for_pop3_message(
     raise RuntimeError(f"The expected POP3 message did not reach {account}.")
 
 
+def read_sieve_line(stream) -> bytes:
+    line = stream.readline(16 * 1024 + 1)
+    require(line.endswith(b"\r\n"), "ManageSieve returned an incomplete response line.")
+    require(len(line) <= 16 * 1024, "ManageSieve returned an oversized response line.")
+    return line[:-2]
+
+
+def read_sieve_capabilities(stream) -> list[bytes]:
+    lines: list[bytes] = []
+    while True:
+        line = read_sieve_line(stream)
+        lines.append(line)
+        if line.startswith((b"OK", b"NO", b"BYE")):
+            return lines
+
+
+def read_exactly(stream, size: int) -> bytes:
+    content = bytearray()
+    while len(content) < size:
+        chunk = stream.read(size - len(content))
+        require(chunk, "ManageSieve closed the connection during a literal response.")
+        content.extend(chunk)
+    return bytes(content)
+
+
+def test_manage_sieve(account: str, password: str) -> None:
+    script_name = f"mk8-smoke-{uuid.uuid4().hex}"
+    script = b"keep;"
+    raw_socket = socket.create_connection((LOCAL_HOST, 4190), timeout=15)
+    raw_stream = raw_socket.makefile("rwb", buffering=0)
+    tls_socket: ssl.SSLSocket | None = None
+    stream = None
+    stored = False
+    try:
+        capabilities = read_sieve_capabilities(raw_stream)
+        require(b'"STARTTLS"' in capabilities, "ManageSieve did not advertise STARTTLS.")
+        raw_stream.write(b"STARTTLS\r\n")
+        require(read_sieve_line(raw_stream).startswith(b"OK"), "ManageSieve rejected STARTTLS.")
+        raw_stream.close()
+
+        tls_socket = tls_context().wrap_socket(raw_socket, server_hostname="email.mk8n.com")
+        stream = tls_socket.makefile("rwb", buffering=0)
+        capabilities = read_sieve_capabilities(stream)
+        require(b'"SASL" "PLAIN"' in capabilities, "ManageSieve did not advertise SASL PLAIN over TLS.")
+        require(b'"STARTTLS"' not in capabilities, "ManageSieve advertised STARTTLS after TLS negotiation.")
+
+        credentials = base64.b64encode(f"\0{account}\0{password}".encode("utf-8"))
+        stream.write(b'AUTHENTICATE "PLAIN" "' + credentials + b'"\r\n')
+        require(read_sieve_line(stream).startswith(b"OK"), "ManageSieve authentication failed.")
+
+        stream.write(f'CHECKSCRIPT {{{len(script)}+}}\r\n'.encode("ascii") + script + b"\r\n")
+        require(read_sieve_line(stream).startswith(b"OK"), "ManageSieve rejected a valid script.")
+
+        stream.write(
+            f'PUTSCRIPT "{script_name}" {{{len(script)}+}}\r\n'.encode("ascii")
+            + script
+            + b"\r\n"
+        )
+        require(read_sieve_line(stream).startswith(b"OK"), "ManageSieve could not store a script.")
+        stored = True
+
+        stream.write(f'GETSCRIPT "{script_name}"\r\n'.encode("ascii"))
+        marker = read_sieve_line(stream)
+        require(marker.startswith(b"{") and marker.endswith(b"}"), "ManageSieve did not return a literal script.")
+        size_text = marker[1:-1]
+        require(size_text.isdecimal(), "ManageSieve returned an invalid literal size.")
+        returned = read_exactly(stream, int(size_text))
+        require(read_sieve_line(stream) == b"", "ManageSieve omitted the literal terminator.")
+        require(returned == script, "ManageSieve returned different script content.")
+        require(read_sieve_line(stream).startswith(b"OK"), "ManageSieve GETSCRIPT did not complete.")
+
+        stream.write(f'DELETESCRIPT "{script_name}"\r\n'.encode("ascii"))
+        require(read_sieve_line(stream).startswith(b"OK"), "ManageSieve could not delete the test script.")
+        stored = False
+        stream.write(b"LOGOUT\r\n")
+        require(read_sieve_line(stream).startswith(b"OK"), "ManageSieve logout failed.")
+    finally:
+        if stored and stream is not None:
+            try:
+                stream.write(f'DELETESCRIPT "{script_name}"\r\n'.encode("ascii"))
+                read_sieve_line(stream)
+            except (OSError, RuntimeError):
+                pass
+        if stream is not None:
+            stream.close()
+        elif not raw_stream.closed:
+            raw_stream.close()
+        if tls_socket is not None:
+            tls_socket.close()
+        else:
+            raw_socket.close()
+
+
 def require_absent(account: str, password: str, marker: str) -> None:
     with imaplib.IMAP4_SSL(LOCAL_HOST, 993, ssl_context=tls_context(), timeout=15) as client:
         client.login(account, password)
@@ -335,7 +429,8 @@ def baseline(admin_password: str, primary_password: str) -> None:
 
     test_open_relay()
     test_sender_mismatch(admin_password)
-    print("Baseline SMTP, submission, IMAP, POP3, catch-all, DKIM, and relay tests passed.")
+    test_manage_sieve(ADMIN, admin_password)
+    print("Baseline SMTP, submission, IMAP, POP3, ManageSieve, catch-all, DKIM, and relay tests passed.")
 
 
 def unsafe_content(admin_password: str) -> None:

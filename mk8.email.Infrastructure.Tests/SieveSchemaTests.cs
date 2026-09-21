@@ -17,6 +17,7 @@ public sealed class SieveSchemaTests
         Assert.IsNotNull(script);
         Assert.IsNotNull(recipient);
         Assert.AreEqual("sieve_scripts", script.GetTableName());
+        Assert.AreEqual(512, script.FindProperty(nameof(SieveScriptDB.Name))?.GetMaxLength());
         var nameIndex = script.GetIndexes().Single(index =>
             index.Properties.Select(property => property.Name).SequenceEqual(
                 [nameof(SieveScriptDB.UserId), nameof(SieveScriptDB.Name)]));

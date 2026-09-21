@@ -18,7 +18,7 @@ table inet filter {
 
         ip saddr @@MK8_LAN_CIDR@@ tcp dport 22 ct state new accept
         ip saddr @@MK8_LAN_CIDR@@ tcp dport 8443 ct state new accept
-        meta nfproto ipv4 tcp dport { 25, 80, 110, 443, 465, 587, 993, 995 } ct state new accept
+        meta nfproto ipv4 tcp dport { 25, 80, 110, 443, 465, 587, 993, 995, 4190 } ct state new accept
 
         limit rate 3/minute burst 5 packets log prefix "nft-input-drop: " level warn
     }

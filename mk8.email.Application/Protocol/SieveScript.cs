@@ -33,6 +33,7 @@ internal static class SieveScript
     public const int MaximumScriptBytes = 1024 * 1024;
     public const int MaximumTokens = 50_000;
     public const int MaximumNestingDepth = 64;
+    public const int MaximumRedirects = 100;
     private const int MaximumActions = 100;
 
     public static readonly IReadOnlySet<string> SupportedCapabilities =

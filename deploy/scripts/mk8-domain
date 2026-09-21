@@ -398,6 +398,7 @@ write_domain_assets() {
         printf '_carddavs._tcp IN TXT "path=/dav/"\n'
         printf '_pop3._tcp IN SRV 0 1 110 %s.\n' "$canonical_mail_host"
         printf '_pop3s._tcp IN SRV 0 1 995 %s.\n' "$canonical_mail_host"
+        printf '_sieve._tcp IN SRV 0 1 4190 %s.\n' "$canonical_mail_host"
         printf '_submission._tcp IN SRV 0 1 587 %s.\n' "$canonical_mail_host"
         printf '_submissions._tcp IN SRV 0 1 465 %s.\n' "$canonical_mail_host"
         printf 'autoconfig IN CNAME %s. ; cf_tags=cf-proxied:false\n' "$canonical_mail_host"
@@ -528,6 +529,10 @@ verify_public_dns() {
         | tr '\t' ' ' | sed 's/  */ /g' | tr -d '\r')
     [ "$carddavs" = "0 1 443 $canonical_mail_host." ] \
         || fail "The domain CardDAV service record is not ready."
+    sieve=$(dig +time=5 +tries=2 +short SRV "_sieve._tcp.$domain" \
+        | tr '\t' ' ' | sed 's/  */ /g' | tr -d '\r')
+    [ "$sieve" = "0 1 4190 $canonical_mail_host." ] \
+        || fail "The domain ManageSieve service record is not ready."
     caldavs_path=$(dns_txt_value "path=" "_caldavs._tcp.$domain") \
         || fail "The domain CalDAV path record is not ready."
     [ "$caldavs_path" = "path=/dav/" ] \

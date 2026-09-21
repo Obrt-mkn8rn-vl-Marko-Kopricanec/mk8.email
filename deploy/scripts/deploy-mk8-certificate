@@ -225,6 +225,7 @@ probe_certificate submission email.mk8n.com -starttls smtp -connect 127.0.0.1:58
 probe_certificate imaps email.mk8n.com -connect 127.0.0.1:993
 probe_certificate pop3 email.mk8n.com -starttls pop3 -connect 127.0.0.1:110
 probe_certificate pop3s email.mk8n.com -connect 127.0.0.1:995
+probe_certificate sieve email.mk8n.com -starttls sieve -connect 127.0.0.1:4190
 
 systemctl is-active --quiet nginx.service
 systemctl is-active --quiet mk8email.service

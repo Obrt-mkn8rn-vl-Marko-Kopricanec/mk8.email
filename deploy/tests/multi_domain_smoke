@@ -129,6 +129,8 @@ grep -Fx "_pop3._tcp IN SRV 0 1 110 email.mk8n.com." \
     "$domain_directory/cloudflare-import.zone" >/dev/null
 grep -Fx "_pop3s._tcp IN SRV 0 1 995 email.mk8n.com." \
     "$domain_directory/cloudflare-import.zone" >/dev/null
+grep -Fx "_sieve._tcp IN SRV 0 1 4190 email.mk8n.com." \
+    "$domain_directory/cloudflare-import.zone" >/dev/null
 grep -Fx "_caldavs._tcp IN SRV 0 1 443 email.mk8n.com." \
     "$domain_directory/cloudflare-import.zone" >/dev/null
 grep -Fx '_caldavs._tcp IN TXT "path=/dav/"' \

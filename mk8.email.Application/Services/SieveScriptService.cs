@@ -12,6 +12,33 @@ internal sealed class SieveScriptService(EmailDbContext database) : ISieveScript
 {
     public SieveCompilationResult Validate(string content) => SieveScript.Compile(content);
 
+    public async Task<SieveScriptOperationResult> CheckSpaceAsync(
+        Guid userId,
+        string name,
+        long contentSizeBytes,
+        int maximumScripts,
+        CancellationToken cancellationToken = default)
+    {
+        if (!TryNormalizeName(name, out var normalized))
+            return Failure("The script name is invalid.");
+        if (contentSizeBytes is <= 0 or > SieveScript.MaximumScriptBytes)
+            return Failure("The script size exceeds the configured limit.", "QUOTA/MAXSIZE");
+        if (maximumScripts < 1)
+            return Failure("The maximum number of scripts has been reached.", "QUOTA/MAXSCRIPTS");
+
+        var exists = await database.SieveScripts.AsNoTracking().AnyAsync(
+            script => script.UserId == userId && script.Name == normalized,
+            cancellationToken);
+        if (exists)
+            return Success();
+        var count = await database.SieveScripts.AsNoTracking().CountAsync(
+            script => script.UserId == userId,
+            cancellationToken);
+        return count < maximumScripts
+            ? Success()
+            : Failure("The maximum number of scripts has been reached.", "QUOTA/MAXSCRIPTS");
+    }
+
     public async Task<IReadOnlyList<SieveScriptSummary>> ListAsync(
         Guid userId,
         CancellationToken cancellationToken = default) =>
@@ -49,22 +76,37 @@ internal sealed class SieveScriptService(EmailDbContext database) : ISieveScript
         Guid userId,
         string name,
         string content,
+        int maximumScripts = int.MaxValue,
         CancellationToken cancellationToken = default)
     {
         if (!TryNormalizeName(name, out var normalized))
             return Failure("The script name is invalid.");
+        if (Encoding.UTF8.GetByteCount(content) is 0 or > SieveScript.MaximumScriptBytes)
+            return Failure("The script must contain from 1 through 1048576 bytes.", "QUOTA/MAXSIZE");
         var compilation = Validate(content);
         if (!compilation.Succeeded)
             return Failure(FormatDiagnostic(compilation.Diagnostics[0]));
         if (!await database.Users.AsNoTracking().AnyAsync(user => user.Id == userId, cancellationToken))
             return Failure("The user does not exist.");
 
+        await using var transaction = database.Database.IsRelational()
+            ? await database.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken)
+            : null;
         var now = DateTime.UtcNow;
         var script = await database.SieveScripts.SingleOrDefaultAsync(
             item => item.UserId == userId && item.Name == normalized,
             cancellationToken);
         if (script is null)
         {
+            var scriptCount = await database.SieveScripts.CountAsync(
+                item => item.UserId == userId,
+                cancellationToken);
+            if (scriptCount >= maximumScripts)
+            {
+                if (transaction is not null)
+                    await transaction.RollbackAsync(cancellationToken);
+                return Failure("The maximum number of scripts has been reached.", "QUOTA/MAXSCRIPTS");
+            }
             database.SieveScripts.Add(new SieveScriptDB
             {
                 Id = Guid.CreateVersion7(),
@@ -82,6 +124,8 @@ internal sealed class SieveScriptService(EmailDbContext database) : ISieveScript
         }
 
         await database.SaveChangesAsync(cancellationToken);
+        if (transaction is not null)
+            await transaction.CommitAsync(cancellationToken);
         return Success();
     }
 
@@ -94,9 +138,11 @@ internal sealed class SieveScriptService(EmailDbContext database) : ISieveScript
         if (!string.IsNullOrEmpty(name) && !TryNormalizeName(name, out normalized))
             return Failure("The script name is invalid.");
 
-        await using var transaction = await database.Database.BeginTransactionAsync(
-            IsolationLevel.Serializable,
-            cancellationToken);
+        await using var transaction = database.Database.IsRelational()
+            ? await database.Database.BeginTransactionAsync(
+                IsolationLevel.Serializable,
+                cancellationToken)
+            : null;
         SieveScriptDB? target = null;
         if (normalized is not null)
         {
@@ -105,8 +151,9 @@ internal sealed class SieveScriptService(EmailDbContext database) : ISieveScript
                 cancellationToken);
             if (target is null)
             {
-                await transaction.RollbackAsync(cancellationToken);
-                return Failure("The script does not exist.");
+                if (transaction is not null)
+                    await transaction.RollbackAsync(cancellationToken);
+                return Failure("The script does not exist.", "NONEXISTENT");
             }
         }
 
@@ -128,7 +175,8 @@ internal sealed class SieveScriptService(EmailDbContext database) : ISieveScript
             await database.SaveChangesAsync(cancellationToken);
         }
 
-        await transaction.CommitAsync(cancellationToken);
+        if (transaction is not null)
+            await transaction.CommitAsync(cancellationToken);
         return Success();
     }
 
@@ -143,9 +191,9 @@ internal sealed class SieveScriptService(EmailDbContext database) : ISieveScript
             item => item.UserId == userId && item.Name == normalized,
             cancellationToken);
         if (script is null)
-            return Failure("The script does not exist.");
+            return Failure("The script does not exist.", "NONEXISTENT");
         if (script.IsActive)
-            return Failure("The active script cannot be deleted.");
+            return Failure("The active script cannot be deleted.", "ACTIVE");
         database.SieveScripts.Remove(script);
         await database.SaveChangesAsync(cancellationToken);
         return Success();
@@ -163,12 +211,12 @@ internal sealed class SieveScriptService(EmailDbContext database) : ISieveScript
         if (await database.SieveScripts.AnyAsync(
                 script => script.UserId == userId && script.Name == normalizedNew,
                 cancellationToken))
-            return Failure("The destination script already exists.");
+            return Failure("The destination script already exists.", "ALREADYEXISTS");
         var script = await database.SieveScripts.SingleOrDefaultAsync(
             item => item.UserId == userId && item.Name == normalizedOld,
             cancellationToken);
         if (script is null)
-            return Failure("The script does not exist.");
+            return Failure("The script does not exist.", "NONEXISTENT");
         script.Name = normalizedNew;
         script.UpdatedAt = DateTime.UtcNow;
         await database.SaveChangesAsync(cancellationToken);
@@ -184,13 +232,19 @@ internal sealed class SieveScriptService(EmailDbContext database) : ISieveScript
         }
         normalized = name.Normalize(NormalizationForm.FormC);
         return normalized.Length > 0
-            && Encoding.UTF8.GetByteCount(normalized) <= 128
-            && !normalized.Any(char.IsControl);
+            && normalized.EnumerateRunes().Count() <= 128
+            && Encoding.UTF8.GetByteCount(normalized) <= 512
+            && !normalized.EnumerateRunes().Any(rune =>
+                rune.Value is >= 0x0000 and <= 0x001f
+                    or >= 0x007f and <= 0x009f
+                    or 0x2028
+                    or 0x2029);
     }
 
     private static string FormatDiagnostic(SieveDiagnostic diagnostic) =>
         $"Line {diagnostic.Line}, column {diagnostic.Column}: {diagnostic.Message}";
 
     private static SieveScriptOperationResult Success() => new(true);
-    private static SieveScriptOperationResult Failure(string error) => new(false, error);
+    private static SieveScriptOperationResult Failure(string error, string? responseCode = null) =>
+        new(false, error, responseCode);
 }

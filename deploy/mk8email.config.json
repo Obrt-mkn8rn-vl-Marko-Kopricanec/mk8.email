@@ -32,6 +32,12 @@
     "EnableImplicitTls": true,
     "EnableStartTls": true
   },
+  "Sieve": {
+    "Port": 4190,
+    "EnableManageSieve": true,
+    "EnableStartTls": true,
+    "MaxScriptsPerUser": 64
+  },
   "Jmap": {
     "Port": 8081,
     "EnableJmap": true,

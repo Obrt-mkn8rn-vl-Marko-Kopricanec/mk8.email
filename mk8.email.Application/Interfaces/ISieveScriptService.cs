@@ -17,11 +17,19 @@ internal sealed record StoredSieveScript(
 
 internal sealed record SieveScriptOperationResult(
     bool Succeeded,
-    string? Error = null);
+    string? Error = null,
+    string? ResponseCode = null);
 
 internal interface ISieveScriptService
 {
     SieveCompilationResult Validate(string content);
+
+    Task<SieveScriptOperationResult> CheckSpaceAsync(
+        Guid userId,
+        string name,
+        long contentSizeBytes,
+        int maximumScripts,
+        CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<SieveScriptSummary>> ListAsync(
         Guid userId,
@@ -36,6 +44,7 @@ internal interface ISieveScriptService
         Guid userId,
         string name,
         string content,
+        int maximumScripts = int.MaxValue,
         CancellationToken cancellationToken = default);
 
     Task<SieveScriptOperationResult> SetActiveAsync(

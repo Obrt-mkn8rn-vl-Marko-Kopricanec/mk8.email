@@ -70,8 +70,34 @@ public sealed class SieveScriptServiceTests
 
         Assert.IsFalse((await service.PutAsync(userId, string.Empty, "keep;")).Succeeded);
         Assert.IsFalse((await service.PutAsync(userId, new string('x', 129), "keep;")).Succeeded);
+        Assert.IsTrue((await service.PutAsync(userId, string.Concat(Enumerable.Repeat("😀", 128)), "keep;")).Succeeded);
+        Assert.IsFalse((await service.PutAsync(userId, string.Concat(Enumerable.Repeat("😀", 129)), "keep;")).Succeeded);
+        Assert.IsFalse((await service.PutAsync(userId, "line\u2028separator", "keep;")).Succeeded);
         Assert.IsTrue((await service.PutAsync(userId, "Cafe\u0301", "keep;")).Succeeded);
         Assert.IsNotNull(await service.GetAsync(userId, "Café"));
+    }
+
+    [TestMethod]
+    public async Task ScriptCountQuotaAllowsReplacementButRejectsAdditionalScripts()
+    {
+        await using var database = CreateDatabase();
+        await database.Database.EnsureCreatedAsync();
+        var userId = Guid.CreateVersion7();
+        database.Users.Add(new UserDB
+        {
+            Id = userId,
+            Username = "admin@mk8n.com",
+            PasswordHash = "unused",
+            Role = "User",
+        });
+        await database.SaveChangesAsync();
+        var service = new SieveScriptService(database);
+
+        Assert.IsTrue((await service.PutAsync(userId, "first", "keep;", 1)).Succeeded);
+        Assert.IsTrue((await service.PutAsync(userId, "first", "discard;", 1)).Succeeded);
+        var rejected = await service.PutAsync(userId, "second", "keep;", 1);
+        Assert.IsFalse(rejected.Succeeded);
+        Assert.AreEqual("QUOTA/MAXSCRIPTS", rejected.ResponseCode);
     }
 
     private static EmailDbContext CreateDatabase()

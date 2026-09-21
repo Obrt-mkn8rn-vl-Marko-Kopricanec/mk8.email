@@ -143,6 +143,32 @@ internal static class JmapContactQueryEngine
         return true;
     }
 
+    public static bool IsFilterMutable(JsonNode? filter)
+    {
+        if (filter is not JsonObject value)
+            return false;
+        if (!value.ContainsKey("operator"))
+            return value.Count > 0;
+        return value["conditions"] is JsonArray conditions
+            && conditions.Any(IsFilterMutable);
+    }
+
+    public static bool ImmutableFilterMatchesAll(JsonNode? filter)
+    {
+        if (filter is not JsonObject value || !value.ContainsKey("operator"))
+            return true;
+        var operation = value["operator"]!.GetValue<string>();
+        var conditions = value["conditions"]!.AsArray()
+            .Select(ImmutableFilterMatchesAll)
+            .ToArray();
+        return operation switch
+        {
+            "AND" => conditions.All(result => result),
+            "OR" => conditions.Any(result => result),
+            _ => conditions.All(result => !result),
+        };
+    }
+
     public static bool TryParseSort(
         JsonNode? sort,
         out IReadOnlyList<JmapContactComparator> comparators,
@@ -571,9 +597,18 @@ internal sealed class ContactCardQueryChangesMethod(
         var currentIds = JmapContactQueryEngine.Sort(filtered, comparators)
             .Select(card => card.Id).ToList();
         var currentSet = currentIds.ToHashSet(StringComparer.Ordinal);
-        var removed = changes.Destroyed.Concat(changes.Updated)
-            .Distinct(StringComparer.Ordinal).ToArray();
-        var changedCurrent = changes.Created.Concat(changes.Updated)
+        var mutableQuery = comparators.Count > 0
+            || JmapContactQueryEngine.IsFilterMutable(arguments["filter"]);
+        var immutableQueryMatchesAll = !mutableQuery
+            && JmapContactQueryEngine.ImmutableFilterMatchesAll(arguments["filter"]);
+        IEnumerable<string> removedChanges = mutableQuery
+            ? changes.Destroyed.Concat(changes.Updated)
+            : immutableQueryMatchesAll ? changes.Destroyed : [];
+        IEnumerable<string> addedChanges = mutableQuery
+            ? changes.Created.Concat(changes.Updated)
+            : immutableQueryMatchesAll ? changes.Created : [];
+        var removed = removedChanges.Distinct(StringComparer.Ordinal).ToArray();
+        var changedCurrent = addedChanges
             .Where(currentSet.Contains).ToHashSet(StringComparer.Ordinal);
         var added = currentIds.Select((id, index) => new { id, index })
             .Where(item => changedCurrent.Contains(item.id)).ToArray();

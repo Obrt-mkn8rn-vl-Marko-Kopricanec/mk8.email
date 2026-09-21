@@ -376,6 +376,108 @@ public sealed class JmapContactsTests
     }
 
     [TestMethod]
+    public async Task ContactCardQueryChangesDoesNotReinsertUpdatesForImmutableIdOrder()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var defaultBookId = await GetDefaultAddressBookIdAsync(fixture);
+        var create = Arguments(await InvokeAsync(fixture, "ContactCard/set", new JsonObject
+        {
+            ["accountId"] = fixture.AccountId,
+            ["create"] = new JsonObject
+            {
+                ["alice"] = Card(
+                    defaultBookId,
+                    "immutable-query-alice",
+                    "Alice Adams",
+                    "Alice",
+                    "Adams",
+                    "alice@example.net"),
+                ["bob"] = Card(
+                    defaultBookId,
+                    "immutable-query-bob",
+                    "Bob Baker",
+                    "Bob",
+                    "Baker",
+                    "bob@example.net"),
+            },
+        }));
+        var aliceId = create["created"]!["alice"]!["id"]!.GetValue<string>();
+
+        var immutableQuery = Arguments(await InvokeAsync(fixture, "ContactCard/query", new JsonObject
+        {
+            ["accountId"] = fixture.AccountId,
+        }));
+        var immutableState = immutableQuery["queryState"]!.GetValue<string>();
+
+        var contentOnlyUpdate = Arguments(await InvokeAsync(fixture, "ContactCard/set", new JsonObject
+        {
+            ["accountId"] = fixture.AccountId,
+            ["update"] = new JsonObject
+            {
+                [aliceId] = new JsonObject { ["name/full"] = "Alice A. Adams" },
+            },
+        }));
+        Assert.IsTrue(contentOnlyUpdate["updated"]!.AsObject().ContainsKey(aliceId));
+
+        var immutableChanges = Arguments(await InvokeAsync(
+            fixture,
+            "ContactCard/queryChanges",
+            new JsonObject
+            {
+                ["accountId"] = fixture.AccountId,
+                ["sinceQueryState"] = immutableState,
+            }));
+        Assert.AreEqual(0, immutableChanges["removed"]!.AsArray().Count);
+        Assert.AreEqual(0, immutableChanges["added"]!.AsArray().Count);
+
+        var mutableSort = new JsonArray(new JsonObject
+        {
+            ["property"] = "name/surname",
+            ["isAscending"] = true,
+        });
+        var mutableQuery = Arguments(await InvokeAsync(fixture, "ContactCard/query", new JsonObject
+        {
+            ["accountId"] = fixture.AccountId,
+            ["sort"] = mutableSort.DeepClone(),
+        }));
+        var mutableState = mutableQuery["queryState"]!.GetValue<string>();
+
+        var orderUpdate = Arguments(await InvokeAsync(fixture, "ContactCard/set", new JsonObject
+        {
+            ["accountId"] = fixture.AccountId,
+            ["update"] = new JsonObject
+            {
+                [aliceId] = new JsonObject
+                {
+                    ["name"] = new JsonObject
+                    {
+                        ["full"] = "Alice Zulu",
+                        ["components"] = new JsonArray(
+                            new JsonObject { ["kind"] = "given", ["value"] = "Alice" },
+                            new JsonObject { ["kind"] = "surname", ["value"] = "Zulu" }),
+                    },
+                },
+            },
+        }));
+        Assert.IsTrue(orderUpdate["updated"]!.AsObject().ContainsKey(aliceId));
+
+        var mutableChanges = Arguments(await InvokeAsync(
+            fixture,
+            "ContactCard/queryChanges",
+            new JsonObject
+            {
+                ["accountId"] = fixture.AccountId,
+                ["sort"] = mutableSort.DeepClone(),
+                ["sinceQueryState"] = mutableState,
+            }));
+        CollectionAssert.AreEqual(new[] { aliceId }, StringValues(mutableChanges["removed"]!));
+        var added = mutableChanges["added"]!.AsArray();
+        Assert.AreEqual(1, added.Count);
+        Assert.AreEqual(aliceId, added[0]!["id"]!.GetValue<string>());
+        Assert.AreEqual(1, added[0]!["index"]!.GetValue<int>());
+    }
+
+    [TestMethod]
     public async Task ContactMediaAcceptsTypedUploadsAndRejectsMismatches()
     {
         await using var fixture = await JmapFixture.CreateAsync();

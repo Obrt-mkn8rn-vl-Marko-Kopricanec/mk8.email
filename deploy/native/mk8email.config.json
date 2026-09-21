@@ -25,6 +25,13 @@
     "EnableImap": false,
     "EnableImplicitTls": true
   },
+  "Pop3": {
+    "Port": 110,
+    "ImplicitTlsPort": 995,
+    "EnablePop3": true,
+    "EnableImplicitTls": true,
+    "EnableStartTls": true
+  },
   "Jmap": {
     "Port": 8081,
     "EnableJmap": true,

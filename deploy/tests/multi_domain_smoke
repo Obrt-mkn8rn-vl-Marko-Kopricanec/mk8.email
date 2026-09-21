@@ -125,8 +125,14 @@ initial_mta_sts_id=$(sed -n '1p' "$domain_directory/mta-sts-id")
 grep -Fx "\$ORIGIN $domain." "$domain_directory/cloudflare-import.zone" >/dev/null
 grep -Fx "@ IN MX 10 email.mk8n.com." \
     "$domain_directory/cloudflare-import.zone" >/dev/null
+grep -Fx "_pop3._tcp IN SRV 0 1 110 email.mk8n.com." \
+    "$domain_directory/cloudflare-import.zone" >/dev/null
+grep -Fx "_pop3s._tcp IN SRV 0 1 995 email.mk8n.com." \
+    "$domain_directory/cloudflare-import.zone" >/dev/null
 grep -Fx "autoconfig IN CNAME email.mk8n.com. ; cf_tags=cf-proxied:false" \
     "$domain_directory/cloudflare-import.zone" >/dev/null
+grep -F '<incomingServer type="pop3">' \
+    "$web_directory/autoconfig/mail/config-v1.1.xml" >/dev/null
 grep -Fx "$domain $selector" /etc/rspamd/dkim_selectors.map >/dev/null
 grep -Fx "$domain $selector_key" /etc/rspamd/dkim_paths.map >/dev/null
 runuser -u _rspamd -- test -r "$selector_key"

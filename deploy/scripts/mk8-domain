@@ -392,6 +392,8 @@ write_domain_assets() {
         printf '@ IN MX 10 %s.\n' "$canonical_mail_host"
         printf '_jmap._tcp IN SRV 0 1 443 %s.\n' "$canonical_mail_host"
         printf '_imaps._tcp IN SRV 0 1 993 %s.\n' "$canonical_mail_host"
+        printf '_pop3._tcp IN SRV 0 1 110 %s.\n' "$canonical_mail_host"
+        printf '_pop3s._tcp IN SRV 0 1 995 %s.\n' "$canonical_mail_host"
         printf '_submission._tcp IN SRV 0 1 587 %s.\n' "$canonical_mail_host"
         printf '_submissions._tcp IN SRV 0 1 465 %s.\n' "$canonical_mail_host"
         printf 'autoconfig IN CNAME %s. ; cf_tags=cf-proxied:false\n' "$canonical_mail_host"

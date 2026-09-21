@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import imaplib
+import poplib
 import re
 import smtplib
 import ssl
@@ -75,6 +76,26 @@ def require_login_rejected(account: str, password: str) -> None:
     except imaplib.IMAP4.error:
         return
     raise RuntimeError("mk8.email accepted an IMAP login for an inactive domain.")
+
+
+def require_pop3_login_rejected(account: str, password: str) -> None:
+    client = poplib.POP3_SSL(
+        LOCAL_HOST,
+        995,
+        timeout=20,
+        context=tls_context(),
+    )
+    try:
+        client.user(account)
+        client.pass_(password)
+    except poplib.error_proto:
+        return
+    finally:
+        try:
+            client.quit()
+        except poplib.error_proto:
+            client.close()
+    raise RuntimeError("mk8.email accepted a POP3 login for an inactive domain.")
 
 
 def send_inbound(value: EmailMessage) -> None:
@@ -542,7 +563,8 @@ def main() -> None:
     if arguments.mode == "pending":
         require_recipient_rejected(f"undefined@{arguments.domain}")
         require_login_rejected(arguments.account, password)
-        print("The pending domain rejected SMTP and IMAP access.")
+        require_pop3_login_rejected(arguments.account, password)
+        print("The pending domain rejected SMTP, IMAP, and POP3 access.")
         return
 
     require(arguments.selector is not None, "The active test requires a DKIM selector.")

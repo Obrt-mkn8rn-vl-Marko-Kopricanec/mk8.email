@@ -2,6 +2,7 @@
 import argparse
 import base64
 import imaplib
+import poplib
 import smtplib
 import ssl
 import subprocess
@@ -141,6 +142,64 @@ def wait_for_subject(account: str, password: str, subject: str) -> None:
     raise RuntimeError(f"The message with the expected subject did not reach {account}.")
 
 
+def wait_for_pop3_message(
+    account: str,
+    password: str,
+    marker: str,
+    implicit_tls: bool,
+) -> bytes:
+    deadline = time.monotonic() + 40
+    while time.monotonic() < deadline:
+        client: poplib.POP3 | None = None
+        try:
+            if implicit_tls:
+                client = poplib.POP3_SSL(
+                    LOCAL_HOST,
+                    995,
+                    timeout=15,
+                    context=tls_context(),
+                )
+            else:
+                client = poplib.POP3(LOCAL_HOST, 110, timeout=15)
+                clear_capabilities = client.capa()
+                require(b"STLS" in clear_capabilities, "POP3 did not advertise STLS.")
+                client.stls(context=tls_context())
+
+            capabilities = client.capa()
+            require(b"UIDL" in capabilities, "POP3 did not advertise UIDL.")
+            require(b"TOP" in capabilities, "POP3 did not advertise TOP.")
+            client.user(account)
+            client.pass_(password)
+            _, uidl_lines, _ = client.uidl()
+            unique_ids = [line.split(maxsplit=1)[1] for line in uidl_lines]
+            require(
+                len(unique_ids) == len(set(unique_ids)),
+                "POP3 returned duplicate UIDLs.",
+            )
+            _, message_lines, _ = client.list()
+            for listing in reversed(message_lines):
+                number = int(listing.split(maxsplit=1)[0])
+                _, header_lines, _ = client.top(number, 0)
+                headers = b"\r\n".join(header_lines) + b"\r\n"
+                if not contains_marker(headers, marker):
+                    continue
+                _, content_lines, _ = client.retr(number)
+                raw = b"\r\n".join(content_lines) + b"\r\n"
+                require(contains_marker(raw, marker), "POP3 TOP and RETR returned different messages.")
+                client.dele(number)
+                client.quit()
+                client = None
+                return raw
+        finally:
+            if client is not None:
+                try:
+                    client.quit()
+                except poplib.error_proto:
+                    client.close()
+        time.sleep(1)
+    raise RuntimeError(f"The expected POP3 message did not reach {account}.")
+
+
 def require_absent(account: str, password: str, marker: str) -> None:
     with imaplib.IMAP4_SSL(LOCAL_HOST, 993, ssl_context=tls_context(), timeout=15) as client:
         client.login(account, password)
@@ -257,6 +316,14 @@ def baseline(admin_password: str, primary_password: str) -> None:
     send_inbound(message(f"undefined-{catchall_marker}@{DOMAIN}", catchall_marker))
     wait_for_message(PRIMARY, primary_password, catchall_marker)
 
+    pop3s_marker = uuid.uuid4().hex
+    send_inbound(message(ADMIN, pop3s_marker))
+    wait_for_pop3_message(ADMIN, admin_password, pop3s_marker, implicit_tls=True)
+
+    pop3_stls_marker = uuid.uuid4().hex
+    send_inbound(message(ADMIN, pop3_stls_marker))
+    wait_for_pop3_message(ADMIN, admin_password, pop3_stls_marker, implicit_tls=False)
+
     starttls_marker = uuid.uuid4().hex
     send_submission(message(ADMIN, starttls_marker), admin_password, implicit_tls=False)
     raw = wait_for_message(ADMIN, admin_password, starttls_marker)
@@ -268,7 +335,7 @@ def baseline(admin_password: str, primary_password: str) -> None:
 
     test_open_relay()
     test_sender_mismatch(admin_password)
-    print("Baseline SMTP, submission, IMAP, catch-all, DKIM, and relay tests passed.")
+    print("Baseline SMTP, submission, IMAP, POP3, catch-all, DKIM, and relay tests passed.")
 
 
 def unsafe_content(admin_password: str) -> None:

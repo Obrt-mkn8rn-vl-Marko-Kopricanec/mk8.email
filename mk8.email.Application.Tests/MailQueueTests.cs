@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging;
 using mk8.email.Application.Interfaces;
 using mk8.email.Application.Services;
 using mk8.email.Contracts.Enums;
@@ -345,6 +345,247 @@ public sealed class MailQueueTests
         CollectionAssert.AreEquivalent(new[] { "created", "updated" }, changes);
     }
 
+    [TestMethod]
+    public async Task SieveFileIntoCreatesFolderAndAppliesFlags()
+    {
+        var environment = CreateEnvironment();
+        await using var services = CreateServices(
+            environment,
+            CleanScan(),
+            new StubRelay(OutboundDeliveryStatus.Delivered));
+        await SeedAccountAsync(services, includeCatchAll: false);
+        await ActivateScriptAsync(
+            services,
+            TestAccount,
+            """
+            require ["fileinto", "mailbox", "imap4flags"];
+            fileinto :create :flags ["\\Seen", "\\Flagged", "project"] "Projects/MK8";
+            """);
+        var queueId = await EnqueueAsync(
+            services,
+            "sender@example.net",
+            TestAccount,
+            isLocal: true,
+            authenticatedUser: null);
+
+        Assert.IsTrue(await ProcessOneAsync(services, environment));
+
+        using var scope = services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var queued = await database.MailQueueMessages
+            .Include(message => message.Recipients)
+            .SingleAsync(message => message.Id == queueId);
+        Assert.AreEqual(MailQueueStates.Completed, queued.State);
+        var delivered = await database.Emails.Include(message => message.Folder).SingleAsync();
+        Assert.AreEqual("Projects/MK8", delivered.Folder.Name);
+        Assert.IsTrue(delivered.IsRead);
+        Assert.IsTrue(delivered.IsFlagged);
+        CollectionAssert.AreEqual(new[] { "project" }, delivered.Keywords);
+        Assert.AreNotEqual(queued.Recipients.Single().Id, delivered.QueueDeliveryId);
+    }
+
+    [TestMethod]
+    public async Task SieveDiscardCompletesWithoutMailboxDelivery()
+    {
+        var environment = CreateEnvironment();
+        await using var services = CreateServices(
+            environment,
+            CleanScan(),
+            new StubRelay(OutboundDeliveryStatus.Delivered));
+        await SeedAccountAsync(services, includeCatchAll: false);
+        await ActivateScriptAsync(services, TestAccount, "discard;");
+        var queueId = await EnqueueAsync(
+            services,
+            "sender@example.net",
+            TestAccount,
+            isLocal: true,
+            authenticatedUser: null);
+
+        Assert.IsTrue(await ProcessOneAsync(services, environment));
+
+        using var scope = services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        Assert.AreEqual(
+            MailQueueStates.Completed,
+            (await database.MailQueueMessages.SingleAsync(message => message.Id == queueId)).State);
+        Assert.AreEqual(0, await database.Emails.CountAsync());
+    }
+
+    [TestMethod]
+    public async Task MissingSieveFileIntoMailboxFallsBackToInbox()
+    {
+        var environment = CreateEnvironment();
+        await using var services = CreateServices(
+            environment,
+            CleanScan(),
+            new StubRelay(OutboundDeliveryStatus.Delivered));
+        await SeedAccountAsync(services, includeCatchAll: false);
+        await ActivateScriptAsync(
+            services,
+            TestAccount,
+            "require \"fileinto\"; fileinto \"Missing\";");
+        await EnqueueAsync(
+            services,
+            "sender@example.net",
+            TestAccount,
+            isLocal: true,
+            authenticatedUser: null);
+
+        Assert.IsTrue(await ProcessOneAsync(services, environment));
+
+        using var scope = services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var delivered = await database.Emails.Include(message => message.Folder).SingleAsync();
+        Assert.AreEqual(DefaultFolders.Inbox, delivered.Folder.Name);
+    }
+
+    [TestMethod]
+    public async Task CatchAllDeliveryUsesOwningUsersActiveSieveScript()
+    {
+        var environment = CreateEnvironment();
+        await using var services = CreateServices(
+            environment,
+            CleanScan(),
+            new StubRelay(OutboundDeliveryStatus.Delivered));
+        await SeedAccountAsync(services, includeCatchAll: true);
+        await ActivateScriptAsync(services, TestAccount, "discard;");
+        await EnqueueAsync(
+            services,
+            "sender@example.net",
+            "undefined@mk8n.com",
+            isLocal: true,
+            authenticatedUser: null);
+
+        Assert.IsTrue(await ProcessOneAsync(services, environment));
+
+        using var scope = services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        Assert.AreEqual(0, await database.Emails.CountAsync());
+        Assert.AreEqual(MailQueueStates.Completed, (await database.MailQueueMessages.SingleAsync()).State);
+    }
+
+    [TestMethod]
+    public async Task SieveRedirectAddsDurableRecipientForNextQueuePass()
+    {
+        var environment = CreateEnvironment();
+        var relay = new StubRelay(OutboundDeliveryStatus.Delivered);
+        await using var services = CreateServices(environment, CleanScan(), relay);
+        await SeedAccountAsync(services, includeCatchAll: false);
+        await ActivateScriptAsync(
+            services,
+            TestAccount,
+            "redirect \"archive@example.org\";");
+        var queueId = await EnqueueAsync(
+            services,
+            "sender@example.net",
+            TestAccount,
+            isLocal: true,
+            authenticatedUser: null);
+
+        Assert.IsTrue(await ProcessOneAsync(services, environment));
+        Assert.AreEqual(0, relay.CallCount);
+        Assert.IsTrue(await ProcessOneAsync(services, environment));
+
+        using var scope = services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var queued = await database.MailQueueMessages
+            .Include(message => message.Recipients)
+            .SingleAsync(message => message.Id == queueId);
+        Assert.AreEqual(
+            MailQueueStates.Completed,
+            queued.State,
+            $"message={queued.AttemptCount}:{queued.NextAttemptAt:o}:{queued.LastError};" +
+            string.Join(';', queued.Recipients.Select(item =>
+                $"{item.Recipient}:{item.State}:{item.AttemptCount}:{item.NextAttemptAt:o}:{item.LastError}")));
+        Assert.AreEqual(2, queued.Recipients.Count);
+        var redirected = queued.Recipients.Single(item => item.Recipient == "archive@example.org");
+        Assert.AreEqual(1, redirected.RedirectDepth);
+        CollectionAssert.AreEquivalent(
+            new[] { TestAccount, "archive@example.org" },
+            redirected.RedirectHistory);
+        Assert.AreEqual(1, relay.CallCount);
+        Assert.AreEqual(0, await database.Emails.CountAsync());
+    }
+
+    [TestMethod]
+    public async Task SieveRedirectLoopFallsBackToKeepAtLastRecipient()
+    {
+        const string secondAccount = "second@mk8n.com";
+        var environment = CreateEnvironment();
+        var relay = new StubRelay(OutboundDeliveryStatus.Delivered);
+        await using var services = CreateServices(environment, CleanScan(), relay);
+        await SeedAccountAsync(services, includeCatchAll: false);
+        using (var setupScope = services.CreateScope())
+        {
+            var setupDatabase = setupScope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            var administration = new MailAdministrationService(setupDatabase);
+            Assert.IsTrue((await administration.CreateAccountAsync(
+                secondAccount,
+                "second-account-password-value",
+                UserRole.User)).Succeeded);
+        }
+        await ActivateScriptAsync(services, TestAccount, $"redirect \"{secondAccount}\";");
+        await ActivateScriptAsync(services, secondAccount, $"redirect \"{TestAccount}\";");
+        var queueId = await EnqueueAsync(
+            services,
+            "sender@example.net",
+            TestAccount,
+            isLocal: true,
+            authenticatedUser: null);
+
+        Assert.IsTrue(await ProcessOneAsync(services, environment));
+        Assert.IsTrue(await ProcessOneAsync(services, environment));
+
+        using var scope = services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var queueMessage = await database.MailQueueMessages.SingleAsync(message => message.Id == queueId);
+        Assert.AreEqual(
+            MailQueueStates.Completed,
+            queueMessage.State,
+            $"message={queueMessage.AttemptCount}:{queueMessage.NextAttemptAt:o}:{queueMessage.LastError};" +
+            string.Join(';', (await database.MailQueueRecipients
+                .Where(item => item.MessageId == queueId)
+                .ToListAsync()).Select(item =>
+                $"{item.Recipient}:{item.State}:{item.AttemptCount}:{item.NextAttemptAt:o}:{item.LastError}")));
+        var delivered = await database.Emails.Include(message => message.Folder).SingleAsync();
+        Assert.AreEqual(secondAccount, delivered.Recipient);
+        Assert.AreEqual(DefaultFolders.Inbox, delivered.Folder.Name);
+        Assert.AreEqual(0, relay.CallCount);
+    }
+
+    [TestMethod]
+    public async Task SieveRejectNotifiesEnvelopeSenderWithoutStoringOriginal()
+    {
+        var environment = CreateEnvironment();
+        var relay = new StubRelay(OutboundDeliveryStatus.Delivered);
+        await using var services = CreateServices(environment, CleanScan(), relay);
+        await SeedAccountAsync(services, includeCatchAll: false);
+        await ActivateScriptAsync(
+            services,
+            TestAccount,
+            "require \"reject\"; reject \"This mailbox does not accept automated reports.\";");
+        var queueId = await EnqueueAsync(
+            services,
+            "sender@example.net",
+            TestAccount,
+            isLocal: true,
+            authenticatedUser: null);
+
+        Assert.IsTrue(await ProcessOneAsync(services, environment));
+
+        using var scope = services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        Assert.AreEqual(
+            MailQueueStates.Completed,
+            (await database.MailQueueMessages.SingleAsync(message => message.Id == queueId)).State);
+        Assert.AreEqual(0, await database.Emails.CountAsync());
+        Assert.AreEqual(1, relay.CallCount);
+        Assert.AreEqual(string.Empty, relay.LastSender);
+        Assert.AreEqual("sender@example.net", relay.LastRecipient);
+        StringAssert.Contains(relay.LastRawMessage!, "This mailbox does not accept automated reports.");
+        StringAssert.Contains(relay.LastRawMessage!, "Auto-Submitted: auto-replied");
+    }
+
     private static ServiceProvider CreateServices(
         EnvironmentConfig environment,
         MailScanResult scanResult,
@@ -357,7 +598,10 @@ public sealed class MailQueueTests
             options.UseInMemoryDatabase(databaseName)
                 .ConfigureWarnings(warnings => warnings.Ignore(InMemoryEventId.TransactionIgnoredWarning)));
         services.AddScoped<IEmailService, EmailService>();
+        services.AddScoped<ISieveScriptService, SieveScriptService>();
+        services.AddScoped<ISieveFilterService, SieveFilterService>();
         services.AddScoped<IMailSubmissionQueue, PostgresMailSubmissionQueue>();
+        services.AddLogging();
         services.AddSingleton<IMailScanner>(new StubScanner(scanResult));
         services.AddSingleton(relay);
         return services.BuildServiceProvider();
@@ -402,16 +646,38 @@ public sealed class MailQueueTests
         return queueId;
     }
 
+    private static async Task ActivateScriptAsync(
+        ServiceProvider services,
+        string username,
+        string content)
+    {
+        using var scope = services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var userId = await database.Users
+            .Where(user => user.Username == username)
+            .Select(user => user.Id)
+            .SingleAsync();
+        var scripts = scope.ServiceProvider.GetRequiredService<ISieveScriptService>();
+        var put = await scripts.PutAsync(userId, "active", content);
+        Assert.IsTrue(put.Succeeded, put.Error);
+        var active = await scripts.SetActiveAsync(userId, "active");
+        Assert.IsTrue(active.Succeeded, active.Error);
+    }
+
     private static async Task<bool> ProcessOneAsync(
         ServiceProvider services,
         EnvironmentConfig environment)
     {
+        var logger = new CapturingQueueLogger();
         var worker = new MailQueueWorker(
             services.GetRequiredService<IServiceScopeFactory>(),
             environment,
             TimeProvider.System,
-            NullLogger<MailQueueWorker>.Instance);
-        return await worker.ProcessNextAsync(CancellationToken.None);
+            logger);
+        var processed = await worker.ProcessNextAsync(CancellationToken.None);
+        if (logger.Exception is not null)
+            Assert.Fail(logger.Exception.ToString());
+        return processed;
     }
 
     private static EnvironmentConfig CreateEnvironment(int maxAttempts = 5) => new()
@@ -450,9 +716,31 @@ public sealed class MailQueueTests
             CancellationToken cancellationToken = default) => Task.FromResult(result);
     }
 
+    private sealed class CapturingQueueLogger : ILogger<MailQueueWorker>
+    {
+        public Exception? Exception { get; private set; }
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel >= LogLevel.Error && exception is not null)
+                Exception = exception;
+        }
+    }
+
     private sealed class StubRelay(OutboundDeliveryStatus status) : IOutboundMailRelay
     {
         public int CallCount { get; private set; }
+        public string? LastSender { get; private set; }
+        public string? LastRecipient { get; private set; }
+        public string? LastRawMessage { get; private set; }
 
         public Task<OutboundDeliveryResult> RelayAsync(
             string sender,
@@ -461,6 +749,9 @@ public sealed class MailQueueTests
             CancellationToken cancellationToken = default)
         {
             CallCount++;
+            LastSender = sender;
+            LastRecipient = recipient;
+            LastRawMessage = rawMessage;
             return Task.FromResult(new OutboundDeliveryResult(status, "Test delivery result."));
         }
     }

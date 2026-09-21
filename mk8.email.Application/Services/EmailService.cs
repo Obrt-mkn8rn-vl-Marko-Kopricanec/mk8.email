@@ -27,10 +27,15 @@ public class EmailService(EmailDbContext db) : IEmailService
         string rawMessage,
         string folderName = DefaultFolders.Inbox,
         Guid? queueDeliveryId = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IReadOnlyCollection<string>? flags = null,
+        bool createFolder = false)
     {
-        if (!DefaultFolders.All.Contains(folderName, StringComparer.Ordinal))
+        folderName = MailboxName.Normalize(folderName);
+        if (!MailboxName.IsValid(folderName))
             throw new ArgumentException("The delivery folder is not valid.", nameof(folderName));
+        if (!TryNormalizeFlags(flags, out var normalizedFlags))
+            throw new ArgumentException("The delivery flags are not valid.", nameof(flags));
 
         if (queueDeliveryId is not null
             && await db.Emails.AsNoTracking().AnyAsync(
@@ -59,7 +64,17 @@ public class EmailService(EmailDbContext db) : IEmailService
                                    && f.Name == folderName,
                 cancellationToken);
         if (folder is null)
-            return false;
+        {
+            if (!createFolder)
+                return false;
+            folder = new FolderDB
+            {
+                Id = Guid.CreateVersion7(),
+                InboxId = target.Id,
+                Name = folderName,
+            };
+            db.Folders.Add(folder);
+        }
 
         var uid = folder.NextUid++;
         var modSeq = ++folder.HighestModSeq;
@@ -77,7 +92,7 @@ public class EmailService(EmailDbContext db) : IEmailService
             messageId,
             cancellationToken);
 
-        db.Emails.Add(new EmailDB
+        var email = new EmailDB
         {
             Id = Guid.CreateVersion7(),
             Sender = sender,
@@ -96,7 +111,9 @@ public class EmailService(EmailDbContext db) : IEmailService
             Uid = uid,
             ModSeq = modSeq,
             FolderId = folder.Id,
-        });
+        };
+        ApplyFlags(email, normalizedFlags);
+        db.Emails.Add(email);
 
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
@@ -286,6 +303,61 @@ public class EmailService(EmailDbContext db) : IEmailService
 
     private static ParsedMailMessage ParseMessage(string rawMessage) =>
         MailMessageParser.Parse(rawMessage);
+
+    private static bool TryNormalizeFlags(
+        IReadOnlyCollection<string>? flags,
+        out IReadOnlyList<string> normalized)
+    {
+        var values = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var flag in flags ?? [])
+        {
+            if (!IsValidFlag(flag))
+            {
+                normalized = [];
+                return false;
+            }
+            values.Add(flag);
+        }
+        if (values.Count(item => !item.StartsWith('\\')) > 128)
+        {
+            normalized = [];
+            return false;
+        }
+        normalized = values
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ThenBy(flag => flag, StringComparer.Ordinal)
+            .ToArray();
+        return true;
+    }
+
+    private static bool IsValidFlag(string flag)
+    {
+        if (flag.Length is < 1 or > 255)
+            return false;
+        if (flag[0] == '\\')
+            return flag.ToUpperInvariant() is "\\SEEN" or "\\DELETED" or "\\FLAGGED" or "\\DRAFT" or "\\ANSWERED";
+        return flag.All(character => character > ' '
+            && character < '\u007f'
+            && character is not '(' and not ')' and not '{' and not '%' and not '*' and not ']');
+    }
+
+    private static void ApplyFlags(EmailDB email, IReadOnlyList<string> flags)
+    {
+        var keywords = new List<string>();
+        foreach (var flag in flags)
+        {
+            switch (flag.ToUpperInvariant())
+            {
+                case "\\SEEN": email.IsRead = true; break;
+                case "\\DELETED": email.IsDeleted = true; break;
+                case "\\FLAGGED": email.IsFlagged = true; break;
+                case "\\DRAFT": email.IsDraft = true; break;
+                case "\\ANSWERED": email.IsAnswered = true; break;
+                default: keywords.Add(flag); break;
+            }
+        }
+        email.Keywords = keywords.ToArray();
+    }
 
     private sealed record TargetInbox(Guid Id, string Domain, Guid OwnerId, long QuotaBytes);
 

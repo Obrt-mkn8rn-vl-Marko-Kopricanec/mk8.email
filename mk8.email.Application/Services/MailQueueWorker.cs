@@ -1,4 +1,6 @@
 using System.Data;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -17,6 +19,8 @@ public sealed class MailQueueWorker(
     TimeProvider timeProvider,
     ILogger<MailQueueWorker> logger) : BackgroundService
 {
+    private const int MaximumSieveRedirectDepth = 10;
+    private const int MaximumSieveRedirectRecipients = 100;
     private DateTimeOffset _nextCleanup = DateTimeOffset.MinValue;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -109,6 +113,7 @@ public sealed class MailQueueWorker(
         var scanner = services.GetRequiredService<IMailScanner>();
         var delivery = services.GetRequiredService<IEmailService>();
         var vacationResponder = services.GetService<IVacationResponder>();
+        var sieveFilter = services.GetService<ISieveFilterService>();
         var relay = services.GetRequiredService<IOutboundMailRelay>();
 
         if (message.ScanState == MailQueueScanStates.Pending)
@@ -170,14 +175,17 @@ public sealed class MailQueueWorker(
         foreach (var recipient in message.Recipients
                      .Where(item => item.State == MailQueueRecipientStates.Pending
                          && item.NextAttemptAt <= now)
-                     .OrderBy(item => item.Id))
+                     .OrderBy(item => item.Id)
+                     .ToList())
         {
             await DeliverRecipientAsync(
+                database,
                 message,
                 recipient,
                 deliveryMessage,
                 delivery,
                 vacationResponder,
+                sieveFilter,
                 relay,
                 now,
                 cancellationToken);
@@ -206,11 +214,13 @@ public sealed class MailQueueWorker(
     }
 
     private async Task DeliverRecipientAsync(
+        EmailDbContext database,
         MailQueueMessageDB message,
         MailQueueRecipientDB recipient,
         string rawMessage,
         IEmailService delivery,
         IVacationResponder? vacationResponder,
+        ISieveFilterService? sieveFilter,
         IOutboundMailRelay relay,
         DateTime now,
         CancellationToken cancellationToken)
@@ -222,22 +232,91 @@ public sealed class MailQueueWorker(
         {
             if (recipient.IsLocal)
             {
-                var delivered = await delivery.DeliverAsync(
-                    message.EnvelopeSender,
-                    recipient.Recipient,
-                    rawMessage,
-                    message.TargetFolder ?? DefaultFolders.Inbox,
-                    recipient.Id,
-                    cancellationToken);
-                if (delivered)
+                var defaultFolder = message.TargetFolder ?? DefaultFolders.Inbox;
+                var plan = sieveFilter is null
+                    ? new SieveDeliveryPlan(
+                        false,
+                        [new SieveDeliveryInstruction(defaultFolder, [], false)],
+                        [],
+                        null,
+                        false)
+                    : await sieveFilter.EvaluateAsync(
+                        message.EnvelopeSender,
+                        recipient.Recipient,
+                        rawMessage,
+                        defaultFolder,
+                        cancellationToken);
+
+                if (plan.RejectReason is not null)
                 {
+                    if (!await CreateSieveRejectionAsync(
+                            message,
+                            recipient,
+                            plan.RejectReason,
+                            delivery,
+                            relay,
+                            cancellationToken))
+                    {
+                        ScheduleRecipientRetry(
+                            message,
+                            recipient,
+                            "The Sieve rejection notice could not be delivered.",
+                            now);
+                        return;
+                    }
+                    MarkDelivered(recipient, now);
+                    return;
+                }
+
+                var redirectsAdded = await AddSieveRedirectsAsync(
+                    database,
+                    message,
+                    recipient,
+                    plan.Redirects,
+                    delivery,
+                    now,
+                    cancellationToken);
+                var deliveries = plan.Deliveries;
+                if (deliveries.Count == 0
+                    && plan.Redirects.Count > 0
+                    && redirectsAdded == 0
+                    && !plan.Discarded)
+                {
+                    deliveries = [new SieveDeliveryInstruction(defaultFolder, [], false)];
+                }
+
+                for (var index = 0; index < deliveries.Count; index++)
+                {
+                    var instruction = deliveries[index];
+                    var deliveryId = plan.ScriptApplied
+                        ? DeriveQueueDeliveryId(recipient.Id, $"sieve-delivery-{index}")
+                        : recipient.Id;
+                    var delivered = await delivery.DeliverAsync(
+                        message.EnvelopeSender,
+                        recipient.Recipient,
+                        rawMessage,
+                        instruction.Folder,
+                        deliveryId,
+                        cancellationToken,
+                        instruction.Flags,
+                        instruction.Create);
+                    if (!delivered)
+                    {
+                        ScheduleRecipientRetry(
+                            message,
+                            recipient,
+                            "The local mailbox is unavailable, missing, or over quota.",
+                            now);
+                        return;
+                    }
+
                     if (vacationResponder is not null
                         && !await vacationResponder.QueueResponseAsync(
                             message.EnvelopeSender,
                             recipient.Recipient,
                             rawMessage,
-                            message.TargetFolder ?? DefaultFolders.Inbox,
-                            recipient.Id,
+                            instruction.Folder,
+                            deliveryId,
                             cancellationToken))
                     {
                         ScheduleRecipientRetry(
@@ -247,15 +326,9 @@ public sealed class MailQueueWorker(
                             now);
                         return;
                     }
-                    MarkDelivered(recipient, now);
-                    return;
                 }
 
-                ScheduleRecipientRetry(
-                    message,
-                    recipient,
-                    "The local mailbox is unavailable or over quota.",
-                    now);
+                MarkDelivered(recipient, now);
                 return;
             }
 
@@ -286,6 +359,120 @@ public sealed class MailQueueWorker(
         {
             ScheduleRecipientRetry(message, recipient, GetSafeError(exception), now);
         }
+    }
+
+    private async Task<int> AddSieveRedirectsAsync(
+        EmailDbContext database,
+        MailQueueMessageDB message,
+        MailQueueRecipientDB source,
+        IReadOnlyList<string> redirects,
+        IEmailService delivery,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        if (redirects.Count == 0 || source.RedirectDepth >= MaximumSieveRedirectDepth)
+            return 0;
+
+        var history = new HashSet<string>(
+            source.RedirectHistory.Length > 0
+                ? source.RedirectHistory
+                : [source.Recipient],
+            StringComparer.OrdinalIgnoreCase);
+        history.Add(source.Recipient);
+        var added = 0;
+        for (var index = 0; index < redirects.Count; index++)
+        {
+            var redirect = redirects[index];
+            if (history.Contains(redirect)
+                || message.Recipients.Count >= MaximumSieveRedirectRecipients)
+            {
+                continue;
+            }
+
+            var redirectId = DeriveQueueDeliveryId(source.Id, $"sieve-redirect-{index}-{redirect}");
+            if (message.Recipients.Any(item => item.Id == redirectId))
+            {
+                added++;
+                continue;
+            }
+
+            var redirectHistory = source.RedirectHistory
+                .Append(source.Recipient)
+                .Append(redirect)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            database.MailQueueRecipients.Add(new MailQueueRecipientDB
+            {
+                Id = redirectId,
+                MessageId = message.Id,
+                Message = message,
+                Recipient = redirect,
+                IsLocal = await delivery.CanReceiveAsync(redirect, cancellationToken),
+                State = MailQueueRecipientStates.Pending,
+                NextAttemptAt = now,
+                RedirectDepth = source.RedirectDepth + 1,
+                RedirectHistory = redirectHistory,
+            });
+            added++;
+        }
+        return added;
+    }
+
+    private async Task<bool> CreateSieveRejectionAsync(
+        MailQueueMessageDB message,
+        MailQueueRecipientDB recipient,
+        string reason,
+        IEmailService delivery,
+        IOutboundMailRelay relay,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrEmpty(message.EnvelopeSender))
+            return true;
+
+        var host = environment.Smtp.Hostname;
+        var safeReason = SanitizeError(reason);
+        var sender = $"mailer-daemon@{host}";
+        var rawNotice =
+            $"From: Mail Delivery System <{sender}>\r\n" +
+            $"To: {message.EnvelopeSender}\r\n" +
+            "Subject: Message rejected by recipient policy\r\n" +
+            $"Date: {timeProvider.GetUtcNow():r}\r\n" +
+            $"Message-ID: <sieve-reject-{recipient.Id:N}@{host}>\r\n" +
+            "Auto-Submitted: auto-replied\r\n" +
+            "Content-Type: text/plain; charset=utf-8\r\n" +
+            "Content-Transfer-Encoding: 8bit\r\n\r\n" +
+            $"Delivery to {recipient.Recipient} was rejected by the recipient's mail policy.\r\n\r\n" +
+            $"{safeReason}\r\n";
+
+        if (await delivery.CanReceiveAsync(message.EnvelopeSender, cancellationToken))
+        {
+            return await delivery.DeliverAsync(
+                sender,
+                message.EnvelopeSender,
+                rawNotice,
+                DefaultFolders.Inbox,
+                DeriveQueueDeliveryId(recipient.Id, "sieve-reject"),
+                cancellationToken);
+        }
+
+        var result = await relay.RelayAsync(
+            string.Empty,
+            message.EnvelopeSender,
+            rawNotice,
+            cancellationToken);
+        return result.Status is OutboundDeliveryStatus.Delivered
+            or OutboundDeliveryStatus.PermanentFailure;
+    }
+
+    private static Guid DeriveQueueDeliveryId(Guid sourceId, string purpose)
+    {
+        var source = sourceId.ToByteArray();
+        var label = Encoding.UTF8.GetBytes(purpose);
+        var input = new byte[source.Length + label.Length];
+        source.CopyTo(input, 0);
+        label.CopyTo(input, source.Length);
+        var hash = SHA256.HashData(input);
+        return new Guid(hash.AsSpan(0, 16));
     }
 
     private async Task<bool> CreateFailureNoticeAsync(

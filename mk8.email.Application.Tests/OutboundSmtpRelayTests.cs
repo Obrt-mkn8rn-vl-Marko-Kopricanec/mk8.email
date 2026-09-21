@@ -102,6 +102,24 @@ public sealed class OutboundSmtpRelayTests
 
     [TestMethod]
     [Timeout(10_000)]
+    public async Task RelaySupportsNullReversePathForAutomaticResponses()
+    {
+        await using var server = new ScriptedSmtpServer(
+            session => RunSuccessfulDeliveryAsync(session, useStartTls: false, certificatePath: null));
+        var relay = CreateRelay(new StubResolver(Available(server.Port)));
+
+        var result = await relay.RelayAsync(
+            string.Empty,
+            "recipient@example.com",
+            "From: mailer-daemon@mk8n.com\r\nSubject: response\r\n\r\nbody\r\n");
+        await server.WaitForCompletionAsync();
+
+        Assert.AreEqual(OutboundDeliveryStatus.Delivered, result.Status);
+        CollectionAssert.Contains(server.Session!.Commands, "MAIL FROM:<>");
+    }
+
+    [TestMethod]
+    [Timeout(10_000)]
     public async Task RelayContinuesAfterTemporaryMxFailure()
     {
         await using var firstServer = new ScriptedSmtpServer(async session =>

@@ -14,7 +14,9 @@ public interface IEmailService
         string rawMessage,
         string folderName = DefaultFolders.Inbox,
         Guid? queueDeliveryId = null,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        IReadOnlyCollection<string>? flags = null,
+        bool createFolder = false);
 
     Task<bool> SaveSentCopyAsync(
         string sender,

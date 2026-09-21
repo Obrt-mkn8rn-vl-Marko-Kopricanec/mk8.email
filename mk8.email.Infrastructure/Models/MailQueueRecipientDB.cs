@@ -44,6 +44,12 @@ public sealed class MailQueueRecipientDB
     [Column("failure_notice_created")]
     public bool FailureNoticeCreated { get; set; }
 
+    [Column("redirect_depth")]
+    public int RedirectDepth { get; set; }
+
+    [Column("redirect_history", TypeName = "text[]")]
+    public string[] RedirectHistory { get; set; } = [];
+
     [Column("completed_at")]
     public DateTime? CompletedAt { get; set; }
 }

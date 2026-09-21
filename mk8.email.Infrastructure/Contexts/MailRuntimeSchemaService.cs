@@ -44,7 +44,21 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["last_attempt_at"] = "timestamptz",
             ["last_error"] = "text",
             ["failure_notice_created"] = "bool",
+            ["redirect_depth"] = "int4",
+            ["redirect_history"] = "_text",
             ["completed_at"] = "timestamptz",
+        };
+
+    private static readonly IReadOnlyDictionary<string, string> RequiredSieveScriptColumns =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["id"] = "uuid",
+            ["user_id"] = "uuid",
+            ["name"] = "varchar",
+            ["content"] = "text",
+            ["is_active"] = "bool",
+            ["created_at"] = "timestamptz",
+            ["updated_at"] = "timestamptz",
         };
 
     private static readonly IReadOnlyDictionary<string, string> RequiredEmailColumns =
@@ -267,12 +281,21 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 last_attempt_at timestamp with time zone,
                 last_error text,
                 failure_notice_created boolean NOT NULL DEFAULT false,
+                redirect_depth integer NOT NULL DEFAULT 0,
+                redirect_history text[] NOT NULL DEFAULT ARRAY[]::text[],
                 completed_at timestamp with time zone,
                 CONSTRAINT ck_mail_queue_recipients_state
                     CHECK (state IN ('pending', 'delivered', 'permanent_failure', 'quarantined')),
                 CONSTRAINT ck_mail_queue_recipients_attempt_count
-                    CHECK (attempt_count >= 0)
+                    CHECK (attempt_count >= 0),
+                CONSTRAINT ck_mail_queue_recipients_redirect_depth
+                    CHECK (redirect_depth >= 0)
             );
+
+            ALTER TABLE mail_queue_recipients
+                ADD COLUMN IF NOT EXISTS redirect_depth integer NOT NULL DEFAULT 0;
+            ALTER TABLE mail_queue_recipients
+                ADD COLUMN IF NOT EXISTS redirect_history text[] NOT NULL DEFAULT ARRAY[]::text[];
 
             ALTER TABLE emails
                 ADD COLUMN IF NOT EXISTS queue_delivery_id uuid;
@@ -451,6 +474,16 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 CONSTRAINT ck_dav_changes_sequence CHECK (sequence > 0)
             );
 
+            CREATE TABLE IF NOT EXISTS sieve_scripts (
+                id uuid PRIMARY KEY,
+                user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                name varchar(128) NOT NULL,
+                content text NOT NULL,
+                is_active boolean NOT NULL DEFAULT false,
+                created_at timestamp with time zone NOT NULL,
+                updated_at timestamp with time zone NOT NULL
+            );
+
             CREATE UNIQUE INDEX IF NOT EXISTS ix_emails_queue_delivery_id
                 ON emails (queue_delivery_id)
                 WHERE queue_delivery_id IS NOT NULL;
@@ -517,6 +550,11 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 ON dav_changes (collection_id, sequence);
             CREATE INDEX IF NOT EXISTS ix_dav_changes_changed_at
                 ON dav_changes (changed_at);
+            CREATE UNIQUE INDEX IF NOT EXISTS ix_sieve_scripts_user_name
+                ON sieve_scripts (user_id, name);
+            CREATE UNIQUE INDEX IF NOT EXISTS ix_sieve_scripts_user_active
+                ON sieve_scripts (user_id)
+                WHERE is_active;
             """,
             cancellationToken);
 
@@ -575,6 +613,10 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
         await ValidateTableAsync(
             "dav_changes",
             RequiredDavChangeColumns,
+            cancellationToken);
+        await ValidateTableAsync(
+            "sieve_scripts",
+            RequiredSieveScriptColumns,
             cancellationToken);
     }
 

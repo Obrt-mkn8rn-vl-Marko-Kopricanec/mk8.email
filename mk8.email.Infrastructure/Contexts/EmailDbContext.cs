@@ -30,6 +30,7 @@ public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContex
     public DbSet<DavCollectionDB> DavCollections => Set<DavCollectionDB>();
     public DbSet<DavResourceDB> DavResources => Set<DavResourceDB>();
     public DbSet<DavChangeDB> DavChanges => Set<DavChangeDB>();
+    public DbSet<SieveScriptDB> SieveScripts => Set<SieveScriptDB>();
 
     private static readonly Guid GlobalConfigSeedId = Guid.Parse("00000000-0000-0000-0000-000000000001");
     private static readonly Guid GlobalLimitsSeedId = Guid.Parse("00000000-0000-0000-0000-000000000002");
@@ -156,6 +157,19 @@ public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContex
                   .WithMany(message => message.Recipients)
                   .HasForeignKey(recipient => recipient.MessageId)
                   .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<SieveScriptDB>(entity =>
+        {
+            entity.HasIndex(script => new { script.UserId, script.Name }).IsUnique();
+            entity.HasIndex(script => script.UserId)
+                .IsUnique()
+                .HasFilter("is_active");
+
+            entity.HasOne(script => script.User)
+                .WithMany()
+                .HasForeignKey(script => script.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<JmapChangeDB>(entity =>

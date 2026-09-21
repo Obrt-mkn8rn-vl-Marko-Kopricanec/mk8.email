@@ -47,7 +47,7 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay
         string rawMessage,
         CancellationToken cancellationToken = default)
     {
-        if (!IsSafeMailbox(sender) || !TryGetDomain(recipient, out var domain))
+        if (!IsSafeEnvelopeSender(sender) || !TryGetDomain(recipient, out var domain))
         {
             return new OutboundDeliveryResult(
                 OutboundDeliveryStatus.PermanentFailure,
@@ -243,6 +243,9 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay
             && mailbox.Length <= 320
             && !mailbox.ContainsAny(['\r', '\n', '<', '>']);
     }
+
+    private static bool IsSafeEnvelopeSender(string sender) =>
+        sender.Length == 0 || IsSafeMailbox(sender);
 
     private static bool TryGetDomain(string recipient, out string domain)
     {

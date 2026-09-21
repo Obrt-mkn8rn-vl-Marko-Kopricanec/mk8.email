@@ -78,6 +78,7 @@ public sealed class PostgresMailSubmissionQueue(
                 IsLocal = recipient.IsLocal,
                 State = MailQueueRecipientStates.Pending,
                 NextAttemptAt = now,
+                RedirectHistory = [recipient.Address],
             });
         }
 

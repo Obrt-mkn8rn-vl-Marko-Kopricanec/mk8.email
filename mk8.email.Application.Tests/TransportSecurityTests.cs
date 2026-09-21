@@ -3140,7 +3140,9 @@ public sealed class TransportSecurityTests
             string rawMessage,
             string folderName = DefaultFolders.Inbox,
             Guid? queueDeliveryId = null,
-            CancellationToken cancellationToken = default) =>
+            CancellationToken cancellationToken = default,
+            IReadOnlyCollection<string>? flags = null,
+            bool createFolder = false) =>
             throw new InvalidOperationException("The SMTP listener must use the durable queue.");
 
         public Task<bool> SaveSentCopyAsync(

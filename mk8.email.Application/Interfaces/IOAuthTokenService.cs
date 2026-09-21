@@ -5,7 +5,13 @@ public sealed record OAuthTokenPair(
     string AccessToken,
     string RefreshToken,
     int ExpiresInSeconds,
-    string Scope);
+    string Scope,
+    string? IdToken = null);
+
+public sealed record OAuthAccessTokenIdentity(
+    Guid UserId,
+    string Username,
+    IReadOnlyList<string> Scopes);
 
 public sealed record OAuthGrantSummary(
     Guid Id,
@@ -34,6 +40,20 @@ public interface IOAuthTokenService
         string accessToken,
         string requiredScope,
         CancellationToken cancellationToken = default);
+
+    async Task<OAuthAccessTokenIdentity?> AuthenticateIdentityAsync(
+        string accessToken,
+        string requiredScope,
+        CancellationToken cancellationToken = default)
+    {
+        var user = await AuthenticateAccessTokenAsync(
+            accessToken,
+            requiredScope,
+            cancellationToken);
+        return user is null
+            ? null
+            : new(user.Id, user.Username, [requiredScope]);
+    }
 
     Task<IReadOnlyList<OAuthGrantSummary>> ListGrantsAsync(
         Guid userId,

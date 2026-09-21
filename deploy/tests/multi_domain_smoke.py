@@ -275,6 +275,48 @@ def test_oauth_metadata() -> None:
         metadata.get("code_challenge_methods_supported") == ["S256"],
         "The OAuth service did not require PKCE S256.",
     )
+    require(
+        "openid" in metadata.get("scopes_supported", []),
+        "The OAuth service did not advertise OpenID Connect.",
+    )
+
+    status, headers, body = dav_request("GET", "/.well-known/openid-configuration")
+    require(status == 200, "The public OpenID Connect discovery endpoint is not ready.")
+    require(
+        (headers.get("Content-Type") or "").startswith("application/json"),
+        "OpenID Connect discovery returned the wrong media type.",
+    )
+    discovery = json.loads(body)
+    require(
+        discovery.get("issuer") == f"https://{PUBLIC_MAIL_HOST}",
+        "The OpenID Connect issuer is not canonical.",
+    )
+    require(
+        discovery.get("jwks_uri") == f"https://{PUBLIC_MAIL_HOST}/oauth/jwks",
+        "The OpenID Connect signing-key endpoint is not canonical.",
+    )
+    require(
+        discovery.get("userinfo_endpoint") == f"https://{PUBLIC_MAIL_HOST}/oauth/userinfo",
+        "The OpenID Connect UserInfo endpoint is not canonical.",
+    )
+    require(
+        discovery.get("id_token_signing_alg_values_supported") == ["RS256"],
+        "The OpenID Connect service did not advertise RS256.",
+    )
+
+    status, headers, body = dav_request("GET", "/oauth/jwks")
+    require(status == 200, "The public OpenID Connect signing keys are not ready.")
+    keys = json.loads(body).get("keys", [])
+    require(
+        len(keys) == 1
+        and keys[0].get("kty") == "RSA"
+        and keys[0].get("use") == "sig"
+        and keys[0].get("alg") == "RS256"
+        and keys[0].get("kid")
+        and keys[0].get("n")
+        and keys[0].get("e"),
+        "The OpenID Connect JWK is incomplete.",
+    )
 
 
 def new_message(sender: str, recipient: str, marker: str) -> EmailMessage:

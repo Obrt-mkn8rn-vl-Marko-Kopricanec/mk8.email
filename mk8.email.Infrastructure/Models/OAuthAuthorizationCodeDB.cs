@@ -43,6 +43,10 @@ public sealed class OAuthAuthorizationCodeDB
     [Column("code_hash", TypeName = "bytea")]
     public byte[] CodeHash { get; set; } = [];
 
+    [MaxLength(512)]
+    [Column("nonce")]
+    public string? Nonce { get; set; }
+
     [Column("created_at")]
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

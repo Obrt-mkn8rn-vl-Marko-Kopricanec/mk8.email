@@ -9,6 +9,7 @@ public interface IOAuthAuthorizationService
         string deviceName,
         IReadOnlyCollection<string> scopes,
         string codeChallenge,
+        string? nonce = null,
         CancellationToken cancellationToken = default);
 
     Task<OAuthTokenPair?> RedeemAuthorizationCodeAsync(

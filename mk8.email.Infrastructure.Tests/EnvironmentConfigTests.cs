@@ -177,6 +177,22 @@ public sealed class EnvironmentConfigTests
     }
 
     [TestMethod]
+    public void OpenIdConnectRequiresOAuthAndAValidSigningKey()
+    {
+        var errors = CreateValidConfiguration(
+            oauthPublicBaseUrl: "https://email.mk8n.com/tenant",
+            oidcEnable: true,
+            oidcSigningKey: "not-a-private-key",
+            oidcIdTokenMinutes: 0).Validate();
+
+        var joined = string.Join('|', errors);
+        StringAssert.Contains(joined, "OAuth.EnableOpenIdConnect requires OAuth.EnableOAuth.");
+        StringAssert.Contains(joined, "OAuth.SigningKey must be an RSA private key of at least 2048 bits.");
+        StringAssert.Contains(joined, "OAuth.IdTokenMinutes must be from 1 through 60.");
+        StringAssert.Contains(joined, "OAuth.PublicBaseUrl must not contain a path when OpenID Connect is enabled.");
+    }
+
+    [TestMethod]
     public void LoaderReadsPasswordsFromSecretFiles()
     {
         var databasePasswordPath = WriteFile("database-password", "database-secret-value");
@@ -206,6 +222,25 @@ public sealed class EnvironmentConfigTests
         var loaded = EnvironmentLoader.LoadFromFile(configurationPath);
 
         Assert.AreEqual(encodedKey, loaded.Mfa.EncryptionKey);
+    }
+
+    [TestMethod]
+    public void LoaderReadsOpenIdConnectSigningKeyFromSecretFile()
+    {
+        using var rsa = System.Security.Cryptography.RSA.Create(2048);
+        var signingKey = rsa.ExportPkcs8PrivateKeyPem();
+        var keyPath = WriteFile("oidc-signing-key.pem", signingKey);
+        var configuration = CreateValidConfiguration(
+            oauthEnable: true,
+            oidcEnable: true,
+            oidcSigningKeyFile: keyPath);
+        var configurationPath = WriteFile(
+            "mk8email-oidc.config.json",
+            JsonSerializer.Serialize(configuration));
+
+        var loaded = EnvironmentLoader.LoadFromFile(configurationPath);
+
+        Assert.AreEqual(signingKey.TrimEnd('\r', '\n'), loaded.OAuth.SigningKey);
     }
 
     [TestMethod]
@@ -243,6 +278,10 @@ public sealed class EnvironmentConfigTests
         string? oauthPublicBaseUrl = null,
         string oauthClientId = "thunderbird",
         int oauthAuthorizationCodeMinutes = 5,
+        bool oidcEnable = false,
+        string oidcSigningKey = "",
+        string? oidcSigningKeyFile = null,
+        int oidcIdTokenMinutes = 10,
         bool mfaEnable = false,
         string mfaEncryptionKey = "",
         string? mfaEncryptionKeyFile = null,
@@ -306,11 +345,15 @@ public sealed class EnvironmentConfigTests
             OAuth = new OAuthConfig
             {
                 EnableOAuth = oauthEnable,
+                EnableOpenIdConnect = oidcEnable,
                 PublicBaseUrl = oauthPublicBaseUrl,
                 ClientId = oauthClientId,
                 AccessTokenMinutes = oauthAccessTokenMinutes,
                 RefreshTokenDays = oauthRefreshTokenDays,
                 AuthorizationCodeMinutes = oauthAuthorizationCodeMinutes,
+                IdTokenMinutes = oidcIdTokenMinutes,
+                SigningKey = oidcSigningKey,
+                SigningKeyFile = oidcSigningKeyFile,
             },
             Mfa = new MfaConfig
             {

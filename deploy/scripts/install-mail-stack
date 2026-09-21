@@ -9,6 +9,7 @@ fi
 asset_root=$1
 primary_lineage=
 mfa_key_work=
+oidc_key_work=
 cleanup() {
     if [ -n "$primary_lineage" ]; then
         case "$primary_lineage" in
@@ -18,6 +19,11 @@ cleanup() {
     if [ -n "$mfa_key_work" ]; then
         case "$mfa_key_work" in
             /run/mk8-mfa-key.*) rm -f -- "$mfa_key_work" ;;
+        esac
+    fi
+    if [ -n "$oidc_key_work" ]; then
+        case "$oidc_key_work" in
+            /run/mk8-oidc-key.*) rm -f -- "$oidc_key_work" ;;
         esac
     fi
 }
@@ -113,6 +119,27 @@ fi
 }
 [ "$(openssl base64 -d -A -in "$mfa_key" | wc -c | tr -d ' ')" -eq 32 ] || {
     printf '%s\n' "The MFA encryption key is not a base64-encoded 256-bit key." >&2
+    exit 1
+}
+oidc_key=/etc/mk8email/secrets/oidc_signing_key.pem
+if [ -L "$oidc_key" ] || { [ -e "$oidc_key" ] && [ ! -f "$oidc_key" ]; }; then
+    printf '%s\n' "The OpenID Connect signing key path is unsafe." >&2
+    exit 1
+fi
+if [ ! -e "$oidc_key" ]; then
+    oidc_key_work=$(mktemp /run/mk8-oidc-key.XXXXXX)
+    openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 \
+        -out "$oidc_key_work" 2>/dev/null
+    install -o root -g mk8email -m 0640 "$oidc_key_work" "$oidc_key"
+    rm -f -- "$oidc_key_work"
+    oidc_key_work=
+fi
+[ "$(stat -c '%U:%G %a %h' "$oidc_key")" = "root:mk8email 640 1" ] || {
+    printf '%s\n' "The OpenID Connect signing key has unsafe metadata." >&2
+    exit 1
+}
+openssl pkey -in "$oidc_key" -check -noout >/dev/null 2>&1 || {
+    printf '%s\n' "The OpenID Connect signing key is not valid." >&2
     exit 1
 }
 install -o root -g mk8email -m 0640 "$asset_root/deploy/native/mk8email.config.json" /etc/mk8email/mk8email.config.json

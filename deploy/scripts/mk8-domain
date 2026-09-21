@@ -614,6 +614,9 @@ verify_domain_web_services() {
     grep -F "<issuer>https://$canonical_mail_host</issuer>" \
         "$work/autoconfig-check.xml" >/dev/null \
         || fail "The autoconfiguration OAuth issuer is not correct."
+    grep -F '<scope>openid profile email offline_access imap smtp pop jmap dav sieve</scope>' \
+        "$work/autoconfig-check.xml" >/dev/null \
+        || fail "The autoconfiguration OAuth scopes are not correct."
     grep -F "<authURL>https://$canonical_mail_host/oauth/authorize</authURL>" \
         "$work/autoconfig-check.xml" >/dev/null \
         || fail "The autoconfiguration OAuth authorization endpoint is not correct."

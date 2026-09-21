@@ -61,11 +61,14 @@
   },
   "OAuth": {
     "EnableOAuth": true,
+    "EnableOpenIdConnect": true,
     "PublicBaseUrl": "https://email.mk8n.com",
     "ClientId": "thunderbird",
     "AccessTokenMinutes": 10,
     "RefreshTokenDays": 90,
-    "AuthorizationCodeMinutes": 5
+    "AuthorizationCodeMinutes": 5,
+    "IdTokenMinutes": 10,
+    "SigningKeyFile": "/etc/mk8email/secrets/oidc_signing_key.pem"
   },
   "Mfa": {
     "EnableTotp": true,

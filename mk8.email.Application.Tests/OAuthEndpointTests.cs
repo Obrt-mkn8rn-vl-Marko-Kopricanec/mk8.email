@@ -1,4 +1,6 @@
 using System.Net;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -161,6 +163,136 @@ public sealed class OAuthEndpointTests
 
     [TestMethod]
     [Timeout(15_000)]
+    public async Task OpenIdConnectCodeFlowSignsIdentityAndServesScopedUserInfo()
+    {
+        await using var fixture = await OAuthFixture.CreateAsync();
+        using var discoveryResponse = await fixture.Client.GetAsync(
+            "/.well-known/openid-configuration");
+        Assert.AreEqual(HttpStatusCode.OK, discoveryResponse.StatusCode);
+        using var discovery = JsonDocument.Parse(
+            await discoveryResponse.Content.ReadAsStringAsync());
+        Assert.AreEqual(
+            "https://email.mk8n.com/oauth/jwks",
+            discovery.RootElement.GetProperty("jwks_uri").GetString());
+        CollectionAssert.Contains(
+            discovery.RootElement.GetProperty("scopes_supported")
+                .EnumerateArray().Select(item => item.GetString()).ToArray(),
+            "openid");
+
+        using var jwksResponse = await fixture.Client.GetAsync("/oauth/jwks");
+        Assert.AreEqual(HttpStatusCode.OK, jwksResponse.StatusCode);
+        using var jwks = JsonDocument.Parse(await jwksResponse.Content.ReadAsStringAsync());
+        var jwk = jwks.RootElement.GetProperty("keys")[0];
+        Assert.AreEqual("RSA", jwk.GetProperty("kty").GetString());
+        Assert.AreEqual("RS256", jwk.GetProperty("alg").GetString());
+
+        using var missingBearer = await fixture.Client.GetAsync("/oauth/userinfo");
+        Assert.AreEqual(HttpStatusCode.Unauthorized, missingBearer.StatusCode);
+        Assert.AreEqual(
+            "Bearer error=\"invalid_token\"",
+            missingBearer.Headers.WwwAuthenticate.Single().ToString());
+
+        var verifier = new string('o', 64);
+        const string redirectUri = "http://127.0.0.1:49153/";
+        const string nonce = "openid-nonce-value-123456789";
+        var authorizationValues = new Dictionary<string, string>
+        {
+            ["response_type"] = "code",
+            ["client_id"] = "thunderbird",
+            ["redirect_uri"] = redirectUri,
+            ["scope"] = "openid profile email offline_access imap",
+            ["state"] = "openid-state-value-123456789",
+            ["nonce"] = nonce,
+            ["max_age"] = "0",
+            ["code_challenge"] = OAuthProtocolValues.CreatePkceChallenge(verifier),
+            ["code_challenge_method"] = "S256",
+            ["login_hint"] = Username,
+        };
+        var query = string.Join('&', authorizationValues.Select(value =>
+            $"{WebUtility.UrlEncode(value.Key)}={WebUtility.UrlEncode(value.Value)}"));
+        using var begin = await fixture.Client.GetAsync($"/oauth/authorize?{query}");
+        Assert.AreEqual(HttpStatusCode.OK, begin.StatusCode);
+        var csrf = GetCookie(begin, "__Host-mk8oauth");
+        authorizationValues["csrf"] = csrf;
+        authorizationValues["username"] = Username;
+        authorizationValues["password"] = Password;
+        authorizationValues["device_name"] = "Thunderbird OIDC test";
+        using var completion = await SendAuthorizationAsync(
+            fixture.Client,
+            authorizationValues,
+            csrf);
+        Assert.AreEqual(HttpStatusCode.Redirect, completion.StatusCode);
+        var code = ParseQuery(completion.Headers.Location!.Query)["code"];
+
+        var tokens = await ExchangeAsync(fixture.Client, new Dictionary<string, string>
+        {
+            ["grant_type"] = "authorization_code",
+            ["client_id"] = "thunderbird",
+            ["code"] = code,
+            ["redirect_uri"] = redirectUri,
+            ["code_verifier"] = verifier,
+        });
+
+        Assert.IsNotNull(tokens.IdToken);
+        var claims = VerifyIdToken(tokens.IdToken, jwk);
+        Assert.AreEqual("https://email.mk8n.com", claims.GetProperty("iss").GetString());
+        Assert.AreEqual("thunderbird", claims.GetProperty("aud").GetString());
+        Assert.AreEqual(nonce, claims.GetProperty("nonce").GetString());
+        Assert.AreEqual(Username, claims.GetProperty("email").GetString());
+        Assert.IsTrue(claims.GetProperty("email_verified").GetBoolean());
+        Assert.AreEqual(Username, claims.GetProperty("preferred_username").GetString());
+        Assert.AreEqual(AccessTokenHash(tokens.AccessToken), claims.GetProperty("at_hash").GetString());
+        Assert.IsTrue(claims.GetProperty("exp").GetInt64() > claims.GetProperty("iat").GetInt64());
+        var subject = claims.GetProperty("sub").GetString();
+
+        using var userInfoRequest = new HttpRequestMessage(HttpMethod.Get, "/oauth/userinfo");
+        userInfoRequest.Headers.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+        using var userInfoResponse = await fixture.Client.SendAsync(userInfoRequest);
+        Assert.AreEqual(HttpStatusCode.OK, userInfoResponse.StatusCode);
+        using (var userInfo = JsonDocument.Parse(await userInfoResponse.Content.ReadAsStringAsync()))
+        {
+            Assert.AreEqual(subject, userInfo.RootElement.GetProperty("sub").GetString());
+            Assert.AreEqual(Username, userInfo.RootElement.GetProperty("email").GetString());
+            Assert.AreEqual(Username, userInfo.RootElement.GetProperty("preferred_username").GetString());
+        }
+
+        var refreshed = await ExchangeAsync(fixture.Client, new Dictionary<string, string>
+        {
+            ["grant_type"] = "refresh_token",
+            ["client_id"] = "thunderbird",
+            ["refresh_token"] = tokens.RefreshToken,
+        });
+        Assert.IsNotNull(refreshed.IdToken);
+        var refreshedClaims = VerifyIdToken(refreshed.IdToken, jwk);
+        Assert.AreEqual(subject, refreshedClaims.GetProperty("sub").GetString());
+        Assert.AreEqual(
+            claims.GetProperty("auth_time").GetInt64(),
+            refreshedClaims.GetProperty("auth_time").GetInt64());
+        Assert.IsFalse(refreshedClaims.TryGetProperty("nonce", out _));
+        Assert.AreEqual(
+            AccessTokenHash(refreshed.AccessToken),
+            refreshedClaims.GetProperty("at_hash").GetString());
+
+        using (var scope = fixture.Services.CreateScope())
+        {
+            var expectedSubject = await scope.ServiceProvider
+                .GetRequiredService<EmailDbContext>()
+                .Users.Select(user => user.Id.ToString("D"))
+                .SingleAsync();
+            Assert.AreEqual(expectedSubject, subject);
+        }
+
+        using var promptNone = await fixture.Client.GetAsync(
+            $"/oauth/authorize?{query}&prompt=none");
+        Assert.AreEqual(HttpStatusCode.Redirect, promptNone.StatusCode);
+        Assert.AreEqual(
+            "login_required",
+            ParseQuery(promptNone.Headers.Location!.Query)["error"]);
+    }
+
+    [TestMethod]
+    [Timeout(15_000)]
     public async Task AuthorizationEndpointRejectsMissingPkceAndCsrf()
     {
         await using var fixture = await OAuthFixture.CreateAsync();
@@ -239,7 +371,48 @@ public sealed class OAuthEndpointTests
         return new(
             json.RootElement.GetProperty("access_token").GetString()!,
             json.RootElement.GetProperty("refresh_token").GetString()!,
-            json.RootElement.GetProperty("token_type").GetString()!);
+            json.RootElement.GetProperty("token_type").GetString()!,
+            json.RootElement.TryGetProperty("id_token", out var idToken)
+                ? idToken.GetString()
+                : null);
+    }
+
+    private static JsonElement VerifyIdToken(string token, JsonElement jwk)
+    {
+        var segments = token.Split('.');
+        Assert.HasCount(3, segments);
+        using var header = JsonDocument.Parse(Base64UrlDecode(segments[0]));
+        Assert.AreEqual("RS256", header.RootElement.GetProperty("alg").GetString());
+        Assert.AreEqual(jwk.GetProperty("kid").GetString(), header.RootElement.GetProperty("kid").GetString());
+        using var rsa = RSA.Create();
+        rsa.ImportParameters(new RSAParameters
+        {
+            Modulus = Base64UrlDecode(jwk.GetProperty("n").GetString()!),
+            Exponent = Base64UrlDecode(jwk.GetProperty("e").GetString()!),
+        });
+        Assert.IsTrue(rsa.VerifyData(
+            Encoding.ASCII.GetBytes($"{segments[0]}.{segments[1]}"),
+            Base64UrlDecode(segments[2]),
+            HashAlgorithmName.SHA256,
+            RSASignaturePadding.Pkcs1));
+        using var payload = JsonDocument.Parse(Base64UrlDecode(segments[1]));
+        return payload.RootElement.Clone();
+    }
+
+    private static byte[] Base64UrlDecode(string value)
+    {
+        var padded = value.Replace('-', '+').Replace('_', '/');
+        padded += new string('=', (4 - padded.Length % 4) % 4);
+        return Convert.FromBase64String(padded);
+    }
+
+    private static string AccessTokenHash(string accessToken)
+    {
+        var digest = SHA256.HashData(Encoding.ASCII.GetBytes(accessToken));
+        return Convert.ToBase64String(digest.AsSpan(0, digest.Length / 2))
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_');
     }
 
     private static string GetCookie(HttpResponseMessage response, string name)
@@ -274,7 +447,8 @@ public sealed class OAuthEndpointTests
     private sealed record TokenResponse(
         string AccessToken,
         string RefreshToken,
-        string TokenType);
+        string TokenType,
+        string? IdToken);
 
     private sealed class OAuthFixture : IAsyncDisposable
     {
@@ -291,17 +465,21 @@ public sealed class OAuthEndpointTests
 
         public static async Task<OAuthFixture> CreateAsync()
         {
+            using var signingKey = RSA.Create(2048);
             var environment = new EnvironmentConfig
             {
                 Smtp = new SmtpConfig { Hostname = "email.mk8n.com" },
                 OAuth = new OAuthConfig
                 {
                     EnableOAuth = true,
+                    EnableOpenIdConnect = true,
                     PublicBaseUrl = "https://email.mk8n.com",
                     ClientId = "thunderbird",
                     AccessTokenMinutes = 10,
                     RefreshTokenDays = 90,
                     AuthorizationCodeMinutes = 5,
+                    IdTokenMinutes = 10,
+                    SigningKey = signingKey.ExportPkcs8PrivateKeyPem(),
                 },
                 Mfa = new MfaConfig
                 {

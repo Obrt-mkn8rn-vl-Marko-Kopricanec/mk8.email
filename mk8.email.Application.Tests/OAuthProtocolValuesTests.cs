@@ -48,8 +48,11 @@ public sealed class OAuthProtocolValuesTests
             new[] { "imap", "offline_access", "smtp" },
             normalized);
         Assert.IsFalse(OAuthProtocolValues.TryNormalizeScopes(["imap"], out _));
-        Assert.IsFalse(OAuthProtocolValues.TryNormalizeScopes(
+        Assert.IsTrue(OAuthProtocolValues.TryNormalizeScopes(
             ["openid offline_access imap"],
-            out _));
+            out var identityScopes));
+        CollectionAssert.AreEquivalent(
+            new[] { "imap", "offline_access", "openid" },
+            identityScopes);
     }
 }

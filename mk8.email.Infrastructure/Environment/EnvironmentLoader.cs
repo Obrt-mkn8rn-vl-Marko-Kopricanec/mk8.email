@@ -49,6 +49,10 @@ public static class EnvironmentLoader
             config.Database.Password,
             config.Database.PasswordFile,
             "database password");
+        config.OAuth.SigningKey = ResolveSecret(
+            config.OAuth.SigningKey,
+            config.OAuth.SigningKeyFile,
+            "OpenID Connect signing key");
         config.Mfa.EncryptionKey = ResolveSecret(
             config.Mfa.EncryptionKey,
             config.Mfa.EncryptionKeyFile,
@@ -72,7 +76,7 @@ public static class EnvironmentLoader
             throw new InvalidOperationException($"Configure the {name} as a value or a file, but not both.");
 
         if (!hasFilePath)
-        return directValue ?? string.Empty;
+            return directValue ?? string.Empty;
 
         var fullPath = Path.GetFullPath(filePath!);
         if (!File.Exists(fullPath))

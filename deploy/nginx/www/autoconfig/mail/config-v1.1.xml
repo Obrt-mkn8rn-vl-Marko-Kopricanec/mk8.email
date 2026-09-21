@@ -6,7 +6,7 @@
     <displayShortName>mk8n</displayShortName>
     <oAuth2>
       <issuer>https://email.mk8n.com</issuer>
-      <scope>offline_access imap smtp pop jmap dav sieve</scope>
+      <scope>openid profile email offline_access imap smtp pop jmap dav sieve</scope>
       <authURL>https://email.mk8n.com/oauth/authorize</authURL>
       <tokenURL>https://email.mk8n.com/oauth/token</tokenURL>
       <clientID>thunderbird</clientID>

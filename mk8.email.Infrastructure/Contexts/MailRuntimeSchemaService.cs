@@ -297,6 +297,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["scopes"] = "_text",
             ["code_challenge"] = "varchar",
             ["code_hash"] = "bytea",
+            ["nonce"] = "varchar",
             ["created_at"] = "timestamptz",
             ["expires_at"] = "timestamptz",
             ["consumed_at"] = "timestamptz",
@@ -673,6 +674,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 scopes text[] NOT NULL,
                 code_challenge varchar(128) NOT NULL,
                 code_hash bytea NOT NULL,
+                nonce varchar(512),
                 created_at timestamp with time zone NOT NULL,
                 expires_at timestamp with time zone NOT NULL,
                 consumed_at timestamp with time zone,
@@ -709,6 +711,9 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 CONSTRAINT ck_mfa_recovery_code_hash_length
                     CHECK (octet_length(code_hash) = 32)
             );
+
+            ALTER TABLE oauth_authorization_codes
+                ADD COLUMN IF NOT EXISTS nonce varchar(512);
 
             CREATE UNIQUE INDEX IF NOT EXISTS ix_emails_queue_delivery_id
                 ON emails (queue_delivery_id)

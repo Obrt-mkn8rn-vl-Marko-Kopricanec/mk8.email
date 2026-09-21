@@ -13,9 +13,18 @@ namespace mk8.email.Application.Services;
 public sealed class OAuthAuthorizationService(
     EmailDbContext database,
     IOAuthTokenService tokenService,
+    IOpenIdConnectService openIdConnect,
     EnvironmentConfig environment) : IOAuthAuthorizationService
 {
     private static readonly byte[] DummyHash = new byte[32];
+
+    public OAuthAuthorizationService(
+        EmailDbContext database,
+        IOAuthTokenService tokenService,
+        EnvironmentConfig environment)
+        : this(database, tokenService, new OpenIdConnectService(environment), environment)
+    {
+    }
 
     public async Task<string?> CreateAuthorizationCodeAsync(
         Guid userId,
@@ -24,14 +33,24 @@ public sealed class OAuthAuthorizationService(
         string deviceName,
         IReadOnlyCollection<string> scopes,
         string codeChallenge,
+        string? nonce = null,
         CancellationToken cancellationToken = default)
     {
+        var normalizedNonce = string.IsNullOrEmpty(nonce) ? null : nonce;
         if (!string.Equals(clientId, environment.OAuth.ClientId, StringComparison.Ordinal)
             || !OAuthProtocolValues.IsAllowedRedirectUri(redirectUri)
             || !OAuthProtocolValues.TryNormalizeScopes(scopes, out var normalizedScopes)
             || !OAuthProtocolValues.IsValidPkceChallenge(codeChallenge)
             || string.IsNullOrWhiteSpace(deviceName)
-            || deviceName.Trim().Length > 128)
+            || deviceName.Trim().Length > 128
+            || normalizedScopes.Contains("openid", StringComparer.Ordinal)
+                && !environment.OAuth.EnableOpenIdConnect
+            || normalizedScopes.Any(scope => scope is "email" or "profile")
+                && !normalizedScopes.Contains("openid", StringComparer.Ordinal)
+            || normalizedNonce is not null
+                && (normalizedNonce.Length > 512 || normalizedNonce.Any(char.IsControl))
+            || normalizedNonce is not null
+                && !normalizedScopes.Contains("openid", StringComparer.Ordinal))
         {
             return null;
         }
@@ -62,6 +81,7 @@ public sealed class OAuthAuthorizationService(
             Scopes = normalizedScopes,
             CodeChallenge = codeChallenge,
             CodeHash = HashAscii(codeValue),
+            Nonce = normalizedNonce,
             CreatedAt = now,
             ExpiresAt = now.AddMinutes(environment.OAuth.AuthorizationCodeMinutes),
         });
@@ -112,6 +132,25 @@ public sealed class OAuthAuthorizationService(
             authorizationCode.DeviceName,
             authorizationCode.Scopes,
             cancellationToken);
+        if (pair?.IdToken is not null)
+        {
+            var grant = await database.OAuthGrants
+                .Include(candidate => candidate.User)
+                .SingleAsync(candidate => candidate.Id == pair.GrantId, cancellationToken);
+            grant.CreatedAt = authorizationCode.CreatedAt;
+            pair = pair with
+            {
+                IdToken = openIdConnect.CreateIdToken(
+                    grant.UserId,
+                    grant.User.Username,
+                    grant.ClientId,
+                    pair.AccessToken,
+                    authorizationCode.CreatedAt,
+                    now,
+                    authorizationCode.Nonce,
+                    grant.Scopes),
+            };
+        }
         await database.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return pair;

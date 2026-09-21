@@ -6,7 +6,7 @@
     <displayShortName>@@DOMAIN@@</displayShortName>
     <oAuth2>
       <issuer>https://@@CANONICAL_MAIL_HOST@@</issuer>
-      <scope>offline_access imap smtp pop jmap dav sieve</scope>
+      <scope>openid profile email offline_access imap smtp pop jmap dav sieve</scope>
       <authURL>https://@@CANONICAL_MAIL_HOST@@/oauth/authorize</authURL>
       <tokenURL>https://@@CANONICAL_MAIL_HOST@@/oauth/token</tokenURL>
       <clientID>thunderbird</clientID>

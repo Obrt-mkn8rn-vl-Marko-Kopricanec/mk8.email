@@ -12,11 +12,17 @@ namespace mk8.email.Application.Services;
 
 public sealed class OAuthTokenService(
     EmailDbContext database,
-    EnvironmentConfig environment) : IOAuthTokenService
+    EnvironmentConfig environment,
+    IOpenIdConnectService openIdConnect) : IOAuthTokenService
 {
     public const string AccessTokenType = "access";
     public const string RefreshTokenType = "refresh";
     private static readonly byte[] DummyHash = new byte[32];
+
+    public OAuthTokenService(EmailDbContext database, EnvironmentConfig environment)
+        : this(database, environment, new OpenIdConnectService(environment))
+    {
+    }
 
     public async Task<OAuthTokenPair?> CreateGrantAsync(
         Guid userId,
@@ -30,7 +36,11 @@ public sealed class OAuthTokenService(
         var normalizedScopes = NormalizeScopes(scopes);
         if (normalizedClientId.Length is < 1 or > 128
             || normalizedDeviceName.Length is < 1 or > 128
-            || normalizedScopes is null)
+            || normalizedScopes is null
+            || normalizedScopes.Contains("openid", StringComparer.Ordinal)
+                && !environment.OAuth.EnableOpenIdConnect
+            || normalizedScopes.Any(scope => scope is "email" or "profile")
+                && !normalizedScopes.Contains("openid", StringComparer.Ordinal))
         {
             return null;
         }
@@ -44,6 +54,7 @@ public sealed class OAuthTokenService(
         {
             Id = Guid.CreateVersion7(),
             UserId = user.Id,
+            User = user,
             ClientId = normalizedClientId,
             DeviceName = normalizedDeviceName,
             Scopes = normalizedScopes,
@@ -117,6 +128,20 @@ public sealed class OAuthTokenService(
         string requiredScope,
         CancellationToken cancellationToken = default)
     {
+        var identity = await AuthenticateIdentityAsync(
+            accessToken,
+            requiredScope,
+            cancellationToken);
+        return identity is null
+            ? null
+            : new(identity.UserId, identity.Username);
+    }
+
+    public async Task<OAuthAccessTokenIdentity?> AuthenticateIdentityAsync(
+        string accessToken,
+        string requiredScope,
+        CancellationToken cancellationToken = default)
+    {
         if (!OAuthProtocolValues.SupportedScopes.Contains(requiredScope)
             || !TryParseTokenId(accessToken, "mk8_at_", out var tokenId))
         {
@@ -145,7 +170,10 @@ public sealed class OAuthTokenService(
         token.LastUsedAt = now;
         token.Grant.LastUsedAt = now;
         await database.SaveChangesAsync(cancellationToken);
-        return new(token.Grant.User.Id, token.Grant.User.Username);
+        return new(
+            token.Grant.User.Id,
+            token.Grant.User.Username,
+            token.Grant.Scopes);
     }
 
     public async Task<IReadOnlyList<OAuthGrantSummary>> ListGrantsAsync(
@@ -212,13 +240,25 @@ public sealed class OAuthTokenService(
             now.AddMinutes(environment.OAuth.AccessTokenMinutes));
         var refresh = CreateToken(grant, RefreshTokenType, "mk8_rt_", now,
             now.AddDays(environment.OAuth.RefreshTokenDays));
+        var idToken = grant.Scopes.Contains("openid", StringComparer.Ordinal)
+            ? openIdConnect.CreateIdToken(
+                grant.UserId,
+                grant.User.Username,
+                grant.ClientId,
+                access.Value,
+                grant.CreatedAt,
+                now,
+                nonce: null,
+                grant.Scopes)
+            : null;
         return new(
             new OAuthTokenPair(
                 grant.Id,
                 access.Value,
                 refresh.Value,
                 checked(environment.OAuth.AccessTokenMinutes * 60),
-                string.Join(' ', grant.Scopes)),
+                string.Join(' ', grant.Scopes),
+                idToken),
             refresh.Entity.Id);
     }
 

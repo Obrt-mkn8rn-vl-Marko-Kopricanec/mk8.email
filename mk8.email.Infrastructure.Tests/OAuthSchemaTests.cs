@@ -29,6 +29,9 @@ public sealed class OAuthSchemaTests
         Assert.AreEqual(
             "text[]",
             authorizationCode.FindProperty(nameof(OAuthAuthorizationCodeDB.Scopes))?.GetColumnType());
+        Assert.AreEqual(
+            512,
+            authorizationCode.FindProperty(nameof(OAuthAuthorizationCodeDB.Nonce))?.GetMaxLength());
         Assert.AreEqual(128, grant.FindProperty(nameof(OAuthGrantDB.ClientId))?.GetMaxLength());
         Assert.AreEqual(128, grant.FindProperty(nameof(OAuthGrantDB.DeviceName))?.GetMaxLength());
         Assert.AreEqual(16, token.FindProperty(nameof(OAuthTokenDB.TokenType))?.GetMaxLength());

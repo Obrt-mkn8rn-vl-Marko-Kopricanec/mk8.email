@@ -16,12 +16,21 @@ public static class OAuthEndpointRouteBuilderExtensions
 {
     private const string CsrfCookieName = "__Host-mk8oauth";
     private const int MaximumFormBytes = 16 * 1024;
-    private static readonly string[] AdvertisedScopes =
+    private static readonly string[] OAuthScopes =
         ["offline_access", "imap", "smtp", "pop", "jmap", "dav", "sieve"];
+    private static readonly string[] OpenIdConnectScopes =
+        ["openid", "profile", "email", .. OAuthScopes];
+
+    private static string[] AdvertisedScopes(EnvironmentConfig environment) =>
+        environment.OAuth.EnableOpenIdConnect ? OpenIdConnectScopes : OAuthScopes;
 
     public static IEndpointRouteBuilder MapOAuthEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapGet("/.well-known/oauth-authorization-server", MetadataAsync);
+        endpoints.MapGet("/.well-known/openid-configuration", OpenIdMetadataAsync);
+        endpoints.MapGet("/oauth/jwks", JwksAsync);
+        endpoints.MapMethods("/oauth/userinfo", [HttpMethods.Get, HttpMethods.Post], UserInfoAsync)
+            .RequireRateLimiting("oauth-token");
         endpoints.MapGet("/oauth/authorize", BeginAuthorizationAsync);
         endpoints.MapPost("/oauth/authorize", CompleteAuthorizationAsync)
             .RequireRateLimiting("oauth-authorize");
@@ -38,7 +47,7 @@ public static class OAuthEndpointRouteBuilderExtensions
             environment.Smtp.Hostname,
             environment.Jmap.PublicBaseUrl);
         context.Response.Headers.CacheControl = "public, max-age=3600";
-        return Results.Json(new Dictionary<string, object>
+        var metadata = new Dictionary<string, object>
         {
             ["issuer"] = baseUri.AbsoluteUri.TrimEnd('/'),
             ["authorization_endpoint"] = new Uri(baseUri, "oauth/authorize").AbsoluteUri,
@@ -48,8 +57,112 @@ public static class OAuthEndpointRouteBuilderExtensions
             ["grant_types_supported"] = new[] { "authorization_code", "refresh_token" },
             ["token_endpoint_auth_methods_supported"] = new[] { "none" },
             ["code_challenge_methods_supported"] = new[] { "S256" },
-            ["scopes_supported"] = AdvertisedScopes,
+            ["scopes_supported"] = AdvertisedScopes(environment),
+        };
+        if (environment.OAuth.EnableOpenIdConnect)
+        {
+            metadata["jwks_uri"] = new Uri(baseUri, "oauth/jwks").AbsoluteUri;
+            metadata["userinfo_endpoint"] = new Uri(baseUri, "oauth/userinfo").AbsoluteUri;
+        }
+        return Results.Json(metadata);
+    }
+
+    private static IResult OpenIdMetadataAsync(
+        HttpContext context,
+        EnvironmentConfig environment)
+    {
+        if (!environment.OAuth.EnableOpenIdConnect)
+            return Results.NotFound();
+
+        var baseUri = environment.OAuth.GetPublicBaseUri(
+            environment.Smtp.Hostname,
+            environment.Jmap.PublicBaseUrl);
+        context.Response.Headers.CacheControl = "public, max-age=3600";
+        return Results.Json(new Dictionary<string, object>
+        {
+            ["issuer"] = baseUri.AbsoluteUri.TrimEnd('/'),
+            ["authorization_endpoint"] = new Uri(baseUri, "oauth/authorize").AbsoluteUri,
+            ["token_endpoint"] = new Uri(baseUri, "oauth/token").AbsoluteUri,
+            ["userinfo_endpoint"] = new Uri(baseUri, "oauth/userinfo").AbsoluteUri,
+            ["jwks_uri"] = new Uri(baseUri, "oauth/jwks").AbsoluteUri,
+            ["revocation_endpoint"] = new Uri(baseUri, "oauth/revoke").AbsoluteUri,
+            ["response_types_supported"] = new[] { "code" },
+            ["response_modes_supported"] = new[] { "query" },
+            ["grant_types_supported"] = new[] { "authorization_code", "refresh_token" },
+            ["subject_types_supported"] = new[] { "public" },
+            ["id_token_signing_alg_values_supported"] = new[] { "RS256" },
+            ["token_endpoint_auth_methods_supported"] = new[] { "none" },
+            ["code_challenge_methods_supported"] = new[] { "S256" },
+            ["scopes_supported"] = OpenIdConnectScopes,
+            ["claims_supported"] = new[]
+            {
+                "iss", "sub", "aud", "exp", "iat", "auth_time", "nonce", "at_hash",
+                "preferred_username", "email", "email_verified",
+            },
+            ["claims_parameter_supported"] = false,
+            ["request_parameter_supported"] = false,
+            ["request_uri_parameter_supported"] = false,
         });
+    }
+
+    private static IResult JwksAsync(
+        HttpContext context,
+        IOpenIdConnectService openIdConnect,
+        EnvironmentConfig environment)
+    {
+        if (!environment.OAuth.EnableOpenIdConnect)
+            return Results.NotFound();
+
+        var key = openIdConnect.GetPublicKey();
+        context.Response.Headers.CacheControl = "public, max-age=3600";
+        return Results.Json(new Dictionary<string, object>
+        {
+            ["keys"] = new[]
+            {
+                new Dictionary<string, object>
+                {
+                    ["kty"] = key.KeyType,
+                    ["use"] = key.Use,
+                    ["kid"] = key.KeyId,
+                    ["alg"] = key.Algorithm,
+                    ["n"] = key.Modulus,
+                    ["e"] = key.Exponent,
+                },
+            },
+        });
+    }
+
+    private static async Task<IResult> UserInfoAsync(
+        HttpContext context,
+        IOAuthTokenService tokenService,
+        EnvironmentConfig environment,
+        CancellationToken cancellationToken)
+    {
+        SetSensitiveResponseHeaders(context.Response);
+        if (!environment.OAuth.EnableOpenIdConnect)
+            return Results.NotFound();
+        if (!TryGetBearerToken(context.Request, out var accessToken))
+            return BearerError(context);
+
+        var identity = await tokenService.AuthenticateIdentityAsync(
+            accessToken,
+            "openid",
+            cancellationToken);
+        if (identity is null)
+            return BearerError(context);
+
+        var claims = new Dictionary<string, object>
+        {
+            ["sub"] = identity.UserId.ToString("D"),
+        };
+        if (identity.Scopes.Contains("email", StringComparer.Ordinal))
+        {
+            claims["email"] = identity.Username;
+            claims["email_verified"] = true;
+        }
+        if (identity.Scopes.Contains("profile", StringComparer.Ordinal))
+            claims["preferred_username"] = identity.Username;
+        return Results.Json(claims);
     }
 
     private static async Task BeginAuthorizationAsync(
@@ -65,6 +178,20 @@ public static class OAuthEndpointRouteBuilderExtensions
         if (!parsed)
         {
             await WriteAuthorizationErrorAsync(context, environment, error, cancellationToken);
+            return;
+        }
+        if (request!.PromptNone)
+        {
+            await WriteAuthorizationErrorAsync(
+                context,
+                environment,
+                new(
+                    "login_required",
+                    "Interactive sign-in is required.",
+                    request.ClientId,
+                    request.RedirectUri,
+                    request.State),
+                cancellationToken);
             return;
         }
 
@@ -106,6 +233,20 @@ public static class OAuthEndpointRouteBuilderExtensions
         if (!parsed)
         {
             await WriteAuthorizationErrorAsync(context, environment, error, cancellationToken);
+            return;
+        }
+        if (request!.PromptNone)
+        {
+            await WriteAuthorizationErrorAsync(
+                context,
+                environment,
+                new(
+                    "login_required",
+                    "Interactive sign-in is required.",
+                    request.ClientId,
+                    request.RedirectUri,
+                    request.State),
+                cancellationToken);
             return;
         }
 
@@ -175,6 +316,7 @@ public static class OAuthEndpointRouteBuilderExtensions
             deviceName,
             request.Scopes,
             request.CodeChallenge,
+            request.Nonce,
             cancellationToken);
         if (code is null)
         {
@@ -238,16 +380,20 @@ public static class OAuthEndpointRouteBuilderExtensions
                 return OAuthError("unsupported_grant_type", "The grant type is not supported.");
         }
 
-        return pair is null
-            ? OAuthError("invalid_grant", "The authorization grant is invalid or expired.")
-            : Results.Json(new Dictionary<string, object>
-            {
-                ["access_token"] = pair.AccessToken,
-                ["token_type"] = "Bearer",
-                ["expires_in"] = pair.ExpiresInSeconds,
-                ["refresh_token"] = pair.RefreshToken,
-                ["scope"] = pair.Scope,
-            });
+        if (pair is null)
+            return OAuthError("invalid_grant", "The authorization grant is invalid or expired.");
+
+        var response = new Dictionary<string, object>
+        {
+            ["access_token"] = pair.AccessToken,
+            ["token_type"] = "Bearer",
+            ["expires_in"] = pair.ExpiresInSeconds,
+            ["refresh_token"] = pair.RefreshToken,
+            ["scope"] = pair.Scope,
+        };
+        if (pair.IdToken is not null)
+            response["id_token"] = pair.IdToken;
+        return Results.Json(response);
     }
 
     private static async Task<IResult> RevokeTokenAsync(
@@ -326,6 +472,40 @@ public static class OAuthEndpointRouteBuilderExtensions
             error = error with { Code = "invalid_scope", Description = "The requested scopes are not valid." };
             return false;
         }
+        var hasOpenId = scopes.Contains("openid", StringComparer.Ordinal);
+        if (hasOpenId && !environment.OAuth.EnableOpenIdConnect
+            || scopes.Any(scope => scope is "email" or "profile") && !hasOpenId)
+        {
+            error = error with { Code = "invalid_scope", Description = "The requested identity scopes are not valid." };
+            return false;
+        }
+
+        var nonce = getValue("nonce");
+        if (nonce.Length > 512 || nonce.Any(char.IsControl) || nonce.Length > 0 && !hasOpenId)
+        {
+            error = error with { Description = "The OpenID Connect nonce is not valid." };
+            return false;
+        }
+
+        var prompt = getValue("prompt");
+        var prompts = prompt.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (prompts.Distinct(StringComparer.Ordinal).Count() != prompts.Length
+            || prompts.Any(value => value is not ("none" or "login" or "consent" or "select_account"))
+            || prompts.Contains("none", StringComparer.Ordinal) && prompts.Length != 1)
+        {
+            error = error with { Description = "The OpenID Connect prompt is not valid." };
+            return false;
+        }
+
+        var maxAge = getValue("max_age");
+        if (maxAge.Length > 0
+            && (maxAge.Length > 10
+                || maxAge.Any(character => character is < '0' or > '9')
+                || !uint.TryParse(maxAge, out _)))
+        {
+            error = error with { Description = "The OpenID Connect maximum authentication age is not valid." };
+            return false;
+        }
 
         var loginHint = getValue("login_hint");
         if (loginHint.Length > 320 || loginHint.Any(char.IsControl))
@@ -339,7 +519,11 @@ public static class OAuthEndpointRouteBuilderExtensions
             state,
             scopes,
             getValue("code_challenge"),
-            loginHint);
+            loginHint,
+            nonce.Length == 0 ? null : nonce,
+            prompt,
+            maxAge,
+            prompts.Contains("none", StringComparer.Ordinal));
         return true;
     }
 
@@ -399,6 +583,9 @@ public static class OAuthEndpointRouteBuilderExtensions
             {Hidden("state", request.State)}
             {Hidden("code_challenge", request.CodeChallenge)}
             {Hidden("code_challenge_method", "S256")}
+            {Hidden("nonce", request.Nonce ?? string.Empty)}
+            {Hidden("prompt", request.Prompt)}
+            {Hidden("max_age", request.MaxAge)}
             {Hidden("csrf", csrf)}
             <p><label>Email address <input name="username" type="email" autocomplete="username" value="{encode(request.LoginHint)}" maxlength="320" required></label></p>
             <p><label>Password <input name="password" type="password" autocomplete="current-password" maxlength="1024" required></label></p>
@@ -422,6 +609,26 @@ public static class OAuthEndpointRouteBuilderExtensions
                 ["error_description"] = description,
             },
             statusCode: statusCode);
+
+    private static IResult BearerError(HttpContext context)
+    {
+        context.Response.Headers.WWWAuthenticate = "Bearer error=\"invalid_token\"";
+        return OAuthError(
+            "invalid_token",
+            "A valid OpenID Connect access token is required.",
+            StatusCodes.Status401Unauthorized);
+    }
+
+    private static bool TryGetBearerToken(HttpRequest request, out string token)
+    {
+        const string prefix = "Bearer ";
+        var value = request.Headers.Authorization.ToString();
+        token = value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+            ? value[prefix.Length..]
+            : string.Empty;
+        return token.Length is > 0 and <= 512
+            && token.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_');
+    }
 
     private static async Task WritePlainErrorAsync(
         HttpContext context,
@@ -470,7 +677,11 @@ public static class OAuthEndpointRouteBuilderExtensions
         string State,
         string[] Scopes,
         string CodeChallenge,
-        string LoginHint);
+        string LoginHint,
+        string? Nonce,
+        string Prompt,
+        string MaxAge,
+        bool PromptNone);
 
     internal sealed record OAuthAuthorizationError(
         string Code,

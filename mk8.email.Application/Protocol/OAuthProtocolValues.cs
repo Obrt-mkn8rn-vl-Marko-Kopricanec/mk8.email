@@ -6,7 +6,7 @@ namespace mk8.email.Application.Protocol;
 public static class OAuthProtocolValues
 {
     public static readonly IReadOnlySet<string> SupportedScopes = new HashSet<string>(
-        ["offline_access", "imap", "smtp", "pop", "jmap", "dav", "sieve"],
+        ["offline_access", "imap", "smtp", "pop", "jmap", "dav", "sieve", "openid", "profile", "email"],
         StringComparer.Ordinal);
 
     public static bool TryNormalizeScopes(

@@ -1,6 +1,7 @@
 using mk8.email.Infrastructure.Models;
 using Npgsql;
 using System.Net;
+using System.Security.Cryptography;
 
 namespace mk8.email.Infrastructure.Environment;
 
@@ -152,6 +153,8 @@ public sealed class EnvironmentConfig
             errors.Add("OAuth.RefreshTokenDays must be from 1 through 365.");
         if (OAuth.AuthorizationCodeMinutes is < 1 or > 15)
             errors.Add("OAuth.AuthorizationCodeMinutes must be from 1 through 15.");
+        if (OAuth.IdTokenMinutes is < 1 or > 60)
+            errors.Add("OAuth.IdTokenMinutes must be from 1 through 60.");
         if (OAuth.EnableOAuth)
         {
             if (string.IsNullOrEmpty(OAuth.ClientId)
@@ -169,6 +172,34 @@ public sealed class EnvironmentConfig
                 || !string.IsNullOrEmpty(oauthBaseUri.Fragment))
             {
                 errors.Add("OAuth.PublicBaseUrl must be an absolute HTTPS URL without a query or fragment.");
+            }
+        }
+        if (OAuth.EnableOpenIdConnect)
+        {
+            if (!OAuth.EnableOAuth)
+                errors.Add("OAuth.EnableOpenIdConnect requires OAuth.EnableOAuth.");
+            var issuer = string.IsNullOrWhiteSpace(OAuth.PublicBaseUrl)
+                ? Jmap.PublicBaseUrl ?? $"https://{Smtp.Hostname}"
+                : OAuth.PublicBaseUrl;
+            if (Uri.TryCreate(issuer, UriKind.Absolute, out var issuerUri)
+                && issuerUri.AbsolutePath != "/")
+            {
+                errors.Add("OAuth.PublicBaseUrl must not contain a path when OpenID Connect is enabled.");
+            }
+            try
+            {
+                using var signingKey = RSA.Create();
+                signingKey.ImportFromPem(OAuth.SigningKey ?? string.Empty);
+                var parameters = signingKey.ExportParameters(includePrivateParameters: true);
+                if (parameters.Modulus is not { Length: >= 256 }
+                    || parameters.D is not { Length: > 0 })
+                {
+                    errors.Add("OAuth.SigningKey must be an RSA private key of at least 2048 bits.");
+                }
+            }
+            catch (Exception exception) when (exception is ArgumentException or CryptographicException)
+            {
+                errors.Add("OAuth.SigningKey must be an RSA private key of at least 2048 bits.");
             }
         }
 
@@ -437,11 +468,15 @@ public sealed class DavConfig
 public sealed class OAuthConfig
 {
     public bool EnableOAuth { get; init; }
+    public bool EnableOpenIdConnect { get; init; }
     public string? PublicBaseUrl { get; init; }
     public string ClientId { get; init; } = "thunderbird";
     public int AccessTokenMinutes { get; init; } = 10;
     public int RefreshTokenDays { get; init; } = 90;
     public int AuthorizationCodeMinutes { get; init; } = 5;
+    public int IdTokenMinutes { get; init; } = 10;
+    public string SigningKey { get; set; } = string.Empty;
+    public string? SigningKeyFile { get; init; }
 
     public Uri GetPublicBaseUri(string smtpHostname, string? jmapPublicBaseUrl)
     {

@@ -757,14 +757,14 @@ public sealed class TransportSecurityTests
         StringAssert.Contains(capability, "SEARCHRES UTF8=ACCEPT");
         StringAssert.Contains(
             capability,
-            "SORT THREAD=ORDEREDSUBJECT THREAD=REFERENCES MULTIAPPEND STATUS=SIZE " +
+            "SORT THREAD=ORDEREDSUBJECT THREAD=REFERENCES BINARY MULTIAPPEND STATUS=SIZE " +
             "COMPRESS=DEFLATE APPENDLIMIT=65536");
         StringAssert.Contains(capability, "LOGINDISABLED");
         StringAssert.Contains(capability, "STARTTLS");
         Assert.IsFalse(capability.Contains("AUTH=PLAIN", StringComparison.Ordinal));
         foreach (var unverifiedExtension in new[]
                  {
-                     "BINARY", "OBJECTID",
+                     "OBJECTID",
                  })
         {
             Assert.IsFalse(
@@ -2695,6 +2695,129 @@ public sealed class TransportSecurityTests
     }
 
     [TestMethod]
+    [Timeout(20_000)]
+    public async Task ImapBinaryDecodesMimeSectionsAndSupportsLiteral8Append()
+    {
+        var port = ReservePort();
+        var environment = CreateEnvironment(imapPort: port);
+        await using var server = await ServerFixture.StartImapAsync(environment, port);
+        await using var connection = await ProtocolConnection.ConnectAsync(port);
+        const string message =
+            "From: sender@example.net\r\n" +
+            $"To: {TestUsername}\r\n" +
+            "Subject: binary sections\r\n" +
+            "MIME-Version: 1.0\r\n" +
+            "Content-Type: multipart/mixed; boundary=bin\r\n\r\n" +
+            "--bin\r\n" +
+            "Content-Type: text/plain; charset=utf-8\r\n" +
+            "Content-Transfer-Encoding: quoted-printable\r\n\r\n" +
+            "first=0Asecond=0Dthird\r\n" +
+            "--bin\r\n" +
+            "Content-Type: application/octet-stream\r\n" +
+            "Content-Transfer-Encoding: base64\r\n\r\n" +
+            "QQD/Cg==\r\n" +
+            "--bin\r\n" +
+            "Content-Type: application/octet-stream\r\n" +
+            "Content-Transfer-Encoding: x-rot13\r\n\r\n" +
+            "uryyb\r\n" +
+            "--bin--\r\n";
+
+        await connection.ReadLineAsync();
+        await connection.WriteLineAsync("a1 STARTTLS");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a1 OK", StringComparison.Ordinal));
+        await connection.UpgradeToTlsAsync("email.mk8n.com");
+        await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a2 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync($"a3 APPEND Sent {{{message.Length}}}");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("+ ", StringComparison.Ordinal));
+        await connection.WriteRawAsync(message);
+        await connection.WriteLineAsync(string.Empty);
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a3 OK [APPENDUID", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a4 SELECT Sent");
+        await ReadUntilTaggedResponseAsync(connection, "a4");
+
+        await connection.WriteLineAsync(
+            "a4h UID FETCH 1 (UID BODY.PEEK[HEADER.FIELDS (SUBJECT FROM)])");
+        var headerFields = string.Join('\n', await ReadUntilTaggedResponseAsync(connection, "a4h"));
+        StringAssert.Contains(headerFields, "BODY[HEADER.FIELDS (SUBJECT FROM)]");
+        StringAssert.Contains(headerFields, "Subject: binary sections");
+        StringAssert.Contains(headerFields, "From: sender@example.net");
+        Assert.IsFalse((await server.GetStoredEmailByUidAsync(1)).IsRead);
+
+        await connection.WriteLineAsync(
+            "a5 UID FETCH 1 (UID FLAGS BINARY.PEEK[1]<7.6> BINARY.SIZE[1] BINARY.SIZE[2])");
+        var response = await connection.ReadLineAsync();
+        StringAssert.Contains(response, "* 1 FETCH (FLAGS () BINARY[1]<7> {6}");
+        Assert.AreEqual("second", await connection.ReadCharactersAsync(6));
+        response = await connection.ReadLineAsync();
+        StringAssert.Contains(response, "BINARY.SIZE[1] 20");
+        StringAssert.Contains(response, "BINARY.SIZE[2] 4");
+        StringAssert.Contains(response, "UID 1)");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a5 OK", StringComparison.Ordinal));
+        Assert.IsFalse((await server.GetStoredEmailByUidAsync(1)).IsRead);
+
+        await connection.WriteLineAsync("a6 UID FETCH 1 (UID BINARY[2])");
+        response = await connection.ReadLineAsync();
+        StringAssert.Contains(response, "* 1 FETCH (BINARY[2] ~{4}");
+        CollectionAssert.AreEqual(
+            new byte[] { 0x41, 0x00, 0xff, 0x0a },
+            Encoding.Latin1.GetBytes(await connection.ReadCharactersAsync(4)));
+        StringAssert.Contains(await connection.ReadLineAsync(), "UID 1)");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a6 OK", StringComparison.Ordinal));
+        Assert.IsTrue((await server.GetStoredEmailByUidAsync(1)).IsRead);
+
+        await connection.WriteLineAsync("a7 STORE 1 -FLAGS.SILENT (\\Seen)");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a7 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync(
+            "a8 FETCH 1 (BINARY.PEEK[1]<0.5> BINARY.PEEK[2]<0.1>)");
+        StringAssert.Contains(await connection.ReadLineAsync(), "BINARY[1]<0> {5}");
+        Assert.AreEqual("first", await connection.ReadCharactersAsync(5));
+        StringAssert.Contains(await connection.ReadLineAsync(), "BINARY[2]<0> {1}");
+        Assert.AreEqual("A", await connection.ReadCharactersAsync(1));
+        Assert.AreEqual(")", (await connection.ReadLineAsync()).Trim());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a8 OK", StringComparison.Ordinal));
+        Assert.IsFalse((await server.GetStoredEmailByUidAsync(1)).IsRead);
+
+        await connection.WriteLineAsync("a9 UID FETCH 1 BINARY.SIZE[3]");
+        response = await connection.ReadLineAsync();
+        Assert.IsTrue(response.StartsWith("a9 NO [UNKNOWN-CTE]", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a10 UID FETCH 1 BINARY[]");
+        response = await connection.ReadLineAsync();
+        Assert.IsTrue(response.StartsWith("a10 NO [CANNOT]", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a11 UID FETCH 1 BINARY[01]");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a11 BAD", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a11b UID FETCH 1 BINARY[1]<0.0>");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a11b BAD", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a12 NOOP");
+        Assert.AreEqual("a12 OK NOOP completed", await connection.ReadLineAsync());
+
+        const string literal8Message =
+            "From: sender@example.net\r\n" +
+            $"To: {TestUsername}\r\n" +
+            "Subject: literal8\r\n\r\n" +
+            "eight bit body: \u00ff\r\n";
+        await connection.WriteRawAsync(
+            $"a13 APPEND Sent ~{{{literal8Message.Length}+}}\r\n{literal8Message}\r\n");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a13 OK [APPENDUID", StringComparison.Ordinal));
+
+        const string unsupportedBinaryMessage =
+            "From: sender@example.net\r\n" +
+            $"To: {TestUsername}\r\n" +
+            "Subject: binary append\r\n\r\n" +
+            "A\0B";
+        await connection.WriteLineAsync(
+            $"a14 APPEND Sent ~{{{unsupportedBinaryMessage.Length}}}");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("+ ", StringComparison.Ordinal));
+        await connection.WriteRawAsync(unsupportedBinaryMessage);
+        await connection.WriteLineAsync(string.Empty);
+        response = await connection.ReadLineAsync();
+        Assert.IsTrue(response.StartsWith("a14 NO [UNKNOWN-CTE]", StringComparison.Ordinal));
+        Assert.AreEqual(2, await server.CountStoredEmailsAsync());
+        await connection.WriteLineAsync("a15 NOOP");
+        Assert.AreEqual("a15 OK NOOP completed", await connection.ReadLineAsync());
+    }
+
+    [TestMethod]
     [Timeout(10_000)]
     public async Task ImapMutationsUseUidSequenceOrderWithoutChangingMessageContent()
     {
@@ -3669,6 +3792,23 @@ public sealed class TransportSecurityTests
             using var timeout = new CancellationTokenSource(timeoutDuration);
             return await _reader.ReadLineAsync(timeout.Token)
                 ?? throw new EndOfStreamException("The server closed the protocol stream.");
+        }
+
+        public async Task<string> ReadCharactersAsync(int count)
+        {
+            var buffer = new char[count];
+            var totalRead = 0;
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            while (totalRead < count)
+            {
+                var read = await _reader.ReadAsync(
+                    buffer.AsMemory(totalRead, count - totalRead),
+                    timeout.Token);
+                if (read == 0)
+                    throw new EndOfStreamException("The server closed the protocol stream.");
+                totalRead += read;
+            }
+            return new string(buffer);
         }
 
         public async Task<string> ReadSmtpResponseAsync()

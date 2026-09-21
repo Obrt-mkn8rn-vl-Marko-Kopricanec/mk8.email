@@ -68,7 +68,15 @@ ILogger<ImapServerService> logger) : BackgroundService
 
     private enum SessionUpgrade { None, StartTls, Compress }
 
+    private enum BinaryFetchKind { Content, Size }
+
     private readonly record struct MessageSetRange(int Start, int End);
+    private readonly record struct BinaryFetchRequest(
+        BinaryFetchKind Kind,
+        string Section,
+        bool Peek,
+        uint? Offset,
+        uint? Count);
     private readonly record struct MailboxLocation(Guid InboxId, string FolderName);
     private sealed record MailboxFolderInfo(
         string InboxName,
@@ -832,7 +840,7 @@ ILogger<ImapServerService> logger) : BackgroundService
         var caps =
             "IMAP4rev1 LITERAL+ IDLE NAMESPACE SPECIAL-USE UIDPLUS LIST-EXTENDED LIST-STATUS " +
             "ID ENABLE MOVE UNSELECT QUOTA CONDSTORE QRESYNC ESEARCH SEARCHRES UTF8=ACCEPT " +
-            $"SORT THREAD=ORDEREDSUBJECT THREAD=REFERENCES MULTIAPPEND STATUS=SIZE COMPRESS=DEFLATE " +
+            $"SORT THREAD=ORDEREDSUBJECT THREAD=REFERENCES BINARY MULTIAPPEND STATUS=SIZE COMPRESS=DEFLATE " +
             $"APPENDLIMIT={config.MaxMessageSizeBytes}";
         if (session.IsSecure)
         {
@@ -1616,8 +1624,14 @@ ILogger<ImapServerService> logger) : BackgroundService
         }
 
         var messageSet = args[..spaceIdx];
-        var fetchItems = args[(spaceIdx + 1)..].Trim().TrimStart('(').TrimEnd(')');
-        var implicitSeen = ShouldSetSeen(fetchItems);
+        var fetchItems = StripFetchList(args[(spaceIdx + 1)..]);
+        if (!TryParseBinaryFetchRequests(fetchItems, out var binaryRequests))
+        {
+            await writer.WriteLineAsync($"{tag} BAD Invalid BINARY data item");
+            return;
+        }
+
+        var implicitSeen = ShouldSetSeen(fetchItems, binaryRequests);
 
         if (fetchItems.Contains("MODSEQ", StringComparison.OrdinalIgnoreCase))
             session.CondstoreEnabled = true;
@@ -1645,7 +1659,14 @@ ILogger<ImapServerService> logger) : BackgroundService
             return;
         }
 
-        var includeStoredContent = FetchNeedsStoredContent(fetchItems);
+        var includeStoredContent = FetchNeedsStoredContent(fetchItems, binaryRequests);
+        var normalizedFetchItems = fetchItems
+            .ToUpperInvariant()
+            .Replace("BODY.PEEK[", "BODY[");
+        var needsMimeProjection = normalizedFetchItems.Contains("BODYSTRUCTURE", StringComparison.Ordinal)
+            || BodyStandaloneRegex().IsMatch(normalizedFetchItems)
+            || NumericBodySectionRegex().IsMatch(normalizedFetchItems)
+            || binaryRequests.Count > 0;
         var fetchQuery = CreateFetchQuery(messageQuery, includeStoredContent);
         var seenUpdates = new List<EmailDB>();
         var folder = implicitSeen && !session.SelectedReadOnly
@@ -1660,6 +1681,21 @@ ILogger<ImapServerService> logger) : BackgroundService
             if (!MessageSetContains(parsedMessageSet, identifier))
                 continue;
 
+            using var mimeMessage = needsMimeProjection
+                ? ImapMimeMessage.TryParse(BuildRfc822(email))
+                : null;
+
+            if (!TryDecodeBinarySections(
+                    mimeMessage,
+                    binaryRequests,
+                    out var binarySections,
+                    out var binaryFailure))
+            {
+                await PersistSeenUpdatesAsync(db, seenUpdates, ct);
+                await writer.WriteLineAsync($"{tag} NO {binaryFailure}");
+                return;
+            }
+
             if (implicitSeen && !email.IsRead && folder is not null)
             {
                 email.IsRead = true;
@@ -1672,10 +1708,28 @@ ILogger<ImapServerService> logger) : BackgroundService
                 });
             }
 
-            var response = BuildFetchResponse(sequenceNumber, email, fetchItems, useUid);
+            var response = BuildFetchResponse(
+                sequenceNumber,
+                email,
+                fetchItems,
+                useUid,
+                mimeMessage,
+                binaryRequests,
+                binarySections);
             await writer.WriteLineAsync(response);
         }
 
+        await PersistSeenUpdatesAsync(db, seenUpdates, ct);
+
+        var commandName = useUid ? "UID FETCH" : "FETCH";
+        await writer.WriteLineAsync($"{tag} OK {commandName} completed");
+    }
+
+    private static async Task PersistSeenUpdatesAsync(
+        EmailDbContext db,
+        IReadOnlyCollection<EmailDB> seenUpdates,
+        CancellationToken ct)
+    {
         foreach (var update in seenUpdates)
         {
             db.Emails.Attach(update);
@@ -1685,9 +1739,6 @@ ILogger<ImapServerService> logger) : BackgroundService
 
         if (seenUpdates.Count > 0)
             await db.SaveChangesAsync(ct);
-
-        var commandName = useUid ? "UID FETCH" : "FETCH";
-        await writer.WriteLineAsync($"{tag} OK {commandName} completed");
     }
 
     private async Task HandleStoreAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
@@ -2772,23 +2823,42 @@ ILogger<ImapServerService> logger) : BackgroundService
         }
     }
 
-    private static bool ShouldSetSeen(string fetchItems)
+    private static string StripFetchList(string value)
     {
-        var upper = fetchItems.ToUpperInvariant();
-        if (upper.Contains("BODY.PEEK") || upper.Contains("BINARY.PEEK"))
-            return false;
-        if (IsFetchMacro(upper, "RFC822"))
-            return true;
-        if (upper.Contains("BINARY["))
-            return true;
-        if (!upper.Contains("BODY["))
-            return false;
-        if (upper.Contains("BODY[HEADER"))
-            return false;
-        return true;
+        var trimmed = value.Trim();
+        return trimmed.Length >= 2 && trimmed[0] == '(' && trimmed[^1] == ')'
+            ? trimmed[1..^1].Trim()
+            : trimmed;
     }
 
-    private static bool FetchNeedsStoredContent(string fetchItems)
+    private static bool ShouldSetSeen(
+        string fetchItems,
+        IReadOnlyList<BinaryFetchRequest> binaryRequests)
+    {
+        if (binaryRequests.Any(request =>
+                request.Kind == BinaryFetchKind.Content && !request.Peek))
+        {
+            return true;
+        }
+
+        foreach (var item in TokenizeFetchDataItems(fetchItems))
+        {
+            if (item.Equals("RFC822", StringComparison.OrdinalIgnoreCase)
+                || item.StartsWith("RFC822.TEXT", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (item.StartsWith("BODY[", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool FetchNeedsStoredContent(
+        string fetchItems,
+        IReadOnlyCollection<BinaryFetchRequest> binaryRequests)
     {
         var normalized = fetchItems
             .ToUpperInvariant()
@@ -2799,8 +2869,166 @@ ILogger<ImapServerService> logger) : BackgroundService
             || IsFetchMacro(normalized, "RFC822")
             || normalized.Contains("RFC822.HEADER", StringComparison.Ordinal)
             || normalized.Contains("RFC822.TEXT", StringComparison.Ordinal)
-            || BinaryFetchRegex().IsMatch(normalized)
-            || BinarySizeRegex().IsMatch(normalized);
+            || binaryRequests.Count > 0;
+    }
+
+    private static IReadOnlyList<string> TokenizeFetchDataItems(string fetchItems)
+    {
+        var items = new List<string>();
+        var index = 0;
+        while (index < fetchItems.Length)
+        {
+            while (index < fetchItems.Length && char.IsWhiteSpace(fetchItems[index]))
+                index++;
+            if (index >= fetchItems.Length)
+                break;
+
+            var start = index;
+            var bracketDepth = 0;
+            var parenthesisDepth = 0;
+            var quoted = false;
+            var escaped = false;
+            while (index < fetchItems.Length)
+            {
+                var character = fetchItems[index];
+                if (quoted)
+                {
+                    if (escaped)
+                        escaped = false;
+                    else if (character == '\\')
+                        escaped = true;
+                    else if (character == '"')
+                        quoted = false;
+                }
+                else
+                {
+                    switch (character)
+                    {
+                        case '"':
+                            quoted = true;
+                            break;
+                        case '[':
+                            bracketDepth++;
+                            break;
+                        case ']':
+                            if (bracketDepth > 0)
+                                bracketDepth--;
+                            break;
+                        case '(':
+                            parenthesisDepth++;
+                            break;
+                        case ')':
+                            if (parenthesisDepth > 0)
+                                parenthesisDepth--;
+                            break;
+                    }
+
+                    if (char.IsWhiteSpace(character)
+                        && bracketDepth == 0
+                        && parenthesisDepth == 0)
+                    {
+                        break;
+                    }
+                }
+
+                index++;
+            }
+
+            items.Add(fetchItems[start..index]);
+        }
+
+        return items;
+    }
+
+    private static bool TryParseBinaryFetchRequests(
+        string fetchItems,
+        out List<BinaryFetchRequest> requests)
+    {
+        requests = [];
+        foreach (var item in TokenizeFetchDataItems(fetchItems))
+        {
+            var sizeMatch = BinarySizeDataItemRegex().Match(item);
+            if (sizeMatch.Success)
+            {
+                requests.Add(new BinaryFetchRequest(
+                    BinaryFetchKind.Size,
+                    sizeMatch.Groups[1].Value,
+                    Peek: true,
+                    Offset: null,
+                    Count: null));
+                continue;
+            }
+
+            var contentMatch = BinaryContentDataItemRegex().Match(item);
+            if (contentMatch.Success)
+            {
+                uint? offset = null;
+                uint? count = null;
+                if (contentMatch.Groups[3].Success)
+                {
+                    if (!uint.TryParse(contentMatch.Groups[3].ValueSpan, out var parsedOffset)
+                        || !uint.TryParse(contentMatch.Groups[4].ValueSpan, out var parsedCount))
+                    {
+                        return false;
+                    }
+                    offset = parsedOffset;
+                    count = parsedCount;
+                }
+
+                requests.Add(new BinaryFetchRequest(
+                    BinaryFetchKind.Content,
+                    contentMatch.Groups[2].Value,
+                    Peek: contentMatch.Groups[1].Success,
+                    offset,
+                    count));
+                continue;
+            }
+
+            if (item.StartsWith("BINARY", StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryDecodeBinarySections(
+        ImapMimeMessage? mimeMessage,
+        IReadOnlyList<BinaryFetchRequest> requests,
+        out Dictionary<string, ImapBinarySection> sections,
+        out string failure)
+    {
+        sections = new Dictionary<string, ImapBinarySection>(StringComparer.Ordinal);
+        failure = string.Empty;
+        if (requests.Count == 0)
+            return true;
+        if (mimeMessage is null)
+        {
+            failure = "[CANNOT] Message MIME content cannot be parsed";
+            return false;
+        }
+
+        foreach (var section in requests.Select(request => request.Section).Distinct(StringComparer.Ordinal))
+        {
+            var status = mimeMessage.GetBinarySection(section, out var content);
+            switch (status)
+            {
+                case ImapBinarySectionStatus.Success:
+                    sections.Add(section, content);
+                    break;
+                case ImapBinarySectionStatus.UnknownTransferEncoding:
+                    failure = "[UNKNOWN-CTE] BINARY section uses an unknown transfer encoding";
+                    return false;
+                case ImapBinarySectionStatus.NotFound:
+                case ImapBinarySectionStatus.NotLeaf:
+                    failure = "[CANNOT] BINARY section does not name a leaf MIME part";
+                    return false;
+                default:
+                    failure = "[CANNOT] BINARY section cannot be decoded";
+                    return false;
+            }
+        }
+
+        return true;
     }
 
     private static IQueryable<EmailDB> CreateFetchQuery(
@@ -2909,21 +3137,21 @@ ILogger<ImapServerService> logger) : BackgroundService
         return Regex.IsMatch(name, regexPattern, RegexOptions.IgnoreCase);
     }
 
-    private static string BuildFetchResponse(int seqNum, EmailDB email, string fetchItems, bool useUid)
+    private static string BuildFetchResponse(
+        int seqNum,
+        EmailDB email,
+        string fetchItems,
+        bool useUid,
+        ImapMimeMessage? mimeMessage,
+        IReadOnlyList<BinaryFetchRequest> binaryRequests,
+        IReadOnlyDictionary<string, ImapBinarySection> binarySections)
     {
         var items = fetchItems.ToUpperInvariant();
         var normalizedItems = items.Replace("BODY.PEEK[", "BODY[");
         var parts = new List<string>();
 
         var numericSectionMatch = NumericBodySectionRegex().Match(items);
-        var needsMimeProjection = normalizedItems.Contains("BODYSTRUCTURE", StringComparison.Ordinal)
-            || BodyStandaloneRegex().IsMatch(normalizedItems)
-            || numericSectionMatch.Success;
-        using var mimeMessage = needsMimeProjection
-            ? ImapMimeMessage.TryParse(BuildRfc822(email))
-            : null;
-
-        var partialMatch = PartialFetchRegex().Match(items);
+        var partialMatch = BodyPartialFetchRegex().Match(items);
         int? partialOffset = null;
         int? partialCount = null;
         if (partialMatch.Success)
@@ -3038,32 +3266,24 @@ ILogger<ImapServerService> logger) : BackgroundService
             parts.Add(threadId is not null ? $"THREADID ({threadId})" : "THREADID NIL");
         }
 
-        // BINARY extension (RFC 3516)
-        if (BinaryFetchRegex().IsMatch(items))
+        foreach (var request in binaryRequests)
         {
-            var binaryMatch = BinaryFetchRegex().Match(items);
-            var binarySection = binaryMatch.Groups[1].Value;
-            var content = binarySection.ToUpperInvariant() switch
+            var section = binarySections[request.Section];
+            if (request.Kind == BinaryFetchKind.Size)
             {
-                "" or "1" => email.Body,
-                "HEADER" => BuildRfc822Header(email),
-                "TEXT" => email.Body,
-                _ => email.Body,
-            };
-            var contentBytes = MailWireEncoding.Instance.GetBytes(content);
-            parts.Add($"BINARY[{binarySection}] ~{{{contentBytes.Length}}}\r\n{content}");
-        }
+                parts.Add($"BINARY.SIZE[{request.Section}] {section.Content.Length}");
+                continue;
+            }
 
-        if (BinarySizeRegex().IsMatch(items))
-        {
-            var sizeMatch = BinarySizeRegex().Match(items);
-            var sizeSection = sizeMatch.Groups[1].Value;
-            var content = sizeSection.ToUpperInvariant() switch
-            {
-                "" or "1" => email.Body,
-                _ => email.Body,
-            };
-            parts.Add($"BINARY.SIZE[{sizeSection}] {MailWireEncoding.Instance.GetByteCount(content)}");
+            var (content, origin) = ApplyBinaryPartial(
+                section.Content,
+                request.Offset,
+                request.Count);
+            var suffix = origin is null ? string.Empty : $"<{origin}>";
+            var literal8Marker = content.Span.Contains((byte)0) ? "~" : string.Empty;
+            parts.Add(
+                $"BINARY[{request.Section}]{suffix} {literal8Marker}{{{content.Length}}}\r\n" +
+                MailWireEncoding.Instance.GetString(content.Span));
         }
 
         if (useUid || normalizedItems.Contains("UID"))
@@ -3081,17 +3301,21 @@ ILogger<ImapServerService> logger) : BackgroundService
     [GeneratedRegex(@"BODY(?:\.PEEK)?\[((?:\d+\.)*\d+)(\.MIME)?\]")]
     private static partial Regex NumericBodySectionRegex();
 
-    [GeneratedRegex(@"<(\d+)\.(\d+)>")]
-    private static partial Regex PartialFetchRegex();
+    [GeneratedRegex(@"BODY(?:\.PEEK)?\[[^\]]*\]<(\d+)\.(\d+)>")]
+    private static partial Regex BodyPartialFetchRegex();
 
     [GeneratedRegex(@"(?<![.\[A-Z])BODY(?![.\[A-Z])")]
     private static partial Regex BodyStandaloneRegex();
 
-    [GeneratedRegex(@"BINARY(?:\.PEEK)?\[([^\]]*)\]", RegexOptions.IgnoreCase)]
-    private static partial Regex BinaryFetchRegex();
+    [GeneratedRegex(
+        @"^BINARY(?:\.(PEEK))?\[((?:[1-9][0-9]*)(?:\.[1-9][0-9]*)*|)\](?:<([0-9]+)\.([1-9][0-9]*)>)?$",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex BinaryContentDataItemRegex();
 
-    [GeneratedRegex(@"BINARY\.SIZE\[([^\]]*)\]", RegexOptions.IgnoreCase)]
-    private static partial Regex BinarySizeRegex();
+    [GeneratedRegex(
+        @"^BINARY\.SIZE\[((?:[1-9][0-9]*)(?:\.[1-9][0-9]*)*|)\]$",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex BinarySizeDataItemRegex();
 
     private static (string data, int? origin) ApplyPartial(string content, int? offset, int? count)
     {
@@ -3103,6 +3327,20 @@ ILogger<ImapServerService> logger) : BackgroundService
         var length = Math.Min(count.Value, bytes.Length - start);
         var sliced = MailWireEncoding.Instance.GetString(bytes, start, length);
         return (sliced, start);
+    }
+
+    private static (ReadOnlyMemory<byte> data, uint? origin) ApplyBinaryPartial(
+        byte[] content,
+        uint? offset,
+        uint? count)
+    {
+        if (offset is null || count is null)
+            return (content, null);
+
+        var start = (int)Math.Min((long)offset.Value, content.Length);
+        var available = content.Length - start;
+        var length = (int)Math.Min((long)count.Value, available);
+        return (content.AsMemory(start, length), offset);
     }
 
     private static string BuildFallbackBodyStructure(EmailDB email, bool extended)
@@ -6089,7 +6327,7 @@ ILogger<ImapServerService> logger) : BackgroundService
 
         while (true)
         {
-            var (mailboxName, flags, internalDate, literalSize) = ParseAppendArgs(
+            var (mailboxName, flags, internalDate, literalSize, isLiteral8, isLiteralPlus) = ParseAppendArgs(
                 remaining,
                 session.Utf8Enabled);
 
@@ -6115,7 +6353,6 @@ ILogger<ImapServerService> logger) : BackgroundService
                 targetMailbox = mailboxName;
             }
 
-            var isLiteralPlus = remaining.Contains("{" + literalSize + "+}");
             if (!TryValidateFlagList(flags, out var flagFailure))
             {
                 await RejectAppendBeforeLiteralAsync(
@@ -6216,7 +6453,10 @@ ILogger<ImapServerService> logger) : BackgroundService
                 {
                     return;
                 }
-                await writer.WriteLineAsync($"{tag} NO APPEND content contains a NUL byte");
+                var response = isLiteral8
+                    ? "[UNKNOWN-CTE] Binary APPEND storage is not supported"
+                    : "APPEND content contains a NUL byte";
+                await writer.WriteLineAsync($"{tag} NO {response}");
                 return;
             }
 
@@ -6286,7 +6526,9 @@ ILogger<ImapServerService> logger) : BackgroundService
             if (nextLine is null || nextLine.Length == 0)
                 break;
 
-            if (!nextLine.TrimStart().StartsWith('(') && !nextLine.TrimStart().StartsWith('{'))
+            if (!nextLine.TrimStart().StartsWith('(')
+                && !nextLine.TrimStart().StartsWith('{')
+                && !nextLine.TrimStart().StartsWith("~{", StringComparison.Ordinal))
             {
                 await writer.WriteLineAsync($"{tag} BAD Invalid APPEND continuation");
                 return;
@@ -6453,19 +6695,27 @@ ILogger<ImapServerService> logger) : BackgroundService
     [GeneratedRegex(@"\{([0-9]+)(\+)?\}$")]
     private static partial Regex CommandLiteralRegex();
 
-    private static (string? mailboxName, List<string> flags, DateTime? internalDate, int? literalSize) ParseAppendArgs(
+    private static (
+        string? mailboxName,
+        List<string> flags,
+        DateTime? internalDate,
+        int? literalSize,
+        bool isLiteral8,
+        bool isLiteralPlus) ParseAppendArgs(
         string args,
         bool utf8Enabled)
     {
         var tokens = ParseImapTokens(args);
         if (tokens.Count < 1)
-            return (null, [], null, null);
+            return (null, [], null, null, false, false);
 
         if (!TryParseMailboxName(tokens[0], utf8Enabled, out var mailboxName))
-            return (null, [], null, null);
+            return (null, [], null, null, false, false);
         var flags = new List<string>();
         DateTime? internalDate = null;
         int? literalSize = null;
+        var isLiteral8 = false;
+        var isLiteralPlus = false;
 
         for (var i = 1; i < tokens.Count; i++)
         {
@@ -6485,10 +6735,16 @@ ILogger<ImapServerService> logger) : BackgroundService
                 }
                 flags.AddRange(flagStr.Split(' ', StringSplitOptions.RemoveEmptyEntries));
             }
-            else if (token.StartsWith('{') && token.EndsWith('}'))
+            else if ((token.StartsWith('{') || token.StartsWith("~{", StringComparison.Ordinal))
+                && token.EndsWith('}'))
             {
-                if (int.TryParse(token[1..^1].TrimEnd('+'), out var size))
+                var literalValue = token[(token[0] == '~' ? 2 : 1)..^1];
+                isLiteralPlus = literalValue.EndsWith('+');
+                if (int.TryParse(literalValue.TrimEnd('+'), out var size))
+                {
                     literalSize = size;
+                    isLiteral8 = token[0] == '~';
+                }
             }
             else if (token.StartsWith('"') || char.IsDigit(token[0]))
             {
@@ -6503,12 +6759,17 @@ ILogger<ImapServerService> logger) : BackgroundService
             var braceEnd = args.LastIndexOf('}');
             if (braceIdx >= 0 && braceEnd > braceIdx)
             {
-                if (int.TryParse(args[(braceIdx + 1)..braceEnd].TrimEnd('+'), out var size))
+                var literalValue = args[(braceIdx + 1)..braceEnd];
+                isLiteralPlus = literalValue.EndsWith('+');
+                if (int.TryParse(literalValue.TrimEnd('+'), out var size))
+                {
                     literalSize = size;
+                    isLiteral8 = braceIdx > 0 && args[braceIdx - 1] == '~';
+                }
             }
         }
 
-        return (mailboxName, flags, internalDate, literalSize);
+        return (mailboxName, flags, internalDate, literalSize, isLiteral8, isLiteralPlus);
     }
 
     private async Task HandleIdleAsync(

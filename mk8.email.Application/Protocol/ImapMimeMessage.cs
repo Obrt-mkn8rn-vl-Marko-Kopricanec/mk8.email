@@ -3,6 +3,20 @@ using MimeKit;
 
 namespace mk8.email.Application.Protocol;
 
+internal enum ImapBinarySectionStatus
+{
+    Success,
+    NotFound,
+    NotLeaf,
+    UnknownTransferEncoding,
+    InvalidContent,
+}
+
+internal readonly record struct ImapBinarySection(byte[] Content)
+{
+    public bool RequiresLiteral8 => Content.AsSpan().Contains((byte)0);
+}
+
 internal sealed class ImapMimeMessage : IDisposable
 {
     private static readonly FormatOptions WireFormat = CreateWireFormat();
@@ -61,6 +75,41 @@ internal sealed class ImapMimeMessage : IDisposable
         return true;
     }
 
+    public ImapBinarySectionStatus GetBinarySection(
+        string section,
+        out ImapBinarySection binarySection)
+    {
+        binarySection = new ImapBinarySection([]);
+        if (!TrySelectEntity(section, out var entity))
+            return ImapBinarySectionStatus.NotFound;
+        if (entity is not MimePart part)
+            return ImapBinarySectionStatus.NotLeaf;
+
+        var transferEncoding = part.Headers[HeaderId.ContentTransferEncoding];
+        if (part.ContentTransferEncoding == ContentEncoding.Default
+            && !string.IsNullOrWhiteSpace(transferEncoding)
+            && !transferEncoding.Trim().Equals("7bit", StringComparison.OrdinalIgnoreCase))
+        {
+            return ImapBinarySectionStatus.UnknownTransferEncoding;
+        }
+
+        try
+        {
+            using var decoded = new MemoryStream();
+            part.Content?.DecodeTo(decoded);
+            var content = decoded.ToArray();
+            if (part.ContentType.IsMimeType("text", "*"))
+                content = NormalizeTextLineEndings(content);
+            binarySection = new ImapBinarySection(content);
+            return ImapBinarySectionStatus.Success;
+        }
+        catch (Exception exception) when (
+            exception is FormatException or IOException or ParseException)
+        {
+            return ImapBinarySectionStatus.InvalidContent;
+        }
+    }
+
     public void Dispose()
     {
         _message.Body?.Dispose();
@@ -78,6 +127,53 @@ internal sealed class ImapMimeMessage : IDisposable
             return SelectPart(messagePart.Message.Body, partNumber, isRoot: true);
 
         return isRoot && partNumber == 1 ? entity : null;
+    }
+
+    private bool TrySelectEntity(string section, out MimeEntity? entity)
+    {
+        entity = _message.Body;
+        if (section.Length == 0)
+            return entity is not null;
+
+        var components = section.Split('.');
+        for (var index = 0; index < components.Length; index++)
+        {
+            if (!int.TryParse(components[index], out var partNumber) || partNumber < 1)
+            {
+                entity = null;
+                return false;
+            }
+
+            entity = SelectPart(entity, partNumber, index == 0);
+            if (entity is null)
+                return false;
+        }
+        return true;
+    }
+
+    private static byte[] NormalizeTextLineEndings(ReadOnlySpan<byte> content)
+    {
+        using var normalized = new MemoryStream(content.Length);
+        for (var index = 0; index < content.Length; index++)
+        {
+            if (content[index] == (byte)'\r')
+            {
+                normalized.WriteByte((byte)'\r');
+                normalized.WriteByte((byte)'\n');
+                if (index + 1 < content.Length && content[index + 1] == (byte)'\n')
+                    index++;
+            }
+            else if (content[index] == (byte)'\n')
+            {
+                normalized.WriteByte((byte)'\r');
+                normalized.WriteByte((byte)'\n');
+            }
+            else
+            {
+                normalized.WriteByte(content[index]);
+            }
+        }
+        return normalized.ToArray();
     }
 
     private static string FormatEntity(MimeEntity? entity, bool extended)

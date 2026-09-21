@@ -22,6 +22,7 @@ internal sealed class DavFixture : IAsyncDisposable
 {
     private const string Username = "dav.user@mk8n.com";
     private const string AttendeeUsername = "dav.attendee@mk8n.com";
+    private const string OutsiderUsername = "dav.outsider@other.example";
     private const string Password = "correct horse battery staple";
     private readonly WebApplication application;
     private readonly CapturingMailSubmissionQueue submissionQueue;
@@ -31,6 +32,7 @@ internal sealed class DavFixture : IAsyncDisposable
         HttpClient client,
         Guid userId,
         Guid attendeeUserId,
+        Guid outsiderUserId,
         CapturingMailSubmissionQueue submissionQueue)
     {
         this.application = application;
@@ -38,19 +40,24 @@ internal sealed class DavFixture : IAsyncDisposable
         Client = client;
         UserId = userId;
         AttendeeUserId = attendeeUserId;
+        OutsiderUserId = outsiderUserId;
     }
 
     public HttpClient Client { get; }
     public Guid UserId { get; }
     public Guid AttendeeUserId { get; }
+    public Guid OutsiderUserId { get; }
     public string PrimaryAddress => Username;
     public string AttendeeAddress => AttendeeUsername;
     public string PrincipalPath => $"/dav/principals/{UserId:N}/";
+    public string AttendeePrincipalPath => $"/dav/principals/{AttendeeUserId:N}/";
+    public string OutsiderPrincipalPath => $"/dav/principals/{OutsiderUserId:N}/";
     public string CalendarHomePath => $"/dav/calendars/{UserId:N}/";
     public string AddressBookHomePath => $"/dav/addressbooks/{UserId:N}/";
     public string SchedulingInboxPath => CalendarHomePath + "schedule-inbox/";
     public string SchedulingOutboxPath => CalendarHomePath + "schedule-outbox/";
     public string AttendeeCalendarHomePath => $"/dav/calendars/{AttendeeUserId:N}/";
+    public string AttendeeAddressBookHomePath => $"/dav/addressbooks/{AttendeeUserId:N}/";
     public string AttendeeSchedulingInboxPath => AttendeeCalendarHomePath + "schedule-inbox/";
     public IReadOnlyList<MailSubmission> QueuedSubmissions => submissionQueue.Submissions;
 
@@ -92,6 +99,7 @@ internal sealed class DavFixture : IAsyncDisposable
 
         var userId = Guid.CreateVersion7();
         var attendeeUserId = Guid.CreateVersion7();
+        var outsiderUserId = Guid.CreateVersion7();
         using (var scope = application.Services.CreateScope())
         {
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
@@ -123,6 +131,26 @@ internal sealed class DavFixture : IAsyncDisposable
                 Role = "User",
                 Company = company,
             });
+            var outsiderCompany = new CompanyDB
+            {
+                Id = Guid.CreateVersion7(),
+                Name = "Other DAV Tenant",
+            };
+            database.Addresses.Add(new AddressDB
+            {
+                Id = Guid.CreateVersion7(),
+                Domain = "other.example",
+                Company = outsiderCompany,
+                IsActive = true,
+            });
+            database.Users.Add(new UserDB
+            {
+                Id = outsiderUserId,
+                Username = OutsiderUsername,
+                PasswordHash = PasswordHasher.Hash(Password),
+                Role = "User",
+                Company = outsiderCompany,
+            });
             await database.SaveChangesAsync();
         }
         using (var verificationScope = application.Services.CreateScope())
@@ -147,6 +175,7 @@ internal sealed class DavFixture : IAsyncDisposable
             client,
             userId,
             attendeeUserId,
+            outsiderUserId,
             submissionQueue);
     }
 

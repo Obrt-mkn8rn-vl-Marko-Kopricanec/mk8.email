@@ -236,6 +236,17 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["changed_at"] = "timestamptz",
         };
 
+    private static readonly IReadOnlyDictionary<string, string> RequiredDavShareColumns =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["id"] = "uuid",
+            ["collection_id"] = "uuid",
+            ["grantee_user_id"] = "uuid",
+            ["access_level"] = "varchar",
+            ["created_at"] = "timestamptz",
+            ["updated_at"] = "timestamptz",
+        };
+
     public async Task EnsureAsync(CancellationToken cancellationToken = default)
     {
         if (!string.Equals(
@@ -514,6 +525,17 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 CONSTRAINT ck_dav_changes_sequence CHECK (sequence > 0)
             );
 
+            CREATE TABLE IF NOT EXISTS dav_shares (
+                id uuid PRIMARY KEY,
+                collection_id uuid NOT NULL REFERENCES dav_collections(id) ON DELETE CASCADE,
+                grantee_user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                access_level varchar(16) NOT NULL,
+                created_at timestamp with time zone NOT NULL,
+                updated_at timestamp with time zone NOT NULL,
+                CONSTRAINT ck_dav_shares_access
+                    CHECK (access_level IN ('read', 'read-write'))
+            );
+
             CREATE TABLE IF NOT EXISTS sieve_scripts (
                 id uuid PRIMARY KEY,
                 user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -590,6 +612,10 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 ON dav_changes (collection_id, sequence);
             CREATE INDEX IF NOT EXISTS ix_dav_changes_changed_at
                 ON dav_changes (changed_at);
+            CREATE UNIQUE INDEX IF NOT EXISTS ix_dav_shares_collection_grantee
+                ON dav_shares (collection_id, grantee_user_id);
+            CREATE INDEX IF NOT EXISTS ix_dav_shares_grantee
+                ON dav_shares (grantee_user_id);
             CREATE UNIQUE INDEX IF NOT EXISTS ix_sieve_scripts_user_name
                 ON sieve_scripts (user_id, name);
             ALTER TABLE sieve_scripts
@@ -655,6 +681,10 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
         await ValidateTableAsync(
             "dav_changes",
             RequiredDavChangeColumns,
+            cancellationToken);
+        await ValidateTableAsync(
+            "dav_shares",
+            RequiredDavShareColumns,
             cancellationToken);
         await ValidateTableAsync(
             "sieve_scripts",

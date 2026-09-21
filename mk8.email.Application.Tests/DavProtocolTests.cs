@@ -24,7 +24,9 @@ public sealed class DavProtocolTests
         StringAssert.Contains(options.Headers.GetValues("DAV").Single(), "calendar-access");
         StringAssert.Contains(options.Headers.GetValues("DAV").Single(), "calendar-schedule");
         StringAssert.Contains(options.Headers.GetValues("DAV").Single(), "addressbook");
+        StringAssert.Contains(options.Headers.GetValues("DAV").Single(), "access-control");
         StringAssert.Contains(options.Content.Headers.Allow.ToString(), "REPORT");
+        StringAssert.Contains(options.Content.Headers.Allow.ToString(), "ACL");
 
         using var redirect = await fixture.SendAsync(
             "PROPFIND",
@@ -365,6 +367,243 @@ public sealed class DavProtocolTests
     }
 
     [TestMethod]
+    public async Task DavAclSharesCalendarsAndAddressBooksWithEnforcedPrivileges()
+    {
+        await using var fixture = await DavFixture.CreateAsync();
+
+        using var searchableProperties = await fixture.SendAsync(
+            "REPORT",
+            "/dav/principals/",
+            "<D:principal-search-property-set xmlns:D=\"DAV:\"/>",
+            headers: Header("Depth", "0"));
+        Assert.AreEqual(HttpStatusCode.OK, searchableProperties.StatusCode);
+        Assert.IsTrue((await ReadXmlAsync(searchableProperties))
+            .Descendants(Dav + "displayname").Any());
+
+        const string principalSearch = """
+        <D:principal-property-search xmlns:D="DAV:">
+          <D:property-search>
+            <D:prop><D:displayname/></D:prop>
+            <D:match>attendee</D:match>
+          </D:property-search>
+          <D:prop><D:displayname/><D:principal-URL/></D:prop>
+        </D:principal-property-search>
+        """;
+        using var searched = await fixture.SendAsync(
+            "REPORT",
+            "/dav/principals/",
+            principalSearch,
+            headers: Header("Depth", "0"));
+        Assert.AreEqual((HttpStatusCode)207, searched.StatusCode);
+        var searchXml = await ReadXmlAsync(searched);
+        CollectionAssert.AreEqual(
+            new[] { fixture.AttendeePrincipalPath },
+            Hrefs(searchXml));
+
+        var calendarCollection = fixture.CalendarHomePath + "team/";
+        const string createCalendar = """
+        <C:mkcalendar xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+          <D:set><D:prop><D:displayname>Shared team calendar</D:displayname></D:prop></D:set>
+        </C:mkcalendar>
+        """;
+        using var createdCalendar = await fixture.SendAsync(
+            "MKCALENDAR",
+            calendarCollection,
+            createCalendar);
+        Assert.AreEqual(HttpStatusCode.Created, createdCalendar.StatusCode);
+
+        const string eventOne = """
+        BEGIN:VCALENDAR
+        VERSION:2.0
+        PRODID:-//mk8.email//Shared DAV tests//EN
+        BEGIN:VEVENT
+        UID:shared-one@mk8n.com
+        DTSTAMP:20260921T080000Z
+        DTSTART:20261002T100000Z
+        DTEND:20261002T110000Z
+        SUMMARY:Shared event one
+        END:VEVENT
+        END:VCALENDAR
+        """;
+        using var createdEvent = await fixture.SendAsync(
+            "PUT",
+            calendarCollection + "one.ics",
+            eventOne,
+            "text/calendar; charset=utf-8");
+        Assert.AreEqual(HttpStatusCode.Created, createdEvent.StatusCode);
+
+        using var grantedRead = await fixture.SendAsync(
+            "ACL",
+            calendarCollection,
+            Acl(fixture.AttendeePrincipalPath, writable: false));
+        Assert.AreEqual(HttpStatusCode.OK, grantedRead.StatusCode);
+
+        using var crossTenantGrant = await fixture.SendAsync(
+            "ACL",
+            calendarCollection,
+            Acl(fixture.OutsiderPrincipalPath, writable: false));
+        Assert.AreEqual(HttpStatusCode.Forbidden, crossTenantGrant.StatusCode);
+        Assert.IsTrue((await ReadXmlAsync(crossTenantGrant))
+            .Descendants(Dav + "allowed-principal").Any());
+
+        using var ownerAcl = await fixture.SendAsync(
+            "PROPFIND",
+            calendarCollection,
+            Propfind("<D:acl/><D:acl-restrictions/><D:current-user-privilege-set/>"),
+            headers: Header("Depth", "0"));
+        Assert.AreEqual((HttpStatusCode)207, ownerAcl.StatusCode);
+        var ownerAclXml = await ReadXmlAsync(ownerAcl);
+        Assert.IsTrue(ownerAclXml.Descendants(Dav + "protected").Any());
+        Assert.IsTrue(ownerAclXml.Descendants(Dav + "grant-only").Any());
+        Assert.IsTrue(ownerAclXml.Descendants(Dav + "href")
+            .Any(element => element.Value == fixture.AttendeePrincipalPath));
+        Assert.IsTrue(ownerAclXml.Descendants(Dav + "write-acl").Any());
+
+        using var attendeeCalendars = await fixture.SendAsAttendeeAsync(
+            "PROPFIND",
+            fixture.AttendeeCalendarHomePath,
+            Propfind("<D:displayname/><D:resourcetype/><D:owner/><D:current-user-privilege-set/>"),
+            headers: Header("Depth", "1"));
+        Assert.AreEqual((HttpStatusCode)207, attendeeCalendars.StatusCode);
+        var attendeeCalendarXml = await ReadXmlAsync(attendeeCalendars);
+        var sharedCalendarResponse = ResponseWithDisplayName(
+            attendeeCalendarXml,
+            "Shared team calendar");
+        var sharedCalendarHref = sharedCalendarResponse.Element(Dav + "href")!.Value;
+        StringAssert.StartsWith(sharedCalendarHref, fixture.AttendeeCalendarHomePath + "shared-");
+        Assert.AreEqual(
+            fixture.PrincipalPath,
+            sharedCalendarResponse.Descendants(Dav + "owner").Single()
+                .Element(Dav + "href")?.Value);
+        Assert.IsTrue(sharedCalendarResponse.Descendants(Dav + "read").Any());
+        Assert.IsFalse(sharedCalendarResponse.Descendants(Dav + "write").Any());
+
+        using var attendeeRead = await fixture.SendAsAttendeeAsync(
+            "GET",
+            sharedCalendarHref + "one.ics");
+        Assert.AreEqual(HttpStatusCode.OK, attendeeRead.StatusCode);
+        StringAssert.Contains(await attendeeRead.Content.ReadAsStringAsync(), "Shared event one");
+
+        const string eventTwo = """
+        BEGIN:VCALENDAR
+        VERSION:2.0
+        PRODID:-//mk8.email//Shared DAV tests//EN
+        BEGIN:VEVENT
+        UID:shared-two@mk8n.com
+        DTSTAMP:20260921T080000Z
+        DTSTART:20261003T100000Z
+        DTEND:20261003T110000Z
+        SUMMARY:Shared event two
+        END:VEVENT
+        END:VCALENDAR
+        """;
+        using var readOnlyWrite = await fixture.SendAsAttendeeAsync(
+            "PUT",
+            sharedCalendarHref + "two.ics",
+            eventTwo,
+            "text/calendar; charset=utf-8");
+        Assert.AreEqual(HttpStatusCode.Forbidden, readOnlyWrite.StatusCode);
+
+        using var grantedWrite = await fixture.SendAsync(
+            "ACL",
+            calendarCollection,
+            Acl(fixture.AttendeePrincipalPath, writable: true));
+        Assert.AreEqual(HttpStatusCode.OK, grantedWrite.StatusCode);
+        const string sharedPropertyPatch = """
+        <D:propertyupdate xmlns:D="DAV:">
+          <D:set><D:prop><D:displayname>Shared team calendar updated</D:displayname></D:prop></D:set>
+        </D:propertyupdate>
+        """;
+        using var attendeePropertyWrite = await fixture.SendAsAttendeeAsync(
+            "PROPPATCH",
+            sharedCalendarHref,
+            sharedPropertyPatch);
+        Assert.AreEqual((HttpStatusCode)207, attendeePropertyWrite.StatusCode);
+        using var attendeeWrite = await fixture.SendAsAttendeeAsync(
+            "PUT",
+            sharedCalendarHref + "two.ics",
+            eventTwo,
+            "text/calendar; charset=utf-8");
+        Assert.AreEqual(HttpStatusCode.Created, attendeeWrite.StatusCode);
+        using var ownerReadsSharedWrite = await fixture.SendAsync(
+            "GET",
+            calendarCollection + "two.ics");
+        Assert.AreEqual(HttpStatusCode.OK, ownerReadsSharedWrite.StatusCode);
+
+        var addressBookCollection = fixture.AddressBookHomePath + "directory-shared/";
+        const string createAddressBook = """
+        <D:mkcol xmlns:D="DAV:" xmlns:A="urn:ietf:params:xml:ns:carddav">
+          <D:set><D:prop>
+            <D:resourcetype><D:collection/><A:addressbook/></D:resourcetype>
+            <D:displayname>Shared directory</D:displayname>
+          </D:prop></D:set>
+        </D:mkcol>
+        """;
+        using var createdAddressBook = await fixture.SendAsync(
+            "MKCOL",
+            addressBookCollection,
+            createAddressBook);
+        Assert.AreEqual(HttpStatusCode.Created, createdAddressBook.StatusCode);
+        using var sharedAddressBook = await fixture.SendAsync(
+            "ACL",
+            addressBookCollection,
+            Acl(fixture.AttendeePrincipalPath, writable: true));
+        Assert.AreEqual(HttpStatusCode.OK, sharedAddressBook.StatusCode);
+
+        using var attendeeAddressBooks = await fixture.SendAsAttendeeAsync(
+            "PROPFIND",
+            fixture.AttendeeAddressBookHomePath,
+            Propfind("<D:displayname/><D:resourcetype/><D:current-user-privilege-set/>"),
+            headers: Header("Depth", "1"));
+        var attendeeAddressBookXml = await ReadXmlAsync(attendeeAddressBooks);
+        var sharedAddressBookHref = ResponseWithDisplayName(
+            attendeeAddressBookXml,
+            "Shared directory").Element(Dav + "href")!.Value;
+
+        const string contact = """
+        BEGIN:VCARD
+        VERSION:4.0
+        UID:shared-contact@example.net
+        FN:Shared Contact
+        EMAIL:shared-contact@example.net
+        END:VCARD
+        """;
+        using var attendeeContactWrite = await fixture.SendAsAttendeeAsync(
+            "PUT",
+            sharedAddressBookHref + "shared.vcf",
+            contact,
+            "text/vcard; charset=utf-8");
+        Assert.AreEqual(HttpStatusCode.Created, attendeeContactWrite.StatusCode);
+        using var ownerReadsContact = await fixture.SendAsync(
+            "GET",
+            addressBookCollection + "shared.vcf");
+        Assert.AreEqual(HttpStatusCode.OK, ownerReadsContact.StatusCode);
+
+        using var attendeeUnsubscribes = await fixture.SendAsAttendeeAsync(
+            "DELETE",
+            sharedAddressBookHref);
+        Assert.AreEqual(HttpStatusCode.NoContent, attendeeUnsubscribes.StatusCode);
+        using var ownerStillReadsContact = await fixture.SendAsync(
+            "GET",
+            addressBookCollection + "shared.vcf");
+        Assert.AreEqual(HttpStatusCode.OK, ownerStillReadsContact.StatusCode);
+        using var removedBinding = await fixture.SendAsAttendeeAsync(
+            "GET",
+            sharedAddressBookHref + "shared.vcf");
+        Assert.AreEqual(HttpStatusCode.NotFound, removedBinding.StatusCode);
+
+        using var revokedCalendar = await fixture.SendAsync(
+            "ACL",
+            calendarCollection,
+            "<D:acl xmlns:D=\"DAV:\"/>");
+        Assert.AreEqual(HttpStatusCode.OK, revokedCalendar.StatusCode);
+        using var revokedRead = await fixture.SendAsAttendeeAsync(
+            "GET",
+            sharedCalendarHref + "one.ics");
+        Assert.AreEqual(HttpStatusCode.NotFound, revokedRead.StatusCode);
+    }
+
+    [TestMethod]
     public async Task CalDavSchedulingDeliversLocalInvitationsRepliesAndExternalImip()
     {
         await using var fixture = await DavFixture.CreateAsync();
@@ -618,6 +857,23 @@ public sealed class DavProtocolTests
           <D:prop><D:getetag/></D:prop>
         </D:sync-collection>
         """;
+
+    private static string Acl(string principalHref, bool writable) => $$"""
+        <D:acl xmlns:D="DAV:">
+          <D:ace>
+            <D:principal><D:href>{{principalHref}}</D:href></D:principal>
+            <D:grant>
+              <D:privilege><D:read/></D:privilege>
+              {{(writable ? "<D:privilege><D:write/></D:privilege>" : string.Empty)}}
+            </D:grant>
+          </D:ace>
+        </D:acl>
+        """;
+
+    private static XElement ResponseWithDisplayName(XDocument document, string displayName) =>
+        document.Descendants(Dav + "response").Single(response =>
+            response.Descendants(Dav + "displayname")
+                .Any(element => element.Value == displayName));
 
     private static async Task<XDocument> ReadXmlAsync(HttpResponseMessage response) =>
         XDocument.Parse(await response.Content.ReadAsStringAsync());

@@ -92,6 +92,14 @@ def test_dav(account: str, password: str) -> None:
         "addressbook" in (headers.get("DAV") or ""),
         "The public DAV endpoint did not advertise CardDAV.",
     )
+    require(
+        "access-control" in (headers.get("DAV") or ""),
+        "The public DAV endpoint did not advertise WebDAV ACL support.",
+    )
+    require(
+        "ACL" in (headers.get("Allow") or ""),
+        "The public DAV endpoint did not allow ACL updates.",
+    )
     for discovery_path in ("/.well-known/caldav", "/.well-known/carddav"):
         status, discovery_headers, _ = dav_request("PROPFIND", discovery_path)
         require(status == 301, f"{discovery_path} did not redirect.")

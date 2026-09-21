@@ -15,13 +15,16 @@ public sealed class DavSchemaTests
         var collection = database.Model.FindEntityType(typeof(DavCollectionDB));
         var resource = database.Model.FindEntityType(typeof(DavResourceDB));
         var change = database.Model.FindEntityType(typeof(DavChangeDB));
+        var share = database.Model.FindEntityType(typeof(DavShareDB));
 
         Assert.IsNotNull(collection);
         Assert.IsNotNull(resource);
         Assert.IsNotNull(change);
+        Assert.IsNotNull(share);
         Assert.AreEqual("dav_collections", collection.GetTableName());
         Assert.AreEqual("dav_resources", resource.GetTableName());
         Assert.AreEqual("dav_changes", change.GetTableName());
+        Assert.AreEqual("dav_shares", share.GetTableName());
 
         AssertUniqueIndex(collection, nameof(DavCollectionDB.UserId),
             nameof(DavCollectionDB.CollectionType), nameof(DavCollectionDB.Slug));
@@ -31,12 +34,15 @@ public sealed class DavSchemaTests
             nameof(DavResourceDB.Uid));
         AssertUniqueIndex(change, nameof(DavChangeDB.CollectionId),
             nameof(DavChangeDB.Sequence));
+        AssertUniqueIndex(share, nameof(DavShareDB.CollectionId),
+            nameof(DavShareDB.GranteeUserId));
 
         Assert.AreEqual("text[]", collection.FindProperty(nameof(DavCollectionDB.Components))?.GetColumnType());
         Assert.AreEqual("bytea", resource.FindProperty(nameof(DavResourceDB.Content))?.GetColumnType());
         Assert.IsTrue(collection.GetForeignKeys().All(key => key.DeleteBehavior == DeleteBehavior.Cascade));
         Assert.IsTrue(resource.GetForeignKeys().All(key => key.DeleteBehavior == DeleteBehavior.Cascade));
         Assert.IsTrue(change.GetForeignKeys().All(key => key.DeleteBehavior == DeleteBehavior.Cascade));
+        Assert.IsTrue(share.GetForeignKeys().All(key => key.DeleteBehavior == DeleteBehavior.Cascade));
     }
 
     private static EmailDbContext CreateDatabase()

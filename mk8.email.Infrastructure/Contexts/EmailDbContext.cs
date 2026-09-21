@@ -30,6 +30,7 @@ public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContex
     public DbSet<DavCollectionDB> DavCollections => Set<DavCollectionDB>();
     public DbSet<DavResourceDB> DavResources => Set<DavResourceDB>();
     public DbSet<DavChangeDB> DavChanges => Set<DavChangeDB>();
+    public DbSet<DavShareDB> DavShares => Set<DavShareDB>();
     public DbSet<SieveScriptDB> SieveScripts => Set<SieveScriptDB>();
 
     private static readonly Guid GlobalConfigSeedId = Guid.Parse("00000000-0000-0000-0000-000000000001");
@@ -253,6 +254,22 @@ public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContex
             entity.HasOne(change => change.Collection)
                 .WithMany(collection => collection.Changes)
                 .HasForeignKey(change => change.CollectionId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<DavShareDB>(entity =>
+        {
+            entity.HasIndex(share => new { share.CollectionId, share.GranteeUserId })
+                .IsUnique();
+            entity.HasIndex(share => share.GranteeUserId);
+
+            entity.HasOne(share => share.Collection)
+                .WithMany(collection => collection.Shares)
+                .HasForeignKey(share => share.CollectionId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(share => share.GranteeUser)
+                .WithMany()
+                .HasForeignKey(share => share.GranteeUserId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 

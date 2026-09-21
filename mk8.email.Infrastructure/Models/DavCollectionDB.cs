@@ -59,4 +59,5 @@ public sealed class DavCollectionDB
 
     public ICollection<DavResourceDB> Resources { get; set; } = [];
     public ICollection<DavChangeDB> Changes { get; set; } = [];
+    public ICollection<DavShareDB> Shares { get; set; } = [];
 }

@@ -20,7 +20,7 @@ public static class DavEndpointRouteBuilderExtensions
     private static readonly string[] DavMethods =
     [
         "OPTIONS", "PROPFIND", "PROPPATCH", "REPORT", "GET", "HEAD", "PUT",
-        "DELETE", "MKCOL", "MKCALENDAR", "POST",
+        "DELETE", "MKCOL", "MKCALENDAR", "POST", "ACL",
     ];
 
     public static IEndpointRouteBuilder MapDavEndpoints(this IEndpointRouteBuilder endpoints)
@@ -70,7 +70,9 @@ public static class DavEndpointRouteBuilderExtensions
         }
 
         if (!TryParsePath(context.Request.Path, out var path)
-            || (path.UserId is not null && path.UserId != user.Id))
+            || (path.UserId is not null
+                && path.UserId != user.Id
+                && path.Kind != DavPathKind.Principal))
         {
             context.Response.StatusCode = StatusCodes.Status404NotFound;
             return;
@@ -111,6 +113,9 @@ public static class DavEndpointRouteBuilderExtensions
                     scheduling,
                     environment,
                     cancellationToken);
+                break;
+            case "ACL":
+                await HandleAclAsync(context, user, path, store, cancellationToken);
                 break;
             default:
                 context.Response.StatusCode = StatusCodes.Status405MethodNotAllowed;
@@ -160,7 +165,13 @@ public static class DavEndpointRouteBuilderExtensions
                 {
                     responses.Add(CreatePropertyResponse(
                         PrincipalHref(user.Id),
-                        PrincipalProperties(user),
+                        PrincipalProperties(
+                            new DavPrincipal(user.Id, user.Username),
+                            user.Id),
+                        requested));
+                    responses.Add(CreatePropertyResponse(
+                        PrincipalCollectionHref,
+                        PrincipalCollectionProperties(user),
                         requested));
                     responses.Add(CreatePropertyResponse(
                         HomeHref(DavCollectionKind.Calendar, user.Id),
@@ -173,12 +184,40 @@ public static class DavEndpointRouteBuilderExtensions
                 }
                 break;
 
-            case DavPathKind.Principal:
+            case DavPathKind.PrincipalCollection:
                 responses.Add(CreatePropertyResponse(
-                    PrincipalHref(user.Id),
-                    PrincipalProperties(user),
+                    PrincipalCollectionHref,
+                    PrincipalCollectionProperties(user),
                     requested));
+                if (depth == "1")
+                {
+                    foreach (var principal in await store.GetPrincipalsAsync(user, cancellationToken))
+                    {
+                        responses.Add(CreatePropertyResponse(
+                            PrincipalHref(principal.Id),
+                            PrincipalProperties(principal, user.Id),
+                            requested));
+                    }
+                }
                 break;
+
+            case DavPathKind.Principal:
+                {
+                    var principal = await store.GetPrincipalAsync(
+                        user,
+                        path.UserId!.Value,
+                        cancellationToken);
+                    if (principal is null)
+                    {
+                        context.Response.StatusCode = StatusCodes.Status404NotFound;
+                        return;
+                    }
+                    responses.Add(CreatePropertyResponse(
+                        PrincipalHref(principal.Id),
+                        PrincipalProperties(principal, user.Id),
+                        requested));
+                    break;
+                }
 
             case DavPathKind.Home:
                 responses.Add(CreatePropertyResponse(
@@ -206,6 +245,7 @@ public static class DavEndpointRouteBuilderExtensions
                     var collection = await store.GetCollectionAsync(
                         user,
                         path.CollectionKind!.Value,
+                        path.UserId!.Value,
                         path.Slug!,
                         cancellationToken);
                     if (collection is null)
@@ -259,6 +299,34 @@ public static class DavEndpointRouteBuilderExtensions
         DavStore store,
         CancellationToken cancellationToken)
     {
+        var parsed = await ReadXmlBodyAsync(context.Request, 1_048_576, cancellationToken);
+        if (parsed.IsInvalid || parsed.Value?.Root is null)
+        {
+            context.Response.StatusCode = StatusCodes.Status400BadRequest;
+            return;
+        }
+        var root = parsed.Value.Root;
+        if (path.Kind == DavPathKind.PrincipalCollection)
+        {
+            if (root.Name == Dav + "principal-search-property-set")
+            {
+                await HandlePrincipalSearchPropertySetAsync(
+                    context,
+                    cancellationToken);
+                return;
+            }
+            if (root.Name == Dav + "principal-property-search")
+            {
+                await HandlePrincipalPropertySearchAsync(
+                    context,
+                    user,
+                    root,
+                    store,
+                    cancellationToken);
+                return;
+            }
+        }
+
         if (path.Kind != DavPathKind.Collection)
         {
             context.Response.StatusCode = StatusCodes.Status403Forbidden;
@@ -267,6 +335,7 @@ public static class DavEndpointRouteBuilderExtensions
         var collection = await store.GetCollectionAsync(
             user,
             path.CollectionKind!.Value,
+            path.UserId!.Value,
             path.Slug!,
             cancellationToken);
         if (collection is null)
@@ -275,13 +344,6 @@ public static class DavEndpointRouteBuilderExtensions
             return;
         }
 
-        var parsed = await ReadXmlBodyAsync(context.Request, 1_048_576, cancellationToken);
-        if (parsed.IsInvalid || parsed.Value?.Root is null)
-        {
-            context.Response.StatusCode = StatusCodes.Status400BadRequest;
-            return;
-        }
-        var root = parsed.Value.Root;
         if (root.Name == Dav + "sync-collection")
         {
             await HandleSyncCollectionReportAsync(
@@ -320,6 +382,85 @@ public static class DavEndpointRouteBuilderExtensions
             StatusCodes.Status403Forbidden,
             Dav + "supported-report",
             cancellationToken);
+    }
+
+    private static async Task HandlePrincipalSearchPropertySetAsync(
+        HttpContext context,
+        CancellationToken cancellationToken)
+    {
+        var depth = context.Request.Headers["Depth"].ToString();
+        if (depth.Length > 0 && depth != "0")
+        {
+            context.Response.StatusCode = StatusCodes.Status400BadRequest;
+            return;
+        }
+
+        var document = new XDocument(new XElement(
+            Dav + "principal-search-property-set",
+            new XAttribute(XNamespace.Xmlns + "D", Dav),
+            new XElement(
+                Dav + "principal-search-property",
+                new XElement(Dav + "prop", new XElement(Dav + "displayname")),
+                new XElement(
+                    Dav + "description",
+                    new XAttribute(XNamespace.Xml + "lang", "en"),
+                    "Email address"))));
+        await WriteXmlAsync(
+            context,
+            StatusCodes.Status200OK,
+            document,
+            cancellationToken);
+    }
+
+    private static async Task HandlePrincipalPropertySearchAsync(
+        HttpContext context,
+        AuthenticatedMailUser user,
+        XElement root,
+        DavStore store,
+        CancellationToken cancellationToken)
+    {
+        var depth = context.Request.Headers["Depth"].ToString();
+        if (depth.Length > 0 && depth != "0")
+        {
+            context.Response.StatusCode = StatusCodes.Status400BadRequest;
+            return;
+        }
+
+        var searches = root.Elements(Dav + "property-search").Take(9).ToList();
+        if (searches.Count == 0 || searches.Count > 8)
+        {
+            context.Response.StatusCode = StatusCodes.Status400BadRequest;
+            return;
+        }
+        var matches = new List<string>(searches.Count);
+        foreach (var search in searches)
+        {
+            var properties = search.Element(Dav + "prop")?.Elements().ToList() ?? [];
+            var match = search.Element(Dav + "match")?.Value;
+            if (properties.Count != 1
+                || properties[0].Name != Dav + "displayname"
+                || string.IsNullOrEmpty(match)
+                || match.Length > 255)
+            {
+                context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                return;
+            }
+            matches.Add(match);
+        }
+
+        var requested = root.Element(Dav + "prop")?.Elements()
+            .Select(element => element.Name)
+            .ToHashSet();
+        var principals = await store.GetPrincipalsAsync(user, cancellationToken);
+        var responses = principals
+            .Where(principal => matches.All(match =>
+                principal.Username.Contains(match, StringComparison.OrdinalIgnoreCase)))
+            .Select(principal => CreatePropertyResponse(
+                PrincipalHref(principal.Id),
+                PrincipalProperties(principal, user.Id),
+                requested))
+            .ToList();
+        await WriteMultiStatusAsync(context, responses, null, cancellationToken);
     }
 
     private static async Task HandleSyncCollectionReportAsync(
@@ -588,11 +729,17 @@ public static class DavEndpointRouteBuilderExtensions
         var collection = await store.GetCollectionAsync(
             user,
             path.CollectionKind.Value,
+            path.UserId!.Value,
             path.Slug!,
             cancellationToken);
         if (collection is null)
         {
             context.Response.StatusCode = StatusCodes.Status409Conflict;
+            return;
+        }
+        if (!collection.CanWrite)
+        {
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
             return;
         }
         if (collection.Kind == DavCollectionKind.Calendar
@@ -609,8 +756,7 @@ public static class DavEndpointRouteBuilderExtensions
 
         var result = await store.PutResourceAsync(
             user,
-            path.CollectionKind.Value,
-            path.Slug!,
+            collection.Id,
             path.ResourceName!,
             contentInfo!.Uid,
             contentInfo.ContentType,
@@ -642,6 +788,9 @@ public static class DavEndpointRouteBuilderExtensions
             case DavResourceWriteStatus.LimitExceeded:
                 context.Response.StatusCode = StatusCodes.Status507InsufficientStorage;
                 return;
+            case DavResourceWriteStatus.Forbidden:
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                return;
             default:
                 context.Response.StatusCode = StatusCodes.Status409Conflict;
                 return;
@@ -659,10 +808,20 @@ public static class DavEndpointRouteBuilderExtensions
     {
         if (path.Kind == DavPathKind.Resource)
         {
-            var result = await store.DeleteResourceAsync(
+            var collection = await store.GetCollectionAsync(
                 user,
                 path.CollectionKind!.Value,
+                path.UserId!.Value,
                 path.Slug!,
+                cancellationToken);
+            if (collection is null)
+            {
+                context.Response.StatusCode = StatusCodes.Status404NotFound;
+                return;
+            }
+            var result = await store.DeleteResourceAsync(
+                user,
+                collection.Id,
                 path.ResourceName!,
                 context.Request.Headers.IfMatch.ToString(),
                 cancellationToken);
@@ -670,16 +829,27 @@ public static class DavEndpointRouteBuilderExtensions
             {
                 DavResourceWriteStatus.Updated => StatusCodes.Status204NoContent,
                 DavResourceWriteStatus.PreconditionFailed => StatusCodes.Status412PreconditionFailed,
+                DavResourceWriteStatus.Forbidden => StatusCodes.Status403Forbidden,
                 _ => StatusCodes.Status404NotFound,
             };
             return;
         }
         if (path.Kind == DavPathKind.Collection)
         {
-            var result = await store.DeleteCollectionAsync(
+            var collection = await store.GetCollectionAsync(
                 user,
                 path.CollectionKind!.Value,
+                path.UserId!.Value,
                 path.Slug!,
+                cancellationToken);
+            if (collection is null)
+            {
+                context.Response.StatusCode = StatusCodes.Status404NotFound;
+                return;
+            }
+            var result = await store.DeleteCollectionAsync(
+                user,
+                collection,
                 cancellationToken);
             context.Response.StatusCode = result.Status switch
             {
@@ -737,6 +907,7 @@ public static class DavEndpointRouteBuilderExtensions
             DavCollectionWriteStatus.Created => StatusCodes.Status201Created,
             DavCollectionWriteStatus.AlreadyExists => StatusCodes.Status405MethodNotAllowed,
             DavCollectionWriteStatus.LimitExceeded => StatusCodes.Status507InsufficientStorage,
+            DavCollectionWriteStatus.Protected => StatusCodes.Status403Forbidden,
             _ => StatusCodes.Status409Conflict,
         };
         if (result.Collection is not null)
@@ -758,6 +929,7 @@ public static class DavEndpointRouteBuilderExtensions
         var collection = await store.GetCollectionAsync(
             user,
             path.CollectionKind!.Value,
+            path.UserId!.Value,
             path.Slug!,
             cancellationToken);
         if (collection is null)
@@ -778,14 +950,15 @@ public static class DavEndpointRouteBuilderExtensions
             collection);
         var result = await store.UpdateCollectionAsync(
             user,
-            collection.Kind,
-            collection.Slug,
+            collection,
             properties,
             cancellationToken);
         if (result.Status != DavCollectionWriteStatus.Updated)
         {
             context.Response.StatusCode = result.Status == DavCollectionWriteStatus.Protected
                 ? StatusCodes.Status403Forbidden
+                : result.Status == DavCollectionWriteStatus.Forbidden
+                    ? StatusCodes.Status403Forbidden
                 : StatusCodes.Status404NotFound;
             return;
         }
@@ -802,28 +975,267 @@ public static class DavEndpointRouteBuilderExtensions
         await WriteMultiStatusAsync(context, [response], null, cancellationToken);
     }
 
+    private static async Task HandleAclAsync(
+        HttpContext context,
+        AuthenticatedMailUser user,
+        DavPath path,
+        DavStore store,
+        CancellationToken cancellationToken)
+    {
+        if (path.Kind != DavPathKind.Collection)
+        {
+            context.Response.StatusCode = StatusCodes.Status405MethodNotAllowed;
+            return;
+        }
+
+        var collection = await store.GetCollectionAsync(
+            user,
+            path.CollectionKind!.Value,
+            path.UserId!.Value,
+            path.Slug!,
+            cancellationToken);
+        if (collection is null)
+        {
+            context.Response.StatusCode = StatusCodes.Status404NotFound;
+            return;
+        }
+        if (!collection.IsOwner || DavStore.IsSchedulingCollection(collection.Slug))
+        {
+            await WriteDavErrorAsync(
+                context,
+                StatusCodes.Status403Forbidden,
+                Dav + "no-protected-ace-conflict",
+                cancellationToken);
+            return;
+        }
+
+        var parsed = await ReadXmlBodyAsync(context.Request, 1_048_576, cancellationToken);
+        if (parsed.IsInvalid || parsed.Value?.Root?.Name != Dav + "acl")
+        {
+            context.Response.StatusCode = StatusCodes.Status400BadRequest;
+            return;
+        }
+        if (!TryParseAcl(
+                context.Request,
+                parsed.Value.Root,
+                collection.UserId,
+                out var grants,
+                out var precondition))
+        {
+            await WriteDavErrorAsync(
+                context,
+                StatusCodes.Status403Forbidden,
+                precondition!,
+                cancellationToken);
+            return;
+        }
+
+        var result = await store.ReplaceSharesAsync(
+            user,
+            collection.Id,
+            grants!,
+            cancellationToken);
+        if (result.Status == DavAclWriteStatus.Updated)
+        {
+            context.Response.StatusCode = StatusCodes.Status200OK;
+            return;
+        }
+
+        var error = result.Status switch
+        {
+            DavAclWriteStatus.TooManyEntries => Dav + "limited-number-of-aces",
+            DavAclWriteStatus.UnrecognizedPrincipal => Dav + "recognized-principal",
+            DavAclWriteStatus.DisallowedPrincipal => Dav + "allowed-principal",
+            DavAclWriteStatus.Protected => Dav + "no-protected-ace-conflict",
+            _ => Dav + "no-ace-conflict",
+        };
+        await WriteDavErrorAsync(
+            context,
+            result.Status == DavAclWriteStatus.NotFound
+                ? StatusCodes.Status404NotFound
+                : StatusCodes.Status403Forbidden,
+            error,
+            cancellationToken);
+    }
+
+    private static bool TryParseAcl(
+        HttpRequest request,
+        XElement root,
+        Guid ownerId,
+        out IReadOnlyList<DavShareGrant>? grants,
+        out XName? precondition)
+    {
+        grants = null;
+        precondition = null;
+        var parsed = new List<DavShareGrant>();
+        var principals = new HashSet<Guid>();
+        foreach (var ace in root.Elements())
+        {
+            if (ace.Name != Dav + "ace")
+            {
+                precondition = Dav + "no-ace-conflict";
+                return false;
+            }
+            if (ace.Element(Dav + "protected") is not null)
+            {
+                precondition = Dav + "no-protected-ace-conflict";
+                return false;
+            }
+            if (ace.Element(Dav + "inherited") is not null)
+            {
+                precondition = Dav + "no-inherited-ace-conflict";
+                return false;
+            }
+            if (ace.Element(Dav + "deny") is not null)
+            {
+                precondition = Dav + "grant-only";
+                return false;
+            }
+            if (ace.Element(Dav + "invert") is not null)
+            {
+                precondition = Dav + "no-invert";
+                return false;
+            }
+
+            if (ace.Elements().Count() != 2
+                || ace.Elements(Dav + "principal").Count() != 1
+                || ace.Elements(Dav + "grant").Count() != 1)
+            {
+                precondition = Dav + "no-ace-conflict";
+                return false;
+            }
+
+            var principal = ace.Element(Dav + "principal");
+            var principalHrefs = principal?.Elements(Dav + "href").ToList() ?? [];
+            var principalHref = principalHrefs.Count == 1 ? principalHrefs[0].Value : null;
+            if (principal is null
+                || principal.Elements().Count() != 1
+                || !TryParsePrincipalHref(request, principalHref, out var principalId))
+            {
+                precondition = Dav + "allowed-principal";
+                return false;
+            }
+            if (principalId == ownerId)
+            {
+                precondition = Dav + "no-protected-ace-conflict";
+                return false;
+            }
+            if (!principals.Add(principalId))
+            {
+                precondition = Dav + "no-ace-conflict";
+                return false;
+            }
+
+            var grant = ace.Element(Dav + "grant");
+            if (grant is null || grant.Elements().Any(element => element.Name != Dav + "privilege"))
+            {
+                precondition = Dav + "no-ace-conflict";
+                return false;
+            }
+            var privileges = new HashSet<XName>();
+            foreach (var privilege in grant.Elements(Dav + "privilege"))
+            {
+                var privilegeElements = privilege.Elements().ToList();
+                var privilegeName = privilegeElements.Count == 1
+                    ? privilegeElements[0].Name
+                    : null;
+                if (privilegeName is null
+                    || privilegeName != Dav + "read"
+                        && privilegeName != Dav + "write"
+                        && privilegeName != Dav + "write-content"
+                        && privilegeName != Dav + "write-properties"
+                        && privilegeName != Dav + "bind"
+                        && privilegeName != Dav + "unbind")
+                {
+                    precondition = Dav + "not-supported-privilege";
+                    return false;
+                }
+                privileges.Add(privilegeName);
+            }
+            if (!privileges.Contains(Dav + "read"))
+            {
+                precondition = Dav + "no-ace-conflict";
+                return false;
+            }
+
+            var writable = privileges.Any(privilege => privilege != Dav + "read");
+            parsed.Add(new DavShareGrant(
+                principalId,
+                writable ? DavCollectionAccess.ReadWrite : DavCollectionAccess.ReadOnly));
+        }
+
+        grants = parsed;
+        return true;
+    }
+
+    private static bool TryParsePrincipalHref(
+        HttpRequest request,
+        string? href,
+        out Guid principalId)
+    {
+        principalId = default;
+        if (string.IsNullOrWhiteSpace(href))
+            return false;
+
+        var path = href.Trim();
+        if (Uri.TryCreate(path, UriKind.Absolute, out var absolute)
+            && absolute.Scheme is "http" or "https")
+        {
+            if (!string.Equals(absolute.Authority, request.Host.Value, StringComparison.OrdinalIgnoreCase))
+                return false;
+            path = absolute.AbsolutePath;
+        }
+
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return segments.Length == 3
+            && segments[0] == "dav"
+            && segments[1] == "principals"
+            && Guid.TryParseExact(segments[2], "N", out principalId);
+    }
+
     private static IReadOnlyDictionary<XName, XElement> RootProperties(AuthenticatedMailUser user) =>
         BuildProperties(
             new XElement(Dav + "resourcetype", new XElement(Dav + "collection")),
             new XElement(Dav + "displayname", "mk8.email DAV"),
             HrefProperty(Dav + "current-user-principal", PrincipalHref(user.Id)),
             HrefProperty(Dav + "principal-URL", PrincipalHref(user.Id)),
+            HrefProperty(Dav + "principal-collection-set", PrincipalCollectionHref),
             HrefProperty(CalDav + "calendar-home-set", HomeHref(DavCollectionKind.Calendar, user.Id)),
             HrefProperty(CardDav + "addressbook-home-set", HomeHref(DavCollectionKind.AddressBook, user.Id)));
 
-    private static IReadOnlyDictionary<XName, XElement> PrincipalProperties(AuthenticatedMailUser user) =>
+    private static IReadOnlyDictionary<XName, XElement> PrincipalCollectionProperties(
+        AuthenticatedMailUser user) => BuildProperties(
+        new XElement(Dav + "resourcetype", new XElement(Dav + "collection")),
+        new XElement(Dav + "displayname", "Principals"),
+        HrefProperty(Dav + "current-user-principal", PrincipalHref(user.Id)),
+        HrefProperty(Dav + "principal-collection-set", PrincipalCollectionHref),
+        PrincipalSupportedReportSet(),
+        CurrentUserPrivilegeSet(DavCollectionAccess.Owner),
+        SupportedPrivilegeSet());
+
+    private static IReadOnlyDictionary<XName, XElement> PrincipalProperties(
+        DavPrincipal principal,
+        Guid currentUserId) =>
         BuildProperties(
             new XElement(Dav + "resourcetype", new XElement(Dav + "collection"), new XElement(Dav + "principal")),
-            new XElement(Dav + "displayname", user.Username),
-            HrefProperty(Dav + "current-user-principal", PrincipalHref(user.Id)),
-            HrefProperty(Dav + "principal-URL", PrincipalHref(user.Id)),
-            HrefProperty(CalDav + "calendar-home-set", HomeHref(DavCollectionKind.Calendar, user.Id)),
-            HrefProperty(CardDav + "addressbook-home-set", HomeHref(DavCollectionKind.AddressBook, user.Id)),
-            HrefProperty(CalDav + "schedule-inbox-URL", SchedulingHref(user.Id, DavStore.SchedulingInboxSlug)),
-            HrefProperty(CalDav + "schedule-outbox-URL", SchedulingHref(user.Id, DavStore.SchedulingOutboxSlug)),
+            new XElement(Dav + "displayname", principal.Username),
+            new XElement(Dav + "alternate-URI-set",
+                new XElement(Dav + "href", $"mailto:{principal.Username}")),
+            HrefProperty(Dav + "current-user-principal", PrincipalHref(currentUserId)),
+            HrefProperty(Dav + "principal-URL", PrincipalHref(principal.Id)),
+            HrefProperty(Dav + "principal-collection-set", PrincipalCollectionHref),
+            HrefProperty(CalDav + "calendar-home-set", HomeHref(DavCollectionKind.Calendar, principal.Id)),
+            HrefProperty(CardDav + "addressbook-home-set", HomeHref(DavCollectionKind.AddressBook, principal.Id)),
+            HrefProperty(CalDav + "schedule-inbox-URL", SchedulingHref(principal.Id, DavStore.SchedulingInboxSlug)),
+            HrefProperty(CalDav + "schedule-outbox-URL", SchedulingHref(principal.Id, DavStore.SchedulingOutboxSlug)),
             new XElement(CalDav + "calendar-user-type", "INDIVIDUAL"),
             new XElement(CalDav + "calendar-user-address-set",
-                new XElement(Dav + "href", $"mailto:{user.Username}")));
+                new XElement(Dav + "href", $"mailto:{principal.Username}")),
+            CurrentUserPrivilegeSet(
+                principal.Id == currentUserId
+                    ? DavCollectionAccess.Owner
+                    : DavCollectionAccess.ReadOnly),
+            SupportedPrivilegeSet());
 
     private static IReadOnlyDictionary<XName, XElement> HomeProperties(
         AuthenticatedMailUser user,
@@ -832,7 +1244,9 @@ public static class DavEndpointRouteBuilderExtensions
         new XElement(Dav + "displayname", kind == DavCollectionKind.Calendar ? "Calendars" : "Address Books"),
         HrefProperty(Dav + "current-user-principal", PrincipalHref(user.Id)),
         HrefProperty(Dav + "owner", PrincipalHref(user.Id)),
-        CurrentUserPrivilegeSet());
+        HrefProperty(Dav + "principal-collection-set", PrincipalCollectionHref),
+        CurrentUserPrivilegeSet(DavCollectionAccess.Owner),
+        SupportedPrivilegeSet());
 
     private static IReadOnlyDictionary<XName, XElement> CollectionProperties(
         DavCollection collection,
@@ -863,7 +1277,15 @@ public static class DavEndpointRouteBuilderExtensions
         new XElement(CalendarServer + "getctag", collection.SyncToken.ToString(CultureInfo.InvariantCulture)),
         new XElement(Dav + "getlastmodified", collection.UpdatedAt.ToUniversalTime().ToString("R", CultureInfo.InvariantCulture)),
         HrefProperty(Dav + "owner", PrincipalHref(collection.UserId)),
-        CurrentUserPrivilegeSet(schedulingInbox, schedulingOutbox),
+        HrefProperty(Dav + "principal-collection-set", PrincipalCollectionHref),
+        CurrentUserPrivilegeSet(
+            collection.Access,
+            schedulingInbox,
+            schedulingOutbox,
+            aclResource: true),
+        SupportedPrivilegeSet(),
+        AclRestrictions(),
+        collection.IsOwner ? AclProperty(collection) : null,
         !schedulingOutbox ? SupportedReportSet(collection.Kind) : null,
         schedulingInbox
             ? HrefProperty(
@@ -957,19 +1379,44 @@ public static class DavEndpointRouteBuilderExtensions
                 new XElement(Dav + "report", new XElement(report)))));
     }
 
+    private static XElement PrincipalSupportedReportSet() =>
+        new(Dav + "supported-report-set",
+            new XElement(
+                Dav + "supported-report",
+                new XElement(
+                    Dav + "report",
+                    new XElement(Dav + "principal-property-search"))),
+            new XElement(
+                Dav + "supported-report",
+                new XElement(
+                    Dav + "report",
+                    new XElement(Dav + "principal-search-property-set"))));
+
     private static XElement CurrentUserPrivilegeSet(
+        DavCollectionAccess access,
         bool schedulingInbox = false,
-        bool schedulingOutbox = false)
+        bool schedulingOutbox = false,
+        bool aclResource = false)
     {
         var privileges = new List<XElement>
         {
             Privilege(Dav + "read"),
-            Privilege(Dav + "write"),
-            Privilege(Dav + "write-content"),
-            Privilege(Dav + "write-properties"),
-            Privilege(Dav + "bind"),
-            Privilege(Dav + "unbind"),
+            Privilege(Dav + "read-current-user-privilege-set"),
         };
+        if (access is DavCollectionAccess.Owner or DavCollectionAccess.ReadWrite)
+        {
+            privileges.Add(Privilege(Dav + "write"));
+            privileges.Add(Privilege(Dav + "write-content"));
+            privileges.Add(Privilege(Dav + "write-properties"));
+            privileges.Add(Privilege(Dav + "bind"));
+            privileges.Add(Privilege(Dav + "unbind"));
+        }
+        if (access == DavCollectionAccess.Owner && aclResource)
+        {
+            privileges.Add(Privilege(Dav + "read-acl"));
+            if (!schedulingInbox && !schedulingOutbox)
+                privileges.Add(Privilege(Dav + "write-acl"));
+        }
         if (schedulingInbox)
         {
             privileges.Add(Privilege(CalDav + "schedule-deliver"));
@@ -986,6 +1433,67 @@ public static class DavEndpointRouteBuilderExtensions
         }
         return new XElement(Dav + "current-user-privilege-set", privileges);
     }
+
+    private static XElement SupportedPrivilegeSet() =>
+        new(Dav + "supported-privilege-set",
+            new XElement(
+                Dav + "supported-privilege",
+                Privilege(Dav + "all"),
+                new XElement(Dav + "abstract"),
+                new XElement(
+                    Dav + "supported-privilege",
+                    Privilege(Dav + "read")),
+                new XElement(
+                    Dav + "supported-privilege",
+                    Privilege(Dav + "write"),
+                    new XElement(Dav + "supported-privilege", Privilege(Dav + "write-content")),
+                    new XElement(Dav + "supported-privilege", Privilege(Dav + "write-properties")),
+                    new XElement(Dav + "supported-privilege", Privilege(Dav + "bind")),
+                    new XElement(Dav + "supported-privilege", Privilege(Dav + "unbind"))),
+                new XElement(
+                    Dav + "supported-privilege",
+                    Privilege(Dav + "read-acl")),
+                new XElement(
+                    Dav + "supported-privilege",
+                    Privilege(Dav + "read-current-user-privilege-set")),
+                new XElement(
+                    Dav + "supported-privilege",
+                    Privilege(Dav + "write-acl"))));
+
+    private static XElement AclRestrictions() =>
+        new(Dav + "acl-restrictions",
+            new XElement(Dav + "grant-only"),
+            new XElement(Dav + "no-invert"),
+            new XElement(
+                Dav + "required-principal",
+                new XElement(Dav + "property", new XElement(Dav + "owner"))));
+
+    private static XElement AclProperty(DavCollection collection) =>
+        new(Dav + "acl",
+            new XElement(
+                Dav + "ace",
+                new XElement(
+                    Dav + "principal",
+                    new XElement(Dav + "property", new XElement(Dav + "owner"))),
+                new XElement(Dav + "grant", Privilege(Dav + "all")),
+                new XElement(Dav + "protected")),
+            collection.Shares.Select(share => new XElement(
+                Dav + "ace",
+                new XElement(
+                    Dav + "principal",
+                    new XElement(Dav + "href", PrincipalHref(share.UserId))),
+                new XElement(
+                    Dav + "grant",
+                    Privilege(Dav + "read"),
+                    share.Access == DavCollectionAccess.ReadWrite
+                        ? Privilege(Dav + "write")
+                        : null,
+                    share.Access == DavCollectionAccess.ReadWrite
+                        ? Privilege(Dav + "bind")
+                        : null,
+                    share.Access == DavCollectionAccess.ReadWrite
+                        ? Privilege(Dav + "unbind")
+                        : null))));
 
     private static XElement Privilege(XName name) =>
         new(Dav + "privilege", new XElement(name));
@@ -1118,6 +1626,7 @@ public static class DavEndpointRouteBuilderExtensions
         var collection = await store.GetCollectionAsync(
             user,
             path.CollectionKind!.Value,
+            path.UserId!.Value,
             path.Slug!,
             cancellationToken);
         if (collection is null)
@@ -1250,6 +1759,11 @@ public static class DavEndpointRouteBuilderExtensions
             path = new DavPath(DavPathKind.Root, null, null, null, null);
             return true;
         }
+        if (segments.Length == 1 && segments[0] == "principals")
+        {
+            path = new DavPath(DavPathKind.PrincipalCollection, null, null, null, null);
+            return true;
+        }
         if (segments.Length == 2
             && segments[0] == "principals"
             && Guid.TryParseExact(segments[1], "N", out var principalId))
@@ -1339,7 +1853,7 @@ public static class DavEndpointRouteBuilderExtensions
     }
 
     private static string CollectionHref(DavCollection collection) =>
-        $"{HomeHref(collection.Kind, collection.UserId)}{Uri.EscapeDataString(collection.Slug)}/";
+        $"{HomeHref(collection.Kind, collection.HrefUserId)}{Uri.EscapeDataString(collection.HrefSlug)}/";
 
     private static string ResourceHref(DavCollection collection, string resourceName) =>
         $"{CollectionHref(collection)}{Uri.EscapeDataString(resourceName)}";
@@ -1351,6 +1865,7 @@ public static class DavEndpointRouteBuilderExtensions
         $"{HomeHref(DavCollectionKind.Calendar, userId)}{slug}/";
 
     private static string PrincipalHref(Guid userId) => $"/dav/principals/{userId:N}/";
+    private const string PrincipalCollectionHref = "/dav/principals/";
     private const string RootHref = "/dav/";
 
     private static string HttpStatus(int status) =>
@@ -1371,13 +1886,13 @@ public static class DavEndpointRouteBuilderExtensions
 
     private static void SetDavHeaders(HttpResponse response)
     {
-        response.Headers["DAV"] = "1, 2, 3, calendar-access, calendar-schedule, addressbook, sync-collection";
+        response.Headers["DAV"] = "1, 2, 3, access-control, calendar-access, calendar-schedule, addressbook, sync-collection";
         response.Headers.Allow = string.Join(", ", DavMethods);
         response.Headers["MS-Author-Via"] = "DAV";
         response.Headers.CacheControl = "no-store";
     }
 
-    private enum DavPathKind { Root, Principal, Home, Collection, Resource }
+    private enum DavPathKind { Root, PrincipalCollection, Principal, Home, Collection, Resource }
 
     private readonly record struct DavPath(
         DavPathKind Kind,

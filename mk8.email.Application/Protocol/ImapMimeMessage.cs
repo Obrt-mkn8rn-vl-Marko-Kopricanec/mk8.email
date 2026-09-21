@@ -13,7 +13,9 @@ internal sealed class ImapMimeMessage : IDisposable
         _message = message;
     }
 
-    public string BodyStructure => FormatEntity(_message.Body);
+    public string Body => FormatEntity(_message.Body, extended: false);
+
+    public string BodyStructure => FormatEntity(_message.Body, extended: true);
 
     public static ImapMimeMessage? TryParse(string rawMessage)
     {
@@ -78,25 +80,41 @@ internal sealed class ImapMimeMessage : IDisposable
         return isRoot && partNumber == 1 ? entity : null;
     }
 
-    private static string FormatEntity(MimeEntity? entity)
+    private static string FormatEntity(MimeEntity? entity, bool extended)
     {
         if (entity is Multipart multipart)
         {
-            var children = string.Join(' ', multipart.Select(FormatEntity));
-            return $"({children} \"{QuoteAtom(multipart.ContentType.MediaSubtype)}\")";
+            var children = string.Join(' ', multipart.Select(child => FormatEntity(child, extended)));
+            var structure = $"({children} \"{QuoteAtom(multipart.ContentType.MediaSubtype)}\"";
+
+            if (extended)
+            {
+                structure +=
+                    $" {FormatParameters(multipart.ContentType.Parameters)}" +
+                    $" {FormatDisposition(multipart.ContentDisposition)}" +
+                    $" {FormatLanguage(multipart)}" +
+                    $" {FormatLocation(multipart)}";
+            }
+
+            return structure + ")";
         }
 
         if (entity is MessagePart { Message: not null } messagePart)
         {
             var metrics = MeasureContent(messagePart);
             var transferEncoding = messagePart.Headers[HeaderId.ContentTransferEncoding];
-            return
+            var structure =
                 $"(\"MESSAGE\" \"RFC822\" {FormatParameters(messagePart.ContentType)} " +
-                $"{FormatNString(messagePart.ContentId)} " +
+                $"{FormatContentId(messagePart)} " +
                 $"{FormatNString(messagePart.Headers[HeaderId.ContentDescription])} " +
                 $"\"{FormatTransferEncoding(transferEncoding)}\" " +
                 $"{metrics.Octets} {FormatEnvelope(messagePart.Message)} " +
-                $"{FormatEntity(messagePart.Message.Body)} {metrics.Lines})";
+                $"{FormatEntity(messagePart.Message.Body, extended)} {metrics.Lines}";
+
+            if (extended)
+                structure += $" {FormatOnePartExtensions(messagePart)}";
+
+            return structure + ")";
         }
 
         if (entity is MimePart part)
@@ -106,12 +124,15 @@ internal sealed class ImapMimeMessage : IDisposable
             var mediaSubtype = QuoteAtom(part.ContentType.MediaSubtype);
             var structure =
                 $"(\"{mediaType}\" \"{mediaSubtype}\" {FormatParameters(part.ContentType)} " +
-                $"{FormatNString(part.ContentId)} {FormatNString(part.ContentDescription)} " +
+                $"{FormatContentId(part)} {FormatNString(part.ContentDescription)} " +
                 $"\"{FormatEncoding(part.ContentTransferEncoding)}\" " +
                 $"{metrics.Octets}";
 
             if (part.ContentType.IsMimeType("text", "*"))
                 structure += $" {metrics.Lines}";
+
+            if (extended)
+                structure += $" {FormatOnePartExtensions(part)}";
 
             return structure + ")";
         }
@@ -164,19 +185,73 @@ internal sealed class ImapMimeMessage : IDisposable
         }
     }
 
-    private static string FormatParameters(ContentType contentType)
-    {
-        if (contentType.Parameters.Count == 0)
-            return "NIL";
+    private static string FormatParameters(ContentType contentType) =>
+        FormatParameters(contentType.Parameters);
 
-        var values = new List<string>(contentType.Parameters.Count * 2);
-        foreach (var parameter in contentType.Parameters)
+    private static string FormatParameters(IEnumerable<Parameter> parameters)
+    {
+        var values = new List<string>();
+        foreach (var parameter in parameters)
         {
-            values.Add(FormatNString(parameter.Name));
+            values.Add(FormatNString(parameter.Name.ToUpperInvariant()));
             values.Add(FormatNString(parameter.Value));
         }
 
-        return $"({string.Join(' ', values)})";
+        return values.Count == 0 ? "NIL" : $"({string.Join(' ', values)})";
+    }
+
+    private static string FormatOnePartExtensions(MimeEntity entity) =>
+        $"{FormatNString(entity.Headers[HeaderId.ContentMd5]?.Trim())} " +
+        $"{FormatDisposition(entity.ContentDisposition)} " +
+        $"{FormatLanguage(entity)} " +
+        FormatLocation(entity);
+
+    private static string FormatContentId(MimeEntity entity)
+    {
+        var contentId = entity.Headers[HeaderId.ContentId]?.Trim();
+        if (string.IsNullOrEmpty(contentId) && !string.IsNullOrEmpty(entity.ContentId))
+            contentId = $"<{entity.ContentId}>";
+
+        return FormatNString(contentId);
+    }
+
+    private static string FormatDisposition(ContentDisposition? disposition)
+    {
+        if (disposition is null)
+            return "NIL";
+
+        return
+            $"(\"{QuoteAtom(disposition.Disposition)}\" " +
+            $"{FormatParameters(disposition.Parameters)})";
+    }
+
+    private static string FormatLanguage(MimeEntity entity)
+    {
+        var header = entity.Headers[HeaderId.ContentLanguage];
+        if (string.IsNullOrWhiteSpace(header))
+            return "NIL";
+
+        var languages = header
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(value => value.Length > 0)
+            .Select(FormatNString)
+            .ToList();
+
+        return languages.Count switch
+        {
+            0 => "NIL",
+            1 => languages[0],
+            _ => $"({string.Join(' ', languages)})",
+        };
+    }
+
+    private static string FormatLocation(MimeEntity entity)
+    {
+        var location = entity.Headers[HeaderId.ContentLocation]?.Trim();
+        if (string.IsNullOrEmpty(location))
+            location = entity.ContentLocation?.OriginalString;
+
+        return FormatNString(location);
     }
 
     private static string FormatEncoding(ContentEncoding encoding) => encoding switch

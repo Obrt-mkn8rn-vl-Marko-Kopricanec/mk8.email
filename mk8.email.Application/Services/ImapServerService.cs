@@ -2947,11 +2947,11 @@ ILogger<ImapServerService> logger) : BackgroundService
 
         if (normalizedItems.Contains("BODYSTRUCTURE"))
         {
-            parts.Add($"BODYSTRUCTURE {mimeMessage?.BodyStructure ?? BuildFallbackBodyStructure(email)}");
+            parts.Add($"BODYSTRUCTURE {mimeMessage?.BodyStructure ?? BuildFallbackBodyStructure(email, extended: true)}");
         }
         else if (BodyStandaloneRegex().IsMatch(normalizedItems))
         {
-            parts.Add($"BODY {mimeMessage?.BodyStructure ?? BuildFallbackBodyStructure(email)}");
+            parts.Add($"BODY {mimeMessage?.Body ?? BuildFallbackBodyStructure(email, extended: false)}");
         }
 
         if (numericSectionMatch.Success)
@@ -3059,14 +3059,18 @@ ILogger<ImapServerService> logger) : BackgroundService
         return (sliced, start);
     }
 
-    private static string BuildFallbackBodyStructure(EmailDB email)
+    private static string BuildFallbackBodyStructure(EmailDB email, bool extended)
     {
         var size = MailWireEncoding.Instance.GetByteCount(email.Body);
         var lines = email.Body.Length == 0
             ? 0
             : email.Body.Count(character => character == '\n')
                 + (email.Body[^1] == '\n' ? 0 : 1);
-        return $"(\"TEXT\" \"PLAIN\" (\"CHARSET\" \"UTF-8\") NIL NIL \"7BIT\" {size} {lines})";
+        var structure =
+            $"(\"TEXT\" \"PLAIN\" (\"CHARSET\" \"UTF-8\") NIL NIL \"7BIT\" {size} {lines}";
+        if (extended)
+            structure += " NIL NIL NIL NIL";
+        return structure + ")";
     }
 
     private static string BuildFlagsList(EmailDB email)

@@ -2342,8 +2342,12 @@ public sealed class TransportSecurityTests
             "<html><body>html=20body</body></html>\r\n" +
             "--alt--\r\n" +
             "--mix\r\n" +
-            "Content-Type: application/octet-stream; name=\"test.txt\"\r\n" +
+            "Content-Type: application/octet-stream\r\n" +
             "Content-Disposition: attachment; filename=\"test.txt\"\r\n" +
+            "Content-ID: <attachment@example.net>\r\n" +
+            "Content-MD5: dGVzdC1kaWdlc3Q=\r\n" +
+            "Content-Language: en, fr\r\n" +
+            "Content-Location: files/test.txt\r\n" +
             "Content-Transfer-Encoding: base64\r\n\r\n" +
             "YXR0YWNobWVudA==\r\n" +
             "--mix--\r\n";
@@ -2370,23 +2374,38 @@ public sealed class TransportSecurityTests
         StringAssert.Contains(bodyStructure, "\"TEXT\" \"HTML\"");
         StringAssert.Contains(bodyStructure, "\"APPLICATION\" \"OCTET-STREAM\"");
         StringAssert.Contains(bodyStructure, "\"BASE64\"");
+        StringAssert.Contains(bodyStructure, "(\"BOUNDARY\" \"mix\")");
+        StringAssert.Contains(bodyStructure, "\"<attachment@example.net>\"");
+        StringAssert.Contains(bodyStructure, "\"dGVzdC1kaWdlc3Q=\"");
+        StringAssert.Contains(bodyStructure, "(\"ATTACHMENT\" (\"FILENAME\" \"test.txt\"))");
+        StringAssert.Contains(bodyStructure, "(\"en\" \"fr\")");
+        StringAssert.Contains(bodyStructure, "\"files/test.txt\"");
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a5 OK", StringComparison.Ordinal));
 
-        await connection.WriteLineAsync("a6 UID FETCH 1 (UID BODY.PEEK[1.2])");
-        var htmlSection = string.Join('\n', await ReadUntilTaggedResponseAsync(connection, "a6"));
+        await connection.WriteLineAsync("a6 UID FETCH 1 (UID BODY)");
+        var body = await connection.ReadLineAsync();
+        StringAssert.Contains(body, "BODY");
+        StringAssert.Contains(body, "\"<attachment@example.net>\"");
+        Assert.IsFalse(body.Contains("\"BOUNDARY\"", StringComparison.Ordinal));
+        Assert.IsFalse(body.Contains("\"ATTACHMENT\"", StringComparison.Ordinal));
+        Assert.IsFalse(body.Contains("dGVzdC1kaWdlc3Q=", StringComparison.Ordinal));
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a6 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a7 UID FETCH 1 (UID BODY.PEEK[1.2])");
+        var htmlSection = string.Join('\n', await ReadUntilTaggedResponseAsync(connection, "a7"));
         StringAssert.Contains(htmlSection, "BODY[1.2]");
         StringAssert.Contains(htmlSection, "<html><body>html=20body</body></html>");
         Assert.IsFalse((await server.GetStoredEmailByUidAsync(1)).IsRead);
 
-        await connection.WriteLineAsync("a7 UID FETCH 1 (UID BODY.PEEK[2.MIME])");
-        var attachmentHeaders = string.Join('\n', await ReadUntilTaggedResponseAsync(connection, "a7"));
+        await connection.WriteLineAsync("a8 UID FETCH 1 (UID BODY.PEEK[2.MIME])");
+        var attachmentHeaders = string.Join('\n', await ReadUntilTaggedResponseAsync(connection, "a8"));
         StringAssert.Contains(attachmentHeaders, "BODY[2.MIME]");
         StringAssert.Contains(attachmentHeaders, "Content-Type: application/octet-stream");
         StringAssert.Contains(attachmentHeaders, "Content-Disposition: attachment");
         Assert.IsFalse((await server.GetStoredEmailByUidAsync(1)).IsRead);
 
-        await connection.WriteLineAsync("a8 UID FETCH 1 (UID BODY[2])");
-        var attachment = string.Join('\n', await ReadUntilTaggedResponseAsync(connection, "a8"));
+        await connection.WriteLineAsync("a9 UID FETCH 1 (UID BODY[2])");
+        var attachment = string.Join('\n', await ReadUntilTaggedResponseAsync(connection, "a9"));
         StringAssert.Contains(attachment, "BODY[2]");
         StringAssert.Contains(attachment, "YXR0YWNobWVudA==");
         Assert.IsTrue((await server.GetStoredEmailByUidAsync(1)).IsRead);

@@ -45,6 +45,9 @@ grep -F "Use a supported production management command." "$output" >/dev/null
 run_failure 2 /usr/local/sbin/mk8email --set-domain-active mk8n.com not-a-state
 grep -F "The domain state must be true or false." "$output" >/dev/null
 
+run_failure 2 /usr/local/sbin/mk8email --revoke-app-password admin@mk8n.com not-an-id
+grep -F "The application password identifier is not valid." "$output" >/dev/null
+
 timeout 30s /usr/local/sbin/mk8email --healthcheck
 
 printf '%s\n' "Management command validation and production configuration tests passed."

@@ -32,6 +32,7 @@ public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContex
     public DbSet<DavChangeDB> DavChanges => Set<DavChangeDB>();
     public DbSet<DavShareDB> DavShares => Set<DavShareDB>();
     public DbSet<SieveScriptDB> SieveScripts => Set<SieveScriptDB>();
+    public DbSet<ApplicationPasswordDB> ApplicationPasswords => Set<ApplicationPasswordDB>();
 
     private static readonly Guid GlobalConfigSeedId = Guid.Parse("00000000-0000-0000-0000-000000000001");
     private static readonly Guid GlobalLimitsSeedId = Guid.Parse("00000000-0000-0000-0000-000000000002");
@@ -170,6 +171,17 @@ public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContex
             entity.HasOne(script => script.User)
                 .WithMany()
                 .HasForeignKey(script => script.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ApplicationPasswordDB>(entity =>
+        {
+            entity.HasIndex(password => new { password.UserId, password.Name });
+            entity.HasIndex(password => password.UserId);
+
+            entity.HasOne(password => password.User)
+                .WithMany()
+                .HasForeignKey(password => password.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 

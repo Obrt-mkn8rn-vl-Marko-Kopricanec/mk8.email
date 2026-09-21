@@ -251,8 +251,21 @@ public sealed partial class MailAdministrationService(EmailDbContext db) : IMail
         user.PasswordHash = PasswordHasher.Hash(password);
         user.UpdatedAt = DateTime.UtcNow;
         await RevokePushSubscriptionsAsync(user.Id, cancellationToken);
+        await RevokeApplicationPasswordsAsync(user.Id, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
         return Success("The password was changed.", user.Id);
+    }
+
+    private async Task RevokeApplicationPasswordsAsync(
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        var now = DateTime.UtcNow;
+        var passwords = await db.ApplicationPasswords
+            .Where(password => password.UserId == userId && password.RevokedAt == null)
+            .ToListAsync(cancellationToken);
+        foreach (var password in passwords)
+            password.RevokedAt = now;
     }
 
     private async Task RevokePushSubscriptionsAsync(

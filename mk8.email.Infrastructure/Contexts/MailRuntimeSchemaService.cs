@@ -247,6 +247,18 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["updated_at"] = "timestamptz",
         };
 
+    private static readonly IReadOnlyDictionary<string, string> RequiredApplicationPasswordColumns =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["id"] = "uuid",
+            ["user_id"] = "uuid",
+            ["name"] = "varchar",
+            ["password_hash"] = "varchar",
+            ["created_at"] = "timestamptz",
+            ["last_used_at"] = "timestamptz",
+            ["revoked_at"] = "timestamptz",
+        };
+
     public async Task EnsureAsync(CancellationToken cancellationToken = default)
     {
         if (!string.Equals(
@@ -546,6 +558,16 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 updated_at timestamp with time zone NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS application_passwords (
+                id uuid PRIMARY KEY,
+                user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                name varchar(128) NOT NULL,
+                password_hash varchar(255) NOT NULL,
+                created_at timestamp with time zone NOT NULL,
+                last_used_at timestamp with time zone,
+                revoked_at timestamp with time zone
+            );
+
             CREATE UNIQUE INDEX IF NOT EXISTS ix_emails_queue_delivery_id
                 ON emails (queue_delivery_id)
                 WHERE queue_delivery_id IS NOT NULL;
@@ -623,6 +645,10 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             CREATE UNIQUE INDEX IF NOT EXISTS ix_sieve_scripts_user_active
                 ON sieve_scripts (user_id)
                 WHERE is_active;
+            CREATE INDEX IF NOT EXISTS ix_application_passwords_user_name
+                ON application_passwords (user_id, name);
+            CREATE INDEX IF NOT EXISTS ix_application_passwords_user_id
+                ON application_passwords (user_id);
             """,
             cancellationToken);
 
@@ -689,6 +715,10 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
         await ValidateTableAsync(
             "sieve_scripts",
             RequiredSieveScriptColumns,
+            cancellationToken);
+        await ValidateTableAsync(
+            "application_passwords",
+            RequiredApplicationPasswordColumns,
             cancellationToken);
     }
 

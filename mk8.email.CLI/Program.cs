@@ -42,6 +42,14 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
         return 2;
     }
 
+    if (arguments.Length == 3
+        && arguments[0] == "--revoke-app-password"
+        && !Guid.TryParse(arguments[2], out _))
+    {
+        Console.Error.WriteLine("The application password identifier is not valid.");
+        return 2;
+    }
+
     try
     {
         var isDevelopment = arguments.Contains("--dev", StringComparer.Ordinal)
@@ -131,6 +139,55 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
             return result.Succeeded ? 0 : 1;
         }
 
+        if (arguments.Length == 3 && arguments[0] == "--create-app-password")
+        {
+            using var host = BuildHost(arguments, environmentConfig, includeMailServers: false);
+            using var scope = host.Services.CreateScope();
+            var result = await scope.ServiceProvider
+                .GetRequiredService<IApplicationPasswordService>()
+                .CreateAsync(arguments[1], arguments[2]);
+            Console.WriteLine(result.Message);
+            if (!result.Succeeded)
+                return 1;
+
+            Console.WriteLine($"ID: {result.Id:D}");
+            Console.WriteLine($"Password: {result.Password}");
+            return 0;
+        }
+
+        if (arguments.Length == 2 && arguments[0] == "--list-app-passwords")
+        {
+            using var host = BuildHost(arguments, environmentConfig, includeMailServers: false);
+            using var scope = host.Services.CreateScope();
+            var passwords = await scope.ServiceProvider
+                .GetRequiredService<IApplicationPasswordService>()
+                .ListAsync(arguments[1]);
+            foreach (var password in passwords)
+            {
+                Console.WriteLine(string.Join('\t',
+                    password.Id.ToString("D"),
+                    password.Name,
+                    password.CreatedAt.ToString("O"),
+                    password.LastUsedAt?.ToString("O") ?? "never",
+                    password.RevokedAt?.ToString("O") ?? "active"));
+            }
+            return 0;
+        }
+
+        if (arguments.Length == 3 && arguments[0] == "--revoke-app-password")
+        {
+            _ = Guid.TryParse(arguments[2], out var applicationPasswordId);
+            using var host = BuildHost(arguments, environmentConfig, includeMailServers: false);
+            using var scope = host.Services.CreateScope();
+            var revoked = await scope.ServiceProvider
+                .GetRequiredService<IApplicationPasswordService>()
+                .RevokeAsync(arguments[1], applicationPasswordId);
+            Console.WriteLine(revoked
+                ? "The application password is revoked."
+                : "The application password was not found.");
+            return revoked ? 0 : 1;
+        }
+
         using var protocolHost = BuildProtocolHost(arguments, environmentConfig, isDevelopment);
         using (var scope = protocolHost.Services.CreateScope())
             await scope.ServiceProvider.GetRequiredService<ISeederService>().SeedAsync();
@@ -152,6 +209,9 @@ static bool IsSupportedCommand(string[] arguments) =>
     || arguments.Length == 4 && arguments[0] == "--create-account"
     || arguments.Length == 3 && arguments[0] == "--set-catchall"
     || arguments.Length == 3 && arguments[0] == "--set-domain-active"
+    || arguments.Length == 3 && arguments[0] == "--create-app-password"
+    || arguments.Length == 2 && arguments[0] == "--list-app-passwords"
+    || arguments.Length == 3 && arguments[0] == "--revoke-app-password"
     || arguments.SequenceEqual(["--serve"]);
 
 static void WriteUsage()

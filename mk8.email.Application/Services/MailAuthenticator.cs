@@ -41,12 +41,47 @@ public sealed class MailAuthenticator(EmailDbContext database) : IMailAuthentica
             })
             .SingleOrDefaultAsync(cancellationToken);
 
-        var passwordMatches = PasswordHasher.Verify(
+        var accountPasswordMatches = PasswordHasher.Verify(
             password,
             candidate?.PasswordHash ?? DummyPasswordHash);
-        if (candidate is null || !passwordMatches)
+        if (candidate is null)
+            return null;
+        if (accountPasswordMatches)
+            return new AuthenticatedMailUser(candidate.Id, candidate.Username);
+
+        if (!TryParseApplicationPasswordId(password, out var applicationPasswordId))
             return null;
 
+        var applicationPassword = await database.ApplicationPasswords
+            .SingleOrDefaultAsync(
+                credential => credential.Id == applicationPasswordId
+                    && credential.UserId == candidate.Id
+                    && credential.RevokedAt == null,
+                cancellationToken);
+        var applicationPasswordMatches = PasswordHasher.Verify(
+            password,
+            applicationPassword?.PasswordHash ?? DummyPasswordHash);
+        if (applicationPassword is null || !applicationPasswordMatches)
+            return null;
+
+        applicationPassword.LastUsedAt = DateTime.UtcNow;
+        await database.SaveChangesAsync(cancellationToken);
+
         return new AuthenticatedMailUser(candidate.Id, candidate.Username);
+    }
+
+    private static bool TryParseApplicationPasswordId(string password, out Guid id)
+    {
+        const int identifierStart = 4;
+        const int identifierLength = 32;
+        const int separatorIndex = identifierStart + identifierLength;
+        id = Guid.Empty;
+        return password.Length > separatorIndex + 1
+            && password.StartsWith("mk8_", StringComparison.Ordinal)
+            && password[separatorIndex] == '_'
+            && Guid.TryParseExact(
+                password.AsSpan(identifierStart, identifierLength),
+                "N",
+                out id);
     }
 }

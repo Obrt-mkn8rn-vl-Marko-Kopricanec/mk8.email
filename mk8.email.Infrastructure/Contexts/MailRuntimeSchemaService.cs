@@ -77,6 +77,8 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["queue_delivery_id"] = "uuid",
             ["keywords"] = "_text",
             ["raw_message"] = "bytea",
+            ["email_object_id"] = "varchar",
+            ["thread_object_id"] = "varchar",
         };
 
     private static readonly IReadOnlyDictionary<string, string> RequiredFolderColumns =
@@ -85,6 +87,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["jmap_role"] = "varchar",
             ["suppress_default_jmap_role"] = "bool",
             ["sort_order"] = "int8",
+            ["mailbox_id"] = "varchar",
         };
 
     private static readonly IReadOnlyDictionary<string, string> RequiredJmapChangeColumns =
@@ -436,6 +439,10 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 ADD COLUMN IF NOT EXISTS keywords text[] NOT NULL DEFAULT ARRAY[]::text[];
             ALTER TABLE emails
                 ADD COLUMN IF NOT EXISTS raw_message bytea;
+            ALTER TABLE emails
+                ADD COLUMN IF NOT EXISTS email_object_id varchar(64);
+            ALTER TABLE emails
+                ADD COLUMN IF NOT EXISTS thread_object_id varchar(64);
             ALTER TABLE folders
                 ADD COLUMN IF NOT EXISTS jmap_role varchar(32);
             ALTER TABLE folders
@@ -446,6 +453,39 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 ALTER COLUMN sort_order TYPE bigint;
             ALTER TABLE folders
                 ALTER COLUMN name TYPE varchar(5049);
+            ALTER TABLE folders
+                ADD COLUMN IF NOT EXISTS mailbox_id varchar(64);
+
+            UPDATE folders
+            SET mailbox_id = replace(id::text, '-', '')
+            WHERE mailbox_id IS NULL OR mailbox_id = '';
+
+            WITH duplicate_mailbox_ids AS (
+                SELECT id
+                FROM (
+                    SELECT id,
+                           row_number() OVER (PARTITION BY mailbox_id ORDER BY id) AS duplicate_number
+                    FROM folders
+                ) ranked
+                WHERE duplicate_number > 1
+            )
+            UPDATE folders
+            SET mailbox_id = replace(folders.id::text, '-', '')
+            FROM duplicate_mailbox_ids
+            WHERE folders.id = duplicate_mailbox_ids.id;
+
+            UPDATE emails
+            SET email_object_id = replace(id::text, '-', '')
+            WHERE email_object_id IS NULL OR email_object_id = '';
+
+            UPDATE emails
+            SET thread_object_id = replace(id::text, '-', '')
+            WHERE thread_object_id IS NULL OR thread_object_id = '';
+
+            ALTER TABLE folders
+                ALTER COLUMN mailbox_id SET NOT NULL;
+            ALTER TABLE emails
+                ALTER COLUMN email_object_id SET NOT NULL;
 
             UPDATE folders
             SET jmap_role = CASE lower(name)
@@ -718,8 +758,12 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             CREATE UNIQUE INDEX IF NOT EXISTS ix_emails_queue_delivery_id
                 ON emails (queue_delivery_id)
                 WHERE queue_delivery_id IS NOT NULL;
-            CREATE UNIQUE INDEX IF NOT EXISTS ix_folders_inbox_id_mailbox_id
-                ON folders (inbox_id, mailbox_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_folders_mailbox_id_objectid
+                ON folders (mailbox_id);
+            CREATE INDEX IF NOT EXISTS ix_emails_email_object_id
+                ON emails (email_object_id);
+            CREATE INDEX IF NOT EXISTS ix_emails_thread_object_id
+                ON emails (thread_object_id);
             CREATE UNIQUE INDEX IF NOT EXISTS ix_folders_inbox_id_jmap_role
                 ON folders (inbox_id, jmap_role)
                 WHERE jmap_role IS NOT NULL;

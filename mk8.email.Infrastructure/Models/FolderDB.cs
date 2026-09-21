@@ -32,6 +32,7 @@ public class FolderDB
     [Column("highest_mod_seq")]
     public long HighestModSeq { get; set; }
 
+    [Required]
     [MaxLength(64)]
     [Column("mailbox_id")]
     public string MailboxId { get; set; } = Guid.CreateVersion7().ToString("N");

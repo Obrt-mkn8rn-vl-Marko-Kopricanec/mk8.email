@@ -53,9 +53,10 @@ public class EmailDB
     [Column("uid")]
     public int Uid { get; set; }
 
+    [Required]
     [MaxLength(64)]
     [Column("email_object_id")]
-    public string? EmailObjectId { get; set; }
+    public string EmailObjectId { get; set; } = Guid.CreateVersion7().ToString("N");
 
     [MaxLength(64)]
     [Column("thread_object_id")]

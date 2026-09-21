@@ -757,20 +757,11 @@ public sealed class TransportSecurityTests
         StringAssert.Contains(capability, "SEARCHRES UTF8=ACCEPT");
         StringAssert.Contains(
             capability,
-            "SORT THREAD=ORDEREDSUBJECT THREAD=REFERENCES BINARY MULTIAPPEND STATUS=SIZE " +
+            "SORT THREAD=ORDEREDSUBJECT THREAD=REFERENCES BINARY OBJECTID MULTIAPPEND STATUS=SIZE " +
             "COMPRESS=DEFLATE APPENDLIMIT=65536");
         StringAssert.Contains(capability, "LOGINDISABLED");
         StringAssert.Contains(capability, "STARTTLS");
         Assert.IsFalse(capability.Contains("AUTH=PLAIN", StringComparison.Ordinal));
-        foreach (var unverifiedExtension in new[]
-                 {
-                     "OBJECTID",
-                 })
-        {
-            Assert.IsFalse(
-                capability.Contains(unverifiedExtension, StringComparison.Ordinal),
-                $"The server advertised the unverified {unverifiedExtension} extension.");
-        }
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a1 OK", StringComparison.Ordinal));
 
         await connection.WriteLineAsync("a2 LOGIN user password");
@@ -2818,6 +2809,156 @@ public sealed class TransportSecurityTests
     }
 
     [TestMethod]
+    [Timeout(30_000)]
+    public async Task ImapObjectIdsRemainStableAcrossRenameCopyMoveAndSearch()
+    {
+        var port = ReservePort();
+        var environment = CreateEnvironment(imapPort: port);
+        await using var server = await ServerFixture.StartImapAsync(environment, port);
+        await using var connection = await ProtocolConnection.ConnectAsync(port);
+        const string rootMessage =
+            "From: sender@example.net\r\n" +
+            $"To: {TestUsername}\r\n" +
+            "Subject: object root\r\n" +
+            "Message-ID: <object-root@example.net>\r\n\r\n" +
+            "root body\r\n";
+        const string replyMessage =
+            "From: sender@example.net\r\n" +
+            $"To: {TestUsername}\r\n" +
+            "Subject: Re: object root\r\n" +
+            "Message-ID: <object-reply@example.net>\r\n" +
+            "In-Reply-To: <object-root@example.net>\r\n" +
+            "References: <object-root@example.net>\r\n\r\n" +
+            "reply body\r\n";
+
+        await connection.ReadLineAsync();
+        await connection.WriteLineAsync("a1 STARTTLS");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a1 OK", StringComparison.Ordinal));
+        await connection.UpgradeToTlsAsync("email.mk8n.com");
+        await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a2 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a3 CREATE ObjectBox");
+        var response = await connection.ReadLineAsync();
+        Assert.IsTrue(response.StartsWith("a3 OK [MAILBOXID (", StringComparison.Ordinal));
+        var mailboxId = ExtractObjectId(response, "MAILBOXID");
+        AssertObjectId(mailboxId, 'F');
+
+        await connection.WriteLineAsync("a4 STATUS ObjectBox (MAILBOXID)");
+        response = await connection.ReadLineAsync();
+        Assert.AreEqual(mailboxId, ExtractObjectId(response, "MAILBOXID"));
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a4 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync(
+            "a5 LIST \"\" \"ObjectBox\" RETURN (STATUS (MAILBOXID))");
+        var responses = await ReadUntilTaggedResponseAsync(connection, "a5");
+        var listStatus = responses.Single(line => line.StartsWith("* STATUS", StringComparison.Ordinal));
+        Assert.AreEqual(mailboxId, ExtractObjectId(listStatus, "MAILBOXID"));
+
+        await connection.WriteLineAsync("a6 EXAMINE ObjectBox");
+        responses = await ReadUntilTaggedResponseAsync(connection, "a6");
+        var selectMailboxId = responses.Single(line =>
+            line.StartsWith("* OK [MAILBOXID", StringComparison.Ordinal));
+        Assert.AreEqual(mailboxId, ExtractObjectId(selectMailboxId, "MAILBOXID"));
+        Assert.IsTrue(responses[^1].StartsWith("a6 OK [READ-ONLY]", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a7 RENAME ObjectBox ObjectBoxRenamed");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a7 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a8 STATUS ObjectBoxRenamed (MAILBOXID)");
+        response = await connection.ReadLineAsync();
+        Assert.AreEqual(mailboxId, ExtractObjectId(response, "MAILBOXID"));
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a8 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a9 CREATE RecreatedBox");
+        var firstCreatedId = ExtractObjectId(await connection.ReadLineAsync(), "MAILBOXID");
+        await connection.WriteLineAsync("a10 DELETE RecreatedBox");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a10 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a11 CREATE RecreatedBox");
+        var secondCreatedId = ExtractObjectId(await connection.ReadLineAsync(), "MAILBOXID");
+        AssertObjectId(firstCreatedId, 'F');
+        AssertObjectId(secondCreatedId, 'F');
+        Assert.AreNotEqual(firstCreatedId, secondCreatedId);
+
+        await connection.WriteLineAsync($"a12 APPEND Sent {{{rootMessage.Length}}}");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("+ ", StringComparison.Ordinal));
+        await connection.WriteRawAsync(rootMessage);
+        await connection.WriteLineAsync(string.Empty);
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a12 OK [APPENDUID", StringComparison.Ordinal));
+        await connection.WriteLineAsync($"a13 APPEND Sent {{{replyMessage.Length}}}");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("+ ", StringComparison.Ordinal));
+        await connection.WriteRawAsync(replyMessage);
+        await connection.WriteLineAsync(string.Empty);
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a13 OK [APPENDUID", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a14 SELECT Sent");
+        await ReadUntilTaggedResponseAsync(connection, "a14");
+        await connection.WriteLineAsync("a15 UID FETCH 1:* (UID EMAILID THREADID)");
+        responses = await ReadUntilTaggedResponseAsync(connection, "a15");
+        var sourceFetches = responses
+            .Where(line => line.StartsWith("* ", StringComparison.Ordinal)
+                && line.Contains(" FETCH ", StringComparison.Ordinal))
+            .ToArray();
+        Assert.AreEqual(2, sourceFetches.Length);
+        StringAssert.Contains(sourceFetches[0], "UID 1");
+        StringAssert.Contains(sourceFetches[1], "UID 2");
+        var rootEmailId = ExtractObjectId(sourceFetches[0], "EMAILID");
+        var replyEmailId = ExtractObjectId(sourceFetches[1], "EMAILID");
+        var rootThreadId = ExtractObjectId(sourceFetches[0], "THREADID");
+        var replyThreadId = ExtractObjectId(sourceFetches[1], "THREADID");
+        AssertObjectId(rootEmailId, 'M');
+        AssertObjectId(replyEmailId, 'M');
+        AssertObjectId(rootThreadId, 'T');
+        AssertObjectId(replyThreadId, 'T');
+        Assert.AreNotEqual(rootEmailId, replyEmailId);
+        Assert.AreEqual(rootThreadId, replyThreadId);
+        Assert.AreNotEqual(rootEmailId, rootThreadId);
+
+        await connection.WriteLineAsync($"a16 UID SEARCH EMAILID {rootEmailId}");
+        Assert.AreEqual("* SEARCH 1", await connection.ReadLineAsync());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a16 OK", StringComparison.Ordinal));
+        var wrongCaseEmailId = char.ToLowerInvariant(rootEmailId[0]) + rootEmailId[1..];
+        await connection.WriteLineAsync($"a17 UID SEARCH EMAILID {wrongCaseEmailId}");
+        Assert.AreEqual("* SEARCH", await connection.ReadLineAsync());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a17 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync($"a18 UID SEARCH THREADID {rootThreadId}");
+        Assert.AreEqual("* SEARCH 1 2", await connection.ReadLineAsync());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a18 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a19 UID SEARCH EMAILID M!");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a19 BAD", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync(
+            "a20 UID FETCH 1 BODY.PEEK[HEADER.FIELDS (EMAILID THREADID)]");
+        var headerOnlyFetch = string.Join('\n', await ReadUntilTaggedResponseAsync(connection, "a20"));
+        Assert.IsFalse(headerOnlyFetch.Contains(" EMAILID (", StringComparison.Ordinal));
+        Assert.IsFalse(headerOnlyFetch.Contains(" THREADID (", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a21 UID COPY 1 ObjectBoxRenamed");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a21 OK [COPYUID", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a22 UID MOVE 2 ObjectBoxRenamed");
+        responses = await ReadUntilTaggedResponseAsync(connection, "a22");
+        Assert.IsTrue(responses[^1].StartsWith("a22 OK [COPYUID", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a23 SELECT ObjectBoxRenamed");
+        await ReadUntilTaggedResponseAsync(connection, "a23");
+        await connection.WriteLineAsync("a24 UID FETCH 1:* (UID EMAILID THREADID)");
+        responses = await ReadUntilTaggedResponseAsync(connection, "a24");
+        var destinationFetches = responses
+            .Where(line => line.StartsWith("* ", StringComparison.Ordinal)
+                && line.Contains(" FETCH ", StringComparison.Ordinal))
+            .ToArray();
+        Assert.AreEqual(2, destinationFetches.Length);
+        Assert.AreEqual(rootEmailId, ExtractObjectId(destinationFetches[0], "EMAILID"));
+        Assert.AreEqual(replyEmailId, ExtractObjectId(destinationFetches[1], "EMAILID"));
+        Assert.AreEqual(rootThreadId, ExtractObjectId(destinationFetches[0], "THREADID"));
+        Assert.AreEqual(replyThreadId, ExtractObjectId(destinationFetches[1], "THREADID"));
+
+        await connection.WriteLineAsync(
+            $"a25 UID SEARCH OR EMAILID {rootEmailId} EMAILID {replyEmailId}");
+        Assert.AreEqual("* SEARCH 1 2", await connection.ReadLineAsync());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a25 OK", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
     [Timeout(10_000)]
     public async Task ImapMutationsUseUidSequenceOrderWithoutChangingMessageContent()
     {
@@ -3017,6 +3158,29 @@ public sealed class TransportSecurityTests
         while (!response.StartsWith($"{tag} ", StringComparison.Ordinal));
 
         return responses;
+    }
+
+    private static string ExtractObjectId(string response, string dataItem)
+    {
+        var marker = $"{dataItem} (";
+        var start = response.IndexOf(marker, StringComparison.Ordinal);
+        Assert.IsTrue(start >= 0, $"{dataItem} was missing from: {response}");
+        start += marker.Length;
+        var end = response.IndexOf(')', start);
+        Assert.IsTrue(end > start, $"{dataItem} was malformed in: {response}");
+        return response[start..end];
+    }
+
+    private static void AssertObjectId(string objectId, char expectedPrefix)
+    {
+        Assert.IsTrue(objectId.Length is >= 1 and <= 255);
+        Assert.AreEqual(expectedPrefix, objectId[0]);
+        Assert.IsTrue(objectId.All(character =>
+            character is >= 'A' and <= 'Z'
+                or >= 'a' and <= 'z'
+                or >= '0' and <= '9'
+                or '_'
+                or '-'));
     }
 
     private static async Task<List<string>> ReadPop3MultilineAsync(ProtocolConnection connection)

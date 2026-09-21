@@ -840,7 +840,7 @@ ILogger<ImapServerService> logger) : BackgroundService
         var caps =
             "IMAP4rev1 LITERAL+ IDLE NAMESPACE SPECIAL-USE UIDPLUS LIST-EXTENDED LIST-STATUS " +
             "ID ENABLE MOVE UNSELECT QUOTA CONDSTORE QRESYNC ESEARCH SEARCHRES UTF8=ACCEPT " +
-            $"SORT THREAD=ORDEREDSUBJECT THREAD=REFERENCES BINARY MULTIAPPEND STATUS=SIZE COMPRESS=DEFLATE " +
+            $"SORT THREAD=ORDEREDSUBJECT THREAD=REFERENCES BINARY OBJECTID MULTIAPPEND STATUS=SIZE COMPRESS=DEFLATE " +
             $"APPENDLIMIT={config.MaxMessageSizeBytes}";
         if (session.IsSecure)
         {
@@ -1249,7 +1249,8 @@ ILogger<ImapServerService> logger) : BackgroundService
         await writer.WriteLineAsync($"* OK [UIDVALIDITY {folder.UidValidity}]");
         await writer.WriteLineAsync($"* OK [UIDNEXT {folder.NextUid}]");
         await writer.WriteLineAsync($"* OK [HIGHESTMODSEQ {folder.HighestModSeq}]");
-        await writer.WriteLineAsync($"* OK [MAILBOXID ({folder.MailboxId})]");
+        await writer.WriteLineAsync(
+            $"* OK [MAILBOXID ({FormatMailboxObjectId(folder)})] Mailbox identifier");
 
         if (unseenCount > 0)
         {
@@ -1375,15 +1376,17 @@ ILogger<ImapServerService> logger) : BackgroundService
             return;
         }
 
-        db.Folders.Add(new FolderDB
+        var folder = new FolderDB
         {
             Id = Guid.CreateVersion7(),
             Name = location.Value.FolderName,
             InboxId = location.Value.InboxId,
-        });
+        };
+        db.Folders.Add(folder);
         await db.SaveChangesAsync(ct);
 
-        await writer.WriteLineAsync($"{tag} OK CREATE completed");
+        await writer.WriteLineAsync(
+            $"{tag} OK [MAILBOXID ({FormatMailboxObjectId(folder)})] CREATE completed");
     }
 
     private async Task HandleDeleteAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
@@ -1571,7 +1574,7 @@ ILogger<ImapServerService> logger) : BackgroundService
                     results.Append($"SIZE {totalSize}");
                     break;
                 case "MAILBOXID":
-                    results.Append($"MAILBOXID ({folder.MailboxId})");
+                    results.Append($"MAILBOXID ({FormatMailboxObjectId(folder)})");
                     break;
             }
         }
@@ -2576,7 +2579,9 @@ ILogger<ImapServerService> logger) : BackgroundService
                 MessageId = source.MessageId,
                 InReplyTo = source.InReplyTo,
                 Cc = source.Cc,
-                EmailObjectId = Guid.CreateVersion7().ToString("N"),
+                EmailObjectId = string.IsNullOrEmpty(source.EmailObjectId)
+                    ? source.Id.ToString("N")
+                    : source.EmailObjectId,
                 ThreadObjectId = source.ThreadObjectId,
                 IsRead = source.IsRead,
                 IsDeleted = false,
@@ -2765,6 +2770,47 @@ ILogger<ImapServerService> logger) : BackgroundService
 
     private static string FormatUidSet(List<int> uids) =>
         uids.Count > 0 ? string.Join(',', uids) : "0";
+
+    private static string FormatMailboxObjectId(FolderDB folder) =>
+        FormatObjectId('F', folder.MailboxId, folder.Id);
+
+    private static string FormatEmailObjectId(EmailDB email) =>
+        FormatEmailObjectId(email.Id, email.EmailObjectId);
+
+    private static string FormatEmailObjectId(Guid id, string? emailObjectId) =>
+        FormatObjectId('M', emailObjectId, id);
+
+    private static string? FormatThreadObjectId(EmailDB email) =>
+        FormatThreadObjectId(email.Id, email.ThreadObjectId);
+
+    private static string? FormatThreadObjectId(Guid id, string? threadObjectId) =>
+        string.IsNullOrEmpty(threadObjectId)
+            ? null
+            : FormatObjectId('T', threadObjectId, id);
+
+    private static string FormatObjectId(char typePrefix, string? storedValue, Guid fallbackId)
+    {
+        var value = string.IsNullOrEmpty(storedValue)
+            ? fallbackId.ToString("N")
+            : storedValue;
+        if (value.Length > 254 || !IsValidObjectId(value))
+        {
+            var hash = System.Security.Cryptography.SHA256.HashData(
+                Encoding.UTF8.GetBytes(value));
+            value = Convert.ToHexStringLower(hash);
+        }
+
+        return string.Concat(typePrefix, value);
+    }
+
+    private static bool IsValidObjectId(string value) =>
+        value.Length is >= 1 and <= 255
+        && value.All(character =>
+            character is >= 'A' and <= 'Z'
+                or >= 'a' and <= 'z'
+                or >= '0' and <= '9'
+                or '_'
+                or '-');
 
     private static string GenerateThreadObjectId(string? inReplyTo, string? messageId)
     {
@@ -3148,6 +3194,7 @@ ILogger<ImapServerService> logger) : BackgroundService
     {
         var items = fetchItems.ToUpperInvariant();
         var normalizedItems = items.Replace("BODY.PEEK[", "BODY[");
+        var requestedDataItems = TokenizeFetchDataItems(fetchItems);
         var parts = new List<string>();
 
         var numericSectionMatch = NumericBodySectionRegex().Match(items);
@@ -3251,18 +3298,15 @@ ILogger<ImapServerService> logger) : BackgroundService
             }
         }
 
-        if (normalizedItems.Contains("MODSEQ"))
+        if (requestedDataItems.Any(item => item.Equals("MODSEQ", StringComparison.OrdinalIgnoreCase)))
             parts.Add($"MODSEQ ({email.ModSeq})");
 
-        if (normalizedItems.Contains("EMAILID"))
-        {
-            var emailId = email.EmailObjectId ?? email.Id.ToString("N");
-            parts.Add($"EMAILID ({emailId})");
-        }
+        if (requestedDataItems.Any(item => item.Equals("EMAILID", StringComparison.OrdinalIgnoreCase)))
+            parts.Add($"EMAILID ({FormatEmailObjectId(email)})");
 
-        if (normalizedItems.Contains("THREADID"))
+        if (requestedDataItems.Any(item => item.Equals("THREADID", StringComparison.OrdinalIgnoreCase)))
         {
-            var threadId = email.ThreadObjectId;
+            var threadId = FormatThreadObjectId(email);
             parts.Add(threadId is not null ? $"THREADID ({threadId})" : "THREADID NIL");
         }
 
@@ -3286,7 +3330,7 @@ ILogger<ImapServerService> logger) : BackgroundService
                 MailWireEncoding.Instance.GetString(content.Span));
         }
 
-        if (useUid || normalizedItems.Contains("UID"))
+        if (useUid || requestedDataItems.Any(item => item.Equals("UID", StringComparison.OrdinalIgnoreCase)))
             parts.Add($"UID {email.Uid}");
 
         return $"* {seqNum} FETCH ({string.Join(' ', parts)})";
@@ -4361,6 +4405,8 @@ ILogger<ImapServerService> logger) : BackgroundService
         string? MessageId,
         string? InReplyTo,
         string? Cc,
+        string? EmailObjectId,
+        string? ThreadObjectId,
         DateTime ReceivedAt);
 
     private sealed record SearchCandidate(Guid Id, int Uid, int SequenceNumber);
@@ -4626,6 +4672,34 @@ ILogger<ImapServerService> logger) : BackgroundService
                     predicate = new SearchPredicate(
                         SearchDataRequirements.None,
                         (message, _) => ContainsSearchText(message.Subject, subject));
+                    return true;
+                case "EMAILID":
+                    if (!TryReadValue(out var emailObjectId)
+                        || !IsValidObjectId(emailObjectId))
+                    {
+                        return false;
+                    }
+
+                    predicate = new SearchPredicate(
+                        SearchDataRequirements.None,
+                        (message, _) => string.Equals(
+                            FormatEmailObjectId(message.Id, message.EmailObjectId),
+                            emailObjectId,
+                            StringComparison.Ordinal));
+                    return true;
+                case "THREADID":
+                    if (!TryReadValue(out var threadObjectId)
+                        || !IsValidObjectId(threadObjectId))
+                    {
+                        return false;
+                    }
+
+                    predicate = new SearchPredicate(
+                        SearchDataRequirements.None,
+                        (message, _) => string.Equals(
+                            FormatThreadObjectId(message.Id, message.ThreadObjectId),
+                            threadObjectId,
+                            StringComparison.Ordinal));
                     return true;
                 case "TO":
                     return TryParseHeaderValue("To", out predicate);
@@ -4984,6 +5058,8 @@ ILogger<ImapServerService> logger) : BackgroundService
                 message.MessageId,
                 message.InReplyTo,
                 message.Cc,
+                message.EmailObjectId,
+                message.ThreadObjectId,
                 message.ReceivedAt));
         }
 
@@ -5008,6 +5084,8 @@ ILogger<ImapServerService> logger) : BackgroundService
                 message.MessageId,
                 message.InReplyTo,
                 message.Cc,
+                message.EmailObjectId,
+                message.ThreadObjectId,
                 message.ReceivedAt));
         }
 
@@ -5032,6 +5110,8 @@ ILogger<ImapServerService> logger) : BackgroundService
                 message.MessageId,
                 message.InReplyTo,
                 message.Cc,
+                message.EmailObjectId,
+                message.ThreadObjectId,
                 message.ReceivedAt));
         }
 
@@ -5054,6 +5134,8 @@ ILogger<ImapServerService> logger) : BackgroundService
             message.MessageId,
             message.InReplyTo,
             message.Cc,
+            message.EmailObjectId,
+            message.ThreadObjectId,
             message.ReceivedAt));
     }
 

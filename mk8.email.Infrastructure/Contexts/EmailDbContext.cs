@@ -124,7 +124,7 @@ public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContex
         modelBuilder.Entity<FolderDB>(entity =>
         {
             entity.HasIndex(f => new { f.InboxId, f.Name }).IsUnique();
-            entity.HasIndex(f => new { f.InboxId, f.MailboxId }).IsUnique();
+            entity.HasIndex(f => f.MailboxId).IsUnique();
             entity.HasIndex(f => new { f.InboxId, f.JmapRole })
                 .IsUnique()
                 .HasFilter("jmap_role IS NOT NULL");
@@ -142,6 +142,7 @@ public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContex
             entity.HasIndex(e => new { e.FolderId, e.ModSeq });
             entity.HasIndex(e => e.MessageId);
             entity.HasIndex(e => e.EmailObjectId);
+            entity.HasIndex(e => e.ThreadObjectId);
             entity.HasIndex(e => e.QueueDeliveryId).IsUnique();
 
             entity.HasOne(e => e.Folder)

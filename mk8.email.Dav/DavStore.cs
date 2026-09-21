@@ -289,6 +289,13 @@ internal sealed class DavStore(EmailDbContext database, EnvironmentConfig enviro
         }
 
         var now = DateTime.UtcNow;
+        var isDefault = kind == DavCollectionKind.AddressBook
+            && string.Equals(slug, "default", StringComparison.Ordinal)
+            && !await database.DavCollections.AsNoTracking().AnyAsync(candidate =>
+                candidate.UserId == user.Id
+                && candidate.CollectionType == DavCollectionDB.AddressBookType
+                && candidate.IsDefault,
+                cancellationToken);
         var collection = new DavCollectionDB
         {
             Id = Guid.CreateVersion7(),
@@ -299,6 +306,8 @@ internal sealed class DavStore(EmailDbContext database, EnvironmentConfig enviro
             Description = properties.Description,
             Color = properties.Color,
             SortOrder = properties.SortOrder,
+            IsDefault = isDefault,
+            IsSubscribed = true,
             Components = NormalizeComponents(kind, properties.Components),
             CreatedAt = now,
             UpdatedAt = now,
@@ -716,8 +725,11 @@ internal sealed class DavStore(EmailDbContext database, EnvironmentConfig enviro
             return new DavResourceWriteResult(DavResourceWriteStatus.LimitExceeded);
         }
         if (await database.DavResources.AnyAsync(resource =>
-                resource.CollectionId == collection.Id
-                && resource.Uid == uid
+                resource.Uid == uid
+                && (collection.CollectionType == DavCollectionDB.AddressBookType
+                    ? resource.Collection.UserId == collection.UserId
+                        && resource.Collection.CollectionType == DavCollectionDB.AddressBookType
+                    : resource.CollectionId == collection.Id)
                 && (existing == null || resource.Id != existing.Id),
             cancellationToken))
         {
@@ -852,6 +864,13 @@ internal sealed class DavStore(EmailDbContext database, EnvironmentConfig enviro
         }
 
         var now = DateTime.UtcNow;
+        var isDefault = kind == DavCollectionKind.AddressBook
+            && string.Equals(slug, "default", StringComparison.Ordinal)
+            && !await database.DavCollections.AsNoTracking().AnyAsync(candidate =>
+                candidate.UserId == user.Id
+                && candidate.CollectionType == DavCollectionDB.AddressBookType
+                && candidate.IsDefault,
+                cancellationToken);
         var collection = new DavCollectionDB
         {
             Id = Guid.CreateVersion7(),
@@ -859,6 +878,8 @@ internal sealed class DavStore(EmailDbContext database, EnvironmentConfig enviro
             CollectionType = type,
             Slug = slug,
             DisplayName = displayName,
+            IsDefault = isDefault,
+            IsSubscribed = true,
             Components = components,
             CreatedAt = now,
             UpdatedAt = now,

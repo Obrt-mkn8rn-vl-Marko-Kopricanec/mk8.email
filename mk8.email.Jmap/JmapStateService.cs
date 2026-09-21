@@ -248,6 +248,75 @@ public sealed class JmapStateService(
                 now);
         }
 
+        var accountOwner = await database.Inboxes
+            .AsNoTracking()
+            .Where(inbox => inbox.Id == accountId)
+            .Select(inbox => new
+            {
+                inbox.OwnerId,
+                inbox.Owner.Username,
+            })
+            .SingleOrDefaultAsync(cancellationToken);
+        if (accountOwner is not null)
+        {
+            var ownerAccounts = await database.Inboxes
+                .AsNoTracking()
+                .Where(inbox => inbox.OwnerId == accountOwner.OwnerId
+                    && inbox.AliasForInboxId == null
+                    && inbox.Name != "*"
+                    && inbox.Owner.IsActive
+                    && inbox.Address.IsActive
+                    && inbox.Address.Company.IsActive)
+                .Select(inbox => new
+                {
+                    inbox.Id,
+                    inbox.Name,
+                    inbox.Address.Domain,
+                })
+                .ToListAsync(cancellationToken);
+            var primaryAccountId = ownerAccounts
+                .OrderBy(inbox => string.Equals(
+                    inbox.Name + "@" + inbox.Domain,
+                    accountOwner.Username,
+                    StringComparison.Ordinal) ? 0 : 1)
+                .ThenBy(inbox => inbox.Domain, StringComparer.Ordinal)
+                .ThenBy(inbox => inbox.Name, StringComparer.Ordinal)
+                .Select(inbox => (Guid?)inbox.Id)
+                .FirstOrDefault();
+            if (primaryAccountId == accountId)
+            {
+                var addressBookIds = await database.DavCollections
+                    .AsNoTracking()
+                    .Where(collection => collection.UserId == accountOwner.OwnerId
+                        && collection.CollectionType == DavCollectionDB.AddressBookType)
+                    .Select(collection => collection.Id)
+                    .ToListAsync(cancellationToken);
+                foreach (var addressBookId in addressBookIds)
+                {
+                    AddBaselineChange(
+                        accountId,
+                        JmapConstants.AddressBookDataType,
+                        JmapId.AddressBook(addressBookId),
+                        now);
+                }
+
+                var contactCardIds = await database.DavResources
+                    .AsNoTracking()
+                    .Where(resource => resource.Collection.UserId == accountOwner.OwnerId
+                        && resource.Collection.CollectionType == DavCollectionDB.AddressBookType)
+                    .Select(resource => resource.Id)
+                    .ToListAsync(cancellationToken);
+                foreach (var contactCardId in contactCardIds)
+                {
+                    AddBaselineChange(
+                        accountId,
+                        JmapConstants.ContactCardDataType,
+                        JmapId.ContactCard(contactCardId),
+                        now);
+                }
+            }
+        }
+
         var emails = await database.Emails
             .AsNoTracking()
             .Where(email => email.Folder.InboxId == accountId && !email.IsDeleted)

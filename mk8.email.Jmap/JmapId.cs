@@ -14,6 +14,8 @@ public static class JmapId
     public static string Identity(Guid inboxId) => FormatGuid('I', inboxId);
     public static string Submission(Guid submissionId) => FormatGuid('S', submissionId);
     public static string PushSubscription(Guid subscriptionId) => FormatGuid('P', subscriptionId);
+    public static string AddressBook(Guid collectionId) => FormatGuid('D', collectionId);
+    public static string ContactCard(Guid resourceId) => FormatGuid('C', resourceId);
 
     public static string Thread(string storedThreadId) =>
         "T" + NormalizeOpaqueId(storedThreadId);
@@ -38,6 +40,8 @@ public static class JmapId
     public static bool TryParseIdentity(string? value, out Guid id) => TryParseGuid(value, 'I', out id);
     public static bool TryParseSubmission(string? value, out Guid id) => TryParseGuid(value, 'S', out id);
     public static bool TryParsePushSubscription(string? value, out Guid id) => TryParseGuid(value, 'P', out id);
+    public static bool TryParseAddressBook(string? value, out Guid id) => TryParseGuid(value, 'D', out id);
+    public static bool TryParseContactCard(string? value, out Guid id) => TryParseGuid(value, 'C', out id);
 
     public static bool TryParseThread(string? value, out string storedThreadId)
     {

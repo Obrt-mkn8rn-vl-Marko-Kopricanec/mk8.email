@@ -205,6 +205,8 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["description"] = "varchar",
             ["color"] = "varchar",
             ["sort_order"] = "int4",
+            ["is_default"] = "bool",
+            ["is_subscribed"] = "bool",
             ["components"] = "_text",
             ["sync_token"] = "int8",
             ["created_at"] = "timestamptz",
@@ -610,6 +612,8 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 description varchar(1024),
                 color varchar(32),
                 sort_order integer NOT NULL DEFAULT 0,
+                is_default boolean NOT NULL DEFAULT false,
+                is_subscribed boolean NOT NULL DEFAULT true,
                 components text[] NOT NULL DEFAULT ARRAY[]::text[],
                 sync_token bigint NOT NULL DEFAULT 0,
                 created_at timestamp with time zone NOT NULL,
@@ -813,8 +817,27 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 ON jmap_identities (identity_object_id);
             CREATE INDEX IF NOT EXISTS ix_jmap_identities_account_email
                 ON jmap_identities (account_id, email);
+            ALTER TABLE dav_collections
+                ADD COLUMN IF NOT EXISTS is_default boolean NOT NULL DEFAULT false;
+            ALTER TABLE dav_collections
+                ADD COLUMN IF NOT EXISTS is_subscribed boolean NOT NULL DEFAULT true;
+            UPDATE dav_collections
+                SET is_default = true
+                WHERE collection_type = 'addressbook'
+                  AND slug = 'default'
+                  AND NOT is_default
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM dav_collections selected
+                      WHERE selected.user_id = dav_collections.user_id
+                        AND selected.collection_type = 'addressbook'
+                        AND selected.is_default
+                  );
             CREATE UNIQUE INDEX IF NOT EXISTS ix_dav_collections_user_type_slug
                 ON dav_collections (user_id, collection_type, slug);
+            CREATE UNIQUE INDEX IF NOT EXISTS ix_dav_collections_user_default_addressbook
+                ON dav_collections (user_id)
+                WHERE collection_type = 'addressbook' AND is_default;
             CREATE UNIQUE INDEX IF NOT EXISTS ix_dav_resources_collection_name
                 ON dav_resources (collection_id, resource_name);
             CREATE UNIQUE INDEX IF NOT EXISTS ix_dav_resources_collection_uid

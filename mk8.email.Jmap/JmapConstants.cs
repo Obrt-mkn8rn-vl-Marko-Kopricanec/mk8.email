@@ -6,6 +6,7 @@ public static class JmapConstants
     public const string MailCapability = "urn:ietf:params:jmap:mail";
     public const string SubmissionCapability = "urn:ietf:params:jmap:submission";
     public const string VacationResponseCapability = "urn:ietf:params:jmap:vacationresponse";
+    public const string ContactsCapability = "urn:ietf:params:jmap:contacts";
 
     public const string MailboxDataType = "Mailbox";
     public const string ThreadDataType = "Thread";
@@ -15,6 +16,8 @@ public static class JmapConstants
     public const string EmailSubmissionDataType = "EmailSubmission";
     public const string VacationResponseDataType = "VacationResponse";
     public const string PushSubscriptionDataType = "PushSubscription";
+    public const string AddressBookDataType = "AddressBook";
+    public const string ContactCardDataType = "ContactCard";
 
     public const string CreatedChange = "created";
     public const string UpdatedChange = "updated";

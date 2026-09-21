@@ -23,6 +23,8 @@ internal sealed class JmapStateChangeService(
             JmapConstants.IdentityDataType,
             JmapConstants.EmailSubmissionDataType,
             JmapConstants.VacationResponseDataType,
+            JmapConstants.AddressBookDataType,
+            JmapConstants.ContactCardDataType,
         ],
         StringComparer.Ordinal);
 

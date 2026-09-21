@@ -295,6 +295,9 @@ public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContex
                 collection.CollectionType,
                 collection.Slug,
             }).IsUnique();
+            entity.HasIndex(collection => collection.UserId)
+                .IsUnique()
+                .HasFilter("collection_type = 'addressbook' AND is_default");
 
             entity.HasOne(collection => collection.User)
                 .WithMany()

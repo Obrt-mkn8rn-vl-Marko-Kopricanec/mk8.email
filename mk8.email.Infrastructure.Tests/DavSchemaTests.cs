@@ -28,6 +28,12 @@ public sealed class DavSchemaTests
 
         AssertUniqueIndex(collection, nameof(DavCollectionDB.UserId),
             nameof(DavCollectionDB.CollectionType), nameof(DavCollectionDB.Slug));
+        var defaultAddressBookIndex = collection.GetIndexes().SingleOrDefault(candidate =>
+            candidate.Properties.Select(property => property.Name)
+                .SequenceEqual([nameof(DavCollectionDB.UserId)])
+            && candidate.GetFilter() == "collection_type = 'addressbook' AND is_default");
+        Assert.IsNotNull(defaultAddressBookIndex, "Missing filtered default-address-book index.");
+        Assert.IsTrue(defaultAddressBookIndex.IsUnique);
         AssertUniqueIndex(resource, nameof(DavResourceDB.CollectionId),
             nameof(DavResourceDB.ResourceName));
         AssertUniqueIndex(resource, nameof(DavResourceDB.CollectionId),
@@ -38,6 +44,8 @@ public sealed class DavSchemaTests
             nameof(DavShareDB.GranteeUserId));
 
         Assert.AreEqual("text[]", collection.FindProperty(nameof(DavCollectionDB.Components))?.GetColumnType());
+        Assert.AreEqual("is_default", collection.FindProperty(nameof(DavCollectionDB.IsDefault))?.GetColumnName());
+        Assert.AreEqual("is_subscribed", collection.FindProperty(nameof(DavCollectionDB.IsSubscribed))?.GetColumnName());
         Assert.AreEqual("bytea", resource.FindProperty(nameof(DavResourceDB.Content))?.GetColumnType());
         Assert.IsTrue(collection.GetForeignKeys().All(key => key.DeleteBehavior == DeleteBehavior.Cascade));
         Assert.IsTrue(resource.GetForeignKeys().All(key => key.DeleteBehavior == DeleteBehavior.Cascade));

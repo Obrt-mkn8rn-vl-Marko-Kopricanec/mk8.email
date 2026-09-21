@@ -19,6 +19,7 @@ public static class JmapServiceExtensions
         services.AddScoped<JmapBlobService>();
         services.AddScoped<JmapEmailBuilder>();
         services.AddScoped<JmapEmailStore>();
+        services.AddScoped<JmapContactStore>();
         services.AddScoped<JmapIdentityService>();
         services.AddScoped<JmapVacationResponseService>();
         services.AddSingleton<JmapPushDeliveryService>();
@@ -56,6 +57,15 @@ public static class JmapServiceExtensions
         services.AddScoped<IJmapMethod, PushSubscriptionGetMethod>();
         services.AddScoped<IJmapMethod, PushSubscriptionSetMethod>();
         services.AddScoped<IJmapMethod, BlobCopyMethod>();
+        services.AddScoped<IJmapMethod, AddressBookGetMethod>();
+        services.AddScoped<IJmapMethod, AddressBookChangesMethod>();
+        services.AddScoped<IJmapMethod, AddressBookSetMethod>();
+        services.AddScoped<IJmapMethod, ContactCardGetMethod>();
+        services.AddScoped<IJmapMethod, ContactCardChangesMethod>();
+        services.AddScoped<IJmapMethod, ContactCardQueryMethod>();
+        services.AddScoped<IJmapMethod, ContactCardQueryChangesMethod>();
+        services.AddScoped<IJmapMethod, ContactCardSetMethod>();
+        services.AddScoped<IJmapMethod, ContactCardCopyMethod>();
         return services;
     }
 }

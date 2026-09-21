@@ -10,12 +10,14 @@ public sealed record JmapSessionDocument(JsonObject Value, string State);
 
 public sealed class JmapSessionService(
     JmapAccountService accounts,
+    JmapContactStore contacts,
     EnvironmentConfig environment)
 {
     public async Task<JmapSessionDocument> BuildAsync(
         AuthenticatedMailUser user,
         CancellationToken cancellationToken = default)
     {
+        await contacts.EnsureDefaultAddressBookAsync(user, cancellationToken);
         var accessibleAccounts = await accounts.GetAccountsAsync(user, cancellationToken);
         var baseUrl = environment.Jmap.GetPublicBaseUri(environment.Smtp.Hostname)
             .AbsoluteUri
@@ -39,6 +41,7 @@ public sealed class JmapSessionService(
             [JmapConstants.MailCapability] = new JsonObject(),
             [JmapConstants.SubmissionCapability] = new JsonObject(),
             [JmapConstants.VacationResponseCapability] = new JsonObject(),
+            [JmapConstants.ContactsCapability] = new JsonObject(),
         };
 
         var accountValues = new JsonObject();
@@ -69,19 +72,29 @@ public sealed class JmapSessionService(
                     System.Globalization.CultureInfo.InvariantCulture)),
             },
         };
-        foreach (var account in accessibleAccounts)
+        for (var accountIndex = 0; accountIndex < accessibleAccounts.Count; accountIndex++)
         {
+            var account = accessibleAccounts[accountIndex];
+            var accountCapabilities = new JsonObject
+            {
+                [JmapConstants.MailCapability] = mailAccountCapability.DeepClone(),
+                [JmapConstants.SubmissionCapability] = submissionAccountCapability.DeepClone(),
+                [JmapConstants.VacationResponseCapability] = new JsonObject(),
+            };
+            if (accountIndex == 0)
+            {
+                accountCapabilities[JmapConstants.ContactsCapability] = new JsonObject
+                {
+                    ["maxAddressBooksPerCard"] = 1,
+                    ["mayCreateAddressBook"] = true,
+                };
+            }
             accountValues[JmapId.Account(account.InboxId)] = new JsonObject
             {
                 ["name"] = account.Address,
                 ["isPersonal"] = true,
                 ["isReadOnly"] = false,
-                ["accountCapabilities"] = new JsonObject
-                {
-                    [JmapConstants.MailCapability] = mailAccountCapability.DeepClone(),
-                    [JmapConstants.SubmissionCapability] = submissionAccountCapability.DeepClone(),
-                    [JmapConstants.VacationResponseCapability] = new JsonObject(),
-                },
+                ["accountCapabilities"] = accountCapabilities,
             };
         }
 
@@ -92,6 +105,7 @@ public sealed class JmapSessionService(
             primaryAccounts[JmapConstants.MailCapability] = primaryId;
             primaryAccounts[JmapConstants.SubmissionCapability] = primaryId;
             primaryAccounts[JmapConstants.VacationResponseCapability] = primaryId;
+            primaryAccounts[JmapConstants.ContactsCapability] = primaryId;
         }
 
         var session = new JsonObject

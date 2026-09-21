@@ -62,4 +62,24 @@ public sealed class JmapAccountService(EmailDbContext database)
                 inbox.Owner.QuotaBytes))
             .SingleOrDefaultAsync(cancellationToken);
     }
+
+    public async Task<JmapAccount?> GetContactAccountAsync(
+        AuthenticatedMailUser user,
+        string? accountId,
+        CancellationToken cancellationToken = default)
+    {
+        var primary = (await GetAccountsAsync(user, cancellationToken)).FirstOrDefault();
+        return primary is not null
+            && string.Equals(JmapId.Account(primary.InboxId), accountId, StringComparison.Ordinal)
+                ? primary
+                : null;
+    }
+
+    public async Task<string> GetContactAccountErrorAsync(
+        AuthenticatedMailUser user,
+        string? accountId,
+        CancellationToken cancellationToken = default) =>
+        await GetAccountAsync(user, accountId, cancellationToken) is null
+            ? "accountNotFound"
+            : "accountNotSupportedByMethod";
 }

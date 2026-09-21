@@ -13,6 +13,8 @@ internal static class JmapChangeCollector
     private const string IdentityType = "Identity";
     private const string SubmissionType = "EmailSubmission";
     private const string VacationType = "VacationResponse";
+    private const string AddressBookType = "AddressBook";
+    private const string ContactCardType = "ContactCard";
     private const string Created = "created";
     private const string Updated = "updated";
     private const string Destroyed = "destroyed";
@@ -40,6 +42,12 @@ internal static class JmapChangeCollector
         var identityEntries = database.ChangeTracker.Entries<JmapIdentityDB>()
             .Where(IsChanged)
             .ToList();
+        var davCollectionEntries = database.ChangeTracker.Entries<DavCollectionDB>()
+            .Where(IsChanged)
+            .ToList();
+        var davResourceEntries = database.ChangeTracker.Entries<DavResourceDB>()
+            .Where(IsChanged)
+            .ToList();
         var changedQueueIds = database.ChangeTracker.Entries<MailQueueMessageDB>()
             .Where(entry => entry.State is EntityState.Modified or EntityState.Deleted)
             .Select(entry => entry.Entity.Id)
@@ -54,6 +62,8 @@ internal static class JmapChangeCollector
             && submissionEntries.Count == 0
             && vacationEntries.Count == 0
             && identityEntries.Count == 0
+            && davCollectionEntries.Count == 0
+            && davResourceEntries.Count == 0
             && changedQueueIds.Count == 0)
         {
             return;
@@ -126,8 +136,149 @@ internal static class JmapChangeCollector
                     email.IsDeleted))
                 .ToListAsync(cancellationToken);
 
+        var persistedDavResourceIds = davResourceEntries
+            .Where(entry => entry.State is EntityState.Modified or EntityState.Deleted)
+            .Select(entry => entry.Entity.Id)
+            .Distinct()
+            .ToArray();
+        var persistedDavResources = persistedDavResourceIds.Length == 0
+            ? new Dictionary<Guid, PersistedDavResource>()
+            : await database.DavResources
+                .AsNoTracking()
+                .Where(resource => persistedDavResourceIds.Contains(resource.Id))
+                .Select(resource => new PersistedDavResource(resource.Id, resource.CollectionId))
+                .ToDictionaryAsync(resource => resource.Id, cancellationToken);
+
+        var davCollectionIds = davCollectionEntries.Select(entry => entry.Entity.Id).ToHashSet();
+        foreach (var entry in davResourceEntries)
+        {
+            davCollectionIds.Add(entry.Entity.CollectionId);
+            if (persistedDavResources.TryGetValue(entry.Entity.Id, out var persistedResource))
+                davCollectionIds.Add(persistedResource.CollectionId);
+        }
+        var davCollections = davCollectionIds.Count == 0
+            ? new Dictionary<Guid, DavCollectionOwner>()
+            : await database.DavCollections
+                .AsNoTracking()
+                .Where(collection => davCollectionIds.Contains(collection.Id))
+                .Select(collection => new DavCollectionOwner(
+                    collection.Id,
+                    collection.UserId,
+                    collection.CollectionType))
+                .ToDictionaryAsync(collection => collection.Id, cancellationToken);
+        foreach (var entry in davCollectionEntries.Where(entry => entry.State != EntityState.Deleted))
+        {
+            davCollections[entry.Entity.Id] = new DavCollectionOwner(
+                entry.Entity.Id,
+                entry.Entity.UserId,
+                entry.Entity.CollectionType);
+        }
+
+        var trackedDavResourceIds = davResourceEntries.Select(entry => entry.Entity.Id).ToArray();
+        var deletedAddressBookIds = davCollectionEntries
+            .Where(entry => entry.State == EntityState.Deleted
+                && entry.Entity.CollectionType == DavCollectionDB.AddressBookType)
+            .Select(entry => entry.Entity.Id)
+            .ToArray();
+        var cascadeDeletedDavResources = deletedAddressBookIds.Length == 0
+            ? []
+            : await database.DavResources
+                .AsNoTracking()
+                .Where(resource => deletedAddressBookIds.Contains(resource.CollectionId)
+                    && !trackedDavResourceIds.Contains(resource.Id))
+                .Select(resource => new PersistedDavResource(resource.Id, resource.CollectionId))
+                .ToListAsync(cancellationToken);
+
+        var davUserIds = davCollections.Values
+            .Where(collection => collection.CollectionType == DavCollectionDB.AddressBookType)
+            .Select(collection => collection.UserId)
+            .Distinct()
+            .ToArray();
+        var contactAccounts = await GetPrimaryAccountIdsAsync(
+            database,
+            davUserIds,
+            cancellationToken);
+
         var changes = new Dictionary<ChangeKey, string>();
         var threadDeltas = new Dictionary<ThreadKey, int>();
+
+        foreach (var entry in davCollectionEntries)
+        {
+            if (entry.State == EntityState.Modified
+                && !IsJmapAddressBookPropertyModified(entry))
+            {
+                continue;
+            }
+            var owner = davCollections.GetValueOrDefault(entry.Entity.Id)
+                ?? new DavCollectionOwner(
+                    entry.Entity.Id,
+                    entry.Entity.UserId,
+                    entry.Entity.CollectionType);
+            if (owner.CollectionType != DavCollectionDB.AddressBookType
+                || !contactAccounts.TryGetValue(owner.UserId, out var accountId))
+            {
+                continue;
+            }
+            var kind = entry.State switch
+            {
+                EntityState.Added => Created,
+                EntityState.Deleted => Destroyed,
+                _ => Updated,
+            };
+            AddChange(changes, accountId, AddressBookType, $"D{entry.Entity.Id:N}", kind);
+        }
+
+        foreach (var entry in davResourceEntries)
+        {
+            var oldCollectionId = persistedDavResources.TryGetValue(entry.Entity.Id, out var persistedResource)
+                ? persistedResource.CollectionId
+                : (Guid?)null;
+            Guid? newCollectionId = entry.State == EntityState.Deleted
+                ? null
+                : entry.Entity.CollectionId;
+            var oldOwner = oldCollectionId is not null
+                ? davCollections.GetValueOrDefault(oldCollectionId.Value)
+                : null;
+            var newOwner = newCollectionId is not null
+                ? davCollections.GetValueOrDefault(newCollectionId.Value)
+                : null;
+            var oldAccountId = oldOwner is not null
+                && oldOwner.CollectionType == DavCollectionDB.AddressBookType
+                && contactAccounts.TryGetValue(oldOwner.UserId, out var oldAccount)
+                    ? oldAccount
+                    : (Guid?)null;
+            var newAccountId = newOwner is not null
+                && newOwner.CollectionType == DavCollectionDB.AddressBookType
+                && contactAccounts.TryGetValue(newOwner.UserId, out var newAccount)
+                    ? newAccount
+                    : (Guid?)null;
+            var objectId = $"C{entry.Entity.Id:N}";
+            if (oldAccountId is null && newAccountId is not null)
+                AddChange(changes, newAccountId.Value, ContactCardType, objectId, Created);
+            else if (oldAccountId is not null && newAccountId is null)
+                AddChange(changes, oldAccountId.Value, ContactCardType, objectId, Destroyed);
+            else if (oldAccountId is not null && newAccountId is not null)
+            {
+                if (oldAccountId != newAccountId)
+                    AddChange(changes, oldAccountId.Value, ContactCardType, objectId, Destroyed);
+                AddChange(
+                    changes,
+                    newAccountId.Value,
+                    ContactCardType,
+                    objectId,
+                    oldAccountId == newAccountId ? Updated : Created);
+            }
+        }
+
+        foreach (var resource in cascadeDeletedDavResources)
+        {
+            if (!davCollections.TryGetValue(resource.CollectionId, out var collection)
+                || !contactAccounts.TryGetValue(collection.UserId, out var accountId))
+            {
+                continue;
+            }
+            AddChange(changes, accountId, ContactCardType, $"C{resource.Id:N}", Destroyed);
+        }
         foreach (var entry in emailEntries)
         {
             var persisted = persistedEmails.GetValueOrDefault(entry.Entity.Id);
@@ -424,6 +575,55 @@ internal static class JmapChangeCollector
     private static bool IsJmapAccount(InboxDB inbox) =>
         inbox.AliasForInboxId is null && inbox.Name != "*";
 
+    private static bool IsJmapAddressBookPropertyModified(
+        EntityEntry<DavCollectionDB> entry) =>
+        entry.Property(collection => collection.UserId).IsModified
+        || entry.Property(collection => collection.CollectionType).IsModified
+        || entry.Property(collection => collection.Slug).IsModified
+        || entry.Property(collection => collection.DisplayName).IsModified
+        || entry.Property(collection => collection.Description).IsModified
+        || entry.Property(collection => collection.SortOrder).IsModified
+        || entry.Property(collection => collection.IsDefault).IsModified
+        || entry.Property(collection => collection.IsSubscribed).IsModified;
+
+    private static async Task<IReadOnlyDictionary<Guid, Guid>> GetPrimaryAccountIdsAsync(
+        EmailDbContext database,
+        IReadOnlyCollection<Guid> userIds,
+        CancellationToken cancellationToken)
+    {
+        if (userIds.Count == 0)
+            return new Dictionary<Guid, Guid>();
+        var ids = userIds.ToArray();
+        var candidates = await database.Inboxes
+            .AsNoTracking()
+            .Where(inbox => ids.Contains(inbox.OwnerId)
+                && inbox.AliasForInboxId == null
+                && inbox.Name != "*"
+                && inbox.Owner.IsActive
+                && inbox.Address.IsActive
+                && inbox.Address.Company.IsActive)
+            .Select(inbox => new PrimaryAccountCandidate(
+                inbox.Id,
+                inbox.OwnerId,
+                inbox.Owner.Username,
+                inbox.Name,
+                inbox.Address.Domain))
+            .ToListAsync(cancellationToken);
+        return candidates
+            .GroupBy(candidate => candidate.UserId)
+            .ToDictionary(
+                group => group.Key,
+                group => group
+                    .OrderBy(candidate => string.Equals(
+                        candidate.Name + "@" + candidate.Domain,
+                        candidate.Username,
+                        StringComparison.Ordinal) ? 0 : 1)
+                    .ThenBy(candidate => candidate.Domain, StringComparer.Ordinal)
+                    .ThenBy(candidate => candidate.Name, StringComparer.Ordinal)
+                    .Select(candidate => candidate.InboxId)
+                    .First());
+    }
+
     private static string NormalizeThreadId(string? storedThreadId, Guid emailId) =>
         "T" + (string.IsNullOrEmpty(storedThreadId) ? emailId.ToString("N") : storedThreadId);
 
@@ -475,6 +675,14 @@ internal static class JmapChangeCollector
         Guid FolderId,
         string? ThreadObjectId,
         bool IsDeleted);
+    private sealed record PersistedDavResource(Guid Id, Guid CollectionId);
+    private sealed record DavCollectionOwner(Guid Id, Guid UserId, string CollectionType);
+    private sealed record PrimaryAccountCandidate(
+        Guid InboxId,
+        Guid UserId,
+        string Username,
+        string Name,
+        string Domain);
     private sealed record ChangeKey(Guid AccountId, string DataType, string ObjectId);
     private sealed record ThreadKey(Guid AccountId, string ThreadId);
 }

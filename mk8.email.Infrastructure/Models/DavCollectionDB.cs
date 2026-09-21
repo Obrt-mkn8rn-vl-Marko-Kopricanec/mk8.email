@@ -45,6 +45,12 @@ public sealed class DavCollectionDB
     [Column("sort_order")]
     public int SortOrder { get; set; }
 
+    [Column("is_default")]
+    public bool IsDefault { get; set; }
+
+    [Column("is_subscribed")]
+    public bool IsSubscribed { get; set; } = true;
+
     [Column("components", TypeName = "text[]")]
     public string[] Components { get; set; } = [];
 

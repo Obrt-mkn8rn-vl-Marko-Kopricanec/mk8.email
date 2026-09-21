@@ -20,7 +20,7 @@ public static class DavEndpointRouteBuilderExtensions
     private static readonly string[] DavMethods =
     [
         "OPTIONS", "PROPFIND", "PROPPATCH", "REPORT", "GET", "HEAD", "PUT",
-        "DELETE", "MKCOL", "MKCALENDAR",
+        "DELETE", "MKCOL", "MKCALENDAR", "POST",
     ];
 
     public static IEndpointRouteBuilder MapDavEndpoints(this IEndpointRouteBuilder endpoints)
@@ -43,6 +43,7 @@ public static class DavEndpointRouteBuilderExtensions
         HttpContext context,
         IMailAuthenticator authenticator,
         DavStore store,
+        DavSchedulingService scheduling,
         EnvironmentConfig environment,
         CancellationToken cancellationToken)
     {
@@ -101,6 +102,15 @@ public static class DavEndpointRouteBuilderExtensions
             case "MKCOL":
             case "MKCALENDAR":
                 await HandleMakeCollectionAsync(context, user, path, store, cancellationToken);
+                break;
+            case "POST":
+                await HandleSchedulingPostAsync(
+                    context,
+                    user,
+                    path,
+                    scheduling,
+                    environment,
+                    cancellationToken);
                 break;
             default:
                 context.Response.StatusCode = StatusCodes.Status405MethodNotAllowed;
@@ -435,6 +445,72 @@ public static class DavEndpointRouteBuilderExtensions
         await WriteMultiStatusAsync(context, responses, null, cancellationToken);
     }
 
+    private static async Task HandleSchedulingPostAsync(
+        HttpContext context,
+        AuthenticatedMailUser user,
+        DavPath path,
+        DavSchedulingService scheduling,
+        EnvironmentConfig environment,
+        CancellationToken cancellationToken)
+    {
+        if (path.Kind != DavPathKind.Collection
+            || path.CollectionKind != DavCollectionKind.Calendar
+            || !string.Equals(
+                path.Slug,
+                DavStore.SchedulingOutboxSlug,
+                StringComparison.Ordinal))
+        {
+            context.Response.StatusCode = StatusCodes.Status405MethodNotAllowed;
+            return;
+        }
+        var body = await ReadBodyAsync(
+            context.Request,
+            environment.Dav.MaxResourceSizeBytes,
+            cancellationToken);
+        if (body is null)
+        {
+            context.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
+            return;
+        }
+
+        var result = await scheduling.SubmitAsync(
+            user,
+            context.Request.Headers["Originator"],
+            context.Request.Headers["Recipient"],
+            context.Request.ContentType,
+            body,
+            context.Connection.RemoteIpAddress?.ToString(),
+            cancellationToken);
+        if (result.Error is not null)
+        {
+            await WriteTextErrorAsync(
+                context,
+                result.StatusCode,
+                result.Error,
+                cancellationToken);
+            return;
+        }
+
+        var document = new XDocument(new XElement(
+            CalDav + "schedule-response",
+            new XAttribute(XNamespace.Xmlns + "D", Dav),
+            new XAttribute(XNamespace.Xmlns + "C", CalDav),
+            result.Recipients.Select(recipient => new XElement(
+                CalDav + "response",
+                new XElement(
+                    CalDav + "recipient",
+                    new XElement(Dav + "href", recipient.Recipient)),
+                new XElement(CalDav + "request-status", recipient.RequestStatus),
+                recipient.CalendarData is null
+                    ? null
+                    : new XElement(CalDav + "calendar-data", recipient.CalendarData)))));
+        await WriteXmlAsync(
+            context,
+            result.StatusCode,
+            document,
+            cancellationToken);
+    }
+
     private static async Task HandleGetAsync(
         HttpContext context,
         AuthenticatedMailUser user,
@@ -474,6 +550,7 @@ public static class DavEndpointRouteBuilderExtensions
         CancellationToken cancellationToken)
     {
         if (path.Kind != DavPathKind.Resource
+            || DavStore.IsSchedulingCollection(path.Slug!)
             || !HasExpectedExtension(path.CollectionKind!.Value, path.ResourceName!))
         {
             context.Response.StatusCode = StatusCodes.Status409Conflict;
@@ -627,6 +704,11 @@ public static class DavEndpointRouteBuilderExtensions
             context.Response.StatusCode = StatusCodes.Status409Conflict;
             return;
         }
+        if (DavStore.IsSchedulingCollection(path.Slug!))
+        {
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            return;
+        }
         if (context.Request.Method == "MKCALENDAR"
             && path.CollectionKind != DavCollectionKind.Calendar)
         {
@@ -702,7 +784,9 @@ public static class DavEndpointRouteBuilderExtensions
             cancellationToken);
         if (result.Status != DavCollectionWriteStatus.Updated)
         {
-            context.Response.StatusCode = StatusCodes.Status404NotFound;
+            context.Response.StatusCode = result.Status == DavCollectionWriteStatus.Protected
+                ? StatusCodes.Status403Forbidden
+                : StatusCodes.Status404NotFound;
             return;
         }
 
@@ -735,6 +819,9 @@ public static class DavEndpointRouteBuilderExtensions
             HrefProperty(Dav + "principal-URL", PrincipalHref(user.Id)),
             HrefProperty(CalDav + "calendar-home-set", HomeHref(DavCollectionKind.Calendar, user.Id)),
             HrefProperty(CardDav + "addressbook-home-set", HomeHref(DavCollectionKind.AddressBook, user.Id)),
+            HrefProperty(CalDav + "schedule-inbox-URL", SchedulingHref(user.Id, DavStore.SchedulingInboxSlug)),
+            HrefProperty(CalDav + "schedule-outbox-URL", SchedulingHref(user.Id, DavStore.SchedulingOutboxSlug)),
+            new XElement(CalDav + "calendar-user-type", "INDIVIDUAL"),
             new XElement(CalDav + "calendar-user-address-set",
                 new XElement(Dav + "href", $"mailto:{user.Username}")));
 
@@ -749,20 +836,40 @@ public static class DavEndpointRouteBuilderExtensions
 
     private static IReadOnlyDictionary<XName, XElement> CollectionProperties(
         DavCollection collection,
-        EnvironmentConfig? environment) => BuildProperties(
+        EnvironmentConfig? environment)
+    {
+        var schedulingInbox = string.Equals(
+            collection.Slug,
+            DavStore.SchedulingInboxSlug,
+            StringComparison.Ordinal);
+        var schedulingOutbox = string.Equals(
+            collection.Slug,
+            DavStore.SchedulingOutboxSlug,
+            StringComparison.Ordinal);
+        var resourceType = schedulingInbox
+            ? CalDav + "schedule-inbox"
+            : schedulingOutbox
+                ? CalDav + "schedule-outbox"
+                : collection.Kind == DavCollectionKind.Calendar
+                    ? CalDav + "calendar"
+                    : CardDav + "addressbook";
+        return BuildProperties(
         new XElement(
             Dav + "resourcetype",
             new XElement(Dav + "collection"),
-            new XElement(collection.Kind == DavCollectionKind.Calendar
-                ? CalDav + "calendar"
-                : CardDav + "addressbook")),
+            new XElement(resourceType)),
         new XElement(Dav + "displayname", collection.DisplayName),
         new XElement(Dav + "sync-token", SyncToken(collection)),
         new XElement(CalendarServer + "getctag", collection.SyncToken.ToString(CultureInfo.InvariantCulture)),
         new XElement(Dav + "getlastmodified", collection.UpdatedAt.ToUniversalTime().ToString("R", CultureInfo.InvariantCulture)),
         HrefProperty(Dav + "owner", PrincipalHref(collection.UserId)),
-        CurrentUserPrivilegeSet(),
-        SupportedReportSet(collection.Kind),
+        CurrentUserPrivilegeSet(schedulingInbox, schedulingOutbox),
+        !schedulingOutbox ? SupportedReportSet(collection.Kind) : null,
+        schedulingInbox
+            ? HrefProperty(
+                CalDav + "schedule-default-calendar-URL",
+                $"{HomeHref(DavCollectionKind.Calendar, collection.UserId)}default/")
+            : null,
         new XElement(
             collection.Kind == DavCollectionKind.Calendar
                 ? CalDav + "calendar-description"
@@ -779,6 +886,7 @@ public static class DavEndpointRouteBuilderExtensions
                 ? CalDav + "max-resource-size"
                 : CardDav + "max-resource-size",
             (environment?.Dav.MaxResourceSizeBytes ?? 0).ToString(CultureInfo.InvariantCulture)));
+    }
 
     private static IReadOnlyDictionary<XName, XElement> ResourceProperties(
         DavResource resource,
@@ -849,14 +957,35 @@ public static class DavEndpointRouteBuilderExtensions
                 new XElement(Dav + "report", new XElement(report)))));
     }
 
-    private static XElement CurrentUserPrivilegeSet() =>
-        new(Dav + "current-user-privilege-set",
+    private static XElement CurrentUserPrivilegeSet(
+        bool schedulingInbox = false,
+        bool schedulingOutbox = false)
+    {
+        var privileges = new List<XElement>
+        {
             Privilege(Dav + "read"),
             Privilege(Dav + "write"),
             Privilege(Dav + "write-content"),
             Privilege(Dav + "write-properties"),
             Privilege(Dav + "bind"),
-            Privilege(Dav + "unbind"));
+            Privilege(Dav + "unbind"),
+        };
+        if (schedulingInbox)
+        {
+            privileges.Add(Privilege(CalDav + "schedule-deliver"));
+            privileges.Add(Privilege(CalDav + "schedule-deliver-invite"));
+            privileges.Add(Privilege(CalDav + "schedule-deliver-reply"));
+            privileges.Add(Privilege(CalDav + "schedule-query-freebusy"));
+        }
+        if (schedulingOutbox)
+        {
+            privileges.Add(Privilege(CalDav + "schedule-send"));
+            privileges.Add(Privilege(CalDav + "schedule-send-invite"));
+            privileges.Add(Privilege(CalDav + "schedule-send-reply"));
+            privileges.Add(Privilege(CalDav + "schedule-query-freebusy"));
+        }
+        return new XElement(Dav + "current-user-privilege-set", privileges);
+    }
 
     private static XElement Privilege(XName name) =>
         new(Dav + "privilege", new XElement(name));
@@ -1218,6 +1347,9 @@ public static class DavEndpointRouteBuilderExtensions
     private static string HomeHref(DavCollectionKind kind, Guid userId) =>
         $"/dav/{(kind == DavCollectionKind.Calendar ? "calendars" : "addressbooks")}/{userId:N}/";
 
+    private static string SchedulingHref(Guid userId, string slug) =>
+        $"{HomeHref(DavCollectionKind.Calendar, userId)}{slug}/";
+
     private static string PrincipalHref(Guid userId) => $"/dav/principals/{userId:N}/";
     private const string RootHref = "/dav/";
 
@@ -1239,7 +1371,7 @@ public static class DavEndpointRouteBuilderExtensions
 
     private static void SetDavHeaders(HttpResponse response)
     {
-        response.Headers["DAV"] = "1, 2, 3, calendar-access, addressbook, sync-collection";
+        response.Headers["DAV"] = "1, 2, 3, calendar-access, calendar-schedule, addressbook, sync-collection";
         response.Headers.Allow = string.Join(", ", DavMethods);
         response.Headers["MS-Author-Via"] = "DAV";
         response.Headers.CacheControl = "no-store";

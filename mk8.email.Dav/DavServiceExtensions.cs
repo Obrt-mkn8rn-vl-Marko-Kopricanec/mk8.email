@@ -7,6 +7,7 @@ public static class DavServiceExtensions
     public static IServiceCollection AddDavProtocol(this IServiceCollection services)
     {
         services.AddScoped<DavStore>();
+        services.AddScoped<DavSchedulingService>();
         return services;
     }
 }

@@ -22,6 +22,7 @@ public sealed class DavProtocolTests
             authenticate: false);
         Assert.AreEqual(HttpStatusCode.OK, options.StatusCode);
         StringAssert.Contains(options.Headers.GetValues("DAV").Single(), "calendar-access");
+        StringAssert.Contains(options.Headers.GetValues("DAV").Single(), "calendar-schedule");
         StringAssert.Contains(options.Headers.GetValues("DAV").Single(), "addressbook");
         StringAssert.Contains(options.Content.Headers.Allow.ToString(), "REPORT");
 
@@ -82,6 +83,26 @@ public sealed class DavProtocolTests
         var addressBookXml = await ReadXmlAsync(addressBooks);
         Assert.IsTrue(Hrefs(addressBookXml).Contains(fixture.AddressBookHomePath + "default/"));
         Assert.IsNotNull(addressBookXml.Descendants(CardDav + "addressbook").SingleOrDefault());
+
+        using var scheduling = await fixture.SendAsync(
+            "PROPFIND",
+            fixture.PrincipalPath,
+            Propfind("<C:schedule-inbox-URL/><C:schedule-outbox-URL/><C:calendar-user-address-set/>"),
+            headers: Header("Depth", "0"));
+        Assert.AreEqual((HttpStatusCode)207, scheduling.StatusCode);
+        var schedulingXml = await ReadXmlAsync(scheduling);
+        Assert.AreEqual(
+            fixture.SchedulingInboxPath,
+            schedulingXml.Descendants(CalDav + "schedule-inbox-URL")
+                .Single().Element(Dav + "href")?.Value);
+        Assert.AreEqual(
+            fixture.SchedulingOutboxPath,
+            schedulingXml.Descendants(CalDav + "schedule-outbox-URL")
+                .Single().Element(Dav + "href")?.Value);
+        Assert.AreEqual(
+            $"mailto:{fixture.PrimaryAddress}",
+            schedulingXml.Descendants(CalDav + "calendar-user-address-set")
+                .Single().Element(Dav + "href")?.Value);
     }
 
     [TestMethod]
@@ -341,6 +362,241 @@ public sealed class DavProtocolTests
             Propfind("<D:displayname/>"),
             headers: Header("Depth", "0"));
         Assert.AreEqual(HttpStatusCode.NotFound, foreign.StatusCode);
+    }
+
+    [TestMethod]
+    public async Task CalDavSchedulingDeliversLocalInvitationsRepliesAndExternalImip()
+    {
+        await using var fixture = await DavFixture.CreateAsync();
+        const string external = "external.attendee@example.net";
+        var invitation = $$"""
+        BEGIN:VCALENDAR
+        VERSION:2.0
+        PRODID:-//mk8.email//Scheduling tests//EN
+        METHOD:REQUEST
+        BEGIN:VEVENT
+        UID:scheduling-invitation-1@mk8n.com
+        DTSTAMP:20260921T080000Z
+        DTSTART:20261001T100000Z
+        DTEND:20261001T110000Z
+        ORGANIZER:mailto:{{fixture.PrimaryAddress}}
+        ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:{{fixture.AttendeeAddress}}
+        ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:{{external}}
+        SUMMARY:Scheduling delivery
+        END:VEVENT
+        END:VCALENDAR
+        """;
+        using var sent = await fixture.SendAsync(
+            "POST",
+            fixture.SchedulingOutboxPath,
+            invitation,
+            "text/calendar; charset=utf-8; method=REQUEST",
+            new Dictionary<string, string>
+            {
+                ["Originator"] = $"mailto:{fixture.PrimaryAddress}",
+                ["Recipient"] = $"mailto:{fixture.AttendeeAddress}, mailto:{external}",
+            });
+        Assert.AreEqual(HttpStatusCode.OK, sent.StatusCode);
+        var sentXml = await ReadXmlAsync(sent);
+        Assert.AreEqual(2, sentXml.Descendants(CalDav + "response").Count());
+        Assert.IsTrue(sentXml.Descendants(CalDav + "request-status")
+            .All(status => status.Value.StartsWith("2.0", StringComparison.Ordinal)));
+
+        using var attendeeInbox = await fixture.SendAsAttendeeAsync(
+            "PROPFIND",
+            fixture.AttendeeSchedulingInboxPath,
+            Propfind("<D:resourcetype/><D:getetag/><C:calendar-data/>"),
+            headers: Header("Depth", "1"));
+        Assert.AreEqual((HttpStatusCode)207, attendeeInbox.StatusCode);
+        var attendeeInboxXml = await ReadXmlAsync(attendeeInbox);
+        Assert.IsNotNull(attendeeInboxXml.Descendants(CalDav + "schedule-inbox").SingleOrDefault());
+        var invitationPath = Hrefs(attendeeInboxXml)
+            .Single(href => href.EndsWith(".ics", StringComparison.Ordinal));
+        using var storedInvitation = await fixture.SendAsAttendeeAsync("GET", invitationPath);
+        Assert.AreEqual(HttpStatusCode.OK, storedInvitation.StatusCode);
+        StringAssert.Contains(
+            await storedInvitation.Content.ReadAsStringAsync(),
+            "METHOD:REQUEST");
+
+        var queued = fixture.QueuedSubmissions.Single();
+        Assert.AreEqual(fixture.PrimaryAddress, queued.EnvelopeSender);
+        Assert.AreEqual(external, queued.Recipients.Single().Address);
+        Assert.IsFalse(queued.Recipients.Single().IsLocal);
+        StringAssert.Contains(queued.RawMessage, "METHOD:REQUEST");
+        StringAssert.Contains(queued.RawMessage, "text/calendar");
+
+        var reply = $$"""
+        BEGIN:VCALENDAR
+        VERSION:2.0
+        PRODID:-//mk8.email//Scheduling tests//EN
+        METHOD:REPLY
+        BEGIN:VEVENT
+        UID:scheduling-invitation-1@mk8n.com
+        DTSTAMP:20260921T081500Z
+        DTSTART:20261001T100000Z
+        DTEND:20261001T110000Z
+        ORGANIZER:mailto:{{fixture.PrimaryAddress}}
+        ATTENDEE;PARTSTAT=ACCEPTED:mailto:{{fixture.AttendeeAddress}}
+        SUMMARY:Scheduling delivery
+        END:VEVENT
+        END:VCALENDAR
+        """;
+        using var replied = await fixture.SendAsAttendeeAsync(
+            "POST",
+            fixture.AttendeeCalendarHomePath + "schedule-outbox/",
+            reply,
+            "text/calendar; charset=utf-8; method=REPLY",
+            new Dictionary<string, string>
+            {
+                ["Originator"] = $"mailto:{fixture.AttendeeAddress}",
+                ["Recipient"] = $"mailto:{fixture.PrimaryAddress}",
+            });
+        Assert.AreEqual(HttpStatusCode.OK, replied.StatusCode);
+
+        using var organizerInbox = await fixture.SendAsync(
+            "PROPFIND",
+            fixture.SchedulingInboxPath,
+            Propfind("<D:getetag/>"),
+            headers: Header("Depth", "1"));
+        Assert.AreEqual((HttpStatusCode)207, organizerInbox.StatusCode);
+        var replyPath = Hrefs(await ReadXmlAsync(organizerInbox))
+            .Single(href => href.EndsWith(".ics", StringComparison.Ordinal));
+        using var storedReply = await fixture.SendAsync("GET", replyPath);
+        Assert.AreEqual(HttpStatusCode.OK, storedReply.StatusCode);
+        StringAssert.Contains(
+            await storedReply.Content.ReadAsStringAsync(),
+            "PARTSTAT=ACCEPTED");
+
+        using var forged = await fixture.SendAsync(
+            "POST",
+            fixture.SchedulingOutboxPath,
+            invitation,
+            "text/calendar; method=REQUEST",
+            new Dictionary<string, string>
+            {
+                ["Originator"] = "mailto:forged@mk8n.com",
+                ["Recipient"] = $"mailto:{fixture.AttendeeAddress}",
+            });
+        Assert.AreEqual(HttpStatusCode.Forbidden, forged.StatusCode);
+        Assert.AreEqual(1, fixture.QueuedSubmissions.Count);
+    }
+
+    [TestMethod]
+    public async Task CalDavSchedulingAnswersRecurrenceAwareFreeBusyQueries()
+    {
+        await using var fixture = await DavFixture.CreateAsync();
+        using var discover = await fixture.SendAsAttendeeAsync(
+            "PROPFIND",
+            fixture.AttendeeCalendarHomePath,
+            Propfind("<D:displayname/>"),
+            headers: Header("Depth", "1"));
+        Assert.AreEqual((HttpStatusCode)207, discover.StatusCode);
+
+        const string recurringEvent = """
+        BEGIN:VCALENDAR
+        VERSION:2.0
+        PRODID:-//mk8.email//Scheduling tests//EN
+        BEGIN:VEVENT
+        UID:recurring-busy-1@mk8n.com
+        DTSTAMP:20260921T080000Z
+        DTSTART:20261001T100000Z
+        DTEND:20261001T110000Z
+        RRULE:FREQ=WEEKLY;COUNT=3
+        EXDATE:20261008T100000Z
+        SUMMARY:Recurring busy event
+        END:VEVENT
+        END:VCALENDAR
+        """;
+        using var created = await fixture.SendAsAttendeeAsync(
+            "PUT",
+            fixture.AttendeeCalendarHomePath + "default/recurring.ics",
+            recurringEvent,
+            "text/calendar; charset=utf-8",
+            Header("If-None-Match", "*"));
+        Assert.AreEqual(HttpStatusCode.Created, created.StatusCode);
+
+        const string daylightSavingEvent = """
+        BEGIN:VCALENDAR
+        VERSION:2.0
+        PRODID:-//mk8.email//Scheduling tests//EN
+        BEGIN:VEVENT
+        UID:daylight-saving-busy-1@mk8n.com
+        DTSTAMP:20260921T080000Z
+        DTSTART;TZID=Europe/Zagreb:20261018T100000
+        DTEND;TZID=Europe/Zagreb:20261018T110000
+        RRULE:FREQ=WEEKLY;COUNT=2
+        SUMMARY:Local-time recurring event
+        END:VEVENT
+        END:VCALENDAR
+        """;
+        using var createdDaylightSaving = await fixture.SendAsAttendeeAsync(
+            "PUT",
+            fixture.AttendeeCalendarHomePath + "default/daylight-saving.ics",
+            daylightSavingEvent,
+            "text/calendar; charset=utf-8",
+            Header("If-None-Match", "*"));
+        Assert.AreEqual(HttpStatusCode.Created, createdDaylightSaving.StatusCode);
+
+        const string lastWeekdayEvent = """
+        BEGIN:VCALENDAR
+        VERSION:2.0
+        PRODID:-//mk8.email//Scheduling tests//EN
+        BEGIN:VEVENT
+        UID:last-weekday-busy-1@mk8n.com
+        DTSTAMP:20260921T080000Z
+        DTSTART:20260930T140000Z
+        DTEND:20260930T143000Z
+        RRULE:FREQ=MONTHLY;COUNT=2;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1
+        SUMMARY:Last weekday recurrence
+        END:VEVENT
+        END:VCALENDAR
+        """;
+        using var createdLastWeekday = await fixture.SendAsAttendeeAsync(
+            "PUT",
+            fixture.AttendeeCalendarHomePath + "default/last-weekday.ics",
+            lastWeekdayEvent,
+            "text/calendar; charset=utf-8",
+            Header("If-None-Match", "*"));
+        Assert.AreEqual(HttpStatusCode.Created, createdLastWeekday.StatusCode);
+
+        var freeBusyRequest = $$"""
+        BEGIN:VCALENDAR
+        VERSION:2.0
+        PRODID:-//mk8.email//Scheduling tests//EN
+        METHOD:REQUEST
+        BEGIN:VFREEBUSY
+        UID:freebusy-request-1@mk8n.com
+        DTSTAMP:20260921T090000Z
+        DTSTART:20261001T000000Z
+        DTEND:20261101T000000Z
+        ORGANIZER:mailto:{{fixture.PrimaryAddress}}
+        ATTENDEE:mailto:{{fixture.AttendeeAddress}}
+        END:VFREEBUSY
+        END:VCALENDAR
+        """;
+        using var response = await fixture.SendAsync(
+            "POST",
+            fixture.SchedulingOutboxPath,
+            freeBusyRequest,
+            "text/calendar; charset=utf-8; method=REQUEST",
+            new Dictionary<string, string>
+            {
+                ["Originator"] = $"mailto:{fixture.PrimaryAddress}",
+                ["Recipient"] = $"mailto:{fixture.AttendeeAddress}",
+            });
+        Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
+        var responseXml = await ReadXmlAsync(response);
+        Assert.AreEqual(
+            "2.0;Success",
+            responseXml.Descendants(CalDav + "request-status").Single().Value);
+        var freeBusy = responseXml.Descendants(CalDav + "calendar-data").Single().Value;
+        StringAssert.Contains(freeBusy, "METHOD:REPLY");
+        StringAssert.Contains(freeBusy, "FREEBUSY;FBTYPE=BUSY:20261001T100000Z/20261001T110000Z");
+        StringAssert.Contains(freeBusy, "FREEBUSY;FBTYPE=BUSY:20261015T100000Z/20261015T110000Z");
+        StringAssert.Contains(freeBusy, "FREEBUSY;FBTYPE=BUSY:20261018T080000Z/20261018T090000Z");
+        StringAssert.Contains(freeBusy, "FREEBUSY;FBTYPE=BUSY:20261025T090000Z/20261025T100000Z");
+        StringAssert.Contains(freeBusy, "FREEBUSY;FBTYPE=BUSY:20261030T140000Z/20261030T143000Z");
+        Assert.IsFalse(freeBusy.Contains("20261008T100000Z", StringComparison.Ordinal));
     }
 
     private static IReadOnlyDictionary<string, string> Header(string name, string? value)

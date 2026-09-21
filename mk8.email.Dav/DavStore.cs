@@ -48,6 +48,15 @@ internal sealed record DavChange(
     string? Etag,
     DateTime ChangedAt);
 
+internal sealed record DavCalendarRecipient(
+    string Address,
+    bool IsLocal,
+    AuthenticatedMailUser? User);
+
+internal sealed record DavCalendarResourceSet(
+    IReadOnlyList<DavResource> Resources,
+    bool IsComplete);
+
 internal sealed record DavCollectionProperties(
     string DisplayName,
     string? Description,
@@ -86,6 +95,9 @@ internal sealed record DavResourceWriteResult(
 
 internal sealed class DavStore(EmailDbContext database, EnvironmentConfig environment)
 {
+    internal const string SchedulingInboxSlug = "schedule-inbox";
+    internal const string SchedulingOutboxSlug = "schedule-outbox";
+
     public async Task EnsureDefaultCollectionsAsync(
         AuthenticatedMailUser user,
         CancellationToken cancellationToken)
@@ -104,6 +116,20 @@ internal sealed class DavStore(EmailDbContext database, EnvironmentConfig enviro
             "Address Book",
             [],
             cancellationToken);
+        await EnsureDefaultCollectionAsync(
+            user,
+            DavCollectionKind.Calendar,
+            SchedulingInboxSlug,
+            "Scheduling Inbox",
+            ["VEVENT", "VTODO", "VFREEBUSY"],
+            cancellationToken);
+        await EnsureDefaultCollectionAsync(
+            user,
+            DavCollectionKind.Calendar,
+            SchedulingOutboxSlug,
+            "Scheduling Outbox",
+            ["VEVENT", "VTODO", "VFREEBUSY"],
+            cancellationToken);
     }
 
     public async Task<IReadOnlyList<DavCollection>> GetCollectionsAsync(
@@ -116,7 +142,9 @@ internal sealed class DavStore(EmailDbContext database, EnvironmentConfig enviro
         var collections = await database.DavCollections
             .AsNoTracking()
             .Where(collection => collection.UserId == user.Id
-                && collection.CollectionType == type)
+                && collection.CollectionType == type
+                && collection.Slug != SchedulingInboxSlug
+                && collection.Slug != SchedulingOutboxSlug)
             .OrderBy(collection => collection.SortOrder)
             .ThenBy(collection => collection.DisplayName)
             .ThenBy(collection => collection.Slug)
@@ -146,6 +174,9 @@ internal sealed class DavStore(EmailDbContext database, EnvironmentConfig enviro
         DavCollectionProperties properties,
         CancellationToken cancellationToken)
     {
+        if (IsSchedulingCollection(slug))
+            return new DavCollectionWriteResult(DavCollectionWriteStatus.Protected);
+
         await using var transaction = await BeginSerializableTransactionAsync(cancellationToken);
         if (await database.DavCollections.AnyAsync(collection =>
                 collection.UserId == user.Id
@@ -156,7 +187,9 @@ internal sealed class DavStore(EmailDbContext database, EnvironmentConfig enviro
             return new DavCollectionWriteResult(DavCollectionWriteStatus.AlreadyExists);
         }
         if (await database.DavCollections.CountAsync(
-                collection => collection.UserId == user.Id,
+                collection => collection.UserId == user.Id
+                    && collection.Slug != SchedulingInboxSlug
+                    && collection.Slug != SchedulingOutboxSlug,
                 cancellationToken) >= environment.Dav.MaxCollectionsPerUser)
         {
             return new DavCollectionWriteResult(DavCollectionWriteStatus.LimitExceeded);
@@ -200,6 +233,9 @@ internal sealed class DavStore(EmailDbContext database, EnvironmentConfig enviro
         DavCollectionProperties properties,
         CancellationToken cancellationToken)
     {
+        if (IsSchedulingCollection(slug))
+            return new DavCollectionWriteResult(DavCollectionWriteStatus.Protected);
+
         var collection = await FindTrackedCollectionAsync(
             user,
             kind,
@@ -226,7 +262,8 @@ internal sealed class DavStore(EmailDbContext database, EnvironmentConfig enviro
         string slug,
         CancellationToken cancellationToken)
     {
-        if (string.Equals(slug, "default", StringComparison.Ordinal))
+        if (string.Equals(slug, "default", StringComparison.Ordinal)
+            || IsSchedulingCollection(slug))
             return new DavCollectionWriteResult(DavCollectionWriteStatus.Protected);
 
         var collection = await FindTrackedCollectionAsync(
@@ -252,6 +289,113 @@ internal sealed class DavStore(EmailDbContext database, EnvironmentConfig enviro
             .OrderBy(resource => resource.ResourceName)
             .ToListAsync(cancellationToken);
         return resources.Select(ToResource).ToList();
+    }
+
+    public async Task<DavCalendarResourceSet> GetCalendarResourcesAsync(
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        const int maximumResources = 50_000;
+        const long maximumBytes = 256L * 1024 * 1024;
+        var query = database.DavResources
+            .AsNoTracking()
+            .Where(resource => resource.Collection.UserId == userId
+                && resource.Collection.CollectionType == DavCollectionDB.CalendarType
+                && resource.Collection.Slug != SchedulingInboxSlug
+                && resource.Collection.Slug != SchedulingOutboxSlug);
+        var count = await query.CountAsync(cancellationToken);
+        var totalBytes = await query.SumAsync(
+            resource => (long?)resource.SizeBytes,
+            cancellationToken) ?? 0;
+        if (count > maximumResources || totalBytes > maximumBytes)
+            return new DavCalendarResourceSet([], false);
+
+        var resources = await query
+            .OrderBy(resource => resource.UpdatedAt)
+            .ToListAsync(cancellationToken);
+        return new DavCalendarResourceSet(
+            resources.Select(ToResource).ToList(),
+            true);
+    }
+
+    public async Task<DavCalendarRecipient> ResolveCalendarRecipientAsync(
+        string address,
+        CancellationToken cancellationToken)
+    {
+        var normalized = address.Trim().ToLowerInvariant();
+        var separator = normalized.LastIndexOf('@');
+        if (separator <= 0 || separator == normalized.Length - 1)
+            return new DavCalendarRecipient(normalized, false, null);
+
+        var localPart = normalized[..separator];
+        var domain = normalized[(separator + 1)..];
+        var route = await database.Inboxes
+            .AsNoTracking()
+            .Where(inbox => (inbox.Name == localPart || inbox.Name == "*")
+                && inbox.Address.Domain == domain
+                && inbox.Address.IsActive
+                && inbox.Address.Company.IsActive
+                && (inbox.Name != "*" || inbox.AliasForInboxId != null))
+            .OrderBy(inbox => inbox.Name == localPart ? 0 : 1)
+            .Select(inbox => new { inbox.Id, inbox.AliasForInboxId })
+            .FirstOrDefaultAsync(cancellationToken);
+        if (route is not null)
+        {
+            var targetId = route.AliasForInboxId ?? route.Id;
+            var target = await database.Inboxes
+                .AsNoTracking()
+                .Where(inbox => inbox.Id == targetId
+                    && inbox.Owner.IsActive
+                    && inbox.Address.IsActive
+                    && inbox.Address.Company.IsActive)
+                .Select(inbox => new AuthenticatedMailUser(
+                    inbox.OwnerId,
+                    inbox.Owner.Username))
+                .SingleOrDefaultAsync(cancellationToken);
+            return new DavCalendarRecipient(normalized, true, target);
+        }
+
+        var principal = await database.Users
+            .AsNoTracking()
+            .Where(user => user.Username == normalized
+                && user.IsActive
+                && user.CompanyId != null
+                && user.Company != null
+                && user.Company.IsActive
+                && database.Addresses.Any(hostedDomain =>
+                    hostedDomain.CompanyId == user.CompanyId
+                    && hostedDomain.Domain == domain
+                    && hostedDomain.IsActive))
+            .Select(user => new AuthenticatedMailUser(user.Id, user.Username))
+            .SingleOrDefaultAsync(cancellationToken);
+        var isHostedDomain = principal is not null
+            || await database.Addresses.AsNoTracking().AnyAsync(
+                addressEntry => addressEntry.Domain == domain
+                    && addressEntry.IsActive
+                    && addressEntry.Company.IsActive,
+                cancellationToken);
+        return new DavCalendarRecipient(normalized, isHostedDomain, principal);
+    }
+
+    public async Task<DavResourceWriteResult> StoreSchedulingMessageAsync(
+        AuthenticatedMailUser recipient,
+        string resourceName,
+        DavContentInfo content,
+        byte[] body,
+        CancellationToken cancellationToken)
+    {
+        await EnsureDefaultCollectionsAsync(recipient, cancellationToken);
+        return await PutResourceAsync(
+            recipient,
+            DavCollectionKind.Calendar,
+            SchedulingInboxSlug,
+            resourceName,
+            resourceName[..^4],
+            content.ContentType,
+            body,
+            ifMatch: null,
+            ifNoneMatchStar: false,
+            cancellationToken);
     }
 
     public async Task<DavResource?> GetResourceAsync(
@@ -540,6 +684,10 @@ internal sealed class DavStore(EmailDbContext database, EnvironmentConfig enviro
             .DefaultIfEmpty("VEVENT")
             .ToArray();
     }
+
+    internal static bool IsSchedulingCollection(string slug) =>
+        string.Equals(slug, SchedulingInboxSlug, StringComparison.Ordinal)
+        || string.Equals(slug, SchedulingOutboxSlug, StringComparison.Ordinal);
 
     internal static string ToStoredType(DavCollectionKind kind) => kind switch
     {

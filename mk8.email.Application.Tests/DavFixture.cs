@@ -21,26 +21,48 @@ namespace mk8.email.Application.Tests;
 internal sealed class DavFixture : IAsyncDisposable
 {
     private const string Username = "dav.user@mk8n.com";
+    private const string AttendeeUsername = "dav.attendee@mk8n.com";
     private const string Password = "correct horse battery staple";
     private readonly WebApplication application;
+    private readonly CapturingMailSubmissionQueue submissionQueue;
 
-    private DavFixture(WebApplication application, HttpClient client, Guid userId)
+    private DavFixture(
+        WebApplication application,
+        HttpClient client,
+        Guid userId,
+        Guid attendeeUserId,
+        CapturingMailSubmissionQueue submissionQueue)
     {
         this.application = application;
+        this.submissionQueue = submissionQueue;
         Client = client;
         UserId = userId;
+        AttendeeUserId = attendeeUserId;
     }
 
     public HttpClient Client { get; }
     public Guid UserId { get; }
+    public Guid AttendeeUserId { get; }
+    public string PrimaryAddress => Username;
+    public string AttendeeAddress => AttendeeUsername;
     public string PrincipalPath => $"/dav/principals/{UserId:N}/";
     public string CalendarHomePath => $"/dav/calendars/{UserId:N}/";
     public string AddressBookHomePath => $"/dav/addressbooks/{UserId:N}/";
+    public string SchedulingInboxPath => CalendarHomePath + "schedule-inbox/";
+    public string SchedulingOutboxPath => CalendarHomePath + "schedule-outbox/";
+    public string AttendeeCalendarHomePath => $"/dav/calendars/{AttendeeUserId:N}/";
+    public string AttendeeSchedulingInboxPath => AttendeeCalendarHomePath + "schedule-inbox/";
+    public IReadOnlyList<MailSubmission> QueuedSubmissions => submissionQueue.Submissions;
 
     public static async Task<DavFixture> CreateAsync()
     {
         var configuration = new EnvironmentConfig
         {
+            Smtp = new SmtpConfig
+            {
+                Hostname = "email.mk8n.com",
+                AllowRelay = true,
+            },
             Dav = new DavConfig
             {
                 EnableDav = true,
@@ -61,12 +83,15 @@ internal sealed class DavFixture : IAsyncDisposable
         builder.Services.AddDbContext<EmailDbContext>(options =>
             options.UseInMemoryDatabase(databaseName, databaseRoot));
         builder.Services.AddScoped<IMailAuthenticator, MailAuthenticator>();
+        var submissionQueue = new CapturingMailSubmissionQueue();
+        builder.Services.AddSingleton<IMailSubmissionQueue>(submissionQueue);
         builder.Services.AddDavProtocol();
 
         var application = builder.Build();
         application.MapDavEndpoints();
 
         var userId = Guid.CreateVersion7();
+        var attendeeUserId = Guid.CreateVersion7();
         using (var scope = application.Services.CreateScope())
         {
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
@@ -90,6 +115,14 @@ internal sealed class DavFixture : IAsyncDisposable
                 Role = "User",
                 Company = company,
             });
+            database.Users.Add(new UserDB
+            {
+                Id = attendeeUserId,
+                Username = AttendeeUsername,
+                PasswordHash = PasswordHasher.Hash(Password),
+                Role = "User",
+                Company = company,
+            });
             await database.SaveChangesAsync();
         }
         using (var verificationScope = application.Services.CreateScope())
@@ -109,7 +142,12 @@ internal sealed class DavFixture : IAsyncDisposable
             BaseAddress = new Uri(address),
             Timeout = TimeSpan.FromSeconds(15),
         };
-        return new DavFixture(application, client, userId);
+        return new DavFixture(
+            application,
+            client,
+            userId,
+            attendeeUserId,
+            submissionQueue);
     }
 
     public Task<HttpResponseMessage> SendAsync(
@@ -118,13 +156,43 @@ internal sealed class DavFixture : IAsyncDisposable
         string? body = null,
         string? contentType = null,
         IReadOnlyDictionary<string, string>? headers = null,
-        bool authenticate = true)
+        bool authenticate = true) => SendAsAsync(
+        Username,
+        method,
+        path,
+        body,
+        contentType,
+        headers,
+        authenticate);
+
+    public Task<HttpResponseMessage> SendAsAttendeeAsync(
+        string method,
+        string path,
+        string? body = null,
+        string? contentType = null,
+        IReadOnlyDictionary<string, string>? headers = null) => SendAsAsync(
+        AttendeeUsername,
+        method,
+        path,
+        body,
+        contentType,
+        headers,
+        authenticate: true);
+
+    private Task<HttpResponseMessage> SendAsAsync(
+        string username,
+        string method,
+        string path,
+        string? body,
+        string? contentType,
+        IReadOnlyDictionary<string, string>? headers,
+        bool authenticate)
     {
         var request = new HttpRequestMessage(new HttpMethod(method), path);
         if (authenticate)
         {
             var credentials = Convert.ToBase64String(
-                Encoding.UTF8.GetBytes($"{Username}:{Password}"));
+                Encoding.UTF8.GetBytes($"{username}:{Password}"));
             request.Headers.Authorization = new AuthenticationHeaderValue("Basic", credentials);
         }
         if (body is not null)
@@ -156,5 +224,28 @@ internal sealed class DavFixture : IAsyncDisposable
         Assert.IsNotNull(values);
         Assert.AreEqual(1, values.Count);
         return values.Single();
+    }
+
+    private sealed class CapturingMailSubmissionQueue : IMailSubmissionQueue
+    {
+        private readonly List<MailSubmission> submissions = [];
+
+        public IReadOnlyList<MailSubmission> Submissions
+        {
+            get
+            {
+                lock (submissions)
+                    return submissions.ToArray();
+            }
+        }
+
+        public Task<Guid> EnqueueAsync(
+            MailSubmission submission,
+            CancellationToken cancellationToken = default)
+        {
+            lock (submissions)
+                submissions.Add(submission);
+            return Task.FromResult(submission.QueueId);
+        }
     }
 }

@@ -170,6 +170,18 @@ internal static class JmapContactValidator
         return true;
     }
 
+    internal static bool ContainsEffectiveMediaBlobId(JsonObject card)
+    {
+        if (ContainsMediaBlobId(card))
+            return true;
+        return !TryGetLocalizedCards(card, out var localizedCards)
+            || localizedCards.Values.Any(ContainsMediaBlobId);
+    }
+
+    private static bool ContainsMediaBlobId(JsonObject card) =>
+        card["media"] is JsonObject media
+        && media.Any(item => item.Value is JsonObject value && value.ContainsKey("blobId"));
+
     private static void ValidateCard(
         JsonObject card,
         ISet<string> invalid,

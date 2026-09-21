@@ -48,6 +48,7 @@ internal sealed class DavFixture : IAsyncDisposable
     }
 
     public HttpClient Client { get; }
+    public IServiceProvider Services => application.Services;
     public Guid UserId { get; }
     public Guid InboxId { get; }
     public Guid AttendeeUserId { get; }
@@ -214,6 +215,14 @@ internal sealed class DavFixture : IAsyncDisposable
         Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
         return Assert.IsInstanceOfType<JsonObject>(
             JsonNode.Parse(await response.Content.ReadAsStringAsync()));
+    }
+
+    public async Task<string> StoreBlobAsync(byte[] content, string contentType)
+    {
+        using var scope = Services.CreateScope();
+        var stored = await scope.ServiceProvider.GetRequiredService<JmapBlobService>()
+            .StoreAsync(InboxId, content, contentType, null, CancellationToken.None);
+        return stored.BlobId;
     }
 
     public Task<HttpResponseMessage> SendAsync(

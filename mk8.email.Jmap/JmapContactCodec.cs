@@ -37,7 +37,7 @@ internal static class JmapContactCodec
             && TryValidate(embedded, out _)
             && TryString(embedded, "uid", out var embeddedUid)
             && string.Equals(embeddedUid, resource.Uid, StringComparison.Ordinal)
-            && !ContainsProtocolBlobId(embedded)
+            && !JmapContactValidator.ContainsEffectiveMediaBlobId(embedded)
             && (string.Equals(
                     HashCore(BuildCore(embedded)),
                     actualHash,
@@ -125,19 +125,6 @@ internal static class JmapContactCodec
             core.Add("REV:" + EscapeText(updated));
         core.Add("END:VCARD");
         return core;
-    }
-
-    private static bool ContainsProtocolBlobId(JsonNode node)
-    {
-        if (node is JsonObject value)
-        {
-            if (value.ContainsKey("blobId"))
-                return true;
-            return value.Any(property => property.Value is not null
-                && ContainsProtocolBlobId(property.Value));
-        }
-        return node is JsonArray array
-            && array.Any(item => item is not null && ContainsProtocolBlobId(item));
     }
 
     private static List<string> BuildLegacyCore(JsonObject card)

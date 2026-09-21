@@ -711,6 +711,42 @@ public sealed class JmapContactsTests
     }
 
     [TestMethod]
+    public async Task ContactVendorExtensionPreservesOpaqueBlobIdMembers()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var defaultBookId = await GetDefaultAddressBookIdAsync(fixture);
+        var metadata = new JsonObject
+        {
+            ["blobId"] = "opaque",
+            ["nested"] = new JsonObject { ["blobId"] = "still-opaque" },
+        };
+        var card = Card(
+            defaultBookId,
+            "opaque-vendor-blob-id",
+            "Opaque Vendor Data",
+            "Opaque",
+            "Vendor",
+            "opaque@example.net");
+        card["example.com:metadata"] = metadata.DeepClone();
+
+        var set = Arguments(await InvokeAsync(fixture, "ContactCard/set", new JsonObject
+        {
+            ["accountId"] = fixture.AccountId,
+            ["create"] = new JsonObject { ["card"] = card },
+        }));
+        var cardId = set["created"]!["card"]!["id"]!.GetValue<string>();
+
+        var get = Arguments(await InvokeAsync(fixture, "ContactCard/get", new JsonObject
+        {
+            ["accountId"] = fixture.AccountId,
+            ["ids"] = new JsonArray(cardId),
+        }));
+        Assert.IsTrue(JsonNode.DeepEquals(
+            metadata,
+            get["list"]![0]!["example.com:metadata"]));
+    }
+
+    [TestMethod]
     public async Task ContactValidationRejectsMalformedRegisteredDataAndFoldsUtf8Vcards()
     {
         await using var fixture = await JmapFixture.CreateAsync();

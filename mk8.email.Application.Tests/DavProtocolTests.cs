@@ -3,6 +3,9 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Xml.Linq;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using mk8.email.Infrastructure.Data;
 using mk8.email.Jmap;
 
 namespace mk8.email.Application.Tests;
@@ -624,11 +627,170 @@ public sealed class DavProtocolTests
             callId);
     }
 
+    [TestMethod]
+    public async Task CardDavEmbeddedJsContactRejectsLeafPatchedLocalizedBlobIds()
+    {
+        await using var fixture = await DavFixture.CreateAsync();
+        var collection = fixture.AddressBookHomePath + "embedded-leaf-guards/";
+        const string createAddressBook = """
+            <D:mkcol xmlns:D="DAV:" xmlns:A="urn:ietf:params:xml:ns:carddav">
+              <D:set><D:prop>
+                <D:resourcetype><D:collection/><A:addressbook/></D:resourcetype>
+                <D:displayname>Embedded leaf guards</D:displayname>
+              </D:prop></D:set>
+            </D:mkcol>
+            """;
+        using var createdAddressBook = await fixture.SendAsync("MKCOL", collection, createAddressBook);
+        Assert.AreEqual(HttpStatusCode.Created, createdAddressBook.StatusCode);
+
+        const string safeUid = "leaf-safe-uid";
+        const string safeBaseUri = "https://example.net/safe.png";
+        const string safeLocalizedUri = "https://example.net/safe-fr.png";
+        var safeEmbedded = new JsonObject
+        {
+            ["@type"] = "Card",
+            ["version"] = "1.0",
+            ["uid"] = safeUid,
+            ["kind"] = "individual",
+            ["name"] = new JsonObject { ["full"] = "Leaf safe" },
+            ["media"] = new JsonObject
+            {
+                ["photo"] = new JsonObject
+                {
+                    ["kind"] = "photo",
+                    ["uri"] = safeBaseUri,
+                },
+            },
+            ["localizations"] = new JsonObject
+            {
+                ["fr"] = new JsonObject { ["media/photo/uri"] = safeLocalizedUri },
+            },
+        };
+        using var safePut = await fixture.SendAsync(
+            "PUT",
+            collection + "safe.vcf",
+            ForgedVCard(
+                safeUid,
+                "Leaf safe",
+                safeEmbedded,
+                includeProdId: true,
+                additionalCoreLines: [$"PHOTO;PROP-ID=photo:{safeBaseUri}"]),
+            "text/vcard; charset=utf-8");
+        Assert.AreEqual(HttpStatusCode.Created, safePut.StatusCode);
+
+        var foreignBlobId = await fixture.StoreBlobAsync([0x47, 0x49, 0x46], "image/gif");
+        var expiredBlobId = await fixture.StoreBlobAsync([0x89, 0x50, 0x4e, 0x47], "image/png");
+        var wrongTypeBlobId = await fixture.StoreBlobAsync(
+            Encoding.ASCII.GetBytes("not an image"),
+            "application/pdf");
+        using (var scope = fixture.Services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            var foreign = await database.JmapBlobs.SingleAsync(blob => blob.BlobId == foreignBlobId);
+            foreign.AccountId = Guid.CreateVersion7();
+            var expired = await database.JmapBlobs.SingleAsync(blob => blob.BlobId == expiredBlobId);
+            expired.ExpiresAt = DateTime.UtcNow.AddMinutes(-1);
+            await database.SaveChangesAsync();
+        }
+
+        var cases = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["missing"] = JmapId.UploadedBlob(Guid.CreateVersion7()),
+            ["foreign"] = foreignBlobId,
+            ["expired"] = expiredBlobId,
+            ["wrong-type"] = wrongTypeBlobId,
+        };
+        foreach (var item in cases)
+        {
+            var uid = $"leaf-{item.Key}-uid";
+            var fullName = $"Leaf {item.Key}";
+            var baseUri = $"https://example.net/{item.Key}.png";
+            var embedded = new JsonObject
+            {
+                ["@type"] = "Card",
+                ["version"] = "1.0",
+                ["uid"] = uid,
+                ["kind"] = "individual",
+                ["name"] = new JsonObject { ["full"] = fullName },
+                ["media"] = new JsonObject
+                {
+                    ["photo"] = new JsonObject
+                    {
+                        ["kind"] = "photo",
+                        ["uri"] = baseUri,
+                    },
+                },
+                ["localizations"] = new JsonObject
+                {
+                    ["fr"] = new JsonObject
+                    {
+                        ["media/photo/uri"] = null,
+                        ["media/photo/blobId"] = item.Value,
+                    },
+                },
+            };
+            using var put = await fixture.SendAsync(
+                "PUT",
+                collection + item.Key + ".vcf",
+                ForgedVCard(
+                    uid,
+                    fullName,
+                    embedded,
+                    includeProdId: true,
+                    additionalCoreLines: [$"PHOTO;PROP-ID=photo:{baseUri}"]),
+                "text/vcard; charset=utf-8");
+            Assert.AreEqual(HttpStatusCode.Created, put.StatusCode, item.Key);
+        }
+
+        var query = await fixture.SendJmapAsync(new JsonObject
+        {
+            ["using"] = new JsonArray(JmapConstants.CoreCapability, JmapConstants.ContactsCapability),
+            ["methodCalls"] = new JsonArray(new JsonArray(
+                "ContactCard/query",
+                new JsonObject
+                {
+                    ["accountId"] = fixture.AccountId,
+                },
+                "query")),
+        });
+        var ids = query["methodResponses"]![0]![1]!["ids"]!.AsArray();
+        Assert.AreEqual(cases.Count + 1, ids.Count);
+
+        var get = await fixture.SendJmapAsync(new JsonObject
+        {
+            ["using"] = new JsonArray(JmapConstants.CoreCapability, JmapConstants.ContactsCapability),
+            ["methodCalls"] = new JsonArray(new JsonArray(
+                "ContactCard/get",
+                new JsonObject
+                {
+                    ["accountId"] = fixture.AccountId,
+                    ["ids"] = ids.DeepClone(),
+                },
+                "get")),
+        });
+        var cards = get["methodResponses"]![0]![1]!["list"]!.AsArray();
+        Assert.AreEqual(cases.Count + 1, cards.Count);
+        var safeCard = cards.Single(value => value!["uid"]!.GetValue<string>() == safeUid)!;
+        Assert.AreEqual(
+            safeLocalizedUri,
+            safeCard["localizations"]!["fr"]!["media/photo/uri"]!.GetValue<string>());
+        foreach (var item in cases)
+        {
+            var uid = $"leaf-{item.Key}-uid";
+            var card = cards.Single(value => value!["uid"]!.GetValue<string>() == uid)!;
+            Assert.IsNull(card["localizations"], item.Key);
+            var photo = card["media"]!["photo"]!;
+            Assert.AreEqual($"https://example.net/{item.Key}.png", photo["uri"]!.GetValue<string>());
+            Assert.IsNull(photo["blobId"], item.Key);
+        }
+    }
+
     private static string ForgedVCard(
         string uid,
         string fullName,
         JsonObject embedded,
-        bool includeProdId = false)
+        bool includeProdId = false,
+        IReadOnlyList<string>? additionalCoreLines = null)
     {
         var core = new List<string> { "BEGIN:VCARD", "VERSION:4.0" };
         if (includeProdId)
@@ -636,6 +798,8 @@ public sealed class DavProtocolTests
         core.Add($"UID;VALUE=text:{uid}");
         core.Add("KIND:individual");
         core.Add($"FN:{fullName}");
+        if (additionalCoreLines is not null)
+            core.AddRange(additionalCoreLines);
         core.Add("END:VCARD");
         var hash = Convert.ToHexStringLower(SHA256.HashData(
             Encoding.UTF8.GetBytes(string.Join("\r\n", core) + "\r\n")));

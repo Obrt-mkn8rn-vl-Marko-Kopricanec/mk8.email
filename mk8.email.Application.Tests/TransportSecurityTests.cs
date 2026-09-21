@@ -755,13 +755,13 @@ public sealed class TransportSecurityTests
         StringAssert.Contains(capability, "LIST-EXTENDED LIST-STATUS");
         StringAssert.Contains(capability, "ID ENABLE MOVE UNSELECT QUOTA CONDSTORE QRESYNC ESEARCH");
         StringAssert.Contains(capability, "SEARCHRES UTF8=ACCEPT");
-        StringAssert.Contains(capability, "MULTIAPPEND STATUS=SIZE COMPRESS=DEFLATE APPENDLIMIT=65536");
+        StringAssert.Contains(capability, "SORT MULTIAPPEND STATUS=SIZE COMPRESS=DEFLATE APPENDLIMIT=65536");
         StringAssert.Contains(capability, "LOGINDISABLED");
         StringAssert.Contains(capability, "STARTTLS");
         Assert.IsFalse(capability.Contains("AUTH=PLAIN", StringComparison.Ordinal));
         foreach (var unverifiedExtension in new[]
                  {
-                     "BINARY", "OBJECTID", "SORT", "THREAD=REFERENCES",
+                     "BINARY", "OBJECTID", "THREAD=REFERENCES",
                  })
         {
             Assert.IsFalse(
@@ -1865,6 +1865,87 @@ public sealed class TransportSecurityTests
     }
 
     [TestMethod]
+    [Timeout(20_000)]
+    public async Task ImapSortImplementsEveryRfc5256KeyCharsetAndTieBreak()
+    {
+        var port = ReservePort();
+        var environment = CreateEnvironment(imapPort: port);
+        await using var server = await ServerFixture.StartImapAsync(environment, port);
+        await server.SeedInboxMessagesForSortAsync();
+        await using var connection = await ProtocolConnection.ConnectAsync(port);
+
+        await connection.ReadLineAsync();
+        await connection.WriteLineAsync("a1 STARTTLS");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a1 OK", StringComparison.Ordinal));
+        await connection.UpgradeToTlsAsync("email.mk8n.com");
+        await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a2 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a3 SELECT INBOX");
+        await ReadUntilTaggedResponseAsync(connection, "a3");
+
+        await AssertSortAsync("a4 SORT (ARRIVAL) US-ASCII ALL", "* SORT 2 4 3 1 5");
+        await AssertSortAsync("a5 UID SORT (DATE) US-ASCII ALL", "* SORT 30 40 10 50 20");
+        await AssertSortAsync("a6 UID SORT (FROM) \"US-ASCII\" ALL", "* SORT 20 40 30 10 50");
+        await AssertSortAsync("a7 UID SORT (TO) US-ASCII ALL", "* SORT 30 10 50 40 20");
+        await AssertSortAsync("a8 UID SORT (CC) US-ASCII ALL", "* SORT 30 40 20 10 50");
+        await AssertSortAsync("a9 UID SORT (SUBJECT) UTF-8 ALL", "* SORT 40 30 10 20 50");
+        await AssertSortAsync("a10 UID SORT (SIZE) US-ASCII ALL", "* SORT 20 40 30 10 50");
+        await AssertSortAsync("a11 UID SORT (REVERSE SIZE) US-ASCII ALL", "* SORT 10 50 30 40 20");
+        await AssertSortAsync(
+            "a12 UID SORT (SUBJECT REVERSE DATE) UTF-8 SUBJECT topic",
+            "* SORT 20 10 50");
+        await AssertSortAsync(
+            "a12e UID SORT (DATE) US-ASCII SUBJECT absent-marker",
+            "* SORT");
+
+        await connection.WriteUtf8LineAsync(
+            "a13 UID SORT (ARRIVAL) UTF-8 SUBJECT \"Äpfel\"");
+        Assert.AreEqual("* SORT 30", await connection.ReadLineAsync());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a13 OK", StringComparison.Ordinal));
+
+        await AssertSortAsync(
+            "a13m UID SORT (ARRIVAL) US-ASCII MODSEQ 3",
+            "* SORT 40 30 50 (MODSEQ 5)");
+        await connection.WriteLineAsync("a13s UID SEARCH MODSEQ 4");
+        Assert.AreEqual("* SEARCH 40 50 (MODSEQ 5)", await connection.ReadLineAsync());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a13s OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync(
+            "a13x UID SEARCH RETURN (ALL) MODSEQ \"/flags/\\\\Seen\" all 4");
+        Assert.AreEqual(
+            "* ESEARCH (TAG \"a13x\") UID ALL 40,50 MODSEQ 5",
+            await connection.ReadLineAsync());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a13x OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a13z UID SEARCH MODSEQ 0");
+        Assert.AreEqual(
+            "* SEARCH 10 20 30 40 50 (MODSEQ 5)",
+            await connection.ReadLineAsync());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a13z OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a14 UID SORT () US-ASCII ALL");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a14 BAD", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a15 UID SORT (REVERSE) US-ASCII ALL");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a15 BAD", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a16 UID SORT (UNKNOWN) US-ASCII ALL");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a16 BAD", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a17 UID SORT (DATE) KOI8-R ALL");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith(
+            "a17 NO [BADCHARSET (US-ASCII UTF-8)]",
+            StringComparison.Ordinal));
+        await connection.WriteLineAsync("a18 NOOP");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a18 OK", StringComparison.Ordinal));
+
+        async Task AssertSortAsync(string command, string expected)
+        {
+            await connection.WriteLineAsync(command);
+            Assert.AreEqual(expected, await connection.ReadLineAsync());
+            var tag = command[..command.IndexOf(' ')];
+            Assert.IsTrue((await connection.ReadLineAsync()).StartsWith(
+                $"{tag} OK",
+                StringComparison.Ordinal));
+        }
+    }
+
+    [TestMethod]
     [Timeout(10_000)]
     public async Task ImapAppendPreservesLiteralOctetsAndLeadingBodyLines()
     {
@@ -2046,7 +2127,7 @@ public sealed class TransportSecurityTests
         Assert.IsFalse(replacement.Contains("$label", StringComparison.Ordinal));
 
         await connection.WriteLineAsync("a13 UID SEARCH UNKEYWORD Final");
-        Assert.AreEqual("* SEARCH ", await connection.ReadLineAsync());
+        Assert.AreEqual("* SEARCH", await connection.ReadLineAsync());
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a13 OK", StringComparison.Ordinal));
 
         await connection.WriteLineAsync("a14 STORE 1 +FLAGS (bad])");
@@ -3200,6 +3281,92 @@ public sealed class TransportSecurityTests
             folder.NextUid = 4;
             await database.SaveChangesAsync();
         }
+
+        public async Task SeedInboxMessagesForSortAsync()
+        {
+            using var scope = services.CreateScope();
+            var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            var folder = await database.Folders.SingleAsync(item => item.Name == DefaultFolders.Inbox);
+            database.Emails.AddRange(
+                CreateSortEmail(
+                    folder.Id,
+                    uid: 10,
+                    new DateTime(2026, 1, 4, 0, 0, 0, DateTimeKind.Utc),
+                    size: 400,
+                    subject: "Re: [list] Topic (fwd)",
+                    "From: Zulu Person <zeta@example.net>\r\n" +
+                    "To: Bravo Person <bravo@example.net>\r\n" +
+                    "Cc: Delta Person <delta@example.net>\r\n" +
+                    "Date: Mon, 2 Feb 2026 10:00:00 +0000\r\n" +
+                    "Subject: Re: [list] Topic (fwd)"),
+                CreateSortEmail(
+                    folder.Id,
+                    uid: 20,
+                    new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc),
+                    size: 100,
+                    subject: "topic",
+                    "From: Alpha Person <alpha@example.net>\r\n" +
+                    "To: Delta Person <delta@example.net>\r\n" +
+                    "Cc: Charlie Person <charlie@example.net>\r\n" +
+                    "Date: Tue, 3 Feb 2026 10:00:00 +0000\r\n" +
+                    "Subject: topic"),
+                CreateSortEmail(
+                    folder.Id,
+                    uid: 30,
+                    new DateTime(2026, 1, 3, 0, 0, 0, DateTimeKind.Utc),
+                    size: 300,
+                    subject: "Re: Äpfel",
+                    "From: Charlie Person <charlie@example.net>\r\n" +
+                    "To: Alpha Person <alpha@example.net>\r\n" +
+                    "Subject: =?UTF-8?Q?Re=3A_=C3=84pfel?="),
+                CreateSortEmail(
+                    folder.Id,
+                    uid: 40,
+                    new DateTime(2026, 1, 2, 0, 0, 0, DateTimeKind.Utc),
+                    size: 200,
+                    subject: "Apfel",
+                    "From: Bravo Person <bravo@example.net>\r\n" +
+                    "To: Charlie Person <charlie@example.net>\r\n" +
+                    "Cc: Alpha Person <alpha@example.net>\r\n" +
+                    "Date: Sun, 1 Feb 2026 10:00:00 +0000\r\n" +
+                    "Subject: Apfel"),
+                CreateSortEmail(
+                    folder.Id,
+                    uid: 50,
+                    new DateTime(2026, 1, 5, 0, 0, 0, DateTimeKind.Utc),
+                    size: 400,
+                    subject: "Fwd: Topic",
+                    "From: Zulu Person <zeta@example.net>\r\n" +
+                    "To: Bravo Person <bravo@example.net>\r\n" +
+                    "Cc: Delta Person <delta@example.net>\r\n" +
+                    "Date: Mon, 2 Feb 2026 10:00:00 +0000\r\n" +
+                    "Subject: Fwd: Topic"));
+            folder.NextUid = 51;
+            folder.HighestModSeq = 5;
+            await database.SaveChangesAsync();
+        }
+
+        private static EmailDB CreateSortEmail(
+            Guid folderId,
+            int uid,
+            DateTime receivedAt,
+            int size,
+            string subject,
+            string rawHeaders) => new()
+        {
+            Id = Guid.CreateVersion7(),
+            Sender = "normalized-column-must-not-win@example.net",
+            Recipient = "normalized-column-must-not-win@example.net",
+            Cc = "normalized-column-must-not-win@example.net",
+            Subject = subject,
+            Body = "body\r\n",
+            RawHeaders = rawHeaders,
+            SizeBytes = size,
+            Uid = uid,
+            ModSeq = uid / 10,
+            FolderId = folderId,
+            ReceivedAt = receivedAt,
+        };
 
         private static EmailDB CreateStoredEmail(Guid folderId, int uid, DateTime receivedAt) => new()
         {

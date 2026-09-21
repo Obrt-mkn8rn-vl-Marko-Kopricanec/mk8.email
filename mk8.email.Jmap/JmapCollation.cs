@@ -1,4 +1,5 @@
 using System.Text;
+using mk8.email.Application.Protocol;
 
 namespace mk8.email.Jmap;
 
@@ -18,7 +19,7 @@ internal static class JmapCollation
         {
             "i;ascii-numeric" => CompareAsciiNumeric(left, right),
             "i;ascii-casemap" => CompareAsciiCasemap(left, right),
-            _ => CompareDefaultUnicode(left, right),
+            _ => Rfc5256.CompareUnicodeCasemap(left, right),
         };
 
     private static int CompareAsciiNumeric(string left, string right)
@@ -48,11 +49,6 @@ internal static class JmapCollation
         CompareUtf8(
             Encoding.UTF8.GetBytes(FoldAscii(left)),
             Encoding.UTF8.GetBytes(FoldAscii(right)));
-
-    private static int CompareDefaultUnicode(string left, string right) =>
-        CompareUtf8(
-            Encoding.UTF8.GetBytes(left.ToUpperInvariant().Normalize(NormalizationForm.FormKD)),
-            Encoding.UTF8.GetBytes(right.ToUpperInvariant().Normalize(NormalizationForm.FormKD)));
 
     private static string FoldAscii(string value)
     {

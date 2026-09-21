@@ -11,6 +11,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using MimeKit;
 using mk8.email.Application.Interfaces;
 using mk8.email.Application.Protocol;
 using mk8.email.Contracts.Enums;
@@ -831,7 +832,7 @@ ILogger<ImapServerService> logger) : BackgroundService
         var caps =
             "IMAP4rev1 LITERAL+ IDLE NAMESPACE SPECIAL-USE UIDPLUS LIST-EXTENDED LIST-STATUS " +
             "ID ENABLE MOVE UNSELECT QUOTA CONDSTORE QRESYNC ESEARCH SEARCHRES UTF8=ACCEPT " +
-            $"MULTIAPPEND STATUS=SIZE COMPRESS=DEFLATE APPENDLIMIT={config.MaxMessageSizeBytes}";
+            $"SORT MULTIAPPEND STATUS=SIZE COMPRESS=DEFLATE APPENDLIMIT={config.MaxMessageSizeBytes}";
         if (session.IsSecure)
         {
             caps += " AUTH=PLAIN SASL-IR";
@@ -1896,14 +1897,22 @@ ILogger<ImapServerService> logger) : BackgroundService
             .ToArray();
         if (responseOptions is { Length: > 0 })
         {
-            var result = BuildEsearchResult(responseOptions, numbers);
+            var result = BuildEsearchResult(
+                responseOptions,
+                numbers,
+                searchResult.HighestModSequence);
             var uidMarker = useUid ? " UID" : string.Empty;
             var resultSuffix = result.Length > 0 ? $" {result}" : string.Empty;
             await writer.WriteLineAsync($"* ESEARCH (TAG \"{tag}\"){uidMarker}{resultSuffix}");
         }
         else if (returnOptions is null)
         {
-            await writer.WriteLineAsync($"* SEARCH {string.Join(' ', numbers)}");
+            var result = string.Join(' ', numbers);
+            var numberSuffix = result.Length == 0 ? string.Empty : $" {result}";
+            var modSequenceSuffix = searchResult.HighestModSequence is { } highestModSequence
+                ? $" (MODSEQ {highestModSequence})"
+                : string.Empty;
+            await writer.WriteLineAsync($"* SEARCH{numberSuffix}{modSequenceSuffix}");
         }
 
         var commandName = useUid ? "UID SEARCH" : "SEARCH";
@@ -4082,6 +4091,7 @@ ILogger<ImapServerService> logger) : BackgroundService
         None = 0,
         Body = 1,
         RawHeaders = 2,
+        ModSequenceResult = 4,
     }
 
     private enum SearchTokenKind
@@ -4118,7 +4128,44 @@ ILogger<ImapServerService> logger) : BackgroundService
 
     private sealed record SearchExecutionResult(
         IReadOnlyList<SearchCandidate> Matches,
-        string? FailureResponse);
+        string? FailureResponse,
+        long? HighestModSequence);
+
+    private enum ImapSortKey
+    {
+        Arrival,
+        Cc,
+        Date,
+        From,
+        Size,
+        Subject,
+        To,
+    }
+
+    private readonly record struct ImapSortCriterion(ImapSortKey Key, bool Reverse);
+
+    private sealed record SortStoredMessage(
+        Guid Id,
+        int Uid,
+        int SequenceNumber,
+        DateTime ReceivedAt,
+        int SizeBytes,
+        string Sender,
+        string Recipient,
+        string? Cc,
+        string Subject,
+        string? RawHeaders);
+
+    private sealed record SortMessage(
+        int Uid,
+        int SequenceNumber,
+        DateTime ReceivedAt,
+        DateTime SentAt,
+        int SizeBytes,
+        byte[] FromSortKey,
+        byte[] ToSortKey,
+        byte[] CcSortKey,
+        byte[] SubjectSortKey);
 
     private sealed record SearchPredicate(
         SearchDataRequirements Requirements,
@@ -4436,25 +4483,36 @@ ILogger<ImapServerService> logger) : BackgroundService
                         (message, _) => !HasKeyword(message, absentKeyword));
                     return true;
                 case "MODSEQ":
-                    if (!TryReadValue(out var modSequenceText)
-                        || !long.TryParse(
-                            modSequenceText,
-                            System.Globalization.NumberStyles.None,
-                            System.Globalization.CultureInfo.InvariantCulture,
-                            out var modSequence)
-                        || modSequence <= 0)
-                    {
+                    if (!TryReadValue(out var modSequenceText))
                         return false;
+                    if (!TryParseModSequence(modSequenceText, out var modSequence))
+                    {
+                        if (!modSequenceText.StartsWith("/flags/", StringComparison.OrdinalIgnoreCase)
+                            || !TryReadValue(out var entryType)
+                            || entryType.ToUpperInvariant() is not ("SHARED" or "PRIV" or "ALL")
+                            || !TryReadValue(out modSequenceText)
+                            || !TryParseModSequence(modSequenceText, out modSequence))
+                        {
+                            return false;
+                        }
                     }
 
                     predicate = new SearchPredicate(
-                        SearchDataRequirements.None,
+                        SearchDataRequirements.ModSequenceResult,
                         (message, _) => message.ModSeq >= modSequence);
                     return true;
                 default:
                     return false;
             }
         }
+
+        private static bool TryParseModSequence(string value, out long modSequence) =>
+            long.TryParse(
+                value,
+                System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out modSequence)
+            && modSequence >= 0;
 
         private bool TryParseHeaderValue(string headerName, out SearchPredicate predicate)
         {
@@ -4573,13 +4631,26 @@ ILogger<ImapServerService> logger) : BackgroundService
         string criteria,
         IReadOnlySet<int> savedSearchUids,
         bool utf8Enabled,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? explicitCharset = null)
     {
-        if (utf8Enabled && !TryDecodeUtf8WireValue(criteria, out criteria))
+        var decodeUtf8 = explicitCharset?.Equals(
+            "UTF-8",
+            StringComparison.OrdinalIgnoreCase) == true || explicitCharset is null && utf8Enabled;
+        if (decodeUtf8 && !TryDecodeUtf8WireValue(criteria, out criteria))
         {
             return new SearchExecutionResult(
                 [],
-                "BAD Invalid UTF-8 in search criteria");
+                "BAD Invalid UTF-8 in search criteria",
+                null);
+        }
+        if (explicitCharset?.Equals("US-ASCII", StringComparison.OrdinalIgnoreCase) == true
+            && criteria.Any(character => character > '\u007f'))
+        {
+            return new SearchExecutionResult(
+                [],
+                "BAD Invalid US-ASCII in search criteria",
+                null);
         }
 
         var bounds = await query
@@ -4597,7 +4668,8 @@ ILogger<ImapServerService> logger) : BackgroundService
         {
             return new SearchExecutionResult(
                 [],
-                "BAD Invalid search criteria");
+                "BAD Invalid search criteria",
+                null);
         }
 
         var parser = new SearchParser(
@@ -4607,12 +4679,15 @@ ILogger<ImapServerService> logger) : BackgroundService
             savedSearchUids,
             utf8Enabled);
         if (!parser.TryParse(out var predicate, out var failureResponse))
-            return new SearchExecutionResult([], failureResponse);
+            return new SearchExecutionResult([], failureResponse, null);
 
         var includeBody = predicate.Requirements.HasFlag(SearchDataRequirements.Body);
         var includeRawHeaders = predicate.Requirements.HasFlag(SearchDataRequirements.RawHeaders);
+        var includeModSequence = predicate.Requirements.HasFlag(
+            SearchDataRequirements.ModSequenceResult);
         var messageQuery = BuildSearchMessageQuery(query, includeBody, includeRawHeaders);
         var matches = new List<SearchCandidate>();
+        long? highestModSequence = null;
         var sequenceNumber = 0;
         await foreach (var message in messageQuery
                            .AsAsyncEnumerable()
@@ -4620,10 +4695,17 @@ ILogger<ImapServerService> logger) : BackgroundService
         {
             sequenceNumber++;
             if (predicate.IsMatch(message, sequenceNumber))
+            {
                 matches.Add(new SearchCandidate(message.Id, message.Uid, sequenceNumber));
+                if (includeModSequence
+                    && (highestModSequence is null || message.ModSeq > highestModSequence))
+                {
+                    highestModSequence = message.ModSeq;
+                }
+            }
         }
 
-        return new SearchExecutionResult(matches, null);
+        return new SearchExecutionResult(matches, null, highestModSequence);
     }
 
     private static IQueryable<SearchStoredMessage> BuildSearchMessageQuery(
@@ -5085,7 +5167,10 @@ ILogger<ImapServerService> logger) : BackgroundService
         return (null, args);
     }
 
-    private static string BuildEsearchResult(string[] returnOpts, List<int> numbers)
+    private static string BuildEsearchResult(
+        string[] returnOpts,
+        List<int> numbers,
+        long? highestModSequence)
     {
         var parts = new List<string>();
         var opts = new HashSet<string>(returnOpts.Select(o => o.ToUpperInvariant()));
@@ -5102,6 +5187,8 @@ ILogger<ImapServerService> logger) : BackgroundService
             parts.Add($"COUNT {numbers.Count}");
         if (opts.Contains("ALL") && numbers.Count > 0)
             parts.Add($"ALL {FormatUidRange(numbers)}");
+        if (highestModSequence is { } value)
+            parts.Add($"MODSEQ {value}");
 
         return string.Join(' ', parts);
     }
@@ -5128,28 +5215,23 @@ ILogger<ImapServerService> logger) : BackgroundService
     private async Task HandleSortCoreAsync(
         StreamWriter writer, string tag, string args, ImapSession session, bool useUid, CancellationToken ct)
     {
-        var openParen = args.IndexOf('(');
-        var closeParen = args.IndexOf(')');
-        if (openParen < 0 || closeParen < 0 || closeParen <= openParen)
+        if (!TryParseSortArguments(
+                args,
+                out var sortCriteria,
+                out var charset,
+                out var searchCriteria))
         {
             await writer.WriteLineAsync($"{tag} BAD Syntax error");
             return;
         }
 
-        var sortCriteria = args[(openParen + 1)..closeParen]
-            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
-            .Select(criterion => criterion.ToUpperInvariant())
-            .ToArray();
-        var rest = args[(closeParen + 1)..].Trim();
-
-        var charsetSpaceIdx = rest.IndexOf(' ');
-        if (charsetSpaceIdx <= 0 || string.IsNullOrWhiteSpace(rest[(charsetSpaceIdx + 1)..]))
+        if (!charset.Equals("US-ASCII", StringComparison.OrdinalIgnoreCase)
+            && !charset.Equals("UTF-8", StringComparison.OrdinalIgnoreCase))
         {
-            await writer.WriteLineAsync($"{tag} BAD Syntax error");
+            await writer.WriteLineAsync(
+                $"{tag} NO [BADCHARSET (US-ASCII UTF-8)] Unsupported sort charset");
             return;
         }
-
-        var searchCriteria = $"CHARSET {rest[..charsetSpaceIdx]} {rest[(charsetSpaceIdx + 1)..].Trim()}";
 
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
@@ -5165,7 +5247,8 @@ ILogger<ImapServerService> logger) : BackgroundService
             searchCriteria,
             session.SavedSearchUids,
             session.Utf8Enabled,
-            ct);
+            ct,
+            charset);
         if (searchResult.FailureResponse is not null)
         {
             await writer.WriteLineAsync($"{tag} {searchResult.FailureResponse}");
@@ -5173,32 +5256,41 @@ ILogger<ImapServerService> logger) : BackgroundService
         }
 
         var matchedIds = searchResult.Matches.Select(candidate => candidate.Id).ToArray();
-        var query = folderQuery.Where(email => matchedIds.Contains(email.Id));
-        query = ApplySortCriteria(query, sortCriteria);
+        var sequenceById = searchResult.Matches.ToDictionary(
+            candidate => candidate.Id,
+            candidate => candidate.SequenceNumber);
+        var storedMessages = await folderQuery
+            .Where(email => matchedIds.Contains(email.Id))
+            .Select(email => new SortStoredMessage(
+                email.Id,
+                email.Uid,
+                0,
+                email.ReceivedAt,
+                email.SizeBytes,
+                email.Sender,
+                email.Recipient,
+                email.Cc,
+                email.Subject,
+                email.RawHeaders))
+            .ToListAsync(ct);
+        if (transaction is not null)
+            await transaction.CommitAsync(ct);
 
-        if (useUid)
-        {
-            var uids = await query.Select(e => e.Uid).ToListAsync(ct);
-            if (transaction is not null)
-                await transaction.CommitAsync(ct);
-            var result = string.Join(' ', uids);
-            await writer.WriteLineAsync($"* SORT {result}");
-            await writer.WriteLineAsync($"{tag} OK UID SORT completed");
-        }
-        else
-        {
-            var sortedIds = await query.Select(e => e.Id).ToListAsync(ct);
-            if (transaction is not null)
-                await transaction.CommitAsync(ct);
-            var sequenceById = searchResult.Matches.ToDictionary(
-                candidate => candidate.Id,
-                candidate => candidate.SequenceNumber);
-            var seqNums = sortedIds.Select(id => sequenceById[id]).ToList();
+        var messages = storedMessages
+            .Select(message => CreateSortMessage(
+                message with { SequenceNumber = sequenceById[message.Id] }))
+            .ToList();
+        messages.Sort((left, right) => CompareSortMessages(left, right, sortCriteria));
 
-            var result = string.Join(' ', seqNums);
-            await writer.WriteLineAsync($"* SORT {result}");
-            await writer.WriteLineAsync($"{tag} OK SORT completed");
-        }
+        var result = string.Join(
+            ' ',
+            messages.Select(message => useUid ? message.Uid : message.SequenceNumber));
+        var resultSuffix = result.Length == 0 ? string.Empty : $" {result}";
+        var modSequenceSuffix = searchResult.HighestModSequence is { } highestModSequence
+            ? $" (MODSEQ {highestModSequence})"
+            : string.Empty;
+        await writer.WriteLineAsync($"* SORT{resultSuffix}{modSequenceSuffix}");
+        await writer.WriteLineAsync($"{tag} OK {(useUid ? "UID SORT" : "SORT")} completed");
     }
 
     private async Task HandleThreadAsync(
@@ -5381,74 +5473,229 @@ ILogger<ImapServerService> logger) : BackgroundService
         }
     }
 
-    private static string NormalizeSubject(string subject)
+    private static string NormalizeSubject(string subject) => Rfc5256.BaseSubject(subject);
+
+    private static bool TryParseSortArguments(
+        string args,
+        out IReadOnlyList<ImapSortCriterion> criteria,
+        out string charset,
+        out string searchCriteria)
     {
-        var s = subject.Trim();
-        while (s.StartsWith("Re:", StringComparison.OrdinalIgnoreCase) ||
-               s.StartsWith("Fwd:", StringComparison.OrdinalIgnoreCase))
+        criteria = [];
+        charset = string.Empty;
+        searchCriteria = string.Empty;
+
+        var value = args.TrimStart(' ');
+        if (value.Length < 3 || value[0] != '(')
+            return false;
+        var closeParen = value.IndexOf(')');
+        if (closeParen <= 1
+            || closeParen + 1 >= value.Length
+            || value[closeParen + 1] != ' '
+            || value.AsSpan(1, closeParen - 1).Contains('('))
+            return false;
+
+        var tokens = value[1..closeParen]
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (tokens.Length == 0 || tokens.Length > MaximumSearchTokens)
+            return false;
+
+        var parsed = new List<ImapSortCriterion>(tokens.Length);
+        for (var index = 0; index < tokens.Length; index++)
         {
-            var colonIdx = s.IndexOf(':');
-            s = s[(colonIdx + 1)..].TrimStart();
+            var reverse = tokens[index].Equals("REVERSE", StringComparison.OrdinalIgnoreCase);
+            if (reverse && ++index >= tokens.Length)
+                return false;
+
+            var key = tokens[index].ToUpperInvariant() switch
+            {
+                "ARRIVAL" => ImapSortKey.Arrival,
+                "CC" => ImapSortKey.Cc,
+                "DATE" => ImapSortKey.Date,
+                "FROM" => ImapSortKey.From,
+                "SIZE" => ImapSortKey.Size,
+                "SUBJECT" => ImapSortKey.Subject,
+                "TO" => ImapSortKey.To,
+                _ => (ImapSortKey?)null,
+            };
+            if (key is null)
+                return false;
+            parsed.Add(new ImapSortCriterion(key.Value, reverse));
         }
-        return s.ToUpperInvariant();
+
+        var remainder = value[(closeParen + 1)..].TrimStart(' ');
+        if (!TryReadSortCharset(remainder, out charset, out searchCriteria))
+            return false;
+
+        criteria = parsed;
+        return true;
     }
 
-    private static IQueryable<EmailDB> ApplySortCriteria(IQueryable<EmailDB> query, string[] criteria)
+    private static bool TryReadSortCharset(
+        string value,
+        out string charset,
+        out string searchCriteria)
     {
-        IOrderedQueryable<EmailDB>? ordered = null;
+        charset = string.Empty;
+        searchCriteria = string.Empty;
+        if (value.Length == 0)
+            return false;
 
-        foreach (var criterion in criteria)
+        var index = 0;
+        if (value[index] == '"')
         {
-            var reverse = false;
-            var field = criterion;
-
-            if (field == "REVERSE" || field == "(REVERSE")
+            index++;
+            var parsed = new StringBuilder();
+            var terminated = false;
+            while (index < value.Length)
             {
-                // REVERSE applies to the next criterion — handled by checking context
-                continue;
+                var character = value[index++];
+                if (character == '"')
+                {
+                    terminated = true;
+                    break;
+                }
+                if (character == '\\')
+                {
+                    if (index >= value.Length || value[index] is not ('\\' or '"'))
+                        return false;
+                    character = value[index++];
+                }
+                if (character is '\r' or '\n' or '\0')
+                    return false;
+                parsed.Append(character);
             }
-
-            var idx = Array.IndexOf(criteria, criterion);
-            if (idx > 0 && (criteria[idx - 1] == "REVERSE" || criteria[idx - 1] == "(REVERSE"))
-                reverse = true;
-
-            ordered = (field, reverse) switch
+            if (!terminated)
+                return false;
+            charset = parsed.ToString();
+        }
+        else
+        {
+            var start = index;
+            while (index < value.Length && value[index] != ' ')
             {
-                ("DATE" or "ARRIVAL", false) => ordered is null
-                    ? query.OrderBy(e => e.ReceivedAt)
-                    : ordered.ThenBy(e => e.ReceivedAt),
-                ("DATE" or "ARRIVAL", true) => ordered is null
-                    ? query.OrderByDescending(e => e.ReceivedAt)
-                    : ordered.ThenByDescending(e => e.ReceivedAt),
-                ("SUBJECT", false) => ordered is null
-                    ? query.OrderBy(e => e.Subject)
-                    : ordered.ThenBy(e => e.Subject),
-                ("SUBJECT", true) => ordered is null
-                    ? query.OrderByDescending(e => e.Subject)
-                    : ordered.ThenByDescending(e => e.Subject),
-                ("FROM", false) => ordered is null
-                    ? query.OrderBy(e => e.Sender)
-                    : ordered.ThenBy(e => e.Sender),
-                ("FROM", true) => ordered is null
-                    ? query.OrderByDescending(e => e.Sender)
-                    : ordered.ThenByDescending(e => e.Sender),
-                ("TO", false) => ordered is null
-                    ? query.OrderBy(e => e.Recipient)
-                    : ordered.ThenBy(e => e.Recipient),
-                ("TO", true) => ordered is null
-                    ? query.OrderByDescending(e => e.Recipient)
-                    : ordered.ThenByDescending(e => e.Recipient),
-                ("SIZE", false) => ordered is null
-                    ? query.OrderBy(e => e.SizeBytes)
-                    : ordered.ThenBy(e => e.SizeBytes),
-                ("SIZE", true) => ordered is null
-                    ? query.OrderByDescending(e => e.SizeBytes)
-                    : ordered.ThenByDescending(e => e.SizeBytes),
-                _ => ordered,
-            };
+                var character = value[index];
+                if (character <= ' '
+                    || character >= '\u007f'
+                    || character is '(' or ')' or '{' or '%' or '*' or '"' or '\\' or ']')
+                {
+                    return false;
+                }
+                index++;
+            }
+            if (index == start)
+                return false;
+            charset = value[start..index];
         }
 
-        return ordered ?? query.OrderBy(e => e.ReceivedAt);
+        if (index >= value.Length || value[index] != ' ')
+            return false;
+        while (index < value.Length && value[index] == ' ')
+            index++;
+        if (index >= value.Length)
+            return false;
+        searchCriteria = value[index..];
+        return true;
+    }
+
+    private static SortMessage CreateSortMessage(SortStoredMessage stored)
+    {
+        var sentAt = stored.ReceivedAt;
+        var from = FirstMailboxLocalPart(stored.Sender);
+        var to = FirstMailboxLocalPart(stored.Recipient);
+        var cc = FirstMailboxLocalPart(stored.Cc);
+        var subject = stored.Subject;
+
+        if (!string.IsNullOrEmpty(stored.RawHeaders))
+        {
+            try
+            {
+                var rawHeaders = stored.RawHeaders.EndsWith("\r\n\r\n", StringComparison.Ordinal)
+                    || stored.RawHeaders.EndsWith("\n\n", StringComparison.Ordinal)
+                    ? stored.RawHeaders
+                    : stored.RawHeaders + "\r\n\r\n";
+                using var stream = new MemoryStream(
+                    MailWireEncoding.Instance.GetBytes(rawHeaders),
+                    writable: false);
+                using var message = MimeMessage.Load(stream, persistent: false);
+                from = FirstMailboxLocalPart(message.From);
+                to = FirstMailboxLocalPart(message.To);
+                cc = FirstMailboxLocalPart(message.Cc);
+                subject = message.Subject ?? string.Empty;
+                var dateHeader = message.Headers.FirstOrDefault(header =>
+                    header.Field.Equals("Date", StringComparison.OrdinalIgnoreCase));
+                if (dateHeader is not null
+                    && MimeKit.Utils.DateUtils.TryParse(dateHeader.Value, out var parsedDate))
+                {
+                    sentAt = parsedDate.UtcDateTime;
+                }
+            }
+            catch (Exception exception) when (
+                exception is FormatException or IOException or ParseException)
+            {
+                // Legacy rows can contain malformed raw headers. Their normalized
+                // columns remain a deterministic fallback for SORT.
+            }
+        }
+
+        return new SortMessage(
+            stored.Uid,
+            stored.SequenceNumber,
+            stored.ReceivedAt,
+            sentAt,
+            stored.SizeBytes,
+            Rfc5256.UnicodeCasemapSortKey(from),
+            Rfc5256.UnicodeCasemapSortKey(to),
+            Rfc5256.UnicodeCasemapSortKey(cc),
+            Rfc5256.UnicodeCasemapSortKey(Rfc5256.BaseSubject(subject)));
+    }
+
+    private static string FirstMailboxLocalPart(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)
+            || !InternetAddressList.TryParse(value, out var addresses))
+        {
+            return string.Empty;
+        }
+        return FirstMailboxLocalPart(addresses);
+    }
+
+    private static string FirstMailboxLocalPart(InternetAddressList addresses)
+    {
+        var address = addresses.Mailboxes.FirstOrDefault()?.Address;
+        if (string.IsNullOrEmpty(address))
+            return string.Empty;
+        var separator = address.LastIndexOf('@');
+        return separator > 0 ? address[..separator] : address;
+    }
+
+    private static int CompareSortMessages(
+        SortMessage left,
+        SortMessage right,
+        IReadOnlyList<ImapSortCriterion> criteria)
+    {
+        foreach (var criterion in criteria)
+        {
+            var comparison = criterion.Key switch
+            {
+                ImapSortKey.Arrival => left.ReceivedAt.CompareTo(right.ReceivedAt),
+                ImapSortKey.Cc => left.CcSortKey.AsSpan().SequenceCompareTo(right.CcSortKey),
+                ImapSortKey.Date => left.SentAt.CompareTo(right.SentAt),
+                ImapSortKey.From => left.FromSortKey.AsSpan().SequenceCompareTo(right.FromSortKey),
+                ImapSortKey.Size => left.SizeBytes.CompareTo(right.SizeBytes),
+                ImapSortKey.Subject => left.SubjectSortKey.AsSpan().SequenceCompareTo(
+                    right.SubjectSortKey),
+                ImapSortKey.To => left.ToSortKey.AsSpan().SequenceCompareTo(right.ToSortKey),
+                _ => 0,
+            };
+            if (comparison == 0)
+                continue;
+            if (!criterion.Reverse)
+                return comparison;
+            return comparison < 0 ? 1 : -1;
+        }
+
+        return left.SequenceNumber.CompareTo(right.SequenceNumber);
     }
 
     private async Task HandleUidExpungeAsync(

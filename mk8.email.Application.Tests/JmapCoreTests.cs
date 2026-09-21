@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using mk8.email.Application.Interfaces;
+using mk8.email.Application.Protocol;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Infrastructure.Environment;
 using mk8.email.Infrastructure.Models;
@@ -668,6 +669,13 @@ public sealed class JmapCoreTests
     public void EmailSubjectSortUsesTheRfc5256BaseSubject(string subject, string expected)
     {
         Assert.AreEqual(expected, JmapEmailQueryEngine.BaseSubject(subject));
+    }
+
+    [TestMethod]
+    public void UnicodeCasemapTitlecasesEachCodePointBeforeCompatibilityDecomposition()
+    {
+        Assert.IsTrue(Rfc5256.CompareUnicodeCasemap("Ǆ", "DZ\u030c") > 0);
+        Assert.AreEqual(0, Rfc5256.CompareUnicodeCasemap("café", "CAFE\u0301"));
     }
 
     [TestMethod]

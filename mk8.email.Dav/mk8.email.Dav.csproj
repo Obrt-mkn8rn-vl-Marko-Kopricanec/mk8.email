@@ -13,7 +13,7 @@
   <ItemGroup>
     <ProjectReference Include="..\mk8.email.Application\mk8.email.Application.Core.csproj" />
     <ProjectReference Include="..\mk8.email.Contracts\mk8.email.Contracts.csproj" />
-    <ProjectReference Include="..\mk8.email.Infrastructure\mk8.email.Infrastructure.csproj" />
+    <ProjectReference Include="..\mk8.email.Dav.Application\mk8.email.Dav.Application.csproj" />
   </ItemGroup>
 
 </Project>

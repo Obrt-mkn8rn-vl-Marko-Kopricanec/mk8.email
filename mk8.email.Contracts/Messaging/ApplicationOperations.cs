@@ -26,6 +26,22 @@ public static class ApplicationOperations
     public const string JmapUpload = "jmap.upload";
     public const string JmapDownload = "jmap.download";
     public const string JmapEventPoll = "jmap.event.poll";
+    public const string DavAuthenticate = "dav.authenticate";
+    public const string DavEnsureCollections = "dav.collections.ensure";
+    public const string DavCollectionsGet = "dav.collections.get";
+    public const string DavCollectionGet = "dav.collection.get";
+    public const string DavCollectionCreate = "dav.collection.create";
+    public const string DavCollectionUpdate = "dav.collection.update";
+    public const string DavCollectionDelete = "dav.collection.delete";
+    public const string DavPrincipalsGet = "dav.principals.get";
+    public const string DavPrincipalGet = "dav.principal.get";
+    public const string DavSharesReplace = "dav.shares.replace";
+    public const string DavResourcesGet = "dav.resources.get";
+    public const string DavResourceGet = "dav.resource.get";
+    public const string DavChangesGet = "dav.changes.get";
+    public const string DavResourcePut = "dav.resource.put";
+    public const string DavResourceDelete = "dav.resource.delete";
+    public const string DavScheduleSubmit = "dav.schedule.submit";
 }
 
 public sealed record SystemPingResult(DateTimeOffset RespondedAt);

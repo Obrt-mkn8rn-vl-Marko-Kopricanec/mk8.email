@@ -603,6 +603,7 @@
           "Microsoft.Extensions.Hosting": "[10.0.4, )",
           "mk8.email.Application.Core": "[1.0.0, )",
           "mk8.email.Contracts": "[1.0.0, )",
+          "mk8.email.Dav.Application": "[1.0.0, )",
           "mk8.email.Hosting": "[1.0.0, )",
           "mk8.email.Infrastructure": "[1.0.0, )",
           "mk8.email.Jmap": "[1.0.0, )",
@@ -617,6 +618,15 @@
       },
       "mk8.email.contracts": {
         "type": "Project"
+      },
+      "mk8.email.dav.application": {
+        "type": "Project",
+        "dependencies": {
+          "mk8.email.Application.Core": "[1.0.0, )",
+          "mk8.email.Configuration": "[1.0.0, )",
+          "mk8.email.Contracts": "[1.0.0, )",
+          "mk8.email.Infrastructure": "[1.0.0, )"
+        }
       },
       "mk8.email.gateway": {
         "type": "Project",

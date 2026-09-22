@@ -60,8 +60,26 @@ public sealed class ArchitectureBoundaryTests
         Assert.IsFalse(references.Any(reference =>
             reference.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal)
             || reference.StartsWith("mk8.email.Gateway", StringComparison.Ordinal)
-            || reference.StartsWith("mk8.email.Dav", StringComparison.Ordinal)
+            || string.Equals(reference, "mk8.email.Dav", StringComparison.Ordinal)
                 || reference.StartsWith("mk8.email.OAuth", StringComparison.Ordinal)));
+        CollectionAssert.Contains(references, "mk8.email.Dav.Application");
+    }
+
+    [TestMethod]
+    public void DavApplicationLogicHasNoAspNetOrPresentationDependency()
+    {
+        var references = typeof(mk8.email.Dav.DavServiceExtensions).Assembly
+            .GetReferencedAssemblies()
+            .Select(reference => reference.Name ?? string.Empty)
+            .ToArray();
+
+        Assert.AreEqual(
+            "mk8.email.Dav.Application",
+            typeof(mk8.email.Dav.DavServiceExtensions).Assembly.GetName().Name);
+        Assert.IsFalse(references.Any(reference =>
+            reference.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal)
+            || string.Equals(reference, "mk8.email.Dav", StringComparison.Ordinal)
+            || reference.StartsWith("mk8.email.Gateway", StringComparison.Ordinal)));
     }
 
     [TestMethod]

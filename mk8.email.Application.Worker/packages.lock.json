@@ -495,6 +495,15 @@
       "mk8.email.contracts": {
         "type": "Project"
       },
+      "mk8.email.dav.application": {
+        "type": "Project",
+        "dependencies": {
+          "mk8.email.Application.Core": "[1.0.0, )",
+          "mk8.email.Configuration": "[1.0.0, )",
+          "mk8.email.Contracts": "[1.0.0, )",
+          "mk8.email.Infrastructure": "[1.0.0, )"
+        }
+      },
       "mk8.email.hosting": {
         "type": "Project",
         "dependencies": {

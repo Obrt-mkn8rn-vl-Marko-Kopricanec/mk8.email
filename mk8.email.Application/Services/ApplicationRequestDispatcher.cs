@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using mk8.email.Application.Interfaces;
 using mk8.email.Contracts.DTOs;
 using mk8.email.Contracts.Messaging;
+using mk8.email.Dav;
 
 namespace mk8.email.Application.Services;
 
@@ -10,6 +11,7 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
 {
     private const string JsonContentType = "application/json";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private IDavApplicationService Dav => services.GetRequiredService<IDavApplicationService>();
 
     public async Task<ApplicationResponse> DispatchAsync(
         ApplicationRequest request,
@@ -120,6 +122,54 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
                         .PollEventAsync(
                             Deserialize<JmapEventApplicationRequest>(request),
                             cancellationToken)),
+                ApplicationOperations.DavAuthenticate => Success(request.Id,
+                    await Dav.AuthenticateAsync(
+                        Deserialize<DavAuthenticationRequest>(request), cancellationToken)),
+                ApplicationOperations.DavEnsureCollections => Success(request.Id,
+                    await Dav.EnsureCollectionsAsync(
+                        Deserialize<DavEnsureCollectionsRequest>(request), cancellationToken)),
+                ApplicationOperations.DavCollectionsGet => Success(request.Id,
+                    await Dav.GetCollectionsAsync(
+                        Deserialize<DavCollectionListRequest>(request), cancellationToken)),
+                ApplicationOperations.DavCollectionGet => Success(request.Id,
+                    await Dav.GetCollectionAsync(
+                        Deserialize<DavCollectionLookupRequest>(request), cancellationToken)),
+                ApplicationOperations.DavCollectionCreate => Success(request.Id,
+                    await Dav.CreateCollectionAsync(
+                        Deserialize<DavCollectionCreateRequest>(request), cancellationToken)),
+                ApplicationOperations.DavCollectionUpdate => Success(request.Id,
+                    await Dav.UpdateCollectionAsync(
+                        Deserialize<DavCollectionUpdateRequest>(request), cancellationToken)),
+                ApplicationOperations.DavCollectionDelete => Success(request.Id,
+                    await Dav.DeleteCollectionAsync(
+                        Deserialize<DavCollectionDeleteRequest>(request), cancellationToken)),
+                ApplicationOperations.DavPrincipalsGet => Success(request.Id,
+                    await Dav.GetPrincipalsAsync(
+                        Deserialize<DavPrincipalListRequest>(request), cancellationToken)),
+                ApplicationOperations.DavPrincipalGet => Success(request.Id,
+                    await Dav.GetPrincipalAsync(
+                        Deserialize<DavPrincipalLookupRequest>(request), cancellationToken)),
+                ApplicationOperations.DavSharesReplace => Success(request.Id,
+                    await Dav.ReplaceSharesAsync(
+                        Deserialize<DavShareReplaceRequest>(request), cancellationToken)),
+                ApplicationOperations.DavResourcesGet => Success(request.Id,
+                    await Dav.GetResourcesAsync(
+                        Deserialize<DavCollectionReference>(request), cancellationToken)),
+                ApplicationOperations.DavResourceGet => Success(request.Id,
+                    await Dav.GetResourceAsync(
+                        Deserialize<DavResourceLookupRequest>(request), cancellationToken)),
+                ApplicationOperations.DavChangesGet => Success(request.Id,
+                    await Dav.GetChangesAsync(
+                        Deserialize<DavChangesRequest>(request), cancellationToken)),
+                ApplicationOperations.DavResourcePut => Success(request.Id,
+                    await Dav.PutResourceAsync(
+                        Deserialize<DavResourcePutRequest>(request), cancellationToken)),
+                ApplicationOperations.DavResourceDelete => Success(request.Id,
+                    await Dav.DeleteResourceAsync(
+                        Deserialize<DavResourceDeleteRequest>(request), cancellationToken)),
+                ApplicationOperations.DavScheduleSubmit => Success(request.Id,
+                    await Dav.SubmitScheduleAsync(
+                        Deserialize<DavScheduleSubmitRequest>(request), cancellationToken)),
                 _ => Error(request.Id, "unknown-operation", "The application operation is not supported."),
             };
         }

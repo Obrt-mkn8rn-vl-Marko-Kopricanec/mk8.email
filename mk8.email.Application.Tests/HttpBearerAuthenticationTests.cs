@@ -4,6 +4,8 @@ using mk8.email.Application.Interfaces;
 using mk8.email.Dav;
 using mk8.email.Configuration;
 using mk8.email.Contracts.Messaging;
+using mk8.email.Gateway.ApplicationBridge;
+using mk8.email.Gateway.Protocols.Dav;
 using mk8.email.Gateway.Protocols.Jmap;
 
 namespace mk8.email.Application.Tests;
@@ -12,19 +14,14 @@ namespace mk8.email.Application.Tests;
 public sealed class HttpBearerAuthenticationTests
 {
     [TestMethod]
-    public async Task GatewayParsesJmapBearerAndDavUsesItsProtocolScope()
+    public async Task GatewayParsesJmapBearerAndForwardsDavBearerToWorker()
     {
-        var tokenService = new RecordingOAuthTokenService();
-        var services = new ServiceCollection()
-            .AddSingleton<IOAuthTokenService>(tokenService)
-            .BuildServiceProvider();
         var environment = new EnvironmentConfig
         {
             OAuth = new OAuthConfig { EnableOAuth = true },
         };
-        var authenticator = new RejectingMailAuthenticator();
 
-        var jmapContext = CreateContext(services);
+        var jmapContext = CreateContext();
         Assert.IsTrue(GatewayJmapAuthentication.TryParse(
             jmapContext.Request,
             environment,
@@ -32,13 +29,42 @@ public sealed class HttpBearerAuthenticationTests
         Assert.AreEqual(ProtocolAuthenticationKinds.BearerToken, jmapAuthentication.Kind);
         Assert.AreEqual("access-token", jmapAuthentication.Secret);
 
-        var davContext = CreateContext(services);
-        var davUser = await DavHttpAuthentication.AuthenticateAsync(
+        var transport = new RecordingDavTransport();
+        var davContext = CreateContext();
+        var davUser = await GatewayDavHttpAuthentication.AuthenticateAsync(
             davContext,
-            authenticator,
+            new GatewayDavStore(transport),
             environment,
             CancellationToken.None);
         Assert.IsNotNull(davUser);
+        Assert.AreEqual(ApplicationOperations.DavAuthenticate, transport.LastOperation);
+        var forwarded = transport.LastAuthentication;
+        Assert.IsNotNull(forwarded);
+        Assert.AreEqual(ProtocolAuthenticationKinds.BearerToken, forwarded.Kind);
+        Assert.AreEqual("access-token", forwarded.Secret);
+    }
+
+    [TestMethod]
+    public async Task DavApplicationAuthenticatesBearerWithDavScope()
+    {
+        await using var fixture = await DavFixture.CreateAsync();
+        using var scope = fixture.Services.CreateScope();
+        var tokenService = new RecordingOAuthTokenService();
+        await using var services = new ServiceCollection()
+            .AddSingleton<IOAuthTokenService>(tokenService)
+            .BuildServiceProvider();
+        var application = new DavApplicationService(
+            scope.ServiceProvider.GetRequiredService<DavStore>(),
+            scope.ServiceProvider.GetRequiredService<DavSchedulingService>(),
+            scope.ServiceProvider.GetRequiredService<IMailAuthenticator>(),
+            services);
+
+        var result = await application.AuthenticateAsync(
+            new DavAuthenticationRequest(new ProtocolAuthentication(
+                ProtocolAuthenticationKinds.BearerToken, null, "access-token")),
+            CancellationToken.None);
+
+        Assert.IsNotNull(result.Value);
         Assert.AreEqual("dav", tokenService.LastScope);
     }
 
@@ -59,7 +85,7 @@ public sealed class HttpBearerAuthenticationTests
 
         var davContext = new DefaultHttpContext();
         davContext.Response.Body = new MemoryStream();
-        await DavHttpAuthentication.WriteUnauthorizedAsync(
+        await GatewayDavHttpAuthentication.WriteUnauthorizedAsync(
             davContext,
             environment,
             CancellationToken.None);
@@ -70,20 +96,30 @@ public sealed class HttpBearerAuthenticationTests
             "Basic realm=\"mk8.email DAV\", charset=\"UTF-8\"");
     }
 
-    private static DefaultHttpContext CreateContext(IServiceProvider services)
+    private static DefaultHttpContext CreateContext()
     {
-        var context = new DefaultHttpContext { RequestServices = services };
+        var context = new DefaultHttpContext();
         context.Request.Headers.Authorization = "Bearer access-token";
         return context;
     }
 
-    private sealed class RejectingMailAuthenticator : IMailAuthenticator
+    private sealed class RecordingDavTransport : IGatewayApplicationTransport
     {
-        public Task<AuthenticatedMailUser?> AuthenticateAsync(
-            string username,
-            string password,
-            CancellationToken cancellationToken = default) =>
-            Task.FromResult<AuthenticatedMailUser?>(null);
+        public string? LastOperation { get; private set; }
+        public ProtocolAuthentication? LastAuthentication { get; private set; }
+
+        public Task<TResponse> SendAsync<TRequest, TResponse>(
+            string protocol,
+            string operation,
+            TRequest value,
+            CancellationToken cancellationToken = default)
+        {
+            Assert.AreEqual("dav", protocol);
+            LastOperation = operation;
+            LastAuthentication = Assert.IsInstanceOfType<DavAuthenticationRequest>(value).Authentication;
+            return Task.FromResult((TResponse)(object)new DavLookupResult<DavUser>(
+                new DavUser(Guid.CreateVersion7(), "user@example.com")));
+        }
     }
 
     private sealed class RecordingOAuthTokenService : IOAuthTokenService

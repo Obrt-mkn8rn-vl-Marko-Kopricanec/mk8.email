@@ -1,8 +1,3 @@
-using System.Net;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -11,7 +6,6 @@ using mk8.email.Application.Interfaces;
 using mk8.email.Application.Services;
 using mk8.email.CLI;
 using mk8.email.Contracts.Enums;
-using mk8.email.Dav;
 using mk8.email.Infrastructure;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
@@ -261,7 +255,7 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
             return disabled ? 0 : 1;
         }
 
-        using var protocolHost = BuildProtocolHost(arguments, environmentConfig, isDevelopment);
+        using var protocolHost = BuildHost(arguments, environmentConfig, includeMailServers: true);
         using (var scope = protocolHost.Services.CreateScope())
         {
             await scope.ServiceProvider.GetRequiredService<ISeederService>().SeedAsync();
@@ -326,73 +320,4 @@ static IHost BuildHost(
         builder.Services.AddMailProtocolServers();
     }
     return builder.Build();
-}
-
-static IHost BuildProtocolHost(
-    string[] arguments,
-    EnvironmentConfig environmentConfig,
-    bool isDevelopment)
-{
-    if (!environmentConfig.Dav.EnableDav)
-        return BuildHost(arguments, environmentConfig, includeMailServers: true);
-
-    var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions
-    {
-        Args = [],
-        EnvironmentName = isDevelopment ? Environments.Development : Environments.Production,
-    });
-    builder.Logging.ClearProviders();
-    builder.Logging.AddJsonConsole();
-    builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
-    builder.Logging.AddFilter("Microsoft.EntityFrameworkCore.Database.Command", LogLevel.Warning);
-    builder.WebHost.ConfigureKestrel(options =>
-    {
-        options.AddServerHeader = false;
-        options.Listen(IPAddress.Loopback, environmentConfig.Jmap.Port);
-        options.Limits.MaxRequestBodySize = environmentConfig.Dav.MaxResourceSizeBytes;
-        options.Limits.RequestHeadersTimeout = TimeSpan.FromSeconds(15);
-        options.Limits.KeepAliveTimeout = TimeSpan.FromMinutes(2);
-    });
-
-    builder.Services.AddInfrastructure(environmentConfig);
-    builder.Services.AddApplication();
-    builder.Services.AddAzureBlobObjectStorage(environmentConfig);
-    builder.Services.AddMailProtocolServers();
-    if (environmentConfig.Dav.EnableDav)
-        builder.Services.AddDavProtocol();
-    builder.Services.Configure<ForwardedHeadersOptions>(options =>
-    {
-        options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
-        options.ForwardLimit = 1;
-        options.KnownProxies.Add(IPAddress.Loopback);
-        options.KnownProxies.Add(IPAddress.IPv6Loopback);
-    });
-
-    var app = builder.Build();
-    app.UseForwardedHeaders();
-    app.Use(async (context, next) =>
-    {
-        context.Response.Headers["X-Content-Type-Options"] = "nosniff";
-        context.Response.Headers["Referrer-Policy"] = "no-referrer";
-        context.Response.Headers["Content-Security-Policy"] =
-            "default-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
-        if (!isDevelopment && !context.Request.IsHttps)
-        {
-            context.Response.StatusCode = StatusCodes.Status400BadRequest;
-            context.Response.ContentType = "application/problem+json";
-            await context.Response.WriteAsJsonAsync(new
-            {
-                type = "about:blank",
-                title = "HTTPS required",
-                status = StatusCodes.Status400BadRequest,
-            });
-            return;
-        }
-
-        await next(context);
-    });
-    app.UseRouting();
-    if (environmentConfig.Dav.EnableDav)
-        app.MapDavEndpoints();
-    return app;
 }

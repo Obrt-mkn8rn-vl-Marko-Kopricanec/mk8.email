@@ -8,11 +8,13 @@ public static class GatewayProtocolPaths
             return "oauth";
         if (IsJmap(path))
             return "jmap";
+        if (IsDav(path))
+            return "dav";
         return null;
     }
 
     public static bool IsPublicProtocol(PathString path) =>
-        IsOAuth(path) || IsJmap(path);
+        IsOAuth(path) || IsJmap(path) || IsDav(path);
 
     public static bool IsOAuth(PathString path) =>
         path.StartsWithSegments("/oauth")
@@ -22,6 +24,11 @@ public static class GatewayProtocolPaths
     public static bool IsJmap(PathString path) =>
         path.StartsWithSegments("/jmap")
         || path.Equals("/.well-known/jmap");
+
+    public static bool IsDav(PathString path) =>
+        path.StartsWithSegments("/dav")
+        || path.Equals("/.well-known/caldav")
+        || path.Equals("/.well-known/carddav");
 
     public static bool IsStreaming(PathString path) => path.Equals("/jmap/event");
 }

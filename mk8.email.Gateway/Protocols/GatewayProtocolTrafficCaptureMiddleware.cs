@@ -123,6 +123,8 @@ public sealed class GatewayProtocolTrafficCaptureMiddleware(
             ? Math.Max(
                 environment.Jmap.MaxRequestSizeBytes,
                 environment.Jmap.MaxUploadSizeBytes)
+            : protocol == "dav"
+                ? Math.Max(1_048_576, environment.Dav.MaxResourceSizeBytes)
             : BufferThresholdBytes;
 
     private static async Task<byte[]> CaptureRequestAsync(

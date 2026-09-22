@@ -294,14 +294,6 @@
       "mk8.email.contracts": {
         "type": "Project"
       },
-      "mk8.email.dav": {
-        "type": "Project",
-        "dependencies": {
-          "mk8.email.Application.Core": "[1.0.0, )",
-          "mk8.email.Contracts": "[1.0.0, )",
-          "mk8.email.Dav.Application": "[1.0.0, )"
-        }
-      },
       "mk8.email.dav.application": {
         "type": "Project",
         "dependencies": {

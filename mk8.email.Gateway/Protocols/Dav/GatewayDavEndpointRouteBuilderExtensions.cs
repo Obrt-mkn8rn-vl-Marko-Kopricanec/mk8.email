@@ -5,12 +5,12 @@ using System.Xml.Linq;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
-using mk8.email.Application.Interfaces;
+using mk8.email.Dav;
 using mk8.email.Configuration;
 
-namespace mk8.email.Dav;
+namespace mk8.email.Gateway.Protocols.Dav;
 
-public static class DavEndpointRouteBuilderExtensions
+public static class GatewayDavEndpointRouteBuilderExtensions
 {
     private static readonly XNamespace Dav = "DAV:";
     private static readonly XNamespace CalDav = "urn:ietf:params:xml:ns:caldav";
@@ -41,9 +41,7 @@ public static class DavEndpointRouteBuilderExtensions
 
     private static async Task HandleDavAsync(
         HttpContext context,
-        IMailAuthenticator authenticator,
-        DavStore store,
-        DavSchedulingService scheduling,
+        GatewayDavStore store,
         EnvironmentConfig environment,
         CancellationToken cancellationToken)
     {
@@ -59,14 +57,14 @@ public static class DavEndpointRouteBuilderExtensions
             return;
         }
 
-        var user = await DavHttpAuthentication.AuthenticateAsync(
+        var user = await GatewayDavHttpAuthentication.AuthenticateAsync(
             context,
-            authenticator,
+            store,
             environment,
             cancellationToken);
         if (user is null)
         {
-            await DavHttpAuthentication.WriteUnauthorizedAsync(
+            await GatewayDavHttpAuthentication.WriteUnauthorizedAsync(
                 context,
                 environment,
                 cancellationToken);
@@ -114,7 +112,7 @@ public static class DavEndpointRouteBuilderExtensions
                     context,
                     user,
                     path,
-                    scheduling,
+                    store,
                     environment,
                     cancellationToken);
                 break;
@@ -129,9 +127,9 @@ public static class DavEndpointRouteBuilderExtensions
 
     private static async Task HandlePropfindAsync(
         HttpContext context,
-        AuthenticatedMailUser user,
+        DavUser user,
         DavPath path,
-        DavStore store,
+        GatewayDavStore store,
         EnvironmentConfig environment,
         CancellationToken cancellationToken)
     {
@@ -264,7 +262,8 @@ public static class DavEndpointRouteBuilderExtensions
                     if (depth == "1")
                     {
                         var resources = await store.GetResourcesAsync(
-                            collection.Id,
+                            user,
+                            collection,
                             cancellationToken);
                         foreach (var resource in resources)
                         {
@@ -298,9 +297,9 @@ public static class DavEndpointRouteBuilderExtensions
 
     private static async Task HandleReportAsync(
         HttpContext context,
-        AuthenticatedMailUser user,
+        DavUser user,
         DavPath path,
-        DavStore store,
+        GatewayDavStore store,
         CancellationToken cancellationToken)
     {
         var parsed = await ReadXmlBodyAsync(context.Request, 1_048_576, cancellationToken);
@@ -352,6 +351,7 @@ public static class DavEndpointRouteBuilderExtensions
         {
             await HandleSyncCollectionReportAsync(
                 context,
+                user,
                 collection,
                 root,
                 store,
@@ -363,6 +363,7 @@ public static class DavEndpointRouteBuilderExtensions
         {
             await HandleMultigetReportAsync(
                 context,
+                user,
                 collection,
                 root,
                 store,
@@ -374,6 +375,7 @@ public static class DavEndpointRouteBuilderExtensions
         {
             await HandleQueryReportAsync(
                 context,
+                user,
                 collection,
                 root,
                 store,
@@ -418,9 +420,9 @@ public static class DavEndpointRouteBuilderExtensions
 
     private static async Task HandlePrincipalPropertySearchAsync(
         HttpContext context,
-        AuthenticatedMailUser user,
+        DavUser user,
         XElement root,
-        DavStore store,
+        GatewayDavStore store,
         CancellationToken cancellationToken)
     {
         var depth = context.Request.Headers["Depth"].ToString();
@@ -469,9 +471,10 @@ public static class DavEndpointRouteBuilderExtensions
 
     private static async Task HandleSyncCollectionReportAsync(
         HttpContext context,
+        DavUser user,
         DavCollection collection,
         XElement root,
-        DavStore store,
+        GatewayDavStore store,
         CancellationToken cancellationToken)
     {
         var tokenValue = root.Element(Dav + "sync-token")?.Value.Trim() ?? string.Empty;
@@ -497,7 +500,7 @@ public static class DavEndpointRouteBuilderExtensions
         var responses = new List<XElement>();
         if (since == 0)
         {
-            foreach (var resource in await store.GetResourcesAsync(collection.Id, cancellationToken))
+            foreach (var resource in await store.GetResourcesAsync(user, collection, cancellationToken))
             {
                 responses.Add(CreatePropertyResponse(
                     ResourceHref(collection, resource.ResourceName),
@@ -507,7 +510,7 @@ public static class DavEndpointRouteBuilderExtensions
         }
         else
         {
-            var changes = await store.GetChangesAsync(collection.Id, since, cancellationToken);
+            var changes = await store.GetChangesAsync(user, collection, since, cancellationToken);
             var latestChanges = changes
                 .GroupBy(change => change.ResourceName, StringComparer.Ordinal)
                 .Select(group => group.MaxBy(change => change.Sequence)!)
@@ -521,7 +524,8 @@ public static class DavEndpointRouteBuilderExtensions
                     continue;
                 }
                 var resource = await store.GetResourceAsync(
-                    collection.Id,
+                    user,
+                    collection,
                     change.ResourceName,
                     cancellationToken);
                 responses.Add(resource is null
@@ -542,9 +546,10 @@ public static class DavEndpointRouteBuilderExtensions
 
     private static async Task HandleMultigetReportAsync(
         HttpContext context,
+        DavUser user,
         DavCollection collection,
         XElement root,
-        DavStore store,
+        GatewayDavStore store,
         CancellationToken cancellationToken)
     {
         var requested = GetRequestedProperties(new XDocument(root));
@@ -555,7 +560,8 @@ public static class DavEndpointRouteBuilderExtensions
                 continue;
             var href = ResourceHref(collection, resourceName);
             var resource = await store.GetResourceAsync(
-                collection.Id,
+                user,
+                collection,
                 resourceName,
                 cancellationToken);
             responses.Add(resource is null
@@ -570,13 +576,14 @@ public static class DavEndpointRouteBuilderExtensions
 
     private static async Task HandleQueryReportAsync(
         HttpContext context,
+        DavUser user,
         DavCollection collection,
         XElement root,
-        DavStore store,
+        GatewayDavStore store,
         CancellationToken cancellationToken)
     {
         var requested = GetRequestedProperties(new XDocument(root));
-        var resources = await store.GetResourcesAsync(collection.Id, cancellationToken);
+        var resources = await store.GetResourcesAsync(user, collection, cancellationToken);
         var responses = new List<XElement>();
         foreach (var resource in resources)
         {
@@ -592,9 +599,9 @@ public static class DavEndpointRouteBuilderExtensions
 
     private static async Task HandleSchedulingPostAsync(
         HttpContext context,
-        AuthenticatedMailUser user,
+        DavUser user,
         DavPath path,
-        DavSchedulingService scheduling,
+        GatewayDavStore scheduling,
         EnvironmentConfig environment,
         CancellationToken cancellationToken)
     {
@@ -602,7 +609,7 @@ public static class DavEndpointRouteBuilderExtensions
             || path.CollectionKind != DavCollectionKind.Calendar
             || !string.Equals(
                 path.Slug,
-                DavStore.SchedulingOutboxSlug,
+                GatewayDavStore.SchedulingOutboxSlug,
                 StringComparison.Ordinal))
         {
             context.Response.StatusCode = StatusCodes.Status405MethodNotAllowed;
@@ -658,9 +665,9 @@ public static class DavEndpointRouteBuilderExtensions
 
     private static async Task HandleGetAsync(
         HttpContext context,
-        AuthenticatedMailUser user,
+        DavUser user,
         DavPath path,
-        DavStore store,
+        GatewayDavStore store,
         bool writeBody,
         CancellationToken cancellationToken)
     {
@@ -679,7 +686,7 @@ public static class DavEndpointRouteBuilderExtensions
         context.Response.StatusCode = StatusCodes.Status200OK;
         context.Response.ContentType = resource.ContentType;
         context.Response.ContentLength = resource.SizeBytes;
-        context.Response.Headers.ETag = DavStore.QuoteEtag(resource.Etag);
+        context.Response.Headers.ETag = GatewayDavStore.QuoteEtag(resource.Etag);
         context.Response.Headers.LastModified = resource.UpdatedAt.ToUniversalTime().ToString("R", CultureInfo.InvariantCulture);
         context.Response.Headers.CacheControl = "private, no-cache";
         if (writeBody)
@@ -688,14 +695,14 @@ public static class DavEndpointRouteBuilderExtensions
 
     private static async Task HandlePutAsync(
         HttpContext context,
-        AuthenticatedMailUser user,
+        DavUser user,
         DavPath path,
-        DavStore store,
+        GatewayDavStore store,
         EnvironmentConfig environment,
         CancellationToken cancellationToken)
     {
         if (path.Kind != DavPathKind.Resource
-            || DavStore.IsSchedulingCollection(path.Slug!)
+            || GatewayDavStore.IsSchedulingCollection(path.Slug!)
             || !HasExpectedExtension(path.CollectionKind!.Value, path.ResourceName!))
         {
             context.Response.StatusCode = StatusCodes.Status409Conflict;
@@ -799,15 +806,15 @@ public static class DavEndpointRouteBuilderExtensions
                 context.Response.StatusCode = StatusCodes.Status409Conflict;
                 return;
         }
-        context.Response.Headers.ETag = DavStore.QuoteEtag(result.Resource!.Etag);
+        context.Response.Headers.ETag = GatewayDavStore.QuoteEtag(result.Resource!.Etag);
         context.Response.Headers.Location = ResourceHref(collection, path.ResourceName!);
     }
 
     private static async Task HandleDeleteAsync(
         HttpContext context,
-        AuthenticatedMailUser user,
+        DavUser user,
         DavPath path,
-        DavStore store,
+        GatewayDavStore store,
         CancellationToken cancellationToken)
     {
         if (path.Kind == DavPathKind.Resource)
@@ -868,9 +875,9 @@ public static class DavEndpointRouteBuilderExtensions
 
     private static async Task HandleMakeCollectionAsync(
         HttpContext context,
-        AuthenticatedMailUser user,
+        DavUser user,
         DavPath path,
-        DavStore store,
+        GatewayDavStore store,
         CancellationToken cancellationToken)
     {
         if (path.Kind != DavPathKind.Collection)
@@ -878,7 +885,7 @@ public static class DavEndpointRouteBuilderExtensions
             context.Response.StatusCode = StatusCodes.Status409Conflict;
             return;
         }
-        if (DavStore.IsSchedulingCollection(path.Slug!))
+        if (GatewayDavStore.IsSchedulingCollection(path.Slug!))
         {
             context.Response.StatusCode = StatusCodes.Status403Forbidden;
             return;
@@ -920,9 +927,9 @@ public static class DavEndpointRouteBuilderExtensions
 
     private static async Task HandleProppatchAsync(
         HttpContext context,
-        AuthenticatedMailUser user,
+        DavUser user,
         DavPath path,
-        DavStore store,
+        GatewayDavStore store,
         CancellationToken cancellationToken)
     {
         if (path.Kind != DavPathKind.Collection)
@@ -981,9 +988,9 @@ public static class DavEndpointRouteBuilderExtensions
 
     private static async Task HandleAclAsync(
         HttpContext context,
-        AuthenticatedMailUser user,
+        DavUser user,
         DavPath path,
-        DavStore store,
+        GatewayDavStore store,
         CancellationToken cancellationToken)
     {
         if (path.Kind != DavPathKind.Collection)
@@ -1003,7 +1010,7 @@ public static class DavEndpointRouteBuilderExtensions
             context.Response.StatusCode = StatusCodes.Status404NotFound;
             return;
         }
-        if (!collection.IsOwner || DavStore.IsSchedulingCollection(collection.Slug))
+        if (!collection.IsOwner || GatewayDavStore.IsSchedulingCollection(collection.Slug))
         {
             await WriteDavErrorAsync(
                 context,
@@ -1197,7 +1204,7 @@ public static class DavEndpointRouteBuilderExtensions
             && Guid.TryParseExact(segments[2], "N", out principalId);
     }
 
-    private static IReadOnlyDictionary<XName, XElement> RootProperties(AuthenticatedMailUser user) =>
+    private static IReadOnlyDictionary<XName, XElement> RootProperties(DavUser user) =>
         BuildProperties(
             new XElement(Dav + "resourcetype", new XElement(Dav + "collection")),
             new XElement(Dav + "displayname", "mk8.email DAV"),
@@ -1208,7 +1215,7 @@ public static class DavEndpointRouteBuilderExtensions
             HrefProperty(CardDav + "addressbook-home-set", HomeHref(DavCollectionKind.AddressBook, user.Id)));
 
     private static IReadOnlyDictionary<XName, XElement> PrincipalCollectionProperties(
-        AuthenticatedMailUser user) => BuildProperties(
+        DavUser user) => BuildProperties(
         new XElement(Dav + "resourcetype", new XElement(Dav + "collection")),
         new XElement(Dav + "displayname", "Principals"),
         HrefProperty(Dav + "current-user-principal", PrincipalHref(user.Id)),
@@ -1230,8 +1237,8 @@ public static class DavEndpointRouteBuilderExtensions
             HrefProperty(Dav + "principal-collection-set", PrincipalCollectionHref),
             HrefProperty(CalDav + "calendar-home-set", HomeHref(DavCollectionKind.Calendar, principal.Id)),
             HrefProperty(CardDav + "addressbook-home-set", HomeHref(DavCollectionKind.AddressBook, principal.Id)),
-            HrefProperty(CalDav + "schedule-inbox-URL", SchedulingHref(principal.Id, DavStore.SchedulingInboxSlug)),
-            HrefProperty(CalDav + "schedule-outbox-URL", SchedulingHref(principal.Id, DavStore.SchedulingOutboxSlug)),
+            HrefProperty(CalDav + "schedule-inbox-URL", SchedulingHref(principal.Id, GatewayDavStore.SchedulingInboxSlug)),
+            HrefProperty(CalDav + "schedule-outbox-URL", SchedulingHref(principal.Id, GatewayDavStore.SchedulingOutboxSlug)),
             new XElement(CalDav + "calendar-user-type", "INDIVIDUAL"),
             new XElement(CalDav + "calendar-user-address-set",
                 new XElement(Dav + "href", $"mailto:{principal.Username}")),
@@ -1242,7 +1249,7 @@ public static class DavEndpointRouteBuilderExtensions
             SupportedPrivilegeSet());
 
     private static IReadOnlyDictionary<XName, XElement> HomeProperties(
-        AuthenticatedMailUser user,
+        DavUser user,
         DavCollectionKind kind) => BuildProperties(
         new XElement(Dav + "resourcetype", new XElement(Dav + "collection")),
         new XElement(Dav + "displayname", kind == DavCollectionKind.Calendar ? "Calendars" : "Address Books"),
@@ -1258,11 +1265,11 @@ public static class DavEndpointRouteBuilderExtensions
     {
         var schedulingInbox = string.Equals(
             collection.Slug,
-            DavStore.SchedulingInboxSlug,
+            GatewayDavStore.SchedulingInboxSlug,
             StringComparison.Ordinal);
         var schedulingOutbox = string.Equals(
             collection.Slug,
-            DavStore.SchedulingOutboxSlug,
+            GatewayDavStore.SchedulingOutboxSlug,
             StringComparison.Ordinal);
         var resourceType = schedulingInbox
             ? CalDav + "schedule-inbox"
@@ -1318,7 +1325,7 @@ public static class DavEndpointRouteBuilderExtensions
         DavResource resource,
         bool includeData) => BuildProperties(
         new XElement(Dav + "resourcetype"),
-        new XElement(Dav + "getetag", DavStore.QuoteEtag(resource.Etag)),
+        new XElement(Dav + "getetag", GatewayDavStore.QuoteEtag(resource.Etag)),
         new XElement(Dav + "getcontenttype", resource.ContentType),
         new XElement(Dav + "getcontentlength", resource.SizeBytes.ToString(CultureInfo.InvariantCulture)),
         new XElement(Dav + "getlastmodified", resource.UpdatedAt.ToUniversalTime().ToString("R", CultureInfo.InvariantCulture)),
@@ -1622,9 +1629,9 @@ public static class DavEndpointRouteBuilderExtensions
         };
 
     private static async Task<(DavCollection Collection, DavResource Resource)?> ResolveResourceAsync(
-        AuthenticatedMailUser user,
+        DavUser user,
         DavPath path,
-        DavStore store,
+        GatewayDavStore store,
         CancellationToken cancellationToken)
     {
         var collection = await store.GetCollectionAsync(
@@ -1636,7 +1643,8 @@ public static class DavEndpointRouteBuilderExtensions
         if (collection is null)
             return null;
         var resource = await store.GetResourceAsync(
-            collection.Id,
+            user,
+            collection,
             path.ResourceName!,
             cancellationToken);
         return resource is null ? null : (collection, resource);

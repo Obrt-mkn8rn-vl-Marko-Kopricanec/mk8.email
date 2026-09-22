@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -17,6 +18,9 @@ using mk8.email.Configuration;
 using mk8.email.Contracts.Storage;
 using mk8.email.Infrastructure.Models;
 using mk8.email.Gateway.Protocols.Jmap;
+using mk8.email.Gateway.Protocols.Dav;
+using mk8.email.Gateway.ApplicationBridge;
+using mk8.email.Contracts.Messaging;
 using mk8.email.Jmap;
 using mk8.email.Utils;
 
@@ -113,9 +117,11 @@ internal sealed class DavFixture : IAsyncDisposable
         builder.Services.AddDavProtocol();
         builder.Services.AddJmapApplication();
         builder.Services.AddSingleton<IGatewayJmapClient, InProcessGatewayJmapClient>();
+        builder.Services.AddScoped<GatewayDavStore>();
+        builder.Services.AddSingleton<IGatewayApplicationTransport, InProcessDavTransport>();
 
         var application = builder.Build();
-        application.MapDavEndpoints();
+        GatewayDavEndpointRouteBuilderExtensions.MapDavEndpoints(application);
         application.MapJmapEndpoints();
 
         var userId = Guid.CreateVersion7();
@@ -327,6 +333,32 @@ internal sealed class DavFixture : IAsyncDisposable
             lock (submissions)
                 submissions.Add(submission);
             return Task.FromResult(submission.QueueId);
+        }
+    }
+
+    private sealed class InProcessDavTransport(IServiceScopeFactory scopes)
+        : IGatewayApplicationTransport
+    {
+        private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
+        public async Task<TResponse> SendAsync<TRequest, TResponse>(
+            string protocol,
+            string operation,
+            TRequest value,
+            CancellationToken cancellationToken = default)
+        {
+            Assert.AreEqual("dav", protocol);
+            using var scope = scopes.CreateScope();
+            var now = DateTimeOffset.UtcNow;
+            var request = new ApplicationRequest(
+                Guid.CreateVersion7(), Guid.CreateVersion7(), 0, protocol, operation,
+                "application/json", JsonSerializer.SerializeToUtf8Bytes(value, JsonOptions),
+                new Dictionary<string, string>(), now, now.AddMinutes(1));
+            var response = await new ApplicationRequestDispatcher(scope.ServiceProvider)
+                .DispatchAsync(request, cancellationToken);
+            Assert.IsFalse(response.IsError, response.ErrorDetail);
+            return JsonSerializer.Deserialize<TResponse>(response.Payload, JsonOptions)
+                ?? throw new AssertFailedException("The DAV application response was empty.");
         }
     }
 }

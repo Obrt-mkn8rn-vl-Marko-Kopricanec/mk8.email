@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.HttpOverrides;
 using mk8.email.Configuration;
 using mk8.email.Gateway.ApplicationBridge;
 using mk8.email.Gateway.Protocols;
+using mk8.email.Gateway.Protocols.Dav;
 using mk8.email.Gateway.Protocols.Jmap;
 using mk8.email.Gateway.Protocols.OAuth;
 using mk8.email.Gateway.Security;
@@ -27,6 +28,10 @@ builder.WebHost.ConfigureKestrel(options =>
                 environmentConfig.Jmap.MaxRequestSizeBytes,
                 environmentConfig.Jmap.MaxUploadSizeBytes))
         : 64 * 1024;
+    if (environmentConfig.Dav.EnableDav)
+        options.Limits.MaxRequestBodySize = Math.Max(
+            options.Limits.MaxRequestBodySize.Value,
+            Math.Max(1_048_576, environmentConfig.Dav.MaxResourceSizeBytes));
 });
 
 builder.Logging.ClearProviders();
@@ -35,6 +40,8 @@ builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
 
 builder.Services.AddDistributedMessaging(environmentConfig);
 builder.Services.AddGatewayApplicationClient();
+if (environmentConfig.Dav.EnableDav)
+    builder.Services.AddScoped<GatewayDavStore>();
 builder.Services.AddSingleton<GatewayWebPushService>();
 builder.Services.AddHostedService<GatewayPresentationWorker>();
 builder.Services.AddSingleton(environmentConfig);
@@ -144,6 +151,8 @@ if (environmentConfig.OAuth.EnableOAuth)
     app.MapOAuthEndpoints();
 if (environmentConfig.Jmap.EnableJmap)
     app.MapJmapEndpoints();
+if (environmentConfig.Dav.EnableDav)
+    app.MapDavEndpoints();
 app.MapRazorPages();
 
 await app.RunAsync();

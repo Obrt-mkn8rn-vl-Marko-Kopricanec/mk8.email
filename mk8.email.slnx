@@ -9,7 +9,6 @@
   </Folder>
   <Folder Name="/Gateway/">
     <Project Path="mk8.email.Gateway/mk8.email.Gateway.csproj" />
-    <Project Path="mk8.email.Dav/mk8.email.Dav.csproj" />
   </Folder>
   <Folder Name="/Shared/">
     <Project Path="mk8.email.Configuration/mk8.email.Configuration.csproj" />

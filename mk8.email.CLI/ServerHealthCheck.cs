@@ -42,9 +42,5 @@ internal static class ServerHealthCheck
             yield return environment.Pop3.ImplicitTlsPort;
         if (environment.Sieve.EnableManageSieve)
             yield return environment.Sieve.Port;
-        if (environment.Jmap.EnableJmap
-            || environment.Dav.EnableDav
-            || environment.OAuth.EnableOAuth)
-            yield return environment.Jmap.Port;
     }
 }

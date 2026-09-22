@@ -168,4 +168,15 @@ public sealed class ArchitectureBoundaryTests
         Assert.IsFalse(endpointAssembly.GetReferencedAssemblies().Any(reference =>
             string.Equals(reference.Name, "mk8.email.Jmap", StringComparison.Ordinal)));
     }
+
+    [TestMethod]
+    public void GatewayOwnsDavPresentationWithoutDependingOnDavApplicationLogic()
+    {
+        var endpointAssembly = typeof(
+            mk8.email.Gateway.Protocols.Dav.GatewayDavEndpointRouteBuilderExtensions).Assembly;
+        Assert.AreEqual("mk8.email.Gateway", endpointAssembly.GetName().Name);
+        Assert.IsFalse(endpointAssembly.GetReferencedAssemblies().Any(reference =>
+            string.Equals(reference.Name, "mk8.email.Dav.Application", StringComparison.Ordinal)
+            || string.Equals(reference.Name, "mk8.email.Dav", StringComparison.Ordinal)));
+    }
 }

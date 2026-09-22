@@ -4,8 +4,8 @@
     <Project Path="mk8.email.CLI/mk8.email.Application.CLI.csproj" Id="7f6167d9-82f3-4c62-a0cd-c1fe927aed1c" />
     <Project Path="mk8.email.Infrastructure/mk8.email.Infrastructure.csproj" />
   </Folder>
-  <Folder Name="/PublicAPI/">
-    <Project Path="mk8.email.PublicAPI/mk8.email.PublicAPI.csproj" />
+  <Folder Name="/Gateway/">
+    <Project Path="mk8.email.Gateway/mk8.email.Gateway.csproj" />
     <Project Path="mk8.email.Dav/mk8.email.Dav.csproj" />
     <Project Path="mk8.email.Jmap/mk8.email.Jmap.csproj" />
     <Project Path="mk8.email.OAuth/mk8.email.OAuth.csproj" />

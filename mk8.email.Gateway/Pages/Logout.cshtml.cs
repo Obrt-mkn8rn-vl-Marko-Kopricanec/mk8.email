@@ -3,9 +3,9 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using mk8.email.PublicAPI.Security;
+using mk8.email.Gateway.Security;
 
-namespace mk8.email.PublicAPI.Pages;
+namespace mk8.email.Gateway.Pages;
 
 [Authorize]
 public sealed class LogoutModel(IAdminAuditLog auditLog) : PageModel

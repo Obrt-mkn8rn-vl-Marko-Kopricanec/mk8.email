@@ -5,9 +5,9 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 using mk8.email.Application.Interfaces;
 using mk8.email.Contracts.DTOs;
 using mk8.email.Contracts.Enums;
-using mk8.email.PublicAPI.Security;
+using mk8.email.Gateway.Security;
 
-namespace mk8.email.PublicAPI.Pages.Domains;
+namespace mk8.email.Gateway.Pages.Domains;
 
 [Authorize(Roles = nameof(UserRole.SuperAdmin))]
 public sealed class DomainsModel(

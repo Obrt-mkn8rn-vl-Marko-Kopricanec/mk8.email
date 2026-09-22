@@ -68,8 +68,8 @@ install -d -o root -g root -m 0755 /opt/mk8email "$release_root" "$stage"
 tar --extract --gzip --file="$archive" --directory="$stage" --no-same-owner
 test -f "$stage/cli/mk8.email.Application.CLI.dll"
 test -f "$stage/cli/mk8.email.Application.CLI.runtimeconfig.json"
-test -f "$stage/admin/mk8.email.PublicAPI.dll"
-test -f "$stage/admin/mk8.email.PublicAPI.runtimeconfig.json"
+test -f "$stage/admin/mk8.email.Gateway.dll"
+test -f "$stage/admin/mk8.email.Gateway.runtimeconfig.json"
 if find "$stage" -mindepth 1 -maxdepth 1 \
     ! -name cli ! -name admin -print -quit | grep -q .; then
     fail "The release archive contains an unexpected top-level entry."

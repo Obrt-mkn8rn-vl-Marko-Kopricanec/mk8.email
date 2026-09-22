@@ -9,9 +9,9 @@ using Microsoft.AspNetCore.RateLimiting;
 using mk8.email.Application.Interfaces;
 using mk8.email.Contracts.Enums;
 using mk8.email.Infrastructure.Environment;
-using mk8.email.PublicAPI.Security;
+using mk8.email.Gateway.Security;
 
-namespace mk8.email.PublicAPI.Pages;
+namespace mk8.email.Gateway.Pages;
 
 [AllowAnonymous]
 [EnableRateLimiting("login")]

@@ -2,7 +2,7 @@ using System.Text;
 using System.Text.Json;
 using mk8.email.Infrastructure.Environment;
 
-namespace mk8.email.PublicAPI.Security;
+namespace mk8.email.Gateway.Security;
 
 public sealed class AdminAuditLog(
     AdminConfig config,

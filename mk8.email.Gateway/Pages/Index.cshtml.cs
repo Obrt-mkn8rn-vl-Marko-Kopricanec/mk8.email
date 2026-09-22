@@ -4,7 +4,7 @@ using mk8.email.Application.Interfaces;
 using mk8.email.Contracts.Enums;
 using mk8.email.Contracts.DTOs;
 
-namespace mk8.email.PublicAPI.Pages;
+namespace mk8.email.Gateway.Pages;
 
 [Authorize(Roles = nameof(UserRole.SuperAdmin))]
 public sealed class IndexModel(

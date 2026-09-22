@@ -1,4 +1,4 @@
-namespace mk8.email.PublicAPI.Security;
+namespace mk8.email.Gateway.Security;
 
 public sealed class AdminNetworkMiddleware(
     RequestDelegate next,

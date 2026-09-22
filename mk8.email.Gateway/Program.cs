@@ -9,7 +9,7 @@ using mk8.email.Application.Interfaces;
 using mk8.email.Infrastructure;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Infrastructure.Environment;
-using mk8.email.PublicAPI.Security;
+using mk8.email.Gateway.Security;
 
 var builder = WebApplication.CreateBuilder(args);
 var environmentConfig = EnvironmentLoader.Load(builder.Environment.IsDevelopment());

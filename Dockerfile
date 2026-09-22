@@ -11,7 +11,7 @@ RUN dotnet publish mk8.email.CLI/mk8.email.Application.CLI.csproj \
     --output /app/cli \
     --property:ContinuousIntegrationBuild=true \
     --property:UseAppHost=false
-RUN dotnet publish mk8.email.PublicAPI/mk8.email.PublicAPI.csproj \
+RUN dotnet publish mk8.email.Gateway/mk8.email.Gateway.csproj \
     --configuration Release \
     --no-restore \
     --output /app/admin \
@@ -39,4 +39,4 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=12s --start-period=30s --retries=3 \
     CMD ["dotnet", "/app/cli/mk8.email.Application.CLI.dll", "--healthcheck"]
 
-ENTRYPOINT ["dotnet", "/app/admin/mk8.email.PublicAPI.dll"]
+ENTRYPOINT ["dotnet", "/app/admin/mk8.email.Gateway.dll"]

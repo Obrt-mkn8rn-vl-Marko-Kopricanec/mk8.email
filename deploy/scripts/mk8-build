@@ -218,14 +218,14 @@ run_unit "mk8-build-$short_commit-$$" yes /bin/sh -eu -c '
         --configuration Release --no-build \
         --artifacts-path "$run_root/artifacts" \
         --output "$run_root/release/cli" --property:UseAppHost=false
-    "$sdk" publish mk8.email.PublicAPI/mk8.email.PublicAPI.csproj \
+    "$sdk" publish mk8.email.Gateway/mk8.email.Gateway.csproj \
         --configuration Release --no-build \
         --artifacts-path "$run_root/artifacts" \
         --output "$run_root/release/admin" \
         --property:DisableBuildCompression=true \
         --property:UseAppHost=false
     python3 deploy/scripts/normalize-static-web-assets.py \
-        "$run_root/release/admin/mk8.email.PublicAPI.staticwebassets.endpoints.json" \
+        "$run_root/release/admin/mk8.email.Gateway.staticwebassets.endpoints.json" \
         "$source_epoch"
     tar --sort=name --format=gnu --mtime="@$source_epoch" \
         --owner=0 --group=0 --numeric-owner \

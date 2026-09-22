@@ -31,8 +31,8 @@ for payload_root in "$payload" "$unsafe_payload"; do
         "$payload_root/cli" "$payload_root/admin"
     : > "$payload_root/cli/mk8.email.Application.CLI.dll"
     : > "$payload_root/cli/mk8.email.Application.CLI.runtimeconfig.json"
-    : > "$payload_root/admin/mk8.email.PublicAPI.dll"
-    : > "$payload_root/admin/mk8.email.PublicAPI.runtimeconfig.json"
+    : > "$payload_root/admin/mk8.email.Gateway.dll"
+    : > "$payload_root/admin/mk8.email.Gateway.runtimeconfig.json"
 done
 ln -s /etc/passwd "$unsafe_payload/admin/unsafe-link"
 tar --create --gzip --file="$archive" --directory="$payload" cli admin

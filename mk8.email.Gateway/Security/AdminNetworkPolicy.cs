@@ -1,7 +1,7 @@
 using System.Net;
 using mk8.email.Infrastructure.Environment;
 
-namespace mk8.email.PublicAPI.Security;
+namespace mk8.email.Gateway.Security;
 
 public sealed class AdminNetworkPolicy
 {

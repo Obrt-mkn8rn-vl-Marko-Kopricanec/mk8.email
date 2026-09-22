@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace mk8.email.Application.Protocol;
+namespace mk8.email.MailWire;
 
 internal readonly record struct BoundedLine(string? Value, bool IsTooLong);
 

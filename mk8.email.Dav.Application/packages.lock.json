@@ -213,6 +213,7 @@
           "MimeKit": "[4.17.0, )",
           "mk8.email.Contracts": "[1.0.0, )",
           "mk8.email.Infrastructure": "[1.0.0, )",
+          "mk8.email.MailWire": "[1.0.0, )",
           "mk8.email.Utils": "[1.0.0, )"
         }
       },
@@ -232,6 +233,9 @@
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.1, )",
           "mk8.email.Configuration": "[1.0.0, )"
         }
+      },
+      "mk8.email.mailwire": {
+        "type": "Project"
       },
       "mk8.email.utils": {
         "type": "Project",

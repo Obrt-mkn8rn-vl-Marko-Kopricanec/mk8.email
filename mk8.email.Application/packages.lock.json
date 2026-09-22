@@ -225,6 +225,9 @@
           "mk8.email.Configuration": "[1.0.0, )"
         }
       },
+      "mk8.email.mailwire": {
+        "type": "Project"
+      },
       "mk8.email.utils": {
         "type": "Project",
         "dependencies": {

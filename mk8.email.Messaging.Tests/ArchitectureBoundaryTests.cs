@@ -1,4 +1,5 @@
 using mk8.email.Contracts.Messaging;
+using mk8.email.MailWire;
 
 namespace mk8.email.Messaging.Tests;
 
@@ -47,6 +48,19 @@ public sealed class ArchitectureBoundaryTests
             reference.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal)
             || reference.StartsWith("mk8.email.Application", StringComparison.Ordinal)
                 || reference.StartsWith("mk8.email.Infrastructure", StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
+    public void MailWireHelpersAreIndependentOfApplicationAndPersistence()
+    {
+        var assembly = typeof(SmtpAddress).Assembly;
+        Assert.AreEqual("mk8.email.MailWire", assembly.GetName().Name);
+        Assert.IsFalse(assembly.GetReferencedAssemblies().Any(reference =>
+            reference.Name is not null
+            && (reference.Name.StartsWith("mk8.email.Application", StringComparison.Ordinal)
+                || reference.Name.StartsWith("mk8.email.Infrastructure", StringComparison.Ordinal)
+                || reference.Name.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal)
+                || reference.Name.StartsWith("Microsoft.EntityFrameworkCore", StringComparison.Ordinal))));
     }
 
     [TestMethod]

@@ -483,6 +483,7 @@
           "MimeKit": "[4.17.0, )",
           "mk8.email.Contracts": "[1.0.0, )",
           "mk8.email.Infrastructure": "[1.0.0, )",
+          "mk8.email.MailWire": "[1.0.0, )",
           "mk8.email.Utils": "[1.0.0, )"
         }
       },
@@ -530,6 +531,9 @@
           "mk8.email.Application.Core": "[1.0.0, )",
           "mk8.email.Infrastructure": "[1.0.0, )"
         }
+      },
+      "mk8.email.mailwire": {
+        "type": "Project"
       },
       "mk8.email.messaging": {
         "type": "Project",

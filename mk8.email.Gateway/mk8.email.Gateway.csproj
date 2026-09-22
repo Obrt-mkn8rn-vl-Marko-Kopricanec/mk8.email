@@ -14,6 +14,7 @@
   <ItemGroup>
     <ProjectReference Include="..\mk8.email.Configuration\mk8.email.Configuration.csproj" />
     <ProjectReference Include="..\mk8.email.Contracts\mk8.email.Contracts.csproj" />
+    <ProjectReference Include="..\mk8.email.MailWire\mk8.email.MailWire.csproj" />
     <ProjectReference Include="..\mk8.email.Hosting\mk8.email.Hosting.csproj" />
     <ProjectReference Include="..\mk8.email.Messaging\mk8.email.Messaging.csproj" />
   </ItemGroup>

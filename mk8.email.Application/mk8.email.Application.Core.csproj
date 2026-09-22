@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\mk8.email.Contracts\mk8.email.Contracts.csproj" />
+    <ProjectReference Include="..\mk8.email.MailWire\mk8.email.MailWire.csproj" />
     <ProjectReference Include="..\mk8.email.Utils\mk8.email.Utils.csproj" />
     <ProjectReference Include="..\mk8.email.Infrastructure\mk8.email.Infrastructure.csproj" />
   </ItemGroup>

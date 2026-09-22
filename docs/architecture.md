@@ -7,6 +7,7 @@ mk8.email is split into a continuously available presentation plane and an indep
 - **Gateway** owns every network listener and presentation concern: TLS, HTTP, JMAP, DAV, OAuth endpoints, SMTP, IMAP, POP3, ManageSieve, protocol parsing, response rendering, connection lifetime, and durable inbound/outbound traffic recording.
 - **Application Worker** owns email and groupware use cases and domain policy. It consumes durable requests, publishes durable responses, and remains dormant on PostgreSQL `LISTEN` while no work is available. It must not reference ASP.NET Core or expose a network API.
 - **Contracts** contains transport-neutral request, response, journal, and storage contracts. It has no ASP.NET Core, Entity Framework Core, Npgsql, or Azure SDK dependency.
+- **MailWire** contains bounded line reading and SMTP address, DSN, and wire-encoding helpers without application or database dependencies. The legacy listener still consumes them while Gateway mail presentation is extracted.
 - **Messaging** implements the encrypted PostgreSQL control plane. Requests survive an absent worker, are claimed with leases and `FOR UPDATE SKIP LOCKED`, and use PostgreSQL notifications only as wake-up hints; durable state remains authoritative.
 - **Storage** implements the large-object data plane through the Azure Blob Storage protocol. The adapter accepts an injected `BlobServiceClient`, so production can target Azure or mk8.sava's Azure Blob-compatible endpoint without leaking an Azure SDK dependency into Application logic.
 

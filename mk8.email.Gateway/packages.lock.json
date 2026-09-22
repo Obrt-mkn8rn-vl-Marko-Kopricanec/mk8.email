@@ -121,6 +121,9 @@
           "mk8.email.Storage": "[1.0.0, )"
         }
       },
+      "mk8.email.mailwire": {
+        "type": "Project"
+      },
       "mk8.email.messaging": {
         "type": "Project",
         "dependencies": {

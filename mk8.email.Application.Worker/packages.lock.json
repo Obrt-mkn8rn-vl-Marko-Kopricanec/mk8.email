@@ -526,6 +526,7 @@
       "mk8.email.jmap": {
         "type": "Project",
         "dependencies": {
+          "Npgsql": "[10.0.2, )",
           "mk8.email.Application.Core": "[1.0.0, )",
           "mk8.email.Infrastructure": "[1.0.0, )"
         }

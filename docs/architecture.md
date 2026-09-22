@@ -26,7 +26,7 @@ Raw mail queue messages, including their MIME attachments, also use reference-on
 
 CalDAV and CardDAV resource bodies now use reference-only Azure Blob-compatible objects as well. The shared storage service verifies every read against the PostgreSQL length and SHA-256 digest, and DAV and JMAP Contacts writes share commit-aware replacement and deletion cleanup. A serialized startup migration externalizes legacy resource bytes before enabling a database constraint that forbids inline DAV bodies; it runs for DAV or JMAP Contacts deployments because both protocols share the same resources.
 
-Stored mailbox messages and attachments must follow the same storage boundary. Their migration from legacy database byte arrays remains a later rollout checkpoint and must complete before the distributed architecture is deployable.
+Stored mailbox messages, including MIME attachments, also use reference-only Azure Blob-compatible objects. The Application Worker externalizes legacy inline mailbox bodies before serving requests, verifies length and digest on reads, and enables a database constraint that forbids inline bodies.
 
 ## Availability semantics
 
@@ -39,6 +39,8 @@ Neither PostgreSQL notifications nor an in-process connection is required for co
 Gateway owns the administration UI and the complete OAuth/OIDC HTTP surface. OAuth presentation traffic is durably captured on ingress and egress even for static discovery responses and application-unavailable responses; application-bound operations also receive their own correlated encrypted request/reply records. OAuth signing and MFA encryption secrets are loaded only by Application Worker, while Gateway receives only public key material through the asynchronous control plane.
 
 Gateway also owns the complete JMAP HTTP surface: session discovery, API requests, upload, ranged download, authentication-header parsing, response rendering, and event-source connection lifetime. The JMAP application library has no ASP.NET dependency and runs only behind typed durable operations in Application Worker. JMAP presentation requests and ordinary responses are recorded as encrypted HTTP envelopes. Event streams record the response start and every emitted SSE chunk before it is sent, while each Gateway/Application exchange is independently journaled at the internal boundary. The legacy combined CLI no longer serves JMAP.
+
+JMAP Web Push delivery is requested by the Application Worker through the reverse presentation lane and performed by Gateway. PostgreSQL notifications wake the push scheduler when account state or verified subscriptions change; retry deadlines and expiry times provide timer wake-ups, with a bounded missed-notification fallback instead of a continuous database poll.
 
 Gateway now owns the complete CalDAV/CardDAV HTTP surface: discovery redirects, authentication-header parsing, XML reports and properties, resource body limits, and response rendering. It forwards typed operations through the encrypted durable request lane to the ASP.NET-free DAV application assembly in Application Worker. The Gateway records each external DAV request/response and each internal Worker exchange; nginx routes DAV to Gateway port 8080. The former DAV HTTP assembly and CLI listener have been removed.
 

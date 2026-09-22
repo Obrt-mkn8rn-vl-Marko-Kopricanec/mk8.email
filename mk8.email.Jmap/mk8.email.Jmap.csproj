@@ -7,6 +7,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Npgsql" Version="10.0.2" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\mk8.email.Application\mk8.email.Application.Core.csproj" />
     <ProjectReference Include="..\mk8.email.Infrastructure\mk8.email.Infrastructure.csproj" />
   </ItemGroup>

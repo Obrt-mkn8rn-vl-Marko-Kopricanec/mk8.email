@@ -2,32 +2,38 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using mk8.email.Configuration;
 using mk8.email.Application.Interfaces;
 using mk8.email.Contracts.Messaging;
 using mk8.email.Infrastructure.Data;
+using Npgsql;
 
 namespace mk8.email.Jmap;
 
 internal sealed class JmapPushWorker(
     IServiceScopeFactory scopeFactory,
     IJmapPushPresentationClient delivery,
+    EnvironmentConfig environment,
     ILogger<JmapPushWorker> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        if (IsPostgreSql())
+        {
+            await RunNotificationLoopAsync(stoppingToken);
+            return;
+        }
+
+        await RunPollingLoopAsync(stoppingToken);
+    }
+
+    private async Task RunPollingLoopAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                var subscriptionIds = await GetBatchAsync(stoppingToken);
-                await Parallel.ForEachAsync(
-                    subscriptionIds,
-                    new ParallelOptions
-                    {
-                        CancellationToken = stoppingToken,
-                        MaxDegreeOfParallelism = 4,
-                    },
-                    ProcessAsync);
+                await ProcessDueAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -47,6 +53,85 @@ internal sealed class JmapPushWorker(
                 break;
             }
         }
+    }
+
+    private async Task RunNotificationLoopAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                await using var listener = new NpgsqlConnection(environment.BuildConnectionString());
+                await listener.OpenAsync(stoppingToken);
+                await using (var command = listener.CreateCommand())
+                {
+                    command.CommandText = "LISTEN mk8_jmap_push_ready";
+                    await command.ExecuteNonQueryAsync(stoppingToken);
+                }
+
+                while (!stoppingToken.IsCancellationRequested)
+                {
+                    await ProcessDueAsync(stoppingToken);
+                    var delay = await GetNextWakeDelayAsync(stoppingToken);
+                    await listener.WaitAsync(
+                        Math.Max(1, checked((int)delay.TotalMilliseconds)),
+                        stoppingToken);
+                }
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception exception)
+            {
+                logger.LogError(exception, "The JMAP push notification listener failed");
+                await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+            }
+        }
+    }
+
+    private async Task ProcessDueAsync(CancellationToken cancellationToken)
+    {
+        var subscriptionIds = await GetBatchAsync(cancellationToken);
+        await Parallel.ForEachAsync(
+            subscriptionIds,
+            new ParallelOptions
+            {
+                CancellationToken = cancellationToken,
+                MaxDegreeOfParallelism = 4,
+            },
+            ProcessAsync);
+    }
+
+    private async Task<TimeSpan> GetNextWakeDelayAsync(CancellationToken cancellationToken)
+    {
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var nextRetry = await database.JmapPushSubscriptions
+            .Where(subscription => subscription.IsVerified && subscription.NextPushAt != null)
+            .MinAsync(subscription => subscription.NextPushAt, cancellationToken);
+        var nextExpiry = await database.JmapPushSubscriptions
+            .MinAsync(subscription => (DateTime?)subscription.ExpiresAt, cancellationToken);
+        var next = new[] { nextRetry, nextExpiry }
+            .Where(candidate => candidate is not null)
+            .Min();
+        var fallback = TimeSpan.FromMinutes(5);
+        if (next is null)
+            return fallback;
+
+        var untilDue = next.Value - DateTime.UtcNow;
+        if (untilDue <= TimeSpan.Zero)
+            return TimeSpan.FromMilliseconds(10);
+        return untilDue < fallback ? untilDue : fallback;
+    }
+
+    private bool IsPostgreSql()
+    {
+        using var scope = scopeFactory.CreateScope();
+        return string.Equals(
+            scope.ServiceProvider.GetRequiredService<EmailDbContext>().Database.ProviderName,
+            "Npgsql.EntityFrameworkCore.PostgreSQL",
+            StringComparison.Ordinal);
     }
 
     private async Task<IReadOnlyList<Guid>> GetBatchAsync(CancellationToken cancellationToken)
@@ -75,7 +160,6 @@ internal sealed class JmapPushWorker(
             .OrderBy(subscription => subscription.NextPushAt)
             .ThenBy(subscription => subscription.UpdatedAt)
             .Select(subscription => subscription.Id)
-            .Take(100)
             .ToListAsync(cancellationToken);
     }
 
@@ -113,7 +197,15 @@ internal sealed class JmapPushWorker(
             requestedTypes,
             cancellationToken);
         if (poll.Cursor == subscription.LastPushedChange)
+        {
+            if (subscription.NextPushAt is not null)
+            {
+                subscription.NextPushAt = null;
+                subscription.UpdatedAt = DateTime.UtcNow;
+                await database.SaveChangesAsync(cancellationToken);
+            }
             return;
+        }
         if (poll.StateChange is null)
         {
             subscription.LastPushedChange = poll.Cursor;

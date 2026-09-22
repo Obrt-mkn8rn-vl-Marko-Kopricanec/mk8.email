@@ -994,6 +994,53 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             $notification$;
             CREATE INDEX IF NOT EXISTS ix_mail_queue_recipients_message_id_state
                 ON mail_queue_recipients (message_id, state);
+            CREATE OR REPLACE FUNCTION mk8_notify_jmap_change_push_ready()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $notification$
+            BEGIN
+                PERFORM pg_notify('mk8_jmap_push_ready', NEW.account_id::text);
+                RETURN NEW;
+            END
+            $notification$;
+            CREATE OR REPLACE FUNCTION mk8_notify_jmap_subscription_push_ready()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $notification$
+            BEGIN
+                IF NEW.is_verified THEN
+                    PERFORM pg_notify('mk8_jmap_push_ready', NEW.user_id::text);
+                END IF;
+                RETURN NEW;
+            END
+            $notification$;
+            DO $notification$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_trigger
+                    WHERE tgrelid = 'jmap_changes'::regclass
+                      AND tgname = 'tr_jmap_change_push_ready'
+                      AND NOT tgisinternal
+                ) THEN
+                    CREATE TRIGGER tr_jmap_change_push_ready
+                    AFTER INSERT ON jmap_changes
+                    FOR EACH ROW
+                    EXECUTE FUNCTION mk8_notify_jmap_change_push_ready();
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_trigger
+                    WHERE tgrelid = 'jmap_push_subscriptions'::regclass
+                      AND tgname = 'tr_jmap_subscription_push_ready'
+                      AND NOT tgisinternal
+                ) THEN
+                    CREATE TRIGGER tr_jmap_subscription_push_ready
+                    AFTER INSERT OR UPDATE OF is_verified, next_push_at, expires_at
+                    ON jmap_push_subscriptions
+                    FOR EACH ROW
+                    EXECUTE FUNCTION mk8_notify_jmap_subscription_push_ready();
+                END IF;
+            END
+            $notification$;
             CREATE INDEX IF NOT EXISTS ix_jmap_changes_account_type_sequence
                 ON jmap_changes (account_id, data_type, sequence);
             CREATE INDEX IF NOT EXISTS ix_jmap_changes_changed_at
@@ -1024,6 +1071,9 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 ON jmap_push_subscriptions (user_id, device_client_id);
             CREATE INDEX IF NOT EXISTS ix_jmap_push_subscriptions_expires_at
                 ON jmap_push_subscriptions (expires_at);
+            CREATE INDEX IF NOT EXISTS ix_jmap_push_subscriptions_next_push_at
+                ON jmap_push_subscriptions (next_push_at)
+                WHERE is_verified AND next_push_at IS NOT NULL;
             CREATE UNIQUE INDEX IF NOT EXISTS ix_jmap_vacation_replies_account_sender
                 ON jmap_vacation_replies (account_id, sender_address);
             CREATE UNIQUE INDEX IF NOT EXISTS ix_jmap_vacation_replies_delivery_id

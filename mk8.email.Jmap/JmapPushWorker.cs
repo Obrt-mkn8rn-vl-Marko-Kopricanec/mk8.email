@@ -3,13 +3,14 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using mk8.email.Application.Interfaces;
+using mk8.email.Contracts.Messaging;
 using mk8.email.Infrastructure.Data;
 
 namespace mk8.email.Jmap;
 
 internal sealed class JmapPushWorker(
     IServiceScopeFactory scopeFactory,
-    JmapPushDeliveryService delivery,
+    IJmapPushPresentationClient delivery,
     ILogger<JmapPushWorker> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -123,22 +124,39 @@ internal sealed class JmapPushWorker(
             return;
         }
 
-        var result = await delivery.SendAsync(subscription, poll.StateChange, cancellationToken);
+        WebPushSendOutcome result;
+        try
+        {
+            result = await delivery.SendAsync(
+                subscription.Url,
+                subscription.KeysJson,
+                subscription.ExpiresAt,
+                JmapPushPresentationPayload.Serialize(poll.StateChange),
+                cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogWarning(
+                exception,
+                "Could not request JMAP Web Push delivery for {SubscriptionId}",
+                subscription.Id);
+            result = WebPushSendOutcome.Failed;
+        }
         var now = DateTime.UtcNow;
         switch (result)
         {
-            case JmapPushDeliveryResult.Success:
+            case WebPushSendOutcome.Success:
                 subscription.LastPushedChange = poll.Cursor;
                 subscription.FailureCount = 0;
                 subscription.NextPushAt = null;
                 subscription.UpdatedAt = now;
                 break;
-            case JmapPushDeliveryResult.Gone:
+            case WebPushSendOutcome.Gone:
                 subscription.Url = string.Empty;
                 subscription.KeysJson = null;
                 database.JmapPushSubscriptions.Remove(subscription);
                 break;
-            case JmapPushDeliveryResult.RateLimited:
+            case WebPushSendOutcome.RateLimited:
                 subscription.FailureCount++;
                 subscription.NextPushAt = now.AddMinutes(
                     Math.Min(60, Math.Pow(2, Math.Min(subscription.FailureCount, 6))));

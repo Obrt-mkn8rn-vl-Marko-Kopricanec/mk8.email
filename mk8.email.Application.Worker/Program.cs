@@ -34,7 +34,10 @@ try
     builder.Services.AddApplication();
     builder.Services.AddMailApplicationWorker();
     if (environment.Jmap.EnableJmap)
+    {
+        builder.Services.AddSingleton<IJmapPushPresentationClient, JmapPushPresentationClient>();
         builder.Services.AddJmapApplication();
+    }
 
     var workerId = string.IsNullOrWhiteSpace(environment.Messaging.WorkerId)
         ? $"application@{Environment.MachineName}"

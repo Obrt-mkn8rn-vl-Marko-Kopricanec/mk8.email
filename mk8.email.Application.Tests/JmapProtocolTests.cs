@@ -6,10 +6,13 @@ using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using mk8.email.Application.Services;
+using mk8.email.Contracts.Messaging;
 using mk8.email.Contracts.Storage;
+using mk8.email.Gateway.Protocols.Jmap;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Infrastructure.Models;
 using mk8.email.Jmap;
+using mk8.email.Messaging;
 
 namespace mk8.email.Application.Tests;
 
@@ -4601,10 +4604,9 @@ public sealed class JmapProtocolTests
         receiverPublic[0] = 4;
         receiverParameters.Q.X!.CopyTo(receiverPublic, 1);
         receiverParameters.Q.Y!.CopyTo(receiverPublic, 33);
-        var handler = new PushRequestHandler();
+        var delivery = new RecordingPushPresentationClient();
         await using var fixture = await JmapFixture.CreateAsync(
-            configureServices: services => services.AddSingleton(
-                new JmapPushDeliveryService(handler)));
+            configureServices: services => services.AddSingleton<IJmapPushPresentationClient>(delivery));
         var expires = JmapDate.FormatUtc(DateTime.UtcNow.AddDays(2));
 
         var response = await fixture.InvokeAsync(new JsonObject
@@ -4638,7 +4640,7 @@ public sealed class JmapProtocolTests
             new[] { "id" },
             Arguments(response)["created"]!["push"]!.AsObject()
                 .Select(property => property.Key).ToArray());
-        Assert.IsTrue(handler.ContentLength > 0);
+        Assert.IsTrue(delivery.VerificationPayloadLength > 0);
     }
 
     [TestMethod]
@@ -4673,27 +4675,28 @@ public sealed class JmapProtocolTests
         receiverParameters.Q.X!.CopyTo(receiverPublic, 1);
         receiverParameters.Q.Y!.CopyTo(receiverPublic, 33);
         var handler = new PushRequestHandler();
-        using var delivery = new JmapPushDeliveryService(handler);
-        var subscription = new JmapPushSubscriptionDB
-        {
-            Url = "https://push.example.net/jmap",
-            ExpiresAt = DateTime.UtcNow.AddDays(1),
-            KeysJson = new JsonObject
-            {
-                ["p256dh"] = Base64Url(receiverPublic),
-                ["auth"] = Base64Url(RandomNumberGenerator.GetBytes(16)),
-            }.ToJsonString(),
-        };
+        var journal = new RecordingPushJournal();
+        using var delivery = new GatewayWebPushService(handler, journal, 65_536);
+        var subscription = new WebPushSendRequest(
+            "https://push.example.net/jmap",
+            Base64Url(receiverPublic),
+            Base64Url(RandomNumberGenerator.GetBytes(16)),
+            DateTimeOffset.UtcNow.AddDays(1),
+            Encoding.UTF8.GetBytes("{\"@type\":\"StateChange\",\"changed\":{}}"));
 
         var result = await delivery.SendAsync(
             subscription,
-            new JsonObject { ["@type"] = "StateChange", ["changed"] = new JsonObject() },
+            Guid.CreateVersion7(),
+            Guid.CreateVersion7(),
             CancellationToken.None);
 
-        Assert.AreEqual(JmapPushDeliveryResult.Success, result);
+        Assert.AreEqual(WebPushSendOutcome.Success, result.Outcome);
         Assert.AreEqual("application/json", handler.ContentType);
         CollectionAssert.AreEqual(new[] { "aes128gcm" }, handler.ContentEncodings.ToArray());
         Assert.IsTrue(handler.ContentLength > 0);
+        Assert.HasCount(2, journal.Records);
+        Assert.AreEqual(GatewayTrafficDirections.Outbound, journal.Records[0].Direction);
+        Assert.AreEqual(GatewayTrafficDirections.Inbound, journal.Records[1].Direction);
     }
 
     [TestMethod]
@@ -4871,5 +4874,51 @@ public sealed class JmapProtocolTests
             ContentLength = (await request.Content!.ReadAsByteArrayAsync(cancellationToken)).Length;
             return new HttpResponseMessage(HttpStatusCode.Created);
         }
+    }
+
+    private sealed class RecordingPushPresentationClient : IJmapPushPresentationClient
+    {
+        public int VerificationPayloadLength { get; private set; }
+
+        public Task<bool> IsSafeUrlAsync(string url, CancellationToken cancellationToken) =>
+            Task.FromResult(true);
+
+        public Task<WebPushSendOutcome> SendAsync(
+            string url,
+            string? keysJson,
+            DateTime expiresAt,
+            byte[] payload,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(WebPushSendOutcome.Success);
+
+        public Task EnqueueVerificationAsync(
+            string url,
+            string? keysJson,
+            DateTime expiresAt,
+            byte[] payload,
+            CancellationToken cancellationToken)
+        {
+            VerificationPayloadLength = payload.Length;
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class RecordingPushJournal : IGatewayTrafficJournal
+    {
+        public List<GatewayTrafficRecord> Records { get; } = [];
+
+        public Task AppendAsync(
+            GatewayTrafficRecord record,
+            CancellationToken cancellationToken = default)
+        {
+            Records.Add(record);
+            return Task.CompletedTask;
+        }
+
+        public Task<IReadOnlyList<GatewayTrafficRecord>> ReadSessionAsync(
+            Guid sessionId,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<GatewayTrafficRecord>>(
+                Records.Where(record => record.SessionId == sessionId).ToArray());
     }
 }

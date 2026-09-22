@@ -35,6 +35,8 @@ builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
 
 builder.Services.AddDistributedMessaging(environmentConfig);
 builder.Services.AddGatewayApplicationClient();
+builder.Services.AddSingleton<GatewayWebPushService>();
+builder.Services.AddHostedService<GatewayPresentationWorker>();
 builder.Services.AddSingleton(environmentConfig);
 if (environmentConfig.OAuth.EnableOAuth)
     builder.Services.AddOAuthProtocol();

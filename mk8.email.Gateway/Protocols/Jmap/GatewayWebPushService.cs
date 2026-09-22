@@ -5,33 +5,36 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
-using mk8.email.Infrastructure.Models;
+using mk8.email.Configuration;
+using mk8.email.Contracts.Messaging;
+using mk8.email.Messaging;
 
-namespace mk8.email.Jmap;
+namespace mk8.email.Gateway.Protocols.Jmap;
 
-internal enum JmapPushDeliveryResult
-{
-    Success,
-    Gone,
-    RateLimited,
-    Failed,
-}
-
-internal sealed class JmapPushDeliveryService : IDisposable
+internal sealed class GatewayWebPushService : IDisposable
 {
     private readonly HttpClient _client;
+    private readonly IGatewayTrafficJournal _journal;
+    private readonly int _maximumJournalPayloadBytes;
 
-    public JmapPushDeliveryService() : this(CreateHandler())
+    public GatewayWebPushService(
+        IGatewayTrafficJournal journal,
+        EnvironmentConfig environment)
+        : this(CreateHandler(), journal, environment.Messaging.MaxPayloadBytes)
     {
     }
 
-    internal JmapPushDeliveryService(HttpMessageHandler handler)
+    internal GatewayWebPushService(
+        HttpMessageHandler handler,
+        IGatewayTrafficJournal journal,
+        int maximumJournalPayloadBytes)
     {
         _client = new HttpClient(handler)
         {
             Timeout = TimeSpan.FromSeconds(10),
         };
+        _journal = journal;
+        _maximumJournalPayloadBytes = maximumJournalPayloadBytes;
     }
 
     private static SocketsHttpHandler CreateHandler()
@@ -67,38 +70,42 @@ internal sealed class JmapPushDeliveryService : IDisposable
         }
     }
 
-    public async Task<JmapPushDeliveryResult> SendAsync(
-        JmapPushSubscriptionDB subscription,
-        JsonObject payload,
+    public async Task<WebPushSendResult> SendAsync(
+        WebPushSendRequest subscription,
+        Guid sessionId,
+        Guid exchangeId,
         CancellationToken cancellationToken)
     {
         if (!TryParseUrl(subscription.Url, out var uri))
-            return JmapPushDeliveryResult.Failed;
-        var json = Encoding.UTF8.GetBytes(payload.ToJsonString(JmapJson.SerializerOptions));
-        var body = json;
+            return new WebPushSendResult(WebPushSendOutcome.Failed);
+        if (subscription.ExpiresAt <= DateTimeOffset.UtcNow)
+            return new WebPushSendResult(WebPushSendOutcome.Gone);
+        if (subscription.Payload is null || subscription.Payload.Length == 0)
+            return new WebPushSendResult(WebPushSendOutcome.Failed);
+        var body = subscription.Payload;
         var encrypted = false;
-        if (subscription.KeysJson is not null)
+        if (subscription.P256dh is not null || subscription.Auth is not null)
         {
             try
             {
-                var keys = JsonNode.Parse(subscription.KeysJson) as JsonObject;
-                if (keys is null
-                    || !JmapMethodHelpers.TryGetRequiredString(keys, "p256dh", out var p256dh)
-                    || !JmapMethodHelpers.TryGetRequiredString(keys, "auth", out var auth))
-                    return JmapPushDeliveryResult.Failed;
-                body = JmapPushEncryption.Encrypt(json, p256dh, auth);
+                if (subscription.P256dh is null || subscription.Auth is null)
+                    return new WebPushSendResult(WebPushSendOutcome.Failed);
+                body = JmapPushEncryption.Encrypt(
+                    subscription.Payload,
+                    subscription.P256dh,
+                    subscription.Auth);
                 encrypted = true;
             }
-            catch (Exception exception) when (exception is CryptographicException or FormatException or JsonException)
+            catch (Exception exception) when (exception is CryptographicException or FormatException)
             {
-                return JmapPushDeliveryResult.Failed;
+                return new WebPushSendResult(WebPushSendOutcome.Failed);
             }
         }
 
         using var request = new HttpRequestMessage(HttpMethod.Post, uri);
         request.Headers.TryAddWithoutValidation(
             "TTL",
-            Math.Clamp((long)(subscription.ExpiresAt - DateTime.UtcNow).TotalSeconds, 0, 86_400)
+            Math.Clamp((long)(subscription.ExpiresAt - DateTimeOffset.UtcNow).TotalSeconds, 0, 86_400)
                 .ToString(System.Globalization.CultureInfo.InvariantCulture));
         request.Headers.TryAddWithoutValidation("Urgency", "normal");
         request.Content = new ByteArrayContent(body);
@@ -106,24 +113,135 @@ internal sealed class JmapPushDeliveryService : IDisposable
         if (encrypted)
             request.Content.Headers.ContentEncoding.Add("aes128gcm");
 
+        var requestTrace = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            method = "POST",
+            url = subscription.Url,
+            headers = request.Headers
+                .Concat(request.Content.Headers)
+                .ToDictionary(header => header.Key, header => header.Value.ToArray()),
+            bodyBase64 = Convert.ToBase64String(body),
+        });
+        if (requestTrace.Length > _maximumJournalPayloadBytes)
+            throw new InvalidOperationException("The Web Push request exceeds the journal payload limit.");
+        await AppendExternalAsync(
+            sessionId,
+            exchangeId,
+            sequence: 1,
+            GatewayTrafficDirections.Outbound,
+            requestTrace);
+
+        HttpResponseMessage response;
         try
         {
-            using var response = await _client.SendAsync(
+            response = await _client.SendAsync(
                 request,
                 HttpCompletionOption.ResponseHeadersRead,
                 cancellationToken);
-            if (response.IsSuccessStatusCode)
-                return JmapPushDeliveryResult.Success;
-            if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Gone)
-                return JmapPushDeliveryResult.Gone;
-            if (response.StatusCode == HttpStatusCode.TooManyRequests)
-                return JmapPushDeliveryResult.RateLimited;
-            return JmapPushDeliveryResult.Failed;
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
         {
-            return JmapPushDeliveryResult.Failed;
+            return await RecordNetworkFailureAsync(sessionId, exchangeId);
         }
+
+        using (response)
+        {
+            byte[] responseBody;
+            bool truncated;
+            try
+            {
+                (responseBody, truncated) = await ReadResponseBodyAsync(
+                    response,
+                    cancellationToken);
+            }
+            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+            {
+                return await RecordNetworkFailureAsync(sessionId, exchangeId);
+            }
+
+            var responseTrace = JsonSerializer.SerializeToUtf8Bytes(new
+            {
+                status = (int)response.StatusCode,
+                headers = response.Headers
+                    .Concat(response.Content.Headers)
+                    .ToDictionary(header => header.Key, header => header.Value.ToArray()),
+                bodyBase64 = Convert.ToBase64String(responseBody),
+                truncated,
+            });
+            await AppendExternalAsync(
+                sessionId,
+                exchangeId,
+                sequence: 2,
+                GatewayTrafficDirections.Inbound,
+                responseTrace);
+            if (response.IsSuccessStatusCode)
+                return new WebPushSendResult(WebPushSendOutcome.Success);
+            if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Gone)
+                return new WebPushSendResult(WebPushSendOutcome.Gone);
+            if (response.StatusCode == HttpStatusCode.TooManyRequests)
+                return new WebPushSendResult(WebPushSendOutcome.RateLimited);
+            return new WebPushSendResult(WebPushSendOutcome.Failed);
+        }
+    }
+
+    private async Task<WebPushSendResult> RecordNetworkFailureAsync(
+        Guid sessionId,
+        Guid exchangeId)
+    {
+        await AppendExternalAsync(
+            sessionId,
+            exchangeId,
+            sequence: 2,
+            GatewayTrafficDirections.Inbound,
+            JsonSerializer.SerializeToUtf8Bytes(new { error = "network-failure" }));
+        return new WebPushSendResult(WebPushSendOutcome.Failed);
+    }
+
+    private async Task<(byte[] Body, bool Truncated)> ReadResponseBodyAsync(
+        HttpResponseMessage response,
+        CancellationToken cancellationToken)
+    {
+        var maximumBodyBytes = Math.Max(0L, ((long)_maximumJournalPayloadBytes - 32_768) * 3 / 4);
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        await using var copy = new MemoryStream();
+        var buffer = new byte[8192];
+        while (true)
+        {
+            var read = await stream.ReadAsync(buffer, cancellationToken);
+            if (read == 0)
+                return (copy.ToArray(), false);
+            var remaining = maximumBodyBytes - copy.Length;
+            if (read > remaining)
+            {
+                if (remaining > 0)
+                    await copy.WriteAsync(buffer.AsMemory(0, checked((int)remaining)), cancellationToken);
+                return (copy.ToArray(), true);
+            }
+            await copy.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+        }
+    }
+
+    private async Task AppendExternalAsync(
+        Guid sessionId,
+        Guid exchangeId,
+        long sequence,
+        string direction,
+        byte[] payload)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await _journal.AppendAsync(
+            new GatewayTrafficRecord(
+                Guid.CreateVersion7(),
+                sessionId,
+                sequence,
+                direction,
+                WebPushPresentationOperations.Protocol,
+                "application/json",
+                payload,
+                new Dictionary<string, string>(),
+                DateTimeOffset.UtcNow,
+                exchangeId),
+            timeout.Token);
     }
 
     public void Dispose() => _client.Dispose();

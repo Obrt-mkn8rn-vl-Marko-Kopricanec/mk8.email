@@ -28,7 +28,7 @@ public static class JmapServiceExtensions
         services.AddScoped<IJmapApplicationService, JmapApplicationService>();
         services.AddScoped<JmapIdentityService>();
         services.AddScoped<JmapVacationResponseService>();
-        services.AddSingleton<JmapPushDeliveryService>();
+        services.TryAddSingleton<IJmapPushPresentationClient, UnavailableJmapPushPresentationClient>();
         services.AddSingleton<JmapConcurrencyLimiter>();
         services.AddHostedService<JmapPushWorker>();
         services.AddScoped<EmailSetMethod>();

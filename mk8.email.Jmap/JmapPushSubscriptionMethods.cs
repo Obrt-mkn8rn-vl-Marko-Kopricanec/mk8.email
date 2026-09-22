@@ -105,7 +105,7 @@ internal sealed class PushSubscriptionGetMethod(
 internal sealed class PushSubscriptionSetMethod(
     EmailDbContext database,
     JmapStateChangeService stateChanges,
-    JmapPushDeliveryService delivery,
+    IJmapPushPresentationClient delivery,
     EnvironmentConfig environment,
     ILogger<PushSubscriptionSetMethod> logger) : IJmapMethod
 {
@@ -172,9 +172,11 @@ internal sealed class PushSubscriptionSetMethod(
                 {
                     try
                     {
-                        _ = await delivery.SendAsync(
-                            subscription,
-                            verification,
+                        await delivery.EnqueueVerificationAsync(
+                            subscription.Url,
+                            subscription.KeysJson,
+                            subscription.ExpiresAt,
+                            JmapPushPresentationPayload.Serialize(verification),
                             postCommitCancellationToken);
                     }
                     catch (Exception exception) when (exception is not OperationCanceledException)
@@ -503,7 +505,7 @@ internal sealed class PushSubscriptionSetMethod(
             || keys.Count != 2
             || !JmapMethodHelpers.TryGetRequiredString(keys, "p256dh", out var p256dh)
             || !JmapMethodHelpers.TryGetRequiredString(keys, "auth", out var auth)
-            || !JmapPushEncryption.TryValidateKeys(p256dh, auth))
+            || !JmapPushKeyValidator.TryValidate(p256dh, auth))
             return false;
         keysJson = new JsonObject
         {

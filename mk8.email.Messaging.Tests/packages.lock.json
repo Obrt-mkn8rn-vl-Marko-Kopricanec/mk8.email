@@ -585,7 +585,6 @@
       "mk8.email.application.core": {
         "type": "Project",
         "dependencies": {
-          "DnsClient": "[1.8.0, )",
           "Microsoft.EntityFrameworkCore": "[10.0.4, )",
           "Microsoft.Extensions.Configuration.Binder": "[10.0.4, )",
           "Microsoft.Extensions.DependencyInjection.Abstractions": "[10.0.4, )",
@@ -638,7 +637,8 @@
           "mk8.email.Contracts": "[1.0.0, )",
           "mk8.email.Hosting": "[1.0.0, )",
           "mk8.email.MailWire": "[1.0.0, )",
-          "mk8.email.Messaging": "[1.0.0, )"
+          "mk8.email.Messaging": "[1.0.0, )",
+          "mk8.email.Smtp.Presentation": "[1.0.0, )"
         }
       },
       "mk8.email.hosting": {
@@ -677,6 +677,18 @@
           "Microsoft.Extensions.Logging.Abstractions": "[10.0.4, )",
           "Npgsql": "[10.0.2, )",
           "mk8.email.Contracts": "[1.0.0, )"
+        }
+      },
+      "mk8.email.smtp.presentation": {
+        "type": "Project",
+        "dependencies": {
+          "DnsClient": "[1.8.0, )",
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "[10.0.4, )",
+          "Microsoft.Extensions.Logging.Abstractions": "[10.0.4, )",
+          "mk8.email.Configuration": "[1.0.0, )",
+          "mk8.email.Contracts": "[1.0.0, )",
+          "mk8.email.MailWire": "[1.0.0, )",
+          "mk8.email.Messaging": "[1.0.0, )"
         }
       },
       "mk8.email.storage": {

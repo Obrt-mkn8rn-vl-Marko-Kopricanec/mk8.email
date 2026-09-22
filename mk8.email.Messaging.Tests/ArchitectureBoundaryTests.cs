@@ -1,6 +1,7 @@
 using mk8.email.Contracts.Messaging;
 using mk8.email.Contracts.Mail;
 using mk8.email.MailWire;
+using mk8.email.Smtp.Presentation;
 
 namespace mk8.email.Messaging.Tests;
 
@@ -71,6 +72,24 @@ public sealed class ArchitectureBoundaryTests
                 || reference.Name.StartsWith("mk8.email.Infrastructure", StringComparison.Ordinal)
                 || reference.Name.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal)
                 || reference.Name.StartsWith("Microsoft.EntityFrameworkCore", StringComparison.Ordinal))));
+    }
+
+    [TestMethod]
+    public void OutboundSmtpNetworkCodeIsOutsideApplicationCoreAndWorker()
+    {
+        var presentationAssembly = typeof(OutboundSmtpRelay).Assembly;
+        Assert.AreEqual("mk8.email.Smtp.Presentation", presentationAssembly.GetName().Name);
+        Assert.IsFalse(presentationAssembly.GetReferencedAssemblies().Any(reference =>
+            reference.Name is not null
+            && (reference.Name.StartsWith("mk8.email.Application", StringComparison.Ordinal)
+                || reference.Name.StartsWith("mk8.email.Infrastructure", StringComparison.Ordinal)
+                || reference.Name.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal))));
+        Assert.IsFalse(typeof(mk8.email.Application.Services.MailQueueWorker).Assembly
+            .GetReferencedAssemblies().Any(reference =>
+                reference.Name == "mk8.email.Smtp.Presentation"));
+        Assert.IsFalse(typeof(mk8.email.Application.Worker.OutboundSmtpPresentationClient).Assembly
+            .GetReferencedAssemblies().Any(reference =>
+                reference.Name == "mk8.email.Smtp.Presentation"));
     }
 
     [TestMethod]

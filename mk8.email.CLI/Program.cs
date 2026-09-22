@@ -10,6 +10,7 @@ using mk8.email.Infrastructure;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
 using mk8.email.Hosting;
+using mk8.email.Smtp.Presentation;
 
 return await RunManagementCommandAsync(args);
 
@@ -318,6 +319,7 @@ static IHost BuildHost(
     {
         builder.Services.AddAzureBlobObjectStorage(environmentConfig);
         builder.Services.AddMailProtocolServers();
+        builder.Services.AddOutboundSmtpPresentation();
     }
     return builder.Build();
 }

@@ -8,6 +8,9 @@ using Microsoft.Extensions.Logging.Abstractions;
 using mk8.email.Application.Interfaces;
 using mk8.email.Application.Services;
 using mk8.email.Configuration;
+using mk8.email.Contracts.Messaging;
+using mk8.email.Messaging;
+using mk8.email.Smtp.Presentation;
 
 namespace mk8.email.Application.Tests;
 
@@ -455,7 +458,86 @@ public sealed class OutboundSmtpRelayTests
         Assert.AreEqual(0, resolver.CallCount);
     }
 
-    private OutboundSmtpRelay CreateRelay(IMailExchangeResolver resolver)
+    [TestMethod]
+    [Timeout(10_000)]
+    public async Task GatewayRelayRecordsExactPlaintextAcrossStartTls()
+    {
+        await using var server = new ScriptedSmtpServer(
+            session => RunSuccessfulDeliveryAsync(session, useStartTls: true, _certificatePath));
+        var journal = new RecordingJournal();
+        var requestId = Guid.CreateVersion7();
+        var relay = CreateRelay(new StubResolver(Available(server.Port)), journal);
+
+        var result = await relay.RelayAsync(
+            new SmtpRelayPresentationRequest(
+                "sender@mk8n.com",
+                "recipient@example.com",
+                "Subject: recorded\r\n\r\n.first\r\n",
+                null),
+            requestId,
+            CancellationToken.None);
+        await server.WaitForCompletionAsync();
+
+        Assert.AreEqual(OutboundDeliveryStatus.Delivered, result.Status);
+        Assert.IsTrue(server.Session!.UsedTls);
+        Assert.IsTrue(journal.Records.Count >= 8);
+        Assert.IsTrue(journal.Records.All(record =>
+            record.ApplicationRequestId == requestId
+            && record.Protocol == SmtpPresentationOperations.Protocol
+            && record.ContentType == "application/octet-stream"));
+        Assert.AreEqual(1, journal.Records.Select(record => record.SessionId).Distinct().Count());
+        CollectionAssert.AreEqual(
+            Enumerable.Range(0, journal.Records.Count).Select(index => (long)index).ToArray(),
+            journal.Records.Select(record => record.Sequence).ToArray());
+        var outbound = Encoding.Latin1.GetString(journal.Records
+            .Where(record => record.Direction == GatewayTrafficDirections.Outbound)
+            .SelectMany(record => record.Payload)
+            .ToArray());
+        var inbound = Encoding.Latin1.GetString(journal.Records
+            .Where(record => record.Direction == GatewayTrafficDirections.Inbound)
+            .SelectMany(record => record.Payload)
+            .ToArray());
+        StringAssert.Contains(outbound, "EHLO email.mk8n.com\r\n");
+        StringAssert.Contains(outbound, "STARTTLS\r\n");
+        StringAssert.Contains(outbound, "MAIL FROM:<sender@mk8n.com>\r\n");
+        StringAssert.Contains(outbound, "..first\r\n.\r\n");
+        StringAssert.Contains(inbound, "220 receiver.test ESMTP\r\n");
+        StringAssert.Contains(inbound, "250 Queued\r\n");
+    }
+
+    [TestMethod]
+    [Timeout(10_000)]
+    public async Task GatewayRelayDoesNotSendCommandsWhenTrafficJournalFails()
+    {
+        await using var server = new ScriptedSmtpServer(async session =>
+        {
+            await session.WriteLineAsync("220 receiver.test ESMTP");
+            try
+            {
+                _ = await session.ReadLineAsync();
+                Assert.Fail("The relay sent a command despite an unavailable journal.");
+            }
+            catch (EndOfStreamException)
+            {
+            }
+        });
+        var relay = CreateRelay(new StubResolver(Available(server.Port)), new RejectingJournal());
+
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(async () =>
+            await relay.RelayAsync(
+                new SmtpRelayPresentationRequest(
+                    "sender@mk8n.com",
+                    "recipient@example.com",
+                    "Subject: test\r\n\r\nbody\r\n",
+                    null),
+                Guid.CreateVersion7(),
+                CancellationToken.None));
+        await server.WaitForCompletionAsync();
+    }
+
+    private OutboundSmtpRelay CreateRelay(
+        IMailExchangeResolver resolver,
+        IGatewayTrafficJournal? traffic = null)
     {
         return new OutboundSmtpRelay(
             resolver,
@@ -471,7 +553,40 @@ public sealed class OutboundSmtpRelayTests
                 },
             },
             NullLogger<OutboundSmtpRelay>.Instance,
-            (_, _, _, _) => true);
+            (_, _, _, _) => true,
+            traffic);
+    }
+
+    private sealed class RecordingJournal : IGatewayTrafficJournal
+    {
+        public List<GatewayTrafficRecord> Records { get; } = [];
+
+        public Task AppendAsync(
+            GatewayTrafficRecord record,
+            CancellationToken cancellationToken = default)
+        {
+            Records.Add(record);
+            return Task.CompletedTask;
+        }
+
+        public Task<IReadOnlyList<GatewayTrafficRecord>> ReadSessionAsync(
+            Guid sessionId,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<GatewayTrafficRecord>>(
+                Records.Where(record => record.SessionId == sessionId).ToArray());
+    }
+
+    private sealed class RejectingJournal : IGatewayTrafficJournal
+    {
+        public Task AppendAsync(
+            GatewayTrafficRecord record,
+            CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("The traffic journal is unavailable.");
+
+        public Task<IReadOnlyList<GatewayTrafficRecord>> ReadSessionAsync(
+            Guid sessionId,
+            CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("The traffic journal is unavailable.");
     }
 
     private static MailRoutingResult Available(int port) => new(

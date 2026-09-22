@@ -5,7 +5,9 @@ using Microsoft.Extensions.Logging.Abstractions;
 using mk8.email.Application.Worker;
 using mk8.email.Configuration;
 using mk8.email.Contracts.Messaging;
+using mk8.email.Gateway.Protocols;
 using mk8.email.Gateway.Protocols.Jmap;
+using mk8.email.Smtp.Presentation;
 using Npgsql;
 using NpgsqlTypes;
 
@@ -42,6 +44,7 @@ public sealed class WebPushPresentationTests
             gatewayBus,
             journal,
             sender,
+            new UnusedSmtpRelay(),
             new EnvironmentConfig(),
             NullLogger<GatewayPresentationWorker>.Instance);
         var application = new JmapPushPresentationClient(
@@ -222,5 +225,14 @@ public sealed class WebPushPresentationTests
             Guid sessionId,
             CancellationToken cancellationToken = default) =>
             throw new InvalidOperationException("The traffic journal is unavailable.");
+    }
+
+    private sealed class UnusedSmtpRelay : ISmtpPresentationRelay
+    {
+        public Task<OutboundDeliveryResult> RelayAsync(
+            SmtpRelayPresentationRequest request,
+            Guid applicationRequestId,
+            CancellationToken cancellationToken) =>
+            throw new AssertFailedException("A Web Push request must not enter the SMTP relay.");
     }
 }

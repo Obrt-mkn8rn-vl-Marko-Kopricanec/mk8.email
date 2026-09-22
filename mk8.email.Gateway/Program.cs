@@ -12,6 +12,7 @@ using mk8.email.Gateway.Protocols.OAuth;
 using mk8.email.Gateway.Security;
 using mk8.email.Hosting;
 using mk8.email.Messaging;
+using mk8.email.Smtp.Presentation;
 
 var builder = WebApplication.CreateBuilder(args);
 var environmentConfig = EnvironmentLoader.Load(
@@ -40,6 +41,7 @@ builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
 
 builder.Services.AddDistributedMessaging(environmentConfig);
 builder.Services.AddGatewayApplicationClient();
+builder.Services.AddOutboundSmtpPresentation();
 if (environmentConfig.Dav.EnableDav)
     builder.Services.AddScoped<GatewayDavStore>();
 builder.Services.AddSingleton<GatewayWebPushService>();

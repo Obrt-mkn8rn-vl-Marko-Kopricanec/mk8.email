@@ -47,6 +47,11 @@
           "System.IO.Hashing": "10.0.3"
         }
       },
+      "DnsClient": {
+        "type": "Transitive",
+        "resolved": "1.8.0",
+        "contentHash": "RRwtaCXkXWsx0mmsReGDqCbRLtItfUbkRJlet1FpdciVhyMGKcPd57T1+8Jki9ojHlq9fntVhXQroOOgRak8DQ=="
+      },
       "Microsoft.Bcl.AsyncInterfaces": {
         "type": "Transitive",
         "resolved": "10.0.3",
@@ -129,6 +134,16 @@
         "dependencies": {
           "Npgsql": "[10.0.2, )",
           "mk8.email.Contracts": "[1.0.0, )"
+        }
+      },
+      "mk8.email.smtp.presentation": {
+        "type": "Project",
+        "dependencies": {
+          "DnsClient": "[1.8.0, )",
+          "mk8.email.Configuration": "[1.0.0, )",
+          "mk8.email.Contracts": "[1.0.0, )",
+          "mk8.email.MailWire": "[1.0.0, )",
+          "mk8.email.Messaging": "[1.0.0, )"
         }
       },
       "mk8.email.storage": {

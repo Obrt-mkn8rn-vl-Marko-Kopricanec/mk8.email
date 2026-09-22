@@ -1,4 +1,3 @@
-using DnsClient;
 using Microsoft.Extensions.DependencyInjection;
 using mk8.email.Application.Interfaces;
 using mk8.email.Application.Services;
@@ -38,15 +37,6 @@ public static class ApplicationServiceExtensions
 
     public static IServiceCollection AddMailApplicationWorker(this IServiceCollection services)
     {
-        services.AddSingleton<ILookupClient>(_ => new LookupClient(new LookupClientOptions
-        {
-            UseCache = true,
-            Timeout = TimeSpan.FromSeconds(5),
-            Retries = 2,
-            ThrowDnsErrors = false,
-        }));
-        services.AddSingleton<IMailExchangeResolver, DnsMailExchangeResolver>();
-        services.AddSingleton<IOutboundMailRelay, OutboundSmtpRelay>();
         services.AddSingleton<IMailScanner, RspamdMailScanner>();
         services.AddSingleton(TimeProvider.System);
         services.AddScoped<ISenderAuthorizationService, SenderAuthorizationService>();

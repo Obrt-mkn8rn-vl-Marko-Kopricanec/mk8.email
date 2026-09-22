@@ -1,17 +1,22 @@
 using System.Text.Json;
 using mk8.email.Configuration;
+using mk8.email.Contracts.Mail;
 using mk8.email.Contracts.Messaging;
+using mk8.email.Gateway.Protocols.Jmap;
 using mk8.email.Messaging;
+using mk8.email.Smtp.Presentation;
 
-namespace mk8.email.Gateway.Protocols.Jmap;
+namespace mk8.email.Gateway.Protocols;
 
 internal sealed class GatewayPresentationWorker(
     IPresentationRequestConsumer requests,
     IGatewayTrafficJournal traffic,
     GatewayWebPushService webPush,
+    ISmtpPresentationRelay smtpRelay,
     EnvironmentConfig environment,
     ILogger<GatewayPresentationWorker> logger) : BackgroundService
 {
+    private const int MaximumConcurrentOperations = 16;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly string WorkerId = $"presentation@{Environment.MachineName}";
     private readonly TimeSpan _leaseRenewalInterval = TimeSpan.FromSeconds(
@@ -19,22 +24,64 @@ internal sealed class GatewayPresentationWorker(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        while (!stoppingToken.IsCancellationRequested)
+        var active = new HashSet<Task>();
+        try
         {
-            try
+            while (!stoppingToken.IsCancellationRequested)
             {
-                var lease = await requests.WaitForRequestAsync(WorkerId, stoppingToken);
-                await ProcessAsync(lease, stoppingToken);
+                try
+                {
+                    active.RemoveWhere(task => task.IsCompleted);
+                    if (active.Count >= MaximumConcurrentOperations)
+                    {
+                        await Task.WhenAny(active);
+                        active.RemoveWhere(task => task.IsCompleted);
+                    }
+
+                    var lease = await requests.WaitForRequestAsync(WorkerId, stoppingToken);
+                    active.Add(ProcessSafelyAsync(lease, stoppingToken));
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception exception)
+                {
+                    logger.LogError(exception, "Gateway presentation request processing failed");
+                    try
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+                    }
+                    catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                    {
+                        break;
+                    }
+                }
             }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (Exception exception)
-            {
-                logger.LogError(exception, "Gateway presentation request processing failed");
-                await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
-            }
+        }
+        finally
+        {
+            await Task.WhenAll(active);
+        }
+    }
+
+    private async Task ProcessSafelyAsync(
+        ApplicationRequestLease lease,
+        CancellationToken stoppingToken)
+    {
+        try
+        {
+            await ProcessAsync(lease, stoppingToken);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(
+                exception,
+                "Gateway presentation request {RequestId} failed unexpectedly",
+                lease.Request.Id);
         }
     }
 
@@ -44,6 +91,8 @@ internal sealed class GatewayPresentationWorker(
     {
         var trafficSessionId = Guid.CreateVersion7();
         using var operationCancellation = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        var remaining = lease.Request.Deadline - DateTimeOffset.UtcNow;
+        operationCancellation.CancelAfter(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero);
         var renewal = RenewLeaseAsync(lease, operationCancellation);
         try
         {
@@ -124,15 +173,29 @@ internal sealed class GatewayPresentationWorker(
         Guid trafficSessionId,
         CancellationToken cancellationToken)
     {
-        if (!string.Equals(
-                request.Protocol,
-                WebPushPresentationOperations.Protocol,
-                StringComparison.Ordinal)
-            || !string.Equals(request.ContentType, "application/json", StringComparison.Ordinal))
+        if (!string.Equals(request.ContentType, "application/json", StringComparison.Ordinal))
             return Error(request.Id, "unsupported-presentation-operation");
 
         try
         {
+            if (string.Equals(request.Protocol, SmtpPresentationOperations.Protocol, StringComparison.Ordinal))
+            {
+                if (request.Operation != SmtpPresentationOperations.Relay)
+                    return Error(request.Id, "unsupported-presentation-operation");
+                var relayRequest = Deserialize<SmtpRelayPresentationRequest>(request.Payload);
+                var result = await smtpRelay.RelayAsync(
+                    relayRequest,
+                    request.Id,
+                    cancellationToken);
+                return Success(request.Id, result);
+            }
+
+            if (!string.Equals(
+                    request.Protocol,
+                    WebPushPresentationOperations.Protocol,
+                    StringComparison.Ordinal))
+                return Error(request.Id, "unsupported-presentation-operation");
+
             switch (request.Operation)
             {
                 case WebPushPresentationOperations.ValidateEndpoint:

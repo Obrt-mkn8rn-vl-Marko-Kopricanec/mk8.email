@@ -1,8 +1,8 @@
 using DnsClient;
 using Microsoft.Extensions.Logging;
-using mk8.email.Application.Interfaces;
+using mk8.email.Contracts.Mail;
 
-namespace mk8.email.Application.Services;
+namespace mk8.email.Smtp.Presentation;
 
 public sealed class DnsMailExchangeResolver(
     ILookupClient lookupClient,

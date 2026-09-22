@@ -5,6 +5,7 @@ using mk8.email.Application;
 using mk8.email.Application.Services;
 using mk8.email.Application.Worker;
 using mk8.email.Configuration;
+using mk8.email.Contracts.Mail;
 using mk8.email.Dav;
 using mk8.email.Hosting;
 using mk8.email.Infrastructure;
@@ -34,6 +35,7 @@ try
     builder.Services.AddInfrastructure(environment);
     builder.Services.AddApplication();
     builder.Services.AddMailApplicationWorker();
+    builder.Services.AddSingleton<IOutboundMailRelay, OutboundSmtpPresentationClient>();
     if (environment.Dav.EnableDav)
         builder.Services.AddDavProtocol();
     if (environment.Jmap.EnableJmap)

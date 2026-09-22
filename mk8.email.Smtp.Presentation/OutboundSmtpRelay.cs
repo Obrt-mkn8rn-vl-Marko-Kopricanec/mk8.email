@@ -3,13 +3,14 @@ using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Text;
 using Microsoft.Extensions.Logging;
-using mk8.email.Application.Interfaces;
-using mk8.email.Application.Protocol;
+using mk8.email.Contracts.Mail;
+using mk8.email.Messaging;
+using mk8.email.MailWire;
 using mk8.email.Configuration;
 
-namespace mk8.email.Application.Services;
+namespace mk8.email.Smtp.Presentation;
 
-public sealed class OutboundSmtpRelay : IOutboundMailRelay
+public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRelay
 {
     private const int MaximumAttempts = 5;
     private const int MaximumResponseLines = 100;
@@ -20,12 +21,22 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay
     private readonly EnvironmentConfig _environment;
     private readonly ILogger<OutboundSmtpRelay> _logger;
     private readonly RemoteCertificateValidationCallback? _certificateValidationCallback;
+    private readonly IGatewayTrafficJournal? _traffic;
 
     public OutboundSmtpRelay(
         IMailExchangeResolver resolver,
         EnvironmentConfig environment,
         ILogger<OutboundSmtpRelay> logger)
-        : this(resolver, environment, logger, certificateValidationCallback: null)
+        : this(resolver, environment, logger, certificateValidationCallback: null, traffic: null)
+    {
+    }
+
+    public OutboundSmtpRelay(
+        IMailExchangeResolver resolver,
+        EnvironmentConfig environment,
+        ILogger<OutboundSmtpRelay> logger,
+        IGatewayTrafficJournal traffic)
+        : this(resolver, environment, logger, certificateValidationCallback: null, traffic)
     {
     }
 
@@ -34,19 +45,51 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay
         EnvironmentConfig environment,
         ILogger<OutboundSmtpRelay> logger,
         RemoteCertificateValidationCallback? certificateValidationCallback)
+        : this(resolver, environment, logger, certificateValidationCallback, traffic: null)
+    {
+    }
+
+    internal OutboundSmtpRelay(
+        IMailExchangeResolver resolver,
+        EnvironmentConfig environment,
+        ILogger<OutboundSmtpRelay> logger,
+        RemoteCertificateValidationCallback? certificateValidationCallback,
+        IGatewayTrafficJournal? traffic)
     {
         _resolver = resolver;
         _environment = environment;
         _logger = logger;
         _certificateValidationCallback = certificateValidationCallback;
+        _traffic = traffic;
     }
 
-    public async Task<OutboundDeliveryResult> RelayAsync(
+    public Task<OutboundDeliveryResult> RelayAsync(
         string sender,
         string recipient,
         string rawMessage,
         OutboundMailOptions? options = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        RelayCoreAsync(sender, recipient, rawMessage, options, null, cancellationToken);
+
+    public Task<OutboundDeliveryResult> RelayAsync(
+        SmtpRelayPresentationRequest request,
+        Guid applicationRequestId,
+        CancellationToken cancellationToken) =>
+        RelayCoreAsync(
+            request.Sender,
+            request.Recipient,
+            request.RawMessage,
+            request.Options,
+            applicationRequestId,
+            cancellationToken);
+
+    private async Task<OutboundDeliveryResult> RelayCoreAsync(
+        string sender,
+        string recipient,
+        string rawMessage,
+        OutboundMailOptions? options,
+        Guid? applicationRequestId,
+        CancellationToken cancellationToken)
     {
         if (rawMessage.Any(character => character > byte.MaxValue))
         {
@@ -122,6 +165,7 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay
                 rawMessage,
                 requiresSmtpUtf8,
                 options,
+                applicationRequestId,
                 attemptTimeout.Token);
 
             if (result.Status == DeliveryAttemptStatus.Delivered)
@@ -168,13 +212,23 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay
         string rawMessage,
         bool requiresSmtpUtf8,
         OutboundMailOptions? options,
+        Guid? applicationRequestId,
         CancellationToken cancellationToken)
     {
+        SmtpTrafficSession? traffic = null;
+        if (applicationRequestId is { } requestId)
+        {
+            if (_traffic is null)
+                throw new InvalidOperationException("Gateway SMTP delivery requires a traffic journal.");
+            traffic = new SmtpTrafficSession(_traffic, endpoint, requestId);
+        }
+
         try
         {
             await using var connection = await SmtpConnection.ConnectAsync(
                 endpoint,
                 _certificateValidationCallback,
+                traffic,
                 cancellationToken);
 
             var greeting = await connection.ReadResponseAsync(cancellationToken);
@@ -440,6 +494,8 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay
     {
         private readonly TcpClient _client;
         private readonly RemoteCertificateValidationCallback? _certificateValidationCallback;
+        private readonly SmtpTrafficSession? _traffic;
+        private readonly NetworkStream _rawStream;
         private Stream _stream;
         private StreamReader _streamReader;
         private BoundedLineReader _lineReader;
@@ -447,11 +503,16 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay
 
         private SmtpConnection(
             TcpClient client,
-            RemoteCertificateValidationCallback? certificateValidationCallback)
+            RemoteCertificateValidationCallback? certificateValidationCallback,
+            SmtpTrafficSession? traffic)
         {
             _client = client;
             _certificateValidationCallback = certificateValidationCallback;
-            _stream = client.GetStream();
+            _traffic = traffic;
+            _rawStream = client.GetStream();
+            _stream = traffic is null
+                ? _rawStream
+                : new SmtpTrafficStream(_rawStream, traffic, leaveInnerOpen: true);
             _streamReader = CreateStreamReader(_stream);
             _lineReader = new BoundedLineReader(_streamReader);
             _writer = CreateWriter(_stream);
@@ -460,13 +521,14 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay
         public static async Task<SmtpConnection> ConnectAsync(
             MailExchangeEndpoint endpoint,
             RemoteCertificateValidationCallback? certificateValidationCallback,
+            SmtpTrafficSession? traffic,
             CancellationToken cancellationToken)
         {
             var client = new TcpClient();
             try
             {
                 await client.ConnectAsync(endpoint.Host, endpoint.Port, cancellationToken);
-                return new SmtpConnection(client, certificateValidationCallback);
+                return new SmtpConnection(client, certificateValidationCallback, traffic);
             }
             catch
             {
@@ -521,15 +583,19 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay
         {
             var normalized = rawMessage.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
             using var messageReader = new StringReader(normalized);
+            var data = new StringBuilder(normalized.Length + 16);
 
             while (messageReader.ReadLine() is { } line)
             {
                 if (line.Length > 0 && line[0] == '.')
-                    await _writer.WriteAsync(".".AsMemory(), cancellationToken);
-                await _writer.WriteLineAsync(line.AsMemory(), cancellationToken);
+                    data.Append('.');
+                data.Append(line).Append("\r\n");
             }
 
-            await _writer.WriteLineAsync(".".AsMemory(), cancellationToken);
+            data.Append(".\r\n");
+            await _writer.FlushAsync(cancellationToken);
+            await _stream.WriteAsync(ProtocolEncoding.GetBytes(data.ToString()), cancellationToken);
+            await _stream.FlushAsync(cancellationToken);
         }
 
         public async Task UpgradeToTlsAsync(string host, CancellationToken cancellationToken)
@@ -537,9 +603,11 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay
             await _writer.FlushAsync(cancellationToken);
             _streamReader.Dispose();
             await _writer.DisposeAsync();
+            if (_traffic is not null)
+                await _stream.DisposeAsync();
 
             var tlsStream = new SslStream(
-                _stream,
+                _rawStream,
                 leaveInnerStreamOpen: false,
                 _certificateValidationCallback);
             try
@@ -554,7 +622,9 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay
                 throw;
             }
 
-            _stream = tlsStream;
+            _stream = _traffic is null
+                ? tlsStream
+                : new SmtpTrafficStream(tlsStream, _traffic, leaveInnerOpen: false);
             _streamReader = CreateStreamReader(_stream);
             _lineReader = new BoundedLineReader(_streamReader);
             _writer = CreateWriter(_stream);

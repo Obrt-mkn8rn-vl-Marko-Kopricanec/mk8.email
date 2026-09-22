@@ -15,6 +15,7 @@ using mk8.email.Dav;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
 using mk8.email.Infrastructure.Models;
+using mk8.email.Gateway.Protocols.Jmap;
 using mk8.email.Jmap;
 using mk8.email.Utils;
 
@@ -106,7 +107,8 @@ internal sealed class DavFixture : IAsyncDisposable
         var submissionQueue = new CapturingMailSubmissionQueue();
         builder.Services.AddSingleton<IMailSubmissionQueue>(submissionQueue);
         builder.Services.AddDavProtocol();
-        builder.Services.AddJmapProtocol();
+        builder.Services.AddJmapApplication();
+        builder.Services.AddSingleton<IGatewayJmapClient, InProcessGatewayJmapClient>();
 
         var application = builder.Build();
         application.MapDavEndpoints();

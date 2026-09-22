@@ -3,7 +3,8 @@ using Microsoft.Extensions.DependencyInjection;
 using mk8.email.Application.Interfaces;
 using mk8.email.Dav;
 using mk8.email.Configuration;
-using mk8.email.Jmap;
+using mk8.email.Contracts.Messaging;
+using mk8.email.Gateway.Protocols.Jmap;
 
 namespace mk8.email.Application.Tests;
 
@@ -11,7 +12,7 @@ namespace mk8.email.Application.Tests;
 public sealed class HttpBearerAuthenticationTests
 {
     [TestMethod]
-    public async Task JmapAndDavAcceptBearerTokensWithProtocolSpecificScopes()
+    public async Task GatewayParsesJmapBearerAndDavUsesItsProtocolScope()
     {
         var tokenService = new RecordingOAuthTokenService();
         var services = new ServiceCollection()
@@ -24,13 +25,12 @@ public sealed class HttpBearerAuthenticationTests
         var authenticator = new RejectingMailAuthenticator();
 
         var jmapContext = CreateContext(services);
-        var jmapUser = await JmapHttpAuthentication.AuthenticateAsync(
-            jmapContext,
-            authenticator,
+        Assert.IsTrue(GatewayJmapAuthentication.TryParse(
+            jmapContext.Request,
             environment,
-            CancellationToken.None);
-        Assert.IsNotNull(jmapUser);
-        Assert.AreEqual("jmap", tokenService.LastScope);
+            out var jmapAuthentication));
+        Assert.AreEqual(ProtocolAuthenticationKinds.BearerToken, jmapAuthentication.Kind);
+        Assert.AreEqual("access-token", jmapAuthentication.Secret);
 
         var davContext = CreateContext(services);
         var davUser = await DavHttpAuthentication.AuthenticateAsync(
@@ -50,7 +50,7 @@ public sealed class HttpBearerAuthenticationTests
             OAuth = new OAuthConfig { EnableOAuth = true },
         };
         var jmapContext = new DefaultHttpContext();
-        _ = JmapHttpAuthentication.Unauthorized(jmapContext, environment);
+        _ = GatewayJmapAuthentication.Unauthorized(jmapContext, environment);
         var jmapChallenges = jmapContext.Response.Headers.WWWAuthenticate.ToArray();
         CollectionAssert.Contains(jmapChallenges, "Bearer realm=\"mk8.email JMAP\"");
         CollectionAssert.Contains(

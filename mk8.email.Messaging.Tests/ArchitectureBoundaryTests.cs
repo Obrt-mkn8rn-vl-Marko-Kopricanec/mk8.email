@@ -50,7 +50,7 @@ public sealed class ArchitectureBoundaryTests
     }
 
     [TestMethod]
-    public void ApplicationWorkerHasNoPresentationFrameworkOrProtocolAssemblyDependency()
+    public void ApplicationWorkerHasNoPresentationFrameworkOrGatewayDependency()
     {
         var references = typeof(mk8.email.Application.Worker.ApplicationRequestWorker).Assembly
             .GetReferencedAssemblies()
@@ -60,9 +60,21 @@ public sealed class ArchitectureBoundaryTests
         Assert.IsFalse(references.Any(reference =>
             reference.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal)
             || reference.StartsWith("mk8.email.Gateway", StringComparison.Ordinal)
-            || reference.StartsWith("mk8.email.Jmap", StringComparison.Ordinal)
             || reference.StartsWith("mk8.email.Dav", StringComparison.Ordinal)
                 || reference.StartsWith("mk8.email.OAuth", StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
+    public void JmapApplicationLogicHasNoAspNetDependency()
+    {
+        var references = typeof(mk8.email.Jmap.JmapRequestProcessor).Assembly
+            .GetReferencedAssemblies()
+            .Select(reference => reference.Name ?? string.Empty)
+            .ToArray();
+
+        Assert.IsFalse(references.Any(reference =>
+            reference.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal)
+            || reference.StartsWith("mk8.email.Gateway", StringComparison.Ordinal)));
     }
 
     [TestMethod]
@@ -127,5 +139,15 @@ public sealed class ArchitectureBoundaryTests
                 .Assembly
                 .GetName()
                 .Name);
+    }
+
+    [TestMethod]
+    public void GatewayOwnsJmapPresentationWithoutDependingOnJmapApplicationLogic()
+    {
+        var endpointAssembly = typeof(
+            mk8.email.Gateway.Protocols.Jmap.JmapEndpointRouteBuilderExtensions).Assembly;
+        Assert.AreEqual("mk8.email.Gateway", endpointAssembly.GetName().Name);
+        Assert.IsFalse(endpointAssembly.GetReferencedAssemblies().Any(reference =>
+            string.Equals(reference.Name, "mk8.email.Jmap", StringComparison.Ordinal)));
     }
 }

@@ -1,5 +1,4 @@
 using System.Text.Json.Nodes;
-using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
@@ -53,7 +52,7 @@ public sealed class JmapRequestProcessor
         {
             throw new JmapRequestException(
                 "urn:ietf:params:jmap:error:unknownCapability",
-                StatusCodes.Status400BadRequest,
+                400,
                 "Unknown capability",
                 $"The request uses an unsupported capability: {unknownCapability}");
         }
@@ -64,7 +63,7 @@ public sealed class JmapRequestProcessor
         {
             throw new JmapRequestException(
                 "urn:ietf:params:jmap:error:limit",
-                StatusCodes.Status400BadRequest,
+                400,
                 "Request limit exceeded",
                 "The request contains too many method calls.",
                 "maxCallsInRequest");
@@ -477,7 +476,7 @@ public sealed class JmapRequestProcessor
     private static JmapRequestException NotRequest(string detail) =>
         new(
             "urn:ietf:params:jmap:error:notRequest",
-            StatusCodes.Status400BadRequest,
+            400,
             "Invalid JMAP request",
             detail);
 

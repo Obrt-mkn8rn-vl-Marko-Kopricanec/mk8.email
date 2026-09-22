@@ -7,7 +7,7 @@ namespace mk8.email.Jmap;
 
 public static class JmapServiceExtensions
 {
-    public static IServiceCollection AddJmapProtocol(this IServiceCollection services)
+    public static IServiceCollection AddJmapApplication(this IServiceCollection services)
     {
         services.TryAddScoped<ISenderAuthorizationService, SenderAuthorizationService>();
         services.TryAddScoped<IEmailService, EmailService>();
@@ -20,6 +20,7 @@ public static class JmapServiceExtensions
         services.AddScoped<JmapEmailBuilder>();
         services.AddScoped<JmapEmailStore>();
         services.AddScoped<JmapContactStore>();
+        services.AddScoped<IJmapApplicationService, JmapApplicationService>();
         services.AddScoped<JmapIdentityService>();
         services.AddScoped<JmapVacationResponseService>();
         services.AddSingleton<JmapPushDeliveryService>();

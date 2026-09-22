@@ -90,6 +90,36 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
                 ApplicationOperations.OAuthTokenRevoke => await RevokeOAuthTokenAsync(
                     request,
                     cancellationToken),
+                ApplicationOperations.JmapSessionGet => Success(
+                    request.Id,
+                    await services.GetRequiredService<IJmapApplicationService>()
+                        .GetSessionAsync(
+                            Deserialize<JmapSessionApplicationRequest>(request),
+                            cancellationToken)),
+                ApplicationOperations.JmapApiProcess => Success(
+                    request.Id,
+                    await services.GetRequiredService<IJmapApplicationService>()
+                        .ProcessApiRequestAsync(
+                            Deserialize<JmapApiApplicationRequest>(request),
+                            cancellationToken)),
+                ApplicationOperations.JmapUpload => Success(
+                    request.Id,
+                    await services.GetRequiredService<IJmapApplicationService>()
+                        .UploadAsync(
+                            Deserialize<JmapUploadApplicationRequest>(request),
+                            cancellationToken)),
+                ApplicationOperations.JmapDownload => Success(
+                    request.Id,
+                    await services.GetRequiredService<IJmapApplicationService>()
+                        .DownloadAsync(
+                            Deserialize<JmapDownloadApplicationRequest>(request),
+                            cancellationToken)),
+                ApplicationOperations.JmapEventPoll => Success(
+                    request.Id,
+                    await services.GetRequiredService<IJmapApplicationService>()
+                        .PollEventAsync(
+                            Deserialize<JmapEventApplicationRequest>(request),
+                            cancellationToken)),
                 _ => Error(request.Id, "unknown-operation", "The application operation is not supported."),
             };
         }

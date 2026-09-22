@@ -1,4 +1,5 @@
 using mk8.email.Gateway.Protocols.OAuth;
+using mk8.email.Gateway.Protocols.Jmap;
 
 namespace mk8.email.Gateway.ApplicationBridge;
 
@@ -13,6 +14,7 @@ public static class GatewayApplicationServiceExtensions
         services.AddSingleton<IGatewayApplicationTransport, GatewayApplicationTransport>();
         services.AddSingleton<IGatewayApplicationClient, GatewayApplicationClient>();
         services.AddSingleton<IGatewayOAuthClient, GatewayOAuthClient>();
+        services.AddSingleton<IGatewayJmapClient, GatewayJmapClient>();
         return services;
     }
 }

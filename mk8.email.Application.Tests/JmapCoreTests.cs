@@ -8,6 +8,7 @@ using mk8.email.Application.Interfaces;
 using mk8.email.Application.Protocol;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
+using mk8.email.Gateway.Protocols.Jmap;
 using mk8.email.Infrastructure.Models;
 using mk8.email.Jmap;
 
@@ -334,7 +335,7 @@ public sealed class JmapCoreTests
     }
 
     [TestMethod]
-    public async Task JsonTransportEnforcesExactMediaTypeAndNamedLimits()
+    public void JsonTransportEnforcesExactMediaTypeAndNamedLimits()
     {
         var context = new DefaultHttpContext();
         context.Request.ContentType = "application/json; charset=utf-8";
@@ -343,10 +344,8 @@ public sealed class JmapCoreTests
         Assert.IsFalse(JmapEndpointRouteBuilderExtensions.HasJmapJsonContentType(context.Request));
 
         var configuration = new JmapConfig { MaxRequestSizeBytes = 65_536 };
-        context.Request.ContentLength = 65_537;
-        context.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes("{}"));
-        var exception = await Assert.ThrowsAsync<JmapRequestException>(
-            () => JmapJson.ParseRequestAsync(context.Request, configuration, CancellationToken.None));
+        var exception = Assert.ThrowsExactly<JmapRequestException>(
+            () => JmapJson.ParseRequest(new byte[65_537], configuration));
         Assert.AreEqual("urn:ietf:params:jmap:error:limit", exception.Type);
         Assert.AreEqual("maxSizeRequest", exception.Limit);
         Assert.AreEqual(StatusCodes.Status400BadRequest, exception.StatusCode);
@@ -487,7 +486,7 @@ public sealed class JmapCoreTests
     }
 
     [TestMethod]
-    public async Task JsonTransportRejectsSurrogatesAndUnicodeNoncharacters()
+    public void JsonTransportRejectsSurrogatesAndUnicodeNoncharacters()
     {
         foreach (var json in new[]
         {
@@ -498,16 +497,11 @@ public sealed class JmapCoreTests
             "{\"\\uFDEF\":true}",
         })
         {
-            var context = new DefaultHttpContext();
             var bytes = Encoding.UTF8.GetBytes(json);
-            context.Request.ContentLength = bytes.Length;
-            context.Request.Body = new MemoryStream(bytes);
-
-            var exception = await Assert.ThrowsAsync<JmapRequestException>(
-                () => JmapJson.ParseRequestAsync(
-                    context.Request,
-                    new JmapConfig { MaxRequestSizeBytes = 65_536 },
-                    CancellationToken.None));
+            var exception = Assert.ThrowsExactly<JmapRequestException>(
+                () => JmapJson.ParseRequest(
+                    bytes,
+                    new JmapConfig { MaxRequestSizeBytes = 65_536 }));
 
             Assert.AreEqual("urn:ietf:params:jmap:error:notJSON", exception.Type, json);
         }

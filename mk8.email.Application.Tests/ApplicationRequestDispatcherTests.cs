@@ -79,6 +79,38 @@ public sealed class ApplicationRequestDispatcherTests
         Assert.AreEqual("authorization-code", result?.AuthorizationCode);
     }
 
+    [TestMethod]
+    public async Task JmapApiDispatchesAsATransportNeutralApplicationOperation()
+    {
+        var service = new StubJmapApplicationService();
+        await using var services = new ServiceCollection()
+            .AddSingleton<IJmapApplicationService>(service)
+            .BuildServiceProvider();
+        var dispatcher = new ApplicationRequestDispatcher(services);
+        var value = new JmapApiApplicationRequest(
+            new ProtocolAuthentication(
+                ProtocolAuthenticationKinds.Password,
+                "person@example.test",
+                "secret"),
+            "{\"using\":[],\"methodCalls\":[]}"u8.ToArray());
+        var request = NewRequest(
+            ApplicationOperations.JmapApiProcess,
+            JsonSerializer.SerializeToUtf8Bytes(
+                value,
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+
+        var response = await dispatcher.DispatchAsync(request);
+
+        Assert.IsFalse(response.IsError);
+        Assert.AreEqual(value.Authentication.Username, service.Request?.Authentication.Username);
+        CollectionAssert.AreEqual(value.Document, service.Request?.Document);
+        var result = JsonSerializer.Deserialize<JmapApplicationResult>(
+            response.Payload,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.AreEqual(JmapApplicationOutcomes.Ok, result?.Outcome);
+        CollectionAssert.AreEqual("{\"methodResponses\":[]}"u8.ToArray(), result?.Content);
+    }
+
     private static ApplicationRequest NewRequest(string operation, byte[] payload)
     {
         var now = DateTimeOffset.UtcNow;
@@ -130,6 +162,42 @@ public sealed class ApplicationRequestDispatcherTests
 
         public Task RevokeTokenAsync(
             OAuthRevokeTokenRequest request,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+    }
+
+    private sealed class StubJmapApplicationService : IJmapApplicationService
+    {
+        public JmapApiApplicationRequest? Request { get; private set; }
+
+        public Task<JmapApplicationResult> GetSessionAsync(
+            JmapSessionApplicationRequest request,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<JmapApplicationResult> ProcessApiRequestAsync(
+            JmapApiApplicationRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            Request = request;
+            return Task.FromResult(new JmapApplicationResult(
+                JmapApplicationOutcomes.Ok,
+                "{\"methodResponses\":[]}"u8.ToArray(),
+                "application/json"));
+        }
+
+        public Task<JmapApplicationResult> UploadAsync(
+            JmapUploadApplicationRequest request,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<JmapApplicationResult> DownloadAsync(
+            JmapDownloadApplicationRequest request,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<JmapApplicationResult> PollEventAsync(
+            JmapEventApplicationRequest request,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
     }

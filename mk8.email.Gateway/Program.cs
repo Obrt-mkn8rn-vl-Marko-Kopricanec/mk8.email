@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.HttpOverrides;
 using mk8.email.Configuration;
 using mk8.email.Gateway.ApplicationBridge;
 using mk8.email.Gateway.Protocols;
+using mk8.email.Gateway.Protocols.Jmap;
 using mk8.email.Gateway.Protocols.OAuth;
 using mk8.email.Gateway.Security;
 using mk8.email.Hosting;
@@ -19,7 +20,13 @@ var environmentConfig = EnvironmentLoader.Load(
 builder.WebHost.ConfigureKestrel(options =>
 {
     options.AddServerHeader = false;
-    options.Limits.MaxRequestBodySize = 64 * 1024;
+    options.Limits.MaxRequestBodySize = environmentConfig.Jmap.EnableJmap
+        ? Math.Max(
+            64 * 1024,
+            Math.Max(
+                environmentConfig.Jmap.MaxRequestSizeBytes,
+                environmentConfig.Jmap.MaxUploadSizeBytes))
+        : 64 * 1024;
 });
 
 builder.Logging.ClearProviders();
@@ -28,6 +35,7 @@ builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
 
 builder.Services.AddDistributedMessaging(environmentConfig);
 builder.Services.AddGatewayApplicationClient();
+builder.Services.AddSingleton(environmentConfig);
 if (environmentConfig.OAuth.EnableOAuth)
     builder.Services.AddOAuthProtocol();
 builder.Services.AddSingleton(environmentConfig.Admin);
@@ -100,11 +108,11 @@ using (var scope = app.Services.CreateScope())
 if (!app.Environment.IsDevelopment())
     app.UseExceptionHandler("/Error");
 
-app.UseMiddleware<OAuthTrafficCaptureMiddleware>();
+app.UseMiddleware<GatewayProtocolTrafficCaptureMiddleware>();
 app.UseMiddleware<GatewayApplicationFailureMiddleware>();
 app.UseForwardedHeaders();
 app.UseWhen(
-    context => !GatewayProtocolPaths.IsOAuth(context.Request.Path),
+    context => !GatewayProtocolPaths.IsPublicProtocol(context.Request.Path),
     branch => branch.UseMiddleware<AdminNetworkMiddleware>());
 app.Use(async (context, next) =>
 {
@@ -132,6 +140,8 @@ app.MapGet("/health/ready", async (
 }).AllowAnonymous();
 if (environmentConfig.OAuth.EnableOAuth)
     app.MapOAuthEndpoints();
+if (environmentConfig.Jmap.EnableJmap)
+    app.MapJmapEndpoints();
 app.MapRazorPages();
 
 await app.RunAsync();

@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
@@ -14,7 +15,7 @@ using mk8.email.Configuration;
 using mk8.email.Contracts.Messaging;
 using mk8.email.Gateway.ApplicationBridge;
 using mk8.email.Gateway.Protocols;
-using mk8.email.Gateway.Protocols.OAuth;
+using mk8.email.Gateway.Protocols.Jmap;
 using Npgsql;
 
 namespace mk8.email.Messaging.Tests;
@@ -22,10 +23,10 @@ namespace mk8.email.Messaging.Tests;
 [TestClass]
 [DoNotParallelize]
 [TestCategory("PostgreSQL")]
-public sealed class OAuthGatewayRouteTests
+public sealed class JmapGatewayRouteTests
 {
     [TestMethod]
-    public async Task HttpTokenRequestCrossesRemoteWorkerAndRecordsBothBoundaries()
+    public async Task HttpApiRequestCrossesRemoteWorkerAndRecordsBothBoundaries()
     {
         await using var database = await RequirePostgresAsync();
         await using var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
@@ -33,10 +34,10 @@ public sealed class OAuthGatewayRouteTests
         await PostgresMessagingSchema.EnsureAsync(gatewayDataSource);
         using var gatewayProtector = AesGcmPayloadProtectorTests.CreateProtector(
             "test",
-            "oauth-route-key");
+            "jmap-route-key");
         using var workerProtector = AesGcmPayloadProtectorTests.CreateProtector(
             "test",
-            "oauth-route-key");
+            "jmap-route-key");
         var messagingOptions = new PostgresMessagingOptions
         {
             NotificationFallbackInterval = TimeSpan.FromSeconds(1),
@@ -53,42 +54,42 @@ public sealed class OAuthGatewayRouteTests
             gatewayDataSource,
             gatewayProtector,
             messagingOptions);
-        var oauth = new StubOAuthApplicationService();
+        var jmap = new StubJmapApplicationService();
         var workerServices = new ServiceCollection()
-            .AddSingleton<IOAuthApplicationService>(oauth)
+            .AddSingleton<IJmapApplicationService>(jmap)
             .AddScoped<IApplicationRequestDispatcher>(serviceProvider =>
                 new ApplicationRequestDispatcher(serviceProvider));
         await using var workerProvider = workerServices.BuildServiceProvider();
         var worker = new ApplicationRequestWorker(
             workerBus,
             workerProvider.GetRequiredService<IServiceScopeFactory>(),
-            new ApplicationWorkerIdentity("application@route-host", TimeSpan.FromSeconds(30)),
+            new ApplicationWorkerIdentity("application@jmap-route-host", TimeSpan.FromSeconds(30)),
             NullLogger<ApplicationRequestWorker>.Instance);
+        var environment = new EnvironmentConfig
+        {
+            Smtp = new SmtpConfig { Hostname = "email.example.test" },
+            Jmap = new JmapConfig
+            {
+                EnableJmap = true,
+                PublicBaseUrl = "https://email.example.test",
+                MaxRequestSizeBytes = 65_536,
+                MaxUploadSizeBytes = 1_048_576,
+            },
+        };
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
         {
             EnvironmentName = "Testing",
         });
         builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, 0));
-        builder.Services.AddSingleton(new EnvironmentConfig
-        {
-            Smtp = new SmtpConfig { Hostname = "email.example.test" },
-            OAuth = new OAuthConfig
-            {
-                EnableOAuth = true,
-                PublicBaseUrl = "https://email.example.test",
-                ClientId = "thunderbird",
-            },
-        });
+        builder.Services.AddSingleton(environment);
         builder.Services.AddSingleton<IApplicationRequestClient>(gatewayBus);
         builder.Services.AddSingleton<IGatewayTrafficJournal>(journal);
         builder.Services.AddGatewayApplicationClient();
-        builder.Services.AddOAuthProtocol();
         var application = builder.Build();
         application.UseMiddleware<GatewayProtocolTrafficCaptureMiddleware>();
         application.UseMiddleware<GatewayApplicationFailureMiddleware>();
         application.UseRouting();
-        application.UseRateLimiter();
-        application.MapOAuthEndpoints();
+        application.MapJmapEndpoints();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
 
         await worker.StartAsync(timeout.Token);
@@ -97,32 +98,38 @@ public sealed class OAuthGatewayRouteTests
         {
             var address = application.Services.GetRequiredService<IServer>()
                 .Features.Get<IServerAddressesFeature>()?.Addresses.Single()
-                ?? throw new AssertFailedException("The OAuth Gateway did not publish an address.");
+                ?? throw new AssertFailedException("The JMAP Gateway did not publish an address.");
             using var client = new HttpClient
             {
                 BaseAddress = new Uri(address),
                 Timeout = TimeSpan.FromSeconds(10),
             };
-            using var response = await client.PostAsync(
-                "/oauth/token",
-                new FormUrlEncodedContent(new Dictionary<string, string>
-                {
-                    ["grant_type"] = "refresh_token",
-                    ["client_id"] = "thunderbird",
-                    ["refresh_token"] = "route-refresh-secret",
-                }),
-                timeout.Token);
+            const string requestDocument =
+                "{\"using\":[\"urn:ietf:params:jmap:core\"],\"methodCalls\":[]}";
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/jmap/api")
+            {
+                Content = new StringContent(requestDocument, Encoding.UTF8, "application/json"),
+            };
+            request.Headers.Authorization = new AuthenticationHeaderValue(
+                "Basic",
+                Convert.ToBase64String(
+                    Encoding.UTF8.GetBytes("person@example.test:route-password-secret")));
+            using var response = await client.SendAsync(request, timeout.Token);
 
             Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
             using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(timeout.Token));
             Assert.AreEqual(
-                "returned-access-token",
-                json.RootElement.GetProperty("access_token").GetString());
-            Assert.AreEqual("route-refresh-secret", oauth.RefreshRequest?.RefreshToken);
+                "remote-worker",
+                json.RootElement.GetProperty("sessionState").GetString());
+            Assert.AreEqual("person@example.test", jmap.Request?.Authentication.Username);
+            Assert.AreEqual("route-password-secret", jmap.Request?.Authentication.Secret);
+            Assert.AreEqual(
+                requestDocument,
+                Encoding.UTF8.GetString(jmap.Request?.Document ?? []));
 
             await using var countCommand = gatewayDataSource.CreateCommand(
                 "SELECT count(*), count(*) FILTER (WHERE metadata ->> 'layer' = 'presentation') "
-                + "FROM gateway_traffic_records WHERE protocol = 'oauth'");
+                + "FROM gateway_traffic_records WHERE protocol = 'jmap'");
             await using var countReader = await countCommand.ExecuteReaderAsync(timeout.Token);
             Assert.IsTrue(await countReader.ReadAsync(timeout.Token));
             Assert.AreEqual(4L, countReader.GetInt64(0));
@@ -131,7 +138,7 @@ public sealed class OAuthGatewayRouteTests
             await using var operationCommand = gatewayDataSource.CreateCommand(
                 "SELECT operation FROM application_requests LIMIT 1");
             Assert.AreEqual(
-                ApplicationOperations.OAuthTokenRefresh,
+                ApplicationOperations.JmapApiProcess,
                 await operationCommand.ExecuteScalarAsync(timeout.Token));
             await using var ciphertextCommand = gatewayDataSource.CreateCommand(
                 "SELECT payload_inline FROM gateway_traffic_records WHERE payload_inline IS NOT NULL");
@@ -141,7 +148,7 @@ public sealed class OAuthGatewayRouteTests
                 var ciphertext = ciphertextReader.GetFieldValue<byte[]>(0);
                 Assert.IsFalse(
                     Encoding.UTF8.GetString(ciphertext)
-                        .Contains("route-refresh-secret", StringComparison.Ordinal));
+                        .Contains("route-password-secret", StringComparison.Ordinal));
             }
         }
         finally
@@ -165,45 +172,38 @@ public sealed class OAuthGatewayRouteTests
         return database;
     }
 
-    private sealed class StubOAuthApplicationService : IOAuthApplicationService
+    private sealed class StubJmapApplicationService : IJmapApplicationService
     {
-        public OAuthRefreshTokenRequest? RefreshRequest { get; private set; }
+        public JmapApiApplicationRequest? Request { get; private set; }
 
-        public Task<OAuthPublicKeyValue> GetPublicKeyAsync(
+        public Task<JmapApplicationResult> GetSessionAsync(
+            JmapSessionApplicationRequest request,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
 
-        public Task<OAuthIdentityLookupResult> AuthenticateIdentityAsync(
-            OAuthIdentityLookupRequest request,
-            CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-
-        public Task<OAuthAuthorizeApplicationResult> AuthorizeAsync(
-            OAuthAuthorizeApplicationRequest request,
-            CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-
-        public Task<OAuthTokenApplicationResult> RedeemAuthorizationCodeAsync(
-            OAuthAuthorizationCodeRedeemRequest request,
-            CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-
-        public Task<OAuthTokenApplicationResult> RefreshTokenAsync(
-            OAuthRefreshTokenRequest request,
+        public Task<JmapApplicationResult> ProcessApiRequestAsync(
+            JmapApiApplicationRequest request,
             CancellationToken cancellationToken = default)
         {
-            RefreshRequest = request;
-            return Task.FromResult(new OAuthTokenApplicationResult(new OAuthTokenValue(
-                Guid.CreateVersion7(),
-                "returned-access-token",
-                "rotated-refresh-token",
-                600,
-                "offline_access imap",
-                null)));
+            Request = request;
+            return Task.FromResult(new JmapApplicationResult(
+                JmapApplicationOutcomes.Ok,
+                "{\"methodResponses\":[],\"sessionState\":\"remote-worker\"}"u8.ToArray(),
+                "application/json"));
         }
 
-        public Task RevokeTokenAsync(
-            OAuthRevokeTokenRequest request,
+        public Task<JmapApplicationResult> UploadAsync(
+            JmapUploadApplicationRequest request,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<JmapApplicationResult> DownloadAsync(
+            JmapDownloadApplicationRequest request,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<JmapApplicationResult> PollEventAsync(
+            JmapEventApplicationRequest request,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
     }

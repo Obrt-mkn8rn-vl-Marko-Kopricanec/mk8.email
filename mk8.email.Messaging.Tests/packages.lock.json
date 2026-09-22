@@ -605,6 +605,7 @@
           "mk8.email.Contracts": "[1.0.0, )",
           "mk8.email.Hosting": "[1.0.0, )",
           "mk8.email.Infrastructure": "[1.0.0, )",
+          "mk8.email.Jmap": "[1.0.0, )",
           "mk8.email.Messaging": "[1.0.0, )"
         }
       },
@@ -645,6 +646,13 @@
           "Microsoft.EntityFrameworkCore": "[10.0.4, )",
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.1, )",
           "mk8.email.Configuration": "[1.0.0, )"
+        }
+      },
+      "mk8.email.jmap": {
+        "type": "Project",
+        "dependencies": {
+          "mk8.email.Application.Core": "[1.0.0, )",
+          "mk8.email.Infrastructure": "[1.0.0, )"
         }
       },
       "mk8.email.messaging": {

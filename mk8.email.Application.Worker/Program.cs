@@ -6,6 +6,7 @@ using mk8.email.Application.Worker;
 using mk8.email.Configuration;
 using mk8.email.Hosting;
 using mk8.email.Infrastructure;
+using mk8.email.Jmap;
 using mk8.email.Messaging;
 
 if (!args.SequenceEqual(["--serve"]))
@@ -29,6 +30,8 @@ try
     builder.Logging.AddFilter("Microsoft.EntityFrameworkCore.Database.Command", LogLevel.Warning);
     builder.Services.AddInfrastructure(environment);
     builder.Services.AddApplication();
+    if (environment.Jmap.EnableJmap)
+        builder.Services.AddJmapApplication();
 
     var workerId = string.IsNullOrWhiteSpace(environment.Messaging.WorkerId)
         ? $"application@{Environment.MachineName}"

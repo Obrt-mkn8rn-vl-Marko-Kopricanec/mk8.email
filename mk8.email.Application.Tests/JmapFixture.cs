@@ -71,7 +71,7 @@ internal sealed class JmapFixture : IAsyncDisposable
         services.AddSingleton(configuration);
         services.AddDbContext<EmailDbContext>(options =>
             options.UseInMemoryDatabase(databaseName));
-        services.AddJmapProtocol();
+        services.AddJmapApplication();
         configureServices?.Invoke(services);
         var provider = services.BuildServiceProvider();
 

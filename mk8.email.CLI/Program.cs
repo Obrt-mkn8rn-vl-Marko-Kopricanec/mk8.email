@@ -14,7 +14,6 @@ using mk8.email.Dav;
 using mk8.email.Infrastructure;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
-using mk8.email.Jmap;
 
 return await RunManagementCommandAsync(args);
 
@@ -318,8 +317,7 @@ static IHost BuildProtocolHost(
     EnvironmentConfig environmentConfig,
     bool isDevelopment)
 {
-    if (!environmentConfig.Jmap.EnableJmap
-        && !environmentConfig.Dav.EnableDav)
+    if (!environmentConfig.Dav.EnableDav)
         return BuildHost(arguments, environmentConfig, includeMailServers: true);
 
     var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions
@@ -335,18 +333,7 @@ static IHost BuildProtocolHost(
     {
         options.AddServerHeader = false;
         options.Listen(IPAddress.Loopback, environmentConfig.Jmap.Port);
-        var maximumRequestBodySize = environmentConfig.Jmap.EnableJmap
-            ? Math.Max(
-                environmentConfig.Jmap.MaxRequestSizeBytes,
-                environmentConfig.Jmap.MaxUploadSizeBytes)
-            : 0;
-        if (environmentConfig.Dav.EnableDav)
-        {
-            maximumRequestBodySize = Math.Max(
-                maximumRequestBodySize,
-                environmentConfig.Dav.MaxResourceSizeBytes);
-        }
-        options.Limits.MaxRequestBodySize = maximumRequestBodySize;
+        options.Limits.MaxRequestBodySize = environmentConfig.Dav.MaxResourceSizeBytes;
         options.Limits.RequestHeadersTimeout = TimeSpan.FromSeconds(15);
         options.Limits.KeepAliveTimeout = TimeSpan.FromMinutes(2);
     });
@@ -354,8 +341,6 @@ static IHost BuildProtocolHost(
     builder.Services.AddInfrastructure(environmentConfig);
     builder.Services.AddApplication();
     builder.Services.AddMailProtocolServers();
-    if (environmentConfig.Jmap.EnableJmap)
-        builder.Services.AddJmapProtocol();
     if (environmentConfig.Dav.EnableDav)
         builder.Services.AddDavProtocol();
     builder.Services.Configure<ForwardedHeadersOptions>(options =>
@@ -390,8 +375,6 @@ static IHost BuildProtocolHost(
         await next(context);
     });
     app.UseRouting();
-    if (environmentConfig.Jmap.EnableJmap)
-        app.MapJmapEndpoints();
     if (environmentConfig.Dav.EnableDav)
         app.MapDavEndpoints();
     return app;

@@ -514,6 +514,13 @@
           "mk8.email.Configuration": "[1.0.0, )"
         }
       },
+      "mk8.email.jmap": {
+        "type": "Project",
+        "dependencies": {
+          "mk8.email.Application.Core": "[1.0.0, )",
+          "mk8.email.Infrastructure": "[1.0.0, )"
+        }
+      },
       "mk8.email.messaging": {
         "type": "Project",
         "dependencies": {

@@ -2,7 +2,6 @@ using System.Buffers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Microsoft.AspNetCore.Http;
 using mk8.email.Configuration;
 
 namespace mk8.email.Jmap;
@@ -15,48 +14,32 @@ internal static class JmapJson
         WriteIndented = false,
     };
 
-    public static async Task<JsonNode?> ParseRequestAsync(
-        HttpRequest request,
-        JmapConfig configuration,
-        CancellationToken cancellationToken)
+    public static JsonNode? ParseRequest(
+        byte[] document,
+        JmapConfig configuration)
     {
-        if (request.ContentLength > configuration.MaxRequestSizeBytes)
+        ArgumentNullException.ThrowIfNull(document);
+        if (document.LongLength > configuration.MaxRequestSizeBytes)
             throw Limit();
-
-        await using var buffer = new MemoryStream();
-        var rented = new byte[16 * 1024];
-        long total = 0;
-        while (true)
-        {
-            var read = await request.Body.ReadAsync(rented, cancellationToken);
-            if (read == 0)
-                break;
-            total += read;
-            if (total > configuration.MaxRequestSizeBytes)
-                throw Limit();
-            await buffer.WriteAsync(rented.AsMemory(0, read), cancellationToken);
-        }
-
-        if (buffer.Length == 0)
+        if (document.Length == 0)
             throw NotJson("The request body is empty.");
 
         try
         {
-            var bytes = buffer.ToArray();
-            using var document = JsonDocument.Parse(bytes, new JsonDocumentOptions
+            using var parsedDocument = JsonDocument.Parse(document, new JsonDocumentOptions
             {
                 AllowTrailingCommas = false,
                 CommentHandling = JsonCommentHandling.Disallow,
                 MaxDepth = 64,
             });
-            if (!HasUniqueObjectProperties(document.RootElement))
+            if (!HasUniqueObjectProperties(parsedDocument.RootElement))
                 throw NotJson("JSON objects must not contain duplicate property names.");
-            if (!HasValidNumbers(document.RootElement))
+            if (!HasValidNumbers(parsedDocument.RootElement))
                 throw NotJson("JSON numbers must be finite IEEE 754 values.");
-            if (!HasValidUnicode(document.RootElement))
+            if (!HasValidUnicode(parsedDocument.RootElement))
                 throw NotJson("JSON strings must contain only I-JSON Unicode characters.");
 
-            return JsonNode.Parse(bytes, documentOptions: new JsonDocumentOptions
+            return JsonNode.Parse(document, documentOptions: new JsonDocumentOptions
             {
                 AllowTrailingCommas = false,
                 CommentHandling = JsonCommentHandling.Disallow,
@@ -228,7 +211,7 @@ internal static class JmapJson
     private static JmapRequestException Limit() =>
         new(
             "urn:ietf:params:jmap:error:limit",
-            StatusCodes.Status400BadRequest,
+            400,
             "Request limit exceeded",
             "The JMAP request is larger than the server limit.",
             "maxSizeRequest");
@@ -237,7 +220,7 @@ internal static class JmapJson
     {
         var exception = new JmapRequestException(
             "urn:ietf:params:jmap:error:notJSON",
-            StatusCodes.Status400BadRequest,
+            400,
             "Invalid JSON",
             detail);
         if (innerException is not null)

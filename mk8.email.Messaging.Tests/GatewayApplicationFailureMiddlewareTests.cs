@@ -2,9 +2,10 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging.Abstractions;
+using mk8.email.Configuration;
 using mk8.email.Contracts.Messaging;
 using mk8.email.Gateway.ApplicationBridge;
-using mk8.email.Gateway.Protocols.OAuth;
+using mk8.email.Gateway.Protocols;
 using mk8.email.Messaging;
 
 namespace mk8.email.Messaging.Tests;
@@ -49,14 +50,14 @@ public sealed class GatewayApplicationFailureMiddlewareTests
             Encoding.UTF8.GetBytes("grant_type=refresh_token&refresh_token=secret-value"));
         context.Response.Body = new MemoryStream();
         var journal = new StubTrafficJournal();
-        var middleware = new OAuthTrafficCaptureMiddleware(
+        var middleware = new GatewayProtocolTrafficCaptureMiddleware(
             async requestContext =>
             {
                 requestContext.Response.StatusCode = StatusCodes.Status200OK;
                 requestContext.Response.ContentType = "application/json";
                 await requestContext.Response.WriteAsync("{\"ok\":true}");
             },
-            NullLogger<OAuthTrafficCaptureMiddleware>.Instance);
+            NullLogger<GatewayProtocolTrafficCaptureMiddleware>.Instance);
 
         await middleware.InvokeAsync(
             context,
@@ -64,7 +65,8 @@ public sealed class GatewayApplicationFailureMiddlewareTests
             new GatewayApplicationOptions(
                 "gateway@test-host",
                 TimeSpan.FromSeconds(10),
-                TimeSpan.FromSeconds(10)));
+                TimeSpan.FromSeconds(10)),
+            new EnvironmentConfig());
 
         Assert.HasCount(2, journal.Records);
         Assert.AreEqual(GatewayTrafficDirections.Inbound, journal.Records[0].Direction);
@@ -80,6 +82,56 @@ public sealed class GatewayApplicationFailureMiddlewareTests
         Assert.AreEqual(
             "{\"ok\":true}",
             await new StreamReader(context.Response.Body, Encoding.UTF8).ReadToEndAsync());
+    }
+
+    [TestMethod]
+    public async Task JmapEventStreamRecordsResponseStartAndEveryFlushedChunk()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = "/jmap/event";
+        context.Request.QueryString = new QueryString("?types=*&closeafter=no&ping=15");
+        context.Response.Body = new MemoryStream();
+        var journal = new StubTrafficJournal();
+        var middleware = new GatewayProtocolTrafficCaptureMiddleware(
+            async requestContext =>
+            {
+                requestContext.Response.StatusCode = StatusCodes.Status200OK;
+                requestContext.Response.ContentType = "text/event-stream";
+                await requestContext.Response.StartAsync();
+                await requestContext.Response.WriteAsync("event: ping\ndata: {\"interval\":15}\n\n");
+                await requestContext.Response.WriteAsync("event: ping\ndata: {\"interval\":15}\n\n");
+            },
+            NullLogger<GatewayProtocolTrafficCaptureMiddleware>.Instance);
+
+        await middleware.InvokeAsync(
+            context,
+            journal,
+            new GatewayApplicationOptions(
+                "gateway@test-host",
+                TimeSpan.FromSeconds(10),
+                TimeSpan.FromSeconds(10)),
+            new EnvironmentConfig
+            {
+                Jmap = new JmapConfig
+                {
+                    MaxRequestSizeBytes = 65_536,
+                    MaxUploadSizeBytes = 1_048_576,
+                },
+            });
+
+        Assert.HasCount(4, journal.Records);
+        Assert.AreEqual(GatewayTrafficDirections.Inbound, journal.Records[0].Direction);
+        Assert.AreEqual(GatewayTrafficDirections.Outbound, journal.Records[1].Direction);
+        Assert.AreEqual("application/vnd.mk8.gateway-http+json", journal.Records[1].ContentType);
+        Assert.AreEqual(
+            "application/vnd.mk8.gateway-http-chunk+json",
+            journal.Records[2].ContentType);
+        Assert.AreEqual(
+            "application/vnd.mk8.gateway-http-chunk+json",
+            journal.Records[3].ContentType);
+        Assert.IsTrue(journal.Records.All(record => record.Protocol == "jmap"));
+        Assert.IsTrue(journal.Records.All(record => record.SessionId == journal.Records[0].SessionId));
     }
 
     private sealed class StubTrafficJournal : IGatewayTrafficJournal

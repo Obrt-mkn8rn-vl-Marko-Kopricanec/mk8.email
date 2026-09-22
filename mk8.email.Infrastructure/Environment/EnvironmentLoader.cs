@@ -15,16 +15,21 @@ public static class EnvironmentLoader
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
     };
 
-    public static EnvironmentConfig Load(bool isDevelopment = false)
+    public static EnvironmentConfig Load(
+        bool isDevelopment = false,
+        EnvironmentValidationRole role = EnvironmentValidationRole.Combined)
     {
         var filePath = System.Environment.GetEnvironmentVariable(ConfigPathVariable);
         if (string.IsNullOrWhiteSpace(filePath))
             throw new InvalidOperationException($"Set {ConfigPathVariable} to the configuration file path.");
 
-        return LoadFromFile(filePath, isDevelopment);
+        return LoadFromFile(filePath, isDevelopment, role);
     }
 
-    public static EnvironmentConfig LoadFromFile(string filePath, bool isDevelopment = false)
+    public static EnvironmentConfig LoadFromFile(
+        string filePath,
+        bool isDevelopment = false,
+        EnvironmentValidationRole role = EnvironmentValidationRole.Combined)
     {
         if (string.IsNullOrWhiteSpace(filePath))
             throw new ArgumentException("The configuration file path is required.", nameof(filePath));
@@ -57,7 +62,22 @@ public static class EnvironmentLoader
             config.Mfa.EncryptionKey,
             config.Mfa.EncryptionKeyFile,
             "MFA encryption key");
-        var errors = config.Validate(isDevelopment);
+        config.Messaging.EncryptionKey = ResolveSecret(
+            config.Messaging.EncryptionKey,
+            config.Messaging.EncryptionKeyFile,
+            "messaging encryption key");
+        foreach (var key in config.Messaging.DecryptionKeys)
+        {
+            key.Key = ResolveSecret(
+                key.Key,
+                key.KeyFile,
+                $"messaging decryption key {key.Id}");
+        }
+        config.ObjectStorage.ConnectionString = ResolveSecret(
+            config.ObjectStorage.ConnectionString,
+            config.ObjectStorage.ConnectionStringFile,
+            "Azure Blob-compatible connection string");
+        var errors = config.Validate(isDevelopment, role);
         if (errors.Count > 0)
         {
             var detail = string.Join(System.Environment.NewLine, errors.Select(error => $"- {error}"));

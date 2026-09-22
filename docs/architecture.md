@@ -27,3 +27,7 @@ All mail attachments and other large persisted application objects follow this s
 PostgreSQL `LISTEN`/`NOTIFY` wakes a resident worker without polling. A bounded fallback scan recovers missed notifications and expired leases. This provides logical sleep while idle; physical scale-to-zero requires an external supervisor capable of starting a worker when durable work appears.
 
 Neither PostgreSQL notifications nor an in-process connection is required for correctness. A Gateway can enqueue while every Application Worker is offline, and a later worker on another machine can claim and complete the request.
+
+`mk8.email.Application.Worker` is the ASP.NET-free executable for this role. It validates only worker-owned configuration, initializes the messaging schema, waits on the durable request channel, creates one dependency-injection scope per claimed operation, renews leases while work is active, and publishes a durable response or sanitized failure. Its first typed operation set covers administration and authentication so the Gateway administration UI can be migrated without sharing Application assemblies or a database context.
+
+The legacy combined CLI and direct Gateway service references remain present only while protocol callers are migrated checkpoint by checkpoint. Their presence keeps this branch non-deployable until the final boundary tests prove that Gateway is the only presentation host and Application Worker is the only application-logic host.

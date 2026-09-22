@@ -5,6 +5,13 @@ using System.Security.Cryptography;
 
 namespace mk8.email.Infrastructure.Environment;
 
+public enum EnvironmentValidationRole
+{
+    Combined,
+    Gateway,
+    ApplicationWorker,
+}
+
 public sealed class EnvironmentConfig
 {
     private const long JmapMaximumInteger = 9_007_199_254_740_991;
@@ -26,6 +33,8 @@ public sealed class EnvironmentConfig
     public LimitsConfig Limits { get; init; } = new();
     public GeneralConfig General { get; init; } = new();
     public AdminConfig Admin { get; init; } = new();
+    public MessagingConfig Messaging { get; init; } = new();
+    public ObjectStorageConfig ObjectStorage { get; init; } = new();
 
     public string BuildConnectionString()
     {
@@ -40,9 +49,12 @@ public sealed class EnvironmentConfig
         }.ConnectionString;
     }
 
-    public IReadOnlyList<string> Validate(bool isDevelopment = false)
+    public IReadOnlyList<string> Validate(
+        bool isDevelopment = false,
+        EnvironmentValidationRole role = EnvironmentValidationRole.Combined)
     {
         var errors = new List<string>();
+        var validatesPresentation = role is not EnvironmentValidationRole.ApplicationWorker;
 
         RequireValue(errors, Database.Host, "Database.Host is required.");
         RequirePort(errors, Database.Port, "Database.Port");
@@ -55,42 +67,48 @@ public sealed class EnvironmentConfig
         if (!isDevelopment && !Smtp.Hostname.Contains('.'))
             errors.Add("Smtp.Hostname must be a fully qualified DNS name in production.");
 
-        var enabledPorts = new List<(string Name, int Port)>();
-        AddEnabledPort(enabledPorts, Smtp.EnableSmtp, "Smtp.Port", Smtp.Port);
-        AddEnabledPort(enabledPorts, Smtp.EnableSubmission, "Smtp.SubmissionPort", Smtp.SubmissionPort);
-        AddEnabledPort(enabledPorts, Smtp.EnableImplicitTls, "Smtp.ImplicitTlsPort", Smtp.ImplicitTlsPort);
-        AddEnabledPort(enabledPorts, Imap.EnableImap, "Imap.Port", Imap.Port);
-        AddEnabledPort(enabledPorts, Imap.EnableImplicitTls, "Imap.ImplicitTlsPort", Imap.ImplicitTlsPort);
-        AddEnabledPort(enabledPorts, Pop3.EnablePop3, "Pop3.Port", Pop3.Port);
-        AddEnabledPort(enabledPorts, Pop3.EnableImplicitTls, "Pop3.ImplicitTlsPort", Pop3.ImplicitTlsPort);
-        AddEnabledPort(enabledPorts, Sieve.EnableManageSieve, "Sieve.Port", Sieve.Port);
-        AddEnabledPort(
-            enabledPorts,
-            Jmap.EnableJmap || Dav.EnableDav || OAuth.EnableOAuth,
-            "Jmap.Port",
-            Jmap.Port);
+        if (validatesPresentation)
+        {
+            var enabledPorts = new List<(string Name, int Port)>();
+            AddEnabledPort(enabledPorts, Smtp.EnableSmtp, "Smtp.Port", Smtp.Port);
+            AddEnabledPort(enabledPorts, Smtp.EnableSubmission, "Smtp.SubmissionPort", Smtp.SubmissionPort);
+            AddEnabledPort(enabledPorts, Smtp.EnableImplicitTls, "Smtp.ImplicitTlsPort", Smtp.ImplicitTlsPort);
+            AddEnabledPort(enabledPorts, Imap.EnableImap, "Imap.Port", Imap.Port);
+            AddEnabledPort(enabledPorts, Imap.EnableImplicitTls, "Imap.ImplicitTlsPort", Imap.ImplicitTlsPort);
+            AddEnabledPort(enabledPorts, Pop3.EnablePop3, "Pop3.Port", Pop3.Port);
+            AddEnabledPort(enabledPorts, Pop3.EnableImplicitTls, "Pop3.ImplicitTlsPort", Pop3.ImplicitTlsPort);
+            AddEnabledPort(enabledPorts, Sieve.EnableManageSieve, "Sieve.Port", Sieve.Port);
+            AddEnabledPort(
+                enabledPorts,
+                Jmap.EnableJmap || Dav.EnableDav || OAuth.EnableOAuth,
+                "Jmap.Port",
+                Jmap.Port);
 
-        if (enabledPorts.Count == 0)
-            errors.Add("Enable at least one SMTP, IMAP, POP3, ManageSieve, JMAP, DAV, or OAuth listener.");
+            if (enabledPorts.Count == 0)
+            {
+                errors.Add(
+                    "Enable at least one SMTP, IMAP, POP3, ManageSieve, JMAP, DAV, or OAuth listener.");
+            }
 
-        foreach (var enabledPort in enabledPorts)
-            RequirePort(errors, enabledPort.Port, enabledPort.Name);
+            foreach (var enabledPort in enabledPorts)
+                RequirePort(errors, enabledPort.Port, enabledPort.Name);
 
-        foreach (var duplicate in enabledPorts.GroupBy(item => item.Port).Where(group => group.Count() > 1))
-            errors.Add($"Enabled listeners cannot share port {duplicate.Key}.");
+            foreach (var duplicate in enabledPorts.GroupBy(item => item.Port).Where(group => group.Count() > 1))
+                errors.Add($"Enabled listeners cannot share port {duplicate.Key}.");
 
-        if (Smtp.EnableSubmission && !Smtp.EnableStartTls)
-            errors.Add("SMTP submission requires STARTTLS.");
-        if (Smtp.AllowRelay && !Smtp.RequireAuth)
-            errors.Add("SMTP relay requires authentication.");
-        if (Smtp.RequireTls && !Smtp.EnableStartTls && !Smtp.EnableImplicitTls)
-            errors.Add("Smtp.RequireTls requires STARTTLS or implicit TLS.");
-        if (!isDevelopment && Imap.EnableImap && !Smtp.EnableStartTls)
-            errors.Add("The production IMAP listener requires STARTTLS.");
-        if (!isDevelopment && Pop3.EnablePop3 && !Pop3.EnableStartTls)
-            errors.Add("The production POP3 listener requires STLS.");
-        if (Sieve.EnableManageSieve && !Sieve.EnableStartTls)
-            errors.Add("The ManageSieve listener requires STARTTLS.");
+            if (Smtp.EnableSubmission && !Smtp.EnableStartTls)
+                errors.Add("SMTP submission requires STARTTLS.");
+            if (Smtp.AllowRelay && !Smtp.RequireAuth)
+                errors.Add("SMTP relay requires authentication.");
+            if (Smtp.RequireTls && !Smtp.EnableStartTls && !Smtp.EnableImplicitTls)
+                errors.Add("Smtp.RequireTls requires STARTTLS or implicit TLS.");
+            if (!isDevelopment && Imap.EnableImap && !Smtp.EnableStartTls)
+                errors.Add("The production IMAP listener requires STARTTLS.");
+            if (!isDevelopment && Pop3.EnablePop3 && !Pop3.EnableStartTls)
+                errors.Add("The production POP3 listener requires STLS.");
+            if (Sieve.EnableManageSieve && !Sieve.EnableStartTls)
+                errors.Add("The ManageSieve listener requires STARTTLS.");
+        }
 
         if (Sieve.MaxScriptsPerUser is < 1 or > 1000)
             errors.Add("Sieve.MaxScriptsPerUser must be from 1 through 1000.");
@@ -224,15 +242,15 @@ public sealed class EnvironmentConfig
                 errors.Add("Mfa.RecoveryCodeCount must be from 5 through 20.");
         }
 
-        var needsCertificate = Smtp.EnableStartTls
+        var needsCertificate = validatesPresentation && (Smtp.EnableStartTls
             || Smtp.EnableImplicitTls
             || Imap.EnableImplicitTls
             || Pop3.EnableStartTls
             || Pop3.EnableImplicitTls
-            || (Sieve.EnableManageSieve && Sieve.EnableStartTls);
+            || (Sieve.EnableManageSieve && Sieve.EnableStartTls));
         if (needsCertificate)
             RequireFile(errors, Tls.CertificatePath, "Tls.CertificatePath");
-        if (!string.IsNullOrWhiteSpace(Tls.CertificateKeyPath))
+        if (validatesPresentation && !string.IsNullOrWhiteSpace(Tls.CertificateKeyPath))
             RequireFile(errors, Tls.CertificateKeyPath, "Tls.CertificateKeyPath");
         if (Dkim.EnableSigning)
         {
@@ -279,16 +297,94 @@ public sealed class EnvironmentConfig
         if (Limits.MaxConnectionsPerIp is < 1 or > 10000)
             errors.Add("Limits.MaxConnectionsPerIp must be from 1 through 10000.");
 
-        if (!isDevelopment && Admin.AllowedNetworks.Count == 0)
+        if (validatesPresentation && !isDevelopment && Admin.AllowedNetworks.Count == 0)
             errors.Add("Admin.AllowedNetworks must contain at least one network in production.");
-        if (!isDevelopment && !Path.IsPathFullyQualified(Admin.DataProtectionKeyPath))
+        if (validatesPresentation
+            && !isDevelopment
+            && !Path.IsPathFullyQualified(Admin.DataProtectionKeyPath))
             errors.Add("Admin.DataProtectionKeyPath must be an absolute path in production.");
-        if (!isDevelopment && !Path.IsPathFullyQualified(Admin.AuditLogPath))
+        if (validatesPresentation && !isDevelopment && !Path.IsPathFullyQualified(Admin.AuditLogPath))
             errors.Add("Admin.AuditLogPath must be an absolute path in production.");
-        if (!isDevelopment && !Path.IsPathFullyQualified(Admin.HealthStatusPath))
+        if (validatesPresentation
+            && !isDevelopment
+            && !Path.IsPathFullyQualified(Admin.HealthStatusPath))
             errors.Add("Admin.HealthStatusPath must be an absolute path in production.");
-        if (Admin.SessionMinutes is < 5 or > 480)
+        if (validatesPresentation && Admin.SessionMinutes is < 5 or > 480)
             errors.Add("Admin.SessionMinutes must be from 5 through 480.");
+
+        if (Messaging.Enabled)
+        {
+            if (!IsMessagingIdentifier(Messaging.EncryptionKeyId, 64, allowAtAndSlash: false))
+            {
+                errors.Add("Messaging.EncryptionKeyId is invalid.");
+            }
+            ValidateEncryptionKey(errors, Messaging.EncryptionKey, "Messaging.EncryptionKey");
+            if (Messaging.DecryptionKeys
+                .Select(key => key.Id)
+                .Append(Messaging.EncryptionKeyId)
+                .Distinct(StringComparer.Ordinal)
+                .Count() != Messaging.DecryptionKeys.Count + 1)
+            {
+                errors.Add("Messaging encryption key identifiers must be unique.");
+            }
+            foreach (var key in Messaging.DecryptionKeys)
+            {
+                if (!IsMessagingIdentifier(key.Id, 64, allowAtAndSlash: false))
+                {
+                    errors.Add("A Messaging.DecryptionKeys identifier is invalid.");
+                }
+                ValidateEncryptionKey(errors, key.Key, $"Messaging.DecryptionKeys[{key.Id}].Key");
+            }
+            if (Messaging.MaxPayloadBytes is < 65_536 or > 1_073_741_824)
+                errors.Add("Messaging.MaxPayloadBytes must be from 65536 through 1073741824.");
+            if (Messaging.InlinePayloadThresholdBytes is < 0 or > 1_048_576
+                || Messaging.InlinePayloadThresholdBytes > Messaging.MaxPayloadBytes)
+            {
+                errors.Add(
+                    "Messaging.InlinePayloadThresholdBytes must be from 0 through 1048576 "
+                    + "and no greater than Messaging.MaxPayloadBytes.");
+            }
+            if (Messaging.LeaseSeconds is < 5 or > 3600)
+                errors.Add("Messaging.LeaseSeconds must be from 5 through 3600.");
+            if (Messaging.NotificationFallbackSeconds is < 1 or > 300)
+                errors.Add("Messaging.NotificationFallbackSeconds must be from 1 through 300.");
+            if (Messaging.WorkerId is { } workerId
+                && !IsMessagingIdentifier(workerId, 128, allowAtAndSlash: true))
+            {
+                errors.Add("Messaging.WorkerId is invalid.");
+            }
+
+            if (!string.Equals(
+                    ObjectStorage.Provider,
+                    "azure-blob",
+                    StringComparison.Ordinal))
+            {
+                errors.Add("ObjectStorage.Provider must be azure-blob.");
+            }
+            RequireSecret(
+                errors,
+                ObjectStorage.ConnectionString,
+                "ObjectStorage.ConnectionString",
+                isDevelopment);
+            if (ObjectStorage.ContainerName.Length is < 3 or > 63
+                || ObjectStorage.ContainerName[0] == '-'
+                || ObjectStorage.ContainerName[^1] == '-'
+                || ObjectStorage.ContainerName.Contains("--", StringComparison.Ordinal)
+                || ObjectStorage.ContainerName.Any(character =>
+                    character is not (>= 'a' and <= 'z')
+                    && character is not (>= '0' and <= '9')
+                    && character != '-'))
+            {
+                errors.Add("ObjectStorage.ContainerName is not a valid Azure Blob container name.");
+            }
+            if (ObjectStorage.ObjectPrefix.Length > 512
+                || ObjectStorage.ObjectPrefix.StartsWith("/", StringComparison.Ordinal)
+                || ObjectStorage.ObjectPrefix.Contains("//", StringComparison.Ordinal)
+                || ObjectStorage.ObjectPrefix.Contains('\0'))
+            {
+                errors.Add("ObjectStorage.ObjectPrefix is invalid.");
+            }
+        }
 
         return errors;
     }
@@ -341,6 +437,36 @@ public sealed class EnvironmentConfig
     {
         if (string.IsNullOrWhiteSpace(value))
             errors.Add(message);
+    }
+
+    private static void ValidateEncryptionKey(List<string> errors, string value, string name)
+    {
+        try
+        {
+            if (Convert.FromBase64String(value ?? string.Empty).Length != 32)
+                errors.Add($"{name} must be a base64-encoded 256-bit key.");
+        }
+        catch (FormatException)
+        {
+            errors.Add($"{name} must be a base64-encoded 256-bit key.");
+        }
+    }
+
+    private static bool IsMessagingIdentifier(
+        string? value,
+        int maximumLength,
+        bool allowAtAndSlash)
+    {
+        if (string.IsNullOrWhiteSpace(value)
+            || value.Length > maximumLength
+            || !char.IsAsciiLetterOrDigit(value[0]))
+        {
+            return false;
+        }
+        return value.All(character =>
+            char.IsAsciiLetterOrDigit(character)
+            || character is '.' or '_' or '-' or ':'
+            || allowAtAndSlash && character is '@' or '/');
     }
 
     public GlobalConfigDB ToGlobalConfig() => new()
@@ -551,4 +677,35 @@ public sealed class AdminConfig
     public string AuditLogPath { get; init; } = "audit/admin.jsonl";
     public string HealthStatusPath { get; init; } = "health/status.json";
     public int SessionMinutes { get; init; } = 30;
+}
+
+public sealed class MessagingConfig
+{
+    public bool Enabled { get; init; }
+    public string EncryptionKeyId { get; init; } = "primary";
+    public string EncryptionKey { get; set; } = string.Empty;
+    public string? EncryptionKeyFile { get; init; }
+    public IReadOnlyList<MessagingDecryptionKeyConfig> DecryptionKeys { get; init; } = [];
+    public int MaxPayloadBytes { get; init; } = 64 * 1024 * 1024;
+    public int InlinePayloadThresholdBytes { get; init; } = 256 * 1024;
+    public int LeaseSeconds { get; init; } = 120;
+    public int NotificationFallbackSeconds { get; init; } = 30;
+    public string? WorkerId { get; init; }
+}
+
+public sealed class MessagingDecryptionKeyConfig
+{
+    public string Id { get; init; } = string.Empty;
+    public string Key { get; set; } = string.Empty;
+    public string? KeyFile { get; init; }
+}
+
+public sealed class ObjectStorageConfig
+{
+    public string Provider { get; init; } = "azure-blob";
+    public string ConnectionString { get; set; } = string.Empty;
+    public string? ConnectionStringFile { get; init; }
+    public string ContainerName { get; init; } = "mk8-email-objects";
+    public string ObjectPrefix { get; init; } = string.Empty;
+    public bool CreateContainerIfMissing { get; init; }
 }

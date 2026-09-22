@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/Application/">
     <Project Path="mk8.email.Application/mk8.email.Application.Core.csproj" />
+    <Project Path="mk8.email.Application.Worker/mk8.email.Application.Worker.csproj" />
     <Project Path="mk8.email.CLI/mk8.email.Application.CLI.csproj" Id="7f6167d9-82f3-4c62-a0cd-c1fe927aed1c" />
     <Project Path="mk8.email.Infrastructure/mk8.email.Infrastructure.csproj" />
   </Folder>

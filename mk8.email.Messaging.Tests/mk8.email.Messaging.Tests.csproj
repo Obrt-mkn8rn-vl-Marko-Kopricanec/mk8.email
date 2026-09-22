@@ -15,6 +15,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\mk8.email.Application.Worker\mk8.email.Application.Worker.csproj" />
     <ProjectReference Include="..\mk8.email.Messaging\mk8.email.Messaging.csproj" />
     <ProjectReference Include="..\mk8.email.Storage\mk8.email.Storage.csproj" />
   </ItemGroup>

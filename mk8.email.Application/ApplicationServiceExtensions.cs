@@ -22,6 +22,7 @@ public static class ApplicationServiceExtensions
         services.AddScoped<IMailSystemStatusService, MailSystemStatusService>();
         services.AddScoped<ISeederService, SeederService>();
         services.AddScoped<IDatabaseInitializationService, DatabaseInitializationService>();
+        services.AddScoped<IApplicationRequestDispatcher, ApplicationRequestDispatcher>();
 
         return services;
     }

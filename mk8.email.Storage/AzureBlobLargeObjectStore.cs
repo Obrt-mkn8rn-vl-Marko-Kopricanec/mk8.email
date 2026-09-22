@@ -25,6 +25,15 @@ public sealed partial class AzureBlobLargeObjectStore : ILargeObjectStore
 
     public string Provider => LargeObjectProviders.AzureBlob;
 
+    public static AzureBlobLargeObjectStore FromConnectionString(
+        string connectionString,
+        AzureBlobLargeObjectStoreOptions? options = null)
+    {
+        if (string.IsNullOrWhiteSpace(connectionString))
+            throw new ArgumentException("An Azure Blob connection string is required.", nameof(connectionString));
+        return new AzureBlobLargeObjectStore(new BlobServiceClient(connectionString), options);
+    }
+
     public async Task<LargeObjectWriteResult> PutIfAbsentAsync(
         string objectName,
         Stream content,

@@ -46,6 +46,22 @@ public sealed class ArchitectureBoundaryTests
         Assert.IsFalse(references.Any(reference =>
             reference.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal)
             || reference.StartsWith("mk8.email.Application", StringComparison.Ordinal)
-            || reference.StartsWith("mk8.email.Infrastructure", StringComparison.Ordinal)));
+                || reference.StartsWith("mk8.email.Infrastructure", StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
+    public void ApplicationWorkerHasNoPresentationFrameworkOrProtocolAssemblyDependency()
+    {
+        var references = typeof(mk8.email.Application.Worker.ApplicationRequestWorker).Assembly
+            .GetReferencedAssemblies()
+            .Select(reference => reference.Name ?? string.Empty)
+            .ToArray();
+
+        Assert.IsFalse(references.Any(reference =>
+            reference.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal)
+            || reference.StartsWith("mk8.email.Gateway", StringComparison.Ordinal)
+            || reference.StartsWith("mk8.email.Jmap", StringComparison.Ordinal)
+            || reference.StartsWith("mk8.email.Dav", StringComparison.Ordinal)
+            || reference.StartsWith("mk8.email.OAuth", StringComparison.Ordinal)));
     }
 }

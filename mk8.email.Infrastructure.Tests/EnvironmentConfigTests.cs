@@ -244,6 +244,106 @@ public sealed class EnvironmentConfigTests
     }
 
     [TestMethod]
+    public void DistributedMessagingRequiresAzureBlobAndValidEncryptionSettings()
+    {
+        var configuration = CreateValidConfiguration(
+            messagingEnabled: true,
+            messagingEncryptionKey: "not-base64",
+            objectStorageProvider: "filesystem",
+            objectStorageConnectionString: "short",
+            objectStorageContainerName: "Invalid--Container");
+
+        var joined = string.Join('|', configuration.Validate());
+        StringAssert.Contains(joined, "Messaging.EncryptionKey must be a base64-encoded 256-bit key.");
+        StringAssert.Contains(joined, "ObjectStorage.Provider must be azure-blob.");
+        StringAssert.Contains(joined, "ObjectStorage.ConnectionString must contain at least 16 characters");
+        StringAssert.Contains(joined, "ObjectStorage.ContainerName is not a valid Azure Blob container name.");
+    }
+
+    [TestMethod]
+    public void LoaderReadsDistributedMessagingSecretsFromFiles()
+    {
+        var activeKey = Convert.ToBase64String(
+            System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+        var oldKey = Convert.ToBase64String(
+            System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+        var connectionString =
+            "DefaultEndpointsProtocol=https;AccountName=mk8;AccountKey=test;"
+            + "BlobEndpoint=https://blob.example.test/;";
+        var activePath = WriteFile("messaging-active-key", activeKey);
+        var oldPath = WriteFile("messaging-old-key", oldKey);
+        var connectionPath = WriteFile("blob-connection", connectionString);
+        var configuration = CreateValidConfiguration(
+            messagingEnabled: true,
+            messagingEncryptionKeyFile: activePath,
+            messagingDecryptionKeys:
+            [
+                new MessagingDecryptionKeyConfig { Id = "old", KeyFile = oldPath },
+            ],
+            objectStorageConnectionStringFile: connectionPath);
+        var configurationPath = WriteFile(
+            "mk8email-messaging.config.json",
+            JsonSerializer.Serialize(configuration));
+
+        var loaded = EnvironmentLoader.LoadFromFile(configurationPath);
+
+        Assert.AreEqual(activeKey, loaded.Messaging.EncryptionKey);
+        Assert.AreEqual(oldKey, loaded.Messaging.DecryptionKeys.Single().Key);
+        Assert.AreEqual(connectionString, loaded.ObjectStorage.ConnectionString);
+        Assert.AreEqual(0, loaded.Validate().Count);
+    }
+
+    [TestMethod]
+    public void ApplicationWorkerValidationDoesNotRequirePresentationListenersOrCertificates()
+    {
+        var configuration = new EnvironmentConfig
+        {
+            Database = new DatabaseConfig
+            {
+                Host = "database.internal",
+                Name = "mk8email",
+                Username = "application-worker",
+                Password = "database-secret-value",
+            },
+            Smtp = new SmtpConfig
+            {
+                Hostname = "email.mk8n.com",
+                EnableSmtp = false,
+                EnableSubmission = false,
+                EnableImplicitTls = false,
+            },
+            Imap = new ImapConfig { EnableImap = false, EnableImplicitTls = false },
+            Pop3 = new Pop3Config { EnablePop3 = false, EnableImplicitTls = false },
+            Sieve = new SieveConfig { EnableManageSieve = false },
+            Jmap = new JmapConfig { EnableJmap = false, IsDefault = false },
+            Dav = new DavConfig { EnableDav = false },
+            OAuth = new OAuthConfig { EnableOAuth = false },
+            Messaging = new MessagingConfig
+            {
+                Enabled = true,
+                EncryptionKeyId = "current",
+                EncryptionKey = Convert.ToBase64String(
+                    System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)),
+            },
+            ObjectStorage = new ObjectStorageConfig
+            {
+                ConnectionString =
+                    "DefaultEndpointsProtocol=https;AccountName=mk8;AccountKey=test;"
+                    + "BlobEndpoint=https://blob.example.test/;",
+            },
+        };
+
+        var workerErrors = configuration.Validate(
+            role: EnvironmentValidationRole.ApplicationWorker);
+        var combinedErrors = configuration.Validate();
+
+        Assert.AreEqual(0, workerErrors.Count, string.Join('|', workerErrors));
+        StringAssert.Contains(
+            string.Join('|', combinedErrors),
+            "Enable at least one SMTP, IMAP, POP3, ManageSieve, JMAP, DAV, or OAuth listener.");
+    }
+
+    [TestMethod]
     public void LoaderRejectsUnknownConfigurationProperties()
     {
         var configurationPath = WriteFile("invalid.json", "{\"UnknownProperty\":true}");
@@ -286,7 +386,15 @@ public sealed class EnvironmentConfigTests
         string mfaEncryptionKey = "",
         string? mfaEncryptionKeyFile = null,
         string mfaIssuer = "mk8.email",
-        int mfaRecoveryCodeCount = 10)
+        int mfaRecoveryCodeCount = 10,
+        bool messagingEnabled = false,
+        string messagingEncryptionKey = "",
+        string? messagingEncryptionKeyFile = null,
+        IReadOnlyList<MessagingDecryptionKeyConfig>? messagingDecryptionKeys = null,
+        string objectStorageProvider = "azure-blob",
+        string objectStorageConnectionString = "",
+        string? objectStorageConnectionStringFile = null,
+        string objectStorageContainerName = "mk8-email-objects")
     {
         return new EnvironmentConfig
         {
@@ -410,6 +518,21 @@ public sealed class EnvironmentConfigTests
                 AuditLogPath = Path.Combine(_testDirectory, "audit", "admin.jsonl"),
                 HealthStatusPath = Path.Combine(_testDirectory, "health", "status.json"),
                 SessionMinutes = 30,
+            },
+            Messaging = new MessagingConfig
+            {
+                Enabled = messagingEnabled,
+                EncryptionKeyId = "current",
+                EncryptionKey = messagingEncryptionKey,
+                EncryptionKeyFile = messagingEncryptionKeyFile,
+                DecryptionKeys = messagingDecryptionKeys ?? [],
+            },
+            ObjectStorage = new ObjectStorageConfig
+            {
+                Provider = objectStorageProvider,
+                ConnectionString = objectStorageConnectionString,
+                ConnectionStringFile = objectStorageConnectionStringFile,
+                ContainerName = objectStorageContainerName,
             },
         };
     }

@@ -138,11 +138,14 @@ public sealed class MailQueueWorker(
     private bool IsPostgreSql()
     {
         using var scope = scopeFactory.CreateScope();
-        return string.Equals(
-            scope.ServiceProvider.GetRequiredService<EmailDbContext>().Database.ProviderName,
+        return IsPostgreSql(scope.ServiceProvider.GetRequiredService<EmailDbContext>());
+    }
+
+    private static bool IsPostgreSql(EmailDbContext database) =>
+        string.Equals(
+            database.Database.ProviderName,
             "Npgsql.EntityFrameworkCore.PostgreSQL",
             StringComparison.Ordinal);
-    }
 
     internal async Task<bool> ProcessNextAsync(CancellationToken cancellationToken)
     {
@@ -154,33 +157,97 @@ public sealed class MailQueueWorker(
         if (messageId is null)
             return false;
 
+        using var processingCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var renewal = IsPostgreSql(database)
+            ? RenewLeaseAsync(messageId.Value, leaseToken, processingCancellation)
+            : Task.CompletedTask;
         try
         {
-            await ProcessClaimedAsync(
-                scope.ServiceProvider,
-                database,
-                messageId.Value,
-                leaseToken,
-                now,
-                cancellationToken);
+            try
+            {
+                await ProcessClaimedAsync(
+                    scope.ServiceProvider,
+                    database,
+                    messageId.Value,
+                    leaseToken,
+                    now,
+                    processingCancellation.Token);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                logger.LogError(exception, "Queue processing failed for {QueueId}", messageId);
+                await ReleaseAfterFailureAsync(
+                    database,
+                    messageId.Value,
+                    leaseToken,
+                    exception,
+                    timeProvider.GetUtcNow().UtcDateTime,
+                    cancellationToken);
+            }
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        finally
         {
-            throw;
-        }
-        catch (Exception exception)
-        {
-            logger.LogError(exception, "Queue processing failed for {QueueId}", messageId);
-            await ReleaseAfterFailureAsync(
-                database,
-                messageId.Value,
-                leaseToken,
-                exception,
-                now,
-                cancellationToken);
+            processingCancellation.Cancel();
+            await renewal;
         }
 
         return true;
+    }
+
+    private async Task RenewLeaseAsync(
+        Guid messageId,
+        Guid leaseToken,
+        CancellationTokenSource processingCancellation)
+    {
+        var interval = TimeSpan.FromSeconds(Math.Max(5, environment.Queue.LeaseSeconds / 3));
+        using var timer = new PeriodicTimer(interval, timeProvider);
+        try
+        {
+            while (await timer.WaitForNextTickAsync(processingCancellation.Token))
+            {
+                await using var scope = scopeFactory.CreateAsyncScope();
+                var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+                var now = timeProvider.GetUtcNow().UtcDateTime;
+                var renewed = await database.MailQueueMessages
+                    .Where(message => message.Id == messageId
+                        && message.State == MailQueueStates.Processing
+                        && message.LeaseToken == leaseToken
+                        && message.LeaseExpiresAt > now)
+                    .ExecuteUpdateAsync(
+                        updates => updates.SetProperty(
+                            message => message.LeaseExpiresAt,
+                            now.AddSeconds(environment.Queue.LeaseSeconds)),
+                        processingCancellation.Token);
+                if (renewed == 1)
+                    continue;
+
+                var state = await database.MailQueueMessages
+                    .AsNoTracking()
+                    .Where(message => message.Id == messageId)
+                    .Select(message => message.State)
+                    .SingleOrDefaultAsync(processingCancellation.Token);
+                if (state == MailQueueStates.Processing)
+                {
+                    logger.LogError(
+                        "The queue processing lease was lost for {QueueId}",
+                        messageId);
+                    processingCancellation.Cancel();
+                }
+                return;
+            }
+        }
+        catch (OperationCanceledException) when (processingCancellation.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(exception, "Could not renew the queue lease for {QueueId}", messageId);
+            processingCancellation.Cancel();
+        }
     }
 
     private async Task ProcessClaimedAsync(

@@ -11,6 +11,8 @@ primary_mail_domain=mk8n.com
 domain_root=/etc/mk8email/domains
 key_root=/etc/mk8email/dkim
 web_root=/var/www/mk8email-domains
+nginx_domain_root=/etc/nginx/mk8email-domains.d
+nginx_domain_template=/usr/local/share/mk8email/domain-templates/nginx-domain.conf
 selector_map=/etc/rspamd/dkim_selectors.map
 path_map=/etc/rspamd/dkim_paths.map
 public_ipv4_file=/etc/mk8email/public-ipv4
@@ -30,6 +32,7 @@ usage() {
     printf '%s\n' "       mk8-domain status DOMAIN" >&2
     printf '%s\n' "       mk8-domain dns DOMAIN" >&2
     printf '%s\n' "       mk8-domain rebuild-signing-maps" >&2
+    printf '%s\n' "       mk8-domain rebuild-web-configs" >&2
     exit 2
 }
 
@@ -293,6 +296,251 @@ rebuild_signing_maps() (
     fi
 
     map_completed=true
+)
+
+render_domain_nginx_configuration() {
+    render_domain=$1
+    render_target=$2
+    validate_domain "$render_domain" \
+        || fail "A domain web configuration has an invalid domain."
+    check_regular_file "$nginx_domain_template" root root 0644
+    sed -e "s/@@DOMAIN@@/$render_domain/g" \
+        "$nginx_domain_template" > "$render_target"
+}
+
+rebuild_web_configurations() (
+    config_work=$(mktemp -d /run/mk8-domain.web-configs.XXXXXX)
+    config_completed=false
+    config_changed=false
+    config_pending_created=false
+
+    # shellcheck disable=SC2317
+    restore_web_configurations() {
+        restore_status=0
+        while IFS= read -r restore_domain; do
+            [ -n "$restore_domain" ] || continue
+            restore_target="$nginx_domain_root/$restore_domain.conf"
+            restore_pending=$restore_target.mk8-rollback
+            rm -f -- "$restore_pending" || restore_status=1
+            if [ -f "$config_work/$restore_domain.present" ]; then
+                cp -p -- "$config_work/$restore_domain.old" \
+                    "$restore_pending" || restore_status=1
+                mv -f -- "$restore_pending" "$restore_target" \
+                    || restore_status=1
+            else
+                rm -f -- "$restore_target" || restore_status=1
+            fi
+        done < "$config_work/domains"
+        sync -f "$nginx_domain_root" || restore_status=1
+        return "$restore_status"
+    }
+
+    # shellcheck disable=SC2317
+    finish_web_configurations() {
+        config_status=$?
+        trap - EXIT HUP INT TERM
+        if [ "$config_completed" != true ] && [ "$config_changed" = true ]; then
+            set +e
+            restore_web_configurations
+            restore_status=$?
+            if nginx -t; then
+                systemctl reload nginx.service || restore_status=1
+            else
+                restore_status=1
+            fi
+            set -e
+            if [ "$restore_status" -eq 0 ]; then
+                printf '%s\n' "Web configuration update failed. The prior domain configurations were restored." >&2
+            else
+                printf '%s\n' "Web configuration rollback failed. Immediate operator action is required." >&2
+            fi
+            config_status=1
+        fi
+        if [ "$config_pending_created" = true ]; then
+            set +e
+            while IFS= read -r cleanup_domain; do
+                [ -n "$cleanup_domain" ] || continue
+                rm -f -- \
+                    "$nginx_domain_root/$cleanup_domain.conf.mk8-new" \
+                    "$nginx_domain_root/$cleanup_domain.conf.mk8-rollback" \
+                    || config_status=1
+            done < "$config_work/domains"
+            set -e
+        fi
+        rm -rf -- "$config_work"
+        exit "$config_status"
+    }
+    trap finish_web_configurations EXIT
+    trap 'exit 1' HUP INT TERM
+
+    probe_domain_web_configuration() {
+        probe_domain=$1
+        probe_web_root="$web_root/$probe_domain"
+        probe_attempt=0
+        consecutive_successes=0
+        while [ "$probe_attempt" -lt 10 ]; do
+            if curl --silent --fail --insecure --max-time 5 --noproxy '*' \
+                --resolve "autoconfig.$probe_domain:443:127.0.0.1" \
+                "https://autoconfig.$probe_domain/mail/config-v1.1.xml" \
+                > "$config_work/$probe_domain.autoconfig.xml" \
+                && cmp --silent "$config_work/$probe_domain.autoconfig.xml" \
+                    "$probe_web_root/autoconfig/mail/config-v1.1.xml" \
+                && curl --silent --fail --insecure --max-time 5 --noproxy '*' \
+                    --resolve "autoconfig.$probe_domain:443:127.0.0.1" \
+                    "https://autoconfig.$probe_domain/.well-known/autoconfig/mail/config-v1.1.xml" \
+                    > "$config_work/$probe_domain.well-known.xml" \
+                && cmp --silent "$config_work/$probe_domain.well-known.xml" \
+                    "$probe_web_root/autoconfig/mail/config-v1.1.xml" \
+                && curl --silent --fail --insecure --max-time 5 --noproxy '*' \
+                    --resolve "mta-sts.$probe_domain:443:127.0.0.1" \
+                    "https://mta-sts.$probe_domain/.well-known/mta-sts.txt" \
+                    > "$config_work/$probe_domain.mta-sts.txt" \
+                && cmp --silent "$config_work/$probe_domain.mta-sts.txt" \
+                    "$probe_web_root/mta-sts/.well-known/mta-sts.txt"; then
+                consecutive_successes=$((consecutive_successes + 1))
+                if [ "$consecutive_successes" -eq 2 ]; then
+                    return 0
+                fi
+            else
+                consecutive_successes=0
+            fi
+            probe_attempt=$((probe_attempt + 1))
+            [ "$probe_attempt" -eq 10 ] || sleep 1
+        done
+        fail "A domain discovery web configuration did not become ready."
+    }
+
+    systemctl is-active --quiet nginx.service \
+        || fail "nginx must be active before rebuilding domain web configurations."
+    ensure_directory "$domain_root" root root 0750
+    ensure_directory "$web_root" root root 0755
+    ensure_directory "$nginx_domain_root" root root 0755
+    check_regular_file "$nginx_domain_template" root root 0644
+    : > "$config_work/domains"
+    : > "$config_work/managed-domains"
+
+    for prepared_path in "$domain_root"/*; do
+        if [ ! -e "$prepared_path" ] && [ ! -L "$prepared_path" ]; then
+            continue
+        fi
+        if [ -L "$prepared_path" ] || [ ! -d "$prepared_path" ]; then
+            fail "A managed domain directory is not safe."
+        fi
+        prepared_domain=${prepared_path##*/}
+        validate_domain "$prepared_domain" \
+            || fail "A prepared domain directory has an invalid name."
+        prepared_marker=$prepared_path/prepared
+        certificate_directory=$prepared_path/tls
+        certificate_file=$certificate_directory/fullchain.pem
+        private_key_file=$certificate_directory/privkey.pem
+        nginx_configuration=$nginx_domain_root/$prepared_domain.conf
+
+        certificate_present=false
+        private_key_present=false
+        configuration_present=false
+        if [ -e "$certificate_file" ] || [ -L "$certificate_file" ]; then
+            certificate_present=true
+        fi
+        if [ -e "$private_key_file" ] || [ -L "$private_key_file" ]; then
+            private_key_present=true
+        fi
+        if [ -e "$nginx_configuration" ] || [ -L "$nginx_configuration" ]; then
+            configuration_present=true
+        fi
+
+        if [ ! -e "$prepared_marker" ] && [ ! -L "$prepared_marker" ]; then
+            if [ "$certificate_present" = true ] \
+                || [ "$private_key_present" = true ] \
+                || [ "$configuration_present" = true ]; then
+                fail "An unprepared domain has discovery service state."
+            fi
+            continue
+        fi
+        check_regular_file "$prepared_marker" root root 0644
+        if [ "$certificate_present" != true ] \
+            && [ "$private_key_present" != true ] \
+            && [ "$configuration_present" != true ]; then
+            continue
+        fi
+        if [ "$certificate_present" != true ] \
+            || [ "$private_key_present" != true ]; then
+            fail "A prepared domain has incomplete discovery certificate state."
+        fi
+
+        ensure_directory "$certificate_directory" root tlskeys 0751
+        check_regular_file "$certificate_file" root tlskeys 0444
+        check_regular_file "$private_key_file" root tlskeys 0440
+        prepared_web_root=$web_root/$prepared_domain
+        ensure_directory "$prepared_web_root" root root 0755
+        ensure_directory "$prepared_web_root/autoconfig" root root 0755
+        ensure_directory "$prepared_web_root/autoconfig/mail" root root 0755
+        ensure_directory "$prepared_web_root/mta-sts" root root 0755
+        ensure_directory "$prepared_web_root/mta-sts/.well-known" root root 0755
+        check_regular_file \
+            "$prepared_web_root/autoconfig/mail/config-v1.1.xml" \
+            root root 0644
+        check_regular_file \
+            "$prepared_web_root/mta-sts/.well-known/mta-sts.txt" \
+            root root 0644
+        check_replaceable_file "$nginx_configuration"
+        render_domain_nginx_configuration "$prepared_domain" \
+            "$config_work/$prepared_domain.new"
+        printf '%s\n' "$prepared_domain" >> "$config_work/managed-domains"
+        if [ "$configuration_present" = true ]; then
+            check_regular_file "$nginx_configuration" root root 0644
+            if cmp --silent "$nginx_configuration" \
+                "$config_work/$prepared_domain.new"; then
+                continue
+            fi
+            cp -p -- "$nginx_configuration" \
+                "$config_work/$prepared_domain.old"
+            : > "$config_work/$prepared_domain.present"
+        fi
+        printf '%s\n' "$prepared_domain" >> "$config_work/domains"
+    done
+
+    if [ ! -s "$config_work/domains" ]; then
+        nginx -t
+        systemctl reload nginx.service
+        while IFS= read -r probe_domain; do
+            probe_domain_web_configuration "$probe_domain"
+        done < "$config_work/managed-domains"
+        systemctl is-active --quiet nginx.service
+        config_completed=true
+        printf '%s\n' "The domain discovery web configurations are already current."
+        exit 0
+    fi
+    nginx -t
+    while IFS= read -r install_domain; do
+        install_target=$nginx_domain_root/$install_domain.conf
+        install_pending=$install_target.mk8-new
+        if [ -e "$install_pending" ] || [ -L "$install_pending" ]; then
+            fail "A stale domain web configuration transaction file exists."
+        fi
+    done < "$config_work/domains"
+    config_pending_created=true
+    while IFS= read -r install_domain; do
+        install_target=$nginx_domain_root/$install_domain.conf
+        install_pending=$install_target.mk8-new
+        install -o root -g root -m 0644 \
+            "$config_work/$install_domain.new" "$install_pending"
+    done < "$config_work/domains"
+    config_changed=true
+    while IFS= read -r install_domain; do
+        mv -f -- "$nginx_domain_root/$install_domain.conf.mk8-new" \
+            "$nginx_domain_root/$install_domain.conf"
+    done < "$config_work/domains"
+    sync -f "$nginx_domain_root"
+
+    nginx -t
+    systemctl reload nginx.service
+    while IFS= read -r probe_domain; do
+        probe_domain_web_configuration "$probe_domain"
+    done < "$config_work/managed-domains"
+    systemctl is-active --quiet nginx.service
+
+    config_completed=true
+    printf '%s\n' "The domain discovery web configurations are current."
 )
 
 write_public_key_record() {
@@ -742,7 +990,7 @@ show_dns() {
 
 command_name=${1:-}
 case "$command_name:$#" in
-    prepare:3|request-certificate:3|activate:2|deactivate:2|status:2|dns:2|rebuild-signing-maps:1) ;;
+    prepare:3|request-certificate:3|activate:2|deactivate:2|status:2|dns:2|rebuild-signing-maps:1|rebuild-web-configs:1) ;;
     *) usage ;;
 esac
 
@@ -761,4 +1009,5 @@ case "$command_name" in
     status) show_status "$2" ;;
     dns) show_dns "$2" ;;
     rebuild-signing-maps) rebuild_signing_maps ;;
+    rebuild-web-configs) rebuild_web_configurations ;;
 esac

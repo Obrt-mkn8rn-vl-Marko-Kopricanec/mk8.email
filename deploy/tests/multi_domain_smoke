@@ -172,6 +172,52 @@ RENEWED_LINEAGE=$work/lineage \
     /usr/local/sbin/deploy-mk8-domain-certificate "$domain" >/dev/null
 installed_certificate_hash=$(sha256sum "$domain_directory/tls/fullchain.pem" \
     | cut -d ' ' -f 1)
+
+python3 - "$nginx_configuration" "$work/legacy-nginx.conf" "$domain" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text(encoding="utf-8")
+well_known_location = """    location = /.well-known/autoconfig/mail/config-v1.1.xml {
+        alias /var/www/mk8email-domains/@@DOMAIN@@/autoconfig/mail/config-v1.1.xml;
+        default_type application/xml;
+    }
+
+""".replace("@@DOMAIN@@", sys.argv[3])
+if source.count(well_known_location) != 1:
+    raise SystemExit("The generated domain configuration has an unexpected shape.")
+Path(sys.argv[2]).write_text(
+    source.replace(well_known_location, ""), encoding="utf-8"
+)
+PY
+install -o root -g root -m 0644 "$work/legacy-nginx.conf" \
+    "$nginx_configuration"
+nginx -t >/dev/null
+systemctl reload nginx.service
+legacy_configuration_active=false
+for _ in $(seq 1 10); do
+    legacy_status=$(curl --silent --insecure --max-time 5 --noproxy '*' \
+        --output /dev/null --write-out '%{http_code}' \
+        --resolve "autoconfig.$domain:443:127.0.0.1" \
+        "https://autoconfig.$domain/.well-known/autoconfig/mail/config-v1.1.xml" \
+        2>/dev/null || true)
+    if [ "$legacy_status" = 404 ]; then
+        legacy_configuration_active=true
+        break
+    fi
+    sleep 1
+done
+[ "$legacy_configuration_active" = true ] \
+    || { printf '%s\n' "The legacy domain web configuration did not become active." >&2; exit 1; }
+/usr/local/sbin/mk8-domain rebuild-web-configs >/dev/null
+grep -F 'location = /.well-known/autoconfig/mail/config-v1.1.xml {' \
+    "$nginx_configuration" >/dev/null
+curl --silent --fail --insecure --max-time 5 --noproxy '*' \
+    --resolve "autoconfig.$domain:443:127.0.0.1" \
+    "https://autoconfig.$domain/.well-known/autoconfig/mail/config-v1.1.xml" \
+    | cmp --silent - "$web_directory/autoconfig/mail/config-v1.1.xml" \
+    || { printf '%s\n' "The migrated well-known autoconfiguration route is not ready." >&2; exit 1; }
+
 install -d -o root -g root -m 0700 "$work/invalid-lineage"
 openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 30 \
     -subj "/CN=invalid.$domain" \

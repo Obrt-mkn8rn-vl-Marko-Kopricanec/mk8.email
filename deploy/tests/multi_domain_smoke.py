@@ -219,7 +219,7 @@ def test_dav(account: str, password: str) -> None:
         vcard = (
             "BEGIN:VCARD\r\n"
             "VERSION:4.0\r\n"
-            f"UID:{suffix}@mk8.email\r\n"
+            f"UID;VALUE=text:{suffix}@mk8.email\r\n"
             "KIND:individual\r\n"
             "FN:Deployment Smoke\r\n"
             "EMAIL:deployment-smoke@example.invalid\r\n"

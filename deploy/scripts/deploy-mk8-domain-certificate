@@ -41,6 +41,7 @@ domain_directory=/etc/mk8email/domains/$domain
 destination=$domain_directory/tls
 nginx_directory=/etc/nginx/mk8email-domains.d
 nginx_configuration=$nginx_directory/$domain.conf
+nginx_template=/usr/local/share/mk8email/domain-templates/nginx-domain.conf
 web_root=/var/www/mk8email-domains/$domain
 work=$(mktemp -d /run/mk8-domain-certificate.XXXXXX)
 completed=false
@@ -52,7 +53,7 @@ case "$lineage" in
     *) fail "The certificate lineage path must be absolute." ;;
 esac
 
-for required_command in flock nginx openssl systemctl timeout; do
+for required_command in cmp curl flock nginx openssl sed systemctl timeout; do
     command -v "$required_command" >/dev/null \
         || fail "A required certificate command is missing: $required_command"
 done
@@ -97,6 +98,19 @@ check_directory() {
     [ "$(stat -c '%U:%G %a' "$checked_directory")" \
         = "root:$expected_group $expected_mode" ] \
         || fail "A certificate directory has unsafe metadata."
+}
+
+check_managed_file() {
+    checked_file=$1
+    expected_owner=$2
+    expected_group=$3
+    expected_mode=${4#0}
+    if [ ! -f "$checked_file" ] || [ -L "$checked_file" ]; then
+        fail "A managed certificate support file is not safe."
+    fi
+    [ "$(stat -c '%U:%G %a %h' "$checked_file")" \
+        = "$expected_owner:$expected_group $expected_mode 1" ] \
+        || fail "A managed certificate support file has unsafe metadata."
 }
 
 snapshot_file() {
@@ -198,82 +212,8 @@ check_directory /etc/mk8email/domains root 0750
 check_directory "$domain_directory" root 0750
 check_directory "$destination" tlskeys 0751
 check_directory "$nginx_directory" root 0755
-
-cat > "$work/nginx.conf" <<EOF
-server {
-    listen 80;
-    listen [::]:80;
-    server_name autoconfig.$domain mta-sts.$domain;
-    access_log /var/log/nginx/access.log mk8_safe;
-
-    location ^~ /.well-known/acme-challenge/ {
-        root /var/www/letsencrypt;
-        default_type text/plain;
-        try_files \$uri =404;
-    }
-
-    location / {
-        return 308 https://\$host\$request_uri;
-    }
-}
-
-server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
-    http2 on;
-    server_name autoconfig.$domain;
-    access_log /var/log/nginx/access.log mk8_safe;
-    ssl_certificate $destination/fullchain.pem;
-    ssl_certificate_key $destination/privkey.pem;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_session_tickets off;
-    add_header Strict-Transport-Security "max-age=31536000" always;
-    add_header X-Content-Type-Options nosniff always;
-
-    location = /mail/config-v1.1.xml {
-        root $web_root/autoconfig;
-        default_type application/xml;
-        try_files \$uri =404;
-    }
-
-    location = /.well-known/autoconfig/ {
-        return 308 /mail/config-v1.1.xml;
-    }
-
-    location = /.well-known/autoconfig/mail/config-v1.1.xml {
-        alias $web_root/autoconfig/mail/config-v1.1.xml;
-        default_type application/xml;
-    }
-
-    location / {
-        return 404;
-    }
-}
-
-server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
-    http2 on;
-    server_name mta-sts.$domain;
-    access_log /var/log/nginx/access.log mk8_safe;
-    ssl_certificate $destination/fullchain.pem;
-    ssl_certificate_key $destination/privkey.pem;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_session_tickets off;
-    add_header Strict-Transport-Security "max-age=31536000" always;
-    add_header X-Content-Type-Options nosniff always;
-
-    location = /.well-known/mta-sts.txt {
-        root $web_root/mta-sts;
-        default_type text/plain;
-        try_files \$uri =404;
-    }
-
-    location / {
-        return 404;
-    }
-}
-EOF
+check_managed_file "$nginx_template" root root 0644
+sed -e "s/@@DOMAIN@@/$domain/g" "$nginx_template" > "$work/nginx.conf"
 
 systemctl is-active --quiet nginx.service \
     || fail "nginx must be active before certificate deployment."
@@ -329,19 +269,43 @@ probe_certificate() {
 
 probe_certificate "autoconfig.$domain"
 probe_certificate "mta-sts.$domain"
-curl --silent --fail --insecure --max-time 10 --noproxy '*' \
-    --resolve "autoconfig.$domain:443:127.0.0.1" \
-    "https://autoconfig.$domain/mail/config-v1.1.xml" >/dev/null \
-    || fail "The autoconfiguration endpoint is not ready."
-curl --silent --fail --insecure --max-time 10 --noproxy '*' \
-    --resolve "autoconfig.$domain:443:127.0.0.1" \
-    "https://autoconfig.$domain/.well-known/autoconfig/mail/config-v1.1.xml" \
-    >/dev/null \
-    || fail "The well-known autoconfiguration endpoint is not ready."
-curl --silent --fail --insecure --max-time 10 --noproxy '*' \
-    --resolve "mta-sts.$domain:443:127.0.0.1" \
-    "https://mta-sts.$domain/.well-known/mta-sts.txt" >/dev/null \
-    || fail "The MTA-STS endpoint is not ready."
+
+probe_web_services() {
+    probe_attempt=0
+    consecutive_successes=0
+    while [ "$probe_attempt" -lt 10 ]; do
+        if curl --silent --fail --insecure --max-time 5 --noproxy '*' \
+            --resolve "autoconfig.$domain:443:127.0.0.1" \
+            "https://autoconfig.$domain/mail/config-v1.1.xml" \
+            > "$work/autoconfig.xml" \
+            && cmp --silent "$work/autoconfig.xml" \
+                "$web_root/autoconfig/mail/config-v1.1.xml" \
+            && curl --silent --fail --insecure --max-time 5 --noproxy '*' \
+                --resolve "autoconfig.$domain:443:127.0.0.1" \
+                "https://autoconfig.$domain/.well-known/autoconfig/mail/config-v1.1.xml" \
+                > "$work/well-known-autoconfig.xml" \
+            && cmp --silent "$work/well-known-autoconfig.xml" \
+                "$web_root/autoconfig/mail/config-v1.1.xml" \
+            && curl --silent --fail --insecure --max-time 5 --noproxy '*' \
+                --resolve "mta-sts.$domain:443:127.0.0.1" \
+                "https://mta-sts.$domain/.well-known/mta-sts.txt" \
+                > "$work/mta-sts.txt" \
+            && cmp --silent "$work/mta-sts.txt" \
+                "$web_root/mta-sts/.well-known/mta-sts.txt"; then
+            consecutive_successes=$((consecutive_successes + 1))
+            if [ "$consecutive_successes" -eq 2 ]; then
+                return 0
+            fi
+        else
+            consecutive_successes=0
+        fi
+        probe_attempt=$((probe_attempt + 1))
+        [ "$probe_attempt" -eq 10 ] || sleep 1
+    done
+    fail "The local domain discovery endpoints did not become ready."
+}
+
+probe_web_services
 systemctl is-active --quiet nginx.service
 
 completed=true

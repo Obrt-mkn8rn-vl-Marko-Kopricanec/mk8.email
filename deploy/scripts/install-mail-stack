@@ -317,6 +317,8 @@ install -o root -g root -m 0644 "$asset_root/deploy/domain-templates/autoconfig.
     /usr/local/share/mk8email/domain-templates/autoconfig.xml
 install -o root -g root -m 0644 "$asset_root/deploy/domain-templates/mta-sts.txt" \
     /usr/local/share/mk8email/domain-templates/mta-sts.txt
+install -o root -g root -m 0644 "$asset_root/deploy/domain-templates/nginx-domain.conf" \
+    /usr/local/share/mk8email/domain-templates/nginx-domain.conf
 
 install -d -o root -g root -m 0755 /usr/local/lib/mk8email/tests
 install -o root -g root -m 0755 "$asset_root/deploy/tests/backup_restore_smoke" /usr/local/lib/mk8email/tests/backup_restore_smoke
@@ -368,6 +370,7 @@ elif [ ! -s "$primary_domain_certificate" ] \
     printf '%s\n' "The primary domain discovery state is incomplete." >&2
     exit 1
 fi
+/usr/local/sbin/mk8-domain rebuild-web-configs
 install -o root -g root -m 0644 "$asset_root/deploy/fail2ban/90-mk8-server.local" /etc/fail2ban/jail.d/90-mk8-server.local
 install -d -o root -g root -m 0755 /etc/fail2ban/filter.d
 install -o root -g root -m 0644 \

@@ -1,5 +1,5 @@
 using System.Net;
-using mk8.email.Infrastructure.Environment;
+using mk8.email.Configuration;
 
 namespace mk8.email.Gateway.Security;
 

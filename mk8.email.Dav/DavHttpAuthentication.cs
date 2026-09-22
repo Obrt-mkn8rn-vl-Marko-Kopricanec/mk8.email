@@ -3,7 +3,7 @@ using System.Text;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using mk8.email.Application.Interfaces;
-using mk8.email.Infrastructure.Environment;
+using mk8.email.Configuration;
 
 namespace mk8.email.Dav;
 

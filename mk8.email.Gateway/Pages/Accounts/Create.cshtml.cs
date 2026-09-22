@@ -2,15 +2,16 @@ using System.ComponentModel.DataAnnotations;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using mk8.email.Application.Interfaces;
 using mk8.email.Contracts.Enums;
+using mk8.email.Contracts.Messaging;
+using mk8.email.Gateway.ApplicationBridge;
 using mk8.email.Gateway.Security;
 
 namespace mk8.email.Gateway.Pages.Accounts;
 
 [Authorize(Roles = nameof(UserRole.SuperAdmin))]
 public sealed class CreateAccountModel(
-    IMailAdministrationService administration,
+    IGatewayApplicationClient application,
     IAdminAuditLog auditLog) : PageModel
 {
     [BindProperty]
@@ -21,10 +22,8 @@ public sealed class CreateAccountModel(
         if (!ModelState.IsValid)
             return Page();
 
-        var result = await administration.CreateAccountAsync(
-            Input.Address,
-            Input.Password,
-            Input.Role,
+        var result = await application.CreateAccountAsync(
+            new AdminCreateAccountRequest(Input.Address, Input.Password, Input.Role),
             cancellationToken);
         await auditLog.WriteAsync(
             User.Identity?.Name ?? "unknown",

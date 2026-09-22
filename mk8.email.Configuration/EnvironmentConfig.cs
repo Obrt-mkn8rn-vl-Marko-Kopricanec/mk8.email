@@ -2,7 +2,7 @@ using Npgsql;
 using System.Net;
 using System.Security.Cryptography;
 
-namespace mk8.email.Infrastructure.Environment;
+namespace mk8.email.Configuration;
 
 public enum EnvironmentValidationRole
 {

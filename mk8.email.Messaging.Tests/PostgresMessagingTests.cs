@@ -10,6 +10,18 @@ namespace mk8.email.Messaging.Tests;
 public sealed class PostgresMessagingTests
 {
     [TestMethod]
+    public async Task TransportControlReportsAvailabilityOnlyAfterInitialization()
+    {
+        await using var database = await RequirePostgresAsync();
+        await using var dataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        var transport = new PostgresApplicationTransportControl(dataSource);
+
+        Assert.IsFalse(await transport.IsAvailableAsync());
+        await transport.InitializeAsync();
+        Assert.IsTrue(await transport.IsAvailableAsync());
+    }
+
+    [TestMethod]
     public async Task GatewayJournalRecordsEncryptedBidirectionalTraffic()
     {
         await using var database = await RequirePostgresAsync();

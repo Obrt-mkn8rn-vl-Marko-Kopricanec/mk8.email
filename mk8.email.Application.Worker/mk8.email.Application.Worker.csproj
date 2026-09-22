@@ -9,15 +9,14 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.4" />
-    <PackageReference Include="Npgsql" Version="10.0.2" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\mk8.email.Application\mk8.email.Application.Core.csproj" />
     <ProjectReference Include="..\mk8.email.Contracts\mk8.email.Contracts.csproj" />
+    <ProjectReference Include="..\mk8.email.Hosting\mk8.email.Hosting.csproj" />
     <ProjectReference Include="..\mk8.email.Infrastructure\mk8.email.Infrastructure.csproj" />
     <ProjectReference Include="..\mk8.email.Messaging\mk8.email.Messaging.csproj" />
-    <ProjectReference Include="..\mk8.email.Storage\mk8.email.Storage.csproj" />
   </ItemGroup>
 
 </Project>

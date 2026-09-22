@@ -3,7 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Http;
-using mk8.email.Infrastructure.Environment;
+using mk8.email.Configuration;
 
 namespace mk8.email.Jmap;
 

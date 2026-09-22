@@ -2,7 +2,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using mk8.email.Application.Interfaces;
 using mk8.email.Contracts.DTOs;
-using mk8.email.Infrastructure.Environment;
+using mk8.email.Configuration;
 
 namespace mk8.email.Application.Services;
 

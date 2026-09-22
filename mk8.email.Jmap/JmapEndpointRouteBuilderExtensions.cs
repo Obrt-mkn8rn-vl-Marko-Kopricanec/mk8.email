@@ -4,7 +4,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Net.Http.Headers;
 using mk8.email.Application.Interfaces;
-using mk8.email.Infrastructure.Environment;
+using mk8.email.Configuration;
 
 namespace mk8.email.Jmap;
 

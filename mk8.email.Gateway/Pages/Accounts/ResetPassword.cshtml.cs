@@ -2,15 +2,16 @@ using System.ComponentModel.DataAnnotations;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using mk8.email.Application.Interfaces;
 using mk8.email.Contracts.Enums;
+using mk8.email.Contracts.Messaging;
+using mk8.email.Gateway.ApplicationBridge;
 using mk8.email.Gateway.Security;
 
 namespace mk8.email.Gateway.Pages.Accounts;
 
 [Authorize(Roles = nameof(UserRole.SuperAdmin))]
 public sealed class ResetPasswordModel(
-    IMailAdministrationService administration,
+    IGatewayApplicationClient application,
     IAdminAuditLog auditLog) : PageModel
 {
     public string Address { get; private set; } = string.Empty;
@@ -20,7 +21,7 @@ public sealed class ResetPasswordModel(
 
     public async Task<IActionResult> OnGetAsync(Guid userId, CancellationToken cancellationToken)
     {
-        var account = (await administration.GetAccountsAsync(cancellationToken))
+        var account = (await application.GetAccountsAsync(cancellationToken))
             .FirstOrDefault(item => item.UserId == userId);
         if (account is null)
             return NotFound();
@@ -35,9 +36,8 @@ public sealed class ResetPasswordModel(
         if (!ModelState.IsValid)
             return Page();
 
-        var result = await administration.ResetPasswordAsync(
-            Input.UserId,
-            Input.Password,
+        var result = await application.ResetPasswordAsync(
+            new AdminResetPasswordRequest(Input.UserId, Input.Password),
             cancellationToken);
         await auditLog.WriteAsync(
             User.Identity?.Name ?? "unknown",

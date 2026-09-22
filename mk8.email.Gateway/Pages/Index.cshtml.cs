@@ -1,15 +1,14 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using mk8.email.Application.Interfaces;
-using mk8.email.Contracts.Enums;
 using mk8.email.Contracts.DTOs;
+using mk8.email.Contracts.Enums;
+using mk8.email.Gateway.ApplicationBridge;
 
 namespace mk8.email.Gateway.Pages;
 
 [Authorize(Roles = nameof(UserRole.SuperAdmin))]
 public sealed class IndexModel(
-    IMailAdministrationService administration,
-    IMailSystemStatusService systemStatus) : PageModel
+    IGatewayApplicationClient application) : PageModel
 {
     public int DomainCount { get; private set; }
     public int ActiveAccountCount { get; private set; }
@@ -21,9 +20,10 @@ public sealed class IndexModel(
 
     public async Task OnGetAsync(CancellationToken cancellationToken)
     {
-        var domains = await administration.GetDomainsAsync(cancellationToken);
-        var accounts = await administration.GetAccountsAsync(cancellationToken);
-        SystemStatus = await systemStatus.GetStatusAsync(cancellationToken);
+        var dashboard = await application.GetDashboardAsync(cancellationToken);
+        var domains = dashboard.Domains;
+        var accounts = dashboard.Accounts;
+        SystemStatus = dashboard.SystemStatus;
         DomainCount = domains.Count(domain => domain.IsActive);
         ActiveAccountCount = accounts.Count(account => account.IsActive && account.IsDomainActive);
         CatchAllCount = domains.Count(domain => domain.CatchAllTarget is not null);

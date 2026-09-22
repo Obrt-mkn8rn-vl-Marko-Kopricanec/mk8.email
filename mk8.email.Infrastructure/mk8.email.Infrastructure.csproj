@@ -20,12 +20,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Remove="Environment\DkimIdentityValidator.cs" />
-    <Compile Remove="Environment\EnvironmentConfig.cs" />
-    <Compile Remove="Environment\EnvironmentLoader.cs" />
-  </ItemGroup>
-
-  <ItemGroup>
     <ProjectReference Include="..\mk8.email.Configuration\mk8.email.Configuration.csproj" />
   </ItemGroup>
 

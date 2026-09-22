@@ -3,12 +3,10 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using mk8.email.Application;
 using mk8.email.Application.Worker;
-using mk8.email.Contracts.Storage;
+using mk8.email.Configuration;
+using mk8.email.Hosting;
 using mk8.email.Infrastructure;
-using mk8.email.Infrastructure.Environment;
 using mk8.email.Messaging;
-using mk8.email.Storage;
-using Npgsql;
 
 if (!args.SequenceEqual(["--serve"]))
 {
@@ -32,45 +30,11 @@ try
     builder.Services.AddInfrastructure(environment);
     builder.Services.AddApplication();
 
-    var messagingOptions = new PostgresMessagingOptions
-    {
-        MaxPayloadBytes = environment.Messaging.MaxPayloadBytes,
-        InlinePayloadThresholdBytes = environment.Messaging.InlinePayloadThresholdBytes,
-        LeaseDuration = TimeSpan.FromSeconds(environment.Messaging.LeaseSeconds),
-        NotificationFallbackInterval = TimeSpan.FromSeconds(
-            environment.Messaging.NotificationFallbackSeconds),
-    };
     var workerId = string.IsNullOrWhiteSpace(environment.Messaging.WorkerId)
         ? $"application@{Environment.MachineName}"
         : environment.Messaging.WorkerId;
 
-    builder.Services.AddSingleton(messagingOptions);
-    builder.Services.AddSingleton(_ => NpgsqlDataSource.Create(environment.BuildConnectionString()));
-    builder.Services.AddSingleton<IMessagingPayloadProtector>(_ =>
-    {
-        var activeKey = new MessagingEncryptionKey(
-            environment.Messaging.EncryptionKeyId,
-            Convert.FromBase64String(environment.Messaging.EncryptionKey));
-        var decryptionKeys = environment.Messaging.DecryptionKeys.Select(key =>
-            new MessagingEncryptionKey(key.Id, Convert.FromBase64String(key.Key)));
-        return new AesGcmPayloadProtector(activeKey, decryptionKeys);
-    });
-    builder.Services.AddSingleton<ILargeObjectStore>(_ =>
-        AzureBlobLargeObjectStore.FromConnectionString(
-            environment.ObjectStorage.ConnectionString,
-            new AzureBlobLargeObjectStoreOptions
-            {
-                ContainerName = environment.ObjectStorage.ContainerName,
-                ObjectPrefix = environment.ObjectStorage.ObjectPrefix,
-                CreateContainerIfMissing = environment.ObjectStorage.CreateContainerIfMissing,
-            }));
-    builder.Services.AddSingleton(serviceProvider => new PostgresApplicationBus(
-        serviceProvider.GetRequiredService<NpgsqlDataSource>(),
-        serviceProvider.GetRequiredService<IMessagingPayloadProtector>(),
-        serviceProvider.GetRequiredService<PostgresMessagingOptions>(),
-        largeObjectStore: serviceProvider.GetRequiredService<ILargeObjectStore>()));
-    builder.Services.AddSingleton<IApplicationRequestConsumer>(serviceProvider =>
-        serviceProvider.GetRequiredService<PostgresApplicationBus>());
+    builder.Services.AddDistributedMessaging(environment);
     builder.Services.AddSingleton(new ApplicationWorkerIdentity(
         workerId,
         TimeSpan.FromSeconds(Math.Max(1, environment.Messaging.LeaseSeconds / 3))));

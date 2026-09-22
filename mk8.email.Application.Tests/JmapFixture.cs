@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using mk8.email.Application.Interfaces;
 using mk8.email.Infrastructure.Data;
-using mk8.email.Infrastructure.Environment;
+using mk8.email.Configuration;
 using mk8.email.Infrastructure.Models;
 using mk8.email.Jmap;
 

@@ -84,6 +84,14 @@
         "resolved": "2.23.0",
         "contentHash": "nWArUZTdU7iqZLycLKWe0TDms48KKGE6pONH2terYNa8REXiqixrMOkf1sk5DHGMaUTqONU2YkS4SAXBhLStgw=="
       },
+      "Microsoft.AspNetCore.OpenApi": {
+        "type": "Transitive",
+        "resolved": "10.0.4",
+        "contentHash": "OsEhbmT4Xenukau5YCR867gr/HmuAJ9DqMBPQGTcmdNU/TqBqdcnB+yLNwD/mTdkHzLBB+XG7cI4H1L5B1jx+Q==",
+        "dependencies": {
+          "Microsoft.OpenApi": "2.0.0"
+        }
+      },
       "Microsoft.Bcl.AsyncInterfaces": {
         "type": "Transitive",
         "resolved": "10.0.3",
@@ -447,6 +455,11 @@
         "resolved": "8.14.0",
         "contentHash": "iwbCpSjD3ehfTwBhtSNEtKPK0ICun6ov7Ibx6ISNA9bfwIyzI2Siwyi9eJFCJBwxowK9xcA1mj+jBWiigeqgcQ=="
       },
+      "Microsoft.OpenApi": {
+        "type": "Transitive",
+        "resolved": "2.7.5",
+        "contentHash": "0FA67RSnRM4tcBKqiqVu/HPdZ9+QOKbmeRjxRUGTCjPU4C0bmUhd97Dso7Yild5P7nOV6GxJ2xrK0Kv/O9xp0w=="
+      },
       "Microsoft.Testing.Extensions.Telemetry": {
         "type": "Transitive",
         "resolved": "2.3.3",
@@ -588,12 +601,11 @@
         "type": "Project",
         "dependencies": {
           "Microsoft.Extensions.Hosting": "[10.0.4, )",
-          "Npgsql": "[10.0.2, )",
           "mk8.email.Application.Core": "[1.0.0, )",
           "mk8.email.Contracts": "[1.0.0, )",
+          "mk8.email.Hosting": "[1.0.0, )",
           "mk8.email.Infrastructure": "[1.0.0, )",
-          "mk8.email.Messaging": "[1.0.0, )",
-          "mk8.email.Storage": "[1.0.0, )"
+          "mk8.email.Messaging": "[1.0.0, )"
         }
       },
       "mk8.email.configuration": {
@@ -604,6 +616,28 @@
       },
       "mk8.email.contracts": {
         "type": "Project"
+      },
+      "mk8.email.gateway": {
+        "type": "Project",
+        "dependencies": {
+          "Microsoft.AspNetCore.OpenApi": "[10.0.4, )",
+          "Microsoft.OpenApi": "[2.7.5, )",
+          "mk8.email.Configuration": "[1.0.0, )",
+          "mk8.email.Contracts": "[1.0.0, )",
+          "mk8.email.Hosting": "[1.0.0, )",
+          "mk8.email.Messaging": "[1.0.0, )"
+        }
+      },
+      "mk8.email.hosting": {
+        "type": "Project",
+        "dependencies": {
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "[10.0.4, )",
+          "Npgsql": "[10.0.2, )",
+          "mk8.email.Configuration": "[1.0.0, )",
+          "mk8.email.Contracts": "[1.0.0, )",
+          "mk8.email.Messaging": "[1.0.0, )",
+          "mk8.email.Storage": "[1.0.0, )"
+        }
       },
       "mk8.email.infrastructure": {
         "type": "Project",

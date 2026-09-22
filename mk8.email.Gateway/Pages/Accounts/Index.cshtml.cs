@@ -2,16 +2,17 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using mk8.email.Application.Interfaces;
 using mk8.email.Contracts.DTOs;
 using mk8.email.Contracts.Enums;
+using mk8.email.Contracts.Messaging;
+using mk8.email.Gateway.ApplicationBridge;
 using mk8.email.Gateway.Security;
 
 namespace mk8.email.Gateway.Pages.Accounts;
 
 [Authorize(Roles = nameof(UserRole.SuperAdmin))]
 public sealed class AccountsModel(
-    IMailAdministrationService administration,
+    IGatewayApplicationClient application,
     IAdminAuditLog auditLog) : PageModel
 {
     public IReadOnlyList<MailAccountSummaryDTO> Accounts { get; private set; } = [];
@@ -20,7 +21,7 @@ public sealed class AccountsModel(
     public string? StatusMessage { get; set; }
 
     public async Task OnGetAsync(CancellationToken cancellationToken) =>
-        Accounts = await administration.GetAccountsAsync(cancellationToken);
+        Accounts = await application.GetAccountsAsync(cancellationToken);
 
     public async Task<IActionResult> OnPostSetActiveAsync(
         Guid userId,
@@ -34,7 +35,9 @@ public sealed class AccountsModel(
             return RedirectToPage();
         }
 
-        var result = await administration.SetAccountActiveAsync(userId, isActive, cancellationToken);
+        var result = await application.SetAccountActiveAsync(
+            new AdminSetAccountActiveRequest(userId, isActive),
+            cancellationToken);
         await auditLog.WriteAsync(
             User.Identity?.Name ?? "unknown",
             isActive ? "account.enable" : "account.disable",

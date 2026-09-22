@@ -12,8 +12,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\mk8.email.Infrastructure\mk8.email.Infrastructure.csproj" />
-    <ProjectReference Include="..\mk8.email.Application\mk8.email.Application.Core.csproj" />
+    <ProjectReference Include="..\mk8.email.Configuration\mk8.email.Configuration.csproj" />
+    <ProjectReference Include="..\mk8.email.Contracts\mk8.email.Contracts.csproj" />
+    <ProjectReference Include="..\mk8.email.Hosting\mk8.email.Hosting.csproj" />
+    <ProjectReference Include="..\mk8.email.Messaging\mk8.email.Messaging.csproj" />
   </ItemGroup>
 
 </Project>

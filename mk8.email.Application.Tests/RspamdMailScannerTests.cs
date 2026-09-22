@@ -2,7 +2,7 @@ using System.Net;
 using System.Text;
 using mk8.email.Application.Interfaces;
 using mk8.email.Application.Services;
-using mk8.email.Infrastructure.Environment;
+using mk8.email.Configuration;
 
 namespace mk8.email.Application.Tests;
 

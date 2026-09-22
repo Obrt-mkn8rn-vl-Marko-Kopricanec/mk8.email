@@ -56,3 +56,10 @@ public interface IGatewayTrafficJournal
         Guid sessionId,
         CancellationToken cancellationToken = default);
 }
+
+public interface IApplicationTransportControl
+{
+    Task InitializeAsync(CancellationToken cancellationToken = default);
+
+    Task<bool> IsAvailableAsync(CancellationToken cancellationToken = default);
+}

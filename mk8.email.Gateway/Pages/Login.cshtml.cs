@@ -6,9 +6,10 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.AspNetCore.RateLimiting;
-using mk8.email.Application.Interfaces;
+using mk8.email.Contracts.DTOs;
 using mk8.email.Contracts.Enums;
-using mk8.email.Infrastructure.Environment;
+using mk8.email.Configuration;
+using mk8.email.Gateway.ApplicationBridge;
 using mk8.email.Gateway.Security;
 
 namespace mk8.email.Gateway.Pages;
@@ -16,7 +17,7 @@ namespace mk8.email.Gateway.Pages;
 [AllowAnonymous]
 [EnableRateLimiting("login")]
 public sealed class LoginModel(
-    IAuthService authentication,
+    IGatewayApplicationClient application,
     IAdminAuditLog auditLog,
     AdminConfig config) : PageModel
 {
@@ -36,7 +37,9 @@ public sealed class LoginModel(
         if (!ModelState.IsValid)
             return Page();
 
-        var result = await authentication.LoginAsync(new(Input.Username, Input.Password));
+        var result = await application.AuthenticateAsync(
+            new LoginRequestDTO(Input.Username, Input.Password),
+            cancellationToken);
         var isAdministrator = result.Success
             && result.User is not null
             && result.User.Role == UserRole.SuperAdmin;

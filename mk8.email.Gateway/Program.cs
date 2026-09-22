@@ -3,16 +3,16 @@ using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
-using Microsoft.EntityFrameworkCore;
-using mk8.email.Application;
-using mk8.email.Application.Interfaces;
-using mk8.email.Infrastructure;
-using mk8.email.Infrastructure.Data;
-using mk8.email.Infrastructure.Environment;
+using mk8.email.Configuration;
+using mk8.email.Gateway.ApplicationBridge;
 using mk8.email.Gateway.Security;
+using mk8.email.Hosting;
+using mk8.email.Messaging;
 
 var builder = WebApplication.CreateBuilder(args);
-var environmentConfig = EnvironmentLoader.Load(builder.Environment.IsDevelopment());
+var environmentConfig = EnvironmentLoader.Load(
+    builder.Environment.IsDevelopment(),
+    EnvironmentValidationRole.Gateway);
 
 builder.WebHost.ConfigureKestrel(options =>
 {
@@ -23,10 +23,9 @@ builder.WebHost.ConfigureKestrel(options =>
 builder.Logging.ClearProviders();
 builder.Logging.AddJsonConsole(options => options.IncludeScopes = true);
 builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
-builder.Logging.AddFilter("Microsoft.EntityFrameworkCore.Database.Command", LogLevel.Warning);
 
-builder.Services.AddInfrastructure(environmentConfig);
-builder.Services.AddApplication();
+builder.Services.AddDistributedMessaging(environmentConfig);
+builder.Services.AddGatewayApplicationClient();
 builder.Services.AddSingleton(environmentConfig.Admin);
 builder.Services.AddSingleton<AdminNetworkPolicy>();
 builder.Services.AddSingleton<IAdminAuditLog, AdminAuditLog>();
@@ -90,15 +89,8 @@ var app = builder.Build();
 
 using (var scope = app.Services.CreateScope())
 {
-    var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-    if (!await database.Database.CanConnectAsync())
-        throw new InvalidOperationException("The administration database is not available.");
-    if (!await database.GlobalConfig.AnyAsync())
-        throw new InvalidOperationException("The administration database schema is not initialized.");
-    if (!await database.Users.AnyAsync(user => user.Role == "SuperAdmin" && user.IsActive))
-        throw new InvalidOperationException("The database does not contain an active SuperAdmin account.");
-
-    await scope.ServiceProvider.GetRequiredService<ISeederService>().SeedAsync();
+    await scope.ServiceProvider.GetRequiredService<IApplicationTransportControl>()
+        .InitializeAsync();
 }
 
 if (!app.Environment.IsDevelopment())
@@ -123,12 +115,11 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapGet("/health/live", () => Results.Ok(new { status = "live" })).AllowAnonymous();
-app.MapGet("/health/ready", async (EmailDbContext database, CancellationToken cancellationToken) =>
+app.MapGet("/health/ready", async (
+    IApplicationTransportControl transport,
+    CancellationToken cancellationToken) =>
 {
-    var ready = await database.Database.CanConnectAsync(cancellationToken)
-        && await database.Users.AnyAsync(
-            user => user.Role == "SuperAdmin" && user.IsActive,
-            cancellationToken);
+    var ready = await transport.IsAvailableAsync(cancellationToken);
     return ready ? Results.Ok(new { status = "ready" }) : Results.StatusCode(503);
 }).AllowAnonymous();
 app.MapRazorPages();

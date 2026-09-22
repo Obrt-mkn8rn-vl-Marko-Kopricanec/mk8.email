@@ -2,16 +2,17 @@ using System.ComponentModel.DataAnnotations;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using mk8.email.Application.Interfaces;
 using mk8.email.Contracts.DTOs;
 using mk8.email.Contracts.Enums;
+using mk8.email.Contracts.Messaging;
+using mk8.email.Gateway.ApplicationBridge;
 using mk8.email.Gateway.Security;
 
 namespace mk8.email.Gateway.Pages.Domains;
 
 [Authorize(Roles = nameof(UserRole.SuperAdmin))]
 public sealed class DomainsModel(
-    IMailAdministrationService administration,
+    IGatewayApplicationClient application,
     IAdminAuditLog auditLog) : PageModel
 {
     public IReadOnlyList<MailDomainSummaryDTO> Domains { get; private set; } = [];
@@ -26,13 +27,12 @@ public sealed class DomainsModel(
     public string? StatusMessage { get; set; }
 
     public async Task OnGetAsync(CancellationToken cancellationToken) =>
-        Domains = await administration.GetDomainsAsync(cancellationToken);
+        Domains = await application.GetDomainsAsync(cancellationToken);
 
     public async Task<IActionResult> OnPostCreateAsync(CancellationToken cancellationToken)
     {
-        var result = await administration.EnsureDomainAsync(
-            CreateInput.CompanyName,
-            CreateInput.Domain,
+        var result = await application.EnsureDomainAsync(
+            new AdminEnsureDomainRequest(CreateInput.CompanyName, CreateInput.Domain),
             cancellationToken);
         await WriteAuditAsync("domain.create", CreateInput.Domain, result.Succeeded, cancellationToken);
         StatusMessage = result.Message;
@@ -41,9 +41,8 @@ public sealed class DomainsModel(
 
     public async Task<IActionResult> OnPostCatchAllAsync(CancellationToken cancellationToken)
     {
-        var result = await administration.SetCatchAllAsync(
-            CatchAllInput.Domain,
-            CatchAllInput.TargetAddress,
+        var result = await application.SetCatchAllAsync(
+            new AdminSetCatchAllRequest(CatchAllInput.Domain, CatchAllInput.TargetAddress),
             cancellationToken);
         await WriteAuditAsync("domain.catchall.set", CatchAllInput.Domain, result.Succeeded, cancellationToken);
         StatusMessage = result.Message;

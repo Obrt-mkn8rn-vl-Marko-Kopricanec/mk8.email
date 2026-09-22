@@ -1,6 +1,7 @@
+using mk8.email.Configuration;
 using mk8.email.Infrastructure.Models;
 
-namespace mk8.email.Infrastructure.Environment;
+namespace mk8.email.Infrastructure;
 
 public static class EnvironmentConfigInfrastructureExtensions
 {

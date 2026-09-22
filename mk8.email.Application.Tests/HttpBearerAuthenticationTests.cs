@@ -2,7 +2,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using mk8.email.Application.Interfaces;
 using mk8.email.Dav;
-using mk8.email.Infrastructure.Environment;
+using mk8.email.Configuration;
 using mk8.email.Jmap;
 
 namespace mk8.email.Application.Tests;

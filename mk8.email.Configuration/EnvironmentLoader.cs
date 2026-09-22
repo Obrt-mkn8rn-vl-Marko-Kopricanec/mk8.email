@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace mk8.email.Infrastructure.Environment;
+namespace mk8.email.Configuration;
 
 public static class EnvironmentLoader
 {

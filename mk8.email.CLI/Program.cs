@@ -13,7 +13,7 @@ using mk8.email.Contracts.Enums;
 using mk8.email.Dav;
 using mk8.email.Infrastructure;
 using mk8.email.Infrastructure.Data;
-using mk8.email.Infrastructure.Environment;
+using mk8.email.Configuration;
 using mk8.email.Jmap;
 using mk8.email.OAuth;
 

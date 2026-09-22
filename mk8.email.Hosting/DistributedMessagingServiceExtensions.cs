@@ -1,0 +1,68 @@
+using Microsoft.Extensions.DependencyInjection;
+using mk8.email.Configuration;
+using mk8.email.Contracts.Storage;
+using mk8.email.Messaging;
+using mk8.email.Storage;
+using Npgsql;
+
+namespace mk8.email.Hosting;
+
+public static class DistributedMessagingServiceExtensions
+{
+    public static IServiceCollection AddDistributedMessaging(
+        this IServiceCollection services,
+        EnvironmentConfig environment)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(environment);
+        if (!environment.Messaging.Enabled)
+            throw new InvalidOperationException("Messaging.Enabled must be true.");
+
+        var options = new PostgresMessagingOptions
+        {
+            MaxPayloadBytes = environment.Messaging.MaxPayloadBytes,
+            InlinePayloadThresholdBytes = environment.Messaging.InlinePayloadThresholdBytes,
+            LeaseDuration = TimeSpan.FromSeconds(environment.Messaging.LeaseSeconds),
+            NotificationFallbackInterval = TimeSpan.FromSeconds(
+                environment.Messaging.NotificationFallbackSeconds),
+        };
+
+        services.AddSingleton(options);
+        services.AddSingleton(_ => NpgsqlDataSource.Create(environment.BuildConnectionString()));
+        services.AddSingleton<IMessagingPayloadProtector>(_ =>
+        {
+            var activeKey = new MessagingEncryptionKey(
+                environment.Messaging.EncryptionKeyId,
+                Convert.FromBase64String(environment.Messaging.EncryptionKey));
+            var decryptionKeys = environment.Messaging.DecryptionKeys.Select(key =>
+                new MessagingEncryptionKey(key.Id, Convert.FromBase64String(key.Key)));
+            return new AesGcmPayloadProtector(activeKey, decryptionKeys);
+        });
+        services.AddSingleton<ILargeObjectStore>(_ =>
+            AzureBlobLargeObjectStore.FromConnectionString(
+                environment.ObjectStorage.ConnectionString,
+                new AzureBlobLargeObjectStoreOptions
+                {
+                    ContainerName = environment.ObjectStorage.ContainerName,
+                    ObjectPrefix = environment.ObjectStorage.ObjectPrefix,
+                    CreateContainerIfMissing = environment.ObjectStorage.CreateContainerIfMissing,
+                }));
+        services.AddSingleton(serviceProvider => new PostgresApplicationBus(
+            serviceProvider.GetRequiredService<NpgsqlDataSource>(),
+            serviceProvider.GetRequiredService<IMessagingPayloadProtector>(),
+            serviceProvider.GetRequiredService<PostgresMessagingOptions>(),
+            largeObjectStore: serviceProvider.GetRequiredService<ILargeObjectStore>()));
+        services.AddSingleton<IApplicationRequestClient>(serviceProvider =>
+            serviceProvider.GetRequiredService<PostgresApplicationBus>());
+        services.AddSingleton<IApplicationRequestConsumer>(serviceProvider =>
+            serviceProvider.GetRequiredService<PostgresApplicationBus>());
+        services.AddSingleton<IGatewayTrafficJournal>(serviceProvider =>
+            new PostgresGatewayTrafficJournal(
+                serviceProvider.GetRequiredService<NpgsqlDataSource>(),
+                serviceProvider.GetRequiredService<IMessagingPayloadProtector>(),
+                serviceProvider.GetRequiredService<PostgresMessagingOptions>(),
+                serviceProvider.GetRequiredService<ILargeObjectStore>()));
+        services.AddSingleton<IApplicationTransportControl, PostgresApplicationTransportControl>();
+        return services;
+    }
+}

@@ -15,7 +15,7 @@ using mk8.email.Application.Interfaces;
 using mk8.email.Application.Protocol;
 using mk8.email.Application.Services;
 using mk8.email.Infrastructure.Data;
-using mk8.email.Infrastructure.Environment;
+using mk8.email.Configuration;
 using mk8.email.Infrastructure.Models;
 using mk8.email.OAuth;
 using mk8.email.Utils;

@@ -32,15 +32,6 @@
           "Microsoft.Extensions.Options": "10.0.4"
         }
       },
-      "Npgsql": {
-        "type": "Direct",
-        "requested": "[10.0.2, )",
-        "resolved": "10.0.2",
-        "contentHash": "q5RfBI+wywJSFUNDE1L4ZbHEHCFTblo8Uf6A6oe4feOUFYiUQXyAf9GBh5qEZpvJaHiEbpBPkQumjEhXCJxdrg==",
-        "dependencies": {
-          "Microsoft.Extensions.Logging.Abstractions": "10.0.0"
-        }
-      },
       "Azure.Core": {
         "type": "Transitive",
         "resolved": "1.55.0",
@@ -426,6 +417,14 @@
           "System.Security.Cryptography.Pkcs": "10.0.0"
         }
       },
+      "Npgsql": {
+        "type": "Transitive",
+        "resolved": "10.0.2",
+        "contentHash": "q5RfBI+wywJSFUNDE1L4ZbHEHCFTblo8Uf6A6oe4feOUFYiUQXyAf9GBh5qEZpvJaHiEbpBPkQumjEhXCJxdrg==",
+        "dependencies": {
+          "Microsoft.Extensions.Logging.Abstractions": "10.0.0"
+        }
+      },
       "Npgsql.EntityFrameworkCore.PostgreSQL": {
         "type": "Transitive",
         "resolved": "10.0.1",
@@ -495,6 +494,17 @@
       },
       "mk8.email.contracts": {
         "type": "Project"
+      },
+      "mk8.email.hosting": {
+        "type": "Project",
+        "dependencies": {
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "[10.0.4, )",
+          "Npgsql": "[10.0.2, )",
+          "mk8.email.Configuration": "[1.0.0, )",
+          "mk8.email.Contracts": "[1.0.0, )",
+          "mk8.email.Messaging": "[1.0.0, )",
+          "mk8.email.Storage": "[1.0.0, )"
+        }
       },
       "mk8.email.infrastructure": {
         "type": "Project",

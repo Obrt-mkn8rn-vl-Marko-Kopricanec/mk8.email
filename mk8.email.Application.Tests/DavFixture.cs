@@ -14,6 +14,7 @@ using mk8.email.Application.Services;
 using mk8.email.Dav;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
+using mk8.email.Contracts.Storage;
 using mk8.email.Infrastructure.Models;
 using mk8.email.Gateway.Protocols.Jmap;
 using mk8.email.Jmap;
@@ -99,6 +100,9 @@ internal sealed class DavFixture : IAsyncDisposable
         builder.WebHost.ConfigureKestrel(options =>
             options.Listen(IPAddress.Loopback, 0));
         builder.Services.AddSingleton(configuration);
+        builder.Services.AddSingleton<InMemoryLargeObjectStore>();
+        builder.Services.AddSingleton<ILargeObjectStore>(provider =>
+            provider.GetRequiredService<InMemoryLargeObjectStore>());
         var databaseRoot = new InMemoryDatabaseRoot();
         var databaseName = $"dav-{Guid.NewGuid():N}";
         builder.Services.AddDbContext<EmailDbContext>(options =>

@@ -1,8 +1,14 @@
+using System.Buffers.Binary;
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
-using mk8.email.Infrastructure.Data;
+using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Extensions.Logging;
 using mk8.email.Configuration;
+using mk8.email.Contracts.Storage;
+using mk8.email.Infrastructure.Data;
 using mk8.email.Infrastructure.Models;
 
 namespace mk8.email.Jmap;
@@ -14,13 +20,16 @@ internal sealed record JmapBlobContent(
     Guid SourceId,
     string? PartPrefix);
 
-internal sealed class JmapBlobService(
+public sealed class JmapBlobService(
     EmailDbContext database,
-    EnvironmentConfig environment)
+    EnvironmentConfig environment,
+    ILargeObjectStore objects,
+    JmapBlobTransactionEffects transactionEffects,
+    ILogger<JmapBlobService> logger)
 {
     private static readonly ConcurrentDictionary<Guid, SemaphoreSlim> AccountLocks = new();
 
-    public async Task<JmapBlobContent?> GetAsync(
+    internal async Task<JmapBlobContent?> GetAsync(
         Guid accountId,
         string blobId,
         CancellationToken cancellationToken)
@@ -36,7 +45,7 @@ internal sealed class JmapBlobService(
             return uploaded is null
                 ? null
                 : new JmapBlobContent(
-                    uploaded.Content,
+                    await ReadContentAsync(uploaded, cancellationToken),
                     uploaded.ContentType,
                     uploaded.Name,
                     uploaded.Id,
@@ -89,7 +98,8 @@ internal sealed class JmapBlobService(
             return null;
         try
         {
-            using var message = JmapEmailCodec.Parse(sourceBlob.Content);
+            var sourceContent = await ReadContentAsync(sourceBlob, cancellationToken);
+            using var message = JmapEmailCodec.Parse(sourceContent);
             return ResolveBodyPart(
                 message,
                 sourceId,
@@ -139,75 +149,256 @@ internal sealed class JmapBlobService(
                 : null;
     }
 
-    public async Task<JmapBlobDB> StoreAsync(
+    internal async Task<JmapBlobDB> StoreAsync(
         Guid accountId,
         byte[] content,
         string contentType,
         string? name,
         CancellationToken cancellationToken)
     {
-        var accountLock = AccountLocks.GetOrAdd(accountId, static _ => new SemaphoreSlim(1, 1));
-        await accountLock.WaitAsync(cancellationToken);
+        SemaphoreSlim? accountLock = null;
+        if (!IsPostgreSql())
+        {
+            accountLock = AccountLocks.GetOrAdd(accountId, static _ => new SemaphoreSlim(1, 1));
+            await accountLock.WaitAsync(cancellationToken);
+        }
         try
         {
-            return await StoreLockedAsync(
-                accountId,
-                content,
+            var hasCallerTransaction = database.Database.CurrentTransaction is not null;
+            var id = Guid.CreateVersion7();
+            var hash = Convert.ToHexStringLower(SHA256.HashData(content));
+            await using var source = new MemoryStream(content, writable: false);
+            var written = await objects.PutIfAbsentAsync(
+                JmapBlobLargeObjectMigrationService.BuildObjectName(accountId, id),
+                source,
+                content.LongLength,
+                hash,
                 contentType,
-                name,
                 cancellationToken);
+            try
+            {
+                var stored = await StoreLockedAsync(
+                    id,
+                    written.Reference,
+                    accountId,
+                    contentType,
+                    name,
+                    hasCallerTransaction,
+                    cancellationToken);
+                if (hasCallerTransaction && written.Created)
+                    transactionEffects.DeleteOnRollback(written.Reference);
+                return stored;
+            }
+            catch (JmapBlobCommitOutcomeUnknownException)
+            {
+                throw;
+            }
+            catch
+            {
+                if (written.Created)
+                    await DeleteBestEffortAsync(written.Reference);
+                throw;
+            }
         }
         finally
         {
-            accountLock.Release();
+            accountLock?.Release();
         }
     }
 
     private async Task<JmapBlobDB> StoreLockedAsync(
+        Guid id,
+        LargeObjectReference reference,
         Guid accountId,
-        byte[] content,
         string contentType,
         string? name,
+        bool hasCallerTransaction,
         CancellationToken cancellationToken)
     {
-        var now = DateTime.UtcNow;
-        var expired = await database.JmapBlobs
-            .Where(blob => blob.ExpiresAt <= now)
-            .ToListAsync(cancellationToken);
-        if (expired.Count > 0)
-            database.JmapBlobs.RemoveRange(expired);
-        var accountBlobs = await database.JmapBlobs
-            .Where(blob => blob.AccountId == accountId && blob.ExpiresAt > now)
-            .OrderBy(blob => blob.CreatedAt)
-            .ThenBy(blob => blob.Id)
-            .ToListAsync(cancellationToken);
-        var usedBytes = accountBlobs.Sum(blob => blob.SizeBytes);
-        foreach (var existing in accountBlobs)
+        if (!string.Equals(objects.Provider, LargeObjectProviders.AzureBlob, StringComparison.Ordinal)
+            || !string.Equals(reference.Provider, LargeObjectProviders.AzureBlob, StringComparison.Ordinal))
         {
-            if (usedBytes + content.LongLength
-                <= environment.Jmap.MaxUnreferencedBlobBytesPerAccount)
-            {
-                break;
-            }
-            database.JmapBlobs.Remove(existing);
-            usedBytes -= existing.SizeBytes;
+            throw new InvalidOperationException(
+                "JMAP blobs require an Azure Blob-compatible object store.");
         }
-        var id = Guid.CreateVersion7();
-        var blob = new JmapBlobDB
+
+        IDbContextTransaction? ownedTransaction = null;
+        if (database.Database.IsRelational() && database.Database.CurrentTransaction is null)
+            ownedTransaction = await database.Database.BeginTransactionAsync(cancellationToken);
+        var removedReferences = new List<LargeObjectReference>();
+        var commitAttempted = false;
+        try
         {
-            Id = id,
-            BlobId = JmapId.UploadedBlob(id),
-            AccountId = accountId,
-            Content = content,
-            ContentType = contentType,
-            Name = name,
-            SizeBytes = content.LongLength,
-            CreatedAt = now,
-            ExpiresAt = now.AddHours(environment.Jmap.UploadRetentionHours),
-        };
-        database.JmapBlobs.Add(blob);
-        await database.SaveChangesAsync(cancellationToken);
-        return blob;
+            await AcquireAccountLockAsync(accountId, cancellationToken);
+            var now = DateTime.UtcNow;
+            var expired = await database.JmapBlobs
+                .Where(blob => blob.AccountId == accountId && blob.ExpiresAt <= now)
+                .ToListAsync(cancellationToken);
+            if (expired.Count > 0)
+            {
+                removedReferences.AddRange(expired
+                    .Select(TryGetReference)
+                    .Where(candidate => candidate is not null)
+                    .Select(candidate => candidate!));
+                database.JmapBlobs.RemoveRange(expired);
+            }
+            var accountBlobs = await database.JmapBlobs
+                .Where(blob => blob.AccountId == accountId && blob.ExpiresAt > now)
+                .OrderBy(blob => blob.CreatedAt)
+                .ThenBy(blob => blob.Id)
+                .ToListAsync(cancellationToken);
+            var usedBytes = accountBlobs.Sum(blob => blob.SizeBytes);
+            foreach (var existing in accountBlobs)
+            {
+                if (usedBytes + reference.Length
+                    <= environment.Jmap.MaxUnreferencedBlobBytesPerAccount)
+                {
+                    break;
+                }
+                var removed = TryGetReference(existing);
+                if (removed is not null)
+                    removedReferences.Add(removed);
+                database.JmapBlobs.Remove(existing);
+                usedBytes -= existing.SizeBytes;
+            }
+            var blob = new JmapBlobDB
+            {
+                Id = id,
+                BlobId = JmapId.UploadedBlob(id),
+                AccountId = accountId,
+                ContentType = contentType,
+                Name = name,
+                SizeBytes = reference.Length,
+                CreatedAt = now,
+                ExpiresAt = now.AddHours(environment.Jmap.UploadRetentionHours),
+            };
+            JmapBlobLargeObjectMigrationService.ApplyReference(blob, reference);
+            database.JmapBlobs.Add(blob);
+            await database.SaveChangesAsync(cancellationToken);
+            if (ownedTransaction is not null)
+            {
+                commitAttempted = true;
+                await ownedTransaction.CommitAsync(cancellationToken);
+            }
+
+            if (hasCallerTransaction)
+            {
+                foreach (var removedReference in removedReferences)
+                    transactionEffects.DeleteOnCommit(removedReference);
+            }
+            else
+            {
+                foreach (var removedReference in removedReferences)
+                    await DeleteBestEffortAsync(removedReference);
+            }
+            return blob;
+        }
+        catch (Exception exception)
+        {
+            if (ownedTransaction is not null)
+            {
+                try
+                {
+                    await ownedTransaction.RollbackAsync(CancellationToken.None);
+                }
+                catch (Exception rollbackException)
+                {
+                    logger.LogWarning(
+                        rollbackException,
+                        "Could not roll back a failed JMAP blob transaction");
+                }
+            }
+            if (commitAttempted)
+                throw new JmapBlobCommitOutcomeUnknownException(exception);
+            throw;
+        }
+        finally
+        {
+            if (ownedTransaction is not null)
+            {
+                try
+                {
+                    await ownedTransaction.DisposeAsync();
+                }
+                catch (Exception disposeException)
+                {
+                    logger.LogWarning(
+                        disposeException,
+                        "Could not dispose a completed JMAP blob transaction");
+                }
+            }
+        }
+    }
+
+    private async Task<byte[]> ReadContentAsync(
+        JmapBlobDB blob,
+        CancellationToken cancellationToken)
+    {
+        if (blob.Content is not null)
+            return blob.Content;
+        var reference = TryGetReference(blob)
+            ?? throw new InvalidOperationException("The JMAP blob has no valid storage reference.");
+        await using var destination = new MemoryStream();
+        await objects.CopyToAsync(reference, destination, cancellationToken);
+        return destination.ToArray();
+    }
+
+    private LargeObjectReference? TryGetReference(JmapBlobDB blob)
+    {
+        if (blob.ObjectProvider is null
+            || blob.ObjectName is null
+            || blob.ObjectSha256 is null
+            || blob.ObjectEntityTag is null)
+        {
+            return null;
+        }
+        if (!string.Equals(blob.ObjectProvider, objects.Provider, StringComparison.Ordinal)
+            || !string.Equals(blob.ObjectProvider, LargeObjectProviders.AzureBlob, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("The JMAP blob storage provider is not supported.");
+        }
+        return new LargeObjectReference(
+            blob.ObjectProvider,
+            blob.ObjectName,
+            blob.SizeBytes,
+            blob.ObjectSha256,
+            blob.ObjectEntityTag);
+    }
+
+    private async Task AcquireAccountLockAsync(
+        Guid accountId,
+        CancellationToken cancellationToken)
+    {
+        if (!IsPostgreSql())
+            return;
+        if (database.Database.CurrentTransaction is null)
+            throw new InvalidOperationException("The JMAP blob quota lock requires a transaction.");
+
+        var digest = SHA256.HashData(Encoding.UTF8.GetBytes($"jmap-blob-quota:{accountId:D}"));
+        var key = BinaryPrimitives.ReadInt64BigEndian(digest);
+        await database.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT pg_advisory_xact_lock({key})",
+            cancellationToken);
+    }
+
+    private bool IsPostgreSql() => string.Equals(
+        database.Database.ProviderName,
+        "Npgsql.EntityFrameworkCore.PostgreSQL",
+        StringComparison.Ordinal);
+
+    private async Task DeleteBestEffortAsync(LargeObjectReference reference)
+    {
+        try
+        {
+            await objects.DeleteIfMatchAsync(reference, CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                exception,
+                "Could not delete unreferenced JMAP object {ObjectName}",
+                reference.ObjectName);
+        }
     }
 
     private Task<EmailDB?> FindEmailAsync(
@@ -220,6 +411,9 @@ internal sealed class JmapBlobService(
                 && email.Folder.InboxId == accountId
                 && !email.IsDeleted,
                 cancellationToken);
+
+    private sealed class JmapBlobCommitOutcomeUnknownException(Exception innerException)
+        : Exception("The JMAP blob database commit outcome is unknown.", innerException);
 }
 
 internal sealed class BlobCopyMethod(

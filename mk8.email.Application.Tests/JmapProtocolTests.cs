@@ -3356,6 +3356,74 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task UploadedBlobPersistsOnlyAzureCompatibleObjectReference()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var content = "large-object-boundary"u8.ToArray();
+        var blobId = await fixture.StoreBlobAsync(content, "application/octet-stream");
+
+        using var scope = fixture.Services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var row = await database.JmapBlobs.AsNoTracking()
+            .SingleAsync(candidate => candidate.BlobId == blobId);
+        Assert.IsNull(row.Content);
+        Assert.AreEqual("azure-blob", row.ObjectProvider);
+        Assert.IsFalse(string.IsNullOrWhiteSpace(row.ObjectName));
+        Assert.AreEqual(64, row.ObjectSha256?.Length);
+        Assert.IsFalse(string.IsNullOrWhiteSpace(row.ObjectEntityTag));
+        Assert.AreEqual(content.LongLength, row.SizeBytes);
+
+        var loaded = await scope.ServiceProvider.GetRequiredService<JmapBlobService>()
+            .GetAsync(fixture.InboxId, blobId, CancellationToken.None);
+        Assert.IsNotNull(loaded);
+        CollectionAssert.AreEqual(content, loaded.Content);
+    }
+
+    [TestMethod]
+    public async Task LegacyInlineBlobMigratesIdempotentlyToAzureCompatibleObjectReference()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var content = "legacy-inline-blob"u8.ToArray();
+        var id = Guid.CreateVersion7();
+        var blobId = JmapId.UploadedBlob(id);
+        using var scope = fixture.Services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        database.JmapBlobs.Add(new JmapBlobDB
+        {
+            Id = id,
+            BlobId = blobId,
+            AccountId = fixture.InboxId,
+            ContentType = "application/octet-stream",
+            Content = content,
+            SizeBytes = content.LongLength,
+            CreatedAt = DateTime.UtcNow,
+            ExpiresAt = DateTime.UtcNow.AddHours(1),
+        });
+        await database.SaveChangesAsync();
+
+        var migration = scope.ServiceProvider
+            .GetRequiredService<JmapBlobLargeObjectMigrationService>();
+        await migration.MigrateAsync();
+        await migration.MigrateAsync();
+        database.ChangeTracker.Clear();
+
+        var migrated = await database.JmapBlobs.AsNoTracking()
+            .SingleAsync(candidate => candidate.Id == id);
+        Assert.IsNull(migrated.Content);
+        Assert.AreEqual("azure-blob", migrated.ObjectProvider);
+        Assert.AreEqual($"jmap/uploads/{fixture.InboxId:N}/{id:N}", migrated.ObjectName);
+        Assert.AreEqual(64, migrated.ObjectSha256?.Length);
+        Assert.IsFalse(string.IsNullOrWhiteSpace(migrated.ObjectEntityTag));
+        Assert.AreEqual(1, scope.ServiceProvider
+            .GetRequiredService<InMemoryLargeObjectStore>().Count);
+
+        var loaded = await scope.ServiceProvider.GetRequiredService<JmapBlobService>()
+            .GetAsync(fixture.InboxId, blobId, CancellationToken.None);
+        Assert.IsNotNull(loaded);
+        CollectionAssert.AreEqual(content, loaded.Content);
+    }
+
+    [TestMethod]
     public async Task BlobQuotaEvictsOldestUnreferencedUpload()
     {
         const int quota = 1_048_576;
@@ -3367,6 +3435,8 @@ public sealed class JmapProtocolTests
         var blobs = scope.ServiceProvider.GetRequiredService<JmapBlobService>();
         Assert.IsNull(await blobs.GetAsync(fixture.InboxId, first, CancellationToken.None));
         Assert.IsNotNull(await blobs.GetAsync(fixture.InboxId, second, CancellationToken.None));
+        Assert.AreEqual(1, scope.ServiceProvider
+            .GetRequiredService<InMemoryLargeObjectStore>().Count);
     }
 
     [TestMethod]

@@ -256,6 +256,13 @@ public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContex
         {
             entity.HasIndex(blob => blob.BlobId).IsUnique();
             entity.HasIndex(blob => new { blob.AccountId, blob.ExpiresAt });
+            entity.ToTable(table => table.HasCheckConstraint(
+                "ck_jmap_blobs_storage_shape",
+                "(content IS NOT NULL AND object_provider IS NULL AND object_name IS NULL "
+                + "AND object_sha256 IS NULL AND object_etag IS NULL) OR "
+                + "(content IS NULL AND object_provider = 'azure-blob' "
+                + "AND object_name IS NOT NULL AND object_sha256 IS NOT NULL "
+                + "AND object_etag IS NOT NULL)"));
         });
 
         modelBuilder.Entity<JmapEmailSubmissionDB>(entity =>

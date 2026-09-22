@@ -111,6 +111,10 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["content_type"] = "varchar",
             ["name"] = "varchar",
             ["content"] = "bytea",
+            ["object_provider"] = "varchar",
+            ["object_name"] = "varchar",
+            ["object_sha256"] = "varchar",
+            ["object_etag"] = "varchar",
             ["size_bytes"] = "int8",
             ["created_at"] = "timestamptz",
             ["expires_at"] = "timestamptz",
@@ -521,12 +525,65 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 account_id uuid NOT NULL REFERENCES inboxes(id) ON DELETE CASCADE,
                 content_type varchar(255) NOT NULL,
                 name varchar(255),
-                content bytea NOT NULL,
+                content bytea,
+                object_provider varchar(32),
+                object_name varchar(1024),
+                object_sha256 varchar(64),
+                object_etag varchar(256),
                 size_bytes bigint NOT NULL,
                 created_at timestamp with time zone NOT NULL,
                 expires_at timestamp with time zone NOT NULL,
-                CONSTRAINT ck_jmap_blobs_size CHECK (size_bytes >= 0)
+                CONSTRAINT ck_jmap_blobs_size CHECK (size_bytes >= 0),
+                CONSTRAINT ck_jmap_blobs_storage_shape CHECK (
+                    (content IS NOT NULL
+                        AND object_provider IS NULL
+                        AND object_name IS NULL
+                        AND object_sha256 IS NULL
+                        AND object_etag IS NULL)
+                    OR
+                    (content IS NULL
+                        AND object_provider = 'azure-blob'
+                        AND object_name IS NOT NULL
+                        AND object_sha256 IS NOT NULL
+                        AND object_etag IS NOT NULL))
             );
+
+            ALTER TABLE jmap_blobs
+                ALTER COLUMN content DROP NOT NULL;
+            ALTER TABLE jmap_blobs
+                ADD COLUMN IF NOT EXISTS object_provider varchar(32);
+            ALTER TABLE jmap_blobs
+                ADD COLUMN IF NOT EXISTS object_name varchar(1024);
+            ALTER TABLE jmap_blobs
+                ADD COLUMN IF NOT EXISTS object_sha256 varchar(64);
+            ALTER TABLE jmap_blobs
+                ADD COLUMN IF NOT EXISTS object_etag varchar(256);
+            DO $migration$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conrelid = 'jmap_blobs'::regclass
+                      AND conname = 'ck_jmap_blobs_storage_shape'
+                ) THEN
+                    ALTER TABLE jmap_blobs
+                        ADD CONSTRAINT ck_jmap_blobs_storage_shape CHECK (
+                            (content IS NOT NULL
+                                AND object_provider IS NULL
+                                AND object_name IS NULL
+                                AND object_sha256 IS NULL
+                                AND object_etag IS NULL)
+                            OR
+                            (content IS NULL
+                                AND object_provider = 'azure-blob'
+                                AND object_name IS NOT NULL
+                                AND object_sha256 IS NOT NULL
+                                AND object_etag IS NOT NULL)) NOT VALID;
+                END IF;
+            END
+            $migration$;
+            ALTER TABLE jmap_blobs
+                VALIDATE CONSTRAINT ck_jmap_blobs_storage_shape;
 
             CREATE TABLE IF NOT EXISTS jmap_email_submissions (
                 id uuid PRIMARY KEY,

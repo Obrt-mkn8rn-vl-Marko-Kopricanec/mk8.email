@@ -2,6 +2,7 @@ using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using mk8.email.Application.Interfaces;
+using mk8.email.Contracts.Storage;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
 using mk8.email.Infrastructure.Models;
@@ -69,6 +70,9 @@ internal sealed class JmapFixture : IAsyncDisposable
         var databaseName = $"jmap-{Guid.NewGuid():N}";
         services.AddLogging();
         services.AddSingleton(configuration);
+        services.AddSingleton<InMemoryLargeObjectStore>();
+        services.AddSingleton<ILargeObjectStore>(provider =>
+            provider.GetRequiredService<InMemoryLargeObjectStore>());
         services.AddDbContext<EmailDbContext>(options =>
             options.UseInMemoryDatabase(databaseName));
         services.AddJmapApplication();

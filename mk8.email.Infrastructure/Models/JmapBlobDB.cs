@@ -27,9 +27,24 @@ public sealed class JmapBlobDB
     [Column("name")]
     public string? Name { get; set; }
 
-    [Required]
     [Column("content", TypeName = "bytea")]
-    public byte[] Content { get; set; } = [];
+    public byte[]? Content { get; set; }
+
+    [MaxLength(32)]
+    [Column("object_provider")]
+    public string? ObjectProvider { get; set; }
+
+    [MaxLength(1024)]
+    [Column("object_name")]
+    public string? ObjectName { get; set; }
+
+    [MaxLength(64)]
+    [Column("object_sha256")]
+    public string? ObjectSha256 { get; set; }
+
+    [MaxLength(256)]
+    [Column("object_etag")]
+    public string? ObjectEntityTag { get; set; }
 
     [Column("size_bytes")]
     public long SizeBytes { get; set; }

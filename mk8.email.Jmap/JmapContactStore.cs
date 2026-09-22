@@ -18,10 +18,9 @@ internal sealed record JmapContactCardView(
 
 public sealed class JmapContactStore(
     EmailDbContext database,
-    EnvironmentConfig environment)
+    EnvironmentConfig environment,
+    JmapBlobService blobs)
 {
-    private readonly JmapBlobService blobs = new(database, environment);
-
     public async Task EnsureDefaultAddressBookAsync(
         AuthenticatedMailUser user,
         CancellationToken cancellationToken)

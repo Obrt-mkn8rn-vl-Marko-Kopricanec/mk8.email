@@ -20,7 +20,9 @@ Object writes are conditional and immutable. Reads are constrained to the record
 
 Message metadata is authenticated as AES-GCM associated data but remains visible in PostgreSQL. Callers must keep credentials, message bodies, attachments, and other secrets in the encrypted payload, not in metadata.
 
-All mail attachments and other large persisted application objects follow this same storage boundary. Their migration from legacy database byte arrays is a separate rollout checkpoint and must complete before the distributed architecture is deployable.
+JMAP upload blobs now follow this boundary as reference-only rows. Application Worker externalizes legacy inline uploads before it begins consuming requests, serializes that migration across hosts, and then enables a PostgreSQL constraint that forbids inline JMAP blob bytes. Account quota updates use PostgreSQL advisory transaction locks, while object deletion follows the enclosing JMAP method's commit or rollback outcome.
+
+Stored mail messages and attachments, plus DAV resource bodies, must follow the same storage boundary. Their migration from legacy database byte arrays remains a later rollout checkpoint and must complete before the distributed architecture is deployable.
 
 ## Availability semantics
 

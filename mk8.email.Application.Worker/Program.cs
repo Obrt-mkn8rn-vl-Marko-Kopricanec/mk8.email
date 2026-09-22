@@ -44,7 +44,14 @@ try
     builder.Services.AddHostedService<MessagingSchemaInitializer>();
     builder.Services.AddHostedService<ApplicationRequestWorker>();
 
-    await builder.Build().RunAsync();
+    using var host = builder.Build();
+    if (environment.Jmap.EnableJmap)
+    {
+        using var scope = host.Services.CreateScope();
+        await scope.ServiceProvider.GetRequiredService<JmapBlobLargeObjectMigrationService>()
+            .MigrateAsync();
+    }
+    await host.RunAsync();
     return 0;
 }
 catch (Exception exception)

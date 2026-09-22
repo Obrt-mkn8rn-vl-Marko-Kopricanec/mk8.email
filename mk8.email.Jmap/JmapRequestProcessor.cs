@@ -14,6 +14,7 @@ public sealed class JmapRequestProcessor
     private readonly JmapSessionService _sessions;
     private readonly EmailDbContext _database;
     private readonly EnvironmentConfig _environment;
+    private readonly JmapBlobTransactionEffects _blobEffects;
     private readonly ILogger<JmapRequestProcessor> _logger;
 
     public JmapRequestProcessor(
@@ -21,12 +22,14 @@ public sealed class JmapRequestProcessor
         JmapSessionService sessions,
         EmailDbContext database,
         EnvironmentConfig environment,
+        JmapBlobTransactionEffects blobEffects,
         ILogger<JmapRequestProcessor> logger)
     {
         _methods = methods.ToDictionary(method => method.Name, StringComparer.Ordinal);
         _sessions = sessions;
         _database = database;
         _environment = environment;
+        _blobEffects = blobEffects;
         _logger = logger;
     }
 
@@ -157,7 +160,9 @@ public sealed class JmapRequestProcessor
     {
         var createdIds = context.CreatedIds.ToDictionary(item => item.Key, item => item.Value);
         var postCommitMarker = context.MarkPostCommitActions();
+        var blobEffectMarker = _blobEffects.Mark();
         IDbContextTransaction? transaction = null;
+        var commitAttempted = false;
         try
         {
             if (_database.Database.IsRelational())
@@ -167,12 +172,17 @@ public sealed class JmapRequestProcessor
             if (MustRollBack(response))
             {
                 await RollBackAsync(transaction);
+                await _blobEffects.RollbackAsync(blobEffectMarker);
                 RestoreInvocationState(context, createdIds, postCommitMarker);
                 return response;
             }
 
             if (transaction is not null)
+            {
+                commitAttempted = true;
                 await transaction.CommitAsync(cancellationToken);
+            }
+            await _blobEffects.CommitAsync(blobEffectMarker);
             var actions = context.TakePostCommitActions(postCommitMarker);
             foreach (var action in actions)
             {
@@ -193,12 +203,14 @@ public sealed class JmapRequestProcessor
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             await RollBackAsync(transaction);
+            await CompleteBlobRollbackAsync(blobEffectMarker, commitAttempted);
             RestoreInvocationState(context, createdIds, postCommitMarker);
             throw;
         }
         catch (Exception exception)
         {
             await RollBackAsync(transaction);
+            await CompleteBlobRollbackAsync(blobEffectMarker, commitAttempted);
             RestoreInvocationState(context, createdIds, postCommitMarker);
             _logger.LogError(exception, "JMAP method {MethodName} failed", method.Name);
             return JmapMethodResponse.Error("serverFail");
@@ -208,6 +220,18 @@ public sealed class JmapRequestProcessor
             if (transaction is not null)
                 await transaction.DisposeAsync();
         }
+    }
+
+    private async Task CompleteBlobRollbackAsync(int marker, bool commitAttempted)
+    {
+        if (commitAttempted)
+        {
+            // A failed commit can have an ambiguous outcome. Retaining an object is safer
+            // than deleting content that a committed row may reference.
+            _blobEffects.Discard(marker);
+            return;
+        }
+        await _blobEffects.RollbackAsync(marker);
     }
 
     private static bool MustRollBack(JmapMethodResponse response) =>

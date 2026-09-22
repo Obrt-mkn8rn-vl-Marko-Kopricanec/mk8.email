@@ -193,5 +193,8 @@ public static class PostgresMessagingSchema
         CREATE INDEX IF NOT EXISTS ix_application_request_completed
             ON application_requests (completed_at)
             WHERE completed_at IS NOT NULL;
+
+        CREATE TABLE IF NOT EXISTS presentation_requests
+            (LIKE application_requests INCLUDING ALL);
         """;
 }

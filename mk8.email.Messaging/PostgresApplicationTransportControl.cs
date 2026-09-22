@@ -14,7 +14,8 @@ public sealed class PostgresApplicationTransportControl(NpgsqlDataSource dataSou
         {
             await using var command = dataSource.CreateCommand(
                 "SELECT to_regclass('application_requests') IS NOT NULL "
-                + "AND to_regclass('gateway_traffic_records') IS NOT NULL");
+                + "AND to_regclass('gateway_traffic_records') IS NOT NULL "
+                + "AND to_regclass('presentation_requests') IS NOT NULL");
             return await command.ExecuteScalarAsync(cancellationToken) is true;
         }
         catch (Exception exception) when (exception is NpgsqlException or TimeoutException)

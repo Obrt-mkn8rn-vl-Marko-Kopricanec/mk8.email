@@ -175,9 +175,10 @@ internal static partial class MessagingValues
         string metadata,
         string? idempotencyKey,
         DateTimeOffset createdAt,
-        DateTimeOffset deadline) =>
+        DateTimeOffset deadline,
+        string domain) =>
         BuildAssociatedData(
-            "application-request-v1",
+            domain,
             id.ToString("D"),
             sessionId.ToString("D"),
             sequence.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -195,9 +196,10 @@ internal static partial class MessagingValues
         string metadata,
         bool isError,
         string? errorCode,
-        string? errorDetail) =>
+        string? errorDetail,
+        string domain) =>
         BuildAssociatedData(
-            "application-response-v1",
+            domain,
             requestId.ToString("D"),
             contentType,
             metadata,

@@ -46,6 +46,14 @@ public interface IApplicationRequestConsumer
         CancellationToken cancellationToken = default);
 }
 
+public interface IPresentationRequestClient : IApplicationRequestClient
+{
+}
+
+public interface IPresentationRequestConsumer : IApplicationRequestConsumer
+{
+}
+
 public interface IGatewayTrafficJournal
 {
     Task AppendAsync(

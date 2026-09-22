@@ -53,6 +53,11 @@ public sealed class DavSchemaTests
         Assert.AreEqual("is_default", collection.FindProperty(nameof(DavCollectionDB.IsDefault))?.GetColumnName());
         Assert.AreEqual("is_subscribed", collection.FindProperty(nameof(DavCollectionDB.IsSubscribed))?.GetColumnName());
         Assert.AreEqual("bytea", resource.FindProperty(nameof(DavResourceDB.Content))?.GetColumnType());
+        Assert.IsTrue(resource.FindProperty(nameof(DavResourceDB.Content))?.IsNullable);
+        Assert.AreEqual(32, resource.FindProperty(nameof(DavResourceDB.ObjectProvider))?.GetMaxLength());
+        Assert.AreEqual(1024, resource.FindProperty(nameof(DavResourceDB.ObjectName))?.GetMaxLength());
+        Assert.AreEqual(64, resource.FindProperty(nameof(DavResourceDB.ObjectSha256))?.GetMaxLength());
+        Assert.AreEqual(256, resource.FindProperty(nameof(DavResourceDB.ObjectEntityTag))?.GetMaxLength());
         Assert.IsTrue(collection.GetForeignKeys().All(key => key.DeleteBehavior == DeleteBehavior.Cascade));
         Assert.IsTrue(resource.GetForeignKeys().All(key => key.DeleteBehavior == DeleteBehavior.Cascade));
         Assert.IsTrue(change.GetForeignKeys().All(key => key.DeleteBehavior == DeleteBehavior.Cascade));

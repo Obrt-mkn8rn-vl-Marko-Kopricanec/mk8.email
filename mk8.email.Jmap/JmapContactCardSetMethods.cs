@@ -118,8 +118,12 @@ internal sealed class ContactCardSetMethod(
 
                 var id = Guid.CreateVersion7();
                 var now = DateTime.UtcNow;
-                var resource = JmapContactStore.StoreCreatedCard(
-                    database, book, id, prepared.Card, now);
+                var resource = await contacts.StoreCreatedCardAsync(
+                    book,
+                    id,
+                    prepared.Card,
+                    now,
+                    cancellationToken);
                 var view = new JmapContactCardView(resource, prepared.Card);
                 var idString = view.Id;
                 cardsById[idString] = view;
@@ -198,13 +202,13 @@ internal sealed class ContactCardSetMethod(
                     continue;
                 }
                 var oldBook = books.Single(book => book.Id == existing.Resource.CollectionId);
-                JmapContactStore.StoreUpdatedCard(
-                    database,
+                await contacts.StoreUpdatedCardAsync(
                     existing.Resource,
                     oldBook,
                     targetBook,
                     prepared.Card,
-                    DateTime.UtcNow);
+                    DateTime.UtcNow,
+                    cancellationToken);
                 if (oldBook.Id != targetBook.Id)
                 {
                     counts[oldBook.Id] = counts.GetValueOrDefault(oldBook.Id) - 1;
@@ -232,7 +236,7 @@ internal sealed class ContactCardSetMethod(
                     continue;
                 }
                 var book = books.Single(candidate => candidate.Id == existing.Resource.CollectionId);
-                JmapContactStore.DestroyCard(database, existing.Resource, book, DateTime.UtcNow);
+                contacts.DestroyCard(existing.Resource, book, DateTime.UtcNow);
                 cardsById.Remove(resolved);
                 DecrementUidCount(cardCountsByUid, existing.Card["uid"]!.GetValue<string>());
                 counts[book.Id] = counts.GetValueOrDefault(book.Id) - 1;

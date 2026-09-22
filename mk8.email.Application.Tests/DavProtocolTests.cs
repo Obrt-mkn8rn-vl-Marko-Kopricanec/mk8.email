@@ -169,6 +169,19 @@ public sealed class DavProtocolTests
         Assert.AreEqual(HttpStatusCode.Created, created.StatusCode);
         var firstEtag = created.Headers.ETag?.Tag;
         Assert.IsNotNull(firstEtag);
+        string firstObjectName;
+        using (var scope = fixture.Services.CreateScope())
+        {
+            var stored = await scope.ServiceProvider.GetRequiredService<EmailDbContext>()
+                .DavResources.AsNoTracking()
+                .SingleAsync(candidate => candidate.ResourceName == "planning.ics");
+            Assert.IsNull(stored.Content);
+            Assert.AreEqual("azure-blob", stored.ObjectProvider);
+            firstObjectName = stored.ObjectName
+                ?? throw new AssertFailedException("The DAV object name is missing.");
+            Assert.IsTrue(scope.ServiceProvider.GetRequiredService<InMemoryLargeObjectStore>()
+                .Contains(firstObjectName));
+        }
 
         using var duplicateCreate = await fixture.SendAsync(
             "PUT",
@@ -232,6 +245,9 @@ public sealed class DavProtocolTests
             "text/calendar; charset=utf-8",
             Header("If-Match", "\"not-the-current-etag\""));
         Assert.AreEqual(HttpStatusCode.PreconditionFailed, failedUpdate.StatusCode);
+        Assert.AreEqual(
+            1,
+            fixture.Services.GetRequiredService<InMemoryLargeObjectStore>().Count);
 
         using var updated = await fixture.SendAsync(
             "PUT",
@@ -243,12 +259,27 @@ public sealed class DavProtocolTests
         var secondEtag = updated.Headers.ETag?.Tag;
         Assert.IsNotNull(secondEtag);
         Assert.AreNotEqual(firstEtag, secondEtag);
+        using (var scope = fixture.Services.CreateScope())
+        {
+            var stored = await scope.ServiceProvider.GetRequiredService<EmailDbContext>()
+                .DavResources.AsNoTracking()
+                .SingleAsync(candidate => candidate.ResourceName == "planning.ics");
+            Assert.IsNull(stored.Content);
+            Assert.AreNotEqual(firstObjectName, stored.ObjectName);
+            var objects = scope.ServiceProvider.GetRequiredService<InMemoryLargeObjectStore>();
+            Assert.AreEqual(1, objects.Count);
+            Assert.IsFalse(objects.Contains(firstObjectName));
+            Assert.IsTrue(objects.Contains(stored.ObjectName!));
+        }
 
         using var deleted = await fixture.SendAsync(
             "DELETE",
             resource,
             headers: Header("If-Match", secondEtag));
         Assert.AreEqual(HttpStatusCode.NoContent, deleted.StatusCode);
+        Assert.AreEqual(
+            0,
+            fixture.Services.GetRequiredService<InMemoryLargeObjectStore>().Count);
 
         using var delta = await fixture.SendAsync(
             "REPORT",

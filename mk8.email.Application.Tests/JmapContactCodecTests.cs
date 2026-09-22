@@ -166,7 +166,7 @@ public sealed class JmapContactCodecTests
         StringAssert.Contains(encoded, "NOTE;PROP-ID=note_main:Primary note\r\n");
         StringAssert.Contains(encoded, "BDAY;PROP-ID=birth_date:19900102\r\n");
 
-        var decoded = JmapContactCodec.Decode(Resource(
+        var decoded = Decode(Resource(
             "prop-id-roundtrip",
             WithoutEmbeddedExtensions(encoded)));
         Assert.IsNull(decoded["name"]!["full"]);
@@ -195,7 +195,7 @@ public sealed class JmapContactCodecTests
     [TestMethod]
     public void DecodeResolvesDuplicatePropIdsWithoutOverwritingSiblingValues()
     {
-        var decoded = JmapContactCodec.Decode(Resource("duplicate-prop-id", """
+        var decoded = Decode(Resource("duplicate-prop-id", """
             BEGIN:VCARD
             VERSION:4.0
             UID;VALUE=text:duplicate-prop-id
@@ -252,7 +252,7 @@ public sealed class JmapContactCodecTests
         lines.Insert(lines.Count - 1, "X-MK8-JSCONTACT-HASH:" + hash);
         lines.Insert(lines.Count - 1, "X-MK8-JSCONTACT:" + encoded);
 
-        var decoded = JmapContactCodec.Decode(Resource(
+        var decoded = Decode(Resource(
             "legacy-embedded",
             string.Join("\r\n", lines) + "\r\n"));
 
@@ -279,7 +279,7 @@ public sealed class JmapContactCodecTests
             END:VCARD
             """);
 
-        var decoded = JmapContactCodec.Decode(resource);
+        var decoded = Decode(resource);
 
         Assert.IsTrue(JmapContactCodec.TryValidate(decoded, out var invalid),
             string.Join(", ", invalid));
@@ -400,4 +400,7 @@ public sealed class JmapContactCodecTests
         CreatedAt = new DateTime(2026, 9, 21, 8, 0, 0, DateTimeKind.Utc),
         UpdatedAt = new DateTime(2026, 9, 21, 9, 0, 0, DateTimeKind.Utc),
     };
+
+    private static JsonObject Decode(DavResourceDB resource) =>
+        JmapContactCodec.Decode(resource, resource.Content!);
 }

@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using mk8.email.Application.Interfaces;
+using mk8.email.Application.Services;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
 using mk8.email.Infrastructure.Models;
@@ -19,7 +20,8 @@ internal sealed record JmapContactCardView(
 public sealed class JmapContactStore(
     EmailDbContext database,
     EnvironmentConfig environment,
-    JmapBlobService blobs)
+    JmapBlobService blobs,
+    DavResourceContentService resourceContent)
 {
     public async Task EnsureDefaultAddressBookAsync(
         AuthenticatedMailUser user,
@@ -111,8 +113,15 @@ public sealed class JmapContactStore(
                 && resource.Collection.CollectionType == DavCollectionDB.AddressBookType)
             .OrderBy(resource => resource.Id);
         var resources = await (tracked ? query : query.AsNoTracking()).ToListAsync(cancellationToken);
-        return resources.Select(resource =>
-            new JmapContactCardView(resource, JmapContactCodec.Decode(resource))).ToList();
+        var cards = new List<JmapContactCardView>(resources.Count);
+        foreach (var resource in resources)
+        {
+            var content = await resourceContent.ReadAsync(resource, cancellationToken);
+            cards.Add(new JmapContactCardView(
+                resource,
+                JmapContactCodec.Decode(resource, content)));
+        }
+        return cards;
     }
 
     internal async Task<(JsonObject? Card, IReadOnlyList<string> InvalidProperties)> PrepareCardAsync(
@@ -286,12 +295,12 @@ public sealed class JmapContactStore(
         return result;
     }
 
-    internal static DavResourceDB StoreCreatedCard(
-        EmailDbContext database,
+    internal async Task<DavResourceDB> StoreCreatedCardAsync(
         DavCollectionDB collection,
         Guid id,
         JsonObject card,
-        DateTime now)
+        DateTime now,
+        CancellationToken cancellationToken)
     {
         var content = JmapContactCodec.Encode(card);
         var resourceName = $"{id:N}.vcf";
@@ -305,26 +314,25 @@ public sealed class JmapContactStore(
             ResourceName = resourceName,
             Uid = card["uid"]!.GetValue<string>(),
             ContentType = "text/vcard",
-            Content = content,
             Etag = Convert.ToHexStringLower(SHA256.HashData(content)),
-            SizeBytes = content.Length,
             ChangeSequence = sequence,
             CreatedAt = now,
             UpdatedAt = now,
         };
+        await resourceContent.SetAsync(resource, content, cancellationToken);
         collection.UpdatedAt = now;
         database.DavResources.Add(resource);
         AddDavChange(database, collection, resourceName, false, resource.Etag, sequence, now);
         return resource;
     }
 
-    internal static void StoreUpdatedCard(
-        EmailDbContext database,
+    internal async Task StoreUpdatedCardAsync(
         DavResourceDB resource,
         DavCollectionDB oldCollection,
         DavCollectionDB newCollection,
         JsonObject card,
-        DateTime now)
+        DateTime now,
+        CancellationToken cancellationToken)
     {
         var content = JmapContactCodec.Encode(card);
         if (oldCollection.Id != newCollection.Id)
@@ -339,23 +347,22 @@ public sealed class JmapContactStore(
         resource.Collection = newCollection;
         resource.AddressBookUserId = DavContactUidInvariant.ScopeFor(newCollection);
         resource.Uid = card["uid"]!.GetValue<string>();
-        resource.Content = content;
         resource.ContentType = "text/vcard";
         resource.Etag = Convert.ToHexStringLower(SHA256.HashData(content));
-        resource.SizeBytes = content.Length;
         resource.ChangeSequence = sequence;
         resource.UpdatedAt = now;
+        await resourceContent.SetAsync(resource, content, cancellationToken);
         AddDavChange(database, newCollection, resource.ResourceName, false, resource.Etag, sequence, now);
     }
 
-    internal static void DestroyCard(
-        EmailDbContext database,
+    internal void DestroyCard(
         DavResourceDB resource,
         DavCollectionDB collection,
         DateTime now)
     {
         var sequence = checked(++collection.SyncToken);
         collection.UpdatedAt = now;
+        resourceContent.DeleteOnCommit(resource);
         database.DavResources.Remove(resource);
         AddDavChange(database, collection, resource.ResourceName, true, null, sequence, now);
     }

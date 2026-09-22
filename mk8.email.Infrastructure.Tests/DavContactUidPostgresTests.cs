@@ -145,11 +145,13 @@ public sealed class DavContactUidPostgresTests
             Assert.AreEqual(userId, resources[0].AddressBookUserId);
             Assert.AreEqual(userId, resources[1].AddressBookUserId);
             Assert.AreEqual(2, resources.Select(resource => resource.Uid).Distinct().Count());
-            Assert.AreEqual(resources[1].Content.Length, resources[1].SizeBytes);
+            var repairedContent = resources[1].Content
+                ?? throw new AssertFailedException("The repaired legacy vCard content is missing.");
+            Assert.AreEqual(repairedContent.Length, resources[1].SizeBytes);
             Assert.AreEqual(
-                Convert.ToHexStringLower(SHA256.HashData(resources[1].Content)),
+                Convert.ToHexStringLower(SHA256.HashData(repairedContent)),
                 resources[1].Etag);
-            var migratedCard = DecodeEmbeddedCard(resources[1].Content);
+            var migratedCard = DecodeEmbeddedCard(repairedContent);
             Assert.AreEqual(resources[1].Uid, migratedCard["uid"]?.GetValue<string>());
             Assert.AreEqual(
                 "preserved details",

@@ -1,7 +1,10 @@
 using System.Data;
 using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Extensions.Logging;
 using mk8.email.Application.Interfaces;
+using mk8.email.Application.Services;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
 using mk8.email.Infrastructure.Models;
@@ -132,7 +135,12 @@ internal sealed record DavResourceWriteResult(
     DavResourceWriteStatus Status,
     DavResource? Resource = null);
 
-internal sealed class DavStore(EmailDbContext database, EnvironmentConfig environment)
+internal sealed class DavStore(
+    EmailDbContext database,
+    EnvironmentConfig environment,
+    DavResourceContentService resourceContent,
+    LargeObjectTransactionEffects transactionEffects,
+    ILogger<DavStore> logger)
 {
     private const int MaximumSharesPerCollection = 1_000;
     internal const string SchedulingInboxSlug = "schedule-inbox";
@@ -544,7 +552,7 @@ internal sealed class DavStore(EmailDbContext database, EnvironmentConfig enviro
             .Where(resource => resource.CollectionId == collectionId)
             .OrderBy(resource => resource.ResourceName)
             .ToListAsync(cancellationToken);
-        return resources.Select(ToResource).ToList();
+        return await ToResourcesAsync(resources, cancellationToken);
     }
 
     public async Task<DavCalendarResourceSet> GetCalendarResourcesAsync(
@@ -570,7 +578,7 @@ internal sealed class DavStore(EmailDbContext database, EnvironmentConfig enviro
             .OrderBy(resource => resource.UpdatedAt)
             .ToListAsync(cancellationToken);
         return new DavCalendarResourceSet(
-            resources.Select(ToResource).ToList(),
+            await ToResourcesAsync(resources, cancellationToken),
             true);
     }
 
@@ -670,7 +678,9 @@ internal sealed class DavStore(EmailDbContext database, EnvironmentConfig enviro
             .AsNoTracking()
             .SingleOrDefaultAsync(candidate => candidate.CollectionId == collectionId
                 && candidate.ResourceName == resourceName, cancellationToken);
-        return resource is null ? null : ToResource(resource);
+        return resource is null
+            ? null
+            : await ToResourceAsync(resource, cancellationToken);
     }
 
     public async Task<IReadOnlyList<DavChange>> GetChangesAsync(
@@ -703,7 +713,9 @@ internal sealed class DavStore(EmailDbContext database, EnvironmentConfig enviro
         bool ifNoneMatchStar,
         CancellationToken cancellationToken)
     {
+        var effectMarker = transactionEffects.Mark();
         await using var transaction = await BeginSerializableTransactionAsync(cancellationToken);
+        var commitAttempted = false;
         var collection = await FindTrackedWritableCollectionAsync(
             user,
             collectionId,
@@ -750,10 +762,14 @@ internal sealed class DavStore(EmailDbContext database, EnvironmentConfig enviro
             && existing.ContentType == contentType)
         {
             if (transaction is not null)
+            {
+                commitAttempted = true;
                 await transaction.CommitAsync(cancellationToken);
+            }
+            transactionEffects.Discard(effectMarker);
             return new DavResourceWriteResult(
                 DavResourceWriteStatus.Unchanged,
-                ToResource(existing));
+                ToResource(existing, content));
         }
 
         var now = DateTime.UtcNow;
@@ -782,9 +798,7 @@ internal sealed class DavStore(EmailDbContext database, EnvironmentConfig enviro
         resource.Uid = uid;
         resource.AddressBookUserId = DavContactUidInvariant.ScopeFor(collection);
         resource.ContentType = contentType;
-        resource.Content = content;
         resource.Etag = etag;
-        resource.SizeBytes = content.Length;
         resource.ChangeSequence = sequence;
         resource.UpdatedAt = now;
         collection.UpdatedAt = now;
@@ -801,15 +815,28 @@ internal sealed class DavStore(EmailDbContext database, EnvironmentConfig enviro
 
         try
         {
+            await resourceContent.SetAsync(resource, content, cancellationToken);
             await database.SaveChangesAsync(cancellationToken);
             if (transaction is not null)
+            {
+                commitAttempted = true;
                 await transaction.CommitAsync(cancellationToken);
+            }
+            await transactionEffects.CommitAsync(effectMarker);
         }
-        catch (DbUpdateException)
+        catch (DbUpdateException exception)
         {
+            await RollBackAsync(transaction, exception);
+            await CompleteRollbackAsync(effectMarker, commitAttempted);
             return new DavResourceWriteResult(DavResourceWriteStatus.UidConflict);
         }
-        return new DavResourceWriteResult(status, ToResource(resource));
+        catch (Exception exception)
+        {
+            await RollBackAsync(transaction, exception);
+            await CompleteRollbackAsync(effectMarker, commitAttempted);
+            throw;
+        }
+        return new DavResourceWriteResult(status, ToResource(resource, content));
     }
 
     public async Task<DavResourceWriteResult> DeleteResourceAsync(
@@ -819,7 +846,9 @@ internal sealed class DavStore(EmailDbContext database, EnvironmentConfig enviro
         string? ifMatch,
         CancellationToken cancellationToken)
     {
+        var effectMarker = transactionEffects.Mark();
         await using var transaction = await BeginSerializableTransactionAsync(cancellationToken);
+        var commitAttempted = false;
         var collection = await FindTrackedWritableCollectionAsync(
             user,
             collectionId,
@@ -838,6 +867,7 @@ internal sealed class DavStore(EmailDbContext database, EnvironmentConfig enviro
         var now = DateTime.UtcNow;
         var sequence = checked(++collection.SyncToken);
         collection.UpdatedAt = now;
+        resourceContent.DeleteOnCommit(resource);
         database.DavResources.Remove(resource);
         database.DavChanges.Add(new DavChangeDB
         {
@@ -848,10 +878,23 @@ internal sealed class DavStore(EmailDbContext database, EnvironmentConfig enviro
             IsDeleted = true,
             ChangedAt = now,
         });
-        await database.SaveChangesAsync(cancellationToken);
-        if (transaction is not null)
-            await transaction.CommitAsync(cancellationToken);
-        return new DavResourceWriteResult(DavResourceWriteStatus.Updated);
+        try
+        {
+            await database.SaveChangesAsync(cancellationToken);
+            if (transaction is not null)
+            {
+                commitAttempted = true;
+                await transaction.CommitAsync(cancellationToken);
+            }
+            await transactionEffects.CommitAsync(effectMarker);
+            return new DavResourceWriteResult(DavResourceWriteStatus.Updated);
+        }
+        catch (Exception exception)
+        {
+            await RollBackAsync(transaction, exception);
+            await CompleteRollbackAsync(effectMarker, commitAttempted);
+            throw;
+        }
     }
 
     private async Task EnsureDefaultCollectionAsync(
@@ -1083,16 +1126,60 @@ internal sealed class DavStore(EmailDbContext database, EnvironmentConfig enviro
             collection.UpdatedAt);
     }
 
-    private static DavResource ToResource(DavResourceDB resource) => new(
+    private async Task<IReadOnlyList<DavResource>> ToResourcesAsync(
+        IReadOnlyList<DavResourceDB> resources,
+        CancellationToken cancellationToken)
+    {
+        var result = new List<DavResource>(resources.Count);
+        foreach (var resource in resources)
+            result.Add(await ToResourceAsync(resource, cancellationToken));
+        return result;
+    }
+
+    private async Task<DavResource> ToResourceAsync(
+        DavResourceDB resource,
+        CancellationToken cancellationToken) =>
+        ToResource(resource, await resourceContent.ReadAsync(resource, cancellationToken));
+
+    private static DavResource ToResource(DavResourceDB resource, byte[] content) => new(
         resource.Id,
         resource.CollectionId,
         resource.ResourceName,
         resource.Uid,
         resource.ContentType,
-        resource.Content,
+        content,
         resource.Etag,
         resource.SizeBytes,
         resource.ChangeSequence,
         resource.CreatedAt,
         resource.UpdatedAt);
+
+    private async Task CompleteRollbackAsync(int marker, bool commitAttempted)
+    {
+        if (commitAttempted)
+        {
+            transactionEffects.Discard(marker);
+            return;
+        }
+        await transactionEffects.RollbackAsync(marker);
+    }
+
+    private async Task RollBackAsync(
+        IDbContextTransaction? transaction,
+        Exception originalException)
+    {
+        if (transaction is null)
+            return;
+        try
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+        }
+        catch (Exception rollbackException)
+        {
+            logger.LogWarning(
+                rollbackException,
+                "Could not roll back a DAV resource transaction after {FailureType}",
+                originalException.GetType().Name);
+        }
+    }
 }

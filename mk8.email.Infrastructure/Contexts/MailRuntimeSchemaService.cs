@@ -233,6 +233,10 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["uid"] = "varchar",
             ["content_type"] = "varchar",
             ["content"] = "bytea",
+            ["object_provider"] = "varchar",
+            ["object_name"] = "varchar",
+            ["object_sha256"] = "varchar",
+            ["object_etag"] = "varchar",
             ["etag"] = "varchar",
             ["size_bytes"] = "int4",
             ["change_sequence"] = "int8",
@@ -757,14 +761,30 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 resource_name varchar(255) NOT NULL,
                 uid varchar(255) NOT NULL,
                 content_type varchar(255) NOT NULL,
-                content bytea NOT NULL,
+                content bytea,
+                object_provider varchar(32),
+                object_name varchar(1024),
+                object_sha256 varchar(64),
+                object_etag varchar(256),
                 etag varchar(64) NOT NULL,
                 size_bytes integer NOT NULL,
                 change_sequence bigint NOT NULL,
                 created_at timestamp with time zone NOT NULL,
                 updated_at timestamp with time zone NOT NULL,
                 CONSTRAINT ck_dav_resources_size CHECK (size_bytes >= 0),
-                CONSTRAINT ck_dav_resources_change_sequence CHECK (change_sequence > 0)
+                CONSTRAINT ck_dav_resources_change_sequence CHECK (change_sequence > 0),
+                CONSTRAINT ck_dav_resources_storage_shape CHECK (
+                    (content IS NOT NULL
+                        AND object_provider IS NULL
+                        AND object_name IS NULL
+                        AND object_sha256 IS NULL
+                        AND object_etag IS NULL)
+                    OR
+                    (content IS NULL
+                        AND object_provider = 'azure-blob'
+                        AND object_name IS NOT NULL
+                        AND object_sha256 IS NOT NULL
+                        AND object_etag IS NOT NULL))
             );
 
             CREATE TABLE IF NOT EXISTS dav_changes (
@@ -976,6 +996,42 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 ADD COLUMN IF NOT EXISTS is_subscribed boolean NOT NULL DEFAULT true;
             ALTER TABLE dav_resources
                 ADD COLUMN IF NOT EXISTS addressbook_user_id uuid;
+            ALTER TABLE dav_resources
+                ALTER COLUMN content DROP NOT NULL;
+            ALTER TABLE dav_resources
+                ADD COLUMN IF NOT EXISTS object_provider varchar(32);
+            ALTER TABLE dav_resources
+                ADD COLUMN IF NOT EXISTS object_name varchar(1024);
+            ALTER TABLE dav_resources
+                ADD COLUMN IF NOT EXISTS object_sha256 varchar(64);
+            ALTER TABLE dav_resources
+                ADD COLUMN IF NOT EXISTS object_etag varchar(256);
+            DO $migration$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conrelid = 'dav_resources'::regclass
+                      AND conname = 'ck_dav_resources_storage_shape'
+                ) THEN
+                    ALTER TABLE dav_resources
+                        ADD CONSTRAINT ck_dav_resources_storage_shape CHECK (
+                            (content IS NOT NULL
+                                AND object_provider IS NULL
+                                AND object_name IS NULL
+                                AND object_sha256 IS NULL
+                                AND object_etag IS NULL)
+                            OR
+                            (content IS NULL
+                                AND object_provider = 'azure-blob'
+                                AND object_name IS NOT NULL
+                                AND object_sha256 IS NOT NULL
+                                AND object_etag IS NOT NULL)) NOT VALID;
+                END IF;
+            END
+            $migration$;
+            ALTER TABLE dav_resources
+                VALIDATE CONSTRAINT ck_dav_resources_storage_shape;
             UPDATE dav_collections
                 SET is_default = true
                 WHERE collection_type = 'addressbook'
@@ -1239,7 +1295,10 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 for (var suffix = 2; userUids.Contains(replacement); suffix++)
                     replacement = $"urn:uuid:{resource.Id:D}#legacy-{suffix}";
 
-                var content = DavContactUidMigration.Rewrite(resource.Content, replacement);
+                var legacyContent = resource.Content
+                    ?? throw new InvalidOperationException(
+                        $"Legacy duplicate DAV resource {resource.Id:D} has no inline content.");
+                var content = DavContactUidMigration.Rewrite(legacyContent, replacement);
                 var now = DateTime.UtcNow;
                 var sequence = checked(++resource.Collection.SyncToken);
                 resource.Uid = replacement;

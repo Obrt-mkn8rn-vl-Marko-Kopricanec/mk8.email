@@ -37,9 +37,24 @@ public sealed class DavResourceDB
     [Column("content_type")]
     public string ContentType { get; set; } = string.Empty;
 
-    [Required]
     [Column("content")]
-    public byte[] Content { get; set; } = [];
+    public byte[]? Content { get; set; }
+
+    [MaxLength(32)]
+    [Column("object_provider")]
+    public string? ObjectProvider { get; set; }
+
+    [MaxLength(1024)]
+    [Column("object_name")]
+    public string? ObjectName { get; set; }
+
+    [MaxLength(64)]
+    [Column("object_sha256")]
+    public string? ObjectSha256 { get; set; }
+
+    [MaxLength(256)]
+    [Column("object_etag")]
+    public string? ObjectEntityTag { get; set; }
 
     [Required]
     [MaxLength(64)]

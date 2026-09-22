@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using mk8.email.Application.Services;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Infrastructure.Models;
 using mk8.email.Jmap;
@@ -262,7 +263,10 @@ public sealed class JmapContactsTests
         {
             var resource = await scope.ServiceProvider.GetRequiredService<EmailDbContext>()
                 .DavResources.AsNoTracking().SingleAsync(item => item.Uid == "alice-uid");
-            var vcard = Encoding.UTF8.GetString(resource.Content);
+            Assert.IsNull(resource.Content);
+            var stored = await scope.ServiceProvider.GetRequiredService<DavResourceContentService>()
+                .ReadAsync(resource, CancellationToken.None);
+            var vcard = Encoding.UTF8.GetString(stored);
             StringAssert.Contains(vcard, "FN:Alice Adams");
             StringAssert.Contains(vcard, ":alice@example.net");
             StringAssert.Contains(vcard, "X-MK8-JSCONTACT:");
@@ -578,11 +582,13 @@ public sealed class JmapContactsTests
         Assert.IsTrue(JsonNode.DeepEquals(patchedCache, updatedGet["list"]![0]));
 
         using var scope = fixture.Services.CreateScope();
-        var content = await scope.ServiceProvider.GetRequiredService<EmailDbContext>()
+        var resource = await scope.ServiceProvider.GetRequiredService<EmailDbContext>()
             .DavResources.AsNoTracking()
-            .Where(resource => resource.Uid == "photo-contact")
-            .Select(resource => resource.Content)
+            .Where(candidate => candidate.Uid == "photo-contact")
             .SingleAsync();
+        Assert.IsNull(resource.Content);
+        var content = await scope.ServiceProvider.GetRequiredService<DavResourceContentService>()
+            .ReadAsync(resource, CancellationToken.None);
         StringAssert.Contains(Encoding.UTF8.GetString(content), "data:image/gif;base64,");
     }
 
@@ -813,11 +819,13 @@ public sealed class JmapContactsTests
 
         using (var scope = fixture.Services.CreateScope())
         {
-            var content = await scope.ServiceProvider.GetRequiredService<EmailDbContext>()
+            var resource = await scope.ServiceProvider.GetRequiredService<EmailDbContext>()
                 .DavResources.AsNoTracking()
-                .Where(resource => resource.Uid == "utf8-folding")
-                .Select(resource => resource.Content)
+                .Where(candidate => candidate.Uid == "utf8-folding")
                 .SingleAsync();
+            Assert.IsNull(resource.Content);
+            var content = await scope.ServiceProvider.GetRequiredService<DavResourceContentService>()
+                .ReadAsync(resource, CancellationToken.None);
             var lines = Encoding.UTF8.GetString(content)
                 .Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
             Assert.IsTrue(lines.All(line => Encoding.UTF8.GetByteCount(line) <= 75));

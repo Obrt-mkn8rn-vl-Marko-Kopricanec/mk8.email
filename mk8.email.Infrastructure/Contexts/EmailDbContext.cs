@@ -334,6 +334,13 @@ public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContex
                 .HasDatabaseName("ix_dav_resources_addressbook_user_uid")
                 .HasFilter("addressbook_user_id IS NOT NULL");
             entity.HasIndex(resource => new { resource.CollectionId, resource.ChangeSequence });
+            entity.ToTable(table => table.HasCheckConstraint(
+                "ck_dav_resources_storage_shape",
+                "(content IS NOT NULL AND object_provider IS NULL "
+                + "AND object_name IS NULL AND object_sha256 IS NULL AND object_etag IS NULL) OR "
+                + "(content IS NULL AND object_provider = 'azure-blob' "
+                + "AND object_name IS NOT NULL AND object_sha256 IS NOT NULL "
+                + "AND object_etag IS NOT NULL)"));
 
             entity.HasOne(resource => resource.Collection)
                 .WithMany(collection => collection.Resources)

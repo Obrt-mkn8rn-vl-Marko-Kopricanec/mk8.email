@@ -14,12 +14,14 @@ internal static class JmapContactCodec
     public static bool TryValidate(JsonObject card, out IReadOnlyList<string> invalidProperties)
         => JmapContactValidator.TryValidate(card, out invalidProperties);
 
-    public static JsonObject Decode(DavResourceDB resource)
+    public static JsonObject Decode(DavResourceDB resource, byte[] content)
     {
+        ArgumentNullException.ThrowIfNull(resource);
+        ArgumentNullException.ThrowIfNull(content);
         string text;
         try
         {
-            text = StrictUtf8.GetString(resource.Content);
+            text = StrictUtf8.GetString(content);
         }
         catch (DecoderFallbackException)
         {

@@ -28,6 +28,8 @@ public static class ApplicationServiceExtensions
         services.AddScoped<LargeObjectTransactionEffects>();
         services.AddScoped<MailQueueContentService>();
         services.AddScoped<MailQueueLargeObjectMigrationService>();
+        services.AddScoped<DavResourceContentService>();
+        services.AddScoped<DavResourceLargeObjectMigrationService>();
 
         return services;
     }

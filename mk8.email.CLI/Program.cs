@@ -8,6 +8,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using mk8.email.Application;
 using mk8.email.Application.Interfaces;
+using mk8.email.Application.Services;
 using mk8.email.CLI;
 using mk8.email.Contracts.Enums;
 using mk8.email.Dav;
@@ -262,7 +263,15 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
 
         using var protocolHost = BuildProtocolHost(arguments, environmentConfig, isDevelopment);
         using (var scope = protocolHost.Services.CreateScope())
+        {
             await scope.ServiceProvider.GetRequiredService<ISeederService>().SeedAsync();
+            if (environmentConfig.Dav.EnableDav)
+            {
+                await scope.ServiceProvider
+                    .GetRequiredService<DavResourceLargeObjectMigrationService>()
+                    .MigrateAsync();
+            }
+        }
         await protocolHost.RunAsync();
         return 0;
     }

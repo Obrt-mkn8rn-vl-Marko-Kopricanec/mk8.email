@@ -15,9 +15,27 @@ public sealed class MailQueueMessageDB
     [Column("envelope_sender")]
     public string EnvelopeSender { get; set; } = string.Empty;
 
-    [Required]
     [Column("raw_message")]
-    public string RawMessage { get; set; } = string.Empty;
+    public string? RawMessage { get; set; }
+
+    [Column("raw_message_size_bytes")]
+    public long RawMessageSizeBytes { get; set; }
+
+    [MaxLength(32)]
+    [Column("raw_message_object_provider")]
+    public string? RawMessageObjectProvider { get; set; }
+
+    [MaxLength(1024)]
+    [Column("raw_message_object_name")]
+    public string? RawMessageObjectName { get; set; }
+
+    [MaxLength(64)]
+    [Column("raw_message_object_sha256")]
+    public string? RawMessageObjectSha256 { get; set; }
+
+    [MaxLength(256)]
+    [Column("raw_message_object_etag")]
+    public string? RawMessageObjectEntityTag { get; set; }
 
     [Column("requires_smtp_utf8")]
     public bool RequiresSmtpUtf8 { get; set; }

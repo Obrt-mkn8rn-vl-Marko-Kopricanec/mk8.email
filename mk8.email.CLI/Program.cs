@@ -14,6 +14,7 @@ using mk8.email.Dav;
 using mk8.email.Infrastructure;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
+using mk8.email.Hosting;
 
 return await RunManagementCommandAsync(args);
 
@@ -308,7 +309,10 @@ static IHost BuildHost(
     builder.Services.AddInfrastructure(environmentConfig);
     builder.Services.AddApplication();
     if (includeMailServers)
+    {
+        builder.Services.AddAzureBlobObjectStorage(environmentConfig);
         builder.Services.AddMailProtocolServers();
+    }
     return builder.Build();
 }
 
@@ -340,6 +344,7 @@ static IHost BuildProtocolHost(
 
     builder.Services.AddInfrastructure(environmentConfig);
     builder.Services.AddApplication();
+    builder.Services.AddAzureBlobObjectStorage(environmentConfig);
     builder.Services.AddMailProtocolServers();
     if (environmentConfig.Dav.EnableDav)
         builder.Services.AddDavProtocol();

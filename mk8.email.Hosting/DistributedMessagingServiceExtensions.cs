@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using mk8.email.Configuration;
 using mk8.email.Contracts.Storage;
 using mk8.email.Messaging;
@@ -9,6 +10,38 @@ namespace mk8.email.Hosting;
 
 public static class DistributedMessagingServiceExtensions
 {
+    public static IServiceCollection AddAzureBlobObjectStorage(
+        this IServiceCollection services,
+        EnvironmentConfig environment)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(environment);
+        if (!string.Equals(
+                environment.ObjectStorage.Provider,
+                LargeObjectProviders.AzureBlob,
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "ObjectStorage.Provider must be azure-blob.");
+        }
+        if (string.IsNullOrWhiteSpace(environment.ObjectStorage.ConnectionString))
+        {
+            throw new InvalidOperationException(
+                "ObjectStorage.ConnectionString is required.");
+        }
+
+        services.TryAddSingleton<ILargeObjectStore>(_ =>
+            AzureBlobLargeObjectStore.FromConnectionString(
+                environment.ObjectStorage.ConnectionString,
+                new AzureBlobLargeObjectStoreOptions
+                {
+                    ContainerName = environment.ObjectStorage.ContainerName,
+                    ObjectPrefix = environment.ObjectStorage.ObjectPrefix,
+                    CreateContainerIfMissing = environment.ObjectStorage.CreateContainerIfMissing,
+                }));
+        return services;
+    }
+
     public static IServiceCollection AddDistributedMessaging(
         this IServiceCollection services,
         EnvironmentConfig environment)
@@ -38,15 +71,7 @@ public static class DistributedMessagingServiceExtensions
                 new MessagingEncryptionKey(key.Id, Convert.FromBase64String(key.Key)));
             return new AesGcmPayloadProtector(activeKey, decryptionKeys);
         });
-        services.AddSingleton<ILargeObjectStore>(_ =>
-            AzureBlobLargeObjectStore.FromConnectionString(
-                environment.ObjectStorage.ConnectionString,
-                new AzureBlobLargeObjectStoreOptions
-                {
-                    ContainerName = environment.ObjectStorage.ContainerName,
-                    ObjectPrefix = environment.ObjectStorage.ObjectPrefix,
-                    CreateContainerIfMissing = environment.ObjectStorage.CreateContainerIfMissing,
-                }));
+        services.AddAzureBlobObjectStorage(environment);
         services.AddSingleton(serviceProvider => new PostgresApplicationBus(
             serviceProvider.GetRequiredService<NpgsqlDataSource>(),
             serviceProvider.GetRequiredService<IMessagingPayloadProtector>(),

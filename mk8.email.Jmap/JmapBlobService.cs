@@ -6,6 +6,7 @@ using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
+using mk8.email.Application.Services;
 using mk8.email.Configuration;
 using mk8.email.Contracts.Storage;
 using mk8.email.Infrastructure.Data;
@@ -24,7 +25,7 @@ public sealed class JmapBlobService(
     EmailDbContext database,
     EnvironmentConfig environment,
     ILargeObjectStore objects,
-    JmapBlobTransactionEffects transactionEffects,
+    LargeObjectTransactionEffects transactionEffects,
     ILogger<JmapBlobService> logger)
 {
     private static readonly ConcurrentDictionary<Guid, SemaphoreSlim> AccountLocks = new();

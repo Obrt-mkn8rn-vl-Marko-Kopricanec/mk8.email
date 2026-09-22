@@ -1,3 +1,6 @@
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Extensions.Logging;
 using mk8.email.Application.Interfaces;
 using mk8.email.Application.Protocol;
 using mk8.email.Infrastructure.Data;
@@ -8,7 +11,10 @@ namespace mk8.email.Application.Services;
 
 public sealed class PostgresMailSubmissionQueue(
     EmailDbContext database,
-    EnvironmentConfig environment) : IMailSubmissionQueue
+    EnvironmentConfig environment,
+    MailQueueContentService content,
+    LargeObjectTransactionEffects transactionEffects,
+    ILogger<PostgresMailSubmissionQueue> logger) : IMailSubmissionQueue
 {
     public async Task<Guid> EnqueueAsync(
         MailSubmission submission,
@@ -90,7 +96,6 @@ public sealed class PostgresMailSubmissionQueue(
         {
             Id = submission.QueueId,
             EnvelopeSender = sender,
-            RawMessage = submission.RawMessage,
             RequiresSmtpUtf8 = submission.RequiresSmtpUtf8
                 || senderRequiresSmtpUtf8
                 || recipientRequiresSmtpUtf8
@@ -144,9 +149,51 @@ public sealed class PostgresMailSubmissionQueue(
             });
         }
 
-        database.MailQueueMessages.Add(message);
-        await database.SaveChangesAsync(cancellationToken);
-        return message.Id;
+        var effectMarker = transactionEffects.Mark();
+        IDbContextTransaction? transaction = null;
+        var commitAttempted = false;
+        try
+        {
+            if (database.Database.IsRelational())
+                transaction = await database.Database.BeginTransactionAsync(cancellationToken);
+            await content.SetAsync(message, submission.RawMessage, cancellationToken);
+            database.MailQueueMessages.Add(message);
+            await database.SaveChangesAsync(cancellationToken);
+            if (transaction is not null)
+            {
+                commitAttempted = true;
+                await transaction.CommitAsync(cancellationToken);
+            }
+            await transactionEffects.CommitAsync(effectMarker);
+            return message.Id;
+        }
+        catch
+        {
+            if (transaction is not null)
+            {
+                try
+                {
+                    await transaction.RollbackAsync(CancellationToken.None);
+                }
+                catch (Exception rollbackException)
+                {
+                    logger.LogWarning(
+                        rollbackException,
+                        "Could not roll back queue submission {QueueId}",
+                        message.Id);
+                }
+            }
+            if (commitAttempted)
+                transactionEffects.Discard(effectMarker);
+            else
+                await transactionEffects.RollbackAsync(effectMarker);
+            throw;
+        }
+        finally
+        {
+            if (transaction is not null)
+                await transaction.DisposeAsync();
+        }
     }
 
     private static string? NormalizeMetadata(string? value, int maximumLength)

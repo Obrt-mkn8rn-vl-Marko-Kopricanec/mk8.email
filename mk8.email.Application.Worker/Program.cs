@@ -2,10 +2,12 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using mk8.email.Application;
+using mk8.email.Application.Services;
 using mk8.email.Application.Worker;
 using mk8.email.Configuration;
 using mk8.email.Hosting;
 using mk8.email.Infrastructure;
+using mk8.email.Infrastructure.Data;
 using mk8.email.Jmap;
 using mk8.email.Messaging;
 
@@ -30,6 +32,7 @@ try
     builder.Logging.AddFilter("Microsoft.EntityFrameworkCore.Database.Command", LogLevel.Warning);
     builder.Services.AddInfrastructure(environment);
     builder.Services.AddApplication();
+    builder.Services.AddMailApplicationWorker();
     if (environment.Jmap.EnableJmap)
         builder.Services.AddJmapApplication();
 
@@ -45,11 +48,17 @@ try
     builder.Services.AddHostedService<ApplicationRequestWorker>();
 
     using var host = builder.Build();
-    if (environment.Jmap.EnableJmap)
+    using (var scope = host.Services.CreateScope())
     {
-        using var scope = host.Services.CreateScope();
-        await scope.ServiceProvider.GetRequiredService<JmapBlobLargeObjectMigrationService>()
+        await scope.ServiceProvider.GetRequiredService<MailRuntimeSchemaService>()
+            .EnsureAsync();
+        await scope.ServiceProvider.GetRequiredService<MailQueueLargeObjectMigrationService>()
             .MigrateAsync();
+        if (environment.Jmap.EnableJmap)
+        {
+            await scope.ServiceProvider.GetRequiredService<JmapBlobLargeObjectMigrationService>()
+                .MigrateAsync();
+        }
     }
     await host.RunAsync();
     return 0;

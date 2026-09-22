@@ -155,6 +155,17 @@ public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContex
         {
             entity.HasIndex(message => new { message.State, message.NextAttemptAt });
             entity.HasIndex(message => message.ReceivedAt);
+            entity.ToTable(table => table.HasCheckConstraint(
+                "ck_mail_queue_messages_raw_storage_shape",
+                "raw_message_size_bytes >= 0 AND ((raw_message IS NOT NULL "
+                + "AND raw_message_object_provider IS NULL "
+                + "AND raw_message_object_name IS NULL "
+                + "AND raw_message_object_sha256 IS NULL "
+                + "AND raw_message_object_etag IS NULL) OR "
+                + "(raw_message IS NULL AND raw_message_object_provider = 'azure-blob' "
+                + "AND raw_message_object_name IS NOT NULL "
+                + "AND raw_message_object_sha256 IS NOT NULL "
+                + "AND raw_message_object_etag IS NOT NULL))"));
         });
 
         modelBuilder.Entity<MailQueueRecipientDB>(entity =>

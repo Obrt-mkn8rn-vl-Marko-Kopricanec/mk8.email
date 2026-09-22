@@ -3,6 +3,7 @@ using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using mk8.email.Application.Services;
 using mk8.email.Configuration;
 using mk8.email.Contracts.Storage;
 using mk8.email.Infrastructure.Data;
@@ -113,9 +114,9 @@ public sealed class JmapAzureBlobPersistenceTests
             JmapBlobDB original;
             await using (var originalContext = CreateContext(databaseServer.ConnectionString))
             {
-                var originalEffects = new JmapBlobTransactionEffects(
+                var originalEffects = new LargeObjectTransactionEffects(
                     store,
-                    NullLogger<JmapBlobTransactionEffects>.Instance);
+                    NullLogger<LargeObjectTransactionEffects>.Instance);
                 original = await new JmapBlobService(
                     originalContext,
                     environment,
@@ -132,9 +133,9 @@ public sealed class JmapAzureBlobPersistenceTests
 
             await using (var rollbackContext = CreateContext(databaseServer.ConnectionString))
             {
-                var rollbackEffects = new JmapBlobTransactionEffects(
+                var rollbackEffects = new LargeObjectTransactionEffects(
                     store,
-                    NullLogger<JmapBlobTransactionEffects>.Instance);
+                    NullLogger<LargeObjectTransactionEffects>.Instance);
                 var marker = rollbackEffects.Mark();
                 await using var transaction = await rollbackContext.Database.BeginTransactionAsync();
                 await new JmapBlobService(
@@ -168,9 +169,9 @@ public sealed class JmapAzureBlobPersistenceTests
             JmapBlobDB committed;
             await using (var commitContext = CreateContext(databaseServer.ConnectionString))
             {
-                var commitEffects = new JmapBlobTransactionEffects(
+                var commitEffects = new LargeObjectTransactionEffects(
                     store,
-                    NullLogger<JmapBlobTransactionEffects>.Instance);
+                    NullLogger<LargeObjectTransactionEffects>.Instance);
                 var marker = commitEffects.Mark();
                 await using var transaction = await commitContext.Database.BeginTransactionAsync();
                 committed = await new JmapBlobService(
@@ -251,9 +252,9 @@ public sealed class JmapAzureBlobPersistenceTests
             async Task StoreAsync(byte[] content)
             {
                 await using var context = CreateContext(databaseServer.ConnectionString);
-                var effects = new JmapBlobTransactionEffects(
+                var effects = new LargeObjectTransactionEffects(
                     store,
-                    NullLogger<JmapBlobTransactionEffects>.Instance);
+                    NullLogger<LargeObjectTransactionEffects>.Instance);
                 var blobs = new JmapBlobService(
                     context,
                     environment,

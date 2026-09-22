@@ -26,6 +26,7 @@ internal static class DeliveryStatusNotificationBuilder
         MailQueueMessageDB message,
         MailQueueRecipientDB recipient,
         DeliveryStatusAction action,
+        string rawMessage,
         string reportingHost,
         DateTimeOffset now,
         string? diagnostic = null,
@@ -98,17 +99,17 @@ internal static class DeliveryStatusNotificationBuilder
         }
         statusBody.Append("Last-Attempt-Date: ").Append(FormatDate(now.UtcDateTime)).Append("\r\n");
 
-        var originalHeaders = ExtractHeaders(message.RawMessage);
+        var originalHeaders = ExtractHeaders(rawMessage);
         var returnFullMessage = action == DeliveryStatusAction.Failed
             && string.Equals(message.DsnReturnContent, "FULL", StringComparison.Ordinal)
-            && MailWireEncoding.Instance.GetByteCount(message.RawMessage) <= MaximumFullReturnBytes;
-        var returnedContent = returnFullMessage ? message.RawMessage : originalHeaders;
+            && MailWireEncoding.Instance.GetByteCount(rawMessage) <= MaximumFullReturnBytes;
+        var returnedContent = returnFullMessage ? rawMessage : originalHeaders;
         var returnedType = message.RequiresSmtpUtf8
             ? (returnFullMessage ? "message/global" : "message/global-headers")
             : (returnFullMessage ? "message/rfc822" : "text/rfc822-headers");
 
         var boundary = $"=_mk8_dsn_{recipient.Id:N}_{actionName}";
-        while (message.RawMessage.Contains(boundary, StringComparison.Ordinal))
+        while (rawMessage.Contains(boundary, StringComparison.Ordinal))
             boundary += "x";
 
         var humanText = action switch

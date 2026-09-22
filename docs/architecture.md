@@ -22,7 +22,9 @@ Message metadata is authenticated as AES-GCM associated data but remains visible
 
 JMAP upload blobs now follow this boundary as reference-only rows. Application Worker externalizes legacy inline uploads before it begins consuming requests, serializes that migration across hosts, and then enables a PostgreSQL constraint that forbids inline JMAP blob bytes. Account quota updates use PostgreSQL advisory transaction locks, while object deletion follows the enclosing JMAP method's commit or rollback outcome.
 
-Stored mail messages and attachments, plus DAV resource bodies, must follow the same storage boundary. Their migration from legacy database byte arrays remains a later rollout checkpoint and must complete before the distributed architecture is deployable.
+Raw mail queue messages, including their MIME attachments, also use reference-only Azure Blob-compatible objects. A serialized startup migration preserves legacy rows before enabling a database constraint that forbids inline queue content. SMTP and JMAP submission upload the immutable object before committing queue metadata, queue processing verifies its length and SHA-256 digest, and retention cleanup deletes the object only after the corresponding row deletion commits. PostgreSQL notifications wake the queue worker for new or rescheduled work; the bounded fallback exists only to recover missed notifications and expired leases.
+
+Stored mailbox messages and attachments, plus DAV resource bodies, must follow the same storage boundary. Their migration from legacy database byte arrays remains a later rollout checkpoint and must complete before the distributed architecture is deployable.
 
 ## Availability semantics
 

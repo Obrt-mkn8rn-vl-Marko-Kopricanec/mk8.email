@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using MimeKit;
 using mk8.email.Application.Interfaces;
+using mk8.email.Application.Services;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
 using mk8.email.Infrastructure.Models;
@@ -17,6 +18,7 @@ internal sealed class EmailSubmissionSetMethod(
     ISenderAuthorizationService senderAuthorization,
     IEmailService emailService,
     EmailSetMethod emailSet,
+    MailQueueContentService queueContent,
     EnvironmentConfig environment) : IJmapMethod
 {
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
@@ -374,7 +376,6 @@ internal sealed class EmailSubmissionSetMethod(
         {
             Id = queueId,
             EnvelopeSender = sender,
-            RawMessage = deliveryMessage,
             AuthenticatedUser = context.User.Username,
             Direction = MailQueueDirections.Submission,
             State = MailQueueStates.Pending,
@@ -383,6 +384,7 @@ internal sealed class EmailSubmissionSetMethod(
             NextAttemptAt = now,
             SentCopyCreated = true,
         };
+        await queueContent.SetAsync(queue, deliveryMessage, cancellationToken);
         foreach (var recipient in envelopeRecipients)
         {
             queue.Recipients.Add(new MailQueueRecipientDB

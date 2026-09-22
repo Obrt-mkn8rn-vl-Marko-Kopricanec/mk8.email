@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using mk8.email.Application.Services;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Infrastructure.Models;
 using mk8.email.Jmap;
@@ -3559,10 +3560,13 @@ public sealed class JmapProtocolTests
         using (var scope = fixture.Services.CreateScope())
         {
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            var queueContent = scope.ServiceProvider.GetRequiredService<MailQueueContentService>();
             var queued = await database.MailQueueMessages.Include(message => message.Recipients).SingleAsync();
             Assert.AreEqual(fixture.User.Username, queued.EnvelopeSender);
             Assert.AreEqual(fixture.User.Username, queued.Recipients.Single().Recipient);
-            Assert.IsFalse(queued.RawMessage.Contains("Bcc:", StringComparison.OrdinalIgnoreCase));
+            Assert.IsNull(queued.RawMessage);
+            Assert.IsFalse((await queueContent.ReadAsync(queued))
+                .Contains("Bcc:", StringComparison.OrdinalIgnoreCase));
         }
 
         var read = await fixture.InvokeAsync($$$"""

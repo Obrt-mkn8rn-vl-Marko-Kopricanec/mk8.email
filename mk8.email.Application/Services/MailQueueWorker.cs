@@ -2,6 +2,7 @@ using System.Data;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -11,6 +12,7 @@ using mk8.email.Contracts.Enums;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
 using mk8.email.Infrastructure.Models;
+using Npgsql;
 
 namespace mk8.email.Application.Services;
 
@@ -28,7 +30,19 @@ public sealed class MailQueueWorker(
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await EnsureSchemaAsync(stoppingToken);
+        await MigrateQueueContentAsync(stoppingToken);
 
+        if (IsPostgreSql())
+        {
+            await RunNotificationLoopAsync(stoppingToken);
+            return;
+        }
+
+        await RunPollingLoopAsync(stoppingToken);
+    }
+
+    private async Task RunPollingLoopAsync(CancellationToken stoppingToken)
+    {
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -54,6 +68,80 @@ public sealed class MailQueueWorker(
                 await Task.Delay(TimeSpan.FromSeconds(5), timeProvider, stoppingToken);
             }
         }
+    }
+
+    private async Task RunNotificationLoopAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                await using var listener = new NpgsqlConnection(environment.BuildConnectionString());
+                await listener.OpenAsync(stoppingToken);
+                await using (var command = listener.CreateCommand())
+                {
+                    command.CommandText = "LISTEN mk8_mail_queue_ready";
+                    await command.ExecuteNonQueryAsync(stoppingToken);
+                }
+
+                while (!stoppingToken.IsCancellationRequested)
+                {
+                    var processed = await ProcessNextAsync(stoppingToken);
+                    await CleanupCompletedAsync(stoppingToken);
+                    if (!processed)
+                    {
+                        var delay = await GetNextWakeDelayAsync(stoppingToken);
+                        await listener.WaitAsync(
+                            Math.Max(1, checked((int)delay.TotalMilliseconds)),
+                            stoppingToken);
+                    }
+                }
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception exception)
+            {
+                logger.LogError(exception, "The mail queue notification listener failed.");
+                await Task.Delay(TimeSpan.FromSeconds(5), timeProvider, stoppingToken);
+            }
+        }
+    }
+
+    private async Task<TimeSpan> GetNextWakeDelayAsync(CancellationToken cancellationToken)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var nextPending = await database.MailQueueMessages
+            .Where(message => message.State == MailQueueStates.Pending)
+            .Select(message => (DateTime?)message.NextAttemptAt)
+            .MinAsync(cancellationToken);
+        var nextLease = await database.MailQueueMessages
+            .Where(message => message.State == MailQueueStates.Processing)
+            .Select(message => message.LeaseExpiresAt)
+            .MinAsync(cancellationToken);
+        var next = new[] { nextPending, nextLease }
+            .Where(candidate => candidate is not null)
+            .Min();
+        var fallback = TimeSpan.FromSeconds(
+            Math.Clamp(environment.Messaging.NotificationFallbackSeconds, 1, 300));
+        if (next is null)
+            return fallback;
+
+        var untilDue = next.Value - timeProvider.GetUtcNow().UtcDateTime;
+        if (untilDue <= TimeSpan.Zero)
+            return TimeSpan.FromMilliseconds(10);
+        return untilDue < fallback ? untilDue : fallback;
+    }
+
+    private bool IsPostgreSql()
+    {
+        using var scope = scopeFactory.CreateScope();
+        return string.Equals(
+            scope.ServiceProvider.GetRequiredService<EmailDbContext>().Database.ProviderName,
+            "Npgsql.EntityFrameworkCore.PostgreSQL",
+            StringComparison.Ordinal);
     }
 
     internal async Task<bool> ProcessNextAsync(CancellationToken cancellationToken)
@@ -114,9 +202,11 @@ public sealed class MailQueueWorker(
 
         var scanner = services.GetRequiredService<IMailScanner>();
         var delivery = services.GetRequiredService<IEmailService>();
+        var content = services.GetRequiredService<MailQueueContentService>();
         var vacationResponder = services.GetService<IVacationResponder>();
         var sieveFilter = services.GetService<ISieveFilterService>();
         var relay = services.GetRequiredService<IOutboundMailRelay>();
+        var rawMessage = await content.ReadAsync(message, cancellationToken);
 
         if (message.ScanState == MailQueueScanStates.Pending)
         {
@@ -125,7 +215,7 @@ public sealed class MailQueueWorker(
                     message.Id,
                     message.EnvelopeSender,
                     message.Recipients.Select(item => item.Recipient).ToList(),
-                    message.RawMessage,
+                    rawMessage,
                     message.ClientIp,
                     message.Helo,
                     message.AuthenticatedUser),
@@ -156,7 +246,7 @@ public sealed class MailQueueWorker(
             }
         }
 
-        var deliveryMessage = (message.AddedHeaders ?? string.Empty) + message.RawMessage;
+        var deliveryMessage = (message.AddedHeaders ?? string.Empty) + rawMessage;
 
         if (message.Direction == MailQueueDirections.Submission && !message.SentCopyCreated)
         {
@@ -214,6 +304,7 @@ public sealed class MailQueueWorker(
                             message,
                             recipient,
                             action,
+                            rawMessage,
                             delivery,
                             relay,
                             now,
@@ -247,6 +338,7 @@ public sealed class MailQueueWorker(
                             message,
                             recipient,
                             DeliveryStatusAction.Failed,
+                            rawMessage,
                             delivery,
                             relay,
                             now,
@@ -276,6 +368,7 @@ public sealed class MailQueueWorker(
                     message,
                     recipient,
                     DeliveryStatusAction.Delayed,
+                    rawMessage,
                     delivery,
                     relay,
                     now,
@@ -585,6 +678,7 @@ public sealed class MailQueueWorker(
         MailQueueMessageDB message,
         MailQueueRecipientDB recipient,
         DeliveryStatusAction action,
+        string rawMessage,
         IEmailService delivery,
         IOutboundMailRelay relay,
         DateTime now,
@@ -597,6 +691,7 @@ public sealed class MailQueueWorker(
             message,
             recipient,
             action,
+            rawMessage,
             environment.Smtp.Hostname,
             new DateTimeOffset(DateTime.SpecifyKind(now, DateTimeKind.Utc)),
             recipient.LastError,
@@ -941,7 +1036,15 @@ public sealed class MailQueueWorker(
             .EnsureAsync(cancellationToken);
     }
 
-    private async Task CleanupCompletedAsync(CancellationToken cancellationToken)
+    private async Task MigrateQueueContentAsync(CancellationToken cancellationToken)
+    {
+        using var scope = scopeFactory.CreateScope();
+        await scope.ServiceProvider
+            .GetRequiredService<MailQueueLargeObjectMigrationService>()
+            .MigrateAsync(cancellationToken);
+    }
+
+    internal async Task CleanupCompletedAsync(CancellationToken cancellationToken)
     {
         var now = timeProvider.GetUtcNow();
         if (now < _nextCleanup)
@@ -951,17 +1054,73 @@ public sealed class MailQueueWorker(
         var cutoff = now.UtcDateTime.AddDays(-environment.Queue.CompletedRetentionDays);
         using var scope = scopeFactory.CreateScope();
         var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-        var expired = await database.MailQueueMessages
-            .Where(message => message.State == MailQueueStates.Completed
-                && message.CompletedAt < cutoff)
-            .OrderBy(message => message.CompletedAt)
-            .Take(1000)
-            .ToListAsync(cancellationToken);
-        if (expired.Count == 0)
-            return;
+        var content = scope.ServiceProvider.GetRequiredService<MailQueueContentService>();
+        var effects = scope.ServiceProvider.GetRequiredService<LargeObjectTransactionEffects>();
+        var marker = effects.Mark();
+        IDbContextTransaction? transaction = null;
+        var commitAttempted = false;
+        try
+        {
+            if (database.Database.IsRelational())
+                transaction = await database.Database.BeginTransactionAsync(cancellationToken);
+            var expired = await database.MailQueueMessages
+                .Where(message => message.State == MailQueueStates.Completed
+                    && message.CompletedAt < cutoff)
+                .OrderBy(message => message.CompletedAt)
+                .Take(1000)
+                .ToListAsync(cancellationToken);
+            if (expired.Count == 0)
+            {
+                if (transaction is not null)
+                {
+                    commitAttempted = true;
+                    await transaction.CommitAsync(cancellationToken);
+                }
+                effects.Discard(marker);
+                return;
+            }
 
-        database.MailQueueMessages.RemoveRange(expired);
-        await database.SaveChangesAsync(cancellationToken);
-        logger.LogInformation("Removed {Count} completed queue records", expired.Count);
+            foreach (var message in expired)
+            {
+                var reference = content.TryGetReference(message);
+                if (reference is not null)
+                    effects.DeleteOnCommit(reference);
+            }
+            database.MailQueueMessages.RemoveRange(expired);
+            await database.SaveChangesAsync(cancellationToken);
+            if (transaction is not null)
+            {
+                commitAttempted = true;
+                await transaction.CommitAsync(cancellationToken);
+            }
+            await effects.CommitAsync(marker);
+            logger.LogInformation("Removed {Count} completed queue records", expired.Count);
+        }
+        catch
+        {
+            if (transaction is not null)
+            {
+                try
+                {
+                    await transaction.RollbackAsync(CancellationToken.None);
+                }
+                catch (Exception rollbackException)
+                {
+                    logger.LogWarning(
+                        rollbackException,
+                        "Could not roll back completed queue cleanup");
+                }
+            }
+            if (commitAttempted)
+                effects.Discard(marker);
+            else
+                await effects.RollbackAsync(marker);
+            throw;
+        }
+        finally
+        {
+            if (transaction is not null)
+                await transaction.DisposeAsync();
+        }
     }
 }

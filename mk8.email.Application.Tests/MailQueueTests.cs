@@ -7,6 +7,7 @@ using MimeKit;
 using mk8.email.Application.Interfaces;
 using mk8.email.Application.Services;
 using mk8.email.Contracts.Enums;
+using mk8.email.Contracts.Storage;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
 using mk8.email.Infrastructure.Models;
@@ -65,7 +66,8 @@ public sealed class MailQueueTests
             .Include(message => message.Recipients)
             .SingleAsync();
         Assert.AreEqual(queueId, queued.Id);
-        Assert.AreEqual(RawMessage, queued.RawMessage);
+        Assert.IsNull(queued.RawMessage);
+        Assert.AreEqual(RawMessage, await ReadQueueContentAsync(verificationScope, queued));
         Assert.AreEqual(MailQueueStates.Pending, queued.State);
         Assert.AreEqual(MailQueueDirections.Inbound, queued.Direction);
         Assert.AreEqual(1, queued.Recipients.Count);
@@ -250,7 +252,7 @@ public sealed class MailQueueTests
         Assert.AreEqual(MailQueueScanStates.Pending, queued.ScanState);
         Assert.AreEqual(1, queued.AttemptCount);
         Assert.IsTrue(queued.NextAttemptAt > queued.ReceivedAt);
-        Assert.AreEqual(RawMessage, queued.RawMessage);
+        Assert.AreEqual(RawMessage, await ReadQueueContentAsync(scope, queued));
         Assert.AreEqual(0, await database.Emails.CountAsync());
     }
 
@@ -287,7 +289,7 @@ public sealed class MailQueueTests
             .SingleAsync(message => message.Id == queueId);
         Assert.AreEqual(MailQueueStates.Quarantined, queued.State);
         Assert.AreEqual(MailQueueRecipientStates.Quarantined, queued.Recipients.Single().State);
-        Assert.AreEqual(RawMessage, queued.RawMessage);
+        Assert.AreEqual(RawMessage, await ReadQueueContentAsync(scope, queued));
         Assert.AreEqual(0, await database.Emails.CountAsync());
     }
 
@@ -614,7 +616,7 @@ public sealed class MailQueueTests
             .SingleAsync(message => message.Id == queueId);
         Assert.AreEqual(MailQueueStates.Dead, queued.State);
         Assert.AreEqual(MailQueueRecipientStates.PermanentFailure, queued.Recipients.Single().State);
-        Assert.AreEqual(RawMessage, queued.RawMessage);
+        Assert.AreEqual(RawMessage, await ReadQueueContentAsync(verificationScope, queued));
         Assert.AreEqual(0, await database.Emails.CountAsync());
     }
 
@@ -980,6 +982,12 @@ public sealed class MailQueueTests
         services.AddScoped<ISieveScriptService, SieveScriptService>();
         services.AddScoped<ISieveFilterService, SieveFilterService>();
         services.AddScoped<IMailSubmissionQueue, PostgresMailSubmissionQueue>();
+        services.AddSingleton<InMemoryLargeObjectStore>();
+        services.AddSingleton<ILargeObjectStore>(provider =>
+            provider.GetRequiredService<InMemoryLargeObjectStore>());
+        services.AddScoped<LargeObjectTransactionEffects>();
+        services.AddScoped<MailQueueContentService>();
+        services.AddScoped<MailQueueLargeObjectMigrationService>();
         services.AddLogging();
         services.AddSingleton<IMailScanner>(new StubScanner(scanResult));
         services.AddSingleton(relay);
@@ -1027,6 +1035,12 @@ public sealed class MailQueueTests
             Dsn: dsn));
         return queueId;
     }
+
+    private static Task<string> ReadQueueContentAsync(
+        IServiceScope scope,
+        MailQueueMessageDB message) =>
+        scope.ServiceProvider.GetRequiredService<MailQueueContentService>()
+            .ReadAsync(message);
 
     private static async Task ActivateScriptAsync(
         ServiceProvider services,

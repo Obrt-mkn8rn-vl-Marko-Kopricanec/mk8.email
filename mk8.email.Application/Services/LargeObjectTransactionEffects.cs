@@ -1,27 +1,27 @@
 using Microsoft.Extensions.Logging;
 using mk8.email.Contracts.Storage;
 
-namespace mk8.email.Jmap;
+namespace mk8.email.Application.Services;
 
-public sealed class JmapBlobTransactionEffects(
+public sealed class LargeObjectTransactionEffects(
     ILargeObjectStore objects,
-    ILogger<JmapBlobTransactionEffects> logger)
+    ILogger<LargeObjectTransactionEffects> logger)
 {
     private readonly List<Effect> effects = [];
 
-    internal int Mark() => effects.Count;
+    public int Mark() => effects.Count;
 
-    internal void DeleteOnCommit(LargeObjectReference reference) =>
+    public void DeleteOnCommit(LargeObjectReference reference) =>
         effects.Add(new Effect(reference, DeleteAfterCommit: true));
 
-    internal void DeleteOnRollback(LargeObjectReference reference) =>
+    public void DeleteOnRollback(LargeObjectReference reference) =>
         effects.Add(new Effect(reference, DeleteAfterCommit: false));
 
-    internal Task CommitAsync(int marker) => CompleteAsync(marker, committed: true);
+    public Task CommitAsync(int marker) => CompleteAsync(marker, committed: true);
 
-    internal Task RollbackAsync(int marker) => CompleteAsync(marker, committed: false);
+    public Task RollbackAsync(int marker) => CompleteAsync(marker, committed: false);
 
-    internal void Discard(int marker)
+    public void Discard(int marker)
     {
         ValidateMarker(marker);
         effects.RemoveRange(marker, effects.Count - marker);
@@ -43,7 +43,7 @@ public sealed class JmapBlobTransactionEffects(
             {
                 logger.LogWarning(
                     exception,
-                    "Could not delete transactional JMAP object {ObjectName}",
+                    "Could not delete transactional large object {ObjectName}",
                     effect.Reference.ObjectName);
             }
         }

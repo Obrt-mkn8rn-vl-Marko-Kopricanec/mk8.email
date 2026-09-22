@@ -25,11 +25,14 @@ public static class ApplicationServiceExtensions
         services.AddScoped<ISeederService, SeederService>();
         services.AddScoped<IDatabaseInitializationService, DatabaseInitializationService>();
         services.AddScoped<IApplicationRequestDispatcher, ApplicationRequestDispatcher>();
+        services.AddScoped<LargeObjectTransactionEffects>();
+        services.AddScoped<MailQueueContentService>();
+        services.AddScoped<MailQueueLargeObjectMigrationService>();
 
         return services;
     }
 
-    public static IServiceCollection AddMailProtocolServers(this IServiceCollection services)
+    public static IServiceCollection AddMailApplicationWorker(this IServiceCollection services)
     {
         services.AddSingleton<ILookupClient>(_ => new LookupClient(new LookupClientOptions
         {
@@ -49,6 +52,13 @@ public static class ApplicationServiceExtensions
         services.AddScoped<IVacationResponder, VacationResponder>();
         services.AddScoped<IMailSubmissionQueue, PostgresMailSubmissionQueue>();
         services.AddHostedService<MailQueueWorker>();
+
+        return services;
+    }
+
+    public static IServiceCollection AddMailProtocolServers(this IServiceCollection services)
+    {
+        services.AddMailApplicationWorker();
         services.AddHostedService<SmtpServerService>();
         services.AddHostedService<ImapServerService>();
         services.AddHostedService<Pop3ServerService>();

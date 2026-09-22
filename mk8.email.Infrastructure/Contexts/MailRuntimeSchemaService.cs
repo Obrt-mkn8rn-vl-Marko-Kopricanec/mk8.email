@@ -12,6 +12,11 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["id"] = "uuid",
             ["envelope_sender"] = "varchar",
             ["raw_message"] = "text",
+            ["raw_message_size_bytes"] = "int8",
+            ["raw_message_object_provider"] = "varchar",
+            ["raw_message_object_name"] = "varchar",
+            ["raw_message_object_sha256"] = "varchar",
+            ["raw_message_object_etag"] = "varchar",
             ["requires_smtp_utf8"] = "bool",
             ["dsn_return_content"] = "varchar",
             ["dsn_envelope_id"] = "varchar",
@@ -355,7 +360,12 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             CREATE TABLE IF NOT EXISTS mail_queue_messages (
                 id uuid PRIMARY KEY,
                 envelope_sender varchar(320) NOT NULL,
-                raw_message text NOT NULL,
+                raw_message text,
+                raw_message_size_bytes bigint NOT NULL,
+                raw_message_object_provider varchar(32),
+                raw_message_object_name varchar(1024),
+                raw_message_object_sha256 varchar(64),
+                raw_message_object_etag varchar(256),
                 requires_smtp_utf8 boolean NOT NULL DEFAULT false,
                 dsn_return_content varchar(4),
                 dsn_envelope_id varchar(100),
@@ -384,7 +394,20 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 CONSTRAINT ck_mail_queue_messages_scan_state
                     CHECK (scan_state IN ('pending', 'complete')),
                 CONSTRAINT ck_mail_queue_messages_attempt_count
-                    CHECK (attempt_count >= 0)
+                    CHECK (attempt_count >= 0),
+                CONSTRAINT ck_mail_queue_messages_raw_storage_shape CHECK (
+                    raw_message_size_bytes >= 0
+                    AND ((raw_message IS NOT NULL
+                            AND raw_message_object_provider IS NULL
+                            AND raw_message_object_name IS NULL
+                            AND raw_message_object_sha256 IS NULL
+                            AND raw_message_object_etag IS NULL)
+                        OR
+                        (raw_message IS NULL
+                            AND raw_message_object_provider = 'azure-blob'
+                            AND raw_message_object_name IS NOT NULL
+                            AND raw_message_object_sha256 IS NOT NULL
+                            AND raw_message_object_etag IS NOT NULL)))
             );
 
             CREATE TABLE IF NOT EXISTS mail_queue_recipients (
@@ -426,6 +449,50 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 ADD COLUMN IF NOT EXISTS dsn_return_content varchar(4);
             ALTER TABLE mail_queue_messages
                 ADD COLUMN IF NOT EXISTS dsn_envelope_id varchar(100);
+            ALTER TABLE mail_queue_messages
+                ALTER COLUMN raw_message DROP NOT NULL;
+            ALTER TABLE mail_queue_messages
+                ADD COLUMN IF NOT EXISTS raw_message_size_bytes bigint;
+            ALTER TABLE mail_queue_messages
+                ADD COLUMN IF NOT EXISTS raw_message_object_provider varchar(32);
+            ALTER TABLE mail_queue_messages
+                ADD COLUMN IF NOT EXISTS raw_message_object_name varchar(1024);
+            ALTER TABLE mail_queue_messages
+                ADD COLUMN IF NOT EXISTS raw_message_object_sha256 varchar(64);
+            ALTER TABLE mail_queue_messages
+                ADD COLUMN IF NOT EXISTS raw_message_object_etag varchar(256);
+            UPDATE mail_queue_messages
+            SET raw_message_size_bytes = char_length(raw_message)
+            WHERE raw_message_size_bytes IS NULL AND raw_message IS NOT NULL;
+            ALTER TABLE mail_queue_messages
+                ALTER COLUMN raw_message_size_bytes SET NOT NULL;
+            DO $migration$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conrelid = 'mail_queue_messages'::regclass
+                      AND conname = 'ck_mail_queue_messages_raw_storage_shape'
+                ) THEN
+                    ALTER TABLE mail_queue_messages
+                        ADD CONSTRAINT ck_mail_queue_messages_raw_storage_shape CHECK (
+                            raw_message_size_bytes >= 0
+                            AND ((raw_message IS NOT NULL
+                                    AND raw_message_object_provider IS NULL
+                                    AND raw_message_object_name IS NULL
+                                    AND raw_message_object_sha256 IS NULL
+                                    AND raw_message_object_etag IS NULL)
+                                OR
+                                (raw_message IS NULL
+                                    AND raw_message_object_provider = 'azure-blob'
+                                    AND raw_message_object_name IS NOT NULL
+                                    AND raw_message_object_sha256 IS NOT NULL
+                                    AND raw_message_object_etag IS NOT NULL))) NOT VALID;
+                END IF;
+            END
+            $migration$;
+            ALTER TABLE mail_queue_messages
+                VALIDATE CONSTRAINT ck_mail_queue_messages_raw_storage_shape;
             ALTER TABLE mail_queue_recipients
                 ADD COLUMN IF NOT EXISTS success_notice_created boolean NOT NULL DEFAULT false;
             ALTER TABLE mail_queue_recipients
@@ -835,6 +902,32 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 ON mail_queue_messages (state, next_attempt_at);
             CREATE INDEX IF NOT EXISTS ix_mail_queue_messages_received_at
                 ON mail_queue_messages (received_at);
+            CREATE OR REPLACE FUNCTION mk8_notify_mail_queue_ready()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $notification$
+            BEGIN
+                PERFORM pg_notify('mk8_mail_queue_ready', NEW.id::text);
+                RETURN NEW;
+            END
+            $notification$;
+            DO $notification$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_trigger
+                    WHERE tgrelid = 'mail_queue_messages'::regclass
+                      AND tgname = 'tr_mail_queue_ready'
+                      AND NOT tgisinternal
+                ) THEN
+                    CREATE TRIGGER tr_mail_queue_ready
+                    AFTER INSERT OR UPDATE OF state, next_attempt_at, lease_expires_at
+                    ON mail_queue_messages
+                    FOR EACH ROW
+                    EXECUTE FUNCTION mk8_notify_mail_queue_ready();
+                END IF;
+            END
+            $notification$;
             CREATE INDEX IF NOT EXISTS ix_mail_queue_recipients_message_id_state
                 ON mail_queue_recipients (message_id, state);
             CREATE INDEX IF NOT EXISTS ix_jmap_changes_account_type_sequence

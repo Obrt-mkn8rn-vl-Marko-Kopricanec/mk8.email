@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
 using mk8.email.Application.Interfaces;
+using mk8.email.Application.Services;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
 
@@ -14,7 +15,7 @@ public sealed class JmapRequestProcessor
     private readonly JmapSessionService _sessions;
     private readonly EmailDbContext _database;
     private readonly EnvironmentConfig _environment;
-    private readonly JmapBlobTransactionEffects _blobEffects;
+    private readonly LargeObjectTransactionEffects _blobEffects;
     private readonly ILogger<JmapRequestProcessor> _logger;
 
     public JmapRequestProcessor(
@@ -22,7 +23,7 @@ public sealed class JmapRequestProcessor
         JmapSessionService sessions,
         EmailDbContext database,
         EnvironmentConfig environment,
-        JmapBlobTransactionEffects blobEffects,
+        LargeObjectTransactionEffects blobEffects,
         ILogger<JmapRequestProcessor> logger)
     {
         _methods = methods.ToDictionary(method => method.Name, StringComparer.Ordinal);

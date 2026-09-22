@@ -41,13 +41,3 @@ public interface IGatewayApplicationClient
         AdminResetPasswordRequest request,
         CancellationToken cancellationToken = default);
 }
-
-public sealed class GatewayApplicationException(
-    string code,
-    string message,
-    bool isUnavailable = false,
-    Exception? innerException = null) : Exception(message, innerException)
-{
-    public string Code { get; } = code;
-    public bool IsUnavailable { get; } = isUnavailable;
-}

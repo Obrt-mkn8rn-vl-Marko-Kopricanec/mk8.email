@@ -17,8 +17,10 @@ public static class ApplicationServiceExtensions
         services.AddScoped<IApplicationPasswordService, ApplicationPasswordService>();
         services.AddScoped<IOAuthTokenService, OAuthTokenService>();
         services.AddScoped<IOAuthAuthorizationService, OAuthAuthorizationService>();
+        services.AddScoped<IOAuthApplicationService, OAuthApplicationService>();
         services.AddSingleton<IOpenIdConnectService, OpenIdConnectService>();
         services.AddScoped<IMfaService, MfaService>();
+        services.AddScoped<IMailAuthenticator, MailAuthenticator>();
         services.AddScoped<IMailSystemStatusService, MailSystemStatusService>();
         services.AddScoped<ISeederService, SeederService>();
         services.AddScoped<IDatabaseInitializationService, DatabaseInitializationService>();
@@ -41,7 +43,6 @@ public static class ApplicationServiceExtensions
         services.AddSingleton<IMailScanner, RspamdMailScanner>();
         services.AddSingleton(TimeProvider.System);
         services.AddScoped<ISenderAuthorizationService, SenderAuthorizationService>();
-        services.AddScoped<IMailAuthenticator, MailAuthenticator>();
         services.AddScoped<IEmailService, EmailService>();
         services.AddScoped<ISieveScriptService, SieveScriptService>();
         services.AddScoped<ISieveFilterService, SieveFilterService>();

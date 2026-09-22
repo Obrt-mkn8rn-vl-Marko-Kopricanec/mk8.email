@@ -54,14 +54,22 @@ public static class EnvironmentLoader
             config.Database.Password,
             config.Database.PasswordFile,
             "database password");
-        config.OAuth.SigningKey = ResolveSecret(
-            config.OAuth.SigningKey,
-            config.OAuth.SigningKeyFile,
-            "OpenID Connect signing key");
-        config.Mfa.EncryptionKey = ResolveSecret(
-            config.Mfa.EncryptionKey,
-            config.Mfa.EncryptionKeyFile,
-            "MFA encryption key");
+        if (role is not EnvironmentValidationRole.Gateway)
+        {
+            config.OAuth.SigningKey = ResolveSecret(
+                config.OAuth.SigningKey,
+                config.OAuth.SigningKeyFile,
+                "OpenID Connect signing key");
+            config.Mfa.EncryptionKey = ResolveSecret(
+                config.Mfa.EncryptionKey,
+                config.Mfa.EncryptionKeyFile,
+                "MFA encryption key");
+        }
+        else
+        {
+            config.OAuth.SigningKey = string.Empty;
+            config.Mfa.EncryptionKey = string.Empty;
+        }
         config.Messaging.EncryptionKey = ResolveSecret(
             config.Messaging.EncryptionKey,
             config.Messaging.EncryptionKeyFile,

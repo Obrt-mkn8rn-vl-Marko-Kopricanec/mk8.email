@@ -59,6 +59,37 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
                 ApplicationOperations.AdminAccountsResetPassword => await ResetPasswordAsync(
                     request,
                     cancellationToken),
+                ApplicationOperations.OAuthPublicKeyGet => Success(
+                    request.Id,
+                    await services.GetRequiredService<IOAuthApplicationService>()
+                        .GetPublicKeyAsync(cancellationToken)),
+                ApplicationOperations.OAuthIdentityAuthenticate => Success(
+                    request.Id,
+                    await services.GetRequiredService<IOAuthApplicationService>()
+                        .AuthenticateIdentityAsync(
+                            Deserialize<OAuthIdentityLookupRequest>(request),
+                            cancellationToken)),
+                ApplicationOperations.OAuthAuthorize => Success(
+                    request.Id,
+                    await services.GetRequiredService<IOAuthApplicationService>()
+                        .AuthorizeAsync(
+                            Deserialize<OAuthAuthorizeApplicationRequest>(request),
+                            cancellationToken)),
+                ApplicationOperations.OAuthAuthorizationCodeRedeem => Success(
+                    request.Id,
+                    await services.GetRequiredService<IOAuthApplicationService>()
+                        .RedeemAuthorizationCodeAsync(
+                            Deserialize<OAuthAuthorizationCodeRedeemRequest>(request),
+                            cancellationToken)),
+                ApplicationOperations.OAuthTokenRefresh => Success(
+                    request.Id,
+                    await services.GetRequiredService<IOAuthApplicationService>()
+                        .RefreshTokenAsync(
+                            Deserialize<OAuthRefreshTokenRequest>(request),
+                            cancellationToken)),
+                ApplicationOperations.OAuthTokenRevoke => await RevokeOAuthTokenAsync(
+                    request,
+                    cancellationToken),
                 _ => Error(request.Id, "unknown-operation", "The application operation is not supported."),
             };
         }
@@ -143,6 +174,17 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
         var result = await services.GetRequiredService<IMailAdministrationService>()
             .ResetPasswordAsync(value.UserId, value.Password, cancellationToken);
         return Success(request.Id, result);
+    }
+
+    private async Task<ApplicationResponse> RevokeOAuthTokenAsync(
+        ApplicationRequest request,
+        CancellationToken cancellationToken)
+    {
+        await services.GetRequiredService<IOAuthApplicationService>()
+            .RevokeTokenAsync(
+                Deserialize<OAuthRevokeTokenRequest>(request),
+                cancellationToken);
+        return Success(request.Id, new OAuthTokenRevocationResult(true));
     }
 
     private static T Deserialize<T>(ApplicationRequest request) =>

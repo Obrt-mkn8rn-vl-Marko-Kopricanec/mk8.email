@@ -244,6 +244,28 @@ public sealed class EnvironmentConfigTests
     }
 
     [TestMethod]
+    public void GatewayLoaderDoesNotReadApplicationOnlyOAuthOrMfaSecrets()
+    {
+        var configuration = CreateValidConfiguration(
+            oauthEnable: true,
+            oauthPublicBaseUrl: "https://email.mk8n.com",
+            oidcEnable: true,
+            oidcSigningKeyFile: Path.Combine(_testDirectory, "worker-only-signing-key"),
+            mfaEnable: true,
+            mfaEncryptionKeyFile: Path.Combine(_testDirectory, "worker-only-mfa-key"));
+        var configurationPath = WriteFile(
+            "mk8email-gateway.config.json",
+            JsonSerializer.Serialize(configuration));
+
+        var loaded = EnvironmentLoader.LoadFromFile(
+            configurationPath,
+            role: EnvironmentValidationRole.Gateway);
+
+        Assert.AreEqual(string.Empty, loaded.OAuth.SigningKey);
+        Assert.AreEqual(string.Empty, loaded.Mfa.EncryptionKey);
+    }
+
+    [TestMethod]
     public void DistributedMessagingRequiresAzureBlobAndValidEncryptionSettings()
     {
         var configuration = CreateValidConfiguration(

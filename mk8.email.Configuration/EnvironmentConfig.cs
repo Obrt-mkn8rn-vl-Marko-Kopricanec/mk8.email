@@ -54,6 +54,7 @@ public sealed class EnvironmentConfig
     {
         var errors = new List<string>();
         var validatesPresentation = role is not EnvironmentValidationRole.ApplicationWorker;
+        var validatesApplication = role is not EnvironmentValidationRole.Gateway;
 
         RequireValue(errors, Database.Host, "Database.Host is required.");
         RequirePort(errors, Database.Port, "Database.Port");
@@ -203,20 +204,23 @@ public sealed class EnvironmentConfig
             {
                 errors.Add("OAuth.PublicBaseUrl must not contain a path when OpenID Connect is enabled.");
             }
-            try
+            if (validatesApplication)
             {
-                using var signingKey = RSA.Create();
-                signingKey.ImportFromPem(OAuth.SigningKey ?? string.Empty);
-                var parameters = signingKey.ExportParameters(includePrivateParameters: true);
-                if (parameters.Modulus is not { Length: >= 256 }
-                    || parameters.D is not { Length: > 0 })
+                try
+                {
+                    using var signingKey = RSA.Create();
+                    signingKey.ImportFromPem(OAuth.SigningKey ?? string.Empty);
+                    var parameters = signingKey.ExportParameters(includePrivateParameters: true);
+                    if (parameters.Modulus is not { Length: >= 256 }
+                        || parameters.D is not { Length: > 0 })
+                    {
+                        errors.Add("OAuth.SigningKey must be an RSA private key of at least 2048 bits.");
+                    }
+                }
+                catch (Exception exception) when (exception is ArgumentException or CryptographicException)
                 {
                     errors.Add("OAuth.SigningKey must be an RSA private key of at least 2048 bits.");
                 }
-            }
-            catch (Exception exception) when (exception is ArgumentException or CryptographicException)
-            {
-                errors.Add("OAuth.SigningKey must be an RSA private key of at least 2048 bits.");
             }
         }
 
@@ -228,14 +232,17 @@ public sealed class EnvironmentConfig
                 || Mfa.Issuer.Length > 128
                 || Mfa.Issuer.Any(char.IsControl))
                 errors.Add("Mfa.Issuer must contain from 1 through 128 non-control characters.");
-            try
+            if (validatesApplication)
             {
-                if (Convert.FromBase64String(Mfa.EncryptionKey ?? string.Empty).Length != 32)
+                try
+                {
+                    if (Convert.FromBase64String(Mfa.EncryptionKey ?? string.Empty).Length != 32)
+                        errors.Add("Mfa.EncryptionKey must be a base64-encoded 256-bit key.");
+                }
+                catch (Exception exception) when (exception is FormatException or ArgumentNullException)
+                {
                     errors.Add("Mfa.EncryptionKey must be a base64-encoded 256-bit key.");
-            }
-            catch (Exception exception) when (exception is FormatException or ArgumentNullException)
-            {
-                errors.Add("Mfa.EncryptionKey must be a base64-encoded 256-bit key.");
+                }
             }
             if (Mfa.RecoveryCodeCount is < 5 or > 20)
                 errors.Add("Mfa.RecoveryCodeCount must be from 5 through 20.");

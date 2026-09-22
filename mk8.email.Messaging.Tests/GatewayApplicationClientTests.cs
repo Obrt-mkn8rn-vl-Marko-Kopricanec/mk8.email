@@ -4,6 +4,7 @@ using mk8.email.Contracts.DTOs;
 using mk8.email.Contracts.Enums;
 using mk8.email.Contracts.Messaging;
 using mk8.email.Gateway.ApplicationBridge;
+using mk8.email.Gateway.Protocols.OAuth;
 
 namespace mk8.email.Messaging.Tests;
 
@@ -31,10 +32,7 @@ public sealed class GatewayApplicationClientTests
             JsonSerializer.SerializeToUtf8Bytes(expected, JsonOptions),
             new Dictionary<string, string>()));
         var journal = new StubTrafficJournal();
-        var client = new GatewayApplicationClient(
-            requests,
-            journal,
-            TestOptions());
+        var client = CreateClient(requests, journal);
 
         var result = await client.AuthenticateAsync(
             new LoginRequestDTO("admin@example.test", "not-logged-secret"));
@@ -65,10 +63,7 @@ public sealed class GatewayApplicationClientTests
             ErrorCode: "invalid-arguments",
             ErrorDetail: "The request is invalid."));
         var journal = new StubTrafficJournal();
-        var client = new GatewayApplicationClient(
-            requests,
-            journal,
-            TestOptions());
+        var client = CreateClient(requests, journal);
 
         var exception = await Assert.ThrowsExactlyAsync<GatewayApplicationException>(
             () => client.GetDomainsAsync());
@@ -84,7 +79,7 @@ public sealed class GatewayApplicationClientTests
         var requests = new StubRequestClient(_ =>
             throw new InvalidOperationException("simulated transport failure"));
         var journal = new StubTrafficJournal();
-        var client = new GatewayApplicationClient(requests, journal, TestOptions());
+        var client = CreateClient(requests, journal);
 
         var exception = await Assert.ThrowsExactlyAsync<GatewayApplicationException>(
             () => client.GetDashboardAsync());
@@ -98,10 +93,43 @@ public sealed class GatewayApplicationClientTests
             "application-transport-failure");
     }
 
+    [TestMethod]
+    public async Task OAuthClientUsesTypedOperationAndOAuthTrafficJournal()
+    {
+        var expected = new OAuthPublicKeyValue(
+            "RSA",
+            "sig",
+            "key-1",
+            "RS256",
+            "modulus",
+            "AQAB");
+        var requests = new StubRequestClient(request => new ApplicationResponse(
+            request.Id,
+            "application/json",
+            JsonSerializer.SerializeToUtf8Bytes(expected, JsonOptions),
+            new Dictionary<string, string>()));
+        var journal = new StubTrafficJournal();
+        var transport = new GatewayApplicationTransport(requests, journal, TestOptions());
+        var client = new GatewayOAuthClient(transport);
+
+        var result = await client.GetPublicKeyAsync();
+
+        Assert.AreEqual(expected, result);
+        Assert.AreEqual("oauth", requests.Request?.Protocol);
+        Assert.AreEqual(ApplicationOperations.OAuthPublicKeyGet, requests.Request?.Operation);
+        Assert.HasCount(2, journal.Records);
+        Assert.IsTrue(journal.Records.All(record => record.Protocol == "oauth"));
+    }
+
     private static GatewayApplicationOptions TestOptions() => new(
         "gateway@test-host",
         TimeSpan.FromSeconds(10),
         TimeSpan.FromSeconds(10));
+
+    private static GatewayApplicationClient CreateClient(
+        IApplicationRequestClient requests,
+        IGatewayTrafficJournal journal) =>
+        new(new GatewayApplicationTransport(requests, journal, TestOptions()));
 
     private sealed class StubRequestClient(
         Func<ApplicationRequest, ApplicationResponse> responseFactory) : IApplicationRequestClient

@@ -6,11 +6,11 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Routing;
-using mk8.email.Application.Interfaces;
-using mk8.email.Application.Protocol;
 using mk8.email.Configuration;
+using mk8.email.Contracts.Messaging;
+using mk8.email.Contracts.Protocol;
 
-namespace mk8.email.OAuth;
+namespace mk8.email.Gateway.Protocols.OAuth;
 
 public static class OAuthEndpointRouteBuilderExtensions
 {
@@ -105,15 +105,15 @@ public static class OAuthEndpointRouteBuilderExtensions
         });
     }
 
-    private static IResult JwksAsync(
+    private static async Task<IResult> JwksAsync(
         HttpContext context,
-        IOpenIdConnectService openIdConnect,
+        IGatewayOAuthClient application,
         EnvironmentConfig environment)
     {
         if (!environment.OAuth.EnableOpenIdConnect)
             return Results.NotFound();
 
-        var key = openIdConnect.GetPublicKey();
+        var key = await application.GetPublicKeyAsync(context.RequestAborted);
         context.Response.Headers.CacheControl = "public, max-age=3600";
         return Results.Json(new Dictionary<string, object>
         {
@@ -134,7 +134,7 @@ public static class OAuthEndpointRouteBuilderExtensions
 
     private static async Task<IResult> UserInfoAsync(
         HttpContext context,
-        IOAuthTokenService tokenService,
+        IGatewayOAuthClient application,
         EnvironmentConfig environment,
         CancellationToken cancellationToken)
     {
@@ -144,10 +144,9 @@ public static class OAuthEndpointRouteBuilderExtensions
         if (!TryGetBearerToken(context.Request, out var accessToken))
             return BearerError(context);
 
-        var identity = await tokenService.AuthenticateIdentityAsync(
-            accessToken,
-            "openid",
-            cancellationToken);
+        var identity = (await application.AuthenticateIdentityAsync(
+            new OAuthIdentityLookupRequest(accessToken, "openid"),
+            cancellationToken)).Identity;
         if (identity is null)
             return BearerError(context);
 
@@ -210,9 +209,7 @@ public static class OAuthEndpointRouteBuilderExtensions
 
     private static async Task CompleteAuthorizationAsync(
         HttpContext context,
-        IMailAuthenticator authenticator,
-        IMfaService mfaService,
-        IOAuthAuthorizationService authorizationService,
+        IGatewayOAuthClient application,
         EnvironmentConfig environment,
         CancellationToken cancellationToken)
     {
@@ -277,11 +274,19 @@ public static class OAuthEndpointRouteBuilderExtensions
             return;
         }
 
-        var user = await authenticator.AuthenticatePrimaryAsync(
-            username,
-            password,
+        var authorization = await application.AuthorizeAsync(
+            new OAuthAuthorizeApplicationRequest(
+                username,
+                password,
+                mfaCode,
+                request.ClientId,
+                request.RedirectUri,
+                deviceName,
+                request.Scopes,
+                request.CodeChallenge,
+                request.Nonce),
             cancellationToken);
-        if (user is null)
+        if (authorization.Outcome == OAuthAuthorizationOutcome.InvalidCredentials)
         {
             await WriteLoginPageAsync(
                 context,
@@ -293,11 +298,7 @@ public static class OAuthEndpointRouteBuilderExtensions
             return;
         }
 
-        var mfaResult = await mfaService.VerifyForAuthenticationAsync(
-            user.Id,
-            mfaCode,
-            cancellationToken);
-        if (mfaResult == MfaVerificationResult.Failed)
+        if (authorization.Outcome == OAuthAuthorizationOutcome.InvalidVerificationCode)
         {
             await WriteLoginPageAsync(
                 context,
@@ -309,16 +310,8 @@ public static class OAuthEndpointRouteBuilderExtensions
             return;
         }
 
-        var code = await authorizationService.CreateAuthorizationCodeAsync(
-            user.Id,
-            request!.ClientId,
-            request.RedirectUri,
-            deviceName,
-            request.Scopes,
-            request.CodeChallenge,
-            request.Nonce,
-            cancellationToken);
-        if (code is null)
+        if (authorization.Outcome != OAuthAuthorizationOutcome.Succeeded
+            || authorization.AuthorizationCode is null)
         {
             await WritePlainErrorAsync(context, StatusCodes.Status400BadRequest,
                 "The authorization could not be created.", cancellationToken);
@@ -333,13 +326,12 @@ public static class OAuthEndpointRouteBuilderExtensions
         });
         context.Response.Redirect(BuildRedirectUri(
             request.RedirectUri,
-            [("code", code), ("state", request.State)]));
+            [("code", authorization.AuthorizationCode), ("state", request.State)]));
     }
 
     private static async Task<IResult> ExchangeTokenAsync(
         HttpContext context,
-        IOAuthAuthorizationService authorizationService,
-        IOAuthTokenService tokenService,
+        IGatewayOAuthClient application,
         EnvironmentConfig environment,
         CancellationToken cancellationToken)
     {
@@ -359,22 +351,24 @@ public static class OAuthEndpointRouteBuilderExtensions
                 StatusCodes.Status401Unauthorized);
         }
 
-        OAuthTokenPair? pair;
+        OAuthTokenValue? pair;
         switch (form["grant_type"].ToString())
         {
             case "authorization_code":
-                pair = await authorizationService.RedeemAuthorizationCodeAsync(
-                    form["code"].ToString(),
-                    clientId,
-                    form["redirect_uri"].ToString(),
-                    form["code_verifier"].ToString(),
-                    cancellationToken);
+                pair = (await application.RedeemAuthorizationCodeAsync(
+                    new OAuthAuthorizationCodeRedeemRequest(
+                        form["code"].ToString(),
+                        clientId,
+                        form["redirect_uri"].ToString(),
+                        form["code_verifier"].ToString()),
+                    cancellationToken)).Token;
                 break;
             case "refresh_token":
-                pair = await tokenService.RefreshAsync(
-                    form["refresh_token"].ToString(),
-                    clientId,
-                    cancellationToken);
+                pair = (await application.RefreshTokenAsync(
+                    new OAuthRefreshTokenRequest(
+                        form["refresh_token"].ToString(),
+                        clientId),
+                    cancellationToken)).Token;
                 break;
             default:
                 return OAuthError("unsupported_grant_type", "The grant type is not supported.");
@@ -398,7 +392,7 @@ public static class OAuthEndpointRouteBuilderExtensions
 
     private static async Task<IResult> RevokeTokenAsync(
         HttpContext context,
-        IOAuthTokenService tokenService,
+        IGatewayOAuthClient application,
         EnvironmentConfig environment,
         CancellationToken cancellationToken)
     {
@@ -415,9 +409,8 @@ public static class OAuthEndpointRouteBuilderExtensions
             return OAuthError("invalid_client", "The public client identifier is not valid.",
                 StatusCodes.Status401Unauthorized);
 
-        await tokenService.RevokeTokenAsync(
-            form["token"].ToString(),
-            clientId,
+        await application.RevokeTokenAsync(
+            new OAuthRevokeTokenRequest(form["token"].ToString(), clientId),
             cancellationToken);
         return Results.Ok();
     }

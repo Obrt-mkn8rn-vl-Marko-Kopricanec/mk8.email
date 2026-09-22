@@ -5,6 +5,8 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
 using mk8.email.Configuration;
 using mk8.email.Gateway.ApplicationBridge;
+using mk8.email.Gateway.Protocols;
+using mk8.email.Gateway.Protocols.OAuth;
 using mk8.email.Gateway.Security;
 using mk8.email.Hosting;
 using mk8.email.Messaging;
@@ -26,6 +28,8 @@ builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
 
 builder.Services.AddDistributedMessaging(environmentConfig);
 builder.Services.AddGatewayApplicationClient();
+if (environmentConfig.OAuth.EnableOAuth)
+    builder.Services.AddOAuthProtocol();
 builder.Services.AddSingleton(environmentConfig.Admin);
 builder.Services.AddSingleton<AdminNetworkPolicy>();
 builder.Services.AddSingleton<IAdminAuditLog, AdminAuditLog>();
@@ -96,8 +100,12 @@ using (var scope = app.Services.CreateScope())
 if (!app.Environment.IsDevelopment())
     app.UseExceptionHandler("/Error");
 
+app.UseMiddleware<OAuthTrafficCaptureMiddleware>();
+app.UseMiddleware<GatewayApplicationFailureMiddleware>();
 app.UseForwardedHeaders();
-app.UseMiddleware<AdminNetworkMiddleware>();
+app.UseWhen(
+    context => !GatewayProtocolPaths.IsOAuth(context.Request.Path),
+    branch => branch.UseMiddleware<AdminNetworkMiddleware>());
 app.Use(async (context, next) =>
 {
     context.Response.Headers["X-Content-Type-Options"] = "nosniff";
@@ -122,6 +130,8 @@ app.MapGet("/health/ready", async (
     var ready = await transport.IsAvailableAsync(cancellationToken);
     return ready ? Results.Ok(new { status = "ready" }) : Results.StatusCode(503);
 }).AllowAnonymous();
+if (environmentConfig.OAuth.EnableOAuth)
+    app.MapOAuthEndpoints();
 app.MapRazorPages();
 
 await app.RunAsync();

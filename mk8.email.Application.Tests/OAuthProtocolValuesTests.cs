@@ -1,5 +1,6 @@
 using System.Text;
 using mk8.email.Application.Protocol;
+using mk8.email.Contracts.Protocol;
 
 namespace mk8.email.Application.Tests;
 

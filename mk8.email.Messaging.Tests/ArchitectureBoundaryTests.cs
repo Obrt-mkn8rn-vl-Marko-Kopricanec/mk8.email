@@ -109,6 +109,23 @@ public sealed class ArchitectureBoundaryTests
             reference.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal)
             || reference.StartsWith("mk8.email.Gateway", StringComparison.Ordinal)
             || reference.StartsWith("mk8.email.Application", StringComparison.Ordinal)
-            || reference.StartsWith("mk8.email.Infrastructure", StringComparison.Ordinal)));
+                || reference.StartsWith("mk8.email.Infrastructure", StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
+    public void GatewayOwnsOAuthPresentationWithoutAnOAuthHostingAssembly()
+    {
+        Assert.AreEqual(
+            "mk8.email.Gateway",
+            typeof(mk8.email.Gateway.Protocols.OAuth.OAuthEndpointRouteBuilderExtensions)
+                .Assembly
+                .GetName()
+                .Name);
+        Assert.AreEqual(
+            "mk8.email.Contracts",
+            typeof(mk8.email.Contracts.Protocol.OAuthProtocolValues)
+                .Assembly
+                .GetName()
+                .Name);
     }
 }

@@ -9,7 +9,6 @@
     <Project Path="mk8.email.Gateway/mk8.email.Gateway.csproj" />
     <Project Path="mk8.email.Dav/mk8.email.Dav.csproj" />
     <Project Path="mk8.email.Jmap/mk8.email.Jmap.csproj" />
-    <Project Path="mk8.email.OAuth/mk8.email.OAuth.csproj" />
   </Folder>
   <Folder Name="/Shared/">
     <Project Path="mk8.email.Configuration/mk8.email.Configuration.csproj" />

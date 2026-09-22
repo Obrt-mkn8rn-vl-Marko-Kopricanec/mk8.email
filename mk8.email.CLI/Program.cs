@@ -15,7 +15,6 @@ using mk8.email.Infrastructure;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
 using mk8.email.Jmap;
-using mk8.email.OAuth;
 
 return await RunManagementCommandAsync(args);
 
@@ -320,8 +319,7 @@ static IHost BuildProtocolHost(
     bool isDevelopment)
 {
     if (!environmentConfig.Jmap.EnableJmap
-        && !environmentConfig.Dav.EnableDav
-        && !environmentConfig.OAuth.EnableOAuth)
+        && !environmentConfig.Dav.EnableDav)
         return BuildHost(arguments, environmentConfig, includeMailServers: true);
 
     var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions
@@ -348,8 +346,6 @@ static IHost BuildProtocolHost(
                 maximumRequestBodySize,
                 environmentConfig.Dav.MaxResourceSizeBytes);
         }
-        if (environmentConfig.OAuth.EnableOAuth)
-            maximumRequestBodySize = Math.Max(maximumRequestBodySize, 64 * 1024);
         options.Limits.MaxRequestBodySize = maximumRequestBodySize;
         options.Limits.RequestHeadersTimeout = TimeSpan.FromSeconds(15);
         options.Limits.KeepAliveTimeout = TimeSpan.FromMinutes(2);
@@ -362,8 +358,6 @@ static IHost BuildProtocolHost(
         builder.Services.AddJmapProtocol();
     if (environmentConfig.Dav.EnableDav)
         builder.Services.AddDavProtocol();
-    if (environmentConfig.OAuth.EnableOAuth)
-        builder.Services.AddOAuthProtocol();
     builder.Services.Configure<ForwardedHeadersOptions>(options =>
     {
         options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
@@ -396,13 +390,9 @@ static IHost BuildProtocolHost(
         await next(context);
     });
     app.UseRouting();
-    if (environmentConfig.OAuth.EnableOAuth)
-        app.UseRateLimiter();
     if (environmentConfig.Jmap.EnableJmap)
         app.MapJmapEndpoints();
     if (environmentConfig.Dav.EnableDav)
         app.MapDavEndpoints();
-    if (environmentConfig.OAuth.EnableOAuth)
-        app.MapOAuthEndpoints();
     return app;
 }

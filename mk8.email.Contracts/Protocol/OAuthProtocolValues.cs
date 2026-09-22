@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 
-namespace mk8.email.Application.Protocol;
+namespace mk8.email.Contracts.Protocol;
 
 public static class OAuthProtocolValues
 {

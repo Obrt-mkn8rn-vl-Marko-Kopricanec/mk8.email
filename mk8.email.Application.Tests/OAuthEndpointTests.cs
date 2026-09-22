@@ -14,10 +14,12 @@ using mk8.email.Application;
 using mk8.email.Application.Interfaces;
 using mk8.email.Application.Protocol;
 using mk8.email.Application.Services;
-using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
+using mk8.email.Contracts.Messaging;
+using mk8.email.Contracts.Protocol;
+using mk8.email.Gateway.Protocols.OAuth;
+using mk8.email.Infrastructure.Data;
 using mk8.email.Infrastructure.Models;
-using mk8.email.OAuth;
 using mk8.email.Utils;
 
 namespace mk8.email.Application.Tests;
@@ -503,7 +505,7 @@ public sealed class OAuthEndpointTests
                     .ConfigureWarnings(warnings =>
                         warnings.Ignore(InMemoryEventId.TransactionIgnoredWarning)));
             builder.Services.AddApplication();
-            builder.Services.AddScoped<IMailAuthenticator, MailAuthenticator>();
+            builder.Services.AddScoped<IGatewayOAuthClient, InProcessGatewayOAuthClient>();
             builder.Services.AddOAuthProtocol();
 
             var application = builder.Build();
@@ -584,5 +586,38 @@ public sealed class OAuthEndpointTests
             await application.StopAsync();
             await application.DisposeAsync();
         }
+    }
+
+    private sealed class InProcessGatewayOAuthClient(IOAuthApplicationService application)
+        : IGatewayOAuthClient
+    {
+        public Task<OAuthPublicKeyValue> GetPublicKeyAsync(
+            CancellationToken cancellationToken = default) =>
+            application.GetPublicKeyAsync(cancellationToken);
+
+        public Task<OAuthIdentityLookupResult> AuthenticateIdentityAsync(
+            OAuthIdentityLookupRequest request,
+            CancellationToken cancellationToken = default) =>
+            application.AuthenticateIdentityAsync(request, cancellationToken);
+
+        public Task<OAuthAuthorizeApplicationResult> AuthorizeAsync(
+            OAuthAuthorizeApplicationRequest request,
+            CancellationToken cancellationToken = default) =>
+            application.AuthorizeAsync(request, cancellationToken);
+
+        public Task<OAuthTokenApplicationResult> RedeemAuthorizationCodeAsync(
+            OAuthAuthorizationCodeRedeemRequest request,
+            CancellationToken cancellationToken = default) =>
+            application.RedeemAuthorizationCodeAsync(request, cancellationToken);
+
+        public Task<OAuthTokenApplicationResult> RefreshTokenAsync(
+            OAuthRefreshTokenRequest request,
+            CancellationToken cancellationToken = default) =>
+            application.RefreshTokenAsync(request, cancellationToken);
+
+        public Task RevokeTokenAsync(
+            OAuthRevokeTokenRequest request,
+            CancellationToken cancellationToken = default) =>
+            application.RevokeTokenAsync(request, cancellationToken);
     }
 }

@@ -15,6 +15,12 @@ public static class ApplicationOperations
     public const string AdminAccountsCreate = "admin.accounts.create";
     public const string AdminAccountsSetActive = "admin.accounts.set-active";
     public const string AdminAccountsResetPassword = "admin.accounts.reset-password";
+    public const string OAuthPublicKeyGet = "oauth.public-key.get";
+    public const string OAuthIdentityAuthenticate = "oauth.identity.authenticate";
+    public const string OAuthAuthorize = "oauth.authorize";
+    public const string OAuthAuthorizationCodeRedeem = "oauth.authorization-code.redeem";
+    public const string OAuthTokenRefresh = "oauth.token.refresh";
+    public const string OAuthTokenRevoke = "oauth.token.revoke";
 }
 
 public sealed record SystemPingResult(DateTimeOffset RespondedAt);

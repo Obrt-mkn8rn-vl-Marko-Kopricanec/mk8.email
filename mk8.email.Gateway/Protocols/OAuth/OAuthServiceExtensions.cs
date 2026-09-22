@@ -4,7 +4,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace mk8.email.OAuth;
+namespace mk8.email.Gateway.Protocols.OAuth;
 
 public static class OAuthServiceExtensions
 {

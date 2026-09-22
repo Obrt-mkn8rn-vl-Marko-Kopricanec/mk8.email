@@ -16,7 +16,6 @@
     <ProjectReference Include="..\mk8.email.Application\mk8.email.Application.Core.csproj" />
     <ProjectReference Include="..\mk8.email.Dav\mk8.email.Dav.csproj" />
     <ProjectReference Include="..\mk8.email.Jmap\mk8.email.Jmap.csproj" />
-    <ProjectReference Include="..\mk8.email.OAuth\mk8.email.OAuth.csproj" />
   </ItemGroup>
 
 </Project>

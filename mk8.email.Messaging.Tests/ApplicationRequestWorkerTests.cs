@@ -5,6 +5,8 @@ using mk8.email.Application.Interfaces;
 using mk8.email.Application.Services;
 using mk8.email.Application.Worker;
 using mk8.email.Contracts.Messaging;
+using mk8.email.Gateway.ApplicationBridge;
+using mk8.email.Gateway.Protocols.OAuth;
 using Npgsql;
 
 namespace mk8.email.Messaging.Tests;
@@ -83,6 +85,87 @@ public sealed class ApplicationRequestWorkerTests
 
         Assert.AreEqual("application/json", response.ContentType);
         Assert.IsFalse(response.IsError);
+        await worker.StopAsync(timeout.Token);
+        worker.Dispose();
+    }
+
+    [TestMethod]
+    [TestCategory("PostgreSQL")]
+    public async Task OAuthGatewayCallCrossesRemoteWorkerAndRecordsBothDirections()
+    {
+        await using var database = await RequirePostgresAsync();
+        await using var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var workerDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await PostgresMessagingSchema.EnsureAsync(gatewayDataSource);
+        using var gatewayProtector = AesGcmPayloadProtectorTests.CreateProtector(
+            "test",
+            "oauth-worker-key");
+        using var workerProtector = AesGcmPayloadProtectorTests.CreateProtector(
+            "test",
+            "oauth-worker-key");
+        var options = new PostgresMessagingOptions
+        {
+            NotificationFallbackInterval = TimeSpan.FromSeconds(1),
+        };
+        var gatewayBus = new PostgresApplicationBus(
+            gatewayDataSource,
+            gatewayProtector,
+            options);
+        var workerBus = new PostgresApplicationBus(
+            workerDataSource,
+            workerProtector,
+            options);
+        var journal = new PostgresGatewayTrafficJournal(
+            gatewayDataSource,
+            gatewayProtector,
+            options);
+        var oauth = new StubOAuthApplicationService();
+        var services = new ServiceCollection()
+            .AddSingleton<IOAuthApplicationService>(oauth)
+            .AddScoped<IApplicationRequestDispatcher>(serviceProvider =>
+                new ApplicationRequestDispatcher(serviceProvider));
+        await using var provider = services.BuildServiceProvider();
+        var worker = new ApplicationRequestWorker(
+            workerBus,
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            new ApplicationWorkerIdentity("application@oauth-host", TimeSpan.FromSeconds(30)),
+            NullLogger<ApplicationRequestWorker>.Instance);
+        var transport = new GatewayApplicationTransport(
+            gatewayBus,
+            journal,
+            new GatewayApplicationOptions(
+                "gateway@oauth-host",
+                TimeSpan.FromSeconds(10),
+                TimeSpan.FromSeconds(5)));
+        var client = new GatewayOAuthClient(transport);
+        var request = new OAuthAuthorizeApplicationRequest(
+            "person@example.test",
+            "secret-password",
+            "123456",
+            "thunderbird",
+            "http://127.0.0.1:49152/",
+            "Remote test",
+            ["offline_access", "imap"],
+            new string('a', 43),
+            null);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        await worker.StartAsync(timeout.Token);
+        var result = await client.AuthorizeAsync(request, timeout.Token);
+
+        Assert.AreEqual(OAuthAuthorizationOutcome.Succeeded, result.Outcome);
+        Assert.AreEqual("remote-authorization-code", result.AuthorizationCode);
+        Assert.AreEqual(request.Username, oauth.AuthorizationRequest?.Username);
+        await using var sessionCommand = gatewayDataSource.CreateCommand(
+            "SELECT session_id FROM gateway_traffic_records LIMIT 1");
+        var sessionId = (Guid)(await sessionCommand.ExecuteScalarAsync(timeout.Token)
+            ?? throw new AssertFailedException("The OAuth traffic journal is empty."));
+        var records = await journal.ReadSessionAsync(sessionId, timeout.Token);
+        Assert.HasCount(2, records);
+        Assert.IsTrue(records.All(record => record.Protocol == "oauth"));
+        Assert.AreEqual(GatewayTrafficDirections.Inbound, records[0].Direction);
+        Assert.AreEqual(GatewayTrafficDirections.Outbound, records[1].Direction);
+
         await worker.StopAsync(timeout.Token);
         worker.Dispose();
     }
@@ -177,5 +260,44 @@ public sealed class ApplicationRequestWorkerTests
             Completed.TrySetException(new InvalidOperationException(errorDetail));
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class StubOAuthApplicationService : IOAuthApplicationService
+    {
+        public OAuthAuthorizeApplicationRequest? AuthorizationRequest { get; private set; }
+
+        public Task<OAuthPublicKeyValue> GetPublicKeyAsync(
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<OAuthIdentityLookupResult> AuthenticateIdentityAsync(
+            OAuthIdentityLookupRequest request,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<OAuthAuthorizeApplicationResult> AuthorizeAsync(
+            OAuthAuthorizeApplicationRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            AuthorizationRequest = request;
+            return Task.FromResult(new OAuthAuthorizeApplicationResult(
+                OAuthAuthorizationOutcome.Succeeded,
+                "remote-authorization-code"));
+        }
+
+        public Task<OAuthTokenApplicationResult> RedeemAuthorizationCodeAsync(
+            OAuthAuthorizationCodeRedeemRequest request,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<OAuthTokenApplicationResult> RefreshTokenAsync(
+            OAuthRefreshTokenRequest request,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task RevokeTokenAsync(
+            OAuthRevokeTokenRequest request,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
     }
 }

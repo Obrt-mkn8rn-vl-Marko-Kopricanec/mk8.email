@@ -26,6 +26,7 @@ public sealed class JmapBlobService(
     EnvironmentConfig environment,
     ILargeObjectStore objects,
     LargeObjectTransactionEffects transactionEffects,
+    MailboxMessageContentService mailboxContent,
     ILogger<JmapBlobService> logger)
 {
     private static readonly ConcurrentDictionary<Guid, SemaphoreSlim> AccountLocks = new();
@@ -59,7 +60,7 @@ public sealed class JmapBlobService(
             return email is null
                 ? null
                 : new JmapBlobContent(
-                    JmapEmailCodec.GetRawBytes(email),
+                    await mailboxContent.ReadAsync(email, cancellationToken),
                     "message/rfc822",
                     null,
                     emailId,
@@ -80,7 +81,8 @@ public sealed class JmapBlobService(
         var sourceEmail = await FindEmailAsync(accountId, sourceId, cancellationToken);
         if (sourceEmail is not null)
         {
-            using var message = JmapEmailCodec.Parse(sourceEmail);
+            var rawMessage = await mailboxContent.ReadAsync(sourceEmail, cancellationToken);
+            using var message = JmapEmailCodec.Parse(rawMessage);
             return ResolveBodyPart(
                 message,
                 sourceId,

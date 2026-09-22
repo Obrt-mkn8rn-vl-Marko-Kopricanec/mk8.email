@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
+using mk8.email.Application.Services;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
 using mk8.email.Infrastructure.Models;
@@ -13,6 +14,7 @@ internal sealed class MailboxSetMethod(
     JmapAccountService accounts,
     JmapMailboxStore mailboxes,
     JmapStateService states,
+    MailboxMessageContentService content,
     EnvironmentConfig environment) : IJmapMethod
 {
     private static readonly IReadOnlySet<string> JmapMailboxRoles = new HashSet<string>(
@@ -693,6 +695,8 @@ internal sealed class MailboxSetMethod(
                     IsSubscribed = node.IsSubscribed,
                 });
             }
+            foreach (var email in destroyedEmails)
+                content.DeleteOnCommit(email);
             if (destroyedEmails.Count > 0)
                 database.Emails.RemoveRange(destroyedEmails);
             if (destroyedStoredIds.Length > 0)
@@ -980,6 +984,8 @@ internal sealed class MailboxSetMethod(
             .ToListAsync(cancellationToken);
         if (messages.Count > 0 && !onDestroyRemoveEmails)
             return JmapMethodHelpers.SetError("mailboxHasEmail");
+        foreach (var message in messages)
+            content.DeleteOnCommit(message);
         if (messages.Count > 0)
             database.Emails.RemoveRange(messages);
         database.Folders.Remove(folder);

@@ -19,6 +19,7 @@ internal sealed class EmailSubmissionSetMethod(
     IEmailService emailService,
     EmailSetMethod emailSet,
     MailQueueContentService queueContent,
+    MailboxMessageContentService mailboxContent,
     EnvironmentConfig environment) : IJmapMethod
 {
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
@@ -312,7 +313,7 @@ internal sealed class EmailSubmissionSetMethod(
             cancellationToken);
         if (identity is null || email is null)
             return SubmissionCreateResult.Failed("invalidProperties");
-        var rawBytes = JmapEmailCodec.GetRawBytes(email);
+        var rawBytes = await mailboxContent.ReadAsync(email, cancellationToken);
         if (rawBytes.LongLength > environment.Limits.MaxMessageSizeBytes)
         {
             var error = JmapMethodHelpers.SetError("tooLarge");

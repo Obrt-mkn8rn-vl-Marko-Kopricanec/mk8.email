@@ -8,7 +8,10 @@ using mk8.email.Infrastructure.Models;
 
 namespace mk8.email.Application.Services;
 
-public class EmailService(EmailDbContext db) : IEmailService
+public class EmailService(
+    EmailDbContext db,
+    MailboxMessageContentService content,
+    LargeObjectTransactionEffects transactionEffects) : IEmailService
 {
     public async Task<bool> CanReceiveAsync(
         string recipient,
@@ -92,6 +95,7 @@ public class EmailService(EmailDbContext db) : IEmailService
             messageId,
             cancellationToken);
 
+        var rawBytes = MailWireEncoding.Instance.GetBytes(rawMessage);
         var email = new EmailDB
         {
             Id = Guid.CreateVersion7(),
@@ -100,8 +104,6 @@ public class EmailService(EmailDbContext db) : IEmailService
             Subject = subject.Length > 998 ? subject[..998] : subject,
             Body = body,
             RawHeaders = headers,
-            RawMessage = MailWireEncoding.Instance.GetBytes(rawMessage),
-            SizeBytes = messageSize,
             MessageId = messageId,
             InReplyTo = inReplyTo,
             Cc = MailMessageParser.ExtractHeaderValue(headers, "Cc"),
@@ -113,10 +115,23 @@ public class EmailService(EmailDbContext db) : IEmailService
             FolderId = folder.Id,
         };
         ApplyFlags(email, normalizedFlags);
-        db.Emails.Add(email);
-
-        await db.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        var marker = transactionEffects.Mark();
+        var commitAttempted = false;
+        try
+        {
+            await content.SetAsync(email, rawBytes, cancellationToken);
+            db.Emails.Add(email);
+            await db.SaveChangesAsync(cancellationToken);
+            commitAttempted = true;
+            await transaction.CommitAsync(cancellationToken);
+            await transactionEffects.CommitAsync(marker);
+        }
+        catch
+        {
+            await TryRollbackAsync(transaction);
+            await CompleteRollbackAsync(marker, commitAttempted);
+            throw;
+        }
         return true;
     }
 
@@ -172,7 +187,8 @@ public class EmailService(EmailDbContext db) : IEmailService
             sentMessageId,
             cancellationToken);
 
-        db.Emails.Add(new EmailDB
+        var rawBytes = MailWireEncoding.Instance.GetBytes(rawMessage);
+        var email = new EmailDB
         {
             Id = Guid.CreateVersion7(),
             Sender = sender,
@@ -180,8 +196,6 @@ public class EmailService(EmailDbContext db) : IEmailService
             Subject = subject.Length > 998 ? subject[..998] : subject,
             Body = body,
             RawHeaders = headers,
-            RawMessage = MailWireEncoding.Instance.GetBytes(rawMessage),
-            SizeBytes = messageSize,
             MessageId = sentMessageId,
             InReplyTo = sentInReplyTo,
             Cc = MailMessageParser.ExtractHeaderValue(headers, "Cc"),
@@ -192,11 +206,48 @@ public class EmailService(EmailDbContext db) : IEmailService
             ModSeq = modSeq,
             IsRead = true,
             FolderId = folder.Id,
-        });
-
-        await db.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        };
+        var marker = transactionEffects.Mark();
+        var commitAttempted = false;
+        try
+        {
+            await content.SetAsync(email, rawBytes, cancellationToken);
+            db.Emails.Add(email);
+            await db.SaveChangesAsync(cancellationToken);
+            commitAttempted = true;
+            await transaction.CommitAsync(cancellationToken);
+            await transactionEffects.CommitAsync(marker);
+        }
+        catch
+        {
+            await TryRollbackAsync(transaction);
+            await CompleteRollbackAsync(marker, commitAttempted);
+            throw;
+        }
         return true;
+    }
+
+    private async Task CompleteRollbackAsync(int marker, bool commitAttempted)
+    {
+        if (commitAttempted)
+        {
+            transactionEffects.Discard(marker);
+            return;
+        }
+        await transactionEffects.RollbackAsync(marker);
+    }
+
+    private static async Task TryRollbackAsync(
+        Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction transaction)
+    {
+        try
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+        }
+        catch
+        {
+            // Preserve the original failure; an ambiguous commit retains the object.
+        }
     }
 
     private static (string? localPart, string? domain) ParseRecipient(string address)

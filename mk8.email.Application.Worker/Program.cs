@@ -54,6 +54,8 @@ try
             .EnsureAsync();
         await scope.ServiceProvider.GetRequiredService<MailQueueLargeObjectMigrationService>()
             .MigrateAsync();
+        await scope.ServiceProvider.GetRequiredService<MailboxMessageLargeObjectMigrationService>()
+            .MigrateAsync();
         if (environment.Dav.EnableDav || environment.Jmap.EnableJmap)
         {
             await scope.ServiceProvider.GetRequiredService<DavResourceLargeObjectMigrationService>()

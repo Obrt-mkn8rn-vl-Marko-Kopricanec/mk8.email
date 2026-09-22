@@ -68,11 +68,26 @@ public class EmailDB
     [Column("raw_headers")]
     public string? RawHeaders { get; set; }
 
-    // Preserve the exact RFC 5322 octets. RawHeaders/Body remain populated for
-    // efficient legacy IMAP searches, but cannot losslessly represent the
-    // original line endings or a message without a header/body separator.
+    // Transitional legacy column. Exact RFC 5322 octets live in Azure Blob-compatible
+    // storage; RawHeaders and Body are bounded, non-attachment search projections.
     [Column("raw_message")]
     public byte[]? RawMessage { get; set; }
+
+    [MaxLength(32)]
+    [Column("raw_message_object_provider")]
+    public string? RawMessageObjectProvider { get; set; }
+
+    [MaxLength(1024)]
+    [Column("raw_message_object_name")]
+    public string? RawMessageObjectName { get; set; }
+
+    [MaxLength(64)]
+    [Column("raw_message_object_sha256")]
+    public string? RawMessageObjectSha256 { get; set; }
+
+    [MaxLength(256)]
+    [Column("raw_message_object_etag")]
+    public string? RawMessageObjectEntityTag { get; set; }
 
     [MaxLength(255)]
     [Column("message_id")]

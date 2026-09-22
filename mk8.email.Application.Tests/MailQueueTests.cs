@@ -328,7 +328,9 @@ public sealed class MailQueueTests
         Assert.IsTrue(stored.Any(message => message.QueueDeliveryId == queueId));
         var failureNotice = stored.Single(message => message.Folder.Name == DefaultFolders.Inbox);
         Assert.AreNotEqual(queued.Recipients.Single().Id, failureNotice.QueueDeliveryId);
-        using var parsedNotice = MimeMessage.Load(new MemoryStream(failureNotice.RawMessage!));
+        var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
+        using var parsedNotice = MimeMessage.Load(new MemoryStream(
+            await content.ReadAsync(failureNotice, CancellationToken.None)));
         Assert.AreEqual("Delivery Status Notification (Failure)", parsedNotice.Subject);
         var report = Assert.IsInstanceOfType<MultipartReport>(parsedNotice.Body);
         Assert.AreEqual("delivery-status", report.ContentType.Parameters["report-type"]);
@@ -491,7 +493,9 @@ public sealed class MailQueueTests
         Assert.IsFalse(queued.Recipients.Single().DsnForwarded);
         var notice = await database.Emails.SingleAsync(message =>
             message.Subject == "Delivery Status Notification (Relayed)");
-        using var parsedNotice = MimeMessage.Load(new MemoryStream(notice.RawMessage!));
+        var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
+        using var parsedNotice = MimeMessage.Load(new MemoryStream(
+            await content.ReadAsync(notice, CancellationToken.None)));
         var report = Assert.IsInstanceOfType<MultipartReport>(parsedNotice.Body);
         var deliveryStatus = Assert.IsInstanceOfType<MessageDeliveryStatus>(report[1]);
         Assert.AreEqual("relayed", deliveryStatus.StatusGroups[1]["Action"]);
@@ -536,7 +540,9 @@ public sealed class MailQueueTests
         Assert.IsTrue(message.Recipients.Single().DelayNoticeCreated);
         var notice = await database.Emails.SingleAsync();
         Assert.AreEqual("Delivery Status Notification (Delay)", notice.Subject);
-        using var parsedNotice = MimeMessage.Load(new MemoryStream(notice.RawMessage!));
+        var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
+        using var parsedNotice = MimeMessage.Load(new MemoryStream(
+            await content.ReadAsync(notice, CancellationToken.None)));
         var report = Assert.IsInstanceOfType<MultipartReport>(parsedNotice.Body);
         var deliveryStatus = Assert.IsInstanceOfType<MessageDeliveryStatus>(report[1]);
         Assert.AreEqual("delayed", deliveryStatus.StatusGroups[1]["Action"]);
@@ -881,7 +887,9 @@ public sealed class MailQueueTests
             .Where(message => message.Subject == "Delivery Status Notification (Expanded)")
             .ToListAsync();
         Assert.HasCount(1, notices);
-        using var parsedNotice = MimeMessage.Load(new MemoryStream(notices[0].RawMessage!));
+        var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
+        using var parsedNotice = MimeMessage.Load(new MemoryStream(
+            await content.ReadAsync(notices[0], CancellationToken.None)));
         var report = Assert.IsInstanceOfType<MultipartReport>(parsedNotice.Body);
         var deliveryStatus = Assert.IsInstanceOfType<MessageDeliveryStatus>(report[1]);
         Assert.AreEqual("expanded", deliveryStatus.StatusGroups[1]["Action"]);
@@ -988,6 +996,8 @@ public sealed class MailQueueTests
         services.AddScoped<LargeObjectTransactionEffects>();
         services.AddScoped<MailQueueContentService>();
         services.AddScoped<MailQueueLargeObjectMigrationService>();
+        services.AddScoped<MailboxMessageContentService>();
+        services.AddScoped<MailboxMessageLargeObjectMigrationService>();
         services.AddLogging();
         services.AddSingleton<IMailScanner>(new StubScanner(scanResult));
         services.AddSingleton(relay);

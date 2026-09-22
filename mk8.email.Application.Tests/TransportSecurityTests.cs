@@ -13,6 +13,7 @@ using mk8.email.Application.Interfaces;
 using mk8.email.Application.Protocol;
 using mk8.email.Application.Services;
 using mk8.email.Contracts.Enums;
+using mk8.email.Contracts.Storage;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
 using mk8.email.Infrastructure.Models;
@@ -2110,6 +2111,10 @@ public sealed class TransportSecurityTests
         Assert.AreEqual("\r\nbody é\r\n", stored.Body);
         Assert.AreEqual(messageSize, stored.SizeBytes);
         CollectionAssert.AreEqual(Encoding.UTF8.GetBytes(message), stored.RawMessage!);
+        var persisted = await server.GetPersistedEmailAsync(DefaultFolders.Sent);
+        Assert.IsNull(persisted.RawMessage);
+        Assert.AreEqual(LargeObjectProviders.AzureBlob, persisted.RawMessageObjectProvider);
+        Assert.IsNotNull(persisted.RawMessageObjectName);
     }
 
     [TestMethod]
@@ -3009,8 +3014,8 @@ public sealed class TransportSecurityTests
         var port = ReservePort();
         var environment = CreateEnvironment(imapPort: port);
         await using var server = await ServerFixture.StartImapAsync(environment, port);
-        await server.SeedSentMessagesWithReverseDatesAsync();
-        await server.SetUserQuotaAsync(299);
+        var sourceSize = await server.SeedSentMessagesWithReverseDatesAsync();
+        await server.SetUserQuotaAsync(3 * sourceSize - 1);
         await using var connection = await ProtocolConnection.ConnectAsync(port);
 
         await connection.ReadLineAsync();
@@ -3032,17 +3037,17 @@ public sealed class TransportSecurityTests
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a4 NO [OVERQUOTA]", StringComparison.Ordinal));
         Assert.AreEqual(2, await server.CountStoredEmailsAsync());
 
-        await server.SetUserQuotaAsync(300);
+        await server.SetUserQuotaAsync(3 * sourceSize);
         await connection.WriteLineAsync("a5 COPY 1 Trash");
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a5 OK [COPYUID", StringComparison.Ordinal));
         Assert.AreEqual(3, await server.CountStoredEmailsAsync());
 
-        await server.SetUserQuotaAsync(399);
+        await server.SetUserQuotaAsync(4 * sourceSize - 1);
         await connection.WriteLineAsync("a6 UID COPY 2 Trash");
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a6 NO [OVERQUOTA]", StringComparison.Ordinal));
         Assert.AreEqual(3, await server.CountStoredEmailsAsync());
 
-        await server.SetUserQuotaAsync(400);
+        await server.SetUserQuotaAsync(4 * sourceSize);
         await connection.WriteLineAsync("a7 UID COPY 2 Trash");
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a7 OK [COPYUID", StringComparison.Ordinal));
 
@@ -3464,6 +3469,11 @@ public sealed class TransportSecurityTests
             serviceCollection.AddScoped<ISenderAuthorizationService, SenderAuthorizationService>();
             serviceCollection.AddScoped<IMailAuthenticator, MailAuthenticator>();
             serviceCollection.AddScoped<IOAuthTokenService, OAuthTokenService>();
+            serviceCollection.AddSingleton<ILargeObjectStore, InMemoryLargeObjectStore>();
+            serviceCollection.AddScoped(provider => new LargeObjectTransactionEffects(
+                provider.GetRequiredService<ILargeObjectStore>(),
+                NullLogger<LargeObjectTransactionEffects>.Instance));
+            serviceCollection.AddScoped<MailboxMessageContentService>();
             serviceCollection.AddDbContext<EmailDbContext>(options =>
                 options.UseInMemoryDatabase(databaseName));
             var services = serviceCollection.BuildServiceProvider();
@@ -3549,6 +3559,20 @@ public sealed class TransportSecurityTests
         {
             using var scope = services.CreateScope();
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            var email = await database.Emails
+                .AsNoTracking()
+                .Include(email => email.Folder)
+                .SingleAsync(email => email.Folder.Name == folderName);
+            email.RawMessage = await scope.ServiceProvider
+                .GetRequiredService<MailboxMessageContentService>()
+                .ReadAsync(email, CancellationToken.None);
+            return email;
+        }
+
+        public async Task<EmailDB> GetPersistedEmailAsync(string folderName)
+        {
+            using var scope = services.CreateScope();
+            var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
             return await database.Emails
                 .AsNoTracking()
                 .Include(email => email.Folder)
@@ -3576,23 +3600,42 @@ public sealed class TransportSecurityTests
                 .SingleAsync(email => email.Uid == uid);
         }
 
-        public async Task SeedSentMessagesWithReverseDatesAsync()
+        public async Task<long> SeedSentMessagesWithReverseDatesAsync()
         {
             using var scope = services.CreateScope();
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
+            var effects = scope.ServiceProvider.GetRequiredService<LargeObjectTransactionEffects>();
+            var marker = effects.Mark();
             var folder = await database.Folders.SingleAsync(item => item.Name == DefaultFolders.Sent);
-            database.Emails.AddRange(
-                CreateStoredEmail(folder.Id, uid: 1, new DateTime(2026, 2, 1, 0, 0, 0, DateTimeKind.Utc)),
-                CreateStoredEmail(folder.Id, uid: 2, new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)));
-            folder.NextUid = 3;
-            folder.HighestModSeq = 2;
-            await database.SaveChangesAsync();
+            var first = CreateStoredEmail(folder.Id, uid: 1, new DateTime(2026, 2, 1, 0, 0, 0, DateTimeKind.Utc));
+            var second = CreateStoredEmail(folder.Id, uid: 2, new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+            try
+            {
+                await content.SetAsync(first, MailboxMessageContentService.BuildLegacyRawMessage(first), CancellationToken.None);
+                await content.SetAsync(second, MailboxMessageContentService.BuildLegacyRawMessage(second), CancellationToken.None);
+                database.Emails.AddRange(first, second);
+                folder.NextUid = 3;
+                folder.HighestModSeq = 2;
+                await database.SaveChangesAsync();
+                await effects.CommitAsync(marker);
+                Assert.AreEqual(first.SizeBytes, second.SizeBytes);
+                return first.SizeBytes;
+            }
+            catch
+            {
+                await effects.RollbackAsync(marker);
+                throw;
+            }
         }
 
         public async Task SeedPop3MessagesAsync()
         {
             using var scope = services.CreateScope();
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
+            var effects = scope.ServiceProvider.GetRequiredService<LargeObjectTransactionEffects>();
+            var marker = effects.Mark();
             var folder = await database.Folders.SingleAsync(item => item.Name == DefaultFolders.Inbox);
             var firstRaw =
                 $"From: sender@example.net\r\nTo: {TestUsername}\r\nSubject: POP first\r\n\r\n" +
@@ -3600,40 +3643,39 @@ public sealed class TransportSecurityTests
             var secondRaw =
                 $"From: sender@example.net\nTo: {TestUsername}\nSubject: POP second\n\n" +
                 "second message without canonical endings";
-            database.Emails.AddRange(
-                new EmailDB
-                {
-                    Id = Guid.CreateVersion7(),
-                    Sender = "sender@example.net",
-                    Recipient = TestUsername,
-                    Subject = "POP first",
-                    Body = ".leading dot\r\nsecond body line\r\n",
-                    RawHeaders = $"From: sender@example.net\r\nTo: {TestUsername}\r\nSubject: POP first",
-                    RawMessage = MailWireEncoding.Instance.GetBytes(firstRaw),
-                    SizeBytes = MailWireEncoding.Instance.GetByteCount(firstRaw),
-                    Uid = 1,
-                    ModSeq = 1,
-                    FolderId = folder.Id,
-                    ReceivedAt = DateTime.UtcNow.AddMinutes(-1),
-                },
-                new EmailDB
-                {
-                    Id = Guid.CreateVersion7(),
-                    Sender = "sender@example.net",
-                    Recipient = TestUsername,
-                    Subject = "POP second",
-                    Body = "second message without canonical endings",
-                    RawHeaders = $"From: sender@example.net\nTo: {TestUsername}\nSubject: POP second",
-                    RawMessage = MailWireEncoding.Instance.GetBytes(secondRaw),
-                    SizeBytes = MailWireEncoding.Instance.GetByteCount(secondRaw),
-                    Uid = 2,
-                    ModSeq = 2,
-                    FolderId = folder.Id,
-                    ReceivedAt = DateTime.UtcNow,
-                });
+            var first = new EmailDB
+            {
+                Id = Guid.CreateVersion7(),
+                Sender = "sender@example.net",
+                Recipient = TestUsername,
+                Subject = "POP first",
+                Body = ".leading dot\r\nsecond body line\r\n",
+                RawHeaders = $"From: sender@example.net\r\nTo: {TestUsername}\r\nSubject: POP first",
+                Uid = 1,
+                ModSeq = 1,
+                FolderId = folder.Id,
+                ReceivedAt = DateTime.UtcNow.AddMinutes(-1),
+            };
+            var second = new EmailDB
+            {
+                Id = Guid.CreateVersion7(),
+                Sender = "sender@example.net",
+                Recipient = TestUsername,
+                Subject = "POP second",
+                Body = "second message without canonical endings",
+                RawHeaders = $"From: sender@example.net\nTo: {TestUsername}\nSubject: POP second",
+                Uid = 2,
+                ModSeq = 2,
+                FolderId = folder.Id,
+                ReceivedAt = DateTime.UtcNow,
+            };
+            await content.SetAsync(first, MailWireEncoding.Instance.GetBytes(firstRaw), CancellationToken.None);
+            await content.SetAsync(second, MailWireEncoding.Instance.GetBytes(secondRaw), CancellationToken.None);
+            database.Emails.AddRange(first, second);
             folder.NextUid = 3;
             folder.HighestModSeq = 2;
             await database.SaveChangesAsync();
+            await effects.CommitAsync(marker);
         }
 
         public async Task SeedInboxMessagesForSearchAsync()
@@ -3835,20 +3877,20 @@ public sealed class TransportSecurityTests
             int size,
             string subject,
             string rawHeaders) => new()
-        {
-            Id = Guid.CreateVersion7(),
-            Sender = "normalized-column-must-not-win@example.net",
-            Recipient = "normalized-column-must-not-win@example.net",
-            Cc = "normalized-column-must-not-win@example.net",
-            Subject = subject,
-            Body = "body\r\n",
-            RawHeaders = rawHeaders,
-            SizeBytes = size,
-            Uid = uid,
-            ModSeq = uid / 10,
-            FolderId = folderId,
-            ReceivedAt = receivedAt,
-        };
+            {
+                Id = Guid.CreateVersion7(),
+                Sender = "normalized-column-must-not-win@example.net",
+                Recipient = "normalized-column-must-not-win@example.net",
+                Cc = "normalized-column-must-not-win@example.net",
+                Subject = subject,
+                Body = "body\r\n",
+                RawHeaders = rawHeaders,
+                SizeBytes = size,
+                Uid = uid,
+                ModSeq = uid / 10,
+                FolderId = folderId,
+                ReceivedAt = receivedAt,
+            };
 
         private static EmailDB CreateThreadEmail(
             Guid folderId,

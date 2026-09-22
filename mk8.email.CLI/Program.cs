@@ -265,6 +265,9 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
         using (var scope = protocolHost.Services.CreateScope())
         {
             await scope.ServiceProvider.GetRequiredService<ISeederService>().SeedAsync();
+            await scope.ServiceProvider
+                .GetRequiredService<MailboxMessageLargeObjectMigrationService>()
+                .MigrateAsync();
             if (environmentConfig.Dav.EnableDav)
             {
                 await scope.ServiceProvider

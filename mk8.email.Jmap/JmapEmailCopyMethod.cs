@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
+using mk8.email.Application.Services;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
 using mk8.email.Infrastructure.Models;
@@ -11,6 +12,7 @@ internal sealed class EmailCopyMethod(
     JmapAccountService accounts,
     JmapStateService states,
     JmapEmailStore store,
+    MailboxMessageContentService content,
     EnvironmentConfig environment) : IJmapMethod
 {
     private static readonly IReadOnlySet<string> Properties = new HashSet<string>(
@@ -139,10 +141,11 @@ internal sealed class EmailCopyMethod(
                     properties: ["receivedAt"]);
                 continue;
             }
+            var rawMessage = await content.ReadAsync(source, cancellationToken);
             var stored = await store.StoreAsync(
                 targetAccount,
                 mailbox.Folder!,
-                JmapEmailCodec.GetRawBytes(source),
+                rawMessage,
                 keywords,
                 receivedAt,
                 cancellationToken);
@@ -208,6 +211,7 @@ internal sealed class EmailCopyMethod(
                 ModSeq = ++source.Folder.HighestModSeq,
                 FolderId = source.FolderId,
             });
+            content.DeleteOnCommit(source);
             database.Emails.Remove(source);
             await database.SaveChangesAsync(cancellationToken);
             destroyed.Add(wireId);

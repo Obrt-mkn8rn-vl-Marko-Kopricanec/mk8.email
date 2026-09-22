@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Logging.Abstractions;
 using mk8.email.Application.Interfaces;
 using mk8.email.Application.Services;
 using mk8.email.Contracts.Enums;
@@ -30,7 +31,7 @@ public sealed class MailAdministrationTests
             "mk8n@mk8n.com")).Succeeded);
         Assert.IsTrue((await administration.SetDomainActiveAsync("mk8n.com", true)).Succeeded);
 
-        var mail = new EmailService(database);
+        var mail = CreateEmailService(database);
         Assert.IsTrue(await mail.CanReceiveAsync("undefined@mk8n.com"));
         Assert.IsTrue(await mail.DeliverAsync(
             "sender@example.net",
@@ -59,7 +60,7 @@ public sealed class MailAdministrationTests
         await administration.SetCatchAllAsync("mk8n.com", "mk8n@mk8n.com");
         await administration.SetDomainActiveAsync("mk8n.com", true);
 
-        var mail = new EmailService(database);
+        var mail = CreateEmailService(database);
         Assert.IsTrue(await mail.DeliverAsync(
             "sender@example.net",
             "admin@mk8n.com",
@@ -87,7 +88,7 @@ public sealed class MailAdministrationTests
         await administration.SetDomainActiveAsync("example.com", true);
 
         const string originalMessageId = "<shared-original@example.net>";
-        var mail = new EmailService(database);
+        var mail = CreateEmailService(database);
         Assert.IsTrue(await mail.DeliverAsync(
             "sender@example.net",
             "alice@example.com",
@@ -144,7 +145,7 @@ public sealed class MailAdministrationTests
     {
         await using var database = CreateDatabase();
         var administration = new MailAdministrationService(database);
-        var mail = new EmailService(database);
+        var mail = CreateEmailService(database);
 
         Assert.IsTrue((await administration.EnsureDomainAsync("Example", "example.com")).Succeeded);
         Assert.IsTrue((await administration.CreateAccountAsync(
@@ -165,7 +166,7 @@ public sealed class MailAdministrationTests
     {
         await using var database = CreateDatabase();
         var administration = new MailAdministrationService(database);
-        var mail = new EmailService(database);
+        var mail = CreateEmailService(database);
 
         await administration.EnsureDomainAsync("Example", "example.com");
         await administration.CreateAccountAsync(
@@ -282,7 +283,7 @@ public sealed class MailAdministrationTests
         });
         await database.SaveChangesAsync();
 
-        var mail = new EmailService(database);
+        var mail = CreateEmailService(database);
         Assert.IsFalse(await mail.DeliverAsync(
             "sender@example.net",
             "user@example.com",
@@ -299,6 +300,18 @@ public sealed class MailAdministrationTests
         var database = new EmailDbContext(options);
         database.Database.EnsureCreated();
         return database;
+    }
+
+    private static EmailService CreateEmailService(EmailDbContext database)
+    {
+        var store = new InMemoryLargeObjectStore();
+        var effects = new LargeObjectTransactionEffects(
+            store,
+            NullLogger<LargeObjectTransactionEffects>.Instance);
+        return new EmailService(
+            database,
+            new MailboxMessageContentService(store, effects),
+            effects);
     }
 
     private static JmapPushSubscriptionDB CreatePushSubscription(Guid userId, string deviceClientId) =>

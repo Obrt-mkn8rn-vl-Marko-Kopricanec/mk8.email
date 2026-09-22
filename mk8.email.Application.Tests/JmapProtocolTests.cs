@@ -6,6 +6,7 @@ using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using mk8.email.Application.Services;
+using mk8.email.Contracts.Storage;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Infrastructure.Models;
 using mk8.email.Jmap;
@@ -787,8 +788,13 @@ public sealed class JmapProtocolTests
         Assert.IsTrue(JmapId.TryParseEmail(emailId, out var storedEmailId));
         var storedEmail = await scope.ServiceProvider.GetRequiredService<EmailDbContext>()
             .Emails.AsNoTracking().SingleAsync(message => message.Id == storedEmailId);
-        Assert.IsNotNull(storedEmail.RawMessage);
-        CollectionAssert.AreEqual(raw, storedEmail.RawMessage);
+        Assert.IsNull(storedEmail.RawMessage);
+        Assert.AreEqual(LargeObjectProviders.AzureBlob, storedEmail.RawMessageObjectProvider);
+        Assert.IsNotNull(storedEmail.RawMessageObjectName);
+        var storedRaw = await scope.ServiceProvider
+            .GetRequiredService<MailboxMessageContentService>()
+            .ReadAsync(storedEmail, CancellationToken.None);
+        CollectionAssert.AreEqual(raw, storedRaw);
     }
 
     [TestMethod]

@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using MimeKit;
+using mk8.email.Application.Services;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
 using mk8.email.Infrastructure.Models;
@@ -13,7 +14,8 @@ internal sealed record JmapStoredEmailResult(EmailDB? Email, JsonObject? Error);
 
 internal sealed class JmapEmailStore(
     EmailDbContext database,
-    EnvironmentConfig environment)
+    EnvironmentConfig environment,
+    MailboxMessageContentService content)
 {
     public async Task<JmapStoredEmailResult> StoreAsync(
         JmapAccount account,
@@ -81,8 +83,6 @@ internal sealed class JmapEmailStore(
                 Subject = subject,
                 Body = body,
                 RawHeaders = headers,
-                RawMessage = raw.ToArray(),
-                SizeBytes = raw.Length,
                 MessageId = messageId,
                 InReplyTo = inReplyTo,
                 EmailObjectId = id.ToString("N"),
@@ -93,6 +93,7 @@ internal sealed class JmapEmailStore(
                 ModSeq = ++folder.HighestModSeq,
             };
             ApplyKeywords(email, keywords);
+            await content.SetAsync(email, raw, cancellationToken);
             database.Emails.Add(email);
             await database.SaveChangesAsync(cancellationToken);
             return new JmapStoredEmailResult(email, null);
@@ -177,7 +178,7 @@ internal sealed class JmapEmailStore(
         var used = knownSize;
         foreach (var email in unknownSize)
         {
-            var size = JmapEmailCodec.GetRawBytes(email).LongLength;
+            var size = (await content.ReadAsync(email, cancellationToken)).LongLength;
             used = size > long.MaxValue - used ? long.MaxValue : used + size;
         }
         return used;

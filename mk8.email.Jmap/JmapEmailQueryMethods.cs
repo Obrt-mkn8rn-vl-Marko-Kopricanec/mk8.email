@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using MimeKit;
 using mk8.email.Application.Protocol;
+using mk8.email.Application.Services;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
 using mk8.email.Infrastructure.Models;
@@ -62,6 +63,7 @@ internal static partial class JmapEmailQueryEngine
 
     public static async Task<List<JmapEmailQueryItem>> LoadAsync(
         EmailDbContext database,
+        MailboxMessageContentService content,
         Guid accountId,
         CancellationToken cancellationToken)
     {
@@ -74,16 +76,15 @@ internal static partial class JmapEmailQueryEngine
         {
             foreach (var email in emails)
             {
-                var message = JmapEmailCodec.Parse(email);
+                var rawMessage = await content.ReadAsync(email, cancellationToken);
+                var message = JmapEmailCodec.Parse(rawMessage);
                 var keywords = JmapEmailCodec.BuildKeywords(email)
                     .Select(item => item.Key)
                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
                 result.Add(new JmapEmailQueryItem(
                     email,
                     message,
-                    email.SizeBytes > 0
-                        ? email.SizeBytes
-                        : JmapEmailCodec.GetRawBytes(email).LongLength,
+                    email.SizeBytes > 0 ? email.SizeBytes : rawMessage.LongLength,
                     keywords,
                     JmapId.Thread(email.ThreadObjectId ?? email.Id.ToString("N")),
                     JmapEmailCodec.HasAttachment(message),
@@ -549,6 +550,7 @@ internal sealed class EmailQueryMethod(
     EmailDbContext database,
     JmapAccountService accounts,
     JmapStateService states,
+    MailboxMessageContentService content,
     EnvironmentConfig environment) : IJmapMethod
 {
     public string Name => "Email/query";
@@ -586,7 +588,11 @@ internal sealed class EmailQueryMethod(
         if (account is null)
             return JmapMethodResponse.Error("accountNotFound");
 
-        var all = await JmapEmailQueryEngine.LoadAsync(database, account.InboxId, cancellationToken);
+        var all = await JmapEmailQueryEngine.LoadAsync(
+            database,
+            content,
+            account.InboxId,
+            cancellationToken);
         try
         {
             if (!JmapEmailQueryEngine.TryFilter(all, arguments["filter"], out var filtered, out var filterError))
@@ -647,7 +653,8 @@ internal sealed class EmailQueryMethod(
 internal sealed class EmailQueryChangesMethod(
     EmailDbContext database,
     JmapAccountService accounts,
-    JmapStateService states) : IJmapMethod
+    JmapStateService states,
+    MailboxMessageContentService content) : IJmapMethod
 {
     public string Name => "Email/queryChanges";
     public string Capability => JmapConstants.MailCapability;
@@ -679,7 +686,11 @@ internal sealed class EmailQueryChangesMethod(
         var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken);
         if (account is null)
             return JmapMethodResponse.Error("accountNotFound");
-        var all = await JmapEmailQueryEngine.LoadAsync(database, account.InboxId, cancellationToken);
+        var all = await JmapEmailQueryEngine.LoadAsync(
+            database,
+            content,
+            account.InboxId,
+            cancellationToken);
         try
         {
             if (!JmapEmailQueryEngine.TryFilter(all, arguments["filter"], out var filtered, out var filterError))

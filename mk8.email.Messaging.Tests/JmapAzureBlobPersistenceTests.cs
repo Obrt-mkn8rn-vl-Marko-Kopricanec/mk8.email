@@ -122,6 +122,7 @@ public sealed class JmapAzureBlobPersistenceTests
                     environment,
                     store,
                     originalEffects,
+                    new MailboxMessageContentService(store, originalEffects),
                     NullLogger<JmapBlobService>.Instance)
                     .StoreAsync(
                         accountId,
@@ -143,6 +144,7 @@ public sealed class JmapAzureBlobPersistenceTests
                     environment,
                     store,
                     rollbackEffects,
+                    new MailboxMessageContentService(store, rollbackEffects),
                     NullLogger<JmapBlobService>.Instance)
                     .StoreAsync(
                         accountId,
@@ -179,6 +181,7 @@ public sealed class JmapAzureBlobPersistenceTests
                     environment,
                     store,
                     commitEffects,
+                    new MailboxMessageContentService(store, commitEffects),
                     NullLogger<JmapBlobService>.Instance)
                     .StoreAsync(
                         accountId,
@@ -260,6 +263,7 @@ public sealed class JmapAzureBlobPersistenceTests
                     environment,
                     store,
                     effects,
+                    new MailboxMessageContentService(store, effects),
                     NullLogger<JmapBlobService>.Instance);
                 if (Interlocked.Increment(ref ready) == contents.Length)
                     gate.SetResult();

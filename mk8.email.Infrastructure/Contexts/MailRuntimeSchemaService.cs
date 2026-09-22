@@ -83,6 +83,10 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["queue_delivery_id"] = "uuid",
             ["keywords"] = "_text",
             ["raw_message"] = "bytea",
+            ["raw_message_object_provider"] = "varchar",
+            ["raw_message_object_name"] = "varchar",
+            ["raw_message_object_sha256"] = "varchar",
+            ["raw_message_object_etag"] = "varchar",
             ["email_object_id"] = "varchar",
             ["thread_object_id"] = "varchar",
         };
@@ -518,6 +522,46 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 ADD COLUMN IF NOT EXISTS keywords text[] NOT NULL DEFAULT ARRAY[]::text[];
             ALTER TABLE emails
                 ADD COLUMN IF NOT EXISTS raw_message bytea;
+            ALTER TABLE emails
+                ADD COLUMN IF NOT EXISTS raw_message_object_provider varchar(32);
+            ALTER TABLE emails
+                ADD COLUMN IF NOT EXISTS raw_message_object_name varchar(1024);
+            ALTER TABLE emails
+                ADD COLUMN IF NOT EXISTS raw_message_object_sha256 varchar(64);
+            ALTER TABLE emails
+                ADD COLUMN IF NOT EXISTS raw_message_object_etag varchar(256);
+            DO $migration$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conrelid = 'emails'::regclass
+                      AND conname = 'ck_emails_raw_storage_shape'
+                ) THEN
+                    ALTER TABLE emails
+                        ADD CONSTRAINT ck_emails_raw_storage_shape CHECK (
+                            (raw_message IS NOT NULL
+                                AND raw_message_object_provider IS NULL
+                                AND raw_message_object_name IS NULL
+                                AND raw_message_object_sha256 IS NULL
+                                AND raw_message_object_etag IS NULL)
+                            OR
+                            (raw_message IS NULL
+                                AND raw_message_object_provider = 'azure-blob'
+                                AND raw_message_object_name IS NOT NULL
+                                AND raw_message_object_sha256 IS NOT NULL
+                                AND raw_message_object_etag IS NOT NULL)
+                            OR
+                            (raw_message IS NULL
+                                AND raw_message_object_provider IS NULL
+                                AND raw_message_object_name IS NULL
+                                AND raw_message_object_sha256 IS NULL
+                                AND raw_message_object_etag IS NULL)) NOT VALID;
+                END IF;
+            END
+            $migration$;
+            ALTER TABLE emails
+                VALIDATE CONSTRAINT ck_emails_raw_storage_shape;
             ALTER TABLE emails
                 ADD COLUMN IF NOT EXISTS email_object_id varchar(64);
             ALTER TABLE emails

@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using mk8.email.Application.Services;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
 
@@ -162,6 +163,7 @@ internal static partial class JmapSearchSnippetFormatter
 internal sealed class SearchSnippetGetMethod(
     EmailDbContext database,
     JmapAccountService accounts,
+    MailboxMessageContentService content,
     EnvironmentConfig environment) : IJmapMethod
 {
     public string Name => "SearchSnippet/get";
@@ -185,7 +187,11 @@ internal sealed class SearchSnippetGetMethod(
         if (account is null)
             return JmapMethodResponse.Error("accountNotFound");
 
-        var all = await JmapEmailQueryEngine.LoadAsync(database, account.InboxId, cancellationToken);
+        var all = await JmapEmailQueryEngine.LoadAsync(
+            database,
+            content,
+            account.InboxId,
+            cancellationToken);
         try
         {
             if (!JmapEmailQueryEngine.TryFilter(

@@ -144,6 +144,17 @@ public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContex
             entity.HasIndex(e => e.EmailObjectId);
             entity.HasIndex(e => e.ThreadObjectId);
             entity.HasIndex(e => e.QueueDeliveryId).IsUnique();
+            entity.ToTable(table => table.HasCheckConstraint(
+                "ck_emails_raw_storage_shape",
+                "(raw_message IS NOT NULL AND raw_message_object_provider IS NULL "
+                + "AND raw_message_object_name IS NULL AND raw_message_object_sha256 IS NULL "
+                + "AND raw_message_object_etag IS NULL) OR "
+                + "(raw_message IS NULL AND raw_message_object_provider = 'azure-blob' "
+                + "AND raw_message_object_name IS NOT NULL AND raw_message_object_sha256 IS NOT NULL "
+                + "AND raw_message_object_etag IS NOT NULL) OR "
+                + "(raw_message IS NULL AND raw_message_object_provider IS NULL "
+                + "AND raw_message_object_name IS NULL AND raw_message_object_sha256 IS NULL "
+                + "AND raw_message_object_etag IS NULL)"));
 
             entity.HasOne(e => e.Folder)
                   .WithMany(f => f.Emails)

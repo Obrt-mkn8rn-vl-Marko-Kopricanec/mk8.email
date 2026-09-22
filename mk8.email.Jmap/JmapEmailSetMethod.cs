@@ -1,6 +1,7 @@
 using System.Text.Json.Nodes;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
+using mk8.email.Application.Services;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
 using mk8.email.Infrastructure.Models;
@@ -13,6 +14,7 @@ internal sealed class EmailSetMethod(
     JmapStateService states,
     JmapEmailBuilder builder,
     JmapEmailStore store,
+    MailboxMessageContentService content,
     EnvironmentConfig environment) : IJmapMethod
 {
     private static readonly IReadOnlySet<string> MutableProperties = new HashSet<string>(
@@ -225,7 +227,8 @@ internal sealed class EmailSetMethod(
         {
             try
             {
-                using var message = JmapEmailCodec.Parse(email);
+                var rawMessage = await content.ReadAsync(email, cancellationToken);
+                using var message = JmapEmailCodec.Parse(rawMessage);
                 if (!TryBuildUpdateSource(
                         message,
                         email,
@@ -526,6 +529,7 @@ internal sealed class EmailSetMethod(
             ModSeq = ++email.Folder.HighestModSeq,
             FolderId = email.FolderId,
         });
+        content.DeleteOnCommit(email);
         database.Emails.Remove(email);
         await database.SaveChangesAsync(cancellationToken);
         return null;

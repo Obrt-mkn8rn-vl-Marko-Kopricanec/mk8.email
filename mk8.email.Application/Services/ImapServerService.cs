@@ -1414,8 +1414,48 @@ ILogger<ImapServerService> logger) : BackgroundService
             return;
         }
 
-        db.Folders.Remove(folder);
-        await db.SaveChangesAsync(ct);
+        var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
+        var effects = scope.ServiceProvider.GetRequiredService<LargeObjectTransactionEffects>();
+        var marker = effects.Mark();
+        var commitAttempted = false;
+        await using var transaction = db.Database.IsRelational()
+            ? await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct)
+            : null;
+        try
+        {
+            var messages = await db.Emails
+                .Where(email => email.FolderId == folder.Id)
+                .ToListAsync(ct);
+            foreach (var message in messages)
+                content.DeleteOnCommit(message);
+            db.Folders.Remove(folder);
+            await db.SaveChangesAsync(ct);
+            if (transaction is not null)
+            {
+                commitAttempted = true;
+                await transaction.CommitAsync(ct);
+            }
+            await effects.CommitAsync(marker);
+        }
+        catch
+        {
+            if (transaction is not null)
+            {
+                try
+                {
+                    await transaction.RollbackAsync(CancellationToken.None);
+                }
+                catch (Exception rollbackException)
+                {
+                    logger.LogWarning(rollbackException, "Could not roll back IMAP mailbox deletion");
+                }
+            }
+            if (commitAttempted)
+                effects.Discard(marker);
+            else
+                await effects.RollbackAsync(marker);
+            throw;
+        }
 
         if (session.SelectedFolderId == folder.Id)
         {
@@ -1642,6 +1682,7 @@ ILogger<ImapServerService> logger) : BackgroundService
 
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
         var folderId = session.SelectedFolderId!.Value;
         var messageQuery = db.Emails.AsNoTracking().Where(email => email.FolderId == folderId);
         var orderedUids = await messageQuery
@@ -1684,6 +1725,12 @@ ILogger<ImapServerService> logger) : BackgroundService
             var identifier = useUid ? email.Uid : sequenceNumber;
             if (!MessageSetContains(parsedMessageSet, identifier))
                 continue;
+
+            if (includeStoredContent)
+            {
+                var rawMessage = await content.ReadAsync(email, ct);
+                ApplyTransientRawMessage(email, rawMessage);
+            }
 
             using var mimeMessage = needsMimeProjection
                 ? ImapMimeMessage.TryParse(BuildRfc822(email))
@@ -1912,6 +1959,7 @@ ILogger<ImapServerService> logger) : BackgroundService
 
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
         await using var transaction = db.Database.IsRelational()
             ? await db.Database.BeginTransactionAsync(IsolationLevel.RepeatableRead, ct)
             : null;
@@ -1920,6 +1968,7 @@ ILogger<ImapServerService> logger) : BackgroundService
             .Where(email => email.FolderId == session.SelectedFolderId!.Value);
         var searchResult = await FindSearchCandidatesAsync(
             query,
+            content,
             searchCriteria.Trim(),
             session.SavedSearchUids,
             session.Utf8Enabled,
@@ -1979,6 +2028,12 @@ ILogger<ImapServerService> logger) : BackgroundService
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
+        var effects = scope.ServiceProvider.GetRequiredService<LargeObjectTransactionEffects>();
+        var marker = effects.Mark();
+        await using var transaction = db.Database.IsRelational()
+            ? await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct)
+            : null;
 
         var emails = await GetEmailMetadataInFolderAsync(
             db,
@@ -2013,6 +2068,7 @@ ILogger<ImapServerService> logger) : BackgroundService
                     FolderId = session.SelectedFolderId!.Value,
                 });
 
+                content.DeleteOnCommit(emails[i]);
                 AttachDelete(db, emails[i]);
                 expunged++;
             }
@@ -2025,6 +2081,9 @@ ILogger<ImapServerService> logger) : BackgroundService
         }
 
         await db.SaveChangesAsync(ct);
+        if (transaction is not null)
+            await transaction.CommitAsync(ct);
+        await effects.CommitAsync(marker);
         await writer.WriteLineAsync($"{tag} OK EXPUNGE completed");
     }
 
@@ -2086,6 +2145,8 @@ ILogger<ImapServerService> logger) : BackgroundService
 
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
+        var effects = scope.ServiceProvider.GetRequiredService<LargeObjectTransactionEffects>();
         await using var transaction = db.Database.IsRelational()
             ? await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct)
             : null;
@@ -2139,9 +2200,44 @@ ILogger<ImapServerService> logger) : BackgroundService
             return;
         }
 
-        var (srcUids, dstUids) = await CopyMessagesAsync(db, destFolder, selected, ct);
-        if (transaction is not null)
-            await transaction.CommitAsync(ct);
+        var marker = effects.Mark();
+        var commitAttempted = false;
+        List<int> srcUids;
+        List<int> dstUids;
+        try
+        {
+            (srcUids, dstUids) = await CopyMessagesAsync(
+                db,
+                content,
+                destFolder,
+                selected,
+                ct);
+            if (transaction is not null)
+            {
+                commitAttempted = true;
+                await transaction.CommitAsync(ct);
+            }
+            await effects.CommitAsync(marker);
+        }
+        catch
+        {
+            if (transaction is not null)
+            {
+                try
+                {
+                    await transaction.RollbackAsync(CancellationToken.None);
+                }
+                catch (Exception rollbackException)
+                {
+                    logger.LogWarning(rollbackException, "Could not roll back IMAP COPY");
+                }
+            }
+            if (commitAttempted)
+                effects.Discard(marker);
+            else
+                await effects.RollbackAsync(marker);
+            throw;
+        }
 
         await writer.WriteLineAsync(
             $"{tag} OK [COPYUID {destFolder.UidValidity} {FormatUidSet(srcUids)} {FormatUidSet(dstUids)}] {commandName} completed");
@@ -2521,6 +2617,10 @@ ILogger<ImapServerService> logger) : BackgroundService
                 ModSeq = email.ModSeq,
                 Uid = email.Uid,
                 SizeBytes = email.SizeBytes,
+                RawMessageObjectProvider = email.RawMessageObjectProvider,
+                RawMessageObjectName = email.RawMessageObjectName,
+                RawMessageObjectSha256 = email.RawMessageObjectSha256,
+                RawMessageObjectEntityTag = email.RawMessageObjectEntityTag,
                 FolderId = email.FolderId,
             });
 
@@ -2553,6 +2653,7 @@ ILogger<ImapServerService> logger) : BackgroundService
 
     private static async Task<(List<int> SourceUids, List<int> DestinationUids)> CopyMessagesAsync(
         EmailDbContext db,
+        MailboxMessageContentService content,
         FolderDB destinationFolder,
         IReadOnlyList<EmailDB> metadata,
         CancellationToken ct)
@@ -2565,6 +2666,7 @@ ILogger<ImapServerService> logger) : BackgroundService
             var source = await db.Emails
                 .AsNoTracking()
                 .SingleAsync(email => email.Id == item.Id && email.FolderId == item.FolderId, ct);
+            var rawMessage = await content.ReadAsync(source, ct);
             var newUid = destinationFolder.NextUid++;
             var newModSeq = ++destinationFolder.HighestModSeq;
             var copy = new EmailDB
@@ -2573,10 +2675,7 @@ ILogger<ImapServerService> logger) : BackgroundService
                 Sender = source.Sender,
                 Recipient = source.Recipient,
                 Subject = source.Subject,
-                Body = source.Body,
-                RawHeaders = source.RawHeaders,
-                RawMessage = source.RawMessage?.ToArray(),
-                SizeBytes = source.SizeBytes,
+                Body = string.Empty,
                 MessageId = source.MessageId,
                 InReplyTo = source.InReplyTo,
                 Cc = source.Cc,
@@ -2595,6 +2694,8 @@ ILogger<ImapServerService> logger) : BackgroundService
                 ModSeq = newModSeq,
                 FolderId = destinationFolder.Id,
             };
+
+            await content.SetAsync(copy, rawMessage, ct);
 
             sourceUids.Add(source.Uid);
             destinationUids.Add(newUid);
@@ -2670,6 +2771,12 @@ ILogger<ImapServerService> logger) : BackgroundService
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
+        var effects = scope.ServiceProvider.GetRequiredService<LargeObjectTransactionEffects>();
+        var marker = effects.Mark();
+        await using var transaction = db.Database.IsRelational()
+            ? await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct)
+            : null;
 
         var deleted = await GetEmailMetadataInFolderAsync(
             db,
@@ -2692,9 +2799,15 @@ ILogger<ImapServerService> logger) : BackgroundService
                 });
             }
             foreach (var email in toRemove)
+            {
+                content.DeleteOnCommit(email);
                 AttachDelete(db, email);
+            }
         }
         await db.SaveChangesAsync(ct);
+        if (transaction is not null)
+            await transaction.CommitAsync(ct);
+        await effects.CommitAsync(marker);
     }
 
     private static string FormatMailboxName(
@@ -3440,6 +3553,30 @@ ILogger<ImapServerService> logger) : BackgroundService
         sb.Append("\r\n");
         sb.Append(email.Body);
         return sb.ToString();
+    }
+
+    private static void ApplyTransientRawMessage(EmailDB email, byte[] rawMessage)
+    {
+        email.RawMessage = rawMessage;
+        var raw = MailWireEncoding.Instance.GetString(rawMessage);
+        var separator = raw.IndexOf("\r\n\r\n", StringComparison.Ordinal);
+        if (separator >= 0)
+        {
+            email.RawHeaders = raw[..separator];
+            email.Body = raw[(separator + 4)..];
+            return;
+        }
+
+        separator = raw.IndexOf("\n\n", StringComparison.Ordinal);
+        if (separator >= 0)
+        {
+            email.RawHeaders = raw[..separator];
+            email.Body = raw[(separator + 2)..];
+            return;
+        }
+
+        email.RawHeaders = raw;
+        email.Body = string.Empty;
     }
 
     private static string BuildRfc822Header(EmailDB email)
@@ -4952,6 +5089,7 @@ ILogger<ImapServerService> logger) : BackgroundService
 
     private static async Task<SearchExecutionResult> FindSearchCandidatesAsync(
         IQueryable<EmailDB> query,
+        MailboxMessageContentService content,
         string criteria,
         IReadOnlySet<int> savedSearchUids,
         bool utf8Enabled,
@@ -5009,13 +5147,29 @@ ILogger<ImapServerService> logger) : BackgroundService
         var includeRawHeaders = predicate.Requirements.HasFlag(SearchDataRequirements.RawHeaders);
         var includeModSequence = predicate.Requirements.HasFlag(
             SearchDataRequirements.ModSequenceResult);
-        var messageQuery = BuildSearchMessageQuery(query, includeBody, includeRawHeaders);
+        List<SearchStoredMessage> messages;
+        if (includeBody || includeRawHeaders)
+        {
+            var stored = await query
+                .OrderBy(message => message.Uid)
+                .ToListAsync(cancellationToken);
+            messages = new List<SearchStoredMessage>(stored.Count);
+            foreach (var email in stored)
+            {
+                var rawMessage = await content.ReadAsync(email, cancellationToken);
+                ApplyTransientRawMessage(email, rawMessage);
+                messages.Add(CreateSearchStoredMessage(email, includeBody, includeRawHeaders));
+            }
+        }
+        else
+        {
+            messages = await BuildSearchMessageQuery(query, false, false)
+                .ToListAsync(cancellationToken);
+        }
         var matches = new List<SearchCandidate>();
         long? highestModSequence = null;
         var sequenceNumber = 0;
-        await foreach (var message in messageQuery
-                           .AsAsyncEnumerable()
-                           .WithCancellation(cancellationToken))
+        foreach (var message in messages)
         {
             sequenceNumber++;
             if (predicate.IsMatch(message, sequenceNumber))
@@ -5031,6 +5185,33 @@ ILogger<ImapServerService> logger) : BackgroundService
 
         return new SearchExecutionResult(matches, null, highestModSequence);
     }
+
+    private static SearchStoredMessage CreateSearchStoredMessage(
+        EmailDB message,
+        bool includeBody,
+        bool includeRawHeaders) =>
+        new(
+            message.Id,
+            message.Uid,
+            message.Sender,
+            message.Recipient,
+            message.Subject,
+            includeBody ? message.Body : string.Empty,
+            message.IsRead,
+            message.IsDeleted,
+            message.IsFlagged,
+            message.IsDraft,
+            message.IsAnswered,
+            message.Keywords,
+            message.ModSeq,
+            message.SizeBytes,
+            includeRawHeaders ? message.RawHeaders : null,
+            message.MessageId,
+            message.InReplyTo,
+            message.Cc,
+            message.EmailObjectId,
+            message.ThreadObjectId,
+            message.ReceivedAt);
 
     private static IQueryable<SearchStoredMessage> BuildSearchMessageQuery(
         IQueryable<EmailDB> query,
@@ -5567,6 +5748,7 @@ ILogger<ImapServerService> logger) : BackgroundService
 
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
         await using var transaction = db.Database.IsRelational()
             ? await db.Database.BeginTransactionAsync(IsolationLevel.RepeatableRead, ct)
             : null;
@@ -5576,6 +5758,7 @@ ILogger<ImapServerService> logger) : BackgroundService
             .Where(email => email.FolderId == session.SelectedFolderId!.Value);
         var searchResult = await FindSearchCandidatesAsync(
             folderQuery,
+            content,
             searchCriteria,
             session.SavedSearchUids,
             session.Utf8Enabled,
@@ -5591,9 +5774,14 @@ ILogger<ImapServerService> logger) : BackgroundService
         var sequenceById = searchResult.Matches.ToDictionary(
             candidate => candidate.Id,
             candidate => candidate.SequenceNumber);
-        var storedMessages = await folderQuery
+        var storedEmails = await folderQuery
             .Where(email => matchedIds.Contains(email.Id))
-            .Select(email => new SortStoredMessage(
+            .ToListAsync(ct);
+        var storedMessages = new List<SortStoredMessage>(storedEmails.Count);
+        foreach (var email in storedEmails)
+        {
+            ApplyTransientRawMessage(email, await content.ReadAsync(email, ct));
+            storedMessages.Add(new SortStoredMessage(
                 email.Id,
                 email.Uid,
                 0,
@@ -5603,8 +5791,8 @@ ILogger<ImapServerService> logger) : BackgroundService
                 email.Recipient,
                 email.Cc,
                 email.Subject,
-                email.RawHeaders))
-            .ToListAsync(ct);
+                email.RawHeaders));
+        }
         if (transaction is not null)
             await transaction.CommitAsync(ct);
 
@@ -5672,6 +5860,7 @@ ILogger<ImapServerService> logger) : BackgroundService
 
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
         await using var transaction = db.Database.IsRelational()
             ? await db.Database.BeginTransactionAsync(IsolationLevel.RepeatableRead, ct)
             : null;
@@ -5681,6 +5870,7 @@ ILogger<ImapServerService> logger) : BackgroundService
             .Where(email => email.FolderId == session.SelectedFolderId!.Value);
         var searchResult = await FindSearchCandidatesAsync(
             folderQuery,
+            content,
             searchCriteria,
             session.SavedSearchUids,
             session.Utf8Enabled,
@@ -5699,9 +5889,14 @@ ILogger<ImapServerService> logger) : BackgroundService
             var sequenceById = searchResult.Matches.ToDictionary(
                 candidate => candidate.Id,
                 candidate => candidate.SequenceNumber);
-            var storedMessages = await folderQuery
+            var storedEmails = await folderQuery
                 .Where(email => matchedIds.Contains(email.Id))
-                .Select(email => new SortStoredMessage(
+                .ToListAsync(ct);
+            var storedMessages = new List<SortStoredMessage>(storedEmails.Count);
+            foreach (var email in storedEmails)
+            {
+                ApplyTransientRawMessage(email, await content.ReadAsync(email, ct));
+                storedMessages.Add(new SortStoredMessage(
                     email.Id,
                     email.Uid,
                     0,
@@ -5711,8 +5906,8 @@ ILogger<ImapServerService> logger) : BackgroundService
                     email.Recipient,
                     email.Cc,
                     email.Subject,
-                    email.RawHeaders))
-                .ToListAsync(ct);
+                    email.RawHeaders));
+            }
             if (transaction is not null)
                 await transaction.CommitAsync(ct);
 
@@ -5731,9 +5926,14 @@ ILogger<ImapServerService> logger) : BackgroundService
         var referenceSequenceById = searchResult.Matches.ToDictionary(
             candidate => candidate.Id,
             candidate => candidate.SequenceNumber);
-        var referenceStoredMessages = await folderQuery
+        var referenceStoredEmails = await folderQuery
             .Where(email => matchedIds.Contains(email.Id))
-            .Select(email => new ThreadStoredMessage(
+            .ToListAsync(ct);
+        var referenceStoredMessages = new List<ThreadStoredMessage>(referenceStoredEmails.Count);
+        foreach (var email in referenceStoredEmails)
+        {
+            ApplyTransientRawMessage(email, await content.ReadAsync(email, ct));
+            referenceStoredMessages.Add(new ThreadStoredMessage(
                 email.Id,
                 email.Uid,
                 0,
@@ -5741,8 +5941,8 @@ ILogger<ImapServerService> logger) : BackgroundService
                 email.Subject,
                 email.RawHeaders,
                 email.MessageId,
-                email.InReplyTo))
-            .ToListAsync(ct);
+                email.InReplyTo));
+        }
         if (transaction is not null)
             await transaction.CommitAsync(ct);
 
@@ -6146,6 +6346,12 @@ ILogger<ImapServerService> logger) : BackgroundService
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
+        var effects = scope.ServiceProvider.GetRequiredService<LargeObjectTransactionEffects>();
+        var marker = effects.Mark();
+        await using var transaction = db.Database.IsRelational()
+            ? await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct)
+            : null;
 
         var emails = await GetEmailMetadataInFolderAsync(
             db,
@@ -6195,6 +6401,7 @@ ILogger<ImapServerService> logger) : BackgroundService
                 FolderId = session.SelectedFolderId!.Value,
             });
 
+            content.DeleteOnCommit(email);
             AttachDelete(db, email);
             expunged++;
         }
@@ -6206,6 +6413,9 @@ ILogger<ImapServerService> logger) : BackgroundService
         }
 
         await db.SaveChangesAsync(ct);
+        if (transaction is not null)
+            await transaction.CommitAsync(ct);
+        await effects.CommitAsync(marker);
         await writer.WriteLineAsync($"{tag} OK UID EXPUNGE completed");
     }
 
@@ -6402,6 +6612,8 @@ ILogger<ImapServerService> logger) : BackgroundService
         var ct = timeout.Token;
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
+        var effects = scope.ServiceProvider.GetRequiredService<LargeObjectTransactionEffects>();
 
         var remaining = args;
         var pendingMessages = new List<EmailDB>();
@@ -6640,18 +6852,49 @@ ILogger<ImapServerService> logger) : BackgroundService
         }
 
         var allUids = new List<int>(pendingMessages.Count);
-        foreach (var email in pendingMessages)
+        var marker = effects.Mark();
+        var commitAttempted = false;
+        try
         {
-            email.Uid = folder.NextUid++;
-            email.ModSeq = ++folder.HighestModSeq;
-            email.FolderId = folder.Id;
-            allUids.Add(email.Uid);
-        }
+            foreach (var email in pendingMessages)
+            {
+                email.Uid = folder.NextUid++;
+                email.ModSeq = ++folder.HighestModSeq;
+                email.FolderId = folder.Id;
+                allUids.Add(email.Uid);
+                var rawMessage = email.RawMessage
+                    ?? throw new InvalidOperationException("The APPEND message body is unavailable.");
+                await content.SetAsync(email, rawMessage, ct);
+            }
 
-        db.Emails.AddRange(pendingMessages);
-        await db.SaveChangesAsync(ct);
-        if (transaction is not null)
-            await transaction.CommitAsync(ct);
+            db.Emails.AddRange(pendingMessages);
+            await db.SaveChangesAsync(ct);
+            if (transaction is not null)
+            {
+                commitAttempted = true;
+                await transaction.CommitAsync(ct);
+            }
+            await effects.CommitAsync(marker);
+        }
+        catch
+        {
+            if (transaction is not null)
+            {
+                try
+                {
+                    await transaction.RollbackAsync(CancellationToken.None);
+                }
+                catch (Exception rollbackException)
+                {
+                    logger.LogWarning(rollbackException, "Could not roll back IMAP APPEND");
+                }
+            }
+            if (commitAttempted)
+                effects.Discard(marker);
+            else
+                await effects.RollbackAsync(marker);
+            throw;
+        }
 
         var uidSetStr = FormatUidRange(allUids);
         await writer.WriteLineAsync($"{tag} OK [APPENDUID {folder.UidValidity} {uidSetStr}] APPEND completed");

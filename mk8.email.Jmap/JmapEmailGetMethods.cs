@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
+using mk8.email.Application.Services;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
 
@@ -66,6 +67,7 @@ internal sealed class EmailGetMethod(
     EmailDbContext database,
     JmapAccountService accounts,
     JmapStateService states,
+    MailboxMessageContentService content,
     EnvironmentConfig environment) : IJmapMethod
 {
     public string Name => "Email/get";
@@ -131,7 +133,8 @@ internal sealed class EmailGetMethod(
                 continue;
             }
 
-            using var message = JmapEmailCodec.Parse(email);
+            var rawMessage = await content.ReadAsync(email, cancellationToken);
+            using var message = JmapEmailCodec.Parse(rawMessage);
             responseList.Add(JmapEmailCodec.BuildEmail(
                 message,
                 options,

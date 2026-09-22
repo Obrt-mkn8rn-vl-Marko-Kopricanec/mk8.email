@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Logging.Abstractions;
 using MimeKit;
 using mk8.email.Application.Interfaces;
 using mk8.email.Application.Services;
@@ -260,9 +261,16 @@ public sealed class VacationResponderTests
                     MaxRecipientsPerMessage = 10,
                 },
             };
+            var store = new InMemoryLargeObjectStore();
+            var effects = new LargeObjectTransactionEffects(
+                store,
+                NullLogger<LargeObjectTransactionEffects>.Instance);
             var responder = new VacationResponder(
                 database,
-                new EmailService(database),
+                new EmailService(
+                    database,
+                    new MailboxMessageContentService(store, effects),
+                    effects),
                 queue,
                 environment,
                 new FixedTimeProvider(new DateTimeOffset(2026, 9, 20, 12, 0, 0, TimeSpan.Zero)));

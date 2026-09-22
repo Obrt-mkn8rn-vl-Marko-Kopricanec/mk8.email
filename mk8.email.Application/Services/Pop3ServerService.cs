@@ -636,6 +636,7 @@ public sealed class Pop3ServerService(
         var domain = user.Username[(separator + 1)..];
         using var scope = scopeFactory.CreateScope();
         var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
         var folderId = await database.Folders
             .AsNoTracking()
             .Where(folder => folder.Inbox.OwnerId == user.Id
@@ -650,25 +651,11 @@ public sealed class Pop3ServerService(
         var query = database.Emails
             .AsNoTracking()
             .Where(email => email.FolderId == folderId && !email.IsDeleted)
-            .OrderBy(email => email.Uid)
-            .Select(email => new EmailDB
-            {
-                Id = email.Id,
-                Sender = email.Sender,
-                Recipient = email.Recipient,
-                Subject = email.Subject,
-                Body = email.Body,
-                RawHeaders = email.RawHeaders,
-                RawMessage = email.RawMessage,
-                MessageId = email.MessageId,
-                InReplyTo = email.InReplyTo,
-                Cc = email.Cc,
-                ReceivedAt = email.ReceivedAt,
-                Uid = email.Uid,
-            });
+            .OrderBy(email => email.Uid);
 
         await foreach (var email in query.AsAsyncEnumerable().WithCancellation(cancellationToken))
         {
+            email.RawMessage = await content.ReadAsync(email, cancellationToken);
             var wireMessage = BuildWireMessage(email);
             session.Messages.Add(new Pop3Message(
                 session.Messages.Count + 1,
@@ -820,27 +807,17 @@ public sealed class Pop3ServerService(
     {
         using var scope = scopeFactory.CreateScope();
         var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
         var email = await database.Emails
             .AsNoTracking()
             .Where(candidate => candidate.Id == messageId
                 && candidate.Folder.Inbox.OwnerId == session.UserId
                 && !candidate.IsDeleted)
-            .Select(candidate => new EmailDB
-            {
-                Id = candidate.Id,
-                Sender = candidate.Sender,
-                Recipient = candidate.Recipient,
-                Subject = candidate.Subject,
-                Body = candidate.Body,
-                RawHeaders = candidate.RawHeaders,
-                RawMessage = candidate.RawMessage,
-                MessageId = candidate.MessageId,
-                InReplyTo = candidate.InReplyTo,
-                Cc = candidate.Cc,
-                ReceivedAt = candidate.ReceivedAt,
-            })
             .SingleOrDefaultAsync(cancellationToken);
-        return email is null ? null : BuildWireMessage(email);
+        if (email is null)
+            return null;
+        email.RawMessage = await content.ReadAsync(email, cancellationToken);
+        return BuildWireMessage(email);
     }
 
     private static async Task HandleDeleteAsync(
@@ -896,6 +873,10 @@ public sealed class Pop3ServerService(
 
         using var scope = scopeFactory.CreateScope();
         var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
+        var effects = scope.ServiceProvider.GetRequiredService<LargeObjectTransactionEffects>();
+        var marker = effects.Mark();
+        var commitAttempted = false;
         await using var transaction = database.Database.IsRelational()
             ? await database.Database.BeginTransactionAsync(
                 IsolationLevel.Serializable,
@@ -923,12 +904,39 @@ public sealed class Pop3ServerService(
                 ModSeq = ++folder.HighestModSeq,
                 FolderId = folder.Id,
             });
+            content.DeleteOnCommit(email);
             database.Emails.Remove(email);
         }
 
-        await database.SaveChangesAsync(cancellationToken);
-        if (transaction is not null)
-            await transaction.CommitAsync(cancellationToken);
+        try
+        {
+            await database.SaveChangesAsync(cancellationToken);
+            if (transaction is not null)
+            {
+                commitAttempted = true;
+                await transaction.CommitAsync(cancellationToken);
+            }
+            await effects.CommitAsync(marker);
+        }
+        catch
+        {
+            if (transaction is not null)
+            {
+                try
+                {
+                    await transaction.RollbackAsync(CancellationToken.None);
+                }
+                catch (Exception rollbackException)
+                {
+                    logger.LogWarning(rollbackException, "Could not roll back POP3 deletion");
+                }
+            }
+            if (commitAttempted)
+                effects.Discard(marker);
+            else
+                await effects.RollbackAsync(marker);
+            throw;
+        }
         return emails.Count;
     }
 

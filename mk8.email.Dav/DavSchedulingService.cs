@@ -9,16 +9,6 @@ using mk8.email.Configuration;
 
 namespace mk8.email.Dav;
 
-internal sealed record DavScheduleRecipientResult(
-    string Recipient,
-    string RequestStatus,
-    string? CalendarData = null);
-
-internal sealed record DavScheduleSubmissionResult(
-    int StatusCode,
-    string? Error,
-    IReadOnlyList<DavScheduleRecipientResult> Recipients);
-
 internal sealed record DavSchedulingRequest(
     string Method,
     string Uid,

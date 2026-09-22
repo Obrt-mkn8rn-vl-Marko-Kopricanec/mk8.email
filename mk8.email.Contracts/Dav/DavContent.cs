@@ -2,14 +2,7 @@ using System.Text;
 
 namespace mk8.email.Dav;
 
-internal sealed record DavContentInfo(
-    string Uid,
-    string ContentType,
-    IReadOnlySet<string> Components,
-    string Text,
-    IReadOnlyDictionary<string, IReadOnlyList<string>> Properties);
-
-internal static class DavContent
+public static class DavContent
 {
     private static readonly UTF8Encoding StrictUtf8 = new(
         encoderShouldEmitUTF8Identifier: false,
@@ -274,7 +267,7 @@ internal static class DavContent
         return result.ToString();
     }
 
-    internal static IReadOnlyList<string> UnfoldLines(string text)
+    public static IReadOnlyList<string> UnfoldLines(string text)
     {
         var physicalLines = text
             .Replace("\r\n", "\n", StringComparison.Ordinal)
@@ -299,7 +292,7 @@ internal static class DavContent
         return result;
     }
 
-    internal static bool TryParseProperty(string line, out string name, out string value)
+    public static bool TryParseProperty(string line, out string name, out string value)
     {
         if (TryParseVCardProperty(line, out var property))
         {

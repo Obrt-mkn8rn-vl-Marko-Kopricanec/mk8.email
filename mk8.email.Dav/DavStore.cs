@@ -11,69 +11,6 @@ using mk8.email.Infrastructure.Models;
 
 namespace mk8.email.Dav;
 
-internal enum DavCollectionKind
-{
-    Calendar,
-    AddressBook,
-}
-
-internal enum DavCollectionAccess
-{
-    Owner,
-    ReadOnly,
-    ReadWrite,
-}
-
-internal sealed record DavShareGrant(
-    Guid UserId,
-    DavCollectionAccess Access);
-
-internal sealed record DavPrincipal(
-    Guid Id,
-    string Username);
-
-internal sealed record DavCollection(
-    Guid Id,
-    Guid UserId,
-    DavCollectionAccess Access,
-    Guid HrefUserId,
-    string HrefSlug,
-    IReadOnlyList<DavShareGrant> Shares,
-    DavCollectionKind Kind,
-    string Slug,
-    string DisplayName,
-    string? Description,
-    string? Color,
-    int SortOrder,
-    string[] Components,
-    long SyncToken,
-    DateTime CreatedAt,
-    DateTime UpdatedAt)
-{
-    public bool IsOwner => Access == DavCollectionAccess.Owner;
-    public bool CanWrite => Access is DavCollectionAccess.Owner or DavCollectionAccess.ReadWrite;
-}
-
-internal sealed record DavResource(
-    Guid Id,
-    Guid CollectionId,
-    string ResourceName,
-    string Uid,
-    string ContentType,
-    byte[] Content,
-    string Etag,
-    int SizeBytes,
-    long ChangeSequence,
-    DateTime CreatedAt,
-    DateTime UpdatedAt);
-
-internal sealed record DavChange(
-    long Sequence,
-    string ResourceName,
-    bool IsDeleted,
-    string? Etag,
-    DateTime ChangedAt);
-
 internal sealed record DavCalendarRecipient(
     string Address,
     bool IsLocal,
@@ -82,58 +19,6 @@ internal sealed record DavCalendarRecipient(
 internal sealed record DavCalendarResourceSet(
     IReadOnlyList<DavResource> Resources,
     bool IsComplete);
-
-internal sealed record DavCollectionProperties(
-    string DisplayName,
-    string? Description,
-    string? Color,
-    int SortOrder,
-    string[] Components);
-
-internal enum DavCollectionWriteStatus
-{
-    Created,
-    Updated,
-    NotFound,
-    AlreadyExists,
-    LimitExceeded,
-    Protected,
-    Forbidden,
-}
-
-internal sealed record DavCollectionWriteResult(
-    DavCollectionWriteStatus Status,
-    DavCollection? Collection = null);
-
-internal enum DavAclWriteStatus
-{
-    Updated,
-    NotFound,
-    Forbidden,
-    Protected,
-    TooManyEntries,
-    UnrecognizedPrincipal,
-    DisallowedPrincipal,
-    BindingConflict,
-}
-
-internal sealed record DavAclWriteResult(DavAclWriteStatus Status);
-
-internal enum DavResourceWriteStatus
-{
-    Created,
-    Updated,
-    Unchanged,
-    NotFound,
-    PreconditionFailed,
-    UidConflict,
-    LimitExceeded,
-    Forbidden,
-}
-
-internal sealed record DavResourceWriteResult(
-    DavResourceWriteStatus Status,
-    DavResource? Resource = null);
 
 internal sealed class DavStore(
     EmailDbContext database,

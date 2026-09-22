@@ -192,6 +192,12 @@
           "mk8.email.Utils": "[1.0.0, )"
         }
       },
+      "mk8.email.configuration": {
+        "type": "Project",
+        "dependencies": {
+          "Npgsql": "[10.0.2, )"
+        }
+      },
       "mk8.email.contracts": {
         "type": "Project"
       },
@@ -206,7 +212,8 @@
         "type": "Project",
         "dependencies": {
           "Microsoft.EntityFrameworkCore": "[10.0.4, )",
-          "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.1, )"
+          "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.1, )",
+          "mk8.email.Configuration": "[1.0.0, )"
         }
       },
       "mk8.email.jmap": {

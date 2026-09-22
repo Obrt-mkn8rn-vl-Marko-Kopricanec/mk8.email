@@ -12,6 +12,7 @@
     <Project Path="mk8.email.OAuth/mk8.email.OAuth.csproj" />
   </Folder>
   <Folder Name="/Shared/">
+    <Project Path="mk8.email.Configuration/mk8.email.Configuration.csproj" />
     <Project Path="mk8.email.Contracts/mk8.email.Contracts.csproj" />
     <Project Path="mk8.email.Messaging/mk8.email.Messaging.csproj" />
     <Project Path="mk8.email.Storage/mk8.email.Storage.csproj" />

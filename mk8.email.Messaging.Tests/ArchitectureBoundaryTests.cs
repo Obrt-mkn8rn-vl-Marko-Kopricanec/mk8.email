@@ -62,6 +62,24 @@ public sealed class ArchitectureBoundaryTests
             || reference.StartsWith("mk8.email.Gateway", StringComparison.Ordinal)
             || reference.StartsWith("mk8.email.Jmap", StringComparison.Ordinal)
             || reference.StartsWith("mk8.email.Dav", StringComparison.Ordinal)
-            || reference.StartsWith("mk8.email.OAuth", StringComparison.Ordinal)));
+                || reference.StartsWith("mk8.email.OAuth", StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
+    public void SharedConfigurationHasNoApplicationOrEntityFrameworkDependency()
+    {
+        var references = typeof(mk8.email.Infrastructure.Environment.EnvironmentConfig).Assembly
+            .GetReferencedAssemblies()
+            .Select(reference => reference.Name ?? string.Empty)
+            .ToArray();
+
+        Assert.AreEqual(
+            "mk8.email.Configuration",
+            typeof(mk8.email.Infrastructure.Environment.EnvironmentConfig).Assembly.GetName().Name);
+        Assert.IsFalse(references.Any(reference =>
+            reference.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal)
+            || reference.StartsWith("Microsoft.EntityFrameworkCore", StringComparison.Ordinal)
+            || reference.StartsWith("mk8.email.Application", StringComparison.Ordinal)
+            || reference.StartsWith("mk8.email.Infrastructure", StringComparison.Ordinal)));
     }
 }

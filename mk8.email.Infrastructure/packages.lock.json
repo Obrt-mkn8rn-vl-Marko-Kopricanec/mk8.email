@@ -306,6 +306,12 @@
           "System.Composition.Hosting": "9.0.0",
           "System.Composition.Runtime": "9.0.0"
         }
+      },
+      "mk8.email.configuration": {
+        "type": "Project",
+        "dependencies": {
+          "Npgsql": "[10.0.2, )"
+        }
       }
     }
   }

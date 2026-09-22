@@ -1,4 +1,3 @@
-using mk8.email.Infrastructure.Models;
 using Npgsql;
 using System.Net;
 using System.Security.Cryptography;
@@ -469,43 +468,6 @@ public sealed class EnvironmentConfig
             || allowAtAndSlash && character is '@' or '/');
     }
 
-    public GlobalConfigDB ToGlobalConfig() => new()
-    {
-        SmtpHostname = Smtp.Hostname,
-        SmtpPort = Smtp.Port,
-        SmtpSubmissionPort = Smtp.SubmissionPort,
-        SmtpImplicitTlsPort = Smtp.ImplicitTlsPort,
-        EnableSmtp = Smtp.EnableSmtp,
-        EnableSubmission = Smtp.EnableSubmission,
-        EnableImplicitTls = Smtp.EnableImplicitTls,
-        EnableStartTls = Smtp.EnableStartTls,
-        RequireTls = Smtp.RequireTls,
-        RequireAuth = Smtp.RequireAuth,
-        AllowRelay = Smtp.AllowRelay,
-
-        EnableImap = Imap.EnableImap,
-        ImapPort = Imap.Port,
-        EnableImapImplicitTls = Imap.EnableImplicitTls,
-        ImapImplicitTlsPort = Imap.ImplicitTlsPort,
-
-        TlsCertificatePath = Tls.CertificatePath,
-        TlsCertificateKeyPath = Tls.CertificateKeyPath,
-
-        DkimPrivateKeyPath = Dkim.PrivateKeyPath,
-        DkimSelector = Dkim.Selector,
-        EnableDkimSigning = Dkim.EnableSigning,
-
-        EnableSpfCheck = Security.EnableSpfCheck,
-        EnableDmarcCheck = Security.EnableDmarcCheck,
-        PasswordHashScheme = Security.PasswordHashScheme,
-
-        MaxMessageSizeBytes = Limits.MaxMessageSizeBytes,
-        MaxRecipientsPerMessage = Limits.MaxRecipientsPerMessage,
-        ConnectionTimeoutSeconds = Limits.ConnectionTimeoutSeconds,
-        MaxConnectionsPerIp = Limits.MaxConnectionsPerIp,
-
-        AllowRegistration = General.AllowRegistration,
-    };
 }
 
 public sealed class DatabaseConfig

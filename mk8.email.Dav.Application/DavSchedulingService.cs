@@ -5,6 +5,7 @@ using System.Xml;
 using MimeKit;
 using MimeKit.Text;
 using mk8.email.Application.Interfaces;
+using mk8.email.Contracts.Mail;
 using mk8.email.Configuration;
 
 namespace mk8.email.Dav;

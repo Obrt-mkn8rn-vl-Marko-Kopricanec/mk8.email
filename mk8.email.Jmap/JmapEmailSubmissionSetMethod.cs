@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using MimeKit;
 using mk8.email.Application.Interfaces;
+using mk8.email.Contracts.Mail;
 using mk8.email.Application.Services;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;

@@ -1,4 +1,5 @@
 using mk8.email.Contracts.Messaging;
+using mk8.email.Contracts.Mail;
 using mk8.email.MailWire;
 
 namespace mk8.email.Messaging.Tests;
@@ -18,6 +19,15 @@ public sealed class ArchitectureBoundaryTests
             reference.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal)
             || reference.StartsWith("Microsoft.EntityFrameworkCore", StringComparison.Ordinal)
             || reference.StartsWith("Npgsql", StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
+    public void OutboundMailContractsDoNotLoadApplicationLogic()
+    {
+        Assert.AreEqual("mk8.email.Contracts", typeof(IOutboundMailRelay).Assembly.GetName().Name);
+        Assert.AreEqual("mk8.email.Contracts", typeof(IMailExchangeResolver).Assembly.GetName().Name);
+        Assert.AreEqual("mk8.email.Contracts", typeof(IMailSubmissionQueue).Assembly.GetName().Name);
+        Assert.AreEqual("mk8.email.Contracts", typeof(SmtpRelayPresentationRequest).Assembly.GetName().Name);
     }
 
     [TestMethod]

@@ -1,4 +1,4 @@
-namespace mk8.email.Application.Interfaces;
+namespace mk8.email.Contracts.Mail;
 
 public sealed record MailDsnEnvelope(
     string? ReturnContent = null,

@@ -12,10 +12,13 @@
   </Folder>
   <Folder Name="/Shared/">
     <Project Path="mk8.email.Contracts/mk8.email.Contracts.csproj" />
+    <Project Path="mk8.email.Messaging/mk8.email.Messaging.csproj" />
+    <Project Path="mk8.email.Storage/mk8.email.Storage.csproj" />
     <Project Path="mk8.email.Utils/mk8.email.Utils.csproj" />
   </Folder>
   <Folder Name="/Tests/">
     <Project Path="mk8.email.Application.Tests/mk8.email.Application.Tests.csproj" />
     <Project Path="mk8.email.Infrastructure.Tests/mk8.email.Infrastructure.Tests.csproj" />
+    <Project Path="mk8.email.Messaging.Tests/mk8.email.Messaging.Tests.csproj" />
   </Folder>
 </Solution>

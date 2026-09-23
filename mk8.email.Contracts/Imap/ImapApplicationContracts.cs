@@ -21,6 +21,10 @@ public interface IImapApplicationService
     Task<ImapMailboxSubscriptionResult> SetMailboxSubscriptionAsync(
         ImapMailboxSubscriptionRequest request,
         CancellationToken cancellationToken = default);
+
+    Task<ImapMailboxCreateResult> CreateMailboxAsync(
+        ImapMailboxCreateRequest request,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record ImapPasswordAuthentication(string Username, string Password);
@@ -65,3 +69,17 @@ public sealed record ImapMailboxSubscriptionRequest(
     bool IsSubscribed);
 
 public sealed record ImapMailboxSubscriptionResult(bool Found);
+
+public sealed record ImapMailboxCreateRequest(Guid UserId, string MailboxName);
+
+public enum ImapMailboxCreateDisposition
+{
+    Created,
+    InvalidName,
+    AlreadyExists,
+}
+
+public sealed record ImapMailboxCreateResult(
+    ImapMailboxCreateDisposition Disposition,
+    Guid FolderId,
+    string? MailboxId);

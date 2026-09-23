@@ -31,6 +31,7 @@ public static class ApplicationOperations
     public const string ImapListMailboxes = "imap.mailboxes.list";
     public const string ImapGetMailboxStatuses = "imap.mailboxes.statuses";
     public const string ImapSetMailboxSubscription = "imap.mailboxes.subscription.set";
+    public const string ImapCreateMailbox = "imap.mailboxes.create";
     public const string AdminAuthenticate = "admin.authenticate";
     public const string AdminDashboardGet = "admin.dashboard.get";
     public const string AdminDomainsGet = "admin.domains.get";

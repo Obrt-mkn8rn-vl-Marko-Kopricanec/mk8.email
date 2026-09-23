@@ -1421,37 +1421,43 @@ ILogger<ImapServerService> logger) : BackgroundService
             return;
         }
 
-        using var scope = scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-
-        var location = await ResolveMailboxLocationAsync(db, session.UserId, mailboxName, ct);
-        if (location is null || !IsValidFolderName(location.Value.FolderName))
+        ImapMailboxCreateResult result;
+        try
         {
-            await writer.WriteLineAsync($"{tag} NO [CANNOT] Invalid mailbox name");
+            using var scope = scopeFactory.CreateScope();
+            var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
+            result = await application.CreateMailboxAsync(
+                new ImapMailboxCreateRequest(session.UserId, mailboxName), ct);
+            if (result.Disposition == ImapMailboxCreateDisposition.Created
+                && (result.FolderId == Guid.Empty || string.IsNullOrEmpty(result.MailboxId)))
+            {
+                throw new InvalidOperationException("The IMAP mailbox creation result is incomplete.");
+            }
+        }
+        catch (Exception exception) when (
+            exception is not OperationCanceledException && !ct.IsCancellationRequested)
+        {
+            logger.LogWarning(exception, "IMAP mailbox creation is unavailable for {UserId}", session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailbox creation unavailable");
             return;
         }
 
-        var exists = await db.Folders.AnyAsync(
-            folder => folder.InboxId == location.Value.InboxId
-                   && folder.Name == location.Value.FolderName,
-            ct);
-        if (exists)
+        switch (result.Disposition)
         {
-            await writer.WriteLineAsync($"{tag} NO [ALREADYEXISTS] Mailbox already exists");
-            return;
+            case ImapMailboxCreateDisposition.InvalidName:
+                await writer.WriteLineAsync($"{tag} NO [CANNOT] Invalid mailbox name");
+                return;
+            case ImapMailboxCreateDisposition.AlreadyExists:
+                await writer.WriteLineAsync($"{tag} NO [ALREADYEXISTS] Mailbox already exists");
+                return;
+            case ImapMailboxCreateDisposition.Created:
+                await writer.WriteLineAsync(
+                    $"{tag} OK [MAILBOXID ({FormatObjectId('F', result.MailboxId!, result.FolderId)})] CREATE completed");
+                return;
+            default:
+                await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailbox creation unavailable");
+                return;
         }
-
-        var folder = new FolderDB
-        {
-            Id = Guid.CreateVersion7(),
-            Name = location.Value.FolderName,
-            InboxId = location.Value.InboxId,
-        };
-        db.Folders.Add(folder);
-        await db.SaveChangesAsync(ct);
-
-        await writer.WriteLineAsync(
-            $"{tag} OK [MAILBOXID ({FormatMailboxObjectId(folder)})] CREATE completed");
     }
 
     private async Task HandleDeleteAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
@@ -1561,7 +1567,7 @@ ILogger<ImapServerService> logger) : BackgroundService
         var destination = await ResolveMailboxLocationAsync(db, session.UserId, newName, ct);
         if (destination is null
             || destination.Value.InboxId != folder.InboxId
-            || !IsValidFolderName(destination.Value.FolderName))
+            || !ImapMailboxResolver.IsValidFolderName(destination.Value.FolderName))
         {
             await writer.WriteLineAsync($"{tag} NO [CANNOT] Invalid rename destination");
             return;
@@ -2596,24 +2602,6 @@ ILogger<ImapServerService> logger) : BackgroundService
     private static Task<ImapMailboxLocation?> ResolveMailboxLocationAsync(
         EmailDbContext db, Guid userId, string mailboxName, CancellationToken ct) =>
         ImapMailboxResolver.ResolveLocationAsync(db, userId, mailboxName, ct);
-
-    private static bool IsValidFolderName(string folderName)
-    {
-        if (folderName.Length is < 1 or > FolderDB.MaximumStoredNameLength
-            || folderName[0] == '/'
-            || folderName[^1] == '/'
-            || folderName.Contains("//", StringComparison.Ordinal)
-            || folderName.Any(char.IsControl))
-        {
-            return false;
-        }
-
-        var components = folderName.Split('/');
-        return components.Length <= FolderDB.MaximumHierarchyDepth
-            && components.All(component =>
-                component.Length > 0
-                && Encoding.UTF8.GetByteCount(component) <= FolderDB.MaximumLeafNameOctets);
-    }
 
     private static bool IsSystemFolder(string folderName) =>
         DefaultFolders.All.Any(

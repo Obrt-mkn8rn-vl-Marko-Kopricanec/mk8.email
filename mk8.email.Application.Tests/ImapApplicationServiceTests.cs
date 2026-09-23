@@ -52,7 +52,8 @@ public sealed class ImapApplicationServiceTests
         var primary = CreateInbox(owner, address, "owner");
         var primaryFolder = AddFolder(database, primary, DefaultFolders.Inbox, subscribed: true);
         AddFolder(database, primary, "Archive", subscribed: false);
-        AddFolder(database, CreateInbox(owner, address, "alias"), DefaultFolders.Inbox, subscribed: true);
+        var alias = CreateInbox(owner, address, "alias");
+        AddFolder(database, alias, DefaultFolders.Inbox, subscribed: true);
         AddFolder(database, CreateInbox(other, address, "other"), DefaultFolders.Inbox, subscribed: true);
         AddMessage(database, primaryFolder, uid: 1, sizeBytes: 10, isRead: false);
         AddMessage(database, primaryFolder, uid: 2, sizeBytes: 20, isRead: true);
@@ -122,12 +123,27 @@ public sealed class ImapApplicationServiceTests
             new ImapMailboxSubscriptionRequest(owner.Id, "other/example.test/Inbox", false))).Found);
         Assert.IsFalse((await service.SetMailboxSubscriptionAsync(
             new ImapMailboxSubscriptionRequest(owner.Id, "Missing", false))).Found);
+        var created = await service.CreateMailboxAsync(
+            new ImapMailboxCreateRequest(owner.Id, "alias/example.test/Projects"));
+        Assert.AreEqual(ImapMailboxCreateDisposition.Created, created.Disposition);
+        Assert.AreNotEqual(Guid.Empty, created.FolderId);
+        Assert.IsFalse(string.IsNullOrEmpty(created.MailboxId));
+        Assert.AreEqual(alias.Id, (await database.Folders.SingleAsync(
+            folder => folder.Id == created.FolderId)).InboxId);
+        Assert.AreEqual(ImapMailboxCreateDisposition.AlreadyExists,
+            (await service.CreateMailboxAsync(
+                new ImapMailboxCreateRequest(owner.Id, "alias/example.test/Projects"))).Disposition);
+        Assert.AreEqual(ImapMailboxCreateDisposition.InvalidName,
+            (await service.CreateMailboxAsync(
+                new ImapMailboxCreateRequest(owner.Id, "Invalid//Path"))).Disposition);
         await Assert.ThrowsAsync<ArgumentException>(() => service.ListMailboxesAsync(
             new ImapMailboxListRequest(Guid.Empty, SubscribedOnly: false)));
         await Assert.ThrowsAsync<ArgumentException>(() => service.GetMailboxStatusesAsync(
             new ImapMailboxStatusRequest(Guid.Empty, ["INBOX"], true, true, true)));
         await Assert.ThrowsAsync<ArgumentException>(() => service.SetMailboxSubscriptionAsync(
             new ImapMailboxSubscriptionRequest(Guid.Empty, "INBOX", true)));
+        await Assert.ThrowsAsync<ArgumentException>(() => service.CreateMailboxAsync(
+            new ImapMailboxCreateRequest(Guid.Empty, "Projects")));
     }
 
     private static InboxDB CreateInbox(

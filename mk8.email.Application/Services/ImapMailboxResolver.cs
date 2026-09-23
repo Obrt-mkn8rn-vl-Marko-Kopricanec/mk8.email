@@ -1,3 +1,4 @@
+using System.Text;
 using Microsoft.EntityFrameworkCore;
 using mk8.email.Contracts.Enums;
 using mk8.email.Infrastructure.Data;
@@ -9,6 +10,24 @@ internal readonly record struct ImapMailboxLocation(Guid InboxId, string FolderN
 
 internal static class ImapMailboxResolver
 {
+    public static bool IsValidFolderName(string folderName)
+    {
+        if (folderName.Length is < 1 or > FolderDB.MaximumStoredNameLength
+            || folderName[0] == '/'
+            || folderName[^1] == '/'
+            || folderName.Contains("//", StringComparison.Ordinal)
+            || folderName.Any(char.IsControl))
+        {
+            return false;
+        }
+
+        var components = folderName.Split('/');
+        return components.Length <= FolderDB.MaximumHierarchyDepth
+            && components.All(component =>
+                component.Length > 0
+                && Encoding.UTF8.GetByteCount(component) <= FolderDB.MaximumLeafNameOctets);
+    }
+
     public static async Task<FolderDB?> ResolveFolderAsync(
         EmailDbContext database,
         Guid userId,

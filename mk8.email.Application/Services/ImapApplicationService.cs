@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using mk8.email.Application.Interfaces;
 using mk8.email.Contracts.Imap;
 using mk8.email.Infrastructure.Data;
+using mk8.email.Infrastructure.Models;
 
 namespace mk8.email.Application.Services;
 
@@ -138,5 +139,55 @@ internal sealed class ImapApplicationService(
         }
 
         return new ImapMailboxSubscriptionResult(true);
+    }
+
+    public async Task<ImapMailboxCreateResult> CreateMailboxAsync(
+        ImapMailboxCreateRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.UserId == Guid.Empty || string.IsNullOrEmpty(request.MailboxName))
+            throw new ArgumentException("The IMAP mailbox creation request is invalid.", nameof(request));
+
+        var location = await ImapMailboxResolver.ResolveLocationAsync(
+            database, request.UserId, request.MailboxName, cancellationToken);
+        if (location is null || !ImapMailboxResolver.IsValidFolderName(location.Value.FolderName))
+            return new ImapMailboxCreateResult(ImapMailboxCreateDisposition.InvalidName, Guid.Empty, null);
+
+        var exists = await database.Folders.AnyAsync(
+            folder => folder.InboxId == location.Value.InboxId
+                && folder.Name == location.Value.FolderName,
+            cancellationToken);
+        if (exists)
+            return new ImapMailboxCreateResult(ImapMailboxCreateDisposition.AlreadyExists, Guid.Empty, null);
+
+        var folder = new FolderDB
+        {
+            Id = Guid.CreateVersion7(),
+            Name = location.Value.FolderName,
+            InboxId = location.Value.InboxId,
+        };
+        database.Folders.Add(folder);
+        try
+        {
+            await database.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException)
+        {
+            database.Entry(folder).State = EntityState.Detached;
+            if (await database.Folders.AsNoTracking().AnyAsync(
+                    candidate => candidate.InboxId == location.Value.InboxId
+                        && candidate.Name == location.Value.FolderName,
+                    cancellationToken))
+            {
+                return new ImapMailboxCreateResult(
+                    ImapMailboxCreateDisposition.AlreadyExists, Guid.Empty, null);
+            }
+
+            throw;
+        }
+
+        return new ImapMailboxCreateResult(
+            ImapMailboxCreateDisposition.Created, folder.Id, folder.MailboxId);
     }
 }

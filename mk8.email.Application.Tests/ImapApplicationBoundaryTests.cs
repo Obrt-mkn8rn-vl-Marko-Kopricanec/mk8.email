@@ -57,6 +57,13 @@ public sealed class ImapApplicationBoundaryTests
             new ImapMailboxSubscriptionRequest(application.UserId, "INBOX", false));
         Assert.IsTrue(subscription.Found);
         Assert.IsFalse(application.LastSubscriptionState);
+
+        var created = await SendAsync<ImapMailboxCreateRequest, ImapMailboxCreateResult>(
+            dispatcher,
+            ApplicationOperations.ImapCreateMailbox,
+            new ImapMailboxCreateRequest(application.UserId, "Projects"));
+        Assert.AreEqual(ImapMailboxCreateDisposition.Created, created.Disposition);
+        Assert.AreEqual("Projects", application.LastCreatedMailbox);
     }
 
     private static async Task<TResponse> SendAsync<TRequest, TResponse>(
@@ -89,6 +96,7 @@ public sealed class ImapApplicationBoundaryTests
         public string? LastAccessToken { get; private set; }
         public bool LastSubscribedOnly { get; private set; }
         public bool LastSubscriptionState { get; private set; } = true;
+        public string? LastCreatedMailbox { get; private set; }
 
         public Task<ImapIdentityResult> AuthenticatePasswordAsync(
             ImapPasswordAuthentication request,
@@ -130,6 +138,15 @@ public sealed class ImapApplicationBoundaryTests
         {
             LastSubscriptionState = request.IsSubscribed;
             return Task.FromResult(new ImapMailboxSubscriptionResult(true));
+        }
+
+        public Task<ImapMailboxCreateResult> CreateMailboxAsync(
+            ImapMailboxCreateRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            LastCreatedMailbox = request.MailboxName;
+            return Task.FromResult(new ImapMailboxCreateResult(
+                ImapMailboxCreateDisposition.Created, Guid.CreateVersion7(), "mailbox-id"));
         }
     }
 }

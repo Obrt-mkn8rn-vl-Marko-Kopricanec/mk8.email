@@ -77,6 +77,8 @@ public sealed class ImapGatewayTransportTests
             var subscription = await client.SetMailboxSubscriptionAsync(
                 new ImapMailboxSubscriptionRequest(application.UserId, "INBOX", false),
                 timeout.Token);
+            var created = await client.CreateMailboxAsync(
+                new ImapMailboxCreateRequest(application.UserId, "Projects"), timeout.Token);
             Assert.AreEqual(application.UserId, password.UserId);
             Assert.AreEqual(application.UserId, oauth.UserId);
             Assert.AreEqual("imap-secret", application.Password);
@@ -86,6 +88,8 @@ public sealed class ImapGatewayTransportTests
             Assert.AreEqual(2, statuses.Statuses["INBOX"].MessageCount);
             Assert.IsTrue(subscription.Found);
             Assert.IsFalse(application.IsSubscribed);
+            Assert.AreEqual(ImapMailboxCreateDisposition.Created, created.Disposition);
+            Assert.AreEqual("Projects", application.CreatedMailbox);
 
             await using var operations = gatewayDataSource.CreateCommand(
                 "SELECT operation FROM application_requests ORDER BY created_at");
@@ -101,6 +105,7 @@ public sealed class ImapGatewayTransportTests
                     ApplicationOperations.ImapListMailboxes,
                     ApplicationOperations.ImapGetMailboxStatuses,
                     ApplicationOperations.ImapSetMailboxSubscription,
+                    ApplicationOperations.ImapCreateMailbox,
                 },
                 observed);
 
@@ -116,7 +121,7 @@ public sealed class ImapGatewayTransportTests
                 Assert.IsFalse(ciphertext.Contains("imap-secret", StringComparison.Ordinal));
                 Assert.IsFalse(ciphertext.Contains("imap-access-token", StringComparison.Ordinal));
             }
-            Assert.AreEqual(10, recordCount);
+            Assert.AreEqual(12, recordCount);
         }
         finally
         {
@@ -131,6 +136,7 @@ public sealed class ImapGatewayTransportTests
         public string? Password { get; private set; }
         public string? AccessToken { get; private set; }
         public bool IsSubscribed { get; private set; } = true;
+        public string? CreatedMailbox { get; private set; }
 
         public Task<ImapIdentityResult> AuthenticatePasswordAsync(
             ImapPasswordAuthentication request,
@@ -168,6 +174,15 @@ public sealed class ImapGatewayTransportTests
         {
             IsSubscribed = request.IsSubscribed;
             return Task.FromResult(new ImapMailboxSubscriptionResult(true));
+        }
+
+        public Task<ImapMailboxCreateResult> CreateMailboxAsync(
+            ImapMailboxCreateRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            CreatedMailbox = request.MailboxName;
+            return Task.FromResult(new ImapMailboxCreateResult(
+                ImapMailboxCreateDisposition.Created, Guid.CreateVersion7(), "mailbox-id"));
         }
     }
 }

@@ -1478,7 +1478,7 @@ ILogger<ImapServerService> logger) : BackgroundService
             return;
         }
 
-        if (IsSystemFolder(folder.Name))
+        if (ImapMailboxResolver.IsSystemFolder(folder.Name))
         {
             await writer.WriteLineAsync($"{tag} NO [CANNOT] System mailboxes cannot be deleted");
             return;
@@ -1547,58 +1547,42 @@ ILogger<ImapServerService> logger) : BackgroundService
         }
 
         var (oldName, newName) = parsedArgs.Value;
-
-        using var scope = scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-
-        var folder = await ResolveFolderAsync(db, session.UserId, oldName, ct);
-        if (folder is null)
+        ImapMailboxRenameResult result;
+        try
         {
-            await writer.WriteLineAsync($"{tag} NO [NONEXISTENT] Mailbox not found");
+            using var scope = scopeFactory.CreateScope();
+            var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
+            result = await application.RenameMailboxAsync(
+                new ImapMailboxRenameRequest(session.UserId, oldName, newName), ct);
+        }
+        catch (Exception exception) when (
+            exception is not OperationCanceledException && !ct.IsCancellationRequested)
+        {
+            logger.LogWarning(exception, "IMAP mailbox rename is unavailable for {UserId}", session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailbox rename unavailable");
             return;
         }
 
-        if (IsSystemFolder(folder.Name))
+        switch (result.Disposition)
         {
-            await writer.WriteLineAsync($"{tag} NO [CANNOT] System mailboxes cannot be renamed");
-            return;
+            case ImapMailboxRenameDisposition.NotFound:
+                await writer.WriteLineAsync($"{tag} NO [NONEXISTENT] Mailbox not found");
+                return;
+            case ImapMailboxRenameDisposition.SystemFolder:
+                await writer.WriteLineAsync($"{tag} NO [CANNOT] System mailboxes cannot be renamed");
+                return;
+            case ImapMailboxRenameDisposition.InvalidDestination:
+                await writer.WriteLineAsync($"{tag} NO [CANNOT] Invalid rename destination");
+                return;
+            case ImapMailboxRenameDisposition.AlreadyExists:
+                await writer.WriteLineAsync($"{tag} NO [ALREADYEXISTS] Rename destination already exists");
+                return;
+            case ImapMailboxRenameDisposition.Renamed:
+                break;
+            default:
+                await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailbox rename unavailable");
+                return;
         }
-
-        var destination = await ResolveMailboxLocationAsync(db, session.UserId, newName, ct);
-        if (destination is null
-            || destination.Value.InboxId != folder.InboxId
-            || !ImapMailboxResolver.IsValidFolderName(destination.Value.FolderName))
-        {
-            await writer.WriteLineAsync($"{tag} NO [CANNOT] Invalid rename destination");
-            return;
-        }
-
-        var oldFolderName = folder.Name;
-        var affected = await db.Folders
-            .Where(candidate => candidate.InboxId == folder.InboxId
-                             && (candidate.Name == oldFolderName
-                                 || candidate.Name.StartsWith(oldFolderName + "/")))
-            .ToListAsync(ct);
-        var renamed = affected.ToDictionary(
-            candidate => candidate.Id,
-            candidate => destination.Value.FolderName + candidate.Name[oldFolderName.Length..]);
-        var renamedNames = renamed.Values.ToHashSet(StringComparer.Ordinal);
-        var affectedIds = affected.Select(candidate => candidate.Id).ToHashSet();
-        var existingNames = await db.Folders
-            .AsNoTracking()
-            .Where(candidate => candidate.InboxId == folder.InboxId
-                             && !affectedIds.Contains(candidate.Id))
-            .Select(candidate => candidate.Name)
-            .ToListAsync(ct);
-        if (existingNames.Any(renamedNames.Contains))
-        {
-            await writer.WriteLineAsync($"{tag} NO [ALREADYEXISTS] Rename destination already exists");
-            return;
-        }
-
-        foreach (var candidate in affected)
-            candidate.Name = renamed[candidate.Id];
-        await db.SaveChangesAsync(ct);
 
         if (session.SelectedFolderName is not null
             && (string.Equals(session.SelectedFolderName, oldName, StringComparison.OrdinalIgnoreCase)
@@ -2598,14 +2582,6 @@ ILogger<ImapServerService> logger) : BackgroundService
     private static Task<FolderDB?> ResolveFolderAsync(
         EmailDbContext db, Guid userId, string mailboxName, CancellationToken ct) =>
         ImapMailboxResolver.ResolveFolderAsync(db, userId, mailboxName, ct);
-
-    private static Task<ImapMailboxLocation?> ResolveMailboxLocationAsync(
-        EmailDbContext db, Guid userId, string mailboxName, CancellationToken ct) =>
-        ImapMailboxResolver.ResolveLocationAsync(db, userId, mailboxName, ct);
-
-    private static bool IsSystemFolder(string folderName) =>
-        DefaultFolders.All.Any(
-            systemName => string.Equals(systemName, folderName, StringComparison.OrdinalIgnoreCase));
 
     private static IQueryable<EmailDB> SelectEmailMetadata(IQueryable<EmailDB> query) =>
         query

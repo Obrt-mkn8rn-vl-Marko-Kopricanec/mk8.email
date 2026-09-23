@@ -28,6 +28,10 @@ internal static class ImapMailboxResolver
                 && Encoding.UTF8.GetByteCount(component) <= FolderDB.MaximumLeafNameOctets);
     }
 
+    public static bool IsSystemFolder(string folderName) =>
+        DefaultFolders.All.Any(systemName =>
+            string.Equals(systemName, folderName, StringComparison.OrdinalIgnoreCase));
+
     public static async Task<FolderDB?> ResolveFolderAsync(
         EmailDbContext database,
         Guid userId,

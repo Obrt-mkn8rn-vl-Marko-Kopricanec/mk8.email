@@ -136,6 +136,39 @@ public sealed class ImapApplicationServiceTests
         Assert.AreEqual(ImapMailboxCreateDisposition.InvalidName,
             (await service.CreateMailboxAsync(
                 new ImapMailboxCreateRequest(owner.Id, "Invalid//Path"))).Disposition);
+        Assert.AreEqual(ImapMailboxCreateDisposition.Created,
+            (await service.CreateMailboxAsync(
+                new ImapMailboxCreateRequest(owner.Id, "alias/example.test/Projects/2026"))).Disposition);
+        Assert.AreEqual(ImapMailboxRenameDisposition.SystemFolder,
+            (await service.RenameMailboxAsync(
+                new ImapMailboxRenameRequest(owner.Id, "INBOX", "NewInbox"))).Disposition);
+        Assert.AreEqual(ImapMailboxRenameDisposition.NotFound,
+            (await service.RenameMailboxAsync(
+                new ImapMailboxRenameRequest(owner.Id, "Missing", "New"))).Disposition);
+        Assert.AreEqual(ImapMailboxRenameDisposition.InvalidDestination,
+            (await service.RenameMailboxAsync(
+                new ImapMailboxRenameRequest(owner.Id,
+                    "alias/example.test/Projects", "Archive"))).Disposition);
+        var tooDeep = string.Join('/', Enumerable.Repeat("n", FolderDB.MaximumHierarchyDepth));
+        Assert.AreEqual(ImapMailboxRenameDisposition.InvalidDestination,
+            (await service.RenameMailboxAsync(
+                new ImapMailboxRenameRequest(owner.Id,
+                    "alias/example.test/Projects", $"alias/example.test/{tooDeep}"))).Disposition);
+        Assert.AreEqual(ImapMailboxRenameDisposition.Renamed,
+            (await service.RenameMailboxAsync(
+                new ImapMailboxRenameRequest(owner.Id,
+                    "alias/example.test/Projects", "alias/example.test/Archive"))).Disposition);
+        Assert.AreEqual("Archive", (await database.Folders.SingleAsync(
+            folder => folder.Id == created.FolderId)).Name);
+        Assert.IsTrue(await database.Folders.AnyAsync(
+            folder => folder.InboxId == alias.Id && folder.Name == "Archive/2026"));
+        Assert.AreEqual(ImapMailboxCreateDisposition.Created,
+            (await service.CreateMailboxAsync(
+                new ImapMailboxCreateRequest(owner.Id, "alias/example.test/Existing"))).Disposition);
+        Assert.AreEqual(ImapMailboxRenameDisposition.AlreadyExists,
+            (await service.RenameMailboxAsync(
+                new ImapMailboxRenameRequest(owner.Id,
+                    "alias/example.test/Archive", "alias/example.test/Existing"))).Disposition);
         await Assert.ThrowsAsync<ArgumentException>(() => service.ListMailboxesAsync(
             new ImapMailboxListRequest(Guid.Empty, SubscribedOnly: false)));
         await Assert.ThrowsAsync<ArgumentException>(() => service.GetMailboxStatusesAsync(
@@ -144,6 +177,8 @@ public sealed class ImapApplicationServiceTests
             new ImapMailboxSubscriptionRequest(Guid.Empty, "INBOX", true)));
         await Assert.ThrowsAsync<ArgumentException>(() => service.CreateMailboxAsync(
             new ImapMailboxCreateRequest(Guid.Empty, "Projects")));
+        await Assert.ThrowsAsync<ArgumentException>(() => service.RenameMailboxAsync(
+            new ImapMailboxRenameRequest(Guid.Empty, "Projects", "Archive")));
     }
 
     private static InboxDB CreateInbox(

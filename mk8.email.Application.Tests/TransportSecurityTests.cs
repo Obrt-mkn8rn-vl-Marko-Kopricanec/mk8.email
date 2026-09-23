@@ -240,9 +240,11 @@ public sealed class TransportSecurityTests
         Assert.AreEqual("a5 NO [UNAVAILABLE] Mailbox subscription unavailable", await connection.ReadLineAsync());
         await connection.WriteLineAsync("a6 CREATE Projects");
         Assert.AreEqual("a6 NO [UNAVAILABLE] Mailbox creation unavailable", await connection.ReadLineAsync());
-        await connection.WriteLineAsync("a7 CAPABILITY");
+        await connection.WriteLineAsync("a7 RENAME Projects Archive");
+        Assert.AreEqual("a7 NO [UNAVAILABLE] Mailbox rename unavailable", await connection.ReadLineAsync());
+        await connection.WriteLineAsync("a8 CAPABILITY");
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("* CAPABILITY ", StringComparison.Ordinal));
-        Assert.AreEqual("a7 OK CAPABILITY completed", await connection.ReadLineAsync());
+        Assert.AreEqual("a8 OK CAPABILITY completed", await connection.ReadLineAsync());
     }
 
     [TestInitialize]
@@ -3616,6 +3618,11 @@ public sealed class TransportSecurityTests
             ImapMailboxCreateRequest request,
             CancellationToken cancellationToken = default) =>
             Task.FromException<ImapMailboxCreateResult>(new IOException("Worker unavailable"));
+
+        public Task<ImapMailboxRenameResult> RenameMailboxAsync(
+            ImapMailboxRenameRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromException<ImapMailboxRenameResult>(new IOException("Worker unavailable"));
     }
 
     private sealed class UnavailableImapMailboxApplicationService(
@@ -3652,6 +3659,11 @@ public sealed class TransportSecurityTests
             ImapMailboxCreateRequest request,
             CancellationToken cancellationToken = default) =>
             Task.FromException<ImapMailboxCreateResult>(new IOException("Worker unavailable"));
+
+        public Task<ImapMailboxRenameResult> RenameMailboxAsync(
+            ImapMailboxRenameRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromException<ImapMailboxRenameResult>(new IOException("Worker unavailable"));
     }
 
     private sealed class ServerFixture(

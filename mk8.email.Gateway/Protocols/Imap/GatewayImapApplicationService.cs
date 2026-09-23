@@ -42,4 +42,10 @@ public sealed class GatewayImapApplicationService(
         CancellationToken cancellationToken = default) =>
         transport.SendAsync<ImapMailboxCreateRequest, ImapMailboxCreateResult>(
             "imap", ApplicationOperations.ImapCreateMailbox, request, cancellationToken);
+
+    public Task<ImapMailboxRenameResult> RenameMailboxAsync(
+        ImapMailboxRenameRequest request,
+        CancellationToken cancellationToken = default) =>
+        transport.SendAsync<ImapMailboxRenameRequest, ImapMailboxRenameResult>(
+            "imap", ApplicationOperations.ImapRenameMailbox, request, cancellationToken);
 }

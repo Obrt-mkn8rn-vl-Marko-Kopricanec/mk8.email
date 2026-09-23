@@ -1,3 +1,4 @@
+using System.Data;
 using Microsoft.EntityFrameworkCore;
 using mk8.email.Application.Interfaces;
 using mk8.email.Contracts.Imap;
@@ -189,5 +190,67 @@ internal sealed class ImapApplicationService(
 
         return new ImapMailboxCreateResult(
             ImapMailboxCreateDisposition.Created, folder.Id, folder.MailboxId);
+    }
+
+    public async Task<ImapMailboxRenameResult> RenameMailboxAsync(
+        ImapMailboxRenameRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.UserId == Guid.Empty
+            || string.IsNullOrEmpty(request.OldName)
+            || string.IsNullOrEmpty(request.NewName))
+        {
+            throw new ArgumentException("The IMAP mailbox rename request is invalid.", nameof(request));
+        }
+
+        await using var transaction = database.Database.IsRelational()
+            ? await database.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken)
+            : null;
+        var folder = await ImapMailboxResolver.ResolveFolderAsync(
+            database, request.UserId, request.OldName, cancellationToken);
+        if (folder is null)
+            return new ImapMailboxRenameResult(ImapMailboxRenameDisposition.NotFound);
+        if (ImapMailboxResolver.IsSystemFolder(folder.Name))
+            return new ImapMailboxRenameResult(ImapMailboxRenameDisposition.SystemFolder);
+
+        var destination = await ImapMailboxResolver.ResolveLocationAsync(
+            database, request.UserId, request.NewName, cancellationToken);
+        if (destination is null
+            || destination.Value.InboxId != folder.InboxId
+            || !ImapMailboxResolver.IsValidFolderName(destination.Value.FolderName))
+        {
+            return new ImapMailboxRenameResult(ImapMailboxRenameDisposition.InvalidDestination);
+        }
+
+        var oldFolderName = folder.Name;
+        var affected = await database.Folders
+            .Where(candidate => candidate.InboxId == folder.InboxId
+                && (candidate.Name == oldFolderName
+                    || candidate.Name.StartsWith(oldFolderName + "/")))
+            .ToListAsync(cancellationToken);
+        var renamed = affected.ToDictionary(
+            candidate => candidate.Id,
+            candidate => destination.Value.FolderName + candidate.Name[oldFolderName.Length..]);
+        if (renamed.Values.Any(name => !ImapMailboxResolver.IsValidFolderName(name)))
+            return new ImapMailboxRenameResult(ImapMailboxRenameDisposition.InvalidDestination);
+
+        var renamedNames = renamed.Values.ToHashSet(StringComparer.Ordinal);
+        var affectedIds = affected.Select(candidate => candidate.Id).ToHashSet();
+        var existingNames = await database.Folders
+            .AsNoTracking()
+            .Where(candidate => candidate.InboxId == folder.InboxId
+                && !affectedIds.Contains(candidate.Id))
+            .Select(candidate => candidate.Name)
+            .ToListAsync(cancellationToken);
+        if (existingNames.Any(renamedNames.Contains))
+            return new ImapMailboxRenameResult(ImapMailboxRenameDisposition.AlreadyExists);
+
+        foreach (var candidate in affected)
+            candidate.Name = renamed[candidate.Id];
+        await database.SaveChangesAsync(cancellationToken);
+        if (transaction is not null)
+            await transaction.CommitAsync(cancellationToken);
+        return new ImapMailboxRenameResult(ImapMailboxRenameDisposition.Renamed);
     }
 }

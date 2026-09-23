@@ -259,7 +259,7 @@ finish() {
                 systemctl restart fail2ban.service || rollback_status=1
             fi
             if [ "`$rollback_status" -eq 0 ]; then
-                sh "`$remote_root/assets/deploy/scripts/activate-mail-stack" \
+                /usr/local/sbin/activate-mail-stack \
                     || rollback_status=1
             fi
             if [ "`$rollback_status" -eq 0 ]; then

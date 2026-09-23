@@ -83,6 +83,7 @@ jobs:
             deploy/scripts/mk8-domain \
             deploy/scripts/mk8email \
             deploy/scripts/mk8-backup \
+            deploy/scripts/mk8-distributed-backup \
             deploy/scripts/mk8-export-backup \
             deploy/scripts/mk8-mail-health \
             deploy/scripts/prune-native-releases \
@@ -94,6 +95,8 @@ jobs:
             deploy/tests/certificate_deploy_smoke \
             deploy/tests/container_on_demand_smoke \
             deploy/tests/disruption_smoke \
+            deploy/tests/distributed_backup_job_smoke \
+            deploy/tests/fixtures/distributed-backup-dotnet \
             deploy/tests/fixtures/upgrade-curl \
             deploy/tests/fixtures/upgrade-runuser \
             deploy/tests/fixtures/upgrade-systemctl \
@@ -121,6 +124,7 @@ jobs:
             "$PWD/Dockerfile"
           sh deploy/tests/upgrade_distributed_role_smoke "$PWD/deploy/scripts/upgrade-distributed-role"
           sh deploy/tests/on_demand_activation_smoke "$PWD/deploy/scripts/activate-distributed-role" "$PWD/deploy/scripts/deactivate-distributed-role"
+          sh deploy/tests/distributed_backup_job_smoke "$PWD/deploy/scripts/mk8-distributed-backup" "$PWD/deploy/tests/fixtures/distributed-backup-dotnet"
           systemd-analyze verify deploy/systemd/mk8email-wake.service deploy/systemd/mk8email-worker.path deploy/systemd/mk8email-worker-drain.service deploy/systemd/mk8email-worker-maintenance.timer
 
       - name: Validate deployment profile tooling

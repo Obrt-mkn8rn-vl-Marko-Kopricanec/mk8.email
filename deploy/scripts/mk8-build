@@ -196,6 +196,7 @@ run_unit "mk8-build-$short_commit-$$" yes /bin/sh -eu -c '
         deploy/scripts/mk8-domain \
         deploy/scripts/mk8email \
         deploy/scripts/mk8-backup \
+        deploy/scripts/mk8-distributed-backup \
         deploy/scripts/mk8-export-backup \
         deploy/scripts/mk8-mail-health \
         deploy/scripts/prune-native-releases \
@@ -207,6 +208,8 @@ run_unit "mk8-build-$short_commit-$$" yes /bin/sh -eu -c '
         deploy/tests/build_environment_smoke \
         deploy/tests/certificate_deploy_smoke \
         deploy/tests/disruption_smoke \
+        deploy/tests/distributed_backup_job_smoke \
+        deploy/tests/fixtures/distributed-backup-dotnet \
         deploy/tests/fixtures/upgrade-curl \
         deploy/tests/fixtures/upgrade-runuser \
         deploy/tests/fixtures/upgrade-systemctl \
@@ -235,6 +238,9 @@ run_unit "mk8-build-$short_commit-$$" yes /bin/sh -eu -c '
     sh deploy/tests/on_demand_activation_smoke \
         "$stable_source/deploy/scripts/activate-distributed-role" \
         "$stable_source/deploy/scripts/deactivate-distributed-role"
+    sh deploy/tests/distributed_backup_job_smoke \
+        "$stable_source/deploy/scripts/mk8-distributed-backup" \
+        "$stable_source/deploy/tests/fixtures/distributed-backup-dotnet"
     "$sdk" publish mk8.email.CLI/mk8.email.Application.CLI.csproj \
         --configuration Release --no-build \
         --artifacts-path "$run_root/artifacts" \

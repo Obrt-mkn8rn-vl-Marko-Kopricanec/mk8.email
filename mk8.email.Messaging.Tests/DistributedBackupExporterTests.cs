@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Azure.Storage.Blobs;
 using Microsoft.EntityFrameworkCore;
+using mk8.email.Configuration;
 using mk8.email.Contracts.Storage;
 using mk8.email.Hosting;
 using mk8.email.Infrastructure.Data;
@@ -20,6 +21,11 @@ public sealed class DistributedBackupExporterTests
     [TestMethod]
     public async Task ExportsMatchingDatabaseSnapshotAndAzureBlobContent()
     {
+        if (!OperatingSystem.IsLinux())
+        {
+            Assert.Inconclusive("Distributed backup jobs require Linux.");
+            return;
+        }
         var blobConnection = Environment.GetEnvironmentVariable(
             "MK8_EMAIL_TEST_AZURE_BLOB_CONNECTION");
         if (string.IsNullOrWhiteSpace(blobConnection))
@@ -161,6 +167,55 @@ public sealed class DistributedBackupExporterTests
             await DistributedRestoreActivationGuard.RequireReadyAsync(twiceRestoredSource);
             Assert.AreEqual(2L, await DistributedBlobReferenceAudit.AuditAsync(
                 twiceRestoredSource, restoredObjects));
+
+            var jobRoot = Path.Combine(parent.FullName, "job");
+            Directory.CreateDirectory(jobRoot,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            var sourceConnection = new NpgsqlConnectionStringBuilder(sourceDatabase.ConnectionString);
+            var jobConfig = new EnvironmentConfig
+            {
+                Database = new DatabaseConfig
+                {
+                    Host = sourceConnection.Host!,
+                    Port = sourceConnection.Port,
+                    Name = sourceConnection.Database!,
+                    Username = sourceConnection.Username!,
+                    Password = string.IsNullOrEmpty(sourceConnection.Password)
+                        ? "local-test-only-password"
+                        : sourceConnection.Password,
+                },
+                Smtp = new SmtpConfig
+                {
+                    Hostname = "email.example.test",
+                    EnableSmtp = false,
+                },
+                Imap = new ImapConfig { EnableImap = false, EnableImplicitTls = false },
+                Pop3 = new Pop3Config { EnablePop3 = false, EnableImplicitTls = false },
+                Jmap = new JmapConfig { EnableJmap = false, IsDefault = false },
+                Messaging = new MessagingConfig
+                {
+                    Enabled = true,
+                    EncryptionKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
+                },
+                ObjectStorage = new ObjectStorageConfig
+                {
+                    ConnectionString = blobConnection,
+                    ContainerName = container.Name,
+                    CreateContainerIfMissing = true,
+                },
+            };
+            Assert.HasCount(0, jobConfig.Validate(
+                isDevelopment: false, EnvironmentValidationRole.ApplicationWorker));
+            var jobConfigPath = Path.Combine(parent.FullName, "worker-config.json");
+            await File.WriteAllTextAsync(jobConfigPath, JsonSerializer.Serialize(jobConfig));
+            File.SetUnixFileMode(
+                jobConfigPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            var job = await RunBackupJobAsync(jobConfigPath, jobRoot);
+            Assert.AreEqual(0, job.ExitCode, job.Output);
+            var published = Directory.GetDirectories(jobRoot).Single();
+            var publishedSummary = await DistributedBackupRestorer.VerifyAsync(published);
+            Assert.AreEqual(2L, publishedSummary.ReferenceCount);
+            Assert.AreEqual(2L, publishedSummary.UniqueContentCount);
         }
         finally
         {
@@ -498,6 +553,51 @@ public sealed class DistributedBackupExporterTests
 
     private static string PgDumpExecutable =>
         Environment.GetEnvironmentVariable("MK8_EMAIL_TEST_PG_DUMP") ?? "pg_dump";
+
+    private static async Task<(int ExitCode, string Output)> RunBackupJobAsync(
+        string configPath,
+        string backupRoot)
+    {
+        var host = Environment.GetEnvironmentVariable("MK8_EMAIL_TEST_DOTNET_HOST")
+            ?? Environment.GetEnvironmentVariable("DOTNET_HOST_PATH")
+            ?? "dotnet";
+        var configuration = new DirectoryInfo(AppContext.BaseDirectory).Parent?.Name
+            ?? throw new InvalidOperationException("The test configuration directory is missing.");
+        var repository = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../.."));
+        var assembly = Path.Combine(
+            repository, "mk8.email.CLI", "bin", configuration,
+            "net10.0", "mk8.email.Application.CLI.dll");
+        var script = Path.Combine(repository, "deploy", "scripts", "mk8-distributed-backup");
+        Assert.IsTrue(File.Exists(assembly), "The management CLI executable is missing.");
+        Assert.IsTrue(File.Exists(script), "The distributed backup wrapper is missing.");
+        var start = new ProcessStartInfo(script)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        start.ArgumentList.Add(configPath);
+        start.ArgumentList.Add(backupRoot);
+        start.ArgumentList.Add(host);
+        start.ArgumentList.Add(assembly);
+        start.Environment["MK8EMAIL_PG_DUMP_EXECUTABLE"] = PgDumpExecutable;
+        using var process = Process.Start(start)
+            ?? throw new InvalidOperationException("The distributed backup job did not start.");
+        var output = process.StandardOutput.ReadToEndAsync();
+        var error = process.StandardError.ReadToEndAsync();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        try
+        {
+            await process.WaitForExitAsync(deadline.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync();
+            Assert.Fail("The distributed backup job exceeded its deadline.");
+        }
+        return (process.ExitCode, await output + await error);
+    }
 
     private static async Task<(int ExitCode, string Output)> RunVerifierCliAsync(
         string backupDirectory)

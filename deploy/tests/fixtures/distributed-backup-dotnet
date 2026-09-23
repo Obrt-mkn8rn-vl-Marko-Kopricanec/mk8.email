@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+
+[ "$#" -ge 3 ]
+[ -f "$1" ]
+case "$2" in
+    --export-distributed-snapshot)
+        [ "$#" -eq 4 ]
+        [ -f "$3" ]
+        [ "${MOCK_BACKUP_FAIL:-}" != export ] || exit 1
+        mkdir -m 0700 -- "$4"
+        printf '%s\n' 'mock database dump' > "$4/database.dump"
+        ;;
+    --verify-distributed-snapshot)
+        [ "$#" -eq 3 ]
+        [ "${MOCK_BACKUP_FAIL:-}" != verify ] || exit 1
+        [ -s "$3/database.dump" ]
+        ;;
+    *) exit 2 ;;
+esac

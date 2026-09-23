@@ -1,0 +1,80 @@
+#!/bin/sh
+set -eu
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+export DOTNET_ENVIRONMENT=Production
+export DOTNET_EnableDiagnostics=0
+
+if [ "$#" -ne 4 ]; then
+    printf '%s\n' "Usage: mk8-distributed-backup WORKER_CONFIG BACKUP_ROOT DOTNET_EXECUTABLE CLI_DLL" >&2
+    exit 2
+fi
+
+config=$1
+backup_root=$2
+dotnet=$3
+cli=$4
+
+fail() {
+    printf '%s\n' "$1" >&2
+    exit 1
+}
+
+for path in "$config" "$backup_root" "$dotnet" "$cli"; do
+    case "$path" in
+        /*) ;;
+        *) fail "Every backup input path must be absolute." ;;
+    esac
+done
+
+if [ -L "$config" ] || [ ! -f "$config" ] \
+    || [ "$(stat -c '%h' "$config" 2>/dev/null || true)" != 1 ] \
+    || [ -n "$(find "$config" -prune -perm /022 -print -quit)" ]; then
+    fail "The Worker configuration file is missing or unsafe."
+fi
+if [ -L "$backup_root" ] || [ ! -d "$backup_root" ] \
+    || [ "$(realpath -e -- "$backup_root" 2>/dev/null || true)" != "$backup_root" ] \
+    || [ "$(stat -c '%u %a' "$backup_root" 2>/dev/null || true)" != "$(id -u) 700" ]; then
+    fail "The backup root must be canonical, private, and owned by this account."
+fi
+if [ ! -x "$dotnet" ] || [ ! -f "$cli" ]; then
+    fail "The .NET runtime or management CLI is missing."
+fi
+
+umask 077
+lock=$backup_root/.backup.lock
+if [ -L "$lock" ] || { [ -e "$lock" ] && [ ! -f "$lock" ]; } \
+    || { [ -e "$lock" ] \
+        && [ "$(stat -c '%u %a %h' "$lock" 2>/dev/null || true)" != "$(id -u) 600 1" ]; }; then
+    fail "The backup lock file is unsafe."
+fi
+exec 9>>"$lock"
+flock --exclusive --nonblock 9 || fail "Another distributed backup is active."
+
+timestamp=$(date --utc +%Y%m%dT%H%M%SZ)
+final=$backup_root/$timestamp
+if [ -e "$final" ] || [ -L "$final" ]; then
+    fail "The timestamped backup destination already exists."
+fi
+
+stage=$(mktemp -d "$backup_root/.incomplete-XXXXXXXX")
+cleanup() {
+    case "$stage" in
+        "$backup_root"/.incomplete-????????)
+            if [ -d "$stage" ] && [ ! -L "$stage" ]; then
+                rm -rf -- "$stage"
+            fi
+            ;;
+    esac
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+
+"$dotnet" "$cli" --export-distributed-snapshot "$config" "$stage/snapshot"
+"$dotnet" "$cli" --verify-distributed-snapshot "$stage/snapshot"
+mv --no-clobber -T -- "$stage/snapshot" "$final"
+[ ! -e "$stage/snapshot" ] || fail "The backup destination appeared during publication."
+rmdir -- "$stage"
+stage=
+printf '%s\n' "$final"

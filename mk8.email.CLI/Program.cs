@@ -176,11 +176,21 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
             Console.CancelKeyPress += cancel;
             try
             {
+                var pgDumpExecutable = Environment.GetEnvironmentVariable(
+                    "MK8EMAIL_PG_DUMP_EXECUTABLE");
+                if (!string.IsNullOrWhiteSpace(pgDumpExecutable)
+                    && (!Path.IsPathFullyQualified(pgDumpExecutable)
+                        || !File.Exists(pgDumpExecutable)))
+                {
+                    throw new InvalidOperationException(
+                        "MK8EMAIL_PG_DUMP_EXECUTABLE must name an absolute existing file.");
+                }
                 var result = await DistributedBackupExporter.ExportAsync(
                     dataSource,
                     services.GetRequiredService<ILargeObjectStore>(),
                     validated.BuildConnectionString(),
                     arguments[2],
+                    pgDumpExecutable: pgDumpExecutable ?? "pg_dump",
                     cancellationToken: timeout.Token);
                 Console.WriteLine(
                     $"Exported {result.ReferenceCount} references and "

@@ -1,0 +1,69 @@
+#!/bin/sh
+set -eu
+
+[ "$#" -eq 2 ]
+script=$1
+runtime=$2
+test_root=$(mktemp -d)
+cleanup() {
+    if [ -d "$test_root" ] && [ ! -L "$test_root" ]; then
+        rm -rf -- "$test_root"
+    fi
+}
+trap cleanup EXIT
+
+config=$test_root/worker.json
+cli=$test_root/management.dll
+backup_root=$test_root/backups
+printf '%s\n' '{}' > "$config"
+printf '%s\n' 'mock CLI' > "$cli"
+mkdir -m 0700 -- "$backup_root"
+
+output=$("$script" "$config" "$backup_root" "$runtime" "$cli")
+final=$(printf '%s\n' "$output" | tail -n 1)
+[ -s "$final/database.dump" ]
+[ "$(find "$backup_root" -mindepth 1 -maxdepth 1 -type d \
+    -name '20??????T??????Z' | wc -l)" -eq 1 ]
+[ -z "$(find "$backup_root" -mindepth 1 -maxdepth 1 -name '.incomplete-*' -print -quit)" ]
+
+failure_root=$test_root/failed
+mkdir -m 0700 -- "$failure_root"
+if env MOCK_BACKUP_FAIL=export \
+    "$script" "$config" "$failure_root" "$runtime" "$cli" >/dev/null 2>&1; then
+    printf '%s\n' "A failed export was accepted." >&2
+    exit 1
+fi
+[ -z "$(find "$failure_root" -mindepth 1 -maxdepth 1 -type d -print -quit)" ]
+if env MOCK_BACKUP_FAIL=verify \
+    "$script" "$config" "$failure_root" "$runtime" "$cli" >/dev/null 2>&1; then
+    printf '%s\n' "A failed verification was published." >&2
+    exit 1
+fi
+[ -z "$(find "$failure_root" -mindepth 1 -maxdepth 1 -type d -print -quit)" ]
+
+chmod 0755 "$failure_root"
+if "$script" "$config" "$failure_root" "$runtime" "$cli" >/dev/null 2>&1; then
+    printf '%s\n' "An unsafe backup root was accepted." >&2
+    exit 1
+fi
+chmod 0700 "$failure_root"
+chmod 0660 "$config"
+if "$script" "$config" "$failure_root" "$runtime" "$cli" >/dev/null 2>&1; then
+    printf '%s\n' "A writable Worker configuration was accepted." >&2
+    exit 1
+fi
+chmod 0644 "$config"
+rm -- "$failure_root/.backup.lock"
+ln -s "$config" "$failure_root/.backup.lock"
+if "$script" "$config" "$failure_root" "$runtime" "$cli" >/dev/null 2>&1; then
+    printf '%s\n' "A symbolic-link backup lock was accepted." >&2
+    exit 1
+fi
+[ "$(sed -n '1p' "$config")" = '{}' ]
+
+ln -s "$backup_root" "$test_root/symlink-root"
+if "$script" "$config" "$test_root/symlink-root" "$runtime" "$cli" >/dev/null 2>&1; then
+    printf '%s\n' "A symbolic-link backup root was accepted." >&2
+    exit 1
+fi
+printf '%s\n' "Distributed backup staging and failure cleanup passed."

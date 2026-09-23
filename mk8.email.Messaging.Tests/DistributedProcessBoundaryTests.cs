@@ -3,9 +3,13 @@ using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Azure.Storage.Blobs;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
+using mk8.email.Application.Worker;
 using mk8.email.Configuration;
+using mk8.email.Contracts.Messaging;
 using mk8.email.Infrastructure.Data;
 using Npgsql;
 
@@ -92,12 +96,47 @@ public sealed class DistributedProcessBoundaryTests
 
             var wakeRole = $"mk8_process_wake_{Guid.NewGuid():N}";
             var wakePassword = Guid.NewGuid().ToString("N");
+            var gatewayRole = $"mk8_process_gateway_{Guid.NewGuid():N}";
+            var gatewayPassword = Guid.NewGuid().ToString("N");
             await using var roleAdmin = new NpgsqlConnection(database.ConnectionString);
             await roleAdmin.OpenAsync();
             await CreateRestrictedWakeRoleAsync(
                 roleAdmin, database.DatabaseName, wakeRole, wakePassword);
+            var gatewayRoleCreated = false;
             try
             {
+                await CreateRestrictedGatewayRoleAsync(
+                    roleAdmin, database.DatabaseName, gatewayRole, gatewayPassword);
+                gatewayRoleCreated = true;
+                var gatewayConnection = new NpgsqlConnectionStringBuilder(database.ConnectionString)
+                {
+                    Username = gatewayRole,
+                    Password = gatewayPassword,
+                };
+                await using (var gatewayDataSource = NpgsqlDataSource.Create(
+                                 gatewayConnection.ConnectionString))
+                {
+                    await GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource);
+                    await using var applicationTable = gatewayDataSource.CreateCommand(
+                        "SELECT id FROM users");
+                    var denial = await Assert.ThrowsExactlyAsync<PostgresException>(
+                        () => applicationTable.ExecuteScalarAsync());
+                    Assert.AreEqual(PostgresErrorCodes.InsufficientPrivilege, denial.SqlState);
+                }
+                var gatewayConfig = JsonSerializer.SerializeToNode(config)!.AsObject();
+                gatewayConfig["Database"]!["Username"] = gatewayRole;
+                gatewayConfig["Database"]!["Password"] = gatewayPassword;
+                gatewayConfig["Admin"]!["DataProtectionKeyPath"] =
+                    Path.Combine(directory.FullName, "gateway-keys");
+                gatewayConfig["Admin"]!["AuditLogPath"] =
+                    Path.Combine(directory.FullName, "gateway-audit.jsonl");
+                gatewayConfig["Admin"]!["HealthStatusPath"] =
+                    Path.Combine(directory.FullName, "gateway-status.json");
+                Directory.CreateDirectory(
+                    gatewayConfig["Admin"]!["DataProtectionKeyPath"]!.GetValue<string>());
+                var gatewayConfigPath = Path.Combine(directory.FullName, "gateway.json");
+                await File.WriteAllTextAsync(gatewayConfigPath, gatewayConfig.ToJsonString());
+
                 var wakeConnection = new NpgsqlConnectionStringBuilder(database.ConnectionString)
                 {
                     Username = wakeRole,
@@ -111,7 +150,7 @@ public sealed class DistributedProcessBoundaryTests
 
                 var port = ReserveLoopbackPort();
                 using var gateway = StartProcess(
-                    "mk8.email.Gateway", "mk8.email.Gateway.dll", null, configPath,
+                    "mk8.email.Gateway", "mk8.email.Gateway.dll", null, gatewayConfigPath,
                     $"http://127.0.0.1:{port}");
                 var gatewayOutput = gateway.StandardOutput.ReadToEndAsync();
                 var gatewayErrors = gateway.StandardError.ReadToEndAsync();
@@ -136,6 +175,29 @@ public sealed class DistributedProcessBoundaryTests
                     Assert.AreEqual(2, await CountAsync(
                         inspection,
                         "SELECT count(*) FROM gateway_traffic_records WHERE protocol = 'jmap'"));
+
+                    // The reverse presentation lane remains usable without an Application
+                    // process and without granting Gateway access to Application tables.
+                    await using (var applicationDataSource = NpgsqlDataSource.Create(
+                                     database.ConnectionString))
+                    using (var protector = new AesGcmPayloadProtector(new MessagingEncryptionKey(
+                               config.Messaging.EncryptionKeyId,
+                               Convert.FromBase64String(config.Messaging.EncryptionKey))))
+                    {
+                        var presentation = new JmapPushPresentationClient(
+                            new PostgresPresentationBus(applicationDataSource, protector),
+                            NullLogger<JmapPushPresentationClient>.Instance);
+                        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                        Assert.IsFalse(await presentation.IsSafeUrlAsync(
+                            "https://127.0.0.1/push", timeout.Token));
+                    }
+                    Assert.AreEqual(1, await CountAsync(
+                        inspection,
+                        "SELECT count(*) FROM presentation_requests "
+                        + "WHERE protocol = 'webpush' AND state = 'completed'"));
+                    Assert.AreEqual(2, await CountAsync(
+                        inspection,
+                        "SELECT count(*) FROM gateway_traffic_records WHERE protocol = 'webpush'"));
 
                     var pendingProbe = client.GetAsync("/health/application");
                     await WaitForQueuedProbeAsync(inspection, TimeSpan.FromSeconds(10));
@@ -220,7 +282,14 @@ public sealed class DistributedProcessBoundaryTests
             finally
             {
                 await using var cleanup = roleAdmin.CreateCommand();
-                cleanup.CommandText = $"DROP OWNED BY \"{wakeRole}\"; DROP ROLE \"{wakeRole}\"";
+                cleanup.CommandText = gatewayRoleCreated
+                    ? $"""
+                        DROP OWNED BY "{gatewayRole}";
+                        DROP ROLE "{gatewayRole}";
+                        DROP OWNED BY "{wakeRole}";
+                        DROP ROLE "{wakeRole}";
+                        """
+                    : $"DROP OWNED BY \"{wakeRole}\"; DROP ROLE \"{wakeRole}\"";
                 await cleanup.ExecuteNonQueryAsync();
             }
         }
@@ -525,6 +594,30 @@ public sealed class DistributedProcessBoundaryTests
             GRANT SELECT (id, company_id, is_active) ON addresses TO "{role}";
             GRANT SELECT (id, is_active) ON companies TO "{role}";
             GRANT SELECT (account_id, sequence) ON jmap_changes TO "{role}";
+            """;
+        await setup.ExecuteNonQueryAsync();
+        await transaction.CommitAsync();
+    }
+
+    private static async Task CreateRestrictedGatewayRoleAsync(
+        NpgsqlConnection admin,
+        string databaseName,
+        string role,
+        string password)
+    {
+        await using var transaction = await admin.BeginTransactionAsync();
+        await using var setup = admin.CreateCommand();
+        setup.Transaction = transaction;
+        setup.CommandText = $"""
+            CREATE ROLE "{role}" LOGIN PASSWORD '{password}'
+                NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION
+                NOBYPASSRLS NOINHERIT;
+            GRANT CONNECT ON DATABASE "{databaseName}" TO "{role}";
+            GRANT USAGE ON SCHEMA public TO "{role}";
+            GRANT SELECT, INSERT ON gateway_traffic_records TO "{role}";
+            GRANT SELECT, INSERT, UPDATE ON application_requests,
+                presentation_requests TO "{role}";
+            GRANT SELECT, INSERT, UPDATE, DELETE ON pop3_maildrop_leases TO "{role}";
             """;
         await setup.ExecuteNonQueryAsync();
         await transaction.CommitAsync();

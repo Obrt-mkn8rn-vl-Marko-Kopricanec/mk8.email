@@ -237,5 +237,10 @@ public sealed class ImapApplicationBoundaryTests
             ImapExpungeRequest request,
             CancellationToken cancellationToken = default) =>
             Task.FromResult(new ImapExpungeResult(true, []));
+
+        public Task<ImapStoreResult> StoreFlagsAsync(
+            ImapStoreRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ImapStoreResult(ImapStoreDisposition.Stored, [], []));
     }
 }

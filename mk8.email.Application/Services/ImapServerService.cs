@@ -38,8 +38,7 @@ ILogger<ImapServerService> logger) : BackgroundService
     private const int MaximumSearchNestingDepth = 64;
     private const int MaximumMultiAppendMessages = 20;
     private const int MaximumCommandLiterals = 64;
-    private const int MaximumKeywordsPerMessage = 128;
-    private const int MaximumKeywordLength = 255;
+    private const int MaximumKeywordsPerMessage = ImapFlagMutation.MaximumKeywordsPerMessage;
     private static readonly Encoding ProtocolEncoding = MailWireEncoding.Instance;
     private static readonly Encoding StrictUtf8 = new UTF8Encoding(
         encoderShouldEmitUTF8Identifier: false,
@@ -1836,6 +1835,15 @@ ILogger<ImapServerService> logger) : BackgroundService
     }
 
     private async Task HandleStoreAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
+        => await HandleStoreCoreAsync(writer, tag, args, session, useUid: false, ct);
+
+    private async Task HandleStoreCoreAsync(
+        StreamWriter writer,
+        string tag,
+        string args,
+        ImapSession session,
+        bool useUid,
+        CancellationToken ct)
     {
         if (session.SelectedReadOnly)
         {
@@ -1843,8 +1851,8 @@ ILogger<ImapServerService> logger) : BackgroundService
             return;
         }
 
-        var (sequenceSet, unchangedSince, action, flagsRaw) = ParseStoreArgs(args);
-        if (sequenceSet is null || action is null || flagsRaw is null)
+        var (messageSet, unchangedSince, action, flagsRaw) = ParseStoreArgs(args);
+        if (messageSet is null || action is null || flagsRaw is null)
         {
             await writer.WriteLineAsync($"{tag} BAD Syntax error");
             return;
@@ -1853,26 +1861,6 @@ ILogger<ImapServerService> logger) : BackgroundService
         if (unchangedSince is not null)
             session.CondstoreEnabled = true;
 
-        using var scope = scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-
-        var emails = await GetEmailMetadataInFolderAsync(db, session.SelectedFolderId!.Value, ct);
-        if (!TryResolveMessageSet(
-                sequenceSet,
-                emails.Count,
-                emails.Select(email => email.Uid).ToList(),
-                useUid: false,
-                session.SavedSearchUids,
-                out var parsedMessageSet))
-        {
-            await writer.WriteLineAsync($"{tag} BAD Invalid message set");
-            return;
-        }
-
-        var selected = emails
-            .Select((email, index) => (Email: email, SequenceNumber: index + 1))
-            .Where(item => MessageSetContains(parsedMessageSet, item.SequenceNumber))
-            .ToList();
         var flagsList = flagsRaw.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         if (!IsStoreAction(action))
         {
@@ -1885,61 +1873,111 @@ ILogger<ImapServerService> logger) : BackgroundService
             return;
         }
 
-        var isSilent = action.Contains(".SILENT");
-        var modified = new List<int>();
-        var applicable = new List<(EmailDB Email, int SequenceNumber)>();
-
-        foreach (var item in selected)
+        ImapMessageSelection selection;
+        if (messageSet == "$")
         {
-            var email = item.Email;
-            var seqNum = item.SequenceNumber;
-
-            if (unchangedSince is not null && email.ModSeq > unchangedSince.Value)
-            {
-                modified.Add(seqNum);
-                continue;
-            }
-
-            if (!TryApplyFlags(email, action, flagsList, out _))
-            {
-                await writer.WriteLineAsync($"{tag} NO [LIMIT] Too many keywords");
-                return;
-            }
-
-            applicable.Add(item);
+            selection = new ImapMessageSelection(null, session.SavedSearchUids.ToList());
         }
-
-        if (applicable.Count > 0)
+        else if (ImapUidSetParser.TryParse(messageSet, out var ranges))
         {
-            var folder = await db.Folders.FindAsync([session.SelectedFolderId!.Value], ct);
-            var newModSeq = ++folder!.HighestModSeq;
-
-            foreach (var item in applicable)
-            {
-                var tracked = AttachFlagUpdate(db, item.Email, newModSeq);
-
-                if (!isSilent)
-                {
-                    var flags = BuildFlagsList(tracked);
-                    if (session.CondstoreEnabled)
-                        await writer.WriteLineAsync($"* {item.SequenceNumber} FETCH (FLAGS ({flags}) MODSEQ ({newModSeq}))");
-                    else
-                        await writer.WriteLineAsync($"* {item.SequenceNumber} FETCH (FLAGS ({flags}))");
-                }
-            }
-        }
-
-        await db.SaveChangesAsync(ct);
-
-        if (modified.Count > 0)
-        {
-            var modifiedSet = string.Join(',', modified);
-            await writer.WriteLineAsync($"{tag} OK [MODIFIED {modifiedSet}] STORE completed");
+            selection = new ImapMessageSelection(
+                ranges.Select(range => new ImapMessageRange(range.Start, range.End)).ToList(),
+                null);
         }
         else
         {
-            await writer.WriteLineAsync($"{tag} OK STORE completed");
+            await writer.WriteLineAsync($"{tag} BAD Invalid message set");
+            return;
         }
+
+        var mode = action[0] switch
+        {
+            '+' => ImapFlagMutationMode.Add,
+            '-' => ImapFlagMutationMode.Remove,
+            _ => ImapFlagMutationMode.Replace,
+        };
+        var commandName = useUid ? "UID STORE" : "STORE";
+        List<string> responseLines;
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
+            var result = await application.StoreFlagsAsync(new ImapStoreRequest(
+                session.UserId,
+                session.SelectedFolderId!.Value,
+                useUid,
+                selection,
+                unchangedSince,
+                mode,
+                flagsList), ct);
+            responseLines = BuildStoreResponseLines(
+                tag, commandName, result, useUid, action.Contains(".SILENT"),
+                session.CondstoreEnabled);
+        }
+        catch (Exception exception) when (
+            exception is not OperationCanceledException && !ct.IsCancellationRequested)
+        {
+            logger.LogWarning(exception, "IMAP {Command} is unavailable for {UserId}",
+                commandName, session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] {commandName} backend unavailable");
+            return;
+        }
+
+        foreach (var line in responseLines)
+            await writer.WriteLineAsync(line);
+    }
+
+    private static List<string> BuildStoreResponseLines(
+        string tag,
+        string commandName,
+        ImapStoreResult result,
+        bool useUid,
+        bool isSilent,
+        bool condstoreEnabled)
+    {
+        if (result.Modified is null || result.Updated is null
+            || result.Modified.Any(identifier => identifier < 1)
+            || result.Modified.Zip(result.Modified.Skip(1))
+                .Any(pair => pair.Second <= pair.First)
+            || result.Updated.Any(message => message is null
+                || message.Sequence < 1 || message.Uid < 1 || message.ModSeq < 1
+                || message.Keywords is null
+                || message.Keywords.Any(keyword => !IsValidImapKeyword(keyword)))
+            || result.Updated.Zip(result.Updated.Skip(1))
+                .Any(pair => pair.Second.Sequence <= pair.First.Sequence
+                    || pair.Second.Uid <= pair.First.Uid))
+        {
+            throw new InvalidOperationException("The IMAP STORE result is invalid.");
+        }
+
+        if (result.Disposition != ImapStoreDisposition.Stored)
+        {
+            if (result.Modified.Count > 0 || result.Updated.Count > 0)
+                throw new InvalidOperationException("The IMAP STORE result is invalid.");
+            return result.Disposition switch
+            {
+                ImapStoreDisposition.FolderNotFound => [$"{tag} NO Mailbox not found"],
+                ImapStoreDisposition.KeywordLimitExceeded =>
+                    [$"{tag} NO [LIMIT] Too many keywords"],
+                _ => throw new InvalidOperationException("The IMAP STORE result is invalid."),
+            };
+        }
+
+        var lines = new List<string>();
+        if (!isSilent)
+        {
+            foreach (var message in result.Updated)
+            {
+                var uid = useUid ? $"UID {message.Uid} " : string.Empty;
+                var modSeq = condstoreEnabled ? $" MODSEQ ({message.ModSeq})" : string.Empty;
+                lines.Add($"* {message.Sequence} FETCH ({uid}FLAGS ({BuildFlagsList(message)}){modSeq})");
+            }
+        }
+        var modified = result.Modified.Count > 0
+            ? $"[MODIFIED {string.Join(',', result.Modified)}] "
+            : string.Empty;
+        lines.Add($"{tag} OK {modified}{commandName} completed");
+        return lines;
     }
 
     private async Task HandleSearchAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
@@ -2356,108 +2394,7 @@ ILogger<ImapServerService> logger) : BackgroundService
     }
 
     private async Task HandleUidStoreAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
-    {
-        if (session.SelectedReadOnly)
-        {
-            await writer.WriteLineAsync($"{tag} NO Mailbox is read-only");
-            return;
-        }
-
-        var (storeUidSet, unchangedSince, action, flagsRaw) = ParseStoreArgs(args);
-        if (storeUidSet is null || action is null || flagsRaw is null)
-        {
-            await writer.WriteLineAsync($"{tag} BAD Syntax error");
-            return;
-        }
-
-        if (unchangedSince is not null)
-            session.CondstoreEnabled = true;
-
-        var flagsList = flagsRaw.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (!IsStoreAction(action))
-        {
-            await writer.WriteLineAsync($"{tag} BAD Invalid STORE action");
-            return;
-        }
-        if (!TryValidateFlagList(flagsList, out var flagFailure))
-        {
-            await writer.WriteLineAsync($"{tag} BAD {flagFailure}");
-            return;
-        }
-
-        using var scope = scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-
-        var emails = await GetEmailMetadataInFolderAsync(db, session.SelectedFolderId!.Value, ct);
-        var maxUid = emails.Count > 0 ? emails[^1].Uid : 0;
-        if (!TryResolveMessageSet(
-                storeUidSet,
-                maxUid,
-                emails.Select(email => email.Uid).ToList(),
-                useUid: true,
-                session.SavedSearchUids,
-                out var parsedMessageSet))
-        {
-            await writer.WriteLineAsync($"{tag} BAD Invalid message set");
-            return;
-        }
-
-        var isSilent = action.Contains(".SILENT");
-        var modified = new List<int>();
-        var applicable = new List<(EmailDB Email, int SequenceNumber)>();
-
-        for (var i = 0; i < emails.Count; i++)
-        {
-            var email = emails[i];
-            if (!MessageSetContains(parsedMessageSet, email.Uid)) continue;
-
-            if (unchangedSince is not null && email.ModSeq > unchangedSince.Value)
-            {
-                modified.Add(email.Uid);
-                continue;
-            }
-
-            if (!TryApplyFlags(email, action, flagsList, out _))
-            {
-                await writer.WriteLineAsync($"{tag} NO [LIMIT] Too many keywords");
-                return;
-            }
-
-            applicable.Add((email, i + 1));
-        }
-
-        if (applicable.Count > 0)
-        {
-            var folder = await db.Folders.FindAsync([session.SelectedFolderId!.Value], ct);
-            var newModSeq = ++folder!.HighestModSeq;
-
-            foreach (var item in applicable)
-            {
-                var tracked = AttachFlagUpdate(db, item.Email, newModSeq);
-
-                if (isSilent)
-                    continue;
-
-                var flags = BuildFlagsList(tracked);
-                if (session.CondstoreEnabled)
-                    await writer.WriteLineAsync($"* {item.SequenceNumber} FETCH (UID {item.Email.Uid} FLAGS ({flags}) MODSEQ ({newModSeq}))");
-                else
-                    await writer.WriteLineAsync($"* {item.SequenceNumber} FETCH (UID {item.Email.Uid} FLAGS ({flags}))");
-            }
-        }
-
-        await db.SaveChangesAsync(ct);
-
-        if (modified.Count > 0)
-        {
-            var modifiedSet = string.Join(',', modified);
-            await writer.WriteLineAsync($"{tag} OK [MODIFIED {modifiedSet}] UID STORE completed");
-        }
-        else
-        {
-            await writer.WriteLineAsync($"{tag} OK UID STORE completed");
-        }
-    }
+        => await HandleStoreCoreAsync(writer, tag, args, session, useUid: true, ct);
 
     private async Task HandleUidCopyAsync(
         StreamWriter writer,
@@ -3549,49 +3486,10 @@ ILogger<ImapServerService> logger) : BackgroundService
         action is "FLAGS" or "FLAGS.SILENT" or "+FLAGS" or "+FLAGS.SILENT" or "-FLAGS" or "-FLAGS.SILENT";
 
     private static bool TryValidateFlagList(IEnumerable<string> flags, out string failure)
-    {
-        foreach (var flag in flags)
-        {
-            if (IsMutableSystemFlag(flag))
-                continue;
-
-            if (flag.Equals("\\Recent", StringComparison.OrdinalIgnoreCase))
-            {
-                failure = "The \\Recent flag cannot be changed";
-                return false;
-            }
-
-            if (flag.StartsWith('\\') || !IsValidImapKeyword(flag))
-            {
-                failure = "Invalid flag list";
-                return false;
-            }
-        }
-
-        failure = string.Empty;
-        return true;
-    }
-
-    private static bool IsMutableSystemFlag(string flag) =>
-        flag.ToUpperInvariant() is "\\SEEN" or "\\DELETED" or "\\FLAGGED" or "\\DRAFT" or "\\ANSWERED";
+        => ImapFlagMutation.TryValidate(flags as IReadOnlyList<string> ?? flags.ToArray(), out failure);
 
     private static bool IsValidImapKeyword(string keyword)
-    {
-        if (keyword.Length is 0 or > MaximumKeywordLength || keyword[0] == '\\')
-            return false;
-
-        foreach (var character in keyword)
-        {
-            if (character <= ' '
-                || character >= '\u007f'
-                || character is '(' or ')' or '{' or '%' or '*' or ']')
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
+        => ImapFlagMutation.IsValidKeyword(keyword);
 
     private static bool TryApplyFlags(
         EmailDB email,
@@ -3599,63 +3497,19 @@ ILogger<ImapServerService> logger) : BackgroundService
         IReadOnlyList<string> flags,
         out string failure)
     {
-        if (!IsStoreAction(action))
+        var mode = action switch
+        {
+            "FLAGS" or "FLAGS.SILENT" => ImapFlagMutationMode.Replace,
+            "+FLAGS" or "+FLAGS.SILENT" => ImapFlagMutationMode.Add,
+            "-FLAGS" or "-FLAGS.SILENT" => ImapFlagMutationMode.Remove,
+            _ => (ImapFlagMutationMode?)null,
+        };
+        if (mode is null)
         {
             failure = "Invalid STORE action";
             return false;
         }
-        if (!TryValidateFlagList(flags, out failure))
-            return false;
-
-        var replace = action is "FLAGS" or "FLAGS.SILENT";
-        var remove = action is "-FLAGS" or "-FLAGS.SILENT";
-        var isRead = replace ? false : email.IsRead;
-        var isDeleted = replace ? false : email.IsDeleted;
-        var isFlagged = replace ? false : email.IsFlagged;
-        var isDraft = replace ? false : email.IsDraft;
-        var isAnswered = replace ? false : email.IsAnswered;
-        var keywords = new HashSet<string>(
-            replace
-                ? []
-                : (email.Keywords ?? []).Where(IsValidImapKeyword),
-            StringComparer.OrdinalIgnoreCase);
-
-        foreach (var flag in flags)
-        {
-            var value = !remove;
-            switch (flag.ToUpperInvariant())
-            {
-                case "\\SEEN": isRead = value; break;
-                case "\\DELETED": isDeleted = value; break;
-                case "\\FLAGGED": isFlagged = value; break;
-                case "\\DRAFT": isDraft = value; break;
-                case "\\ANSWERED": isAnswered = value; break;
-                default:
-                    if (remove)
-                        keywords.Remove(flag);
-                    else
-                        keywords.Add(flag);
-                    break;
-            }
-        }
-
-        if (keywords.Count > MaximumKeywordsPerMessage)
-        {
-            failure = "Too many keywords";
-            return false;
-        }
-
-        email.IsRead = isRead;
-        email.IsDeleted = isDeleted;
-        email.IsFlagged = isFlagged;
-        email.IsDraft = isDraft;
-        email.IsAnswered = isAnswered;
-        email.Keywords = keywords
-            .Order(StringComparer.OrdinalIgnoreCase)
-            .ThenBy(keyword => keyword, StringComparer.Ordinal)
-            .ToArray();
-        failure = string.Empty;
-        return true;
+        return ImapFlagMutation.TryApply(email, mode.Value, flags, out failure);
     }
 
     private static bool IsMarkedDeleted(EmailDB email) => email.IsDeleted;

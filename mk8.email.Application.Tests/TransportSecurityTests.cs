@@ -328,12 +328,42 @@ public sealed class TransportSecurityTests
         Assert.IsTrue(selected[^1].StartsWith("a3 OK [READ-WRITE]", StringComparison.Ordinal));
         await connection.WriteLineAsync("a4 EXPUNGE");
         Assert.AreEqual("a4 NO [UNAVAILABLE] EXPUNGE backend unavailable", await connection.ReadLineAsync());
-        await connection.WriteLineAsync("a5 UID EXPUNGE *");
-        Assert.AreEqual("a5 NO [UNAVAILABLE] UID EXPUNGE backend unavailable", await connection.ReadLineAsync());
-        await connection.WriteLineAsync("a6 CLOSE");
-        Assert.AreEqual("a6 NO [UNAVAILABLE] CLOSE backend unavailable", await connection.ReadLineAsync());
-        await connection.WriteLineAsync("a7 UNSELECT");
-        Assert.AreEqual("a7 OK UNSELECT completed", await connection.ReadLineAsync());
+        await connection.WriteLineAsync("a5 STORE 1:* +FLAGS.SILENT (\\Seen)");
+        Assert.AreEqual("a5 NO [UNAVAILABLE] STORE backend unavailable", await connection.ReadLineAsync());
+        await connection.WriteLineAsync("a6 UID STORE $ +FLAGS.SILENT (\\Seen)");
+        Assert.AreEqual("a6 NO [UNAVAILABLE] UID STORE backend unavailable", await connection.ReadLineAsync());
+        await connection.WriteLineAsync("a7 UID EXPUNGE *");
+        Assert.AreEqual("a7 NO [UNAVAILABLE] UID EXPUNGE backend unavailable", await connection.ReadLineAsync());
+        await connection.WriteLineAsync("a8 CLOSE");
+        Assert.AreEqual("a8 NO [UNAVAILABLE] CLOSE backend unavailable", await connection.ReadLineAsync());
+        await connection.WriteLineAsync("a9 UNSELECT");
+        Assert.AreEqual("a9 OK UNSELECT completed", await connection.ReadLineAsync());
+    }
+
+    [TestMethod]
+    [Timeout(10_000)]
+    public async Task ImapStoreRejectsMalformedWorkerResultBeforeSendingFetchRows()
+    {
+        var port = ReservePort();
+        await using var server = await ServerFixture.StartImapAsync(
+            CreateEnvironment(imapPort: port),
+            port,
+            applicationService: new UnavailableImapMailboxApplicationService(
+                listingUnavailable: false, selectionAvailable: true, storeMalformed: true));
+        await using var connection = await ProtocolConnection.ConnectAsync(port);
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("* OK ", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a1 STARTTLS");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a1 OK ", StringComparison.Ordinal));
+        await connection.UpgradeToTlsAsync("email.mk8n.com");
+        await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"");
+        Assert.AreEqual("a2 OK LOGIN completed", await connection.ReadLineAsync());
+        await connection.WriteLineAsync("a3 SELECT INBOX");
+        var selected = await ReadUntilTaggedResponseAsync(connection, "a3");
+        Assert.IsTrue(selected[^1].StartsWith("a3 OK [READ-WRITE]", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a4 STORE 1 +FLAGS (\\Seen)");
+        Assert.AreEqual("a4 NO [UNAVAILABLE] STORE backend unavailable", await connection.ReadLineAsync());
+        await connection.WriteLineAsync("a5 UNSELECT");
+        Assert.AreEqual("a5 OK UNSELECT completed", await connection.ReadLineAsync());
     }
 
     [TestInitialize]
@@ -3737,12 +3767,18 @@ public sealed class TransportSecurityTests
             ImapExpungeRequest request,
             CancellationToken cancellationToken = default) =>
             Task.FromException<ImapExpungeResult>(new IOException("Worker unavailable"));
+
+        public Task<ImapStoreResult> StoreFlagsAsync(
+            ImapStoreRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromException<ImapStoreResult>(new IOException("Worker unavailable"));
     }
 
     private sealed class UnavailableImapMailboxApplicationService(
         bool listingUnavailable = true,
         bool selectionMalformed = false,
-        bool selectionAvailable = false) : IImapApplicationService
+        bool selectionAvailable = false,
+        bool storeMalformed = false) : IImapApplicationService
     {
         public Task<ImapIdentityResult> AuthenticatePasswordAsync(
             ImapPasswordAuthentication request,
@@ -3810,6 +3846,13 @@ public sealed class TransportSecurityTests
             ImapExpungeRequest request,
             CancellationToken cancellationToken = default) =>
             Task.FromException<ImapExpungeResult>(new IOException("Worker unavailable"));
+
+        public Task<ImapStoreResult> StoreFlagsAsync(
+            ImapStoreRequest request,
+            CancellationToken cancellationToken = default) => storeMalformed
+            ? Task.FromResult(new ImapStoreResult(ImapStoreDisposition.Stored, [],
+                [new ImapChangedMessage(0, 0, 0, false, false, false, false, false, [])]))
+            : Task.FromException<ImapStoreResult>(new IOException("Worker unavailable"));
     }
 
     private sealed class ServerFixture(

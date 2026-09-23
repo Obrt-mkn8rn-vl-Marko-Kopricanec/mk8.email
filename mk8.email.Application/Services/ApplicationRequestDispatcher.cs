@@ -191,6 +191,11 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
                     await services.GetRequiredService<IImapApplicationService>()
                         .ExpungeDeletedAsync(
                             Deserialize<ImapExpungeRequest>(request), cancellationToken)),
+                ApplicationOperations.ImapStoreFlags => Success(
+                    request.Id,
+                    await services.GetRequiredService<IImapApplicationService>()
+                        .StoreFlagsAsync(
+                            Deserialize<ImapStoreRequest>(request), cancellationToken)),
                 ApplicationOperations.AdminAuthenticate => Success(
                     request.Id,
                     await services.GetRequiredService<IAuthService>().LoginAsync(

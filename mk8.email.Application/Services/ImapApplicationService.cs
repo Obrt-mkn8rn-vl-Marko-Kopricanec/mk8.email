@@ -451,7 +451,7 @@ internal sealed class ImapApplicationService(
             .ToListAsync(cancellationToken);
         var maximumUid = messages.Count > 0 ? messages[^1].Uid : 0;
         var resolvedRanges = selection?.Ranges is { } ranges
-            ? ResolveUidRanges(ranges, maximumUid)
+            ? ResolveMessageRanges(ranges.Select(range => (range.Start, range.End)), maximumUid)
             : null;
         var savedSearchUids = selection?.SavedSearchUids?.ToHashSet();
         var rangeIndex = 0;
@@ -527,14 +527,14 @@ internal sealed class ImapApplicationService(
         return new ImapExpungeResult(true, expunged);
     }
 
-    private static List<(int Start, int End)> ResolveUidRanges(
-        List<ImapUidRange> ranges, int maximumUid)
+    private static List<(int Start, int End)> ResolveMessageRanges(
+        IEnumerable<(int? Start, int? End)> ranges, int maximumIdentifier)
     {
         var sorted = ranges
             .Select(range =>
             {
-                var start = range.Start ?? maximumUid;
-                var end = range.End ?? maximumUid;
+                var start = range.Start ?? maximumIdentifier;
+                var end = range.End ?? maximumIdentifier;
                 return (Start: Math.Min(start, end), End: Math.Max(start, end));
             })
             .OrderBy(range => range.Start)
@@ -553,6 +553,152 @@ internal sealed class ImapApplicationService(
             }
         }
         return merged;
+    }
+
+    public async Task<ImapStoreResult> StoreFlagsAsync(
+        ImapStoreRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.UserId == Guid.Empty || request.FolderId == Guid.Empty
+            || request.Selection is null || request.Flags is null
+            || !Enum.IsDefined(request.Mode))
+        {
+            throw new ArgumentException("The IMAP STORE request is invalid.", nameof(request));
+        }
+        var selection = request.Selection;
+        if ((selection.Ranges is null) == (selection.SavedSearchUids is null)
+            || (selection.Ranges is { } requestedRanges
+                && (requestedRanges.Count == 0
+                    || requestedRanges.Any(range => range is null
+                        || range.Start is < 1 || range.End is < 1)))
+            || (selection.SavedSearchUids is { } savedUids
+                && savedUids.Any(uid => uid < 1))
+            || !ImapFlagMutation.TryValidate(request.Flags, out _))
+        {
+            throw new ArgumentException("The IMAP STORE request is invalid.", nameof(request));
+        }
+
+        await using var transaction = database.Database.IsRelational()
+            ? await database.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken)
+            : null;
+        var folder = await database.Folders.SingleOrDefaultAsync(
+            candidate => candidate.Id == request.FolderId
+                && candidate.Inbox.OwnerId == request.UserId,
+            cancellationToken);
+        if (folder is null)
+            return new ImapStoreResult(ImapStoreDisposition.FolderNotFound, [], []);
+
+        var messages = await database.Emails
+            .AsNoTracking()
+            .Where(email => email.FolderId == folder.Id)
+            .OrderBy(email => email.Uid)
+            .Select(email => new EmailDB
+            {
+                Id = email.Id,
+                Uid = email.Uid,
+                ModSeq = email.ModSeq,
+                IsRead = email.IsRead,
+                IsDeleted = email.IsDeleted,
+                IsFlagged = email.IsFlagged,
+                IsDraft = email.IsDraft,
+                IsAnswered = email.IsAnswered,
+                Keywords = email.Keywords,
+            })
+            .ToListAsync(cancellationToken);
+        var maximumIdentifier = request.UseUid
+            ? messages.Count > 0 ? messages[^1].Uid : 0
+            : messages.Count;
+        var resolvedRanges = selection.Ranges is { } ranges
+            ? ResolveMessageRanges(ranges.Select(range => (range.Start, range.End)), maximumIdentifier)
+            : null;
+        var savedSearchUids = selection.SavedSearchUids?.ToHashSet();
+        var rangeIndex = 0;
+        var modified = new List<int>();
+        var applicable = new List<(EmailDB Email, int SequenceNumber)>();
+
+        for (var index = 0; index < messages.Count; index++)
+        {
+            var message = messages[index];
+            var identifier = request.UseUid ? message.Uid : index + 1;
+            if (savedSearchUids is not null && !savedSearchUids.Contains(message.Uid))
+                continue;
+            if (resolvedRanges is not null)
+            {
+                while (rangeIndex < resolvedRanges.Count
+                    && resolvedRanges[rangeIndex].End < identifier)
+                {
+                    rangeIndex++;
+                }
+                if (rangeIndex == resolvedRanges.Count
+                    || resolvedRanges[rangeIndex].Start > identifier)
+                {
+                    continue;
+                }
+            }
+
+            if (request.UnchangedSince is { } unchangedSince && message.ModSeq > unchangedSince)
+            {
+                modified.Add(identifier);
+                continue;
+            }
+            if (!ImapFlagMutation.TryApply(message, request.Mode, request.Flags, out _))
+                return new ImapStoreResult(ImapStoreDisposition.KeywordLimitExceeded, [], []);
+            applicable.Add((message, index + 1));
+        }
+
+        var updated = new List<ImapChangedMessage>();
+        if (applicable.Count > 0)
+        {
+            var newModSeq = ++folder.HighestModSeq;
+            var trackedUpdates = new List<EmailDB>();
+            foreach (var item in applicable)
+            {
+                trackedUpdates.Add(AttachFlagUpdate(database, item.Email, newModSeq));
+                updated.Add(new ImapChangedMessage(
+                    item.SequenceNumber,
+                    item.Email.Uid,
+                    newModSeq,
+                    item.Email.IsRead,
+                    item.Email.IsDeleted,
+                    item.Email.IsFlagged,
+                    item.Email.IsDraft,
+                    item.Email.IsAnswered,
+                    item.Email.Keywords ?? []));
+            }
+            await database.SaveChangesAsync(cancellationToken);
+            foreach (var update in trackedUpdates)
+                database.Entry(update).State = EntityState.Detached;
+        }
+
+        if (transaction is not null)
+            await transaction.CommitAsync(cancellationToken);
+        return new ImapStoreResult(ImapStoreDisposition.Stored, modified, updated);
+    }
+
+    private static EmailDB AttachFlagUpdate(EmailDbContext database, EmailDB metadata, long modSeq)
+    {
+        var update = new EmailDB
+        {
+            Id = metadata.Id,
+            IsRead = metadata.IsRead,
+            IsDeleted = metadata.IsDeleted,
+            IsFlagged = metadata.IsFlagged,
+            IsDraft = metadata.IsDraft,
+            IsAnswered = metadata.IsAnswered,
+            Keywords = metadata.Keywords?.ToArray() ?? [],
+            ModSeq = modSeq,
+        };
+        database.Emails.Attach(update);
+        var entry = database.Entry(update);
+        entry.Property(email => email.IsRead).IsModified = true;
+        entry.Property(email => email.IsDeleted).IsModified = true;
+        entry.Property(email => email.IsFlagged).IsModified = true;
+        entry.Property(email => email.IsDraft).IsModified = true;
+        entry.Property(email => email.IsAnswered).IsModified = true;
+        entry.Property(email => email.Keywords).IsModified = true;
+        entry.Property(email => email.ModSeq).IsModified = true;
+        return update;
     }
 
     public async Task<ImapQuotaResult> GetQuotaAsync(

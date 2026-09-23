@@ -49,6 +49,10 @@ public interface IImapApplicationService
     Task<ImapExpungeResult> ExpungeDeletedAsync(
         ImapExpungeRequest request,
         CancellationToken cancellationToken = default);
+
+    Task<ImapStoreResult> StoreFlagsAsync(
+        ImapStoreRequest request,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record ImapPasswordAuthentication(string Username, string Password);
@@ -209,3 +213,37 @@ public sealed record ImapExpungeResult(
     List<ImapExpungedMessage> Messages);
 
 public sealed record ImapExpungedMessage(int SequenceNumber, int Uid);
+
+public sealed record ImapStoreRequest(
+    Guid UserId,
+    Guid FolderId,
+    bool UseUid,
+    ImapMessageSelection Selection,
+    long? UnchangedSince,
+    ImapFlagMutationMode Mode,
+    string[] Flags);
+
+public sealed record ImapMessageSelection(
+    List<ImapMessageRange>? Ranges,
+    List<int>? SavedSearchUids);
+
+public sealed record ImapMessageRange(int? Start, int? End);
+
+public enum ImapFlagMutationMode
+{
+    Replace,
+    Add,
+    Remove,
+}
+
+public enum ImapStoreDisposition
+{
+    Stored,
+    FolderNotFound,
+    KeywordLimitExceeded,
+}
+
+public sealed record ImapStoreResult(
+    ImapStoreDisposition Disposition,
+    List<int> Modified,
+    List<ImapChangedMessage> Updated);

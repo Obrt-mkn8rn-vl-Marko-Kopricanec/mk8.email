@@ -94,6 +94,14 @@ public sealed class ImapGatewayTransportTests
             var expunged = await client.ExpungeDeletedAsync(
                 new ImapExpungeRequest(application.UserId, Guid.CreateVersion7(),
                     new ImapUidSelection([new ImapUidRange(2, null)], null)), timeout.Token);
+            var stored = await client.StoreFlagsAsync(new ImapStoreRequest(
+                application.UserId,
+                Guid.CreateVersion7(),
+                true,
+                new ImapMessageSelection([new ImapMessageRange(1, null)], null),
+                5,
+                ImapFlagMutationMode.Add,
+                ["\\Seen", "$Label1"]), timeout.Token);
             Assert.AreEqual(application.UserId, password.UserId);
             Assert.AreEqual(application.UserId, oauth.UserId);
             Assert.AreEqual("imap-secret", application.Password);
@@ -123,6 +131,12 @@ public sealed class ImapGatewayTransportTests
             Assert.IsNotNull(selectedUidRanges);
             Assert.AreEqual(2, selectedUidRanges[0].Start);
             Assert.IsNull(selectedUidRanges[0].End);
+            Assert.AreEqual(ImapStoreDisposition.Stored, stored.Disposition);
+            var recordedStore = application.LastStoreRequest;
+            Assert.IsNotNull(recordedStore);
+            Assert.AreEqual(ImapFlagMutationMode.Add, recordedStore.Mode);
+            Assert.AreEqual(5L, recordedStore.UnchangedSince);
+            CollectionAssert.AreEqual(new[] { "\\Seen", "$Label1" }, recordedStore.Flags);
 
             await using var operations = gatewayDataSource.CreateCommand(
                 "SELECT operation FROM application_requests ORDER BY created_at");
@@ -145,6 +159,7 @@ public sealed class ImapGatewayTransportTests
                     ApplicationOperations.ImapGetQuota,
                     ApplicationOperations.ImapGetIdleSnapshot,
                     ApplicationOperations.ImapExpungeDeleted,
+                    ApplicationOperations.ImapStoreFlags,
                 },
                 observed);
 
@@ -160,7 +175,7 @@ public sealed class ImapGatewayTransportTests
                 Assert.IsFalse(ciphertext.Contains("imap-secret", StringComparison.Ordinal));
                 Assert.IsFalse(ciphertext.Contains("imap-access-token", StringComparison.Ordinal));
             }
-            Assert.AreEqual(24, recordCount);
+            Assert.AreEqual(26, recordCount);
         }
         finally
         {
@@ -181,6 +196,7 @@ public sealed class ImapGatewayTransportTests
         public string? SelectedMailbox { get; private set; }
         public string? QuotaMailbox { get; private set; }
         public ImapUidSelection? LastExpungeSelection { get; private set; }
+        public ImapStoreRequest? LastStoreRequest { get; private set; }
 
         public Task<ImapIdentityResult> AuthenticatePasswordAsync(
             ImapPasswordAuthentication request,
@@ -279,6 +295,14 @@ public sealed class ImapGatewayTransportTests
             LastExpungeSelection = request.UidSelection;
             return Task.FromResult(new ImapExpungeResult(true,
                 [new ImapExpungedMessage(2, 7)]));
+        }
+
+        public Task<ImapStoreResult> StoreFlagsAsync(
+            ImapStoreRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            LastStoreRequest = request;
+            return Task.FromResult(new ImapStoreResult(ImapStoreDisposition.Stored, [], []));
         }
     }
 }

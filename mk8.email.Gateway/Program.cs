@@ -152,12 +152,6 @@ builder.Services.AddRazorPages(options =>
 
 var app = builder.Build();
 
-using (var scope = app.Services.CreateScope())
-{
-    await scope.ServiceProvider.GetRequiredService<IApplicationTransportControl>()
-        .InitializeAsync();
-}
-
 if (!app.Environment.IsDevelopment())
     app.UseExceptionHandler("/Error");
 

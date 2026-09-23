@@ -10,14 +10,14 @@ namespace mk8.email.Messaging.Tests;
 public sealed class PostgresMessagingTests
 {
     [TestMethod]
-    public async Task TransportControlReportsAvailabilityOnlyAfterInitialization()
+    public async Task TransportControlReportsAvailabilityOnlyAfterSchemaProvisioning()
     {
         await using var database = await RequirePostgresAsync();
         await using var dataSource = NpgsqlDataSource.Create(database.ConnectionString);
         var transport = new PostgresApplicationTransportControl(dataSource);
 
         Assert.IsFalse(await transport.IsAvailableAsync());
-        await transport.InitializeAsync();
+        await PostgresMessagingSchema.EnsureAsync(dataSource);
         Assert.IsTrue(await transport.IsAvailableAsync());
     }
 

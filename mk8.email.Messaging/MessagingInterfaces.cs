@@ -67,7 +67,5 @@ public interface IGatewayTrafficJournal
 
 public interface IApplicationTransportControl
 {
-    Task InitializeAsync(CancellationToken cancellationToken = default);
-
     Task<bool> IsAvailableAsync(CancellationToken cancellationToken = default);
 }

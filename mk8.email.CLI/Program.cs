@@ -47,6 +47,16 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
         return 2;
     }
 
+    if (arguments.Length == 3
+        && arguments[0] == "--purge-quarantined-smoke-message"
+        && (arguments[2].Length != 32
+            || arguments[2].Any(character => character is not
+                (>= '0' and <= '9' or >= 'a' and <= 'f'))))
+    {
+        Console.Error.WriteLine("The smoke marker is not valid.");
+        return 2;
+    }
+
     try
     {
         var isDevelopment = arguments.Contains("--dev", StringComparer.Ordinal)
@@ -100,6 +110,20 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
             }
             Console.WriteLine($"The {role} configuration is valid.");
             return 0;
+        }
+        if (arguments.Length == 3 && arguments[0] == "--purge-quarantined-smoke-message")
+        {
+            var validated = EnvironmentLoader.LoadFromFile(
+                arguments[1], isDevelopment, EnvironmentValidationRole.ApplicationWorker);
+            using var host = BuildHost(arguments, validated, includeLargeObjects: true);
+            using var scope = host.Services.CreateScope();
+            var removed = await scope.ServiceProvider
+                .GetRequiredService<MailQueueMaintenanceService>()
+                .PurgeQuarantinedSmokeMessageAsync(arguments[2]);
+            Console.WriteLine(removed
+                ? "The quarantined smoke message and Blob were removed."
+                : "No unique quarantined smoke message matched the marker.");
+            return removed ? 0 : 1;
         }
         var environmentConfig = EnvironmentLoader.Load(isDevelopment);
 
@@ -326,6 +350,7 @@ static bool IsSupportedCommand(string[] arguments) =>
     || arguments.Length == 3 && arguments[0] == "--create-app-password"
     || arguments.Length == 2 && arguments[0] == "--list-app-passwords"
     || arguments.Length == 3 && arguments[0] == "--revoke-app-password"
+    || arguments.Length == 3 && arguments[0] == "--purge-quarantined-smoke-message"
     || arguments.Length == 3 && arguments[0] == "--enroll-totp"
     || arguments.Length == 3 && arguments[0] == "--confirm-totp"
     || arguments.Length == 2 && arguments[0] == "--totp-status"
@@ -344,13 +369,16 @@ static void WriteUsage()
 
 static IHost BuildHost(
     string[] arguments,
-    EnvironmentConfig environmentConfig)
+    EnvironmentConfig environmentConfig,
+    bool includeLargeObjects = false)
 {
     var builder = Host.CreateApplicationBuilder(arguments);
     builder.Logging.ClearProviders();
     builder.Logging.AddJsonConsole();
     builder.Logging.AddFilter("Microsoft.EntityFrameworkCore.Database.Command", LogLevel.Warning);
     builder.Services.AddInfrastructure(environmentConfig);
+    if (includeLargeObjects)
+        builder.Services.AddAzureBlobObjectStorage(environmentConfig);
     builder.Services.AddApplication();
     return builder.Build();
 }

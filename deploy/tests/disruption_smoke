@@ -5,12 +5,52 @@ test "$#" -ge 1
 
 test_root=/usr/local/lib/mk8email/tests
 
+release_queue_probe() {
+    marker=$1
+    test "${#marker}" -eq 32
+    case "$marker" in
+        *[!0123456789abcdef]*|'')
+            printf '%s\n' "The queue marker is not safe." >&2
+            return 1
+            ;;
+    esac
+    updated=$(runuser -u postgres -- psql --dbname=mk8email --no-psqlrc \
+        --tuples-only --no-align --set=ON_ERROR_STOP=1 \
+        --command="WITH changed AS (
+            UPDATE mail_queue_messages
+            SET next_attempt_at = CURRENT_TIMESTAMP
+            WHERE dsn_envelope_id = '$marker'
+                AND envelope_sender = 'probe@debian.org'
+                AND direction = 'inbound'
+                AND state = 'pending'
+            RETURNING id
+        ) SELECT count(*) FROM changed")
+    test "$updated" = 1 || {
+        printf '%s\n' "The expected queued probe was not found uniquely." >&2
+        return 1
+    }
+}
+
+gateway_journal_count() {
+    runuser -u postgres -- psql --dbname=mk8email --no-psqlrc \
+        --tuples-only --no-align --set=ON_ERROR_STOP=1 \
+        --command="SELECT count(*) FROM gateway_traffic_records WHERE protocol = 'health'"
+}
+
 wait_for_mail_recovery() {
     attempt=0
     while [ "$attempt" -lt 30 ]; do
-        if systemctl is-active --quiet mk8email.service rspamd.service \
+        if systemctl is-active --quiet mk8email-gateway.service \
+            && systemctl is-active --quiet mk8email-worker.service \
+            && systemctl is-active --quiet rspamd.service \
             && clamdscan --config-file=/etc/clamav/clamd.conf --ping 1 >/dev/null 2>&1 \
-            && /usr/local/sbin/mk8email --healthcheck >/dev/null 2>&1; then
+            && timeout 20s runuser -u mk8email -- /usr/bin/dotnet \
+                /opt/mk8email/current/cli/mk8.email.Application.CLI.dll \
+                --healthcheck-gateway /etc/mk8email/mk8email.gateway.config.json \
+                >/dev/null 2>&1 \
+            && curl --silent --fail --max-time 10 --noproxy '*' \
+                --header 'Host: admin.mk8n.com' \
+                http://127.0.0.1:8080/health/application >/dev/null; then
             return 0
         fi
         attempt=$((attempt + 1))
@@ -26,18 +66,18 @@ case "$1" in
         admin_password_file=$2
         test -s "$admin_password_file"
         restore_scanner() {
-            systemctl start clamav-daemon.socket clamav-daemon.service mk8email.service
+            systemctl start clamav-daemon.socket clamav-daemon.service mk8email-worker.service
         }
 
         trap restore_scanner EXIT HUP INT TERM
         systemctl stop clamav-daemon.service clamav-daemon.socket
         ! systemctl is-active --quiet clamav-daemon.service
-        systemctl is-active --quiet mk8email.service
+        systemctl is-active --quiet mk8email-gateway.service
+        systemctl is-active --quiet mk8email-worker.service
         marker=$("$test_root/mail_smoke.py" scanner-down)
         restore_scanner
         wait_for_mail_recovery
-        runuser -u postgres -- psql --dbname=mk8email --no-psqlrc --quiet \
-            --command="UPDATE mail_queue_messages SET next_attempt_at = CURRENT_TIMESTAMP WHERE raw_message LIKE '%$marker%'"
+        release_queue_probe "$marker"
         "$test_root/mail_smoke.py" queue-receive \
             --marker "$marker" --admin-password-file "$admin_password_file"
         printf '%s\n' "The scanner failure retained and later delivered the message."
@@ -47,18 +87,33 @@ case "$1" in
         admin_password_file=$2
         test -s "$admin_password_file"
         restore_delivery() {
-            systemctl start clamav-daemon.socket clamav-daemon.service mk8email.service
+            systemctl start clamav-daemon.socket clamav-daemon.service mk8email-worker.service
         }
 
         trap restore_delivery EXIT HUP INT TERM
         systemctl stop clamav-daemon.service clamav-daemon.socket
-        systemctl is-active --quiet mk8email.service
+        systemctl is-active --quiet mk8email-gateway.service
+        systemctl is-active --quiet mk8email-worker.service
         marker=$("$test_root/mail_smoke.py" scanner-down)
-        systemctl stop mk8email.service
-        systemctl start clamav-daemon.socket clamav-daemon.service mk8email.service
+        systemctl stop mk8email-worker.service
+        systemctl is-active --quiet mk8email-gateway.service
+        before=$(gateway_journal_count)
+        curl --silent --fail --max-time 5 --noproxy '*' \
+            --header 'Host: admin.mk8n.com' \
+            http://127.0.0.1:8080/health/live >/dev/null
+        curl --silent --fail --max-time 5 --noproxy '*' \
+            --header 'Host: admin.mk8n.com' \
+            http://127.0.0.1:8080/health/ready >/dev/null
+        unavailable_status=$(curl --silent --output /dev/null \
+            --write-out '%{http_code}' --max-time 40 --noproxy '*' \
+            --header 'Host: admin.mk8n.com' \
+            http://127.0.0.1:8080/health/application)
+        test "$unavailable_status" = 503
+        after=$(gateway_journal_count)
+        test "$after" -ge "$((before + 2))"
+        systemctl start clamav-daemon.socket clamav-daemon.service mk8email-worker.service
         wait_for_mail_recovery
-        runuser -u postgres -- psql --dbname=mk8email --no-psqlrc --quiet \
-            --command="UPDATE mail_queue_messages SET next_attempt_at = CURRENT_TIMESTAMP WHERE raw_message LIKE '%$marker%'"
+        release_queue_probe "$marker"
         "$test_root/mail_smoke.py" queue-receive \
             --marker "$marker" --admin-password-file "$admin_password_file"
         ;;

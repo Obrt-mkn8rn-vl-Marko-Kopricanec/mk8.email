@@ -30,6 +30,7 @@ public static class ApplicationServiceExtensions
         services.AddScoped<IApplicationRequestDispatcher, ApplicationRequestDispatcher>();
         services.AddScoped<LargeObjectTransactionEffects>();
         services.AddScoped<MailQueueContentService>();
+        services.AddScoped<MailQueueMaintenanceService>();
         services.AddScoped<MailQueueLargeObjectMigrationService>();
         services.AddScoped<MailboxMessageContentService>();
         services.AddScoped<MailboxMessageLargeObjectMigrationService>();

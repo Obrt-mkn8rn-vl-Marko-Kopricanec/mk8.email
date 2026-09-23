@@ -62,12 +62,18 @@ run_failure 2 env -u MK8EMAIL_CONFIG_FILE \
     /usr/bin/dotnet "$cli_dll" --probe-worker-dispatch
 grep -F "Use one valid management command." "$output" >/dev/null
 
+run_failure 2 env -u MK8EMAIL_CONFIG_FILE \
+    /usr/bin/dotnet "$cli_dll" --purge-quarantined-smoke-message \
+    /etc/mk8email/mk8email.worker.config.json invalid
+grep -F "The smoke marker is not valid." "$output" >/dev/null
+
 run_failure 2 /usr/local/sbin/mk8email --set-domain-active mk8n.com not-a-state
 grep -F "The domain state must be true or false." "$output" >/dev/null
 
 run_failure 2 /usr/local/sbin/mk8email --revoke-app-password admin@mk8n.com not-an-id
 grep -F "The application password identifier is not valid." "$output" >/dev/null
 
-timeout 30s /usr/local/sbin/mk8email --healthcheck
+timeout 30s runuser -u mk8email -- /usr/bin/dotnet "$cli_dll" \
+    --healthcheck-gateway /etc/mk8email/mk8email.gateway.config.json
 
 printf '%s\n' "Management command validation and production configuration tests passed."

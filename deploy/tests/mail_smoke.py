@@ -59,11 +59,14 @@ def message(recipient: str, marker: str, body: str = "Local production smoke tes
 
 
 def send_inbound(value: EmailMessage) -> None:
+    marker = value.get("X-Mk8-Test", "")
+    require(len(marker) == 32 and all(character in "0123456789abcdef" for character in marker),
+            "The inbound smoke message has no valid queue marker.")
     for attempt in range(3):
         try:
             with smtplib.SMTP(INBOUND_HOST, 25, timeout=30) as client:
                 client.ehlo("probe.debian.org")
-                client.send_message(value)
+                client.send_message(value, mail_options=[f"ENVID={marker}"])
             return
         except smtplib.SMTPRecipientsRefused as error:
             temporary = all(400 <= result[0] < 500 for result in error.recipients.values())
@@ -313,10 +316,12 @@ def require_absent(account: str, password: str, marker: str) -> None:
 
 
 def queue_status(marker: str) -> tuple[str, int]:
-    require(marker.isascii() and marker.isalnum(), "The queue marker is not safe.")
+    require(len(marker) == 32 and all(character in "0123456789abcdef" for character in marker),
+            "The queue marker is not safe.")
     query = (
         "SELECT state || '|' || attempt_count FROM mail_queue_messages "
-        f"WHERE raw_message LIKE '%{marker}%' ORDER BY received_at DESC LIMIT 1"
+        f"WHERE dsn_envelope_id = '{marker}' AND envelope_sender = 'probe@debian.org' "
+        "AND direction = 'inbound' ORDER BY received_at DESC LIMIT 1"
     )
     result = subprocess.run(
         [
@@ -360,24 +365,25 @@ def wait_for_queue_state(
     raise RuntimeError(f"The queue message did not enter the {expected} state.")
 
 
-def delete_queue_message(marker: str) -> None:
-    require(marker.isascii() and marker.isalnum(), "The queue marker is not safe.")
-    query = f"DELETE FROM mail_queue_messages WHERE raw_message LIKE '%{marker}%'"
+def purge_quarantined_smoke_message(marker: str) -> None:
+    require(len(marker) == 32 and all(character in "0123456789abcdef" for character in marker),
+            "The queue marker is not safe.")
     subprocess.run(
         [
+            "timeout",
+            "30s",
             "runuser",
             "-u",
-            "postgres",
+            "mk8email",
             "--",
-            "psql",
-            "--dbname=mk8email",
-            "--no-psqlrc",
-            "--quiet",
-            "--command",
-            query,
+            "/usr/bin/dotnet",
+            "/opt/mk8email/current/cli/mk8.email.Application.CLI.dll",
+            "--purge-quarantined-smoke-message",
+            "/etc/mk8email/mk8email.worker.config.json",
+            marker,
         ],
         check=True,
-        timeout=15,
+        timeout=35,
     )
 
 
@@ -445,12 +451,15 @@ def unsafe_content(admin_password: str) -> None:
         subtype="octet-stream",
         filename="eicar.com",
     )
+    quarantined = False
     try:
         send_inbound(eicar)
         wait_for_queue_state(eicar_marker, "quarantined")
+        quarantined = True
         require_absent(ADMIN, admin_password, eicar_marker)
     finally:
-        delete_queue_message(eicar_marker)
+        if quarantined:
+            purge_quarantined_smoke_message(eicar_marker)
 
     gtube_marker = uuid.uuid4().hex
     gtube = message(
@@ -469,12 +478,15 @@ def unsafe_content(admin_password: str) -> None:
         subtype="zip",
         filename="encrypted-eicar.zip",
     )
+    quarantined = False
     try:
         send_inbound(encrypted)
         wait_for_queue_state(encrypted_marker, "quarantined")
+        quarantined = True
         require_absent(ADMIN, admin_password, encrypted_marker)
     finally:
-        delete_queue_message(encrypted_marker)
+        if quarantined:
+            purge_quarantined_smoke_message(encrypted_marker)
     print("EICAR, GTUBE, and encrypted archive rejection tests passed.")
 
 

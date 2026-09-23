@@ -27,6 +27,122 @@ public sealed class MailQueueAzureBlobPersistenceTests
         "attachment-like-body\r\n";
 
     [TestMethod]
+    public async Task QuarantinedSmokeCleanupRequiresExactMarkerAndDeletesBlob()
+    {
+        await using var databaseServer = await RequirePostgresAsync();
+        var serviceClient = new BlobServiceClient(RequireAzureBlobConnection());
+        var containerName = $"mk8-queue-{Guid.NewGuid():N}";
+        var container = serviceClient.GetBlobContainerClient(containerName);
+        var store = CreateStore(serviceClient, containerName);
+        await CreateSchemaAsync(databaseServer.ConnectionString);
+        await using (var migrationContext = CreateContext(databaseServer.ConnectionString))
+        {
+            await new MailQueueLargeObjectMigrationService(
+                migrationContext,
+                store,
+                NullLogger<MailQueueLargeObjectMigrationService>.Instance)
+                .MigrateAsync();
+        }
+
+        try
+        {
+            var services = new ServiceCollection();
+            services.AddSingleton(CreateEnvironment());
+            services.AddSingleton<ILargeObjectStore>(store);
+            services.AddDbContext<EmailDbContext>(options =>
+                options.UseNpgsql(databaseServer.ConnectionString));
+            services.AddScoped<LargeObjectTransactionEffects>();
+            services.AddScoped<MailQueueContentService>();
+            services.AddScoped<MailQueueMaintenanceService>();
+            services.AddScoped<IMailSubmissionQueue, PostgresMailSubmissionQueue>();
+            services.AddLogging();
+            await using var provider = services.BuildServiceProvider();
+
+            var queueId = Guid.CreateVersion7();
+            var marker = Guid.NewGuid().ToString("N");
+            var raw = $"From: probe@debian.org\r\nTo: admin@example.test\r\n" +
+                $"X-Mk8-Test: {marker}\r\nSubject: smoke\r\n\r\nquarantine probe\r\n";
+            using (var enqueueScope = provider.CreateScope())
+            {
+                await enqueueScope.ServiceProvider.GetRequiredService<IMailSubmissionQueue>()
+                    .EnqueueAsync(new MailSubmission(
+                        queueId,
+                        "probe@debian.org",
+                        [new MailEnvelopeRecipient("admin@example.test", true)],
+                        raw,
+                        "192.0.2.1",
+                        "probe.debian.org",
+                        null,
+                        Dsn: new MailDsnEnvelope(EnvelopeId: marker)));
+            }
+
+            Assert.HasCount(1, await GetBlobNamesAsync(container, queueId));
+            using (var pendingScope = provider.CreateScope())
+            {
+                var maintenance = pendingScope.ServiceProvider
+                    .GetRequiredService<MailQueueMaintenanceService>();
+                Assert.IsFalse(await maintenance.PurgeQuarantinedSmokeMessageAsync(marker));
+                Assert.IsFalse(await maintenance.PurgeQuarantinedSmokeMessageAsync(
+                    Guid.NewGuid().ToString("N")));
+                await Assert.ThrowsExactlyAsync<ArgumentException>(() =>
+                    maintenance.PurgeQuarantinedSmokeMessageAsync("unsafe-marker"));
+            }
+
+            await using (var quarantine = CreateContext(databaseServer.ConnectionString))
+            {
+                var message = await quarantine.MailQueueMessages.SingleAsync();
+                message.State = MailQueueStates.Quarantined;
+                await quarantine.SaveChangesAsync();
+            }
+
+            using (var purgeScope = provider.CreateScope())
+            {
+                Assert.IsTrue(await purgeScope.ServiceProvider
+                    .GetRequiredService<MailQueueMaintenanceService>()
+                    .PurgeQuarantinedSmokeMessageAsync(marker));
+            }
+
+            await using var verification = CreateContext(databaseServer.ConnectionString);
+            Assert.AreEqual(0, await verification.MailQueueMessages.CountAsync());
+            Assert.HasCount(0, await GetBlobNamesAsync(container, queueId));
+
+            var forgedId = Guid.CreateVersion7();
+            using (var enqueueScope = provider.CreateScope())
+            {
+                await enqueueScope.ServiceProvider.GetRequiredService<IMailSubmissionQueue>()
+                    .EnqueueAsync(new MailSubmission(
+                        forgedId,
+                        "probe@debian.org",
+                        [new MailEnvelopeRecipient("admin@example.test", true)],
+                        raw.Replace(marker, Guid.NewGuid().ToString("N"), StringComparison.Ordinal),
+                        "192.0.2.1",
+                        "probe.debian.org",
+                        null,
+                        Dsn: new MailDsnEnvelope(EnvelopeId: marker)));
+            }
+            await using (var quarantine = CreateContext(databaseServer.ConnectionString))
+            {
+                var message = await quarantine.MailQueueMessages.SingleAsync();
+                message.State = MailQueueStates.Quarantined;
+                await quarantine.SaveChangesAsync();
+            }
+            using (var purgeScope = provider.CreateScope())
+            {
+                await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
+                    purgeScope.ServiceProvider.GetRequiredService<MailQueueMaintenanceService>()
+                        .PurgeQuarantinedSmokeMessageAsync(marker));
+            }
+            await using var forgedVerification = CreateContext(databaseServer.ConnectionString);
+            Assert.AreEqual(1, await forgedVerification.MailQueueMessages.CountAsync());
+            Assert.HasCount(1, await GetBlobNamesAsync(container, forgedId));
+        }
+        finally
+        {
+            await container.DeleteIfExistsAsync();
+        }
+    }
+
+    [TestMethod]
     public async Task ConcurrentLegacyMigrationExternalizesQueueAndRejectsInlineRows()
     {
         await using var databaseServer = await RequirePostgresAsync();

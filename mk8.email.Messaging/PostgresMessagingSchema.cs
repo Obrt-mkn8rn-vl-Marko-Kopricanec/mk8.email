@@ -196,5 +196,12 @@ public static class PostgresMessagingSchema
 
         CREATE TABLE IF NOT EXISTS presentation_requests
             (LIKE application_requests INCLUDING ALL);
+
+        CREATE TABLE IF NOT EXISTS pop3_maildrop_leases (
+            user_id uuid PRIMARY KEY,
+            owner_token uuid NOT NULL,
+            expires_at timestamp with time zone NOT NULL,
+            CONSTRAINT ck_pop3_maildrop_lease_owner CHECK (owner_token <> '00000000-0000-0000-0000-000000000000'::uuid)
+        );
         """;
 }

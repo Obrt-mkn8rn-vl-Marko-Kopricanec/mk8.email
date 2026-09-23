@@ -96,6 +96,7 @@ public static class DistributedMessagingServiceExtensions
                 serviceProvider.GetRequiredService<IMessagingPayloadProtector>(),
                 serviceProvider.GetRequiredService<PostgresMessagingOptions>(),
                 serviceProvider.GetRequiredService<ILargeObjectStore>()));
+        services.AddSingleton<IPop3MaildropLeaseStore, PostgresPop3MaildropLeaseStore>();
         services.AddSingleton<IApplicationTransportControl, PostgresApplicationTransportControl>();
         return services;
     }

@@ -65,6 +65,10 @@ public interface IImapApplicationService
     Task<ImapAppendPreflightResult> CheckAppendCapacityAsync(
         ImapAppendPreflightRequest request,
         CancellationToken cancellationToken = default);
+
+    Task<ImapAppendResult> AppendMessagesAsync(
+        ImapAppendRequest request,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record ImapPasswordAuthentication(string Username, string Password);
@@ -316,3 +320,29 @@ public enum ImapAppendPreflightDisposition
 }
 
 public sealed record ImapAppendPreflightResult(ImapAppendPreflightDisposition Disposition);
+
+public sealed record ImapAppendRequest(
+    Guid UserId,
+    string MailboxName,
+    bool Utf8Enabled,
+    List<ImapAppendMessage> Messages);
+
+public sealed record ImapAppendMessage(
+    Guid MessageId,
+    string[] Flags,
+    DateTime? InternalDate,
+    byte[] RawMessage);
+
+public enum ImapAppendDisposition
+{
+    Appended,
+    MailboxNotFound,
+    OverQuota,
+    InvalidFlags,
+    InvalidContent,
+}
+
+public sealed record ImapAppendResult(
+    ImapAppendDisposition Disposition,
+    int UidValidity,
+    List<int> Uids);

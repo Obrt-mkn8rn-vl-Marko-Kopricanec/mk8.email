@@ -2807,6 +2807,40 @@ public sealed class TransportSecurityTests
     }
 
     [TestMethod]
+    [Timeout(10_000)]
+    public async Task ImapAppendRejectsUnavailableOrMalformedWorkerCommitWithoutPartialSuccess()
+    {
+        const string message = "Subject: test\r\n\r\nbody";
+        foreach (var malformed in new[] { false, true })
+        {
+            var port = ReservePort();
+            var environment = CreateEnvironment(imapPort: port);
+            await using var server = await ServerFixture.StartImapAsync(
+                environment, port,
+                applicationService: new UnavailableImapMailboxApplicationService(
+                    listingUnavailable: false,
+                    appendCommitUnavailable: !malformed,
+                    appendMalformed: malformed));
+            await using var connection = await ProtocolConnection.ConnectAsync(port);
+
+            await connection.ReadLineAsync();
+            await connection.WriteLineAsync("a1 STARTTLS");
+            Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a1 OK", StringComparison.Ordinal));
+            await connection.UpgradeToTlsAsync("email.mk8n.com");
+            await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"");
+            Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a2 OK", StringComparison.Ordinal));
+            await connection.WriteLineAsync($"a3 APPEND INBOX {{{message.Length}}}");
+            Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("+ ", StringComparison.Ordinal));
+            await connection.WriteRawAsync(message);
+            await connection.WriteLineAsync(string.Empty);
+            Assert.IsTrue((await connection.ReadLineAsync()).StartsWith(
+                "a3 NO [UNAVAILABLE]", StringComparison.Ordinal));
+            await connection.WriteLineAsync("a4 NOOP");
+            Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a4 OK", StringComparison.Ordinal));
+        }
+    }
+
+    [TestMethod]
     [Timeout(15_000)]
     public async Task ImapBoundsConcurrentMessageWrites()
     {
@@ -3830,6 +3864,11 @@ public sealed class TransportSecurityTests
             ImapAppendPreflightRequest request,
             CancellationToken cancellationToken = default) =>
             Task.FromException<ImapAppendPreflightResult>(new IOException("Worker unavailable"));
+
+        public Task<ImapAppendResult> AppendMessagesAsync(
+            ImapAppendRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromException<ImapAppendResult>(new IOException("Worker unavailable"));
     }
 
     private sealed class UnavailableImapMailboxApplicationService(
@@ -3838,7 +3877,9 @@ public sealed class TransportSecurityTests
         bool selectionAvailable = false,
         bool storeMalformed = false,
         bool moveMalformed = false,
-        bool copyMalformed = false) : IImapApplicationService
+        bool copyMalformed = false,
+        bool appendCommitUnavailable = false,
+        bool appendMalformed = false) : IImapApplicationService
     {
         public Task<ImapIdentityResult> AuthenticatePasswordAsync(
             ImapPasswordAuthentication request,
@@ -3931,7 +3972,17 @@ public sealed class TransportSecurityTests
         public Task<ImapAppendPreflightResult> CheckAppendCapacityAsync(
             ImapAppendPreflightRequest request,
             CancellationToken cancellationToken = default) =>
-            Task.FromException<ImapAppendPreflightResult>(new IOException("Worker unavailable"));
+            appendCommitUnavailable || appendMalformed
+                ? Task.FromResult(new ImapAppendPreflightResult(
+                    ImapAppendPreflightDisposition.Ready))
+                : Task.FromException<ImapAppendPreflightResult>(
+                    new IOException("Worker unavailable"));
+
+        public Task<ImapAppendResult> AppendMessagesAsync(
+            ImapAppendRequest request,
+            CancellationToken cancellationToken = default) => appendMalformed
+            ? Task.FromResult(new ImapAppendResult(ImapAppendDisposition.Appended, 1, []))
+            : Task.FromException<ImapAppendResult>(new IOException("Worker unavailable"));
     }
 
     private sealed class ServerFixture(

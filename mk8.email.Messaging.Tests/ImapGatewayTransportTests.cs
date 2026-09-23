@@ -38,12 +38,13 @@ public sealed class ImapGatewayTransportTests
         {
             NotificationFallbackInterval = TimeSpan.FromSeconds(1),
         };
+        var objects = new InMemoryLargeObjectStore();
         var gatewayBus = new PostgresApplicationBus(
-            gatewayDataSource, gatewayProtector, options);
+            gatewayDataSource, gatewayProtector, options, largeObjectStore: objects);
         var workerBus = new PostgresApplicationBus(
-            workerDataSource, workerProtector, options);
+            workerDataSource, workerProtector, options, largeObjectStore: objects);
         var journal = new PostgresGatewayTrafficJournal(
-            gatewayDataSource, gatewayProtector, options);
+            gatewayDataSource, gatewayProtector, options, largeObjectStore: objects);
         var application = new RecordingImapApplication();
         await using var workerProvider = new ServiceCollection()
             .AddSingleton<IImapApplicationService>(application)
@@ -117,6 +118,12 @@ public sealed class ImapGatewayTransportTests
             var append = await client.CheckAppendCapacityAsync(
                 new ImapAppendPreflightRequest(application.UserId, "INBOX", 512),
                 timeout.Token);
+            var appendBody = Encoding.UTF8.GetBytes(
+                "Subject: transport blob\r\n\r\n" + new string('x', 300 * 1024));
+            var appended = await client.AppendMessagesAsync(new ImapAppendRequest(
+                application.UserId, "INBOX", false,
+                [new ImapAppendMessage(Guid.CreateVersion7(), ["\\Seen"], null,
+                    appendBody)]), timeout.Token);
             Assert.AreEqual(application.UserId, password.UserId);
             Assert.AreEqual(application.UserId, oauth.UserId);
             Assert.AreEqual("imap-secret", application.Password);
@@ -158,6 +165,10 @@ public sealed class ImapGatewayTransportTests
             Assert.AreEqual("Archive", application.LastCopyRequest?.DestinationMailboxName);
             Assert.AreEqual(ImapAppendPreflightDisposition.Ready, append.Disposition);
             Assert.AreEqual(512L, application.LastAppendRequest?.AddedBytes);
+            Assert.AreEqual(ImapAppendDisposition.Appended, appended.Disposition);
+            Assert.AreEqual("INBOX", application.LastAppendCommit?.MailboxName);
+            CollectionAssert.AreEqual(appendBody,
+                application.LastAppendCommit?.Messages[0].RawMessage);
 
             await using var operations = gatewayDataSource.CreateCommand(
                 "SELECT operation FROM application_requests ORDER BY created_at");
@@ -184,22 +195,45 @@ public sealed class ImapGatewayTransportTests
                     ApplicationOperations.ImapMoveMessages,
                     ApplicationOperations.ImapCopyMessages,
                     ApplicationOperations.ImapCheckAppendCapacity,
+                    ApplicationOperations.ImapAppendMessages,
                 },
                 observed);
 
+            await using (var appendStorage = gatewayDataSource.CreateCommand(
+                "SELECT request_payload_inline IS NULL, request_payload_blob_provider "
+                + "FROM application_requests WHERE operation = @operation"))
+            {
+                appendStorage.Parameters.AddWithValue("operation", ApplicationOperations.ImapAppendMessages);
+                await using var storedReader = await appendStorage.ExecuteReaderAsync(timeout.Token);
+                Assert.IsTrue(await storedReader.ReadAsync(timeout.Token));
+                Assert.IsTrue(storedReader.GetBoolean(0));
+                Assert.AreEqual("azure-blob", storedReader.GetString(1));
+            }
+            Assert.IsTrue(objects.ObjectCount > 0);
+
             await using var records = gatewayDataSource.CreateCommand(
-                "SELECT payload_inline FROM gateway_traffic_records "
+                "SELECT payload_inline, payload_blob_provider FROM gateway_traffic_records "
                 + "WHERE protocol = 'imap' AND application_request_id IS NOT NULL");
             await using var recordReader = await records.ExecuteReaderAsync(timeout.Token);
             var recordCount = 0;
+            var blobRecordCount = 0;
             while (await recordReader.ReadAsync(timeout.Token))
             {
                 recordCount++;
-                var ciphertext = Encoding.UTF8.GetString(recordReader.GetFieldValue<byte[]>(0));
-                Assert.IsFalse(ciphertext.Contains("imap-secret", StringComparison.Ordinal));
-                Assert.IsFalse(ciphertext.Contains("imap-access-token", StringComparison.Ordinal));
+                if (recordReader.IsDBNull(0))
+                {
+                    blobRecordCount++;
+                    Assert.AreEqual("azure-blob", recordReader.GetString(1));
+                }
+                else
+                {
+                    var ciphertext = Encoding.UTF8.GetString(recordReader.GetFieldValue<byte[]>(0));
+                    Assert.IsFalse(ciphertext.Contains("imap-secret", StringComparison.Ordinal));
+                    Assert.IsFalse(ciphertext.Contains("imap-access-token", StringComparison.Ordinal));
+                }
             }
-            Assert.AreEqual(32, recordCount);
+            Assert.AreEqual(34, recordCount);
+            Assert.AreEqual(1, blobRecordCount);
         }
         finally
         {
@@ -224,6 +258,7 @@ public sealed class ImapGatewayTransportTests
         public ImapMoveRequest? LastMoveRequest { get; private set; }
         public ImapCopyRequest? LastCopyRequest { get; private set; }
         public ImapAppendPreflightRequest? LastAppendRequest { get; private set; }
+        public ImapAppendRequest? LastAppendCommit { get; private set; }
 
         public Task<ImapIdentityResult> AuthenticatePasswordAsync(
             ImapPasswordAuthentication request,
@@ -357,6 +392,15 @@ public sealed class ImapGatewayTransportTests
             LastAppendRequest = request;
             return Task.FromResult(new ImapAppendPreflightResult(
                 ImapAppendPreflightDisposition.Ready));
+        }
+
+        public Task<ImapAppendResult> AppendMessagesAsync(
+            ImapAppendRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            LastAppendCommit = request;
+            return Task.FromResult(new ImapAppendResult(
+                ImapAppendDisposition.Appended, 1, [7]));
         }
     }
 }

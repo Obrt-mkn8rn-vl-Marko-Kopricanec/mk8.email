@@ -211,6 +211,11 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
                     await services.GetRequiredService<IImapApplicationService>()
                         .CheckAppendCapacityAsync(
                             Deserialize<ImapAppendPreflightRequest>(request), cancellationToken)),
+                ApplicationOperations.ImapAppendMessages => Success(
+                    request.Id,
+                    await services.GetRequiredService<IImapApplicationService>()
+                        .AppendMessagesAsync(
+                            Deserialize<ImapAppendRequest>(request), cancellationToken)),
                 ApplicationOperations.AdminAuthenticate => Success(
                     request.Id,
                     await services.GetRequiredService<IAuthService>().LoginAsync(

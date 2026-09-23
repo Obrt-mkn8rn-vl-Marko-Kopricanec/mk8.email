@@ -42,6 +42,7 @@ public static class ApplicationOperations
     public const string ImapMoveMessages = "imap.messages.move";
     public const string ImapCopyMessages = "imap.messages.copy";
     public const string ImapCheckAppendCapacity = "imap.messages.append.preflight";
+    public const string ImapAppendMessages = "imap.messages.append";
     public const string AdminAuthenticate = "admin.authenticate";
     public const string AdminDashboardGet = "admin.dashboard.get";
     public const string AdminDomainsGet = "admin.domains.get";

@@ -102,4 +102,10 @@ public sealed class GatewayImapApplicationService(
         CancellationToken cancellationToken = default) =>
         transport.SendAsync<ImapAppendPreflightRequest, ImapAppendPreflightResult>(
             "imap", ApplicationOperations.ImapCheckAppendCapacity, request, cancellationToken);
+
+    public Task<ImapAppendResult> AppendMessagesAsync(
+        ImapAppendRequest request,
+        CancellationToken cancellationToken = default) =>
+        transport.SendAsync<ImapAppendRequest, ImapAppendResult>(
+            "imap", ApplicationOperations.ImapAppendMessages, request, cancellationToken);
 }

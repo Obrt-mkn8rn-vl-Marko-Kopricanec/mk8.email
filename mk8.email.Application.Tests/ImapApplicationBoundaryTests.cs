@@ -102,6 +102,16 @@ public sealed class ImapApplicationBoundaryTests
         Assert.AreEqual(ImapAppendPreflightDisposition.Ready, append.Disposition);
         Assert.AreEqual(123L, application.LastAppendBytes);
 
+        var committed = await SendAsync<ImapAppendRequest, ImapAppendResult>(
+            dispatcher,
+            ApplicationOperations.ImapAppendMessages,
+            new ImapAppendRequest(application.UserId, "INBOX", false,
+                [new ImapAppendMessage(Guid.CreateVersion7(), ["\\Seen"], null,
+                    "Subject: test\r\n\r\nbody"u8.ToArray())]));
+        Assert.AreEqual(ImapAppendDisposition.Appended, committed.Disposition);
+        Assert.HasCount(1, committed.Uids);
+        Assert.AreEqual("INBOX", application.LastAppendMailbox);
+
         var idle = await SendAsync<ImapIdleSnapshotRequest, ImapIdleSnapshotResult>(
             dispatcher,
             ApplicationOperations.ImapGetIdleSnapshot,
@@ -146,6 +156,7 @@ public sealed class ImapApplicationBoundaryTests
         public string? LastSelectedMailbox { get; private set; }
         public string? LastQuotaMailbox { get; private set; }
         public long LastAppendBytes { get; private set; }
+        public string? LastAppendMailbox { get; private set; }
 
         public Task<ImapIdentityResult> AuthenticatePasswordAsync(
             ImapPasswordAuthentication request,
@@ -241,6 +252,15 @@ public sealed class ImapApplicationBoundaryTests
             LastAppendBytes = request.AddedBytes;
             return Task.FromResult(new ImapAppendPreflightResult(
                 ImapAppendPreflightDisposition.Ready));
+        }
+
+        public Task<ImapAppendResult> AppendMessagesAsync(
+            ImapAppendRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            LastAppendMailbox = request.MailboxName;
+            return Task.FromResult(new ImapAppendResult(
+                ImapAppendDisposition.Appended, 1, [2]));
         }
 
         public Task<ImapIdleSnapshotResult> GetIdleSnapshotAsync(

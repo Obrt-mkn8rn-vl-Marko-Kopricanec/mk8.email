@@ -2618,26 +2618,6 @@ ILogger<ImapServerService> logger) : BackgroundService
                 or '_'
                 or '-');
 
-    private static string GenerateThreadObjectId(string? inReplyTo, string? messageId)
-    {
-        // Thread ID is a stable hash of the In-Reply-To if present, otherwise a new GUID
-        if (!string.IsNullOrEmpty(inReplyTo))
-        {
-            var hash = System.Security.Cryptography.SHA256.HashData(
-                Encoding.UTF8.GetBytes(inReplyTo));
-            return Convert.ToHexStringLower(hash[..16]);
-        }
-
-        if (!string.IsNullOrEmpty(messageId))
-        {
-            var hash = System.Security.Cryptography.SHA256.HashData(
-                Encoding.UTF8.GetBytes(messageId));
-            return Convert.ToHexStringLower(hash[..16]);
-        }
-
-        return Guid.CreateVersion7().ToString("N");
-    }
-
     private static X509Certificate2 LoadCertificate(GlobalConfigDB config)
     {
         if (config.TlsCertificateKeyPath is not null)
@@ -6215,7 +6195,7 @@ ILogger<ImapServerService> logger) : BackgroundService
         var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
 
         var remaining = args;
-        var pendingMessages = new List<EmailDB>();
+        var pendingMessages = new List<ImapAppendMessage>();
         string? targetMailbox = null;
         long pendingBytes = 0;
 
@@ -6379,7 +6359,7 @@ ILogger<ImapServerService> logger) : BackgroundService
             if (!TryPrepareAppendMessageForParsing(
                     messageData,
                     session.Utf8Enabled,
-                    out var messageForParsing,
+                    out _,
                     out var utf8Failure))
             {
                 if (!await ConsumeRejectedAppendRemainderAsync(
@@ -6396,38 +6376,11 @@ ILogger<ImapServerService> logger) : BackgroundService
                 return;
             }
 
-            var (subject, body, headers) = MailMessageParser.Parse(messageForParsing);
-            var sender = MailMessageParser.ExtractHeaderValue(headers, "From");
-            var recipient = MailMessageParser.ExtractHeaderValue(headers, "To");
-
-            var msgId = MailMessageParser.ExtractHeaderValue(headers, "Message-ID");
-            var inReplyTo = MailMessageParser.ExtractHeaderValue(headers, "In-Reply-To");
-
-            var email = new EmailDB
-            {
-                Id = Guid.CreateVersion7(),
-                Sender = sender,
-                Recipient = recipient,
-                Subject = subject.Length > 998 ? subject[..998] : subject,
-                Body = body,
-                RawHeaders = headers,
-                RawMessage = MailWireEncoding.Instance.GetBytes(messageData),
-                SizeBytes = MailWireEncoding.Instance.GetByteCount(messageData),
-                MessageId = msgId,
-                InReplyTo = inReplyTo,
-                Cc = MailMessageParser.ExtractHeaderValue(headers, "Cc"),
-                EmailObjectId = Guid.CreateVersion7().ToString("N"),
-                ThreadObjectId = GenerateThreadObjectId(inReplyTo, msgId),
-                ReceivedAt = internalDate ?? DateTime.UtcNow,
-            };
-
-            if (!TryApplyFlags(email, "+FLAGS", flags, out var applyFailure))
-            {
-                await writer.WriteLineAsync($"{tag} NO [LIMIT] {applyFailure}");
-                return;
-            }
-
-            pendingMessages.Add(email);
+            pendingMessages.Add(new ImapAppendMessage(
+                Guid.CreateVersion7(),
+                flags.ToArray(),
+                internalDate,
+                MailWireEncoding.Instance.GetBytes(messageData)));
             pendingBytes = nextPendingBytes;
 
             timeout.CancelAfter(TimeSpan.FromSeconds(connectionTimeoutSeconds));
@@ -6454,74 +6407,53 @@ ILogger<ImapServerService> logger) : BackgroundService
                 $"\"{EscapeImapString(FormatWireMailboxName(targetMailbox, session.Utf8Enabled))}\" {nextLine.Trim()}";
         }
 
-        var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-        var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
-        var effects = scope.ServiceProvider.GetRequiredService<LargeObjectTransactionEffects>();
-        db.ChangeTracker.Clear();
-        await using var transaction = db.Database.IsRelational()
-            ? await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct)
-            : null;
-
-        var folder = await ResolveFolderAsync(db, session.UserId, targetMailbox!, ct);
-        if (folder is null)
-        {
-            await writer.WriteLineAsync($"{tag} NO [TRYCREATE] Mailbox not found");
-            return;
-        }
-
-        if (!await HasUserQuotaCapacityAsync(db, session.UserId, pendingBytes, ct))
-        {
-            await writer.WriteLineAsync($"{tag} NO [OVERQUOTA] APPEND exceeds the mailbox quota");
-            return;
-        }
-
-        var allUids = new List<int>(pendingMessages.Count);
-        var marker = effects.Mark();
-        var commitAttempted = false;
+        ImapAppendResult result;
         try
         {
-            foreach (var email in pendingMessages)
+            result = await application.AppendMessagesAsync(new ImapAppendRequest(
+                session.UserId, targetMailbox!, session.Utf8Enabled, pendingMessages), ct);
+            if (!Enum.IsDefined(result.Disposition)
+                || result.Uids is null
+                || result.Disposition == ImapAppendDisposition.Appended
+                    && (result.UidValidity < 1
+                        || result.Uids.Count != pendingMessages.Count
+                        || result.Uids.Any(uid => uid < 1)
+                        || result.Uids.Zip(result.Uids.Skip(1))
+                            .Any(pair => pair.Second <= pair.First))
+                || result.Disposition != ImapAppendDisposition.Appended
+                    && result.Uids.Count != 0)
             {
-                email.Uid = folder.NextUid++;
-                email.ModSeq = ++folder.HighestModSeq;
-                email.FolderId = folder.Id;
-                allUids.Add(email.Uid);
-                var rawMessage = email.RawMessage
-                    ?? throw new InvalidOperationException("The APPEND message body is unavailable.");
-                await content.SetAsync(email, rawMessage, ct);
+                throw new InvalidOperationException("The IMAP APPEND result is invalid.");
             }
-
-            db.Emails.AddRange(pendingMessages);
-            await db.SaveChangesAsync(ct);
-            if (transaction is not null)
-            {
-                commitAttempted = true;
-                await transaction.CommitAsync(ct);
-            }
-            await effects.CommitAsync(marker);
         }
-        catch
+        catch (Exception exception) when (
+            exception is not OperationCanceledException && !ct.IsCancellationRequested)
         {
-            if (transaction is not null)
-            {
-                try
-                {
-                    await transaction.RollbackAsync(CancellationToken.None);
-                }
-                catch (Exception rollbackException)
-                {
-                    logger.LogWarning(rollbackException, "Could not roll back IMAP APPEND");
-                }
-            }
-            if (commitAttempted)
-                effects.Discard(marker);
-            else
-                await effects.RollbackAsync(marker);
-            throw;
+            logger.LogWarning(exception, "IMAP APPEND unavailable for {UserId}", session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] APPEND backend unavailable");
+            return;
         }
 
-        var uidSetStr = FormatUidRange(allUids);
-        await writer.WriteLineAsync($"{tag} OK [APPENDUID {folder.UidValidity} {uidSetStr}] APPEND completed");
+        switch (result.Disposition)
+        {
+            case ImapAppendDisposition.MailboxNotFound:
+                await writer.WriteLineAsync($"{tag} NO [TRYCREATE] Mailbox not found");
+                break;
+            case ImapAppendDisposition.OverQuota:
+                await writer.WriteLineAsync($"{tag} NO [OVERQUOTA] APPEND exceeds the mailbox quota");
+                break;
+            case ImapAppendDisposition.InvalidFlags:
+                await writer.WriteLineAsync($"{tag} NO [LIMIT] APPEND flags are invalid");
+                break;
+            case ImapAppendDisposition.InvalidContent:
+                await writer.WriteLineAsync($"{tag} NO [CANNOT] APPEND content is invalid");
+                break;
+            case ImapAppendDisposition.Appended:
+                var uidSetStr = FormatUidRange(result.Uids);
+                await writer.WriteLineAsync(
+                    $"{tag} OK [APPENDUID {result.UidValidity} {uidSetStr}] APPEND completed");
+                break;
+        }
     }
 
     private static bool TryPrepareAppendMessageForParsing(
@@ -6612,31 +6544,6 @@ ILogger<ImapServerService> logger) : BackgroundService
         }
 
         await writer.WriteLineAsync($"{tag} NO {response}");
-    }
-
-    private static async Task<bool> HasUserQuotaCapacityAsync(
-        EmailDbContext db,
-        Guid userId,
-        long addedBytes,
-        CancellationToken ct)
-    {
-        var quotaBytes = await db.Users
-            .AsNoTracking()
-            .Where(user => user.Id == userId)
-            .Select(user => (long?)user.QuotaBytes)
-            .SingleOrDefaultAsync(ct);
-        if (quotaBytes is null)
-            return false;
-        if (quotaBytes <= 0)
-            return true;
-
-        var usedBytes = await db.Emails
-            .AsNoTracking()
-            .Where(email => email.Folder.Inbox.OwnerId == userId)
-            .SumAsync(email => (long?)email.SizeBytes, ct)
-            ?? 0;
-        return usedBytes < quotaBytes
-            && addedBytes <= quotaBytes - usedBytes;
     }
 
     [GeneratedRegex(@"\{\d+\+\}\s*$")]

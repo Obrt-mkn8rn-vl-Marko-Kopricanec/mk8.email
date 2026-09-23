@@ -1753,10 +1753,6 @@ ILogger<ImapServerService> logger) : BackgroundService
             || NumericBodySectionRegex().IsMatch(normalizedFetchItems)
             || binaryRequests.Count > 0;
         var fetchQuery = CreateFetchQuery(messageQuery, includeStoredContent);
-        var seenUpdates = new List<EmailDB>();
-        var folder = implicitSeen && !session.SelectedReadOnly
-            ? await db.Folders.FindAsync([folderId], ct)
-            : null;
         var sequenceNumber = 0;
 
         await foreach (var email in fetchQuery.AsAsyncEnumerable().WithCancellation(ct))
@@ -1782,21 +1778,45 @@ ILogger<ImapServerService> logger) : BackgroundService
                     out var binarySections,
                     out var binaryFailure))
             {
-                await PersistSeenUpdatesAsync(db, seenUpdates, ct);
                 await writer.WriteLineAsync($"{tag} NO {binaryFailure}");
                 return;
             }
 
-            if (implicitSeen && !email.IsRead && folder is not null)
+            if (implicitSeen && !email.IsRead && !session.SelectedReadOnly)
             {
-                email.IsRead = true;
-                email.ModSeq = ++folder.HighestModSeq;
-                seenUpdates.Add(new EmailDB
+                ImapMarkSeenResult seenResult;
+                try
                 {
-                    Id = email.Id,
-                    IsRead = true,
-                    ModSeq = email.ModSeq,
-                });
+                    var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
+                    seenResult = await application.MarkMessagesSeenAsync(new ImapMarkSeenRequest(
+                        session.UserId, folderId, [email.Id]), ct);
+                    if (seenResult is null
+                        || seenResult.Messages is null
+                        || seenResult.FolderFound && seenResult.Messages.Count != 1
+                        || !seenResult.FolderFound && seenResult.Messages.Count != 0
+                        || seenResult.Messages.Any(message => message is null
+                            || message.Id != email.Id
+                            || message.Found && message.ModSeq < 0
+                            || !message.Found && message.ModSeq != 0))
+                    {
+                        throw new InvalidOperationException("The IMAP seen update is invalid.");
+                    }
+                }
+                catch (Exception exception) when (
+                    exception is not OperationCanceledException && !ct.IsCancellationRequested)
+                {
+                    logger.LogWarning(exception,
+                        "IMAP FETCH seen update unavailable for {UserId}", session.UserId);
+                    await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] FETCH backend unavailable");
+                    return;
+                }
+                if (!seenResult.FolderFound || !seenResult.Messages[0].Found)
+                {
+                    await writer.WriteLineAsync($"{tag} NO Message unavailable");
+                    return;
+                }
+                email.IsRead = true;
+                email.ModSeq = seenResult.Messages[0].ModSeq;
             }
 
             var response = BuildFetchResponse(
@@ -1810,26 +1830,8 @@ ILogger<ImapServerService> logger) : BackgroundService
             await writer.WriteLineAsync(response);
         }
 
-        await PersistSeenUpdatesAsync(db, seenUpdates, ct);
-
         var commandName = useUid ? "UID FETCH" : "FETCH";
         await writer.WriteLineAsync($"{tag} OK {commandName} completed");
-    }
-
-    private static async Task PersistSeenUpdatesAsync(
-        EmailDbContext db,
-        IReadOnlyCollection<EmailDB> seenUpdates,
-        CancellationToken ct)
-    {
-        foreach (var update in seenUpdates)
-        {
-            db.Emails.Attach(update);
-            db.Entry(update).Property(email => email.IsRead).IsModified = true;
-            db.Entry(update).Property(email => email.ModSeq).IsModified = true;
-        }
-
-        if (seenUpdates.Count > 0)
-            await db.SaveChangesAsync(ct);
     }
 
     private async Task HandleStoreAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)

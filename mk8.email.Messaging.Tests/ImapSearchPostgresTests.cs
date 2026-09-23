@@ -216,6 +216,48 @@ public sealed class ImapSearchPostgresTests
                 threadRequest with { Charset = "UNSUPPORTED" }));
             await Assert.ThrowsAsync<ArgumentException>(() => application.ThreadMessagesAsync(
                 threadRequest with { Algorithm = (ImapThreadAlgorithm)999 }));
+
+            var messageIds = await database.Emails
+                .AsNoTracking()
+                .Where(email => email.FolderId == folderId)
+                .OrderBy(email => email.Uid)
+                .Select(email => email.Id)
+                .ToListAsync();
+            var seenRequest = new ImapMarkSeenRequest(
+                ownerId, folderId, [messageIds[0], messageIds[1]]);
+            Assert.IsFalse((await application.MarkMessagesSeenAsync(
+                seenRequest with { UserId = otherId })).FolderFound);
+            var seen = await application.MarkMessagesSeenAsync(seenRequest);
+            Assert.IsTrue(seen.FolderFound);
+            CollectionAssert.AreEqual(new long[] { 4, 5 },
+                seen.Messages.Select(message => message.ModSeq).ToArray());
+            Assert.IsTrue(seen.Messages.All(message => message.Found));
+            var replay = await application.MarkMessagesSeenAsync(seenRequest);
+            CollectionAssert.AreEqual(new long[] { 4, 5 },
+                replay.Messages.Select(message => message.ModSeq).ToArray());
+            var missing = await application.MarkMessagesSeenAsync(seenRequest with
+            {
+                MessageIds = [Guid.CreateVersion7()],
+            });
+            Assert.IsFalse(missing.Messages[0].Found);
+            await Assert.ThrowsAsync<ArgumentException>(() => application.MarkMessagesSeenAsync(
+                seenRequest with { MessageIds = [messageIds[0], messageIds[0]] }));
+        }
+        await using (var database = new EmailDbContext(options))
+        {
+            Assert.AreEqual(5L, await database.Folders
+                .Where(folder => folder.Id == folderId)
+                .Select(folder => folder.HighestModSeq)
+                .SingleAsync());
+            var flags = await database.Emails
+                .Where(email => email.FolderId == folderId)
+                .OrderBy(email => email.Uid)
+                .Select(email => new { email.IsRead, email.ModSeq })
+                .ToListAsync();
+            CollectionAssert.AreEqual(new[] { true, true, false },
+                flags.Select(email => email.IsRead).ToArray());
+            CollectionAssert.AreEqual(new long[] { 4, 5, 3 },
+                flags.Select(email => email.ModSeq).ToArray());
         }
         Assert.AreEqual(3, objects.ObjectCount);
     }

@@ -134,6 +134,9 @@ public sealed class ImapGatewayTransportTests
             var threaded = await client.ThreadMessagesAsync(new ImapThreadRequest(
                 application.UserId, Guid.CreateVersion7(), "ALL", [7], false,
                 "US-ASCII", ImapThreadAlgorithm.References, true), timeout.Token);
+            var seenId = Guid.CreateVersion7();
+            var seen = await client.MarkMessagesSeenAsync(new ImapMarkSeenRequest(
+                application.UserId, Guid.CreateVersion7(), [seenId]), timeout.Token);
             Assert.AreEqual(application.UserId, password.UserId);
             Assert.AreEqual(application.UserId, oauth.UserId);
             Assert.AreEqual("imap-secret", application.Password);
@@ -187,6 +190,8 @@ public sealed class ImapGatewayTransportTests
             Assert.HasCount(2, threaded.Nodes);
             Assert.AreEqual(0, threaded.Nodes[1].ParentIndex);
             Assert.AreEqual(ImapThreadAlgorithm.References, application.LastThreadRequest?.Algorithm);
+            Assert.AreEqual(seenId, application.LastSeenRequest?.MessageIds[0]);
+            Assert.AreEqual(7L, seen.Messages[0].ModSeq);
 
             await using var operations = gatewayDataSource.CreateCommand(
                 "SELECT operation FROM application_requests ORDER BY created_at");
@@ -217,6 +222,7 @@ public sealed class ImapGatewayTransportTests
                     ApplicationOperations.ImapSearchMessages,
                     ApplicationOperations.ImapSortMessages,
                     ApplicationOperations.ImapThreadMessages,
+                    ApplicationOperations.ImapMarkMessagesSeen,
                 },
                 observed);
 
@@ -253,7 +259,7 @@ public sealed class ImapGatewayTransportTests
                     Assert.IsFalse(ciphertext.Contains("imap-access-token", StringComparison.Ordinal));
                 }
             }
-            Assert.AreEqual(40, recordCount);
+            Assert.AreEqual(42, recordCount);
             Assert.AreEqual(1, blobRecordCount);
         }
         finally
@@ -283,6 +289,7 @@ public sealed class ImapGatewayTransportTests
         public ImapSearchRequest? LastSearchRequest { get; private set; }
         public ImapSortRequest? LastSortRequest { get; private set; }
         public ImapThreadRequest? LastThreadRequest { get; private set; }
+        public ImapMarkSeenRequest? LastSeenRequest { get; private set; }
 
         public Task<ImapIdentityResult> AuthenticatePasswordAsync(
             ImapPasswordAuthentication request,
@@ -452,6 +459,15 @@ public sealed class ImapGatewayTransportTests
             LastThreadRequest = request;
             return Task.FromResult(new ImapThreadResult(true, null,
                 [new ImapThreadNode(7, -1), new ImapThreadNode(8, 0)]));
+        }
+
+        public Task<ImapMarkSeenResult> MarkMessagesSeenAsync(
+            ImapMarkSeenRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            LastSeenRequest = request;
+            return Task.FromResult(new ImapMarkSeenResult(true,
+                [new ImapSeenMessage(request.MessageIds[0], true, 7)]));
         }
     }
 }

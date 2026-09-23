@@ -126,4 +126,10 @@ public sealed class GatewayImapApplicationService(
         CancellationToken cancellationToken = default) =>
         transport.SendAsync<ImapThreadRequest, ImapThreadResult>(
             "imap", ApplicationOperations.ImapThreadMessages, request, cancellationToken);
+
+    public Task<ImapMarkSeenResult> MarkMessagesSeenAsync(
+        ImapMarkSeenRequest request,
+        CancellationToken cancellationToken = default) =>
+        transport.SendAsync<ImapMarkSeenRequest, ImapMarkSeenResult>(
+            "imap", ApplicationOperations.ImapMarkMessagesSeen, request, cancellationToken);
 }

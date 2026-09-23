@@ -81,6 +81,10 @@ public interface IImapApplicationService
     Task<ImapThreadResult> ThreadMessagesAsync(
         ImapThreadRequest request,
         CancellationToken cancellationToken = default);
+
+    Task<ImapMarkSeenResult> MarkMessagesSeenAsync(
+        ImapMarkSeenRequest request,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record ImapPasswordAuthentication(string Username, string Password);
@@ -426,3 +430,14 @@ public sealed record ImapThreadResult(
     bool FolderFound,
     string? FailureResponse,
     List<ImapThreadNode> Nodes);
+
+public sealed record ImapMarkSeenRequest(
+    Guid UserId,
+    Guid FolderId,
+    List<Guid> MessageIds);
+
+public sealed record ImapMarkSeenResult(
+    bool FolderFound,
+    List<ImapSeenMessage> Messages);
+
+public sealed record ImapSeenMessage(Guid Id, bool Found, long ModSeq);

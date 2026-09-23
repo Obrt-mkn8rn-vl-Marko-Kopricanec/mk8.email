@@ -46,6 +46,7 @@ public static class ApplicationOperations
     public const string ImapSearchMessages = "imap.messages.search";
     public const string ImapSortMessages = "imap.messages.sort";
     public const string ImapThreadMessages = "imap.messages.thread";
+    public const string ImapMarkMessagesSeen = "imap.messages.seen.mark";
     public const string AdminAuthenticate = "admin.authenticate";
     public const string AdminDashboardGet = "admin.dashboard.get";
     public const string AdminDomainsGet = "admin.domains.get";

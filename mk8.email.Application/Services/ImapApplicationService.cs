@@ -1422,6 +1422,69 @@ internal sealed class ImapApplicationService(
         return new ImapThreadResult(true, null, nodes);
     }
 
+    public async Task<ImapMarkSeenResult> MarkMessagesSeenAsync(
+        ImapMarkSeenRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.MessageIds);
+        if (request.UserId == Guid.Empty
+            || request.FolderId == Guid.Empty
+            || request.MessageIds.Count is < 1 or > 256
+            || request.MessageIds.Any(id => id == Guid.Empty)
+            || request.MessageIds.Distinct().Count() != request.MessageIds.Count)
+        {
+            throw new ArgumentException("The IMAP seen update is invalid.", nameof(request));
+        }
+
+        await using var transaction = database.Database.IsRelational()
+            ? await database.Database.BeginTransactionAsync(
+                IsolationLevel.Serializable, cancellationToken)
+            : null;
+        var folder = await database.Folders.SingleOrDefaultAsync(
+            candidate => candidate.Id == request.FolderId
+                && candidate.Inbox.OwnerId == request.UserId,
+            cancellationToken);
+        if (folder is null)
+            return new ImapMarkSeenResult(false, []);
+
+        var metadata = await database.Emails
+            .AsNoTracking()
+            .Where(email => email.FolderId == folder.Id
+                && request.MessageIds.Contains(email.Id))
+            .Select(email => new { email.Id, email.IsRead, email.ModSeq })
+            .ToListAsync(cancellationToken);
+        var byId = metadata.ToDictionary(email => email.Id);
+        var results = new List<ImapSeenMessage>(request.MessageIds.Count);
+        var changed = false;
+        foreach (var id in request.MessageIds)
+        {
+            if (!byId.TryGetValue(id, out var email))
+            {
+                results.Add(new ImapSeenMessage(id, false, 0));
+                continue;
+            }
+
+            var modSeq = email.ModSeq;
+            if (!email.IsRead)
+            {
+                modSeq = ++folder.HighestModSeq;
+                var update = new EmailDB { Id = id, IsRead = true, ModSeq = modSeq };
+                database.Emails.Attach(update);
+                database.Entry(update).Property(message => message.IsRead).IsModified = true;
+                database.Entry(update).Property(message => message.ModSeq).IsModified = true;
+                changed = true;
+            }
+            results.Add(new ImapSeenMessage(id, true, modSeq));
+        }
+
+        if (changed)
+            await database.SaveChangesAsync(cancellationToken);
+        if (transaction is not null)
+            await transaction.CommitAsync(cancellationToken);
+        return new ImapMarkSeenResult(true, results);
+    }
+
     public async Task<ImapQuotaResult> GetQuotaAsync(
         ImapQuotaRequest request,
         CancellationToken cancellationToken = default)

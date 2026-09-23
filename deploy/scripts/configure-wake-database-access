@@ -80,8 +80,44 @@ BEGIN
         OR EXISTS (SELECT 1 FROM pg_type WHERE typowner = wake_role)
         OR EXISTS (
             SELECT 1 FROM pg_attribute AS attribute
+            JOIN pg_class AS relation ON relation.oid = attribute.attrelid
+            JOIN pg_namespace AS schema ON schema.oid = relation.relnamespace
             CROSS JOIN LATERAL aclexplode(attribute.attacl) AS privilege
-            WHERE privilege.grantee = wake_role)
+            WHERE privilege.grantee = wake_role
+                AND (privilege.privilege_type <> 'SELECT'
+                    OR privilege.is_grantable
+                    OR schema.nspname <> 'public'
+                    OR NOT EXISTS (
+                        SELECT 1
+                        FROM (VALUES
+                            ('application_requests', 'state'),
+                            ('application_requests', 'lease_expires_at'),
+                            ('application_requests', 'deadline_at'),
+                            ('mail_queue_messages', 'state'),
+                            ('mail_queue_messages', 'next_attempt_at'),
+                            ('mail_queue_messages', 'lease_expires_at'),
+                            ('jmap_push_subscriptions', 'expires_at'),
+                            ('jmap_push_subscriptions', 'is_verified'),
+                            ('jmap_push_subscriptions', 'next_push_at'),
+                            ('jmap_push_subscriptions', 'user_id'),
+                            ('jmap_push_subscriptions', 'last_pushed_change'),
+                            ('users', 'id'),
+                            ('users', 'is_active'),
+                            ('inboxes', 'id'),
+                            ('inboxes', 'owner_id'),
+                            ('inboxes', 'alias_for_inbox_id'),
+                            ('inboxes', 'name'),
+                            ('inboxes', 'address_id'),
+                            ('addresses', 'id'),
+                            ('addresses', 'company_id'),
+                            ('addresses', 'is_active'),
+                            ('companies', 'id'),
+                            ('companies', 'is_active'),
+                            ('jmap_changes', 'account_id'),
+                            ('jmap_changes', 'sequence')
+                        ) AS allowed(table_name, column_name)
+                        WHERE relation.relname = allowed.table_name
+                            AND attribute.attname = allowed.column_name)))
     THEN
         RAISE EXCEPTION 'The existing Wake role has unsafe ownership, membership, or column grants';
     END IF;
@@ -105,9 +141,18 @@ GRANT USAGE ON SCHEMA public TO mk8wake;
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM mk8wake;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM mk8wake;
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM mk8wake;
-GRANT SELECT ON public.application_requests, public.mail_queue_messages,
-    public.jmap_push_subscriptions, public.jmap_changes, public.users,
-    public.inboxes, public.addresses, public.companies TO mk8wake;
+GRANT SELECT (state, lease_expires_at, deadline_at)
+    ON public.application_requests TO mk8wake;
+GRANT SELECT (state, next_attempt_at, lease_expires_at)
+    ON public.mail_queue_messages TO mk8wake;
+GRANT SELECT (expires_at, is_verified, next_push_at, user_id,
+    last_pushed_change) ON public.jmap_push_subscriptions TO mk8wake;
+GRANT SELECT (id, is_active) ON public.users TO mk8wake;
+GRANT SELECT (id, owner_id, alias_for_inbox_id, name, address_id)
+    ON public.inboxes TO mk8wake;
+GRANT SELECT (id, company_id, is_active) ON public.addresses TO mk8wake;
+GRANT SELECT (id, is_active) ON public.companies TO mk8wake;
+GRANT SELECT (account_id, sequence) ON public.jmap_changes TO mk8wake;
 
 DO $verify$
 BEGIN

@@ -1,0 +1,93 @@
+#!/bin/sh
+set -eu
+
+if [ "$#" -ne 1 ] || [ -z "${PGHOST:-}" ] || [ -z "${PGPORT:-}" ] \
+    || [ -z "${PGUSER:-}" ]; then
+    printf '%s\n' \
+        'Usage: PGHOST=... PGPORT=... PGUSER=... wake_database_access_smoke CONFIGURE_SCRIPT' >&2
+    exit 2
+fi
+
+configure_source=$1
+test_database=mk8_wake_smoke_$$
+admin_database=${PGDATABASE:-postgres}
+admin_psql() {
+    psql --no-psqlrc --tuples-only --no-align --set=ON_ERROR_STOP=1 \
+        --dbname="$admin_database" "$@"
+}
+test_psql() {
+    psql --no-psqlrc --tuples-only --no-align --set=ON_ERROR_STOP=1 \
+        --dbname="$test_database" "$@"
+}
+
+if [ "$(admin_psql --command="SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'mk8wake')")" != f ] \
+    || [ "$(admin_psql --command="SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = '$test_database')")" != f ]; then
+    printf '%s\n' 'The isolated PostgreSQL test role or database already exists.' >&2
+    exit 1
+fi
+
+created_database=false
+cleanup() {
+    if [ "$created_database" = true ]; then
+        admin_psql --command="DROP DATABASE \"$test_database\" WITH (FORCE)" >/dev/null
+        admin_psql --command='DROP ROLE IF EXISTS mk8wake' >/dev/null
+    fi
+}
+trap cleanup EXIT HUP INT TERM
+
+admin_psql --command="CREATE DATABASE \"$test_database\"" >/dev/null
+created_database=true
+admin_psql --command="REVOKE ALL ON DATABASE \"$test_database\" FROM PUBLIC" >/dev/null
+test_psql <<'SQL' >/dev/null
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+CREATE TABLE application_requests (
+    state text, lease_expires_at timestamptz, deadline_at timestamptz,
+    request_payload_inline bytea);
+CREATE TABLE mail_queue_messages (
+    state text, next_attempt_at timestamptz, lease_expires_at timestamptz,
+    raw_message text);
+CREATE TABLE jmap_push_subscriptions (
+    expires_at timestamptz, is_verified boolean, next_push_at timestamptz,
+    user_id uuid, last_pushed_change bigint);
+CREATE TABLE users (id uuid, is_active boolean, password_hash text);
+CREATE TABLE inboxes (
+    id uuid, owner_id uuid, alias_for_inbox_id uuid, name text, address_id uuid);
+CREATE TABLE addresses (id uuid, company_id uuid, is_active boolean);
+CREATE TABLE companies (id uuid, is_active boolean);
+CREATE TABLE jmap_changes (account_id uuid, sequence bigint);
+SQL
+
+run_install_sql() {
+    sed -n '/^BEGIN;$/,/^SQL$/p' "$configure_source" \
+        | sed '$d' \
+        | sed "s/mk8email/$test_database/g" \
+        | MK8_WAKE_DB_PASSWORD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+            test_psql >/dev/null
+}
+
+run_install_sql
+run_install_sql
+
+permissions=$(test_psql --command="SELECT
+    has_column_privilege('mk8wake', 'public.users', 'id', 'SELECT')
+    AND has_column_privilege('mk8wake', 'public.application_requests', 'state', 'SELECT')
+    AND NOT has_table_privilege('mk8wake', 'public.users', 'SELECT')
+    AND NOT has_column_privilege('mk8wake', 'public.users', 'password_hash', 'SELECT')
+    AND NOT has_column_privilege('mk8wake', 'public.application_requests',
+        'request_payload_inline', 'SELECT')
+    AND NOT has_column_privilege('mk8wake', 'public.mail_queue_messages',
+        'raw_message', 'SELECT')")
+if [ "$permissions" != t ]; then
+    printf '%s\n' 'Wake role has missing scheduling or excess sensitive-data access.' >&2
+    exit 1
+fi
+
+test_psql --command='GRANT SELECT (password_hash) ON users TO mk8wake' >/dev/null
+if run_install_sql 2>/dev/null; then
+    printf '%s\n' 'Wake role provisioning accepted an unsafe existing column grant.' >&2
+    exit 1
+fi
+test_psql --command='REVOKE SELECT (password_hash) ON users FROM mk8wake' >/dev/null
+run_install_sql
+
+printf '%s\n' 'Restricted Wake database role SQL, idempotence, and refusal smoke passed.'

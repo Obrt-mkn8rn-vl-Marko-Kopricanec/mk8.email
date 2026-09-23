@@ -106,7 +106,8 @@ jobs:
             deploy/tests/prerequisites_smoke \
             deploy/tests/release_retention_smoke \
             deploy/tests/tls_smoke \
-            deploy/tests/upgrade_distributed_role_smoke
+            deploy/tests/upgrade_distributed_role_smoke \
+            deploy/tests/wake_database_access_smoke
           PYTHONPYCACHEPREFIX="$RUNNER_TEMP/mk8email-pycache" \
             python3 -m py_compile deploy/tests/dashboard_smoke.py deploy/tests/distributed_config_smoke.py deploy/tests/mail_smoke.py deploy/tests/multi_domain_smoke.py
           python3 deploy/tests/distributed_config_smoke.py

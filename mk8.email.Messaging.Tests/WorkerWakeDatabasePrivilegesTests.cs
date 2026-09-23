@@ -65,9 +65,18 @@ public sealed class WorkerWakeDatabasePrivilegesTests
             await using (var grant = admin.CreateCommand())
             {
                 grant.CommandText = $"""
-                    GRANT SELECT ON application_requests, mail_queue_messages,
-                        jmap_push_subscriptions, jmap_changes, users, inboxes,
-                        addresses, companies TO "{role}";
+                    GRANT SELECT (state, lease_expires_at, deadline_at)
+                        ON application_requests TO "{role}";
+                    GRANT SELECT (state, next_attempt_at, lease_expires_at)
+                        ON mail_queue_messages TO "{role}";
+                    GRANT SELECT (expires_at, is_verified, next_push_at, user_id,
+                        last_pushed_change) ON jmap_push_subscriptions TO "{role}";
+                    GRANT SELECT (id, is_active) ON users TO "{role}";
+                    GRANT SELECT (id, owner_id, alias_for_inbox_id, name, address_id)
+                        ON inboxes TO "{role}";
+                    GRANT SELECT (id, company_id, is_active) ON addresses TO "{role}";
+                    GRANT SELECT (id, is_active) ON companies TO "{role}";
+                    GRANT SELECT (account_id, sequence) ON jmap_changes TO "{role}";
                     """;
                 await grant.ExecuteNonQueryAsync();
             }
@@ -93,6 +102,18 @@ public sealed class WorkerWakeDatabasePrivilegesTests
                     () => privateRead.ExecuteScalarAsync());
                 Assert.AreEqual(PostgresErrorCodes.InsufficientPrivilege, error.SqlState);
             }
+            foreach (var sensitiveColumn in new[]
+                     {
+                         "SELECT password_hash FROM users",
+                         "SELECT request_payload_inline FROM application_requests",
+                         "SELECT raw_message FROM mail_queue_messages",
+                     })
+            {
+                await using var sensitiveRead = wakeDataSource.CreateCommand(sensitiveColumn);
+                var error = await Assert.ThrowsExactlyAsync<PostgresException>(
+                    () => sensitiveRead.ExecuteScalarAsync());
+                Assert.AreEqual(PostgresErrorCodes.InsufficientPrivilege, error.SqlState);
+            }
             await using (var forbiddenWrite = wakeDataSource.CreateCommand(
                              "DELETE FROM application_requests"))
             {
@@ -109,6 +130,15 @@ public sealed class WorkerWakeDatabasePrivilegesTests
                 admin, wakeDataSource,
                 $"GRANT SELECT (id) ON wake_private_mail_content TO \"{role}\"",
                 $"REVOKE SELECT (id) ON wake_private_mail_content FROM \"{role}\"");
+            await AssertExcessGrantRejectedAsync(
+                admin, wakeDataSource,
+                $"GRANT SELECT ON users TO \"{role}\"",
+                $"REVOKE SELECT ON users FROM \"{role}\"; " +
+                $"GRANT SELECT (id, is_active) ON users TO \"{role}\"");
+            await AssertExcessGrantRejectedAsync(
+                admin, wakeDataSource,
+                $"GRANT SELECT (password_hash) ON users TO \"{role}\"",
+                $"REVOKE SELECT (password_hash) ON users FROM \"{role}\"");
             await AssertExcessGrantRejectedAsync(
                 admin, wakeDataSource,
                 $"GRANT UPDATE ON application_requests TO \"{role}\"",

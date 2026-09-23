@@ -12,16 +12,45 @@ public static class WorkerWakeDatabasePrivilegeProbe
 
         await using var command = dataSource.CreateCommand(
             """
-            WITH required_tables(name) AS (
-                VALUES ('application_requests'), ('mail_queue_messages'),
-                    ('jmap_push_subscriptions'), ('jmap_changes'),
-                    ('users'), ('inboxes'), ('addresses'), ('companies')
+            WITH required_columns(table_name, column_name) AS (
+                VALUES
+                    ('application_requests', 'state'),
+                    ('application_requests', 'lease_expires_at'),
+                    ('application_requests', 'deadline_at'),
+                    ('mail_queue_messages', 'state'),
+                    ('mail_queue_messages', 'next_attempt_at'),
+                    ('mail_queue_messages', 'lease_expires_at'),
+                    ('jmap_push_subscriptions', 'expires_at'),
+                    ('jmap_push_subscriptions', 'is_verified'),
+                    ('jmap_push_subscriptions', 'next_push_at'),
+                    ('jmap_push_subscriptions', 'user_id'),
+                    ('jmap_push_subscriptions', 'last_pushed_change'),
+                    ('users', 'id'),
+                    ('users', 'is_active'),
+                    ('inboxes', 'id'),
+                    ('inboxes', 'owner_id'),
+                    ('inboxes', 'alias_for_inbox_id'),
+                    ('inboxes', 'name'),
+                    ('inboxes', 'address_id'),
+                    ('addresses', 'id'),
+                    ('addresses', 'company_id'),
+                    ('addresses', 'is_active'),
+                    ('companies', 'id'),
+                    ('companies', 'is_active'),
+                    ('jmap_changes', 'account_id'),
+                    ('jmap_changes', 'sequence')
             )
             SELECT NOT EXISTS (
-                    SELECT 1 FROM required_tables
-                    WHERE to_regclass('public.' || name) IS NULL
-                        OR NOT has_table_privilege(current_user,
-                            to_regclass('public.' || name), 'SELECT'))
+                    SELECT 1 FROM required_columns AS required
+                    LEFT JOIN pg_class AS relation
+                        ON relation.oid = to_regclass('public.' || required.table_name)
+                    LEFT JOIN pg_attribute AS attribute
+                        ON attribute.attrelid = relation.oid
+                            AND attribute.attname = required.column_name
+                            AND attribute.attnum > 0 AND NOT attribute.attisdropped
+                    WHERE relation.oid IS NULL OR attribute.attnum IS NULL
+                        OR NOT has_column_privilege(current_user, relation.oid,
+                            attribute.attname, 'SELECT'))
                 AND NOT EXISTS (
                     SELECT 1 FROM pg_roles
                     WHERE rolname = current_user
@@ -66,16 +95,26 @@ public static class WorkerWakeDatabasePrivilegeProbe
                                         'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
                                     OR has_any_column_privilege(current_user,
                                         relation.oid, 'INSERT,UPDATE,REFERENCES')
-                                    OR ((has_table_privilege(current_user, relation.oid,
-                                            'SELECT')
-                                        OR has_any_column_privilege(current_user,
-                                            relation.oid, 'SELECT'))
-                                        AND NOT (schema.nspname = 'public'
-                                            AND relation.relname IN (
-                                                SELECT name FROM required_tables)))))
+                                    OR has_table_privilege(current_user,
+                                        relation.oid, 'SELECT')))
                             OR (relation.relkind = 'S'
                                 AND has_sequence_privilege(current_user, relation.oid,
                                     'USAGE,SELECT,UPDATE'))))
+                AND NOT EXISTS (
+                    SELECT 1 FROM pg_class AS relation
+                    JOIN pg_namespace AS schema ON schema.oid = relation.relnamespace
+                    JOIN pg_attribute AS attribute ON attribute.attrelid = relation.oid
+                    WHERE schema.nspname !~ '^pg_'
+                        AND schema.nspname <> 'information_schema'
+                        AND relation.relkind IN ('r', 'p', 'v', 'm', 'f')
+                        AND attribute.attnum > 0 AND NOT attribute.attisdropped
+                        AND has_column_privilege(current_user, relation.oid,
+                            attribute.attname, 'SELECT')
+                        AND NOT EXISTS (
+                            SELECT 1 FROM required_columns AS required
+                            WHERE schema.nspname = 'public'
+                                AND relation.relname = required.table_name
+                                AND attribute.attname = required.column_name))
             """);
         if (await command.ExecuteScalarAsync(cancellationToken) is not true)
         {

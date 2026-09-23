@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily mk8.email encrypted distributed off-site backup
+Documentation=https://github.com/mkn8rn/mk8.email
+
+[Timer]
+OnCalendar=*-*-* 03:20:00 UTC
+RandomizedDelaySec=30m
+Persistent=true
+Unit=mk8email-offsite-backup.service
+
+[Install]
+WantedBy=timers.target

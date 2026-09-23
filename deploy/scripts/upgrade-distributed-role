@@ -15,7 +15,7 @@ role=$1
 case "$1" in
     gateway)
         unit=mk8email-gateway.service
-        other_units='mk8email-worker.service mk8email-worker.path mk8email-wake.service mk8email-worker-drain.service mk8email-worker-maintenance.timer'
+        other_units='mk8email-worker.service mk8email-worker.path mk8email-wake.service mk8email-worker-drain.service mk8email-worker-maintenance.timer mk8email-offsite-backup.service mk8email-offsite-backup.timer'
         config=/etc/mk8email/mk8email.gateway.config.json
         executable=admin/mk8.email.Gateway.dll
         validate=--validate-gateway-config
@@ -27,6 +27,8 @@ case "$1" in
         maintenance_timer=mk8email-worker-maintenance.timer
         drain_unit=mk8email-worker-drain.service
         resident_unit=mk8email-worker.service
+        offsite_timer=mk8email-offsite-backup.timer
+        offsite_unit=mk8email-offsite-backup.service
         wake_connection=/etc/mk8email/mk8email.wake.connection
         other_units=mk8email-gateway.service
         config=/etc/mk8email/mk8email.worker.config.json
@@ -134,6 +136,11 @@ if [ "$role" = worker ]; then
     if systemctl is-active --quiet "$resident_unit" \
         || [ "$(systemctl is-enabled "$resident_unit" 2>/dev/null || true)" = enabled ]; then
         fail "A resident Worker cannot be upgraded as an on-demand role."
+    fi
+    if systemctl is-active --quiet "$offsite_timer" \
+        || systemctl is-active --quiet "$offsite_unit" \
+        || [ "$(systemctl is-enabled "$offsite_timer" 2>/dev/null || true)" = enabled ]; then
+        fail "Pause the off-site backup timer and job before upgrading the Worker role."
     fi
 fi
 systemctl is-active --quiet "$unit" \

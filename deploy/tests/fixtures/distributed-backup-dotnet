@@ -16,5 +16,16 @@ case "$2" in
         [ "${MOCK_BACKUP_FAIL:-}" != verify ] || exit 1
         [ -s "$3/database.dump" ]
         ;;
+    --publish-distributed-archive)
+        [ "$#" -eq 7 ]
+        [ "${MOCK_BACKUP_FAIL:-}" != publish ] || exit 1
+        [ -f "$3" ]
+        [ -s "$6/snapshot.tar.age" ]
+        [ -s "$6/snapshot.tar.age.sig" ]
+        [ -f "$7" ]
+        if [ -n "${MOCK_PUBLISH_LOG:-}" ]; then
+            printf '%s %s\n' "$5" "$6" >> "$MOCK_PUBLISH_LOG"
+        fi
+        ;;
     *) exit 2 ;;
 esac

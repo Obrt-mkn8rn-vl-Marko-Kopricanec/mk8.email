@@ -75,9 +75,12 @@ assert_stopped() {
     test ! -f "$state/active-mk8email-wake.service"
     test ! -f "$state/active-mk8email-worker-maintenance.timer"
     test ! -f "$state/active-mk8email-worker-drain.service"
+    test ! -f "$state/active-mk8email-offsite-backup.timer"
+    test ! -f "$state/active-mk8email-offsite-backup.service"
     test ! -f "$state/enabled-mk8email-worker.path"
     test ! -f "$state/enabled-mk8email-wake.service"
     test ! -f "$state/enabled-mk8email-worker-maintenance.timer"
+    test ! -f "$state/enabled-mk8email-offsite-backup.timer"
 }
 
 prepare_case worker_success
@@ -92,8 +95,12 @@ test -f "$state/dispatch_seen"
 grep -Fx 'mk8email --prepare' "$state/events" >/dev/null
 test ! -f "$state/active-mk8email-worker.service"
 test ! -f "$state/active-mk8email-worker-drain.service"
+: > "$state/active-mk8email-offsite-backup.timer"
+: > "$state/enabled-mk8email-offsite-backup.timer"
+: > "$state/active-mk8email-offsite-backup.service"
 sh "$state/deactivate" worker >/dev/null
 assert_stopped
+grep -Fx 'stop mk8email-offsite-backup.service' "$state/events" >/dev/null
 
 prepare_case backend_refusal
 : > "$state/fail_backend"

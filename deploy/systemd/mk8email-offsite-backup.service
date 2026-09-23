@@ -1,0 +1,49 @@
+[Unit]
+Description=mk8.email encrypted distributed off-site backup
+Documentation=https://github.com/mkn8rn/mk8.email
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=mk8email
+Group=mk8email
+WorkingDirectory=/opt/mk8email/current/cli
+Environment=DOTNET_ENVIRONMENT=Production
+Environment=DOTNET_EnableDiagnostics=0
+EnvironmentFile=/etc/mk8email/mk8email.backup.env
+ExecStart=/bin/sh /usr/local/sbin/mk8-distributed-offsite-backup /etc/mk8email/mk8email.worker.config.json /var/lib/mk8email-backup /var/lib/mk8email-backup/age-recipients.txt /var/lib/mk8email-backup/archive-signing.pem /var/lib/mk8email-backup/archive-verify.pem /var/lib/mk8email-backup/blob-connection.txt ${MK8EMAIL_BACKUP_CONTAINER} /usr/bin/dotnet /opt/mk8email/current/cli/mk8.email.Application.CLI.dll /usr/local/sbin/mk8-distributed-archive
+TimeoutStartSec=8h
+TimeoutStopSec=60s
+KillSignal=SIGINT
+UMask=0077
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+StateDirectory=mk8email-backup
+StateDirectoryMode=0700
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectProc=invisible
+ProtectSystem=strict
+ProcSubset=pid
+ReadOnlyPaths=/etc/mk8email /opt/mk8email/current
+ReadWritePaths=/var/lib/mk8email-backup
+NoExecPaths=/var/lib/mk8email-backup /tmp
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+CapabilityBoundingSet=

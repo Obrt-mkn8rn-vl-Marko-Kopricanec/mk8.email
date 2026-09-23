@@ -24,6 +24,11 @@ case "$2" in
         maintenance_timer_source=$asset_root/deploy/systemd/mk8email-worker-maintenance.timer
         drain_unit_source=$asset_root/deploy/systemd/mk8email-worker-drain.service
         wake_account_source=$asset_root/deploy/scripts/ensure-wake-service-account
+        offsite_unit_source=$asset_root/deploy/systemd/mk8email-offsite-backup.service
+        offsite_timer_source=$asset_root/deploy/systemd/mk8email-offsite-backup.timer
+        offsite_script_source=$asset_root/deploy/scripts/mk8-distributed-offsite-backup
+        archive_script_source=$asset_root/deploy/scripts/mk8-distributed-archive
+        archive_extractor_source=$asset_root/deploy/scripts/extract-distributed-snapshot-tar.py
         ;;
     *)
         printf '%s\n' "Usage: install-distributed-role ASSET_ROOT gateway|worker" >&2
@@ -64,7 +69,8 @@ fi
 if [ "$2" = worker ]; then
     for wake_unit in mk8email-wake.service mk8email-worker.path \
         mk8email-worker-maintenance.timer \
-        mk8email-worker-drain.service; do
+        mk8email-worker-drain.service mk8email-offsite-backup.service \
+        mk8email-offsite-backup.timer; do
         if systemctl is-active --quiet "$wake_unit" \
             || [ "$(systemctl is-enabled "$wake_unit" 2>/dev/null || true)" = enabled ]; then
             fail "Deactivate the Worker wake path before replacing its units."
@@ -97,14 +103,23 @@ if [ "$2" = worker ]; then
     validate_asset "$maintenance_timer_source"
     validate_asset "$drain_unit_source"
     validate_asset "$wake_account_source"
+    validate_asset "$offsite_unit_source"
+    validate_asset "$offsite_timer_source"
+    validate_asset "$offsite_script_source"
+    validate_asset "$archive_script_source"
+    validate_asset "$archive_extractor_source"
     sh -n "$wake_account_source" || fail "The Wake account helper is invalid shell."
+    sh -n "$offsite_script_source" || fail "The off-site backup helper is invalid shell."
+    bash -n "$archive_script_source" || fail "The archive helper is invalid Bash."
     if grep -Eq '@@[A-Za-z0-9_]+@@' \
         "$wake_unit_source" "$wake_path_source" \
-        "$maintenance_timer_source" "$drain_unit_source"; then
+        "$maintenance_timer_source" "$drain_unit_source" \
+        "$offsite_unit_source" "$offsite_timer_source"; then
         fail "A Wake unit still contains an unresolved deployment token."
     fi
     systemd-analyze verify "$wake_unit_source" "$wake_path_source" \
         "$maintenance_timer_source" "$drain_unit_source" \
+        "$offsite_unit_source" "$offsite_timer_source" \
         || fail "The Wake units did not pass systemd verification."
 fi
 if [ -L /etc/mk8email ] \
@@ -121,6 +136,11 @@ if [ "$2" = worker ]; then
     validate_target /etc/systemd/system/mk8email-worker.path
     validate_target /etc/systemd/system/mk8email-worker-maintenance.timer
     validate_target /etc/systemd/system/mk8email-worker-drain.service
+    validate_target /etc/systemd/system/mk8email-offsite-backup.service
+    validate_target /etc/systemd/system/mk8email-offsite-backup.timer
+    validate_target /usr/local/sbin/mk8-distributed-offsite-backup
+    validate_target /usr/local/sbin/mk8-distributed-archive
+    validate_target /usr/local/sbin/extract-distributed-snapshot-tar.py
     sh "$wake_account_source" || fail "The Wake service identity is unsafe."
 fi
 
@@ -144,13 +164,24 @@ if [ "$2" = worker ]; then
         /etc/systemd/system/mk8email-worker-maintenance.timer
     install -o root -g root -m 0644 "$drain_unit_source" \
         /etc/systemd/system/mk8email-worker-drain.service
+    install -o root -g root -m 0644 "$offsite_unit_source" \
+        /etc/systemd/system/mk8email-offsite-backup.service
+    install -o root -g root -m 0644 "$offsite_timer_source" \
+        /etc/systemd/system/mk8email-offsite-backup.timer
+    install -o root -g root -m 0755 "$offsite_script_source" \
+        /usr/local/sbin/mk8-distributed-offsite-backup
+    install -o root -g root -m 0755 "$archive_script_source" \
+        /usr/local/sbin/mk8-distributed-archive
+    install -o root -g root -m 0755 "$archive_extractor_source" \
+        /usr/local/sbin/extract-distributed-snapshot-tar.py
 fi
 systemctl daemon-reload
 systemd-analyze verify "$unit"
 if [ "$2" = worker ]; then
     systemd-analyze verify mk8email-wake.service mk8email-worker.path \
         mk8email-worker-maintenance.timer \
-        mk8email-worker-drain.service
+        mk8email-worker-drain.service mk8email-offsite-backup.service \
+        mk8email-offsite-backup.timer
 fi
 
 printf 'The distributed %s role is installed but not activated.\n' "$2"

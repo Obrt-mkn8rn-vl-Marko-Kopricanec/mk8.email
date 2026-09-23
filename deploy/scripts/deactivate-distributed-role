@@ -14,6 +14,8 @@ case "$1" in
         maintenance_timer=mk8email-worker-maintenance.timer
         drain_unit=mk8email-worker-drain.service
         resident_unit=mk8email-worker.service
+        offsite_timer=mk8email-offsite-backup.timer
+        offsite_unit=mk8email-offsite-backup.service
         ;;
     *)
         printf '%s\n' "Usage: deactivate-distributed-role gateway|worker" >&2
@@ -28,6 +30,12 @@ flock --exclusive --nonblock 9 || {
 }
 
 if [ "$1" = worker ]; then
+    offsite_state=$(systemctl is-enabled "$offsite_timer" 2>/dev/null || true)
+    if [ "$offsite_state" != not-found ]; then
+        systemctl stop "$offsite_timer"
+        systemctl disable "$offsite_timer"
+        systemctl stop "$offsite_unit"
+    fi
     systemctl stop "$maintenance_timer"
     systemctl disable "$maintenance_timer"
 fi

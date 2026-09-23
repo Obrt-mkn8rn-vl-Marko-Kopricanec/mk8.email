@@ -198,6 +198,7 @@ run_unit "mk8-build-$short_commit-$$" yes /bin/sh -eu -c '
         deploy/scripts/mk8-backup \
         deploy/scripts/mk8-distributed-backup \
         deploy/scripts/mk8-distributed-archive \
+        deploy/scripts/mk8-distributed-offsite-backup \
         deploy/scripts/mk8-export-backup \
         deploy/scripts/mk8-mail-health \
         deploy/scripts/prune-native-releases \
@@ -211,6 +212,7 @@ run_unit "mk8-build-$short_commit-$$" yes /bin/sh -eu -c '
         deploy/tests/disruption_smoke \
         deploy/tests/distributed_backup_job_smoke \
         deploy/tests/distributed_archive_smoke \
+        deploy/tests/distributed_offsite_backup_smoke \
         deploy/tests/fixtures/distributed-backup-dotnet \
         deploy/tests/fixtures/upgrade-curl \
         deploy/tests/fixtures/upgrade-runuser \
@@ -247,6 +249,12 @@ run_unit "mk8-build-$short_commit-$$" yes /bin/sh -eu -c '
     bash deploy/tests/distributed_archive_smoke \
         "$stable_source/deploy/scripts/mk8-distributed-archive" \
         "$stable_source/deploy/tests/fixtures/distributed-backup-dotnet"
+    sh deploy/tests/distributed_offsite_backup_smoke \
+        "$stable_source/deploy/scripts/mk8-distributed-offsite-backup" \
+        "$stable_source/deploy/scripts/mk8-distributed-archive" \
+        "$stable_source/deploy/tests/fixtures/distributed-backup-dotnet"
+    systemd-analyze verify deploy/systemd/mk8email-offsite-backup.service \
+        deploy/systemd/mk8email-offsite-backup.timer
     "$sdk" publish mk8.email.CLI/mk8.email.Application.CLI.csproj \
         --configuration Release --no-build \
         --artifacts-path "$run_root/artifacts" \

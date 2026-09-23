@@ -178,6 +178,16 @@ if grep -Fx stop "$state/events" >/dev/null; then
     exit 1
 fi
 
+prepare_case worker_offsite_refusal mk8email-worker.path worker/mk8.email.Application.Worker.dll
+: > "$state/offsite_timer_enabled"
+if sh "$state/upgrade" worker "$new_id" >/dev/null 2>&1; then
+    printf '%s\n' 'The Worker upgrade accepted an enabled off-site backup timer.' >&2
+    exit 1
+fi
+test "$(readlink -f "$state/opt/mk8email/current")" \
+    = "$state/opt/mk8email/releases/$old_id"
+test ! -s "$state/events"
+
 prepare_case worker_prepare_rollback mk8email-worker.path worker/mk8.email.Application.Worker.dll
 : > "$state/fail_new_prepare"
 if sh "$state/upgrade" worker "$new_id" >/dev/null 2>&1; then

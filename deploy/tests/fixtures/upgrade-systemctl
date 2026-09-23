@@ -14,6 +14,9 @@ case "$1" in
         elif [ "$unit" = mk8email-worker.path ] \
             && [ "$3" = mk8email-worker-maintenance.timer ]; then
             [ -f "$state/maintenance_active" ]
+        elif [ "$3" = mk8email-offsite-backup.timer ] \
+            || [ "$3" = mk8email-offsite-backup.service ]; then
+            [ -f "$state/offsite_active" ]
         else
             exit 1
         fi
@@ -26,6 +29,9 @@ case "$1" in
             printf '%s\n' enabled
         elif [ "$unit" = mk8email-worker.path ] \
             && [ "$2" = mk8email-worker-maintenance.timer ]; then
+            printf '%s\n' enabled
+        elif [ "$2" = mk8email-offsite-backup.timer ] \
+            && [ -f "$state/offsite_timer_enabled" ]; then
             printf '%s\n' enabled
         elif [ -f "$state/other_enabled" ]; then
             printf '%s\n' enabled

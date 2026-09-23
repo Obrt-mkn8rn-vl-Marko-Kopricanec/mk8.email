@@ -1,0 +1,137 @@
+#!/bin/sh
+set -eu
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+export DOTNET_ENVIRONMENT=Production
+export DOTNET_EnableDiagnostics=0
+umask 077
+
+if [ "$#" -ne 10 ]; then
+    printf '%s\n' 'Usage: mk8-distributed-offsite-backup WORKER_CONFIG BACKUP_ROOT RECIPIENTS SIGNING_KEY VERIFY_KEY CONNECTION_FILE CONTAINER DOTNET CLI ARCHIVE_TOOL' >&2
+    exit 2
+fi
+
+config=$1
+backup_root=$2
+recipients=$3
+signing_key=$4
+verify_key=$5
+connection_file=$6
+container=$7
+dotnet=$8
+cli=$9
+shift 9
+archive_tool=$1
+
+fail() {
+    printf '%s\n' "$1" >&2
+    exit 1
+}
+
+private_directory() {
+    case "$1" in /*) ;; *) fail 'Backup paths must be absolute.' ;; esac
+    if ! { [ ! -L "$1" ] && [ -d "$1" ] \
+        && [ "$(realpath -e -- "$1" 2>/dev/null || true)" = "$1" ] \
+        && [ "$(stat -c '%u %a' -- "$1" 2>/dev/null || true)" = "$(id -u) 700" ]; }; then
+        fail 'An off-site backup directory is unsafe.'
+    fi
+}
+
+private_file() {
+    case "$1" in /*) ;; *) fail 'Backup paths must be absolute.' ;; esac
+    private_directory "${1%/*}"
+    if ! { [ ! -L "$1" ] && [ -f "$1" ] \
+        && [ "$(realpath -e -- "$1" 2>/dev/null || true)" = "$1" ] \
+        && [ "$(stat -c '%u %a %h' -- "$1" 2>/dev/null || true)" = "$(id -u) 600 1" ]; }; then
+        fail 'An off-site backup key or credential is unsafe.'
+    fi
+}
+
+private_directory "$backup_root"
+for file in "$recipients" "$signing_key" "$verify_key" "$connection_file"; do
+    private_file "$file"
+done
+case "$config" in /*) ;; *) fail 'The Worker configuration path must be absolute.' ;; esac
+if ! { [ ! -L "$config" ] && [ -f "$config" ] \
+    && [ "$(stat -c '%h' -- "$config" 2>/dev/null || true)" = 1 ] \
+    && [ -z "$(find "$config" -prune -perm /022 -print -quit)" ]; }; then
+    fail 'The Worker configuration file is missing or unsafe.'
+fi
+case "$container" in
+    *[!a-z0-9-]* | '' | -* | *-) fail 'The backup Blob container name is invalid.' ;;
+esac
+if [ "${#container}" -lt 3 ] || [ "${#container}" -gt 63 ]; then
+    fail 'The backup Blob container name is invalid.'
+fi
+for file in "$dotnet" "$cli" "$archive_tool"; do
+    case "$file" in /*) ;; *) fail 'The runtime, CLI, and archive tool paths must be absolute.' ;; esac
+    if [ -L "$file" ] || [ ! -f "$file" ]; then
+        fail 'The runtime, CLI, or archive tool is missing or unsafe.'
+    fi
+done
+if [ ! -x "$dotnet" ] || [ ! -x "$archive_tool" ]; then
+    fail 'The runtime or archive tool is not executable.'
+fi
+
+lock=$backup_root/.offsite.lock
+if [ -L "$lock" ] || { [ -e "$lock" ] && [ ! -f "$lock" ]; } \
+    || { [ -e "$lock" ] \
+        && [ "$(stat -c '%u %a %h' -- "$lock" 2>/dev/null || true)" != "$(id -u) 600 1" ]; }; then
+    fail 'The off-site backup lock is unsafe.'
+fi
+exec 9>>"$lock"
+flock --exclusive --nonblock 9 || fail 'Another off-site backup is active.'
+
+# The dedicated root is reserved for this job. A prior SIGKILL or host crash can
+# leave plaintext only in this exact generated staging namespace; remove it
+# under the same lock before exporting a new snapshot.
+for stale in "$backup_root"/.offsite-incomplete-????????; do
+    [ -e "$stale" ] || [ -L "$stale" ] || continue
+    suffix=${stale##*/.offsite-incomplete-}
+    case "$suffix" in
+        *[!A-Za-z0-9]* | '') fail 'A stale off-site backup stage is unsafe.' ;;
+    esac
+    private_directory "$stale"
+    rm -rf -- "$stale"
+done
+
+archive_id=$(date --utc +%Y%m%dt%H%M%Sz)
+final=$backup_root/$archive_id
+if [ -e "$final" ] || [ -L "$final" ]; then
+    fail 'The off-site backup archive identifier already exists.'
+fi
+
+stage=$(mktemp -d "$backup_root/.offsite-incomplete-XXXXXXXX")
+cleanup() {
+    case "$stage" in
+        "$backup_root"/.offsite-incomplete-????????)
+            if [ -d "$stage" ] && [ ! -L "$stage" ]; then
+                rm -rf -- "$stage"
+            fi
+            ;;
+    esac
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+
+"$dotnet" "$cli" --export-distributed-snapshot "$config" "$stage/snapshot"
+"$dotnet" "$cli" --verify-distributed-snapshot "$stage/snapshot"
+"$archive_tool" seal "$stage/snapshot" "$recipients" "$signing_key" \
+    "$verify_key" "$stage/sealed" "$dotnet" "$cli" >/dev/null
+
+# Only the newly created private staging snapshot is removed. A failed remote
+# upload retains the sealed local candidate for an operator-controlled retry.
+rm -rf -- "$stage/snapshot"
+mv --no-clobber -T -- "$stage/sealed" "$final"
+[ ! -e "$stage/sealed" ] || fail 'The local sealed archive was not published.'
+rmdir -- "$stage"
+stage=
+sync -f -- "$backup_root"
+
+if ! "$dotnet" "$cli" --publish-distributed-archive \
+    "$connection_file" "$container" "$archive_id" "$final" "$verify_key"; then
+    printf 'Remote publication failed; the sealed local candidate remains at %s\n' "$final" >&2
+    exit 1
+fi
+printf '%s\n' "$final"

@@ -332,6 +332,32 @@ public sealed class DistributedBackupExporterTests
                     offHostRecovered);
                 Assert.AreEqual(2L, offHostSummary.ReferenceCount);
 
+                var offsiteRoot = Path.Combine(jobRoot, "offsite");
+                Directory.CreateDirectory(offsiteRoot,
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+                var offsiteJob = await RunOffsiteBackupAsync(
+                    jobConfigPath, offsiteRoot, recipients, signingKey, verifyKey,
+                    connectionFile, archiveContainer.Name);
+                Assert.AreEqual(0, offsiteJob.ExitCode, offsiteJob.Output);
+                var offsiteSealed = Directory.GetDirectories(offsiteRoot).Single();
+                Assert.HasCount(2, Directory.GetFiles(offsiteSealed));
+                Assert.IsTrue(await archiveContainer.GetBlobClient(
+                    $"distributed-archives/v1/{Path.GetFileName(offsiteSealed)}/complete.json")
+                    .ExistsAsync());
+                var offsiteDownloaded = Path.Combine(jobRoot, "offsite-downloaded");
+                var offsiteFetch = await RunArchiveTransportCliAsync(
+                    ["--fetch-distributed-archive", connectionFile,
+                        archiveContainer.Name, Path.GetFileName(offsiteSealed),
+                        offsiteDownloaded, verifyKey]);
+                Assert.AreEqual(0, offsiteFetch.ExitCode, offsiteFetch.Output);
+                var offsiteRecovered = Path.Combine(jobRoot, "offsite-recovered");
+                var offsiteUnseal = await RunArchiveAsync(
+                    ["unseal", offsiteDownloaded, identity, verifyKey, offsiteRecovered]);
+                Assert.AreEqual(0, offsiteUnseal.ExitCode, offsiteUnseal.Output);
+                var offsiteVerified = await DistributedBackupRestorer.VerifyAsync(
+                    offsiteRecovered);
+                Assert.AreEqual(2L, offsiteVerified.ReferenceCount);
+
                 var remoteCipher = archiveContainer.GetBlobClient(
                     $"distributed-archives/v1/{archiveId}/snapshot.tar.age");
                 await using (var tampered = new MemoryStream("tampered"u8.ToArray()))
@@ -716,9 +742,34 @@ public sealed class DistributedBackupExporterTests
         return await RunExternalAsync(host, [assembly, .. arguments]);
     }
 
+    private static async Task<(int ExitCode, string Output)> RunOffsiteBackupAsync(
+        string config, string root, string recipients, string signingKey,
+        string verifyKey, string connectionFile, string container)
+    {
+        var host = Environment.GetEnvironmentVariable("MK8_EMAIL_TEST_DOTNET_HOST")
+            ?? Environment.GetEnvironmentVariable("DOTNET_HOST_PATH")
+            ?? "dotnet";
+        var configuration = new DirectoryInfo(AppContext.BaseDirectory).Parent?.Name
+            ?? throw new InvalidOperationException("The test configuration directory is missing.");
+        var repository = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../.."));
+        var assembly = Path.Combine(
+            repository, "mk8.email.CLI", "bin", configuration,
+            "net10.0", "mk8.email.Application.CLI.dll");
+        var script = Path.Combine(
+            repository, "deploy", "scripts", "mk8-distributed-offsite-backup");
+        var archiveTool = Path.Combine(
+            repository, "deploy", "scripts", "mk8-distributed-archive");
+        Assert.IsTrue(File.Exists(assembly), "The management CLI executable is missing.");
+        Assert.IsTrue(File.Exists(script), "The off-site backup wrapper is missing.");
+        return await RunExternalAsync(script,
+            [config, root, recipients, signingKey, verifyKey, connectionFile,
+                container, host, assembly, archiveTool], PgDumpExecutable);
+    }
+
     private static async Task<(int ExitCode, string Output)> RunExternalAsync(
         string executable,
-        IReadOnlyList<string> arguments)
+        IReadOnlyList<string> arguments,
+        string? pgDumpExecutable = null)
     {
         var start = new ProcessStartInfo(executable)
         {
@@ -728,6 +779,8 @@ public sealed class DistributedBackupExporterTests
         };
         foreach (var argument in arguments)
             start.ArgumentList.Add(argument);
+        if (pgDumpExecutable is not null)
+            start.Environment["MK8EMAIL_PG_DUMP_EXECUTABLE"] = pgDumpExecutable;
         using var process = Process.Start(start)
             ?? throw new InvalidOperationException("The archive tool did not start.");
         var output = process.StandardOutput.ReadToEndAsync();

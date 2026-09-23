@@ -1,0 +1,125 @@
+#!/bin/sh
+set -eu
+
+[ "$#" -eq 3 ] || exit 2
+script=$(realpath -e -- "$1")
+archive_tool=$(realpath -e -- "$2")
+runtime=$(realpath -e -- "$3")
+test_root=$(mktemp -d)
+cleanup() {
+    if [ -d "$test_root" ] && [ ! -L "$test_root" ]; then
+        rm -rf -- "$test_root"
+    fi
+}
+trap cleanup EXIT
+umask 077
+
+config=$test_root/worker.json
+cli=$test_root/management.dll
+recipients=$test_root/recipients.txt
+identity=$test_root/identity.txt
+signing_key=$test_root/signing.pem
+verify_key=$test_root/verify.pem
+connection_file=$test_root/blob-connection.txt
+root=$test_root/backups
+printf '%s\n' '{}' > "$config"
+printf '%s\n' 'mock CLI' > "$cli"
+printf '%s\n' 'UseDevelopmentStorage=true' > "$connection_file"
+mkdir -m 0700 -- "$root"
+age-keygen -o "$identity" >/dev/null 2>&1
+age-keygen -y "$identity" > "$recipients"
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 \
+    -out "$signing_key" >/dev/null 2>&1
+openssl pkey -in "$signing_key" -pubout -out "$verify_key" >/dev/null 2>&1
+
+output=$(MOCK_PUBLISH_LOG="$test_root/publish.log" \
+    "$script" "$config" "$root" "$recipients" "$signing_key" \
+    "$verify_key" "$connection_file" mk8email-offsite \
+    "$runtime" "$cli" "$archive_tool")
+final=$(printf '%s\n' "$output" | tail -n 1)
+[ -d "$final" ] && [ -s "$final/snapshot.tar.age" ] \
+    && [ -s "$final/snapshot.tar.age.sig" ]
+[ "$(stat -c '%a' "$final")" = 700 ]
+[ "$(stat -c '%a' "$final/snapshot.tar.age")" = 600 ]
+[ ! -e "$final/snapshot" ] && [ ! -e "$final/database.dump" ]
+[ -s "$test_root/publish.log" ]
+[ -z "$(find "$root" -mindepth 1 -maxdepth 1 \
+    -name '.offsite-incomplete-*' -print -quit)" ]
+if grep -aq 'mock database dump' "$final/snapshot.tar.age"; then
+    printf '%s\n' 'The off-site archive exposed plaintext.' >&2
+    exit 1
+fi
+
+failure_root=$test_root/failed-export
+mkdir -m 0700 -- "$failure_root"
+mkdir -m 0700 -- "$failure_root/.offsite-incomplete-abcdefgh"
+printf '%s\n' 'stale plaintext' \
+    > "$failure_root/.offsite-incomplete-abcdefgh/database.dump"
+if env MOCK_BACKUP_FAIL=export \
+    "$script" "$config" "$failure_root" "$recipients" "$signing_key" \
+    "$verify_key" "$connection_file" mk8email-offsite \
+    "$runtime" "$cli" "$archive_tool" >/dev/null 2>&1; then
+    printf '%s\n' 'A failed export was accepted.' >&2
+    exit 1
+fi
+[ -z "$(find "$failure_root" -mindepth 1 -maxdepth 1 -type d -print -quit)" ]
+
+seal_failure_root=$test_root/failed-seal
+mkdir -m 0700 -- "$seal_failure_root"
+if "$script" "$config" "$seal_failure_root" "$recipients" "$signing_key" \
+    "$verify_key" "$connection_file" mk8email-offsite \
+    "$runtime" "$cli" /usr/bin/false >/dev/null 2>&1; then
+    printf '%s\n' 'A failed seal was accepted.' >&2
+    exit 1
+fi
+[ -z "$(find "$seal_failure_root" -mindepth 1 -maxdepth 1 -type d -print -quit)" ]
+
+publish_failure_root=$test_root/failed-publish
+mkdir -m 0700 -- "$publish_failure_root"
+if env MOCK_BACKUP_FAIL=publish \
+    "$script" "$config" "$publish_failure_root" "$recipients" "$signing_key" \
+    "$verify_key" "$connection_file" mk8email-offsite \
+    "$runtime" "$cli" "$archive_tool" >/dev/null 2>&1; then
+    printf '%s\n' 'A failed remote publication was accepted.' >&2
+    exit 1
+fi
+[ "$(find "$publish_failure_root" -mindepth 1 -maxdepth 1 \
+    -type d ! -name '.offsite-incomplete-*' | wc -l)" -eq 1 ]
+[ -z "$(find "$publish_failure_root" -mindepth 1 -maxdepth 1 \
+    -name '.offsite-incomplete-*' -print -quit)" ]
+[ -z "$(find "$publish_failure_root" -name database.dump -print -quit)" ]
+
+chmod 0644 "$connection_file"
+unsafe_root=$test_root/unsafe
+mkdir -m 0700 -- "$unsafe_root"
+if "$script" "$config" "$unsafe_root" "$recipients" "$signing_key" \
+    "$verify_key" "$connection_file" mk8email-offsite \
+    "$runtime" "$cli" "$archive_tool" >/dev/null 2>&1; then
+    printf '%s\n' 'An exposed connection string was accepted.' >&2
+    exit 1
+fi
+chmod 0600 "$connection_file"
+
+if "$script" "$config" "$unsafe_root" "$recipients" "$signing_key" \
+    "$verify_key" "$connection_file" INVALID-CONTAINER \
+    "$runtime" "$cli" "$archive_tool" >/dev/null 2>&1; then
+    printf '%s\n' 'An invalid container name was accepted.' >&2
+    exit 1
+fi
+ln -s "$root" "$unsafe_root/.offsite-incomplete-abcdefgh"
+if "$script" "$config" "$unsafe_root" "$recipients" "$signing_key" \
+    "$verify_key" "$connection_file" mk8email-offsite \
+    "$runtime" "$cli" "$archive_tool" >/dev/null 2>&1; then
+    printf '%s\n' 'A symbolic-link stale stage was deleted or accepted.' >&2
+    exit 1
+fi
+[ -L "$unsafe_root/.offsite-incomplete-abcdefgh" ]
+ln -s "$root" "$test_root/symlink-root"
+if "$script" "$config" "$test_root/symlink-root" "$recipients" \
+    "$signing_key" "$verify_key" "$connection_file" mk8email-offsite \
+    "$runtime" "$cli" "$archive_tool" >/dev/null 2>&1; then
+    printf '%s\n' 'A symbolic-link backup root was accepted.' >&2
+    exit 1
+fi
+
+printf '%s\n' 'Off-site backup orchestration and failure boundaries passed.'

@@ -128,6 +128,42 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
             Console.WriteLine($"Verified {count} database-referenced Azure Blob object(s).");
             return 0;
         }
+        if (arguments.Length == 3 && arguments[0] == "--export-distributed-snapshot")
+        {
+            var validated = EnvironmentLoader.LoadFromFile(
+                arguments[1], isDevelopment, EnvironmentValidationRole.ApplicationWorker);
+            if (!validated.Messaging.Enabled)
+                throw new InvalidOperationException("Distributed messaging must be enabled.");
+            await using var dataSource = NpgsqlDataSource.Create(validated.BuildConnectionString());
+            await using var services = new ServiceCollection()
+                .AddAzureBlobObjectStorage(validated)
+                .BuildServiceProvider();
+            using var timeout = new CancellationTokenSource(TimeSpan.FromHours(2));
+            ConsoleCancelEventHandler cancel = (_, eventArgs) =>
+            {
+                eventArgs.Cancel = true;
+                timeout.Cancel();
+            };
+            Console.CancelKeyPress += cancel;
+            try
+            {
+                var result = await DistributedBackupExporter.ExportAsync(
+                    dataSource,
+                    services.GetRequiredService<ILargeObjectStore>(),
+                    validated.BuildConnectionString(),
+                    arguments[2],
+                    cancellationToken: timeout.Token);
+                Console.WriteLine(
+                    $"Exported {result.ReferenceCount} references and "
+                    + $"{result.UniqueContentCount} unique Blob contents. "
+                    + "Restore and ETag rebinding are not yet verified.");
+                return 0;
+            }
+            finally
+            {
+                Console.CancelKeyPress -= cancel;
+            }
+        }
         if (arguments.Length == 3 && arguments[0] == "--purge-quarantined-smoke-message")
         {
             var validated = EnvironmentLoader.LoadFromFile(
@@ -368,6 +404,7 @@ static bool IsSupportedCommand(string[] arguments) =>
     || arguments.Length == 2 && arguments[0] == "--list-app-passwords"
     || arguments.Length == 3 && arguments[0] == "--revoke-app-password"
     || arguments.Length == 3 && arguments[0] == "--purge-quarantined-smoke-message"
+    || arguments.Length == 3 && arguments[0] == "--export-distributed-snapshot"
     || arguments.Length == 3 && arguments[0] == "--enroll-totp"
     || arguments.Length == 3 && arguments[0] == "--confirm-totp"
     || arguments.Length == 2 && arguments[0] == "--totp-status"

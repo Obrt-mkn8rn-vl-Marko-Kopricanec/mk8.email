@@ -187,6 +187,7 @@ run_unit "mk8-build-$short_commit-$$" yes /bin/sh -eu -c '
         deploy/scripts/install-build-environment \
         deploy/scripts/install-host-hardening \
         deploy/scripts/install-distributed-role \
+        deploy/scripts/upgrade-distributed-role \
         deploy/scripts/install-mail-stack \
         deploy/scripts/install-native-release \
         deploy/scripts/mk8-build \
@@ -204,13 +205,17 @@ run_unit "mk8-build-$short_commit-$$" yes /bin/sh -eu -c '
         deploy/tests/build_environment_smoke \
         deploy/tests/certificate_deploy_smoke \
         deploy/tests/disruption_smoke \
+        deploy/tests/fixtures/upgrade-curl \
+        deploy/tests/fixtures/upgrade-runuser \
+        deploy/tests/fixtures/upgrade-systemctl \
         deploy/tests/host_hardening_smoke \
         deploy/tests/management_cli_smoke \
         deploy/tests/multi_domain_smoke \
         deploy/tests/native_release_smoke \
         deploy/tests/prerequisites_smoke \
         deploy/tests/release_retention_smoke \
-        deploy/tests/tls_smoke
+        deploy/tests/tls_smoke \
+        deploy/tests/upgrade_distributed_role_smoke
     PYTHONPYCACHEPREFIX="$run_root/pycache" \
         python3 -m py_compile \
         deploy/scripts/normalize-static-web-assets.py \
@@ -220,6 +225,7 @@ run_unit "mk8-build-$short_commit-$$" yes /bin/sh -eu -c '
         deploy/tests/static_web_assets_smoke.py
     python3 deploy/tests/static_web_assets_smoke.py
     python3 deploy/tests/distributed_config_smoke.py
+    sh deploy/tests/upgrade_distributed_role_smoke "$stable_source/deploy/scripts/upgrade-distributed-role"
     "$sdk" publish mk8.email.CLI/mk8.email.Application.CLI.csproj \
         --configuration Release --no-build \
         --artifacts-path "$run_root/artifacts" \

@@ -73,6 +73,7 @@ jobs:
             deploy/scripts/install-build-environment \
             deploy/scripts/install-host-hardening \
             deploy/scripts/install-distributed-role \
+            deploy/scripts/upgrade-distributed-role \
             deploy/scripts/install-mail-stack \
             deploy/scripts/install-native-release \
             deploy/scripts/mk8-build \
@@ -89,16 +90,21 @@ jobs:
             deploy/tests/build_environment_smoke \
             deploy/tests/certificate_deploy_smoke \
             deploy/tests/disruption_smoke \
+            deploy/tests/fixtures/upgrade-curl \
+            deploy/tests/fixtures/upgrade-runuser \
+            deploy/tests/fixtures/upgrade-systemctl \
             deploy/tests/host_hardening_smoke \
             deploy/tests/management_cli_smoke \
             deploy/tests/multi_domain_smoke \
             deploy/tests/native_release_smoke \
             deploy/tests/prerequisites_smoke \
             deploy/tests/release_retention_smoke \
-            deploy/tests/tls_smoke
+            deploy/tests/tls_smoke \
+            deploy/tests/upgrade_distributed_role_smoke
           PYTHONPYCACHEPREFIX="$RUNNER_TEMP/mk8email-pycache" \
             python3 -m py_compile deploy/tests/dashboard_smoke.py deploy/tests/distributed_config_smoke.py deploy/tests/mail_smoke.py deploy/tests/multi_domain_smoke.py
           python3 deploy/tests/distributed_config_smoke.py
+          sh deploy/tests/upgrade_distributed_role_smoke "$PWD/deploy/scripts/upgrade-distributed-role"
 
       - name: Validate deployment profile tooling
         shell: pwsh

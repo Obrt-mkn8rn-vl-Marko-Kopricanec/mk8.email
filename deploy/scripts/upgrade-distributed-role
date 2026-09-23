@@ -1,0 +1,228 @@
+#!/bin/sh
+set -eu
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+export DOTNET_ENVIRONMENT=Production
+export DOTNET_EnableDiagnostics=0
+
+if [ "$(id -u)" -ne 0 ] || [ "$#" -ne 2 ]; then
+    printf '%s\n' "Usage: upgrade-distributed-role gateway|worker STAGED_RELEASE_ID" >&2
+    exit 2
+fi
+
+case "$1" in
+    gateway)
+        unit=mk8email-gateway.service
+        other_unit=mk8email-worker.service
+        config=/etc/mk8email/mk8email.gateway.config.json
+        executable=admin/mk8.email.Gateway.dll
+        validate=--validate-gateway-config
+        probe=--probe-gateway-backends
+        ;;
+    worker)
+        unit=mk8email-worker.service
+        other_unit=mk8email-gateway.service
+        config=/etc/mk8email/mk8email.worker.config.json
+        executable=worker/mk8.email.Application.Worker.dll
+        validate=--validate-worker-config
+        probe=--probe-worker-backends
+        ;;
+    *)
+        printf '%s\n' "The distributed role must be gateway or worker." >&2
+        exit 2
+        ;;
+esac
+
+release_id=$2
+if [ "${#release_id}" -ne 16 ] \
+    || ! printf '%s\n' "$release_id" | grep -Eq '^[0-9a-f]{16}$'; then
+    printf '%s\n' "The staged release identifier must be 16 lowercase hexadecimal characters." >&2
+    exit 2
+fi
+
+fail() {
+    printf '%s\n' "$1" >&2
+    exit 1
+}
+
+validate_release() {
+    release=$1
+    expected_id=$2
+    if [ ! -d "$release" ] || [ -L "$release" ]; then
+        fail "A release directory is missing or unsafe."
+    fi
+    [ "$(readlink -f -- "$release")" = "$release" ] \
+        || fail "A release directory does not resolve to itself."
+    [ "$(stat -c '%U:%G %a' "$release")" = 'root:root 555' ] \
+        || fail "A release directory has unsafe metadata."
+    unsafe_entry=$(find "$release" \( ! -type f -a ! -type d -o ! -user root \
+        -o -perm /022 -o -type f -links +1 \) -print -quit) \
+        || fail "A release could not be inspected."
+    if [ -n "$unsafe_entry" ]; then
+        fail "A release contains an unsafe entry."
+    fi
+    [ -f "$release/.mk8email-release" ] \
+        || fail "A release provenance record is missing."
+    grep -Fx "release_id=$expected_id" "$release/.mk8email-release" >/dev/null \
+        || fail "A release provenance record has the wrong identifier."
+    if [ ! -f "$release/cli/mk8.email.Application.CLI.dll" ] \
+        || [ ! -f "$release/$executable" ]; then
+        fail "A release is missing the selected role or management CLI."
+    fi
+}
+
+current=/opt/mk8email/current
+release_root=/opt/mk8email/releases
+staged_release=$release_root/$release_id
+temporary_link=/opt/mk8email/.current-upgrade-$$
+
+exec 9>/run/lock/mk8email-distributed-activation.lock
+flock --exclusive --nonblock 9 \
+    || fail "Another distributed role operation is running."
+
+if [ ! -L "$current" ] \
+    || [ "$(stat -c '%U:%G' "$current")" != 'root:root' ]; then
+    fail "The active release link is missing or unsafe."
+fi
+previous_release=$(readlink -f -- "$current")
+[ "$(dirname -- "$previous_release")" = "$release_root" ] \
+    || fail "The active release is outside the release directory."
+previous_id=${previous_release##*/}
+if [ "${#previous_id}" -ne 16 ] \
+    || ! printf '%s\n' "$previous_id" | grep -Eq '^[0-9a-f]{16}$'; then
+    fail "The active release identifier is invalid."
+fi
+[ "$previous_release" != "$staged_release" ] \
+    || fail "The staged release is already active."
+validate_release "$previous_release" "$previous_id"
+validate_release "$staged_release" "$release_id"
+
+marker=/etc/mk8email/distributed-ready
+if [ -L "$marker" ] || [ ! -f "$marker" ] \
+    || [ "$(stat -c '%U:%G %a %h' "$marker" 2>/dev/null || true)" != 'root:root 600 1' ]; then
+    fail "The distributed readiness marker is missing or unsafe."
+fi
+if [ -L "$config" ] || [ ! -f "$config" ] \
+    || [ "$(stat -c '%U:%G %a %h' "$config" 2>/dev/null || true)" != 'root:mk8email 640 1' ]; then
+    fail "The role configuration is missing or unsafe."
+fi
+systemctl is-active --quiet "$unit" \
+    || fail "The selected role must be active before an upgrade."
+[ "$(systemctl is-enabled "$unit" 2>/dev/null || true)" = enabled ] \
+    || fail "The selected role must be enabled before an upgrade."
+other_state=$(systemctl is-enabled "$other_unit" 2>/dev/null || true)
+if systemctl is-active --quiet "$other_unit"; then
+    fail "A shared-host role is present; use the coordinated production upgrade path."
+fi
+case "$other_state" in
+    disabled|not-found|masked) ;;
+    *) fail "A shared-host role is enabled or has an unsafe unit state." ;;
+esac
+for legacy_unit in mk8email.service mk8email-admin.service; do
+    if systemctl is-active --quiet "$legacy_unit"; then
+        fail "A legacy mail unit is active."
+    fi
+    legacy_state=$(systemctl is-enabled "$legacy_unit" 2>/dev/null || true)
+    case "$legacy_state" in
+        disabled|not-found|masked) ;;
+        *) fail "A legacy mail unit is enabled or has an unsafe unit state." ;;
+    esac
+done
+
+staged_cli=$staged_release/cli/mk8.email.Application.CLI.dll
+timeout 45s runuser -u mk8email -- /usr/bin/dotnet "$staged_cli" "$validate" "$config" \
+    || fail "The staged role configuration failed validation."
+timeout 45s runuser -u mk8email -- /usr/bin/dotnet "$staged_cli" "$probe" "$config" \
+    || fail "The staged PostgreSQL or Azure Blob backend canary failed."
+
+atomic_current() {
+    destination=$1
+    if [ -e "$temporary_link" ] || [ -L "$temporary_link" ]; then
+        return 1
+    fi
+    ln -s "$destination" "$temporary_link" || return 1
+    if ! mv -Tf -- "$temporary_link" "$current"; then
+        rm -f -- "$temporary_link"
+        return 1
+    fi
+    sync -f /opt/mk8email
+}
+
+wait_ready() {
+    ready_cli=$1
+    ready=false
+    attempt=0
+    while [ "$attempt" -lt 15 ]; do
+        if systemctl is-active --quiet "$unit"; then
+            if [ "$unit" = mk8email-gateway.service ]; then
+                if curl --silent --fail --max-time 3 --noproxy '*' \
+                    --header 'Host: admin.mk8n.com' \
+                    http://127.0.0.1:8080/health/ready >/dev/null \
+                    && timeout 20s runuser -u mk8email -- /usr/bin/dotnet "$ready_cli" \
+                        --healthcheck-gateway "$config" >/dev/null; then
+                    ready=true
+                    break
+                fi
+            elif timeout 15s runuser -u mk8email -- /usr/bin/dotnet "$ready_cli" \
+                --probe-worker-dispatch "$config" >/dev/null; then
+                ready=true
+                break
+            fi
+        fi
+        attempt=$((attempt + 1))
+        sleep 2
+    done
+    [ "$ready" = true ]
+}
+
+interrupted=false
+switched=false
+completed=false
+rollback() {
+    status=$?
+    trap - EXIT HUP INT TERM
+    if [ "$completed" != true ] && [ "$interrupted" = true ]; then
+        set +e
+        systemctl stop "$unit" >/dev/null 2>&1
+        if [ "$switched" = true ]; then
+            atomic_current "$previous_release"
+            link_status=$?
+        else
+            link_status=0
+        fi
+        if [ "$link_status" -eq 0 ]; then
+            systemctl start "$unit"
+            start_status=$?
+            if [ "$start_status" -eq 0 ]; then
+                wait_ready "$previous_release/cli/mk8.email.Application.CLI.dll"
+                start_status=$?
+            fi
+        else
+            start_status=1
+        fi
+        if [ "$link_status" -ne 0 ] || [ "$start_status" -ne 0 ]; then
+            printf '%s\n' "The prior role could not be restored; immediate operator action is required." >&2
+        else
+            printf '%s\n' "The prior role was restored after the failed upgrade." >&2
+        fi
+        set -e
+    fi
+    if [ -L "$temporary_link" ]; then
+        rm -f -- "$temporary_link"
+    fi
+    exit "$status"
+}
+trap rollback EXIT
+trap 'exit 130' HUP INT TERM
+
+interrupted=true
+systemctl stop "$unit" || fail "The selected role could not be stopped."
+switched=true
+atomic_current "$staged_release" || fail "The staged release could not become current."
+systemctl start "$unit" || fail "The upgraded role could not be started."
+wait_ready "$staged_cli" || fail "The upgraded role did not become ready."
+
+completed=true
+trap - EXIT HUP INT TERM
+printf 'The distributed %s role is running release %s.\n' "$1" "$release_id"

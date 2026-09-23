@@ -63,8 +63,9 @@ command -v dotnet >/dev/null 2>&1 || fail "The .NET runtime is missing."
 unit_source=$asset_root/deploy/systemd/$unit
 activation_source=$asset_root/deploy/scripts/activate-distributed-role
 deactivation_source=$asset_root/deploy/scripts/deactivate-distributed-role
+upgrade_source=$asset_root/deploy/scripts/upgrade-distributed-role
 validate_asset "$unit_source"
-for script_source in "$activation_source" "$deactivation_source"; do
+for script_source in "$activation_source" "$deactivation_source" "$upgrade_source"; do
     validate_asset "$script_source"
     sh -n "$script_source" || fail "A role-control asset is not valid shell."
 done
@@ -79,6 +80,7 @@ if [ -L /etc/mk8email ] \
 fi
 validate_target /usr/local/sbin/activate-distributed-role
 validate_target /usr/local/sbin/deactivate-distributed-role
+validate_target /usr/local/sbin/upgrade-distributed-role
 validate_target "/etc/systemd/system/$unit"
 
 install -d -o root -g mk8email -m 0751 /etc/mk8email
@@ -86,6 +88,8 @@ install -o root -g root -m 0755 "$activation_source" \
     /usr/local/sbin/activate-distributed-role
 install -o root -g root -m 0755 "$deactivation_source" \
     /usr/local/sbin/deactivate-distributed-role
+install -o root -g root -m 0755 "$upgrade_source" \
+    /usr/local/sbin/upgrade-distributed-role
 install -o root -g root -m 0644 "$unit_source" \
     "/etc/systemd/system/$unit"
 systemctl daemon-reload

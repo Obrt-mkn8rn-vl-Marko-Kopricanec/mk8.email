@@ -1,0 +1,35 @@
+#!/bin/sh
+set -eu
+
+state=$MK8_UPGRADE_SMOKE_STATE
+unit=$MK8_UPGRADE_SMOKE_UNIT
+case "$1" in
+    is-active)
+        [ "$2" = --quiet ] && [ "$3" = "$unit" ] && [ -f "$state/active" ]
+        ;;
+    is-enabled)
+        if [ "$2" = "$unit" ]; then
+            printf '%s\n' enabled
+        elif [ -f "$state/other_enabled" ]; then
+            printf '%s\n' enabled
+        else
+            printf '%s\n' disabled
+        fi
+        ;;
+    stop)
+        [ "$2" = "$unit" ] || exit 1
+        printf '%s\n' stop >> "$state/events"
+        rm -f -- "$state/active"
+        ;;
+    start)
+        [ "$2" = "$unit" ] || exit 1
+        printf '%s\n' start >> "$state/events"
+        if [ -f "$state/fail_new_start" ] \
+            && [ "$(readlink -f "$state/opt/mk8email/current")" \
+                = "$state/opt/mk8email/releases/bbbbbbbbbbbbbbbb" ]; then
+            exit 1
+        fi
+        touch "$state/active"
+        ;;
+    *) exit 1 ;;
+esac

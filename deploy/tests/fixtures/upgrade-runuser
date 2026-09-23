@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+
+[ "$1" = -u ] && [ "$2" = mk8email ] && [ "$3" = -- ] \
+    || exit 1
+command=$6
+printf 'cli:%s\n' "$command" >> "$MK8_UPGRADE_SMOKE_STATE/events"
+case "$command" in
+    --validate-gateway-config|--validate-worker-config) ;;
+    --healthcheck-gateway|--probe-worker-dispatch)
+        if [ -f "$MK8_UPGRADE_SMOKE_STATE/fail_new_health" ] \
+            && [ "$5" = "$MK8_UPGRADE_SMOKE_STATE/opt/mk8email/releases/bbbbbbbbbbbbbbbb/cli/mk8.email.Application.CLI.dll" ]; then
+            exit 1
+        fi
+        ;;
+    --probe-gateway-backends|--probe-worker-backends)
+        [ ! -f "$MK8_UPGRADE_SMOKE_STATE/fail_preflight" ] || exit 1
+        ;;
+    *) exit 1 ;;
+esac

@@ -57,6 +57,10 @@ public interface IImapApplicationService
     Task<ImapMoveResult> MoveMessagesAsync(
         ImapMoveRequest request,
         CancellationToken cancellationToken = default);
+
+    Task<ImapCopyResult> CopyMessagesAsync(
+        ImapCopyRequest request,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record ImapPasswordAuthentication(string Username, string Password);
@@ -272,3 +276,25 @@ public sealed record ImapMoveResult(
     List<int> SourceUids,
     List<int> DestinationUids,
     List<int> ExpungeSequenceNumbers);
+
+public sealed record ImapCopyRequest(
+    Guid UserId,
+    Guid SourceFolderId,
+    string DestinationMailboxName,
+    bool UseUid,
+    ImapMessageSelection Selection);
+
+public enum ImapCopyDisposition
+{
+    Copied,
+    SourceNotFound,
+    DestinationNotFound,
+    InvalidSourceSize,
+    OverQuota,
+}
+
+public sealed record ImapCopyResult(
+    ImapCopyDisposition Disposition,
+    int DestinationUidValidity,
+    List<int> SourceUids,
+    List<int> DestinationUids);

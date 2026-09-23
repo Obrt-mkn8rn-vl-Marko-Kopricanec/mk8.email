@@ -90,4 +90,10 @@ public sealed class GatewayImapApplicationService(
         CancellationToken cancellationToken = default) =>
         transport.SendAsync<ImapMoveRequest, ImapMoveResult>(
             "imap", ApplicationOperations.ImapMoveMessages, request, cancellationToken);
+
+    public Task<ImapCopyResult> CopyMessagesAsync(
+        ImapCopyRequest request,
+        CancellationToken cancellationToken = default) =>
+        transport.SendAsync<ImapCopyRequest, ImapCopyResult>(
+            "imap", ApplicationOperations.ImapCopyMessages, request, cancellationToken);
 }

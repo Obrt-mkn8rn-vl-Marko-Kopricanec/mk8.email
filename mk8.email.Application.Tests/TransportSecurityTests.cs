@@ -340,8 +340,12 @@ public sealed class TransportSecurityTests
         Assert.AreEqual("a9 NO [UNAVAILABLE] MOVE backend unavailable", await connection.ReadLineAsync());
         await connection.WriteLineAsync("a10 UID MOVE $ Archive");
         Assert.AreEqual("a10 NO [UNAVAILABLE] UID MOVE backend unavailable", await connection.ReadLineAsync());
-        await connection.WriteLineAsync("a11 UNSELECT");
-        Assert.AreEqual("a11 OK UNSELECT completed", await connection.ReadLineAsync());
+        await connection.WriteLineAsync("a11 COPY 1 Archive");
+        Assert.AreEqual("a11 NO [UNAVAILABLE] COPY backend unavailable", await connection.ReadLineAsync());
+        await connection.WriteLineAsync("a12 UID COPY $ Archive");
+        Assert.AreEqual("a12 NO [UNAVAILABLE] UID COPY backend unavailable", await connection.ReadLineAsync());
+        await connection.WriteLineAsync("a13 UNSELECT");
+        Assert.AreEqual("a13 OK UNSELECT completed", await connection.ReadLineAsync());
     }
 
     [TestMethod]
@@ -354,7 +358,7 @@ public sealed class TransportSecurityTests
             port,
             applicationService: new UnavailableImapMailboxApplicationService(
                 listingUnavailable: false, selectionAvailable: true,
-                storeMalformed: true, moveMalformed: true));
+                storeMalformed: true, moveMalformed: true, copyMalformed: true));
         await using var connection = await ProtocolConnection.ConnectAsync(port);
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("* OK ", StringComparison.Ordinal));
         await connection.WriteLineAsync("a1 STARTTLS");
@@ -369,8 +373,10 @@ public sealed class TransportSecurityTests
         Assert.AreEqual("a4 NO [UNAVAILABLE] STORE backend unavailable", await connection.ReadLineAsync());
         await connection.WriteLineAsync("a5 MOVE 1 Archive");
         Assert.AreEqual("a5 NO [UNAVAILABLE] MOVE backend unavailable", await connection.ReadLineAsync());
-        await connection.WriteLineAsync("a6 UNSELECT");
-        Assert.AreEqual("a6 OK UNSELECT completed", await connection.ReadLineAsync());
+        await connection.WriteLineAsync("a6 COPY 1 Archive");
+        Assert.AreEqual("a6 NO [UNAVAILABLE] COPY backend unavailable", await connection.ReadLineAsync());
+        await connection.WriteLineAsync("a7 UNSELECT");
+        Assert.AreEqual("a7 OK UNSELECT completed", await connection.ReadLineAsync());
     }
 
     [TestInitialize]
@@ -3784,6 +3790,11 @@ public sealed class TransportSecurityTests
             ImapMoveRequest request,
             CancellationToken cancellationToken = default) =>
             Task.FromException<ImapMoveResult>(new IOException("Worker unavailable"));
+
+        public Task<ImapCopyResult> CopyMessagesAsync(
+            ImapCopyRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromException<ImapCopyResult>(new IOException("Worker unavailable"));
     }
 
     private sealed class UnavailableImapMailboxApplicationService(
@@ -3791,7 +3802,8 @@ public sealed class TransportSecurityTests
         bool selectionMalformed = false,
         bool selectionAvailable = false,
         bool storeMalformed = false,
-        bool moveMalformed = false) : IImapApplicationService
+        bool moveMalformed = false,
+        bool copyMalformed = false) : IImapApplicationService
     {
         public Task<ImapIdentityResult> AuthenticatePasswordAsync(
             ImapPasswordAuthentication request,
@@ -3873,6 +3885,13 @@ public sealed class TransportSecurityTests
             ? Task.FromResult(new ImapMoveResult(ImapMoveDisposition.Moved, 1,
                 [1], [2], []))
             : Task.FromException<ImapMoveResult>(new IOException("Worker unavailable"));
+
+        public Task<ImapCopyResult> CopyMessagesAsync(
+            ImapCopyRequest request,
+            CancellationToken cancellationToken = default) => copyMalformed
+            ? Task.FromResult(new ImapCopyResult(ImapCopyDisposition.Copied, 1,
+                [1], []))
+            : Task.FromException<ImapCopyResult>(new IOException("Worker unavailable"));
     }
 
     private sealed class ServerFixture(

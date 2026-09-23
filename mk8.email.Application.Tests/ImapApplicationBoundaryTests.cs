@@ -247,5 +247,10 @@ public sealed class ImapApplicationBoundaryTests
             ImapMoveRequest request,
             CancellationToken cancellationToken = default) =>
             Task.FromResult(new ImapMoveResult(ImapMoveDisposition.Moved, 1, [], [], []));
+
+        public Task<ImapCopyResult> CopyMessagesAsync(
+            ImapCopyRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ImapCopyResult(ImapCopyDisposition.Copied, 1, [], []));
     }
 }

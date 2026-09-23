@@ -2228,104 +2228,86 @@ ILogger<ImapServerService> logger) : BackgroundService
             return;
         }
 
-        using var scope = scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-        var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
-        var effects = scope.ServiceProvider.GetRequiredService<LargeObjectTransactionEffects>();
-        await using var transaction = db.Database.IsRelational()
-            ? await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct)
-            : null;
-
-        var destFolder = await ResolveFolderAsync(db, session.UserId, destMailbox, ct);
-        if (destFolder is null)
+        ImapMessageSelection selection;
+        if (messageSet == "$")
         {
-            await writer.WriteLineAsync($"{tag} NO [TRYCREATE] Destination mailbox not found");
-            return;
+            selection = new ImapMessageSelection(null, session.SavedSearchUids.ToList());
         }
-
-        var emails = await GetEmailMetadataInFolderAsync(db, session.SelectedFolderId!.Value, ct);
-        var maximumIdentifier = useUid
-            ? (emails.Count > 0 ? emails[^1].Uid : 0)
-            : emails.Count;
-        if (!TryResolveMessageSet(
-                messageSet,
-                maximumIdentifier,
-                emails.Select(email => email.Uid).ToList(),
-                useUid,
-                session.SavedSearchUids,
-                out var parsedMessageSet))
+        else if (ImapUidSetParser.TryParse(messageSet, out var ranges))
+        {
+            selection = new ImapMessageSelection(
+                ranges.Select(range => new ImapMessageRange(range.Start, range.End)).ToList(),
+                null);
+        }
+        else
         {
             await writer.WriteLineAsync($"{tag} BAD Invalid message set");
             return;
         }
 
-        var selected = emails
-            .Where((email, index) => MessageSetContains(
-                parsedMessageSet,
-                useUid ? email.Uid : index + 1))
-            .ToList();
-
         var commandName = useUid ? "UID COPY" : "COPY";
-        if (selected.Count == 0)
-        {
-            await writer.WriteLineAsync($"{tag} OK {commandName} completed");
-            return;
-        }
-
-        if (!TryGetTotalStoredSize(selected, out var addedBytes))
-        {
-            await writer.WriteLineAsync($"{tag} NO [SERVERBUG] COPY source size is invalid");
-            return;
-        }
-
-        if (selected.Count > 0
-            && !await HasUserQuotaCapacityAsync(db, session.UserId, addedBytes, ct))
-        {
-            await writer.WriteLineAsync($"{tag} NO [OVERQUOTA] COPY exceeds the mailbox quota");
-            return;
-        }
-
-        var marker = effects.Mark();
-        var commitAttempted = false;
-        List<int> srcUids;
-        List<int> dstUids;
+        List<string> responseLines;
         try
         {
-            (srcUids, dstUids) = await CopyMessagesAsync(
-                db,
-                content,
-                destFolder,
-                selected,
-                ct);
-            if (transaction is not null)
-            {
-                commitAttempted = true;
-                await transaction.CommitAsync(ct);
-            }
-            await effects.CommitAsync(marker);
+            using var scope = scopeFactory.CreateScope();
+            var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
+            var result = await application.CopyMessagesAsync(new ImapCopyRequest(
+                session.UserId, session.SelectedFolderId!.Value,
+                destMailbox, useUid, selection), ct);
+            responseLines = BuildCopyResponseLines(tag, commandName, result);
         }
-        catch
+        catch (Exception exception) when (
+            exception is not OperationCanceledException && !ct.IsCancellationRequested)
         {
-            if (transaction is not null)
-            {
-                try
-                {
-                    await transaction.RollbackAsync(CancellationToken.None);
-                }
-                catch (Exception rollbackException)
-                {
-                    logger.LogWarning(rollbackException, "Could not roll back IMAP COPY");
-                }
-            }
-            if (commitAttempted)
-                effects.Discard(marker);
-            else
-                await effects.RollbackAsync(marker);
-            throw;
+            logger.LogWarning(exception, "IMAP {Command} is unavailable for {UserId}",
+                commandName, session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] {commandName} backend unavailable");
+            return;
         }
 
-        await writer.WriteLineAsync(
-            $"{tag} OK [COPYUID {destFolder.UidValidity} {FormatUidSet(srcUids)} {FormatUidSet(dstUids)}] {commandName} completed");
+        foreach (var line in responseLines)
+            await writer.WriteLineAsync(line);
+    }
+
+    private static List<string> BuildCopyResponseLines(
+        string tag, string commandName, ImapCopyResult result)
+    {
+        if (result.SourceUids is null || result.DestinationUids is null
+            || result.SourceUids.Count != result.DestinationUids.Count
+            || result.SourceUids.Any(uid => uid < 1)
+            || result.DestinationUids.Any(uid => uid < 1)
+            || result.SourceUids.Zip(result.SourceUids.Skip(1))
+                .Any(pair => pair.Second <= pair.First)
+            || result.DestinationUids.Zip(result.DestinationUids.Skip(1))
+                .Any(pair => pair.Second <= pair.First))
+        {
+            throw new InvalidOperationException("The IMAP COPY result is invalid.");
+        }
+
+        if (result.Disposition != ImapCopyDisposition.Copied)
+        {
+            if (result.SourceUids.Count > 0 || result.DestinationUidValidity != 0)
+                throw new InvalidOperationException("The IMAP COPY result is invalid.");
+            return result.Disposition switch
+            {
+                ImapCopyDisposition.SourceNotFound => [$"{tag} NO Selected mailbox not found"],
+                ImapCopyDisposition.DestinationNotFound =>
+                    [$"{tag} NO [TRYCREATE] Destination mailbox not found"],
+                ImapCopyDisposition.InvalidSourceSize =>
+                    [$"{tag} NO [SERVERBUG] COPY source size is invalid"],
+                ImapCopyDisposition.OverQuota =>
+                    [$"{tag} NO [OVERQUOTA] COPY exceeds the mailbox quota"],
+                _ => throw new InvalidOperationException("The IMAP COPY result is invalid."),
+            };
+        }
+
+        if (result.DestinationUidValidity < 1)
+            throw new InvalidOperationException("The IMAP COPY result is invalid.");
+        return result.SourceUids.Count == 0
+            ? [$"{tag} OK {commandName} completed"]
+            : [$"{tag} OK [COPYUID {result.DestinationUidValidity} "
+                + $"{FormatUidSet(result.SourceUids)} {FormatUidSet(result.DestinationUids)}] "
+                + $"{commandName} completed"];
     }
 
     private async Task HandleUidAsync(
@@ -2493,111 +2475,6 @@ ILogger<ImapServerService> logger) : BackgroundService
     private static Task<FolderDB?> ResolveFolderAsync(
         EmailDbContext db, Guid userId, string mailboxName, CancellationToken ct) =>
         ImapMailboxResolver.ResolveFolderAsync(db, userId, mailboxName, ct);
-
-    private static IQueryable<EmailDB> SelectEmailMetadata(IQueryable<EmailDB> query) =>
-        query
-            .AsNoTracking()
-            .Select(email => new EmailDB
-            {
-                Id = email.Id,
-                IsRead = email.IsRead,
-                IsDeleted = email.IsDeleted,
-                IsFlagged = email.IsFlagged,
-                IsDraft = email.IsDraft,
-                IsAnswered = email.IsAnswered,
-                Keywords = email.Keywords,
-                ModSeq = email.ModSeq,
-                Uid = email.Uid,
-                SizeBytes = email.SizeBytes,
-                RawMessageObjectProvider = email.RawMessageObjectProvider,
-                RawMessageObjectName = email.RawMessageObjectName,
-                RawMessageObjectSha256 = email.RawMessageObjectSha256,
-                RawMessageObjectEntityTag = email.RawMessageObjectEntityTag,
-                FolderId = email.FolderId,
-            });
-
-    private static async Task<List<EmailDB>> GetEmailMetadataInFolderAsync(
-        EmailDbContext db,
-        Guid folderId,
-        CancellationToken ct)
-    {
-        return await SelectEmailMetadata(db.Emails.Where(email => email.FolderId == folderId))
-            .OrderBy(email => email.Uid)
-            .ToListAsync(ct);
-    }
-
-    private static bool TryGetTotalStoredSize(IReadOnlyList<EmailDB> emails, out long totalBytes)
-    {
-        totalBytes = 0;
-        foreach (var email in emails)
-        {
-            if (email.SizeBytes < 0 || totalBytes > long.MaxValue - email.SizeBytes)
-            {
-                totalBytes = 0;
-                return false;
-            }
-
-            totalBytes += email.SizeBytes;
-        }
-
-        return true;
-    }
-
-    private static async Task<(List<int> SourceUids, List<int> DestinationUids)> CopyMessagesAsync(
-        EmailDbContext db,
-        MailboxMessageContentService content,
-        FolderDB destinationFolder,
-        IReadOnlyList<EmailDB> metadata,
-        CancellationToken ct)
-    {
-        var sourceUids = new List<int>(metadata.Count);
-        var destinationUids = new List<int>(metadata.Count);
-
-        foreach (var item in metadata)
-        {
-            var source = await db.Emails
-                .AsNoTracking()
-                .SingleAsync(email => email.Id == item.Id && email.FolderId == item.FolderId, ct);
-            var rawMessage = await content.ReadAsync(source, ct);
-            var newUid = destinationFolder.NextUid++;
-            var newModSeq = ++destinationFolder.HighestModSeq;
-            var copy = new EmailDB
-            {
-                Id = Guid.CreateVersion7(),
-                Sender = source.Sender,
-                Recipient = source.Recipient,
-                Subject = source.Subject,
-                Body = string.Empty,
-                MessageId = source.MessageId,
-                InReplyTo = source.InReplyTo,
-                Cc = source.Cc,
-                EmailObjectId = string.IsNullOrEmpty(source.EmailObjectId)
-                    ? source.Id.ToString("N")
-                    : source.EmailObjectId,
-                ThreadObjectId = source.ThreadObjectId,
-                IsRead = source.IsRead,
-                IsDeleted = false,
-                IsFlagged = source.IsFlagged,
-                IsDraft = source.IsDraft,
-                IsAnswered = source.IsAnswered,
-                Keywords = source.Keywords.ToArray(),
-                ReceivedAt = source.ReceivedAt,
-                Uid = newUid,
-                ModSeq = newModSeq,
-                FolderId = destinationFolder.Id,
-            };
-
-            await content.SetAsync(copy, rawMessage, ct);
-
-            sourceUids.Add(source.Uid);
-            destinationUids.Add(newUid);
-            db.Emails.Add(copy);
-            await db.SaveChangesAsync(ct);
-            db.Entry(copy).State = EntityState.Detached;
-        }
-
-        return (sourceUids, destinationUids);
-    }
 
     private static EmailDB AttachFlagUpdate(
         EmailDbContext db,

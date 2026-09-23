@@ -70,8 +70,10 @@ test -f "$stage/cli/mk8.email.Application.CLI.dll"
 test -f "$stage/cli/mk8.email.Application.CLI.runtimeconfig.json"
 test -f "$stage/admin/mk8.email.Gateway.dll"
 test -f "$stage/admin/mk8.email.Gateway.runtimeconfig.json"
+test -f "$stage/worker/mk8.email.Application.Worker.dll"
+test -f "$stage/worker/mk8.email.Application.Worker.runtimeconfig.json"
 if find "$stage" -mindepth 1 -maxdepth 1 \
-    ! -name cli ! -name admin -print -quit | grep -q .; then
+    ! -name cli ! -name admin ! -name worker -print -quit | grep -q .; then
     fail "The release archive contains an unexpected top-level entry."
 fi
 if find "$stage" ! -type d ! -type f -print -quit | grep -q .; then

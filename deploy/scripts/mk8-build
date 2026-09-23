@@ -224,13 +224,18 @@ run_unit "mk8-build-$short_commit-$$" yes /bin/sh -eu -c '
         --output "$run_root/release/admin" \
         --property:DisableBuildCompression=true \
         --property:UseAppHost=false
+    "$sdk" publish mk8.email.Application.Worker/mk8.email.Application.Worker.csproj \
+        --configuration Release --no-build \
+        --artifacts-path "$run_root/artifacts" \
+        --output "$run_root/release/worker" \
+        --property:UseAppHost=false
     python3 deploy/scripts/normalize-static-web-assets.py \
         "$run_root/release/admin/mk8.email.Gateway.staticwebassets.endpoints.json" \
         "$source_epoch"
     tar --sort=name --format=gnu --mtime="@$source_epoch" \
         --owner=0 --group=0 --numeric-owner \
         --create --gzip --file="$run_root/mk8email-linux-x64.tar.gz" \
-        --directory="$run_root/release" cli admin
+        --directory="$run_root/release" cli admin worker
     sha256sum "$run_root/mk8email-linux-x64.tar.gz" \
         > "$run_root/mk8email-linux-x64.tar.gz.sha256"
 ' sh "$sdk" "$run_root" "$commit_epoch" "$stable_source"

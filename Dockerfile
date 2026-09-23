@@ -17,6 +17,24 @@ RUN dotnet publish mk8.email.Gateway/mk8.email.Gateway.csproj \
     --output /app/admin \
     --property:ContinuousIntegrationBuild=true \
     --property:UseAppHost=false
+RUN dotnet publish mk8.email.Application.Worker/mk8.email.Application.Worker.csproj \
+    --configuration Release \
+    --no-restore \
+    --output /app/worker \
+    --property:ContinuousIntegrationBuild=true \
+    --property:UseAppHost=false
+
+FROM mcr.microsoft.com/dotnet/runtime:10.0.11-noble AS worker
+WORKDIR /app
+
+ENV DOTNET_EnableDiagnostics=0 \
+    MK8EMAIL_CONFIG_FILE=/run/secrets/mk8email_config
+
+COPY --from=build --chown=root:root /app/worker ./worker
+
+USER app
+
+ENTRYPOINT ["dotnet", "/app/worker/mk8.email.Application.Worker.dll", "--serve"]
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0.11-noble AS final
 WORKDIR /app

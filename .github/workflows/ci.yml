@@ -114,9 +114,12 @@ jobs:
       - name: Publish administrator dashboard
         run: dotnet publish mk8.email.Gateway/mk8.email.Gateway.csproj --configuration Release --no-build --output artifacts/admin --property:UseAppHost=false
 
+      - name: Publish Application Worker
+        run: dotnet publish mk8.email.Application.Worker/mk8.email.Application.Worker.csproj --configuration Release --no-build --output artifacts/worker --property:UseAppHost=false
+
       - name: Package release
         run: |
-          tar --create --gzip --file=artifacts/mk8email-linux-x64.tar.gz --directory=artifacts cli admin
+          tar --create --gzip --file=artifacts/mk8email-linux-x64.tar.gz --directory=artifacts cli admin worker
           sha256sum artifacts/mk8email-linux-x64.tar.gz > artifacts/mk8email-linux-x64.tar.gz.sha256
 
       - name: Save evidence and release

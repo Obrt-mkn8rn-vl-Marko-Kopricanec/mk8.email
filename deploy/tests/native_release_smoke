@@ -25,19 +25,24 @@ payload=$test_root/payload
 unsafe_payload=$test_root/unsafe-payload
 archive=$test_root/release.tar.gz
 unsafe_archive=$test_root/unsafe-release.tar.gz
+missing_worker_archive=$test_root/missing-worker-release.tar.gz
 install -d -o root -g root -m 0755 "$test_opt/releases"
 for payload_root in "$payload" "$unsafe_payload"; do
     install -d -o root -g root -m 0755 \
-        "$payload_root/cli" "$payload_root/admin"
+        "$payload_root/cli" "$payload_root/admin" "$payload_root/worker"
     : > "$payload_root/cli/mk8.email.Application.CLI.dll"
     : > "$payload_root/cli/mk8.email.Application.CLI.runtimeconfig.json"
     : > "$payload_root/admin/mk8.email.Gateway.dll"
     : > "$payload_root/admin/mk8.email.Gateway.runtimeconfig.json"
+    : > "$payload_root/worker/mk8.email.Application.Worker.dll"
+    : > "$payload_root/worker/mk8.email.Application.Worker.runtimeconfig.json"
 done
 ln -s /etc/passwd "$unsafe_payload/admin/unsafe-link"
-tar --create --gzip --file="$archive" --directory="$payload" cli admin
+tar --create --gzip --file="$archive" --directory="$payload" cli admin worker
 tar --create --gzip --file="$unsafe_archive" \
-    --directory="$unsafe_payload" cli admin
+    --directory="$unsafe_payload" cli admin worker
+tar --create --gzip --file="$missing_worker_archive" \
+    --directory="$payload" cli admin
 
 source_commit=0123456789abcdef0123456789abcdef01234567
 asset_digest=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -46,6 +51,9 @@ release_id=$(printf '%s\n%s\n' "$artifact_digest" "$asset_digest" \
     | sha256sum | cut -c1-16)
 unsafe_digest=$(sha256sum "$unsafe_archive" | cut -d' ' -f1)
 unsafe_release_id=$(printf '%s\n%s\n' "$unsafe_digest" "$asset_digest" \
+    | sha256sum | cut -c1-16)
+missing_worker_digest=$(sha256sum "$missing_worker_archive" | cut -d' ' -f1)
+missing_worker_release_id=$(printf '%s\n%s\n' "$missing_worker_digest" "$asset_digest" \
     | sha256sum | cut -c1-16)
 
 # The child shell expands its positional parameters.
@@ -61,11 +69,14 @@ unshare --mount sh -eu -c '
     asset_digest=$7
     unsafe_archive=$8
     unsafe_release_id=$9
+    missing_worker_archive=${10}
+    missing_worker_release_id=${11}
 
     sh "$install_script" "$archive" "$release_id" "$source_commit" \
         "$artifact_digest" "$asset_digest" >/dev/null
     release=/opt/mk8email/releases/$release_id
     test "$(readlink -f /opt/mk8email/current)" = "$release"
+    test -f "$release/worker/mk8.email.Application.Worker.dll"
     test "$(stat -c "%U:%G %a" "$release/.mk8email-release")" \
         = "root:root 444"
     grep -Fx "commit=$source_commit" "$release/.mk8email-release" >/dev/null
@@ -87,10 +98,18 @@ unshare --mount sh -eu -c '
         exit 1
     fi
     test ! -e "/opt/mk8email/releases/$unsafe_release_id"
+    if sh "$install_script" "$missing_worker_archive" "$missing_worker_release_id" \
+        "$source_commit" "$(sha256sum "$missing_worker_archive" | cut -d" " -f1)" \
+        "$asset_digest" >/dev/null 2>&1; then
+        printf "%s\n" "The installer accepted a release without the Worker." >&2
+        exit 1
+    fi
+    test ! -e "/opt/mk8email/releases/$missing_worker_release_id"
     test -z "$(find /opt/mk8email/releases -mindepth 1 -maxdepth 1 \
         -name ".installing-*" -print -quit)"
 ' sh "$test_opt" "$install_script" "$archive" "$release_id" \
     "$source_commit" "$artifact_digest" "$asset_digest" \
-    "$unsafe_archive" "$unsafe_release_id"
+    "$unsafe_archive" "$unsafe_release_id" \
+    "$missing_worker_archive" "$missing_worker_release_id"
 
 printf '%s\n' "Native release provenance and rejection tests passed."

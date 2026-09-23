@@ -14,6 +14,7 @@ using mk8.email.Infrastructure;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Jmap;
 using mk8.email.Messaging;
+using Npgsql;
 
 var drain = args.SequenceEqual(["--drain"]);
 var prepare = args.SequenceEqual(["--prepare"]);
@@ -64,6 +65,8 @@ try
         provider.GetRequiredService<ApplicationRequestWorker>());
 
     using var host = builder.Build();
+    await DistributedRestoreActivationGuard.RequireReadyAsync(
+        host.Services.GetRequiredService<NpgsqlDataSource>());
     if (!drain)
     {
         using var scope = host.Services.CreateScope();

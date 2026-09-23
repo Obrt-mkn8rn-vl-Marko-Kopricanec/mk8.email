@@ -30,8 +30,10 @@ public sealed class DistributedBackupExporterTests
 
         await using var sourceDatabase = await RequirePostgresAsync();
         await using var restoredDatabase = await RequirePostgresAsync();
+        await using var twiceRestoredDatabase = await RequirePostgresAsync();
         await PrepareAsync(sourceDatabase);
         await using var dataSource = NpgsqlDataSource.Create(sourceDatabase.ConnectionString);
+        await DistributedRestoreActivationGuard.RequireReadyAsync(dataSource);
         var service = new BlobServiceClient(blobConnection);
         var container = service.GetBlobContainerClient($"mk8-export-{Guid.NewGuid():N}");
         var restoredContainer = service.GetBlobContainerClient(
@@ -98,7 +100,7 @@ public sealed class DistributedBackupExporterTests
             Assert.AreEqual("application/vnd.mk8.encrypted-payload", gatewayRow.ContentType);
             var metadata = JsonDocument.Parse(
                 await File.ReadAllTextAsync(Path.Combine(destination, "backup.json")));
-            Assert.AreEqual(2, metadata.RootElement.GetProperty("SchemaVersion").GetInt32());
+            Assert.AreEqual(3, metadata.RootElement.GetProperty("SchemaVersion").GetInt32());
             Assert.AreEqual(result.DatabaseSha256,
                 metadata.RootElement.GetProperty("DatabaseSha256").GetString());
             await VerifyChecksumsAsync(destination);
@@ -110,7 +112,13 @@ public sealed class DistributedBackupExporterTests
                 restoredObjects, PgRestoreExecutable);
             Assert.AreEqual(2L, restoredResult.ReferenceCount);
             Assert.AreEqual(2L, restoredResult.ImportedObjectCount);
+            await DistributedRestoreActivationGuard.RequireReadyAsync(restoredSource);
             await using var restored = await restoredSource.OpenConnectionAsync();
+            await using (var state = restored.CreateCommand())
+            {
+                state.CommandText = "SELECT state FROM public.mk8_restore_state WHERE id = 1";
+                Assert.AreEqual("complete", await state.ExecuteScalarAsync());
+            }
             await using var query = restored.CreateCommand();
             query.CommandText = "SELECT object_etag FROM jmap_blobs WHERE id = @id";
             query.Parameters.AddWithValue("id", rowId);
@@ -131,11 +139,61 @@ public sealed class DistributedBackupExporterTests
             CollectionAssert.AreEqual(gatewayContent, copiedGateway.ToArray());
             Assert.AreEqual(2L, await DistributedBlobReferenceAudit.AuditAsync(
                 restoredSource, restoredObjects));
+
+            var secondSnapshot = Path.Combine(parent.FullName, "restored-snapshot");
+            var exportedAgain = await DistributedBackupExporter.ExportAsync(
+                restoredSource, restoredObjects, restoredDatabase.ConnectionString,
+                secondSnapshot, PgDumpExecutable);
+            Assert.AreEqual(2L, exportedAgain.ReferenceCount);
+            await using var twiceRestoredSource = NpgsqlDataSource.Create(
+                twiceRestoredDatabase.ConnectionString);
+            var twiceRestored = await DistributedBackupRestorer.RestoreAsync(
+                secondSnapshot, twiceRestoredSource, twiceRestoredDatabase.ConnectionString,
+                restoredObjects, PgRestoreExecutable);
+            Assert.AreEqual(2L, twiceRestored.ReferenceCount);
+            await DistributedRestoreActivationGuard.RequireReadyAsync(twiceRestoredSource);
+            Assert.AreEqual(2L, await DistributedBlobReferenceAudit.AuditAsync(
+                twiceRestoredSource, restoredObjects));
         }
         finally
         {
             await container.DeleteIfExistsAsync();
             await restoredContainer.DeleteIfExistsAsync();
+            parent.Delete(recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task VersionTwoArchiveRestoresIntoGuardedDatabase()
+    {
+        await using var sourceDatabase = await RequirePostgresAsync();
+        await using var targetDatabase = await RequirePostgresAsync();
+        await PrepareAsync(sourceDatabase);
+        await using var source = NpgsqlDataSource.Create(sourceDatabase.ConnectionString);
+        await using var target = NpgsqlDataSource.Create(targetDatabase.ConnectionString);
+        var objects = new InMemoryLargeObjectStore();
+        var parent = Directory.CreateTempSubdirectory("mk8-version-two-restore-");
+        var destination = Path.Combine(parent.FullName, "snapshot");
+        try
+        {
+            await DistributedBackupExporter.ExportAsync(
+                source, objects, sourceDatabase.ConnectionString,
+                destination, PgDumpExecutable);
+            var metadataPath = Path.Combine(destination, "backup.json");
+            var metadata = JsonNode.Parse(await File.ReadAllTextAsync(metadataPath));
+            Assert.IsNotNull(metadata);
+            metadata["SchemaVersion"] = 2;
+            await File.WriteAllTextAsync(metadataPath, metadata.ToJsonString());
+            await RewriteChecksumsAsync(destination);
+
+            var result = await DistributedBackupRestorer.RestoreAsync(
+                destination, target, targetDatabase.ConnectionString,
+                objects, PgRestoreExecutable);
+            Assert.AreEqual(0L, result.ReferenceCount);
+            await DistributedRestoreActivationGuard.RequireReadyAsync(target);
+        }
+        finally
+        {
             parent.Delete(recursive: true);
         }
     }
@@ -272,6 +330,12 @@ public sealed class DistributedBackupExporterTests
                     targetObjects, PgRestoreExecutable));
             StringAssert.Contains(corrupt.Message, "checksum mismatch");
             Assert.AreEqual(0, targetObjects.ObjectCount);
+            await DistributedRestoreActivationGuard.RequireReadyAsync(target);
+            await using (var marker = target.CreateCommand(
+                             "SELECT to_regclass('public.mk8_restore_state') IS NULL"))
+            {
+                Assert.AreEqual(true, await marker.ExecuteScalarAsync());
+            }
 
             await File.WriteAllBytesAsync(blobFile, content);
             await using (var connection = await target.OpenConnectionAsync())
@@ -286,6 +350,58 @@ public sealed class DistributedBackupExporterTests
                     targetObjects, PgRestoreExecutable));
             StringAssert.Contains(nonempty.Message, "not empty");
             Assert.AreEqual(0, targetObjects.ObjectCount);
+        }
+        finally
+        {
+            parent.Delete(recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task BlobImportFailureLeavesPendingMarkerBeforeDatabaseRestore()
+    {
+        await using var sourceDatabase = await RequirePostgresAsync();
+        await using var targetDatabase = await RequirePostgresAsync();
+        await PrepareAsync(sourceDatabase);
+        await using var source = NpgsqlDataSource.Create(sourceDatabase.ConnectionString);
+        await using var target = NpgsqlDataSource.Create(targetDatabase.ConnectionString);
+        var originalObjects = new InMemoryLargeObjectStore();
+        var targetObjects = new InMemoryLargeObjectStore();
+        var content = "expected restore content"u8.ToArray();
+        var sha256 = Convert.ToHexStringLower(SHA256.HashData(content));
+        await using var upload = new MemoryStream(content, writable: false);
+        var written = await originalObjects.PutIfAbsentAsync(
+            "jmap/import-conflict", upload, content.LongLength, sha256,
+            "application/octet-stream");
+        await InsertJmapBlobAsync(source, Guid.NewGuid(), written.Reference);
+
+        var conflicting = "different target content"u8.ToArray();
+        var conflictingSha256 = Convert.ToHexStringLower(SHA256.HashData(conflicting));
+        await using var conflictingUpload = new MemoryStream(conflicting, writable: false);
+        await targetObjects.PutIfAbsentAsync(
+            written.Reference.ObjectName, conflictingUpload, conflicting.LongLength,
+            conflictingSha256, "application/octet-stream");
+
+        var parent = Directory.CreateTempSubdirectory("mk8-import-failed-restore-");
+        var destination = Path.Combine(parent.FullName, "snapshot");
+        try
+        {
+            await DistributedBackupExporter.ExportAsync(
+                source, originalObjects, sourceDatabase.ConnectionString,
+                destination, PgDumpExecutable);
+            var failure = await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
+                DistributedBackupRestorer.RestoreAsync(
+                    destination, target, targetDatabase.ConnectionString,
+                    targetObjects, PgRestoreExecutable));
+            StringAssert.Contains(failure.Message, "already uses that name");
+            await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
+                DistributedRestoreActivationGuard.RequireReadyAsync(target));
+            await using var marker = target.CreateCommand(
+                "SELECT state FROM public.mk8_restore_state");
+            Assert.AreEqual("pending", await marker.ExecuteScalarAsync());
+            await using var tables = target.CreateCommand(
+                "SELECT to_regclass('public.jmap_blobs') IS NULL");
+            Assert.AreEqual(true, await tables.ExecuteScalarAsync());
         }
         finally
         {
@@ -341,7 +457,21 @@ public sealed class DistributedBackupExporterTests
                     destination, target, targetDatabase.ConnectionString,
                     targetObjects, PgRestoreExecutable));
             StringAssert.Contains(mismatch.Message, "do not match");
+            var blocked = await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
+                DistributedRestoreActivationGuard.RequireReadyAsync(target));
+            StringAssert.Contains(blocked.Message, "incomplete");
+            var invalidSnapshot = Path.Combine(parent.FullName, "incomplete-source-snapshot");
+            await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
+                DistributedBackupExporter.ExportAsync(
+                    target, targetObjects, targetDatabase.ConnectionString,
+                    invalidSnapshot, PgDumpExecutable));
+            Assert.IsFalse(Path.Exists(invalidSnapshot));
             await using var restored = await target.OpenConnectionAsync();
+            await using (var state = restored.CreateCommand())
+            {
+                state.CommandText = "SELECT state FROM public.mk8_restore_state WHERE id = 1";
+                Assert.AreEqual("pending", await state.ExecuteScalarAsync());
+            }
             await using var query = restored.CreateCommand();
             query.CommandText = "SELECT object_etag FROM jmap_blobs WHERE id = @id";
             query.Parameters.AddWithValue("id", rowId);

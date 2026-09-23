@@ -53,7 +53,9 @@ public static class DistributedBackupRestorer
                 nameof(pgRestoreExecutable));
 
         var backup = await VerifyArchiveAsync(backupDirectory, cancellationToken);
-        await RequireEmptyDatabaseAsync(targetDataSource, cancellationToken);
+        await DistributedRestoreActivationGuard.BeginRestoreAsync(
+            targetDataSource, backup.DatabaseSha256, backup.ManifestSha256,
+            cancellationToken);
         var temporary = Directory.CreateTempSubdirectory("mk8-distributed-restore-");
         try
         {
@@ -156,7 +158,7 @@ public static class DistributedBackupRestorer
                     input, cancellationToken: cancellationToken)
                 ?? throw new InvalidOperationException("The backup metadata is missing.");
         }
-        if (metadata.SchemaVersion != 2
+        if (metadata.SchemaVersion is not (2 or 3)
             || metadata.ReferenceCount < 0
             || metadata.UniqueContentCount < 0
             || metadata.DatabaseSha256 != await HashFileAsync(
@@ -353,6 +355,8 @@ public static class DistributedBackupRestorer
         {
             throw new InvalidOperationException("The restored Blob ETags did not rebind completely.");
         }
+        await DistributedRestoreActivationGuard.CompleteRestoreAsync(
+            connection, transaction, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }
 
@@ -396,23 +400,6 @@ public static class DistributedBackupRestorer
         command.Transaction = transaction;
         command.CommandText = sql;
         return (long)(await command.ExecuteScalarAsync(cancellationToken))!;
-    }
-
-    private static async Task RequireEmptyDatabaseAsync(
-        NpgsqlDataSource targetDataSource,
-        CancellationToken cancellationToken)
-    {
-        await using var connection = await targetDataSource.OpenConnectionAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT count(*)
-            FROM pg_class AS relation
-            JOIN pg_namespace AS schema ON schema.oid = relation.relnamespace
-            WHERE schema.nspname = current_schema()
-                AND relation.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
-            """;
-        if ((long)(await command.ExecuteScalarAsync(cancellationToken))! != 0)
-            throw new InvalidOperationException("The target PostgreSQL database is not empty.");
     }
 
     private static async Task RunPgRestoreAsync(

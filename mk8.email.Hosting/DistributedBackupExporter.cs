@@ -55,6 +55,7 @@ public static class DistributedBackupExporter
         }
         if (Path.Exists(destination))
             throw new IOException("The backup destination already exists.");
+        await DistributedRestoreActivationGuard.RequireReadyAsync(dataSource, cancellationToken);
 
         var stage = Path.Combine(parent, $".incomplete-{Guid.CreateVersion7():N}");
         Directory.CreateDirectory(stage, UnixFileMode.UserRead
@@ -127,7 +128,7 @@ public static class DistributedBackupExporter
                 metadataPath,
                 JsonSerializer.Serialize(new
                 {
-                    SchemaVersion = 2,
+                    SchemaVersion = 3,
                     ExportedAtUtc = DateTimeOffset.UtcNow,
                     Snapshot = snapshot,
                     ReferenceCount = references,
@@ -230,6 +231,7 @@ public static class DistributedBackupExporter
         start.ArgumentList.Add("--no-owner");
         start.ArgumentList.Add("--no-acl");
         start.ArgumentList.Add("--no-password");
+        start.ArgumentList.Add("--exclude-table=public.mk8_restore_state");
         start.ArgumentList.Add($"--snapshot={snapshot}");
         start.ArgumentList.Add($"--file={dumpPath}");
         start.ArgumentList.Add($"--host={database.Host}");

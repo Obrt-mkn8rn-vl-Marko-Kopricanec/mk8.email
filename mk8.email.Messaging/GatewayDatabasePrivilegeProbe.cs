@@ -49,6 +49,27 @@ public static class GatewayDatabasePrivilegeProbe
                             OR has_table_privilege(current_user, relation.oid, 'REFERENCES')
                             OR has_table_privilege(current_user, relation.oid, 'TRIGGER')))
                 AND NOT EXISTS (
+                    SELECT 1 FROM pg_class AS relation
+                    JOIN pg_namespace AS schema ON schema.oid = relation.relnamespace
+                    WHERE schema.nspname = 'public'
+                        AND relation.relname = 'mk8_restore_state'
+                        AND (NOT has_column_privilege(
+                                current_user, relation.oid, 'state', 'SELECT')
+                            OR has_table_privilege(current_user, relation.oid,
+                                'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+                            OR has_any_column_privilege(current_user, relation.oid,
+                                'INSERT,UPDATE,REFERENCES')))
+                AND NOT EXISTS (
+                    SELECT 1 FROM pg_class AS relation
+                    JOIN pg_namespace AS schema ON schema.oid = relation.relnamespace
+                    JOIN pg_attribute AS attribute ON attribute.attrelid = relation.oid
+                    WHERE schema.nspname = 'public'
+                        AND relation.relname = 'mk8_restore_state'
+                        AND attribute.attnum > 0 AND NOT attribute.attisdropped
+                        AND attribute.attname <> 'state'
+                        AND has_column_privilege(current_user, relation.oid,
+                            attribute.attname, 'SELECT'))
+                AND NOT EXISTS (
                     SELECT 1 FROM pg_namespace AS schema
                     WHERE schema.nspname !~ '^pg_'
                         AND schema.nspname <> 'information_schema'
@@ -69,7 +90,8 @@ public static class GatewayDatabasePrivilegeProbe
                         AND NOT (schema.nspname = 'public'
                             AND relation.relname IN (
                                 'gateway_traffic_records', 'application_requests',
-                                'presentation_requests', 'pop3_maildrop_leases'))
+                                'presentation_requests', 'pop3_maildrop_leases',
+                                'mk8_restore_state'))
                         AND (has_table_privilege(current_user, relation.oid, 'SELECT')
                             OR has_table_privilege(current_user, relation.oid, 'INSERT')
                             OR has_table_privilege(current_user, relation.oid, 'UPDATE')

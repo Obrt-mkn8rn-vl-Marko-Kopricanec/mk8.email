@@ -231,6 +231,119 @@ public sealed class DistributedProcessBoundaryTests
         }
     }
 
+    [TestMethod]
+    public async Task PendingRestoreStopsGatewayAndWorkerBeforeSchemaOrListenersStart()
+    {
+        await using var database = await RequirePostgresAsync();
+        var directory = Directory.CreateTempSubdirectory("mk8-pending-restore-process-");
+        try
+        {
+            await using (var connection = new NpgsqlConnection(database.ConnectionString))
+            {
+                await connection.OpenAsync();
+                await using var create = connection.CreateCommand();
+                create.CommandText = """
+                    CREATE TABLE public.mk8_restore_state (
+                        id smallint PRIMARY KEY,
+                        state text NOT NULL);
+                    INSERT INTO public.mk8_restore_state VALUES (1, 'pending');
+                    """;
+                await create.ExecuteNonQueryAsync();
+            }
+
+            var databaseConnection = new NpgsqlConnectionStringBuilder(database.ConnectionString);
+            var config = new EnvironmentConfig
+            {
+                Database = new DatabaseConfig
+                {
+                    Host = databaseConnection.Host!,
+                    Port = databaseConnection.Port,
+                    Name = databaseConnection.Database!,
+                    Username = databaseConnection.Username!,
+                    Password = string.IsNullOrEmpty(databaseConnection.Password)
+                        ? "local-test-only-password"
+                        : databaseConnection.Password,
+                },
+                Smtp = new SmtpConfig
+                {
+                    Hostname = "email.example.test",
+                    EnableSmtp = false,
+                },
+                Imap = new ImapConfig { EnableImap = false, EnableImplicitTls = false },
+                Pop3 = new Pop3Config { EnablePop3 = false, EnableImplicitTls = false },
+                Sieve = new SieveConfig { EnableManageSieve = false },
+                Jmap = new JmapConfig
+                {
+                    EnableJmap = true,
+                    IsDefault = true,
+                    PublicBaseUrl = "https://email.example.test",
+                },
+                Dav = new DavConfig { EnableDav = false },
+                Admin = new AdminConfig
+                {
+                    AllowedNetworks = ["127.0.0.0/8"],
+                    DataProtectionKeyPath = Path.Combine(directory.FullName, "keys"),
+                    AuditLogPath = Path.Combine(directory.FullName, "audit.jsonl"),
+                    HealthStatusPath = Path.Combine(directory.FullName, "status.json"),
+                },
+                Messaging = new MessagingConfig
+                {
+                    Enabled = true,
+                    EncryptionKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
+                },
+                ObjectStorage = new ObjectStorageConfig
+                {
+                    ConnectionString = "UseDevelopmentStorage=true",
+                    ContainerName = "mk8-pending-restore-test",
+                    CreateContainerIfMissing = true,
+                },
+            };
+            Assert.HasCount(0, config.Validate(false, EnvironmentValidationRole.Gateway));
+            Assert.HasCount(0, config.Validate(false, EnvironmentValidationRole.ApplicationWorker));
+            Directory.CreateDirectory(config.Admin.DataProtectionKeyPath);
+            var configPath = Path.Combine(directory.FullName, "distributed.json");
+            await File.WriteAllTextAsync(configPath, JsonSerializer.Serialize(config));
+
+            foreach (var mode in new[] { "--prepare", "--drain" })
+            {
+                var worker = await RunWorkerAsync(mode, configPath);
+                Assert.AreEqual(1, worker.ExitCode, worker.Output);
+                StringAssert.Contains(worker.Output, "restore is incomplete");
+            }
+
+            using var gateway = StartProcess(
+                "mk8.email.Gateway", "mk8.email.Gateway.dll", null, configPath,
+                "http://127.0.0.1:0");
+            var gatewayOutput = gateway.StandardOutput.ReadToEndAsync();
+            var gatewayErrors = gateway.StandardError.ReadToEndAsync();
+            using (var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15)))
+            {
+                try
+                {
+                    await gateway.WaitForExitAsync(deadline.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    gateway.Kill(entireProcessTree: true);
+                    await gateway.WaitForExitAsync();
+                    Assert.Fail("Gateway started despite a pending restore.");
+                }
+            }
+            var output = await gatewayOutput + await gatewayErrors;
+            Assert.AreNotEqual(0, gateway.ExitCode, output);
+            StringAssert.Contains(output, "restore is incomplete");
+
+            await using var inspection = new NpgsqlConnection(database.ConnectionString);
+            await inspection.OpenAsync();
+            Assert.AreEqual(0L, await CountAsync(
+                inspection, "SELECT count(*) FROM pg_class WHERE oid = to_regclass('public.users')"));
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
     private static async Task WaitForGatewayAsync(
         HttpClient client,
         Process gateway,

@@ -99,6 +99,13 @@ GRANT SELECT, INSERT ON public.gateway_traffic_records TO mk8gateway;
 GRANT SELECT, INSERT, UPDATE ON public.application_requests,
     public.presentation_requests TO mk8gateway;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.pop3_maildrop_leases TO mk8gateway;
+DO $restore_grant$
+BEGIN
+    IF to_regclass('public.mk8_restore_state') IS NOT NULL THEN
+        GRANT SELECT (state) ON public.mk8_restore_state TO mk8gateway;
+    END IF;
+END
+$restore_grant$;
 COMMIT;
 SQL
 unset MK8_GATEWAY_DB_PASSWORD gateway_password

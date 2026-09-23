@@ -85,6 +85,8 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
             }
             if (arguments[0] == "--probe-worker-dispatch")
             {
+                await using var source = NpgsqlDataSource.Create(validated.BuildConnectionString());
+                await DistributedRestoreActivationGuard.RequireReadyAsync(source);
                 await using var probeServices = new ServiceCollection()
                     .AddDistributedMessaging(validated)
                     .BuildServiceProvider();
@@ -98,6 +100,8 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
             {
                 using var probeTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
                 await using var source = NpgsqlDataSource.Create(validated.BuildConnectionString());
+                await DistributedRestoreActivationGuard.RequireReadyAsync(
+                    source, probeTimeout.Token);
                 if (role == EnvironmentValidationRole.Gateway)
                     await GatewayDatabasePrivilegeProbe.ProbeAsync(source, probeTimeout.Token);
                 await using var objects = new ServiceCollection()

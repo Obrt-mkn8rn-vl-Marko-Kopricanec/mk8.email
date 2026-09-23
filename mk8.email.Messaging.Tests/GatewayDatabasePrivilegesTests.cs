@@ -1,5 +1,6 @@
 using System.Text;
 using mk8.email.Contracts.Messaging;
+using mk8.email.Hosting;
 using Npgsql;
 
 namespace mk8.email.Messaging.Tests;
@@ -23,6 +24,11 @@ public sealed class GatewayDatabasePrivilegesTests
                 REVOKE ALL ON DATABASE "{database.DatabaseName}" FROM PUBLIC;
                 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
                 CREATE TABLE private_application_state (id integer PRIMARY KEY);
+                CREATE TABLE mk8_restore_state (
+                    id smallint PRIMARY KEY,
+                    state text NOT NULL,
+                    database_sha256 text NOT NULL);
+                INSERT INTO mk8_restore_state VALUES (1, 'complete', 'private-hash');
                 CREATE ROLE "{role}" LOGIN PASSWORD '{password}'
                     NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
                 """;
@@ -59,11 +65,41 @@ public sealed class GatewayDatabasePrivilegesTests
                             application_requests, presentation_requests TO "{role}";
                         GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
                             pop3_maildrop_leases TO "{role}";
+                        GRANT SELECT (state) ON TABLE
+                            mk8_restore_state TO "{role}";
                         """;
                     await grant.ExecuteNonQueryAsync();
                 }
                 Assert.IsTrue(await transport.IsAvailableAsync());
                 await GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource);
+                await DistributedRestoreActivationGuard.RequireReadyAsync(gatewayDataSource);
+                await using (var privateMarker = gatewayDataSource.CreateCommand(
+                                 "SELECT database_sha256 FROM mk8_restore_state"))
+                {
+                    var error = await Assert.ThrowsExactlyAsync<PostgresException>(
+                        () => privateMarker.ExecuteScalarAsync());
+                    Assert.AreEqual(PostgresErrorCodes.InsufficientPrivilege, error.SqlState);
+                }
+                await using (var excessMarkerGrant = admin.CreateCommand())
+                {
+                    excessMarkerGrant.CommandText =
+                        $"GRANT UPDATE (state) ON mk8_restore_state TO \"{role}\"";
+                    await excessMarkerGrant.ExecuteNonQueryAsync();
+                    await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
+                        GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource));
+                    excessMarkerGrant.CommandText =
+                        $"REVOKE UPDATE (state) ON mk8_restore_state FROM \"{role}\"";
+                    await excessMarkerGrant.ExecuteNonQueryAsync();
+                    await GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource);
+                    excessMarkerGrant.CommandText =
+                        $"GRANT SELECT (database_sha256) ON mk8_restore_state TO \"{role}\"";
+                    await excessMarkerGrant.ExecuteNonQueryAsync();
+                    await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
+                        GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource));
+                    excessMarkerGrant.CommandText =
+                        $"REVOKE SELECT (database_sha256) ON mk8_restore_state FROM \"{role}\"";
+                    await excessMarkerGrant.ExecuteNonQueryAsync();
+                }
                 await using (var excessGrant = admin.CreateCommand())
                 {
                     excessGrant.CommandText = $"GRANT SELECT ON private_application_state TO \"{role}\"";

@@ -98,6 +98,8 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
             {
                 using var probeTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
                 await using var source = NpgsqlDataSource.Create(validated.BuildConnectionString());
+                if (role == EnvironmentValidationRole.Gateway)
+                    await GatewayDatabasePrivilegeProbe.ProbeAsync(source, probeTimeout.Token);
                 await using var objects = new ServiceCollection()
                     .AddAzureBlobObjectStorage(validated)
                     .BuildServiceProvider();

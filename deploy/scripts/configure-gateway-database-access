@@ -1,0 +1,106 @@
+#!/bin/sh
+set -eu
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+export LC_ALL=C
+
+if [ "$(id -u)" -ne 0 ] || [ "$#" -ne 1 ]; then
+    printf '%s\n' "Usage: configure-gateway-database-access PASSWORD_FILE" >&2
+    exit 2
+fi
+
+password_file=$1
+if [ -L "$password_file" ] || [ ! -f "$password_file" ] \
+    || [ "$(stat -c '%U:%G %a %h' "$password_file" 2>/dev/null || true)" != 'root:root 600 1' ]; then
+    printf '%s\n' "The Gateway database password file has unsafe metadata." >&2
+    exit 1
+fi
+password_bytes=$(wc -c < "$password_file" | tr -d ' ')
+if [ "$password_bytes" -ne 64 ] && [ "$password_bytes" -ne 65 ]; then
+    printf '%s\n' "The Gateway database password must contain 64 hexadecimal characters." >&2
+    exit 1
+fi
+if ! grep -aEq '^[0-9a-f]{64}$' "$password_file"; then
+    printf '%s\n' "The Gateway database password must be one lowercase hexadecimal line." >&2
+    exit 1
+fi
+gateway_password=$(tr -d '\n' < "$password_file")
+case "$gateway_password" in
+    *[!0123456789abcdef]*|'')
+        printf '%s\n' "The Gateway database password must be lowercase hexadecimal." >&2
+        exit 1
+        ;;
+esac
+if [ "${#gateway_password}" -ne 64 ]; then
+    printf '%s\n' "The Gateway database password has the wrong length." >&2
+    exit 1
+fi
+
+if ! runuser -u postgres -- psql --dbname=mk8email --no-psqlrc \
+    --tuples-only --no-align --set=ON_ERROR_STOP=1 \
+    --command="SELECT to_regclass('public.users') IS NOT NULL
+        AND to_regclass('public.gateway_traffic_records') IS NOT NULL
+        AND to_regclass('public.application_requests') IS NOT NULL
+        AND to_regclass('public.presentation_requests') IS NOT NULL
+        AND to_regclass('public.pop3_maildrop_leases') IS NOT NULL" \
+    | grep -qx t; then
+    printf '%s\n' "The application and messaging schemas must exist before Gateway access is configured." >&2
+    exit 1
+fi
+
+MK8_GATEWAY_DB_PASSWORD=$gateway_password
+export MK8_GATEWAY_DB_PASSWORD
+runuser --preserve-environment -u postgres -- psql --dbname=mk8email \
+    --no-psqlrc --set=ON_ERROR_STOP=1 <<'SQL'
+BEGIN;
+SELECT pg_advisory_xact_lock(5563539125731845288);
+
+DO $validate$
+DECLARE
+    gateway_role oid;
+BEGIN
+    SELECT oid INTO gateway_role FROM pg_roles WHERE rolname = 'mk8gateway';
+    IF gateway_role IS NULL THEN
+        RETURN;
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM pg_roles
+        WHERE oid = gateway_role
+            AND (rolsuper OR rolcreatedb OR rolcreaterole
+                OR rolreplication OR rolbypassrls))
+        OR EXISTS (SELECT 1 FROM pg_auth_members WHERE member = gateway_role)
+        OR EXISTS (SELECT 1 FROM pg_database WHERE datdba = gateway_role)
+        OR EXISTS (SELECT 1 FROM pg_namespace WHERE nspowner = gateway_role)
+        OR EXISTS (SELECT 1 FROM pg_class WHERE relowner = gateway_role)
+    THEN
+        RAISE EXCEPTION 'The existing Gateway role has unsafe ownership or membership';
+    END IF;
+END
+$validate$;
+
+SELECT 'CREATE ROLE mk8gateway LOGIN' WHERE NOT EXISTS (
+    SELECT 1 FROM pg_roles WHERE rolname = 'mk8gateway') \gexec
+\getenv gateway_password MK8_GATEWAY_DB_PASSWORD
+ALTER ROLE mk8gateway PASSWORD :'gateway_password';
+ALTER ROLE mk8gateway LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
+    NOREPLICATION NOBYPASSRLS NOINHERIT;
+ALTER ROLE mk8gateway CONNECTION LIMIT 100;
+ALTER ROLE mk8gateway SET statement_timeout TO '60s';
+ALTER ROLE mk8gateway SET lock_timeout TO '5s';
+
+REVOKE ALL ON DATABASE mk8email FROM mk8gateway;
+GRANT CONNECT ON DATABASE mk8email TO mk8gateway;
+REVOKE ALL ON SCHEMA public FROM mk8gateway;
+GRANT USAGE ON SCHEMA public TO mk8gateway;
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM mk8gateway;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM mk8gateway;
+GRANT SELECT, INSERT ON public.gateway_traffic_records TO mk8gateway;
+GRANT SELECT, INSERT, UPDATE ON public.application_requests,
+    public.presentation_requests TO mk8gateway;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.pop3_maildrop_leases TO mk8gateway;
+COMMIT;
+SQL
+unset MK8_GATEWAY_DB_PASSWORD gateway_password
+
+printf '%s\n' "The restricted Gateway database role is configured."

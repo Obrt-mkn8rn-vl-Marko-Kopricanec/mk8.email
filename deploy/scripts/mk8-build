@@ -176,6 +176,7 @@ run_unit "mk8-build-$short_commit-$$" yes /bin/sh -eu -c '
         deploy/scripts/activate-distributed-role \
         deploy/scripts/activate-mail-stack \
         deploy/scripts/configure-apt-sources \
+        deploy/scripts/configure-gateway-database-access \
         deploy/scripts/configure-mail-database-access \
         deploy/scripts/deactivate-distributed-role \
         deploy/scripts/deactivate-mail-stack \

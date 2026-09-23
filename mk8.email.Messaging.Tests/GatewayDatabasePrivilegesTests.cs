@@ -20,6 +20,7 @@ public sealed class GatewayDatabasePrivilegesTests
         await using (var setup = admin.CreateCommand())
         {
             setup.CommandText = $"""
+                REVOKE ALL ON DATABASE "{database.DatabaseName}" FROM PUBLIC;
                 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
                 CREATE TABLE private_application_state (id integer PRIMARY KEY);
                 CREATE ROLE "{role}" LOGIN PASSWORD '{password}'
@@ -47,6 +48,8 @@ public sealed class GatewayDatabasePrivilegesTests
             {
                 var transport = new PostgresApplicationTransportControl(gatewayDataSource);
                 Assert.IsFalse(await transport.IsAvailableAsync());
+                await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
+                    GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource));
                 await using (var grant = admin.CreateCommand())
                 {
                     grant.CommandText = $"""
@@ -60,6 +63,37 @@ public sealed class GatewayDatabasePrivilegesTests
                     await grant.ExecuteNonQueryAsync();
                 }
                 Assert.IsTrue(await transport.IsAvailableAsync());
+                await GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource);
+                await using (var excessGrant = admin.CreateCommand())
+                {
+                    excessGrant.CommandText = $"GRANT SELECT ON private_application_state TO \"{role}\"";
+                    await excessGrant.ExecuteNonQueryAsync();
+                    await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
+                        GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource));
+                    excessGrant.CommandText = $"REVOKE SELECT ON private_application_state FROM \"{role}\"";
+                    await excessGrant.ExecuteNonQueryAsync();
+                }
+                await GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource);
+                await using (var excessSchemaGrant = admin.CreateCommand())
+                {
+                    excessSchemaGrant.CommandText = $"GRANT CREATE ON SCHEMA public TO \"{role}\"";
+                    await excessSchemaGrant.ExecuteNonQueryAsync();
+                    await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
+                        GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource));
+                    excessSchemaGrant.CommandText = $"REVOKE CREATE ON SCHEMA public FROM \"{role}\"";
+                    await excessSchemaGrant.ExecuteNonQueryAsync();
+                }
+                await GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource);
+                await using (var excessControlGrant = admin.CreateCommand())
+                {
+                    excessControlGrant.CommandText = $"GRANT DELETE ON gateway_traffic_records TO \"{role}\"";
+                    await excessControlGrant.ExecuteNonQueryAsync();
+                    await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
+                        GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource));
+                    excessControlGrant.CommandText = $"REVOKE DELETE ON gateway_traffic_records FROM \"{role}\"";
+                    await excessControlGrant.ExecuteNonQueryAsync();
+                }
+                await GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource);
                 await using (var forbiddenControlWrites = gatewayDataSource.CreateCommand(
                                  """
                                  SELECT has_table_privilege(current_user,

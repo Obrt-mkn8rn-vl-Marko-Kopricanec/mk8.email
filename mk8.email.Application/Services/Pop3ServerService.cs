@@ -16,6 +16,7 @@ using mk8.email.Contracts.Enums;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
 using mk8.email.Infrastructure.Models;
+using mk8.email.MailWire;
 
 namespace mk8.email.Application.Services;
 
@@ -788,11 +789,11 @@ public sealed class Pop3ServerService(
                 return;
             }
             if (bodyLineCount is not null)
-                wireMessage = TakeTop(wireMessage, bodyLineCount.Value);
+                wireMessage = Pop3WireCodec.TakeTop(wireMessage, bodyLineCount.Value);
 
             await writer.WriteLineAsync($"+OK {wireMessage.Length} octets");
             await writer.FlushAsync(cancellationToken);
-            await WriteDotStuffedAsync(stream, wireMessage, cancellationToken);
+            await Pop3WireCodec.WriteDotStuffedAsync(stream, wireMessage, cancellationToken);
         }
         finally
         {
@@ -990,118 +991,7 @@ public sealed class Pop3ServerService(
             raw = MailWireEncoding.Instance.GetBytes(builder.ToString());
         }
 
-        return NormalizeCrlf(raw);
-    }
-
-    private static byte[] NormalizeCrlf(ReadOnlySpan<byte> source)
-    {
-        using var output = new MemoryStream(source.Length + 2);
-        for (var index = 0; index < source.Length; index++)
-        {
-            var value = source[index];
-            if (value == '\r')
-            {
-                if (index + 1 < source.Length && source[index + 1] == '\n')
-                    index++;
-                output.WriteByte((byte)'\r');
-                output.WriteByte((byte)'\n');
-            }
-            else if (value == '\n')
-            {
-                output.WriteByte((byte)'\r');
-                output.WriteByte((byte)'\n');
-            }
-            else
-            {
-                output.WriteByte(value);
-            }
-        }
-
-        var normalized = output.ToArray();
-        if (normalized.Length >= 2
-            && normalized[^2] == '\r'
-            && normalized[^1] == '\n')
-        {
-            return normalized;
-        }
-
-        Array.Resize(ref normalized, normalized.Length + 2);
-        normalized[^2] = (byte)'\r';
-        normalized[^1] = (byte)'\n';
-        return normalized;
-    }
-
-    private static byte[] TakeTop(byte[] message, int bodyLineCount)
-    {
-        var bodyStart = FindHeaderBodySeparator(message);
-        if (bodyStart < 0)
-            return message;
-
-        var end = bodyStart;
-        for (var line = 0; line < bodyLineCount && end < message.Length; line++)
-        {
-            var nextLine = FindCrlf(message, end);
-            end = nextLine < 0 ? message.Length : nextLine + 2;
-        }
-        return message[..end];
-    }
-
-    private static int FindHeaderBodySeparator(byte[] message)
-    {
-        for (var index = 0; index <= message.Length - 4; index++)
-        {
-            if (message[index] == '\r'
-                && message[index + 1] == '\n'
-                && message[index + 2] == '\r'
-                && message[index + 3] == '\n')
-            {
-                return index + 4;
-            }
-        }
-        return -1;
-    }
-
-    private static int FindCrlf(byte[] message, int start)
-    {
-        for (var index = start; index < message.Length - 1; index++)
-        {
-            if (message[index] == '\r' && message[index + 1] == '\n')
-                return index;
-        }
-        return -1;
-    }
-
-    private static async Task WriteDotStuffedAsync(
-        Stream stream,
-        byte[] message,
-        CancellationToken cancellationToken)
-    {
-        var buffer = new byte[8192];
-        var buffered = 0;
-        var atLineStart = true;
-        foreach (var value in message)
-        {
-            if (atLineStart && value == '.')
-            {
-                if (buffered == buffer.Length)
-                {
-                    await stream.WriteAsync(buffer, cancellationToken);
-                    buffered = 0;
-                }
-                buffer[buffered++] = (byte)'.';
-            }
-            if (buffered == buffer.Length)
-            {
-                await stream.WriteAsync(buffer, cancellationToken);
-                buffered = 0;
-            }
-            buffer[buffered++] = value;
-            atLineStart = value == '\n';
-        }
-        if (buffered > 0)
-            await stream.WriteAsync(buffer.AsMemory(0, buffered), cancellationToken);
-        await stream.WriteAsync(".\r\n"u8.ToArray(), cancellationToken);
-        await stream.FlushAsync(cancellationToken);
+        return Pop3WireCodec.NormalizeCrlf(raw);
     }
 
     private void RecordAuthenticationFailure(Pop3Session session)

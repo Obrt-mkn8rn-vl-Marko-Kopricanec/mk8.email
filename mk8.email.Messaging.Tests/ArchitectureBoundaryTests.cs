@@ -70,6 +70,7 @@ public sealed class ArchitectureBoundaryTests
         Assert.AreEqual("mk8.email.MailWire", assembly.GetName().Name);
         Assert.AreSame(assembly, typeof(ManageSieveWireReader).Assembly);
         Assert.AreSame(assembly, typeof(SieveWireCapabilities).Assembly);
+        Assert.AreSame(assembly, typeof(Pop3WireCodec).Assembly);
         Assert.IsFalse(assembly.GetReferencedAssemblies().Any(reference =>
             reference.Name is not null
             && (reference.Name.StartsWith("mk8.email.Application", StringComparison.Ordinal)

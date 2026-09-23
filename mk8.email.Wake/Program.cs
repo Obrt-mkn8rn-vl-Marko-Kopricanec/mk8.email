@@ -19,6 +19,7 @@ try
     if (string.IsNullOrWhiteSpace(connectionString))
         throw new InvalidOperationException("The Worker wake database connection file is empty.");
     await using var dataSource = NpgsqlDataSource.Create(connectionString);
+    await WorkerWakeDatabasePrivilegeProbe.ProbeAsync(dataSource);
     var probe = new WorkerWakeProbe(dataSource, includeJmap: args.Length == 3);
     var trigger = new WorkerWakeTrigger(args[2]);
     trigger.Validate();

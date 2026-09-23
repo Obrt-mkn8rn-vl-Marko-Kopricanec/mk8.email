@@ -15,6 +15,7 @@ if systemctl is-active --quiet mk8email-gateway.service \
     || systemctl is-active --quiet mk8email-worker.service \
     || systemctl is-active --quiet mk8email-worker-drain.service \
     || systemctl is-active --quiet mk8email-worker.path \
+    || systemctl is-active --quiet mk8email-worker-maintenance.timer \
     || systemctl is-active --quiet mk8email-wake.service; then
     fail "The distributed mail stack is already active; use a controlled upgrade procedure."
 fi
@@ -88,10 +89,12 @@ cleanup() {
         rm -f -- /etc/mk8email/mail-stack-ready
         systemctl stop mk8-mail-health.timer mk8-backup.timer \
             dailyaidecheck.timer 2>/dev/null || true
-        systemctl stop mk8email-gateway.service mk8email-worker.path \
+        systemctl stop mk8email-gateway.service mk8email-worker-maintenance.timer \
+            mk8email-worker.path \
             mk8email-worker-drain.service mk8email-wake.service \
             mk8email-worker.service 2>/dev/null || true
-        systemctl disable mk8email-gateway.service mk8email-worker.path \
+        systemctl disable mk8email-gateway.service mk8email-worker-maintenance.timer \
+            mk8email-worker.path \
             mk8email-wake.service mk8email-worker.service 2>/dev/null || true
     fi
 }
@@ -117,7 +120,7 @@ systemctl disable mk8email.service mk8email-admin.service 2>/dev/null || true
 install -o root -g root -m 0644 /dev/null /etc/mk8email/mail-stack-ready
 systemctl start mk8-mail-health.timer mk8-backup.timer dailyaidecheck.timer
 systemctl is-active --quiet mk8email-gateway.service mk8email-worker.path \
-    mk8email-wake.service rspamd.service
+    mk8email-wake.service mk8email-worker-maintenance.timer rspamd.service
 pg_isready --host=127.0.0.1 --port=5432 --dbname=mk8email --quiet
 valkey-cli -h 127.0.0.1 -p 6379 ping 2>/dev/null | grep -qx PONG
 clamdscan --config-file=/etc/clamav/clamd.conf --ping 1 >/dev/null 2>&1

@@ -351,7 +351,7 @@ if [ -f /etc/mk8email/mail-stack-ready ]; then
         rollback_supported=true
     elif systemctl is-active --quiet mk8email-gateway.service mk8email-worker.service; then
         rollback_supported=true
-    elif systemctl is-active --quiet mk8email-gateway.service mk8email-wake.service mk8email-worker.path; then
+    elif systemctl is-active --quiet mk8email-gateway.service mk8email-wake.service mk8email-worker.path mk8email-worker-maintenance.timer; then
         rollback_supported=true
     fi
     timeout 180s apt-get update

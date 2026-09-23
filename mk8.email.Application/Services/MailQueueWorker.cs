@@ -1117,8 +1117,17 @@ public sealed class MailQueueWorker(
         if (now < _nextCleanup)
             return;
 
-        _nextCleanup = now.AddHours(1);
         var cutoff = now.UtcDateTime.AddDays(-environment.Queue.CompletedRetentionDays);
+        while (await CleanupCompletedBatchAsync(cutoff, cancellationToken) == 1000)
+        {
+        }
+        _nextCleanup = now.AddHours(1);
+    }
+
+    private async Task<int> CleanupCompletedBatchAsync(
+        DateTime cutoff,
+        CancellationToken cancellationToken)
+    {
         using var scope = scopeFactory.CreateScope();
         var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
         var content = scope.ServiceProvider.GetRequiredService<MailQueueContentService>();
@@ -1144,7 +1153,7 @@ public sealed class MailQueueWorker(
                     await transaction.CommitAsync(cancellationToken);
                 }
                 effects.Discard(marker);
-                return;
+                return 0;
             }
 
             foreach (var message in expired)
@@ -1162,6 +1171,7 @@ public sealed class MailQueueWorker(
             }
             await effects.CommitAsync(marker);
             logger.LogInformation("Removed {Count} completed queue records", expired.Count);
+            return expired.Count;
         }
         catch
         {

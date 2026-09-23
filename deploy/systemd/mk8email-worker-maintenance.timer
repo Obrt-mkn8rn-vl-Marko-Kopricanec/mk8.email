@@ -1,0 +1,13 @@
+[Unit]
+Description=Run mk8.email Application maintenance once per day
+Documentation=https://github.com/mkn8rn/mk8.email
+ConditionPathExists=/etc/mk8email/distributed-ready
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=5m
+Persistent=true
+Unit=mk8email-worker-drain.service
+
+[Install]
+WantedBy=timers.target

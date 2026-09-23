@@ -34,6 +34,8 @@ gateway_pid=$(active_pid mk8email-gateway.service)
 wake_pid=$(active_pid mk8email-wake.service)
 systemctl is-active --quiet mk8email-worker.path \
     || fail "The Worker wake path is not active before the backup."
+systemctl is-active --quiet mk8email-worker-maintenance.timer \
+    || fail "The Worker maintenance timer is not active before the backup."
 if systemctl is-active --quiet mk8email-worker.service; then
     fail "The resident Application Worker is active before the backup."
 fi
@@ -58,6 +60,8 @@ assert_same_pid mk8email-gateway.service "$gateway_pid"
 assert_same_pid mk8email-wake.service "$wake_pid"
 systemctl is-active --quiet mk8email-worker.path \
     || fail "The Worker wake path stopped during the backup."
+systemctl is-active --quiet mk8email-worker-maintenance.timer \
+    || fail "The Worker maintenance timer stopped during the backup."
 assert_same_pid prosody.service "$prosody_pid"
 assert_same_pid cloudflared-xmpp.service "$xmpp_tunnel_pid"
 

@@ -11,6 +11,7 @@ case "$1" in
     worker)
         unit=mk8email-worker.path
         wake_unit=mk8email-wake.service
+        maintenance_timer=mk8email-worker-maintenance.timer
         drain_unit=mk8email-worker-drain.service
         resident_unit=mk8email-worker.service
         ;;
@@ -26,6 +27,10 @@ flock --exclusive --nonblock 9 || {
     exit 1
 }
 
+if [ "$1" = worker ]; then
+    systemctl stop "$maintenance_timer"
+    systemctl disable "$maintenance_timer"
+fi
 systemctl stop "$unit"
 systemctl disable "$unit"
 if [ "$1" = worker ]; then

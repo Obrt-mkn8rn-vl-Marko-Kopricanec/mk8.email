@@ -1,6 +1,6 @@
 [Unit]
 Description=Check mk8 mail service health
-After=network-online.target mk8email-gateway.service mk8email-wake.service mk8email-worker.path rspamd.service clamav-daemon.service valkey-server.service
+After=network-online.target mk8email-gateway.service mk8email-wake.service mk8email-worker.path mk8email-worker-maintenance.timer rspamd.service clamav-daemon.service valkey-server.service
 
 [Service]
 Type=oneshot

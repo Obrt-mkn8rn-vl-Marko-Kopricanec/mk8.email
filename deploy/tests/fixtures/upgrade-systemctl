@@ -11,6 +11,9 @@ case "$1" in
         elif [ "$unit" = mk8email-worker.path ] \
             && [ "$3" = mk8email-wake.service ]; then
             [ -f "$state/wake_active" ]
+        elif [ "$unit" = mk8email-worker.path ] \
+            && [ "$3" = mk8email-worker-maintenance.timer ]; then
+            [ -f "$state/maintenance_active" ]
         else
             exit 1
         fi
@@ -20,6 +23,9 @@ case "$1" in
             printf '%s\n' enabled
         elif [ "$unit" = mk8email-worker.path ] \
             && [ "$2" = mk8email-wake.service ]; then
+            printf '%s\n' enabled
+        elif [ "$unit" = mk8email-worker.path ] \
+            && [ "$2" = mk8email-worker-maintenance.timer ]; then
             printf '%s\n' enabled
         elif [ -f "$state/other_enabled" ]; then
             printf '%s\n' enabled
@@ -37,6 +43,10 @@ case "$1" in
             && [ "$2" = mk8email-wake.service ]; then
             printf '%s\n' stop_wake >> "$state/events"
             rm -f -- "$state/wake_active"
+        elif [ "$unit" = mk8email-worker.path ] \
+            && [ "$2" = mk8email-worker-maintenance.timer ]; then
+            printf '%s\n' stop_maintenance >> "$state/events"
+            rm -f -- "$state/maintenance_active"
         elif [ "$unit" = mk8email-worker.path ] \
             && [ "$2" = mk8email-worker-drain.service ]; then
             printf '%s\n' stop_drain >> "$state/events"
@@ -57,6 +67,10 @@ case "$1" in
             && [ "$2" = mk8email-wake.service ]; then
             printf '%s\n' start_wake >> "$state/events"
             touch "$state/wake_active"
+        elif [ "$unit" = mk8email-worker.path ] \
+            && [ "$2" = mk8email-worker-maintenance.timer ]; then
+            printf '%s\n' start_maintenance >> "$state/events"
+            touch "$state/maintenance_active"
         else
             exit 1
         fi

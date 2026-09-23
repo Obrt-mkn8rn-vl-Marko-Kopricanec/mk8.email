@@ -15,7 +15,7 @@ role=$1
 case "$1" in
     gateway)
         unit=mk8email-gateway.service
-        other_units='mk8email-worker.service mk8email-worker.path mk8email-wake.service mk8email-worker-drain.service'
+        other_units='mk8email-worker.service mk8email-worker.path mk8email-wake.service mk8email-worker-drain.service mk8email-worker-maintenance.timer'
         config=/etc/mk8email/mk8email.gateway.config.json
         executable=admin/mk8.email.Gateway.dll
         validate=--validate-gateway-config
@@ -24,6 +24,7 @@ case "$1" in
     worker)
         unit=mk8email-worker.path
         wake_unit=mk8email-wake.service
+        maintenance_timer=mk8email-worker-maintenance.timer
         drain_unit=mk8email-worker-drain.service
         resident_unit=mk8email-worker.service
         wake_connection=/etc/mk8email/mk8email.wake.connection
@@ -126,6 +127,10 @@ if [ "$role" = worker ]; then
         || fail "The Wake monitor must be active before a Worker upgrade."
     [ "$(systemctl is-enabled "$wake_unit" 2>/dev/null || true)" = enabled ] \
         || fail "The Wake monitor must be enabled before a Worker upgrade."
+    systemctl is-active --quiet "$maintenance_timer" \
+        || fail "The Worker maintenance timer must be active before an upgrade."
+    [ "$(systemctl is-enabled "$maintenance_timer" 2>/dev/null || true)" = enabled ] \
+        || fail "The Worker maintenance timer must be enabled before an upgrade."
     if systemctl is-active --quiet "$resident_unit" \
         || [ "$(systemctl is-enabled "$resident_unit" 2>/dev/null || true)" = enabled ]; then
         fail "A resident Worker cannot be upgraded as an on-demand role."
@@ -183,6 +188,7 @@ atomic_current() {
 
 stop_selected() {
     if [ "$role" = worker ]; then
+        systemctl stop "$maintenance_timer" || return 1
         systemctl stop "$unit" || return 1
         systemctl stop "$wake_unit" || return 1
         systemctl stop "$drain_unit" || return 1
@@ -196,6 +202,7 @@ start_selected() {
         systemctl start "$wake_unit" || return 1
         systemctl is-active --quiet "$wake_unit" || return 1
         systemctl start "$unit" || return 1
+        systemctl start "$maintenance_timer" || return 1
     else
         systemctl start "$unit" || return 1
     fi
@@ -218,6 +225,7 @@ wait_ready() {
                     break
                 fi
             elif systemctl is-active --quiet "$wake_unit" \
+                && systemctl is-active --quiet "$maintenance_timer" \
                 && ! systemctl is-active --quiet "$resident_unit" \
                 && timeout 20s runuser -u mk8wake -- /usr/bin/dotnet \
                     "$ready_wake" --probe "$wake_connection" /run/mk8email-wake \

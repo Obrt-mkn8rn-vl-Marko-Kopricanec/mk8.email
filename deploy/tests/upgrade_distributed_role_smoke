@@ -66,6 +66,7 @@ prepare_case() {
         : > "$state/etc/mk8email/mk8email.wake.connection"
         chmod 0640 "$state/etc/mk8email/mk8email.wake.connection"
         : > "$state/wake_active"
+        : > "$state/maintenance_active"
         install -d -m 0700 "$state/run/mk8email-wake"
     fi
     : > "$state/active"
@@ -155,6 +156,7 @@ test "$(readlink -f "$state/opt/mk8email/current")" \
     = "$state/opt/mk8email/releases/$new_id"
 test -f "$state/active"
 test -f "$state/wake_active"
+test -f "$state/maintenance_active"
 grep -Fx 'cli:--probe-worker-backends' "$state/events" >/dev/null
 grep -Fx 'cli:--probe-worker-dispatch' "$state/events" >/dev/null
 grep -Fx 'wake:--probe' "$state/events" >/dev/null
@@ -169,6 +171,7 @@ test "$(readlink -f "$state/opt/mk8email/current")" \
     = "$state/opt/mk8email/releases/$old_id"
 test -f "$state/active"
 test -f "$state/wake_active"
+test -f "$state/maintenance_active"
 if grep -Fx stop "$state/events" >/dev/null; then
     printf '%s\n' "The Worker path stopped after failed Wake preflight." >&2
     exit 1
@@ -184,6 +187,7 @@ test "$(readlink -f "$state/opt/mk8email/current")" \
     = "$state/opt/mk8email/releases/$old_id"
 test -f "$state/active"
 test -f "$state/wake_active"
+test -f "$state/maintenance_active"
 test "$(grep -cx stop "$state/events")" -eq 2
 test "$(grep -cx stop_wake "$state/events")" -eq 2
 
@@ -197,6 +201,7 @@ test "$(readlink -f "$state/opt/mk8email/current")" \
     = "$state/opt/mk8email/releases/$old_id"
 test -f "$state/active"
 test -f "$state/wake_active"
+test -f "$state/maintenance_active"
 
 prepare_case worker_wake_health_rollback mk8email-worker.path worker/mk8.email.Application.Worker.dll
 : > "$state/fail_new_wake_health"
@@ -208,5 +213,6 @@ test "$(readlink -f "$state/opt/mk8email/current")" \
     = "$state/opt/mk8email/releases/$old_id"
 test -f "$state/active"
 test -f "$state/wake_active"
+test -f "$state/maintenance_active"
 
 printf '%s\n' "Distributed role upgrade and rollback control-flow smoke passed."

@@ -56,11 +56,12 @@ if [ "$aide_was_active" = yes ]; then
     systemctl reset-failed dailyaidecheck.service
 fi
 systemctl stop mk8email.service mk8email-admin.service mk8email-gateway.service \
-    mk8email-worker.path mk8email-wake.service \
+    mk8email-worker.path mk8email-worker-maintenance.timer mk8email-wake.service \
     mk8email-worker-drain.service mk8email-worker.service \
     postfix.service dovecot.service rspamd.service \
     clamav-freshclam.service clamav-daemon.service clamav-daemon.socket valkey-server.service 2>/dev/null || true
-systemctl disable mk8email-worker.path mk8email-wake.service 2>/dev/null || true
+systemctl disable mk8email-worker.path mk8email-worker-maintenance.timer \
+    mk8email-wake.service 2>/dev/null || true
 systemctl unmask mk8email.service
 systemctl disable postfix.service dovecot.service 2>/dev/null || true
 systemctl mask postfix.service dovecot.service
@@ -294,6 +295,7 @@ install -o root -g root -m 0644 "$asset_root/deploy/systemd/mk8email-worker.serv
 install -o root -g root -m 0644 "$asset_root/deploy/systemd/mk8email-worker-drain.service" /etc/systemd/system/mk8email-worker-drain.service
 install -o root -g root -m 0644 "$asset_root/deploy/systemd/mk8email-wake.service" /etc/systemd/system/mk8email-wake.service
 install -o root -g root -m 0644 "$asset_root/deploy/systemd/mk8email-worker.path" /etc/systemd/system/mk8email-worker.path
+install -o root -g root -m 0644 "$asset_root/deploy/systemd/mk8email-worker-maintenance.timer" /etc/systemd/system/mk8email-worker-maintenance.timer
 install -o root -g root -m 0644 "$asset_root/deploy/systemd/mk8-mail-health.service" /etc/systemd/system/mk8-mail-health.service
 install -o root -g root -m 0644 "$asset_root/deploy/systemd/mk8-mail-health.timer" /etc/systemd/system/mk8-mail-health.timer
 
@@ -432,6 +434,7 @@ systemctl daemon-reload
 systemd-analyze verify mk8email-admin.service mk8email-gateway.service \
     mk8email-worker.service mk8email-worker-drain.service \
     mk8email-wake.service mk8email-worker.path \
+    mk8email-worker-maintenance.timer \
     mk8-backup.service mk8-backup.timer \
     mk8-mail-health.service mk8-mail-health.timer mk8email.service rspamd.service \
     clamav-daemon.service clamav-freshclam.service valkey-server.service \

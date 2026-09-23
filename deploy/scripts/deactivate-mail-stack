@@ -7,10 +7,12 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 systemctl stop mk8-mail-health.timer mk8-backup.timer dailyaidecheck.timer 2>/dev/null || true
-systemctl stop mk8email-gateway.service mk8email-worker.path \
+systemctl stop mk8email-gateway.service mk8email-worker-maintenance.timer \
+    mk8email-worker.path \
     mk8email-worker-drain.service mk8email-wake.service \
     mk8email-worker.service 2>/dev/null || true
-systemctl disable mk8email-gateway.service mk8email-worker.path \
+systemctl disable mk8email-gateway.service mk8email-worker-maintenance.timer \
+    mk8email-worker.path \
     mk8email-wake.service mk8email-worker.service 2>/dev/null || true
 systemctl stop mk8email.service mk8email-admin.service rspamd.service
 systemctl stop postfix.service dovecot.service 2>/dev/null || true

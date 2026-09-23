@@ -23,6 +23,7 @@ case "$1" in
     worker)
         unit=mk8email-worker.path
         wake_unit=mk8email-wake.service
+        maintenance_timer=mk8email-worker-maintenance.timer
         drain_unit=mk8email-worker-drain.service
         resident_unit=mk8email-worker.service
         wake_connection=/etc/mk8email/mk8email.wake.connection
@@ -81,12 +82,14 @@ if systemctl is-active --quiet "$unit"; then
     fail "The distributed role is already active; activation cannot verify a new release without a restart."
 fi
 if [ "$1" = worker ]; then
-    for forbidden_unit in "$wake_unit" "$drain_unit" "$resident_unit"; do
+    for forbidden_unit in "$wake_unit" "$maintenance_timer" \
+        "$drain_unit" "$resident_unit"; do
         if systemctl is-active --quiet "$forbidden_unit"; then
             fail "A Worker process or Wake service is already active."
         fi
     done
-    for forbidden_unit in "$unit" "$wake_unit" "$drain_unit" "$resident_unit"; do
+    for forbidden_unit in "$unit" "$wake_unit" "$maintenance_timer" \
+        "$drain_unit" "$resident_unit"; do
         if [ "$(systemctl is-enabled "$forbidden_unit" 2>/dev/null || true)" = enabled ]; then
             fail "A Worker or Wake unit is already enabled."
         fi
@@ -113,8 +116,10 @@ cleanup() {
         return
     fi
     if [ "$role" = worker ]; then
-        systemctl stop "$unit" "$wake_unit" "$drain_unit" 2>/dev/null || true
-        systemctl disable "$unit" "$wake_unit" 2>/dev/null || true
+        systemctl stop "$maintenance_timer" "$unit" "$wake_unit" \
+            "$drain_unit" 2>/dev/null || true
+        systemctl disable "$maintenance_timer" "$unit" "$wake_unit" \
+            2>/dev/null || true
     else
         if [ "$was_active" = false ]; then
             systemctl stop "$unit" 2>/dev/null || true
@@ -138,6 +143,10 @@ if [ "$1" = worker ]; then
 fi
 systemctl enable "$unit"
 systemctl start "$unit"
+if [ "$role" = worker ]; then
+    systemctl enable "$maintenance_timer"
+    systemctl start "$maintenance_timer"
+fi
 
 ready=false
 attempt=0
@@ -156,6 +165,7 @@ while [ "$attempt" -lt 15 ]; do
                 ;;
             worker)
                 if systemctl is-active --quiet "$wake_unit" \
+                    && systemctl is-active --quiet "$maintenance_timer" \
                     && timeout 45s runuser -u mk8email -- /usr/bin/dotnet "$cli" \
                     --probe-worker-dispatch "$config" >/dev/null; then
                     ready=true

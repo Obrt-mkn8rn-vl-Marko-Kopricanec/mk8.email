@@ -27,6 +27,40 @@ public sealed class MailQueueTests
         "body\r\n";
 
     [TestMethod]
+    public async Task CompletedQueueCleanupDrainsEveryExpiredBatch()
+    {
+        var environment = CreateEnvironment();
+        await using var services = CreateServices(
+            environment, CleanScan(), new StubRelay(OutboundDeliveryStatus.Delivered));
+        using (var scope = services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            database.MailQueueMessages.AddRange(Enumerable.Range(0, 1001).Select(_ =>
+                new MailQueueMessageDB
+                {
+                    Id = Guid.CreateVersion7(),
+                    EnvelopeSender = "retention@example.test",
+                    Direction = MailQueueDirections.Inbound,
+                    State = MailQueueStates.Completed,
+                    ScanState = MailQueueScanStates.Complete,
+                    CompletedAt = DateTime.UtcNow.AddDays(-8),
+                }));
+            await database.SaveChangesAsync();
+        }
+
+        var worker = new MailQueueWorker(
+            services.GetRequiredService<IServiceScopeFactory>(),
+            environment,
+            TimeProvider.System,
+            new CapturingQueueLogger());
+        await worker.CleanupCompletedAsync(CancellationToken.None);
+
+        using var verification = services.CreateScope();
+        Assert.AreEqual(0, await verification.ServiceProvider
+            .GetRequiredService<EmailDbContext>().MailQueueMessages.CountAsync());
+    }
+
+    [TestMethod]
     public async Task SubmissionQueuePersistsRawMessageAndDistinctRecipients()
     {
         var environment = CreateEnvironment();

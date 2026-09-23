@@ -43,6 +43,7 @@ wait_for_mail_recovery() {
         if systemctl is-active --quiet mk8email-gateway.service \
             && systemctl is-active --quiet mk8email-wake.service \
             && systemctl is-active --quiet mk8email-worker.path \
+            && systemctl is-active --quiet mk8email-worker-maintenance.timer \
             && systemctl is-active --quiet rspamd.service \
             && clamdscan --config-file=/etc/clamav/clamd.conf --ping 1 >/dev/null 2>&1 \
             && timeout 20s runuser -u mk8email -- /usr/bin/dotnet \
@@ -76,6 +77,7 @@ case "$1" in
         systemctl is-active --quiet mk8email-gateway.service
         systemctl is-active --quiet mk8email-wake.service
         systemctl is-active --quiet mk8email-worker.path
+        systemctl is-active --quiet mk8email-worker-maintenance.timer
         marker=$("$test_root/mail_smoke.py" scanner-down)
         restore_scanner
         wait_for_mail_recovery
@@ -90,7 +92,8 @@ case "$1" in
         test -s "$admin_password_file"
         restore_delivery() {
             systemctl start clamav-daemon.socket clamav-daemon.service \
-                mk8email-wake.service mk8email-worker.path
+                mk8email-wake.service mk8email-worker.path \
+                mk8email-worker-maintenance.timer
         }
 
         trap restore_delivery EXIT HUP INT TERM
@@ -98,8 +101,10 @@ case "$1" in
         systemctl is-active --quiet mk8email-gateway.service
         systemctl is-active --quiet mk8email-wake.service
         systemctl is-active --quiet mk8email-worker.path
+        systemctl is-active --quiet mk8email-worker-maintenance.timer
         marker=$("$test_root/mail_smoke.py" scanner-down)
-        systemctl stop mk8email-worker.path mk8email-worker-drain.service
+        systemctl stop mk8email-worker-maintenance.timer \
+            mk8email-worker.path mk8email-worker-drain.service
         systemctl is-active --quiet mk8email-gateway.service
         systemctl is-active --quiet mk8email-wake.service
         before=$(gateway_journal_count)

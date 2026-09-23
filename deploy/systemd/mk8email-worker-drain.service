@@ -2,7 +2,8 @@
 Description=mk8.email one-shot Application Worker drain
 Documentation=https://github.com/mkn8rn/mk8.email
 Wants=network-online.target
-After=network-online.target
+Requires=mk8email-wake.service
+After=network-online.target mk8email-wake.service
 ConditionPathExists=/etc/mk8email/distributed-ready
 
 [Service]
@@ -19,7 +20,7 @@ ExecStartPre=+/usr/bin/rm -f -- /run/mk8email-wake/trigger
 ExecStart=/usr/bin/dotnet /opt/mk8email/current/worker/mk8.email.Application.Worker.dll --drain
 Restart=on-failure
 RestartSec=5s
-TimeoutStartSec=infinity
+TimeoutStartSec=2h
 TimeoutStopSec=60s
 KillSignal=SIGINT
 UMask=0077

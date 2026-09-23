@@ -73,17 +73,21 @@ prepare_case() {
 assert_stopped() {
     test ! -f "$state/active-mk8email-worker.path"
     test ! -f "$state/active-mk8email-wake.service"
+    test ! -f "$state/active-mk8email-worker-maintenance.timer"
     test ! -f "$state/active-mk8email-worker-drain.service"
     test ! -f "$state/enabled-mk8email-worker.path"
     test ! -f "$state/enabled-mk8email-wake.service"
+    test ! -f "$state/enabled-mk8email-worker-maintenance.timer"
 }
 
 prepare_case worker_success
 sh "$state/activate" worker >/dev/null
 test -f "$state/active-mk8email-worker.path"
 test -f "$state/active-mk8email-wake.service"
+test -f "$state/active-mk8email-worker-maintenance.timer"
 test -f "$state/enabled-mk8email-worker.path"
 test -f "$state/enabled-mk8email-wake.service"
+test -f "$state/enabled-mk8email-worker-maintenance.timer"
 test -f "$state/dispatch_seen"
 test ! -f "$state/active-mk8email-worker.service"
 test ! -f "$state/active-mk8email-worker-drain.service"

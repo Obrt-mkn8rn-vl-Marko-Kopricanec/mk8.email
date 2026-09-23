@@ -76,7 +76,8 @@ write_status_snapshot() {
 }
 
 for service_name in postgresql.service mk8email-gateway.service \
-    mk8email-wake.service mk8email-worker.path rspamd.service \
+    mk8email-wake.service mk8email-worker.path \
+    mk8email-worker-maintenance.timer rspamd.service \
     clamav-daemon.service clamav-freshclam.service valkey-server.service \
     nginx.service nftables.service fail2ban.service \
     auditd.service apparmor.service acct.service cron.service \

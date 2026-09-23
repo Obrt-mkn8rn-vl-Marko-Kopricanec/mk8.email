@@ -112,7 +112,7 @@ jobs:
           python3 deploy/tests/distributed_config_smoke.py
           sh deploy/tests/upgrade_distributed_role_smoke "$PWD/deploy/scripts/upgrade-distributed-role"
           sh deploy/tests/on_demand_activation_smoke "$PWD/deploy/scripts/activate-distributed-role" "$PWD/deploy/scripts/deactivate-distributed-role"
-          systemd-analyze verify deploy/systemd/mk8email-wake.service deploy/systemd/mk8email-worker.path deploy/systemd/mk8email-worker-drain.service
+          systemd-analyze verify deploy/systemd/mk8email-wake.service deploy/systemd/mk8email-worker.path deploy/systemd/mk8email-worker-drain.service deploy/systemd/mk8email-worker-maintenance.timer
 
       - name: Validate deployment profile tooling
         shell: pwsh

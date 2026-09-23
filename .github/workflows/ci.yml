@@ -22,6 +22,18 @@ jobs:
   build-test-package:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: mk8email-ci-only
+        ports:
+          - 5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Check out source
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
@@ -111,7 +123,52 @@ jobs:
         run: dotnet test mk8.email.Application.Tests/mk8.email.Application.Tests.csproj --configuration Release --no-build --logger "trx;LogFileName=application.trx" --results-directory artifacts/test-results
 
       - name: Test infrastructure
+        env:
+          MK8_EMAIL_TEST_POSTGRES: Host=127.0.0.1;Port=${{ job.services.postgres.ports['5432'] }};Database=postgres;Username=postgres;Password=mk8email-ci-only;Pooling=false
         run: dotnet test mk8.email.Infrastructure.Tests/mk8.email.Infrastructure.Tests.csproj --configuration Release --no-build --logger "trx;LogFileName=infrastructure.trx" --results-directory artifacts/test-results
+
+      - name: Test distributed messaging with PostgreSQL and Azure Blob
+        shell: bash
+        env:
+          MK8_EMAIL_TEST_POSTGRES: Host=127.0.0.1;Port=${{ job.services.postgres.ports['5432'] }};Database=postgres;Username=postgres;Password=mk8email-ci-only;Pooling=false
+          MK8_EMAIL_TEST_AZURE_BLOB_CONNECTION: UseDevelopmentStorage=true
+        run: |
+          set -euo pipefail
+          azurite_container="mk8email-azurite-${{ github.run_id }}"
+          docker run --detach --rm --name "$azurite_container" \
+            --publish 127.0.0.1:10000:10000 \
+            mcr.microsoft.com/azure-storage/azurite:3.37.0@sha256:830430c1da1a2d537e08f3e6764dd1f5ae00cf0346bcaf625b968ec3f0971fd5 \
+            azurite-blob --inMemoryPersistence --disableTelemetry \
+            --silent --skipApiVersionCheck --blobHost 0.0.0.0 --blobPort 10000
+          trap 'docker stop "$azurite_container" >/dev/null || true' EXIT
+          azurite_ready=false
+          for _ in {1..30}; do
+            if curl --silent --max-time 1 --output /dev/null \
+              http://127.0.0.1:10000/devstoreaccount1; then
+              azurite_ready=true
+              break
+            fi
+            sleep 1
+          done
+          test "$azurite_ready" = true
+          dotnet test mk8.email.Messaging.Tests/mk8.email.Messaging.Tests.csproj \
+            --configuration Release --no-build \
+            --logger "trx;LogFileName=messaging.trx" \
+            --results-directory artifacts/test-results
+
+      - name: Require all test cases to execute
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from xml.etree import ElementTree
+
+          results = Path('artifacts/test-results')
+          for name in ('application.trx', 'infrastructure.trx', 'messaging.trx'):
+              report = results / name
+              counters = ElementTree.parse(report).find('.//{*}Counters')
+              if counters is None or counters.get('total') != counters.get('passed'):
+                  raise SystemExit(f'Tests failed or did not execute: {report}')
+          PY
 
       - name: Publish management command
         run: dotnet publish mk8.email.CLI/mk8.email.Application.CLI.csproj --configuration Release --no-build --output artifacts/cli --property:UseAppHost=false

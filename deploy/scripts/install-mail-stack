@@ -294,6 +294,7 @@ install -o root -g root -m 0755 "$asset_root/deploy/scripts/configure-mail-datab
 install -o root -g root -m 0755 "$asset_root/deploy/scripts/configure-apt-sources" /usr/local/sbin/configure-apt-sources
 install -o root -g root -m 0755 "$asset_root/deploy/scripts/activate-mail-stack" /usr/local/sbin/activate-mail-stack
 install -o root -g root -m 0755 "$asset_root/deploy/scripts/activate-distributed-role" /usr/local/sbin/activate-distributed-role
+install -o root -g root -m 0755 "$asset_root/deploy/scripts/install-distributed-role" /usr/local/sbin/install-distributed-role
 install -o root -g root -m 0755 "$asset_root/deploy/scripts/deactivate-mail-stack" /usr/local/sbin/deactivate-mail-stack
 install -o root -g root -m 0755 "$asset_root/deploy/scripts/deactivate-distributed-role" /usr/local/sbin/deactivate-distributed-role
 install -o root -g root -m 0755 "$asset_root/deploy/scripts/mk8-mail-health" /usr/local/sbin/mk8-mail-health

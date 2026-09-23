@@ -1,0 +1,90 @@
+#!/bin/sh
+set -eu
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+if [ "$(id -u)" -ne 0 ] || [ "$#" -ne 2 ]; then
+    printf '%s\n' "Usage: install-distributed-role ASSET_ROOT gateway|worker" >&2
+    exit 2
+fi
+
+asset_root=$1
+case "$2" in
+    gateway)
+        unit=mk8email-gateway.service
+        executable=/opt/mk8email/current/admin/mk8.email.Gateway.dll
+        ;;
+    worker)
+        unit=mk8email-worker.service
+        executable=/opt/mk8email/current/worker/mk8.email.Application.Worker.dll
+        ;;
+    *)
+        printf '%s\n' "Usage: install-distributed-role ASSET_ROOT gateway|worker" >&2
+        exit 2
+        ;;
+esac
+
+fail() {
+    printf '%s\n' "$1" >&2
+    exit 1
+}
+
+validate_asset() {
+    if [ ! -f "$1" ] || [ -L "$1" ] \
+        || [ "$(stat -c '%U:%G %h' "$1" 2>/dev/null || true)" != 'root:root 1' ] \
+        || find "$1" -prune -perm /022 -print -quit | grep -q .; then
+        fail "A distributed role asset is missing or unsafe."
+    fi
+}
+
+validate_target() {
+    if [ -L "$1" ] \
+        || { [ -e "$1" ] && [ ! -f "$1" ]; } \
+        || { [ -e "$1" ] \
+            && [ "$(stat -c '%U:%G %h' "$1" 2>/dev/null || true)" != 'root:root 1' ]; }; then
+        fail "A distributed role target is unsafe."
+    fi
+}
+
+getent passwd mk8email >/dev/null || fail "The mk8email service account is missing."
+getent group mk8email >/dev/null || fail "The mk8email service group is missing."
+[ "$(id -gn mk8email)" = mk8email ] \
+    || fail "The mk8email service account has the wrong primary group."
+command -v dotnet >/dev/null 2>&1 || fail "The .NET runtime is missing."
+[ -f "$executable" ] || fail "The selected role executable is not installed."
+[ -f /opt/mk8email/current/cli/mk8.email.Application.CLI.dll ] \
+    || fail "The management CLI is not installed."
+
+unit_source=$asset_root/deploy/systemd/$unit
+activation_source=$asset_root/deploy/scripts/activate-distributed-role
+deactivation_source=$asset_root/deploy/scripts/deactivate-distributed-role
+validate_asset "$unit_source"
+for script_source in "$activation_source" "$deactivation_source"; do
+    validate_asset "$script_source"
+    sh -n "$script_source" || fail "A role-control asset is not valid shell."
+done
+if grep -Eq '@@[A-Za-z0-9_]+@@' "$unit_source"; then
+    fail "The selected role unit still contains an unresolved deployment token."
+fi
+systemd-analyze verify "$unit_source" \
+    || fail "The selected role unit asset did not pass systemd verification."
+if [ -L /etc/mk8email ] \
+    || { [ -e /etc/mk8email ] && [ ! -d /etc/mk8email ]; }; then
+    fail "The role configuration directory is unsafe."
+fi
+validate_target /usr/local/sbin/activate-distributed-role
+validate_target /usr/local/sbin/deactivate-distributed-role
+validate_target "/etc/systemd/system/$unit"
+
+install -d -o root -g mk8email -m 0751 /etc/mk8email
+install -o root -g root -m 0755 "$activation_source" \
+    /usr/local/sbin/activate-distributed-role
+install -o root -g root -m 0755 "$deactivation_source" \
+    /usr/local/sbin/deactivate-distributed-role
+install -o root -g root -m 0644 "$unit_source" \
+    "/etc/systemd/system/$unit"
+systemctl daemon-reload
+systemd-analyze verify "$unit"
+
+printf 'The distributed %s role is installed but not activated.\n' "$2"

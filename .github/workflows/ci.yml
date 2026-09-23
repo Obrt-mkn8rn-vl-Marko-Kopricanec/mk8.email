@@ -42,9 +42,11 @@ jobs:
       - name: Validate operations code
         run: |
           shellcheck \
+            deploy/scripts/activate-distributed-role \
             deploy/scripts/activate-mail-stack \
             deploy/scripts/configure-apt-sources \
             deploy/scripts/configure-mail-database-access \
+            deploy/scripts/deactivate-distributed-role \
             deploy/scripts/deactivate-mail-stack \
             deploy/scripts/deploy-admin-certificate \
             deploy/scripts/deploy-mk8-domain-certificate \
@@ -52,6 +54,7 @@ jobs:
             deploy/scripts/initialize-postgresql \
             deploy/scripts/install-build-environment \
             deploy/scripts/install-host-hardening \
+            deploy/scripts/install-distributed-role \
             deploy/scripts/install-mail-stack \
             deploy/scripts/install-native-release \
             deploy/scripts/mk8-build \

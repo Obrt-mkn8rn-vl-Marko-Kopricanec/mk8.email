@@ -26,11 +26,11 @@ public sealed class ApplicationRequestWorker(
                 return;
             }
 
-            await ProcessAsync(lease, stoppingToken);
+            await ProcessLeaseAsync(lease, stoppingToken);
         }
     }
 
-    private async Task ProcessAsync(
+    internal async Task ProcessLeaseAsync(
         ApplicationRequestLease lease,
         CancellationToken stoppingToken)
     {

@@ -56,7 +56,8 @@ public static class ApplicationServiceExtensions
         services.AddScoped<IVacationResponder, VacationResponder>();
         services.AddScoped<IMailSubmissionQueue, PostgresMailSubmissionQueue>();
         services.AddScoped<ISmtpApplicationService, SmtpApplicationService>();
-        services.AddHostedService<MailQueueWorker>();
+        services.AddSingleton<MailQueueWorker>();
+        services.AddHostedService(provider => provider.GetRequiredService<MailQueueWorker>());
 
         return services;
     }

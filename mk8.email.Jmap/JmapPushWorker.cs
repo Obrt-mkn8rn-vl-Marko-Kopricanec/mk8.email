@@ -14,7 +14,7 @@ internal sealed class JmapPushWorker(
     IServiceScopeFactory scopeFactory,
     IJmapPushPresentationClient delivery,
     EnvironmentConfig environment,
-    ILogger<JmapPushWorker> logger) : BackgroundService
+    ILogger<JmapPushWorker> logger) : BackgroundService, IJmapPushWork
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -90,7 +90,7 @@ internal sealed class JmapPushWorker(
         }
     }
 
-    private async Task ProcessDueAsync(CancellationToken cancellationToken)
+    public async Task ProcessDueAsync(CancellationToken cancellationToken)
     {
         var subscriptionIds = await GetBatchAsync(cancellationToken);
         await Parallel.ForEachAsync(

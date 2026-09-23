@@ -36,7 +36,7 @@ Stored mailbox messages, including MIME attachments, also use reference-only Azu
 
 ## Availability semantics
 
-PostgreSQL `LISTEN`/`NOTIFY` wakes a resident worker without polling. A bounded fallback scan recovers missed notifications and expired leases. This provides logical sleep while idle; physical scale-to-zero requires an external supervisor capable of starting a worker when durable work appears.
+PostgreSQL `LISTEN`/`NOTIFY` wakes a resident worker without polling. A bounded fallback scan recovers missed notifications and expired leases. This provides logical sleep while idle. The standalone Worker also accepts `--drain`: it initializes its schemas, claims and processes existing application requests and due mail queue entries, runs the JMAP push batch when enabled, checks twice for newly arrived work, and exits when currently due work is exhausted. This one-shot mode is not yet a production scale-to-zero deployment. A separate always-on, non-Application wake supervisor must listen for request, mail queue, and JMAP push notifications, schedule future retries and lease recovery, and recheck durable state after the drain process exits so work arriving during shutdown cannot be stranded. The current systemd unit still runs `--serve` until that supervisor and its operational tests are ready.
 
 Neither PostgreSQL notifications nor an in-process connection is required for correctness. A Gateway can enqueue while every Application Worker is offline, and a later worker on another machine can claim and complete the request.
 

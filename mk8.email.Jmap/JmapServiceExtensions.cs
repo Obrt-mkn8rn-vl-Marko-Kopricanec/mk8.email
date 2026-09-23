@@ -30,7 +30,10 @@ public static class JmapServiceExtensions
         services.AddScoped<JmapVacationResponseService>();
         services.TryAddSingleton<IJmapPushPresentationClient, UnavailableJmapPushPresentationClient>();
         services.AddSingleton<JmapConcurrencyLimiter>();
-        services.AddHostedService<JmapPushWorker>();
+        services.AddSingleton<JmapPushWorker>();
+        services.AddSingleton<IJmapPushWork>(provider =>
+            provider.GetRequiredService<JmapPushWorker>());
+        services.AddHostedService(provider => provider.GetRequiredService<JmapPushWorker>());
         services.AddScoped<EmailSetMethod>();
         services.AddScoped<JmapRequestProcessor>();
         services.AddScoped<IJmapMethod, CoreEchoMethod>();

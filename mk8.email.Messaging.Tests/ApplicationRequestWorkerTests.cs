@@ -1,13 +1,17 @@
 using System.Threading.Channels;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
+using mk8.email.Application;
 using mk8.email.Application.Interfaces;
 using mk8.email.Application.Services;
 using mk8.email.Application.Worker;
+using mk8.email.Configuration;
 using mk8.email.Contracts.Messaging;
 using mk8.email.Gateway.ApplicationBridge;
 using mk8.email.Gateway.Protocols.OAuth;
 using mk8.email.Hosting;
+using mk8.email.Jmap;
 using Npgsql;
 
 namespace mk8.email.Messaging.Tests;
@@ -15,6 +19,26 @@ namespace mk8.email.Messaging.Tests;
 [TestClass]
 public sealed class ApplicationRequestWorkerTests
 {
+    [TestMethod]
+    public void DrainModeUsesTheSameQueueAndPushWorkersAsHostedMode()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton(new EnvironmentConfig());
+        services.AddApplication();
+        services.AddMailApplicationWorker();
+        services.AddJmapApplication();
+        using var provider = services.BuildServiceProvider();
+
+        var hosted = provider.GetServices<IHostedService>().ToArray();
+        Assert.AreSame(
+            provider.GetRequiredService<MailQueueWorker>(),
+            hosted.OfType<MailQueueWorker>().Single());
+        Assert.IsTrue(ReferenceEquals(
+            provider.GetRequiredService<IJmapPushWork>(),
+            hosted.Single(service => service is IJmapPushWork)));
+    }
+
     [TestMethod]
     public async Task WorkerSleepsUntilDurableWorkArrivesThenCompletesIt()
     {
@@ -49,6 +73,97 @@ public sealed class ApplicationRequestWorkerTests
         await worker.StopAsync(timeout.Token);
         worker.Dispose();
         await services.DisposeAsync();
+    }
+
+    [TestMethod]
+    public async Task DrainModeProcessesPendingRequestsAndDueMailThenExits()
+    {
+        var requests = new StubRequestConsumer();
+        var dispatcher = new StubDispatcher();
+        await using var services = new ServiceCollection()
+            .AddSingleton<IApplicationRequestDispatcher>(_ => dispatcher)
+            .BuildServiceProvider();
+        var identity = new ApplicationWorkerIdentity(
+            "application@drain-host",
+            TimeSpan.FromMinutes(1));
+        using var worker = new ApplicationRequestWorker(
+            requests,
+            services.GetRequiredService<IServiceScopeFactory>(),
+            identity,
+            NullLogger<ApplicationRequestWorker>.Instance);
+        await requests.Queue.Writer.WriteAsync(new ApplicationRequestLease(
+            NewRequest(), identity.WorkerId, DateTimeOffset.UtcNow.AddMinutes(2), 1));
+        await requests.Queue.Writer.WriteAsync(new ApplicationRequestLease(
+            NewRequest(), identity.WorkerId, DateTimeOffset.UtcNow.AddMinutes(2), 1));
+        var mailCalls = 0;
+        var cleanupCalls = 0;
+        var pushCalls = 0;
+        var runner = new WorkerDrainRunner(
+            requests,
+            worker,
+            identity,
+            _ => Task.FromResult(++mailCalls <= 2),
+            _ =>
+            {
+                cleanupCalls++;
+                return Task.CompletedTask;
+            },
+            _ =>
+            {
+                pushCalls++;
+                return Task.CompletedTask;
+            });
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        var result = await runner.RunAsync(timeout.Token);
+
+        Assert.AreEqual(2, result.ApplicationRequests);
+        Assert.AreEqual(2, result.MailMessages);
+        Assert.AreEqual(2, dispatcher.DispatchCount);
+        Assert.AreEqual(mailCalls, cleanupCalls);
+        Assert.AreEqual(mailCalls, pushCalls);
+        Assert.IsFalse(requests.WaitEntered.Task.IsCompleted);
+    }
+
+    [TestMethod]
+    public async Task DrainModeRechecksForWorkArrivingDuringIdleCleanup()
+    {
+        var requests = new StubRequestConsumer();
+        var dispatcher = new StubDispatcher();
+        await using var services = new ServiceCollection()
+            .AddSingleton<IApplicationRequestDispatcher>(_ => dispatcher)
+            .BuildServiceProvider();
+        var identity = new ApplicationWorkerIdentity(
+            "application@drain-host",
+            TimeSpan.FromMinutes(1));
+        using var worker = new ApplicationRequestWorker(
+            requests,
+            services.GetRequiredService<IServiceScopeFactory>(),
+            identity,
+            NullLogger<ApplicationRequestWorker>.Instance);
+        var cleanupCalls = 0;
+        var runner = new WorkerDrainRunner(
+            requests,
+            worker,
+            identity,
+            _ => Task.FromResult(false),
+            _ =>
+            {
+                if (++cleanupCalls == 1)
+                {
+                    requests.Queue.Writer.TryWrite(new ApplicationRequestLease(
+                        NewRequest(), identity.WorkerId, DateTimeOffset.UtcNow.AddMinutes(2), 1));
+                }
+                return Task.CompletedTask;
+            });
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        var result = await runner.RunAsync(timeout.Token);
+
+        Assert.AreEqual(1, result.ApplicationRequests);
+        Assert.AreEqual(0, result.MailMessages);
+        Assert.AreEqual(1, dispatcher.DispatchCount);
+        Assert.IsFalse(requests.WaitEntered.Task.IsCompleted);
     }
 
     [TestMethod]
@@ -89,6 +204,56 @@ public sealed class ApplicationRequestWorkerTests
         await DistributedApplicationProbe.ProbeAsync(gateway, TimeSpan.FromSeconds(5), timeout.Token);
         await worker.StopAsync(timeout.Token);
         worker.Dispose();
+    }
+
+    [TestMethod]
+    [TestCategory("PostgreSQL")]
+    public async Task DrainModeClaimsRemoteRequestQueuedWhileApplicationWasOffline()
+    {
+        await using var database = await RequirePostgresAsync();
+        await using var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var workerDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await PostgresMessagingSchema.EnsureAsync(gatewayDataSource);
+        using var gatewayProtector = AesGcmPayloadProtectorTests.CreateProtector(
+            "test", "drain-key");
+        using var workerProtector = AesGcmPayloadProtectorTests.CreateProtector(
+            "test", "drain-key");
+        var options = new PostgresMessagingOptions
+        {
+            NotificationFallbackInterval = TimeSpan.FromSeconds(1),
+        };
+        var gateway = new PostgresApplicationBus(gatewayDataSource, gatewayProtector, options);
+        var workerBus = new PostgresApplicationBus(workerDataSource, workerProtector, options);
+        var request = NewRequest();
+        await gateway.EnqueueAsync(request);
+
+        await using var services = new ServiceCollection()
+            .AddScoped<IApplicationRequestDispatcher>(provider =>
+                new ApplicationRequestDispatcher(provider))
+            .BuildServiceProvider();
+        var identity = new ApplicationWorkerIdentity(
+            "application@remote-drain-host", TimeSpan.FromSeconds(30));
+        using var worker = new ApplicationRequestWorker(
+            workerBus,
+            services.GetRequiredService<IServiceScopeFactory>(),
+            identity,
+            NullLogger<ApplicationRequestWorker>.Instance);
+        var runner = new WorkerDrainRunner(
+            workerBus,
+            worker,
+            identity,
+            _ => Task.FromResult(false),
+            _ => Task.CompletedTask);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        var result = await runner.RunAsync(timeout.Token);
+        var response = await gateway.WaitForResponseAsync(
+            request.Id, request.Deadline, timeout.Token);
+
+        Assert.AreEqual(1, result.ApplicationRequests);
+        Assert.AreEqual(0, result.MailMessages);
+        Assert.IsFalse(response.IsError);
+        Assert.AreEqual("application/json", response.ContentType);
     }
 
     [TestMethod]
@@ -236,8 +401,11 @@ public sealed class ApplicationRequestWorkerTests
 
         public Task<ApplicationRequestLease?> TryClaimAsync(
             string workerId,
-            CancellationToken cancellationToken = default) =>
-            Task.FromResult<ApplicationRequestLease?>(null);
+            CancellationToken cancellationToken = default)
+        {
+            Queue.Reader.TryRead(out var lease);
+            return Task.FromResult<ApplicationRequestLease?>(lease);
+        }
 
         public Task<bool> RenewLeaseAsync(
             ApplicationRequestLease lease,

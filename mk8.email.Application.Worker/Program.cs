@@ -1,7 +1,9 @@
+using System.Runtime.InteropServices;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using mk8.email.Application;
+using mk8.email.Application.Interfaces;
 using mk8.email.Application.Services;
 using mk8.email.Application.Worker;
 using mk8.email.Configuration;
@@ -13,9 +15,10 @@ using mk8.email.Infrastructure.Data;
 using mk8.email.Jmap;
 using mk8.email.Messaging;
 
-if (!args.SequenceEqual(["--serve"]))
+var drain = args.SequenceEqual(["--drain"]);
+if (!drain && !args.SequenceEqual(["--serve"]))
 {
-    Console.Error.WriteLine("The Application Worker requires the --serve command.");
+    Console.Error.WriteLine("The Application Worker requires --serve or --drain.");
     return 2;
 }
 
@@ -52,8 +55,12 @@ try
     builder.Services.AddSingleton(new ApplicationWorkerIdentity(
         workerId,
         TimeSpan.FromSeconds(Math.Max(1, environment.Messaging.LeaseSeconds / 3))));
-    builder.Services.AddHostedService<MessagingSchemaInitializer>();
-    builder.Services.AddHostedService<ApplicationRequestWorker>();
+    builder.Services.AddSingleton<MessagingSchemaInitializer>();
+    builder.Services.AddHostedService(provider =>
+        provider.GetRequiredService<MessagingSchemaInitializer>());
+    builder.Services.AddSingleton<ApplicationRequestWorker>();
+    builder.Services.AddHostedService(provider =>
+        provider.GetRequiredService<ApplicationRequestWorker>());
 
     using var host = builder.Build();
     using (var scope = host.Services.CreateScope())
@@ -77,6 +84,44 @@ try
                 .MigrateAsync();
         }
     }
+    if (drain)
+    {
+        using var shutdown = new CancellationTokenSource();
+        using var interrupt = PosixSignalRegistration.Create(PosixSignal.SIGINT, signal =>
+        {
+            signal.Cancel = true;
+            shutdown.Cancel();
+        });
+        using var terminate = PosixSignalRegistration.Create(PosixSignal.SIGTERM, signal =>
+        {
+            signal.Cancel = true;
+            shutdown.Cancel();
+        });
+        try
+        {
+            await host.Services.GetRequiredService<MessagingSchemaInitializer>()
+                .StartAsync(shutdown.Token);
+            var queue = host.Services.GetRequiredService<MailQueueWorker>();
+            var push = host.Services.GetService<IJmapPushWork>();
+            var runner = new WorkerDrainRunner(
+                host.Services.GetRequiredService<IApplicationRequestConsumer>(),
+                host.Services.GetRequiredService<ApplicationRequestWorker>(),
+                host.Services.GetRequiredService<ApplicationWorkerIdentity>(),
+                queue.ProcessNextAsync,
+                queue.CleanupCompletedAsync,
+                push is null ? null : push.ProcessDueAsync);
+            var result = await runner.RunAsync(shutdown.Token);
+            Console.WriteLine(
+                $"The Application Worker drained {result.ApplicationRequests} requests "
+                + $"and {result.MailMessages} queued messages.");
+            return 0;
+        }
+        catch (OperationCanceledException) when (shutdown.IsCancellationRequested)
+        {
+            return 0;
+        }
+    }
+
     await host.RunAsync();
     return 0;
 }

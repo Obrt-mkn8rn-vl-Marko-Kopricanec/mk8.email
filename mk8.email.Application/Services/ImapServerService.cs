@@ -1236,7 +1236,6 @@ ILogger<ImapServerService> logger) : BackgroundService
         var parenIdx = selectArgs.IndexOf('(');
         int? qresyncUidValidity = null;
         long? qresyncModSeq = null;
-        string? qresyncKnownUids = null;
         if (parenIdx >= 0)
         {
             var modifiers = selectArgs[parenIdx..].ToUpperInvariant();
@@ -1259,8 +1258,6 @@ ILogger<ImapServerService> logger) : BackgroundService
                             if (int.TryParse(qrParams[0], out var uv)) qresyncUidValidity = uv;
                             if (long.TryParse(qrParams[1], out var ms)) qresyncModSeq = ms;
                         }
-                        if (qrParams.Length >= 3)
-                            qresyncKnownUids = qrParams[2];
                     }
                 }
             }
@@ -1274,106 +1271,92 @@ ILogger<ImapServerService> logger) : BackgroundService
             return;
         }
 
-        using var scope = scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        ImapSelectedMailbox? mailbox;
+        List<string>? responseLines = null;
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
+            var result = await application.SelectMailboxAsync(
+                new ImapMailboxSelectRequest(
+                    session.UserId, mailboxName, qresyncUidValidity, qresyncModSeq), ct);
+            mailbox = result.Mailbox;
+            if (mailbox is not null)
+                responseLines = BuildMailboxSelectionLines(mailbox);
+        }
+        catch (Exception exception) when (
+            exception is not OperationCanceledException && !ct.IsCancellationRequested)
+        {
+            logger.LogWarning(exception, "IMAP mailbox selection is unavailable for {UserId}", session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailbox selection unavailable");
+            return;
+        }
 
-        var folder = await ResolveFolderAsync(db, session.UserId, mailboxName, ct);
-        if (folder is null)
+        if (mailbox is null)
         {
             await writer.WriteLineAsync($"{tag} NO Mailbox not found");
             return;
         }
-
-        var totalCount = await db.Emails.CountAsync(e => e.FolderId == folder.Id, ct);
-        var unseenCount = await db.Emails.CountAsync(e => e.FolderId == folder.Id && !e.IsRead, ct);
-        var keywordSets = await db.Emails
-            .AsNoTracking()
-            .Where(email => email.FolderId == folder.Id)
-            .Select(email => email.Keywords)
-            .ToListAsync(ct);
-        var keywords = keywordSets
-            .SelectMany(keywordSet => keywordSet ?? [])
-            .Where(IsValidImapKeyword)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Order(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-
-        session.SelectedFolderId = folder.Id;
+        session.SelectedFolderId = mailbox.FolderId;
         session.SelectedFolderName = mailboxName;
         session.SelectedReadOnly = readOnly;
         session.SavedSearchUids = [];
         session.State = ImapState.Selected;
-
-        await writer.WriteLineAsync($"* {totalCount} EXISTS");
-        await writer.WriteLineAsync("* 0 RECENT");
-        var definedFlags = keywords.Length == 0
-            ? "\\Seen \\Answered \\Flagged \\Deleted \\Draft"
-            : $"\\Seen \\Answered \\Flagged \\Deleted \\Draft {string.Join(' ', keywords)}";
-        await writer.WriteLineAsync($"* FLAGS ({definedFlags})");
-        await writer.WriteLineAsync("* OK [PERMANENTFLAGS (\\Seen \\Answered \\Flagged \\Deleted \\Draft \\*)] Flags permitted");
-        await writer.WriteLineAsync($"* OK [UIDVALIDITY {folder.UidValidity}]");
-        await writer.WriteLineAsync($"* OK [UIDNEXT {folder.NextUid}]");
-        await writer.WriteLineAsync($"* OK [HIGHESTMODSEQ {folder.HighestModSeq}]");
-        await writer.WriteLineAsync(
-            $"* OK [MAILBOXID ({FormatMailboxObjectId(folder)})] Mailbox identifier");
-
-        if (unseenCount > 0)
-        {
-            var allIds = await db.Emails
-                .Where(e => e.FolderId == folder.Id)
-                .OrderBy(e => e.Uid)
-                .Select(e => new { e.Id, e.IsRead })
-                .ToListAsync(ct);
-
-            var firstUnseenIdx = allIds.FindIndex(e => !e.IsRead);
-            if (firstUnseenIdx >= 0)
-                await writer.WriteLineAsync($"* OK [UNSEEN {firstUnseenIdx + 1}]");
-        }
-
-        // QRESYNC: send VANISHED and changed flags since the requested modseq
-        if (qresyncUidValidity is not null && qresyncModSeq is not null
-            && qresyncUidValidity.Value == folder.UidValidity)
-        {
-            // Report expunged UIDs since qresyncModSeq
-            var vanished = await db.ExpungedUids
-                .Where(eu => eu.FolderId == folder.Id && eu.ModSeq > qresyncModSeq.Value)
-                .OrderBy(eu => eu.Uid)
-                .Select(eu => eu.Uid)
-                .ToListAsync(ct);
-
-            if (vanished.Count > 0)
-            {
-                var vanishedSet = FormatUidRange(vanished);
-                await writer.WriteLineAsync($"* VANISHED (EARLIER) {vanishedSet}");
-            }
-
-            // Report changed messages since qresyncModSeq
-            var changed = await SelectEmailMetadata(
-                    db.Emails.Where(e => e.FolderId == folder.Id && e.ModSeq > qresyncModSeq.Value))
-                .OrderBy(e => e.Uid)
-                .ToListAsync(ct);
-
-            var allEmailIds = await db.Emails
-                .Where(e => e.FolderId == folder.Id)
-                .OrderBy(e => e.Uid)
-                .Select(e => e.Id)
-                .ToListAsync(ct);
-
-            foreach (var email in changed)
-            {
-                var seqIdx = allEmailIds.IndexOf(email.Id);
-                if (seqIdx >= 0)
-                {
-                    var seqNum = seqIdx + 1;
-                    var flags = BuildFlagsList(email);
-                    await writer.WriteLineAsync($"* {seqNum} FETCH (UID {email.Uid} FLAGS ({flags}) MODSEQ ({email.ModSeq}))");
-                }
-            }
-        }
+        foreach (var line in responseLines!)
+            await writer.WriteLineAsync(line);
 
         var cmdName = readOnly ? "EXAMINE" : "SELECT";
         var access = readOnly ? "[READ-ONLY]" : "[READ-WRITE]";
         await writer.WriteLineAsync($"{tag} OK {access} {cmdName} completed");
+    }
+
+    private static List<string> BuildMailboxSelectionLines(ImapSelectedMailbox mailbox)
+    {
+        if (mailbox.FolderId == Guid.Empty
+            || string.IsNullOrEmpty(mailbox.MailboxId)
+            || mailbox.MessageCount < 0
+            || mailbox.Keywords is null
+            || mailbox.VanishedUids is null
+            || mailbox.ChangedMessages is null
+            || mailbox.FirstUnseenSequence is < 1
+            || mailbox.FirstUnseenSequence > mailbox.MessageCount)
+        {
+            throw new InvalidOperationException("The IMAP mailbox selection result is invalid.");
+        }
+
+        var keywords = mailbox.Keywords
+            .Where(IsValidImapKeyword)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var definedFlags = keywords.Length == 0
+            ? "\\Seen \\Answered \\Flagged \\Deleted \\Draft"
+            : $"\\Seen \\Answered \\Flagged \\Deleted \\Draft {string.Join(' ', keywords)}";
+        var lines = new List<string>
+        {
+            $"* {mailbox.MessageCount} EXISTS",
+            "* 0 RECENT",
+            $"* FLAGS ({definedFlags})",
+            "* OK [PERMANENTFLAGS (\\Seen \\Answered \\Flagged \\Deleted \\Draft \\*)] Flags permitted",
+            $"* OK [UIDVALIDITY {mailbox.UidValidity}]",
+            $"* OK [UIDNEXT {mailbox.NextUid}]",
+            $"* OK [HIGHESTMODSEQ {mailbox.HighestModSeq}]",
+            $"* OK [MAILBOXID ({FormatObjectId('F', mailbox.MailboxId, mailbox.FolderId)})] Mailbox identifier",
+        };
+        if (mailbox.FirstUnseenSequence is not null)
+            lines.Add($"* OK [UNSEEN {mailbox.FirstUnseenSequence}]");
+        if (mailbox.VanishedUids.Count > 0)
+            lines.Add($"* VANISHED (EARLIER) {FormatUidRange(mailbox.VanishedUids)}");
+        foreach (var changed in mailbox.ChangedMessages)
+        {
+            if (changed.Sequence is < 1 || changed.Sequence > mailbox.MessageCount
+                || changed.Uid < 1 || changed.Keywords is null)
+            {
+                throw new InvalidOperationException("The IMAP changed-message result is invalid.");
+            }
+            lines.Add($"* {changed.Sequence} FETCH (UID {changed.Uid} FLAGS ({BuildFlagsList(changed)}) MODSEQ ({changed.ModSeq}))");
+        }
+        return lines;
     }
 
     private static int FindMatchingParen(string s, int openIdx)
@@ -3464,15 +3447,37 @@ ILogger<ImapServerService> logger) : BackgroundService
         return structure + ")";
     }
 
-    private static string BuildFlagsList(EmailDB email)
+    private static string BuildFlagsList(EmailDB email) => BuildFlagsList(
+        email.IsRead,
+        email.IsDeleted,
+        email.IsFlagged,
+        email.IsDraft,
+        email.IsAnswered,
+        email.Keywords);
+
+    private static string BuildFlagsList(ImapChangedMessage message) => BuildFlagsList(
+        message.IsRead,
+        message.IsDeleted,
+        message.IsFlagged,
+        message.IsDraft,
+        message.IsAnswered,
+        message.Keywords);
+
+    private static string BuildFlagsList(
+        bool isRead,
+        bool isDeleted,
+        bool isFlagged,
+        bool isDraft,
+        bool isAnswered,
+        string[]? keywords)
     {
         var flags = new List<string>();
-        if (email.IsRead) flags.Add("\\Seen");
-        if (email.IsDeleted) flags.Add("\\Deleted");
-        if (email.IsFlagged) flags.Add("\\Flagged");
-        if (email.IsDraft) flags.Add("\\Draft");
-        if (email.IsAnswered) flags.Add("\\Answered");
-        flags.AddRange((email.Keywords ?? [])
+        if (isRead) flags.Add("\\Seen");
+        if (isDeleted) flags.Add("\\Deleted");
+        if (isFlagged) flags.Add("\\Flagged");
+        if (isDraft) flags.Add("\\Draft");
+        if (isAnswered) flags.Add("\\Answered");
+        flags.AddRange((keywords ?? [])
             .Where(IsValidImapKeyword)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Order(StringComparer.OrdinalIgnoreCase));

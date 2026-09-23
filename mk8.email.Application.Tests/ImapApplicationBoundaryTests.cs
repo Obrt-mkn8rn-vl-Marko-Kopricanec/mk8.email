@@ -78,6 +78,14 @@ public sealed class ImapApplicationBoundaryTests
             new ImapMailboxDeleteRequest(application.UserId, "Archive"));
         Assert.AreEqual(ImapMailboxDeleteDisposition.Deleted, deleted.Disposition);
         Assert.AreEqual("Archive", application.LastDeletedMailbox);
+
+        var selected = await SendAsync<ImapMailboxSelectRequest, ImapMailboxSelectResult>(
+            dispatcher,
+            ApplicationOperations.ImapSelectMailbox,
+            new ImapMailboxSelectRequest(application.UserId, "INBOX", 1, 2));
+        Assert.IsNotNull(selected.Mailbox);
+        Assert.AreEqual(2, selected.Mailbox.MessageCount);
+        Assert.AreEqual("INBOX", application.LastSelectedMailbox);
     }
 
     private static async Task<TResponse> SendAsync<TRequest, TResponse>(
@@ -113,6 +121,7 @@ public sealed class ImapApplicationBoundaryTests
         public string? LastCreatedMailbox { get; private set; }
         public string? LastRenamedMailbox { get; private set; }
         public string? LastDeletedMailbox { get; private set; }
+        public string? LastSelectedMailbox { get; private set; }
 
         public Task<ImapIdentityResult> AuthenticatePasswordAsync(
             ImapPasswordAuthentication request,
@@ -180,6 +189,17 @@ public sealed class ImapApplicationBoundaryTests
             LastDeletedMailbox = request.MailboxName;
             return Task.FromResult(new ImapMailboxDeleteResult(
                 ImapMailboxDeleteDisposition.Deleted, Guid.CreateVersion7()));
+        }
+
+        public Task<ImapMailboxSelectResult> SelectMailboxAsync(
+            ImapMailboxSelectRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            LastSelectedMailbox = request.MailboxName;
+            return Task.FromResult(new ImapMailboxSelectResult(new ImapSelectedMailbox(
+                Guid.CreateVersion7(), 1, 3, 5, "mailbox-id", 2, 1,
+                ["$Label1"], [77],
+                [new ImapChangedMessage(1, 1, 3, false, false, false, false, false, ["$Label1"])])));
         }
     }
 }

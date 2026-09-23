@@ -33,6 +33,10 @@ public interface IImapApplicationService
     Task<ImapMailboxDeleteResult> DeleteMailboxAsync(
         ImapMailboxDeleteRequest request,
         CancellationToken cancellationToken = default);
+
+    Task<ImapMailboxSelectResult> SelectMailboxAsync(
+        ImapMailboxSelectRequest request,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record ImapPasswordAuthentication(string Username, string Password);
@@ -120,3 +124,34 @@ public enum ImapMailboxDeleteDisposition
 public sealed record ImapMailboxDeleteResult(
     ImapMailboxDeleteDisposition Disposition,
     Guid FolderId);
+
+public sealed record ImapMailboxSelectRequest(
+    Guid UserId,
+    string MailboxName,
+    int? QresyncUidValidity,
+    long? QresyncModSeq);
+
+public sealed record ImapMailboxSelectResult(ImapSelectedMailbox? Mailbox);
+
+public sealed record ImapSelectedMailbox(
+    Guid FolderId,
+    int UidValidity,
+    int NextUid,
+    long HighestModSeq,
+    string MailboxId,
+    int MessageCount,
+    int? FirstUnseenSequence,
+    List<string> Keywords,
+    List<int> VanishedUids,
+    List<ImapChangedMessage> ChangedMessages);
+
+public sealed record ImapChangedMessage(
+    int Sequence,
+    int Uid,
+    long ModSeq,
+    bool IsRead,
+    bool IsDeleted,
+    bool IsFlagged,
+    bool IsDraft,
+    bool IsAnswered,
+    string[] Keywords);

@@ -244,9 +244,35 @@ public sealed class TransportSecurityTests
         Assert.AreEqual("a7 NO [UNAVAILABLE] Mailbox rename unavailable", await connection.ReadLineAsync());
         await connection.WriteLineAsync("a8 DELETE Projects");
         Assert.AreEqual("a8 NO [UNAVAILABLE] Mailbox deletion unavailable", await connection.ReadLineAsync());
-        await connection.WriteLineAsync("a9 CAPABILITY");
+        await connection.WriteLineAsync("a9 SELECT INBOX");
+        Assert.AreEqual("a9 NO [UNAVAILABLE] Mailbox selection unavailable", await connection.ReadLineAsync());
+        await connection.WriteLineAsync("a10 CAPABILITY");
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("* CAPABILITY ", StringComparison.Ordinal));
-        Assert.AreEqual("a9 OK CAPABILITY completed", await connection.ReadLineAsync());
+        Assert.AreEqual("a10 OK CAPABILITY completed", await connection.ReadLineAsync());
+    }
+
+    [TestMethod]
+    [Timeout(10_000)]
+    public async Task ImapRejectsMalformedSelectionBeforeSendingAnyMailboxLines()
+    {
+        var port = ReservePort();
+        await using var server = await ServerFixture.StartImapAsync(
+            CreateEnvironment(imapPort: port),
+            port,
+            applicationService: new UnavailableImapMailboxApplicationService(
+                listingUnavailable: false, selectionMalformed: true));
+        await using var connection = await ProtocolConnection.ConnectAsync(port);
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("* OK ", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a1 STARTTLS");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a1 OK ", StringComparison.Ordinal));
+        await connection.UpgradeToTlsAsync("email.mk8n.com");
+        await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"");
+        Assert.AreEqual("a2 OK LOGIN completed", await connection.ReadLineAsync());
+        await connection.WriteLineAsync("a3 SELECT INBOX");
+        Assert.AreEqual("a3 NO [UNAVAILABLE] Mailbox selection unavailable", await connection.ReadLineAsync());
+        await connection.WriteLineAsync("a4 CAPABILITY");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("* CAPABILITY ", StringComparison.Ordinal));
+        Assert.AreEqual("a4 OK CAPABILITY completed", await connection.ReadLineAsync());
     }
 
     [TestInitialize]
@@ -3630,10 +3656,16 @@ public sealed class TransportSecurityTests
             ImapMailboxDeleteRequest request,
             CancellationToken cancellationToken = default) =>
             Task.FromException<ImapMailboxDeleteResult>(new IOException("Worker unavailable"));
+
+        public Task<ImapMailboxSelectResult> SelectMailboxAsync(
+            ImapMailboxSelectRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromException<ImapMailboxSelectResult>(new IOException("Worker unavailable"));
     }
 
     private sealed class UnavailableImapMailboxApplicationService(
-        bool listingUnavailable = true) : IImapApplicationService
+        bool listingUnavailable = true,
+        bool selectionMalformed = false) : IImapApplicationService
     {
         public Task<ImapIdentityResult> AuthenticatePasswordAsync(
             ImapPasswordAuthentication request,
@@ -3676,6 +3708,13 @@ public sealed class TransportSecurityTests
             ImapMailboxDeleteRequest request,
             CancellationToken cancellationToken = default) =>
             Task.FromException<ImapMailboxDeleteResult>(new IOException("Worker unavailable"));
+
+        public Task<ImapMailboxSelectResult> SelectMailboxAsync(
+            ImapMailboxSelectRequest request,
+            CancellationToken cancellationToken = default) => selectionMalformed
+            ? Task.FromResult(new ImapMailboxSelectResult(new ImapSelectedMailbox(
+                Guid.Empty, 1, 1, 1, "mailbox-id", 1, null, [], [], [])))
+            : Task.FromException<ImapMailboxSelectResult>(new IOException("Worker unavailable"));
     }
 
     private sealed class ServerFixture(

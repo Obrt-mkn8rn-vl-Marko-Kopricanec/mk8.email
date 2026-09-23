@@ -316,4 +316,87 @@ internal sealed class ImapApplicationService(
 
         return new ImapMailboxDeleteResult(ImapMailboxDeleteDisposition.Deleted, folder.Id);
     }
+
+    public async Task<ImapMailboxSelectResult> SelectMailboxAsync(
+        ImapMailboxSelectRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.UserId == Guid.Empty || string.IsNullOrEmpty(request.MailboxName))
+            throw new ArgumentException("The IMAP mailbox selection request is invalid.", nameof(request));
+
+        await using var transaction = database.Database.IsRelational()
+            ? await database.Database.BeginTransactionAsync(IsolationLevel.RepeatableRead, cancellationToken)
+            : null;
+        var folder = await ImapMailboxResolver.ResolveFolderAsync(
+            database, request.UserId, request.MailboxName, cancellationToken);
+        if (folder is null)
+            return new ImapMailboxSelectResult(null);
+
+        var messages = await database.Emails
+            .AsNoTracking()
+            .Where(email => email.FolderId == folder.Id)
+            .OrderBy(email => email.Uid)
+            .Select(email => new
+            {
+                email.Uid,
+                email.ModSeq,
+                email.IsRead,
+                email.IsDeleted,
+                email.IsFlagged,
+                email.IsDraft,
+                email.IsAnswered,
+                email.Keywords,
+            })
+            .ToListAsync(cancellationToken);
+        var firstUnseenIndex = messages.FindIndex(message => !message.IsRead);
+        var keywords = messages
+            .SelectMany(message => message.Keywords ?? [])
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var vanishedUids = new List<int>();
+        var changedMessages = new List<ImapChangedMessage>();
+        if (request.QresyncUidValidity == folder.UidValidity
+            && request.QresyncModSeq is not null)
+        {
+            vanishedUids = await database.ExpungedUids
+                .AsNoTracking()
+                .Where(expunged => expunged.FolderId == folder.Id
+                    && expunged.ModSeq > request.QresyncModSeq.Value)
+                .OrderBy(expunged => expunged.Uid)
+                .Select(expunged => expunged.Uid)
+                .ToListAsync(cancellationToken);
+            for (var index = 0; index < messages.Count; index++)
+            {
+                var message = messages[index];
+                if (message.ModSeq <= request.QresyncModSeq.Value)
+                    continue;
+                changedMessages.Add(new ImapChangedMessage(
+                    index + 1,
+                    message.Uid,
+                    message.ModSeq,
+                    message.IsRead,
+                    message.IsDeleted,
+                    message.IsFlagged,
+                    message.IsDraft,
+                    message.IsAnswered,
+                    message.Keywords ?? []));
+            }
+        }
+
+        if (transaction is not null)
+            await transaction.CommitAsync(cancellationToken);
+        return new ImapMailboxSelectResult(new ImapSelectedMailbox(
+            folder.Id,
+            folder.UidValidity,
+            folder.NextUid,
+            folder.HighestModSeq,
+            folder.MailboxId,
+            messages.Count,
+            firstUnseenIndex < 0 ? null : firstUnseenIndex + 1,
+            keywords,
+            vanishedUids,
+            changedMessages));
+    }
 }

@@ -51,12 +51,22 @@ public sealed class ImapApplicationServiceTests
         };
         var primary = CreateInbox(owner, address, "owner");
         var primaryFolder = AddFolder(database, primary, DefaultFolders.Inbox, subscribed: true);
+        primaryFolder.HighestModSeq = 4;
         AddFolder(database, primary, "Archive", subscribed: false);
         var alias = CreateInbox(owner, address, "alias");
         AddFolder(database, alias, DefaultFolders.Inbox, subscribed: true);
         AddFolder(database, CreateInbox(other, address, "other"), DefaultFolders.Inbox, subscribed: true);
-        AddMessage(database, primaryFolder, uid: 1, sizeBytes: 10, isRead: false);
-        AddMessage(database, primaryFolder, uid: 2, sizeBytes: 20, isRead: true);
+        AddMessage(database, primaryFolder, uid: 1, sizeBytes: 10, isRead: false,
+            modSeq: 2, keywords: ["$Label1"]);
+        AddMessage(database, primaryFolder, uid: 2, sizeBytes: 20, isRead: true,
+            modSeq: 3, keywords: ["$Label2"]);
+        database.ExpungedUids.Add(new ExpungedUidDB
+        {
+            Id = Guid.CreateVersion7(),
+            Folder = primaryFolder,
+            Uid = 77,
+            ModSeq = 4,
+        });
         await database.SaveChangesAsync();
 
         var service = new ImapApplicationService(null!, null!, database, null!, null!, null!);
@@ -107,6 +117,26 @@ public sealed class ImapApplicationServiceTests
         Assert.IsNull(sizeOnly.Statuses["INBOX"].MessageCount);
         Assert.IsNull(sizeOnly.Statuses["INBOX"].UnseenCount);
         Assert.AreEqual(30L, sizeOnly.Statuses["INBOX"].SizeBytes);
+        var selected = (await service.SelectMailboxAsync(
+            new ImapMailboxSelectRequest(owner.Id, "INBOX", primaryFolder.UidValidity, 1))).Mailbox;
+        Assert.IsNotNull(selected);
+        Assert.AreEqual(primaryFolder.Id, selected.FolderId);
+        Assert.AreEqual(2, selected.MessageCount);
+        Assert.AreEqual(1, selected.FirstUnseenSequence);
+        CollectionAssert.AreEquivalent(new[] { "$Label1", "$Label2" }, selected.Keywords);
+        CollectionAssert.AreEqual(new[] { 77 }, selected.VanishedUids);
+        Assert.HasCount(2, selected.ChangedMessages);
+        Assert.AreEqual(1, selected.ChangedMessages[0].Sequence);
+        Assert.AreEqual(2, selected.ChangedMessages[1].Sequence);
+        Assert.IsFalse(selected.ChangedMessages[0].IsRead);
+        Assert.IsTrue(selected.ChangedMessages[1].IsRead);
+        var staleSelection = (await service.SelectMailboxAsync(
+            new ImapMailboxSelectRequest(owner.Id, "INBOX", primaryFolder.UidValidity + 1, 1))).Mailbox;
+        Assert.IsNotNull(staleSelection);
+        Assert.IsEmpty(staleSelection.VanishedUids);
+        Assert.IsEmpty(staleSelection.ChangedMessages);
+        Assert.IsNull((await service.SelectMailboxAsync(
+            new ImapMailboxSelectRequest(owner.Id, "other/example.test/Inbox", null, null))).Mailbox);
         Assert.IsTrue((await service.SetMailboxSubscriptionAsync(
             new ImapMailboxSubscriptionRequest(owner.Id, "INBOX", false))).Found);
         Assert.IsFalse(primaryFolder.IsSubscribed);
@@ -187,6 +217,8 @@ public sealed class ImapApplicationServiceTests
             new ImapMailboxRenameRequest(Guid.Empty, "Projects", "Archive")));
         await Assert.ThrowsAsync<ArgumentException>(() => service.DeleteMailboxAsync(
             new ImapMailboxDeleteRequest(Guid.Empty, "Archive")));
+        await Assert.ThrowsAsync<ArgumentException>(() => service.SelectMailboxAsync(
+            new ImapMailboxSelectRequest(Guid.Empty, "INBOX", null, null)));
     }
 
     private static InboxDB CreateInbox(
@@ -222,7 +254,9 @@ public sealed class ImapApplicationServiceTests
         FolderDB folder,
         int uid,
         int sizeBytes,
-        bool isRead)
+        bool isRead,
+        long modSeq,
+        string[] keywords)
     {
         database.Emails.Add(new EmailDB
         {
@@ -235,6 +269,8 @@ public sealed class ImapApplicationServiceTests
             Body = string.Empty,
             SizeBytes = sizeBytes,
             IsRead = isRead,
+            ModSeq = modSeq,
+            Keywords = keywords,
         });
     }
 }

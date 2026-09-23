@@ -113,6 +113,21 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
             Console.WriteLine($"The {role} configuration is valid.");
             return 0;
         }
+        if (arguments.Length == 2 && arguments[0] == "--audit-blob-references")
+        {
+            var validated = EnvironmentLoader.LoadFromFile(
+                arguments[1], isDevelopment, EnvironmentValidationRole.ApplicationWorker);
+            if (!validated.Messaging.Enabled)
+                throw new InvalidOperationException("Distributed messaging must be enabled.");
+            await using var dataSource = NpgsqlDataSource.Create(validated.BuildConnectionString());
+            await using var services = new ServiceCollection()
+                .AddAzureBlobObjectStorage(validated)
+                .BuildServiceProvider();
+            var count = await DistributedBlobReferenceAudit.AuditAsync(
+                dataSource, services.GetRequiredService<ILargeObjectStore>());
+            Console.WriteLine($"Verified {count} database-referenced Azure Blob object(s).");
+            return 0;
+        }
         if (arguments.Length == 3 && arguments[0] == "--purge-quarantined-smoke-message")
         {
             var validated = EnvironmentLoader.LoadFromFile(
@@ -362,7 +377,7 @@ static bool IsSupportedCommand(string[] arguments) =>
         ("--validate-gateway-config" or "--validate-worker-config"
             or "--healthcheck-gateway"
             or "--probe-gateway-backends" or "--probe-worker-backends"
-            or "--probe-worker-dispatch");
+            or "--probe-worker-dispatch" or "--audit-blob-references");
 
 static void WriteUsage()
 {

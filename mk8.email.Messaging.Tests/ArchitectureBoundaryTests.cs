@@ -2,6 +2,8 @@ using mk8.email.Contracts.Messaging;
 using mk8.email.Contracts.Mail;
 using mk8.email.MailWire;
 using mk8.email.Smtp.Presentation;
+using mk8.email.Contracts.Sieve;
+using mk8.email.Gateway.Protocols.Sieve;
 
 namespace mk8.email.Messaging.Tests;
 
@@ -204,6 +206,17 @@ public sealed class ArchitectureBoundaryTests
                 .Assembly
                 .GetName()
                 .Name);
+    }
+
+    [TestMethod]
+    public void GatewayOwnsManageSievePresentationWithoutApplicationLogic()
+    {
+        Assert.AreEqual("mk8.email.Gateway", typeof(ManageSieveServerService).Assembly.GetName().Name);
+        Assert.AreEqual("mk8.email.Contracts", typeof(ISieveApplicationService).Assembly.GetName().Name);
+        Assert.IsFalse(typeof(ManageSieveServerService).Assembly.GetReferencedAssemblies().Any(reference =>
+            reference.Name is not null
+            && (reference.Name.StartsWith("mk8.email.Application", StringComparison.Ordinal)
+                || reference.Name.StartsWith("mk8.email.Infrastructure", StringComparison.Ordinal))));
     }
 
     [TestMethod]

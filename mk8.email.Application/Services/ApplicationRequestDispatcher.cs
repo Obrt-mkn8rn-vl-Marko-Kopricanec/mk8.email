@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using mk8.email.Application.Interfaces;
 using mk8.email.Contracts.DTOs;
 using mk8.email.Contracts.Mail;
+using mk8.email.Contracts.Sieve;
 using mk8.email.Contracts.Messaging;
 using mk8.email.Dav;
 
@@ -58,6 +59,51 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
                     request.Id,
                     await services.GetRequiredService<ISmtpApplicationService>()
                         .EnqueueAsync(Deserialize<MailSubmission>(request), cancellationToken)),
+                ApplicationOperations.SieveAuthenticatePassword => Success(
+                    request.Id,
+                    await services.GetRequiredService<ISieveApplicationService>()
+                        .AuthenticatePasswordAsync(
+                            Deserialize<SievePasswordAuthentication>(request), cancellationToken)),
+                ApplicationOperations.SieveAuthenticateOAuth => Success(
+                    request.Id,
+                    await services.GetRequiredService<ISieveApplicationService>()
+                        .AuthenticateOAuthAsync(
+                            Deserialize<SieveOAuthAuthentication>(request), cancellationToken)),
+                ApplicationOperations.SieveCheckSpace => Success(
+                    request.Id,
+                    await services.GetRequiredService<ISieveApplicationService>()
+                        .CheckSpaceAsync(
+                            Deserialize<SieveCheckSpaceRequest>(request), cancellationToken)),
+                ApplicationOperations.SieveList => Success(
+                    request.Id,
+                    await services.GetRequiredService<ISieveApplicationService>()
+                        .ListAsync(Deserialize<SieveUserRequest>(request), cancellationToken)),
+                ApplicationOperations.SieveGet => Success(
+                    request.Id,
+                    await services.GetRequiredService<ISieveApplicationService>()
+                        .GetAsync(Deserialize<SieveNamedRequest>(request), cancellationToken)),
+                ApplicationOperations.SievePut => Success(
+                    request.Id,
+                    await services.GetRequiredService<ISieveApplicationService>()
+                        .PutAsync(Deserialize<SievePutRequest>(request), cancellationToken)),
+                ApplicationOperations.SieveSetActive => Success(
+                    request.Id,
+                    await services.GetRequiredService<ISieveApplicationService>()
+                        .SetActiveAsync(
+                            Deserialize<SieveSetActiveRequest>(request), cancellationToken)),
+                ApplicationOperations.SieveDelete => Success(
+                    request.Id,
+                    await services.GetRequiredService<ISieveApplicationService>()
+                        .DeleteAsync(Deserialize<SieveNamedRequest>(request), cancellationToken)),
+                ApplicationOperations.SieveRename => Success(
+                    request.Id,
+                    await services.GetRequiredService<ISieveApplicationService>()
+                        .RenameAsync(Deserialize<SieveRenameRequest>(request), cancellationToken)),
+                ApplicationOperations.SieveValidate => Success(
+                    request.Id,
+                    await services.GetRequiredService<ISieveApplicationService>()
+                        .ValidateAsync(
+                            Deserialize<SieveValidationRequest>(request), cancellationToken)),
                 ApplicationOperations.AdminAuthenticate => Success(
                     request.Id,
                     await services.GetRequiredService<IAuthService>().LoginAsync(

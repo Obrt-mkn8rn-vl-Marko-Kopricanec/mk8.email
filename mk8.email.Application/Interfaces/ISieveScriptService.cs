@@ -1,24 +1,7 @@
 using mk8.email.Application.Protocol;
+using mk8.email.Contracts.Sieve;
 
 namespace mk8.email.Application.Interfaces;
-
-internal sealed record SieveScriptSummary(
-    string Name,
-    bool IsActive,
-    DateTime CreatedAt,
-    DateTime UpdatedAt);
-
-internal sealed record StoredSieveScript(
-    string Name,
-    string Content,
-    bool IsActive,
-    DateTime CreatedAt,
-    DateTime UpdatedAt);
-
-internal sealed record SieveScriptOperationResult(
-    bool Succeeded,
-    string? Error = null,
-    string? ResponseCode = null);
 
 internal interface ISieveScriptService
 {

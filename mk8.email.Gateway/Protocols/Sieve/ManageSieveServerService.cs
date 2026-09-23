@@ -1,23 +1,25 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using mk8.email.Application.Interfaces;
-using mk8.email.Application.Protocol;
 using mk8.email.Configuration;
+using mk8.email.Contracts.Sieve;
+using mk8.email.MailWire;
+using mk8.email.Messaging;
 
-namespace mk8.email.Application.Services;
+namespace mk8.email.Gateway.Protocols.Sieve;
 
 public sealed class ManageSieveServerService(
     IServiceScopeFactory scopeFactory,
     EnvironmentConfig environment,
-    ILogger<ManageSieveServerService> logger) : BackgroundService
+    ILogger<ManageSieveServerService> logger,
+    IGatewayTrafficJournal? journal = null) : BackgroundService
 {
     private const int MaximumConcurrentConnections = 256;
     private const int MaximumAuthenticationFailures = 5;
@@ -102,6 +104,19 @@ public sealed class ManageSieveServerService(
             using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken))
             {
                 stream = client.GetStream();
+                if (journal is not null)
+                {
+                    var traffic = new GatewayTrafficSession(
+                        journal,
+                        "sieve",
+                        new Dictionary<string, string>
+                        {
+                            ["remoteEndpoint"] = remoteLabel,
+                            ["listenerPort"] = ((client.Client.LocalEndPoint as IPEndPoint)?.Port ?? 0)
+                                .ToString(CultureInfo.InvariantCulture),
+                        });
+                    stream = new GatewayTrafficStream(stream, traffic, leaveInnerOpen: false);
+                }
                 var sendCapabilities = true;
                 while (!timeout.IsCancellationRequested)
                 {
@@ -201,13 +216,11 @@ public sealed class ManageSieveServerService(
                 if (result is not null)
                     return result.Value;
             }
-            catch (DbUpdateException exception)
+            catch (Exception exception) when (
+                exception is not OperationCanceledException && !timeout.IsCancellationRequested)
             {
-                logger.LogWarning(
-                    exception,
-                    "ManageSieve storage command failed for user {UserId}",
-                    session.UserId);
-                await WriteNoAsync(stream, "The script store is temporarily unavailable.", "TRYLATER", timeout.Token);
+                logger.LogWarning(exception, "ManageSieve application command failed for user {UserId}", session.UserId);
+                await WriteNoAsync(stream, "The script service is temporarily unavailable.", "TRYLATER", timeout.Token);
             }
         }
 
@@ -402,7 +415,7 @@ public sealed class ManageSieveServerService(
             return;
         }
 
-        AuthenticatedMailUser? authenticated;
+        SieveIdentityResult authenticated;
         if (mechanism == "XOAUTH2")
         {
             if (!OAuthSasl.TryParseXOAuth2(payload, out var username, out var accessToken))
@@ -416,18 +429,16 @@ public sealed class ManageSieveServerService(
             }
 
             using var scope = scopeFactory.CreateScope();
-            var tokenService = scope.ServiceProvider.GetRequiredService<IOAuthTokenService>();
-            authenticated = await tokenService.AuthenticateAccessTokenAsync(
-                accessToken,
-                "sieve",
-                cancellationToken);
-            if (authenticated is not null
+            var application = scope.ServiceProvider.GetRequiredService<ISieveApplicationService>();
+            authenticated = await application.AuthenticateOAuthAsync(
+                new SieveOAuthAuthentication(accessToken), cancellationToken);
+            if (authenticated.UserId is not null
                 && !string.Equals(
                     username,
                     authenticated.Username,
                     StringComparison.OrdinalIgnoreCase))
             {
-                authenticated = null;
+                authenticated = new SieveIdentityResult(null, null);
             }
         }
         else
@@ -452,19 +463,17 @@ public sealed class ManageSieveServerService(
             }
 
             using var scope = scopeFactory.CreateScope();
-            var authenticator = scope.ServiceProvider.GetRequiredService<IMailAuthenticator>();
-            authenticated = await authenticator.AuthenticateAsync(
-                username,
-                password,
-                cancellationToken);
+            var application = scope.ServiceProvider.GetRequiredService<ISieveApplicationService>();
+            authenticated = await application.AuthenticatePasswordAsync(
+                new SievePasswordAuthentication(username, password), cancellationToken);
         }
-        if (authenticated is null)
+        if (authenticated.UserId is null || authenticated.Username is null)
         {
             await RecordAuthenticationFailureAsync(stream, session, "Authentication failed.", cancellationToken);
             return;
         }
 
-        session.UserId = authenticated.Id;
+        session.UserId = authenticated.UserId;
         session.Username = authenticated.Username;
         timeout.CancelAfter(TimeSpan.FromSeconds(
             Math.Max(environment.Limits.ConnectionTimeoutSeconds, AuthenticatedTimeoutSeconds)));
@@ -508,12 +517,13 @@ public sealed class ManageSieveServerService(
         }
 
         using var scope = scopeFactory.CreateScope();
-        var scripts = scope.ServiceProvider.GetRequiredService<ISieveScriptService>();
-        var result = await scripts.CheckSpaceAsync(
-            session.UserId!.Value,
-            command.Arguments[0].Value,
-            size,
-            environment.Sieve.MaxScriptsPerUser,
+        var application = scope.ServiceProvider.GetRequiredService<ISieveApplicationService>();
+        var result = await application.CheckSpaceAsync(
+            new SieveCheckSpaceRequest(
+                session.UserId!.Value,
+                command.Arguments[0].Value,
+                size,
+                environment.Sieve.MaxScriptsPerUser),
             cancellationToken);
         await WriteOperationResultAsync(stream, result, "Space is available", cancellationToken);
     }
@@ -531,12 +541,13 @@ public sealed class ManageSieveServerService(
         }
 
         using var scope = scopeFactory.CreateScope();
-        var scripts = scope.ServiceProvider.GetRequiredService<ISieveScriptService>();
-        var result = await scripts.PutAsync(
-            session.UserId!.Value,
-            command.Arguments[0].Value,
-            command.Arguments[1].Value,
-            environment.Sieve.MaxScriptsPerUser,
+        var application = scope.ServiceProvider.GetRequiredService<ISieveApplicationService>();
+        var result = await application.PutAsync(
+            new SievePutRequest(
+                session.UserId!.Value,
+                command.Arguments[0].Value,
+                command.Arguments[1].Value,
+                environment.Sieve.MaxScriptsPerUser),
             cancellationToken);
         await WriteOperationResultAsync(stream, result, "Script stored", cancellationToken);
     }
@@ -554,8 +565,9 @@ public sealed class ManageSieveServerService(
         }
 
         using var scope = scopeFactory.CreateScope();
-        var scripts = scope.ServiceProvider.GetRequiredService<ISieveScriptService>();
-        foreach (var script in await scripts.ListAsync(session.UserId!.Value, cancellationToken))
+        var application = scope.ServiceProvider.GetRequiredService<ISieveApplicationService>();
+        foreach (var script in await application.ListAsync(
+                     new SieveUserRequest(session.UserId!.Value), cancellationToken))
         {
             await WriteLineAsync(
                 stream,
@@ -578,11 +590,10 @@ public sealed class ManageSieveServerService(
         }
 
         using var scope = scopeFactory.CreateScope();
-        var scripts = scope.ServiceProvider.GetRequiredService<ISieveScriptService>();
+        var application = scope.ServiceProvider.GetRequiredService<ISieveApplicationService>();
         var name = command.Arguments[0].Value;
-        var result = await scripts.SetActiveAsync(
-            session.UserId!.Value,
-            name.Length == 0 ? null : name,
+        var result = await application.SetActiveAsync(
+            new SieveSetActiveRequest(session.UserId!.Value, name.Length == 0 ? null : name),
             cancellationToken);
         await WriteOperationResultAsync(stream, result, "Active script updated", cancellationToken);
     }
@@ -600,11 +611,10 @@ public sealed class ManageSieveServerService(
         }
 
         using var scope = scopeFactory.CreateScope();
-        var scripts = scope.ServiceProvider.GetRequiredService<ISieveScriptService>();
-        var script = await scripts.GetAsync(
-            session.UserId!.Value,
-            command.Arguments[0].Value,
-            cancellationToken);
+        var application = scope.ServiceProvider.GetRequiredService<ISieveApplicationService>();
+        var script = (await application.GetAsync(
+            new SieveNamedRequest(session.UserId!.Value, command.Arguments[0].Value),
+            cancellationToken)).Script;
         if (script is null)
         {
             await WriteNoAsync(stream, "The script does not exist.", "NONEXISTENT", cancellationToken);
@@ -632,10 +642,9 @@ public sealed class ManageSieveServerService(
         }
 
         using var scope = scopeFactory.CreateScope();
-        var scripts = scope.ServiceProvider.GetRequiredService<ISieveScriptService>();
-        var result = await scripts.DeleteAsync(
-            session.UserId!.Value,
-            command.Arguments[0].Value,
+        var application = scope.ServiceProvider.GetRequiredService<ISieveApplicationService>();
+        var result = await application.DeleteAsync(
+            new SieveNamedRequest(session.UserId!.Value, command.Arguments[0].Value),
             cancellationToken);
         await WriteOperationResultAsync(stream, result, "Script deleted", cancellationToken);
     }
@@ -653,11 +662,12 @@ public sealed class ManageSieveServerService(
         }
 
         using var scope = scopeFactory.CreateScope();
-        var scripts = scope.ServiceProvider.GetRequiredService<ISieveScriptService>();
-        var result = await scripts.RenameAsync(
-            session.UserId!.Value,
-            command.Arguments[0].Value,
-            command.Arguments[1].Value,
+        var application = scope.ServiceProvider.GetRequiredService<ISieveApplicationService>();
+        var result = await application.RenameAsync(
+            new SieveRenameRequest(
+                session.UserId!.Value,
+                command.Arguments[0].Value,
+                command.Arguments[1].Value),
             cancellationToken);
         await WriteOperationResultAsync(stream, result, "Script renamed", cancellationToken);
     }
@@ -672,18 +682,20 @@ public sealed class ManageSieveServerService(
             await WriteNoAsync(stream, "CHECKSCRIPT requires script content.", cancellationToken: cancellationToken);
             return;
         }
-        if (StrictUtf8.GetByteCount(command.Arguments[0].Value) > SieveScript.MaximumScriptBytes)
+        if (StrictUtf8.GetByteCount(command.Arguments[0].Value) > SieveWireCapabilities.MaximumScriptBytes)
         {
             await WriteNoAsync(stream, "The script exceeds the one-megabyte limit.", "QUOTA/MAXSIZE", cancellationToken);
             return;
         }
 
         using var scope = scopeFactory.CreateScope();
-        var scripts = scope.ServiceProvider.GetRequiredService<ISieveScriptService>();
-        var compilation = scripts.Validate(command.Arguments[0].Value);
-        if (!compilation.Succeeded)
+        var application = scope.ServiceProvider.GetRequiredService<ISieveApplicationService>();
+        var validation = await application.ValidateAsync(
+            new SieveValidationRequest(command.Arguments[0].Value), cancellationToken);
+        if (!validation.Succeeded)
         {
-            var diagnostic = compilation.Diagnostics[0];
+            var diagnostic = validation.Diagnostic
+                ?? throw new InvalidOperationException("The script validation result is missing a diagnostic.");
             await WriteNoAsync(
                 stream,
                 $"Line {diagnostic.Line}, column {diagnostic.Column}: {diagnostic.Message}",
@@ -741,14 +753,14 @@ public sealed class ManageSieveServerService(
         await WriteCapabilityAsync(
             stream,
             "SIEVE",
-            string.Join(' ', SieveScript.SupportedCapabilities.Order(StringComparer.Ordinal)),
+            string.Join(' ', SieveWireCapabilities.Supported.Order(StringComparer.Ordinal)),
             cancellationToken);
         if (!session.IsSecure && !session.IsAuthenticated && environment.Sieve.EnableStartTls)
             await WriteLineAsync(stream, Quote("STARTTLS"), cancellationToken);
         await WriteCapabilityAsync(
             stream,
             "MAXREDIRECTS",
-            SieveScript.MaximumRedirects.ToString(),
+            SieveWireCapabilities.MaximumRedirects.ToString(CultureInfo.InvariantCulture),
             cancellationToken);
         await WriteCapabilityAsync(stream, "LANGUAGE", "i-default", cancellationToken);
         await WriteLineAsync(stream, Quote("UNAUTHENTICATE"), cancellationToken);

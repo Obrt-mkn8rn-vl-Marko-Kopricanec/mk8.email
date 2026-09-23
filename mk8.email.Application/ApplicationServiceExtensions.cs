@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using mk8.email.Application.Interfaces;
 using mk8.email.Application.Services;
 using mk8.email.Contracts.Mail;
+using mk8.email.Contracts.Sieve;
 
 namespace mk8.email.Application;
 
@@ -43,6 +44,7 @@ public static class ApplicationServiceExtensions
         services.AddScoped<ISenderAuthorizationService, SenderAuthorizationService>();
         services.AddScoped<IEmailService, EmailService>();
         services.AddScoped<ISieveScriptService, SieveScriptService>();
+        services.AddScoped<ISieveApplicationService, SieveApplicationService>();
         services.AddScoped<ISieveFilterService, SieveFilterService>();
         services.AddScoped<IVacationResponder, VacationResponder>();
         services.AddScoped<IMailSubmissionQueue, PostgresMailSubmissionQueue>();
@@ -57,7 +59,6 @@ public static class ApplicationServiceExtensions
         services.AddMailApplicationWorker();
         services.AddHostedService<ImapServerService>();
         services.AddHostedService<Pop3ServerService>();
-        services.AddHostedService<ManageSieveServerService>();
 
         return services;
     }

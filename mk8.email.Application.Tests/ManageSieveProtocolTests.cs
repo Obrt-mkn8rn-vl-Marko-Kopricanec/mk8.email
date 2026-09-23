@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -9,6 +10,10 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using mk8.email.Application.Interfaces;
 using mk8.email.Application.Services;
+using mk8.email.Contracts.Sieve;
+using mk8.email.Contracts.Messaging;
+using mk8.email.Gateway.Protocols.Sieve;
+using mk8.email.Messaging;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
 using mk8.email.Infrastructure.Models;
@@ -26,6 +31,43 @@ public sealed class ManageSieveProtocolTests
     private static readonly Guid TestUserId = Guid.Parse("01994f34-9776-7d2d-898c-d0273d6832ef");
     private string _testDirectory = null!;
     private string _certificatePath = null!;
+
+    [TestMethod]
+    [Timeout(10_000)]
+    public async Task GatewaySievePresentationJournalsWireBytesAndFailsClosed()
+    {
+        var port = ReservePort();
+        var journal = new RecordingSieveJournal();
+        await using (var server = await ServerFixture.StartAsync(
+                         CreateEnvironment(port), port, journal))
+        {
+            await using var connection = await ProtocolConnection.ConnectAsync(port);
+            await connection.ReadCapabilityResponseAsync();
+            await connection.WriteLineAsync("NOOP");
+            Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("OK ", StringComparison.Ordinal));
+        }
+
+        var sessionId = journal.Records.Single(record =>
+            record.Direction == GatewayTrafficDirections.Inbound
+            && Encoding.UTF8.GetString(record.Payload).Contains("NOOP\r\n", StringComparison.Ordinal))
+            .SessionId;
+        var records = journal.Records.Where(record => record.SessionId == sessionId).ToArray();
+        Assert.IsTrue(records.Any(record => record.Direction == GatewayTrafficDirections.Outbound
+            && Encoding.UTF8.GetString(record.Payload).Contains("\"IMPLEMENTATION\"", StringComparison.Ordinal)));
+        Assert.IsTrue(records.All(record => record.Protocol == "sieve"));
+        CollectionAssert.AreEqual(
+            Enumerable.Range(0, records.Length).Select(value => (long)value).ToArray(),
+            records.Select(record => record.Sequence).ToArray());
+
+        var rejectedPort = ReservePort();
+        await using var rejectedServer = await ServerFixture.StartAsync(
+            CreateEnvironment(rejectedPort),
+            rejectedPort,
+            new RecordingSieveJournal { RejectWrites = true });
+        await using var rejectedConnection = await ProtocolConnection.ConnectAsync(rejectedPort);
+        await Assert.ThrowsAsync<EndOfStreamException>(
+            () => rejectedConnection.ReadLineAsync());
+    }
 
     [TestInitialize]
     public void Initialize()
@@ -241,50 +283,50 @@ public sealed class ManageSieveProtocolTests
         int port,
         int maximumScripts = 64,
         bool enableOAuth = false) => new()
-    {
-        Smtp = new SmtpConfig
         {
-            Hostname = "email.mk8n.com",
-            EnableSmtp = false,
-        },
-        Imap = new ImapConfig
-        {
-            EnableImap = false,
-        },
-        Pop3 = new Pop3Config(),
-        Sieve = new SieveConfig
-        {
-            Port = port,
-            EnableManageSieve = true,
-            EnableStartTls = true,
-            MaxScriptsPerUser = maximumScripts,
-        },
-        Jmap = new JmapConfig
-        {
-            EnableJmap = false,
-            IsDefault = false,
-        },
-        Dav = new DavConfig
-        {
-            EnableDav = false,
-        },
-        OAuth = new OAuthConfig
-        {
-            EnableOAuth = enableOAuth,
-            PublicBaseUrl = "https://email.mk8n.com",
-        },
-        Tls = new TlsConfig
-        {
-            CertificatePath = _certificatePath,
-        },
-        Limits = new LimitsConfig
-        {
-            MaxMessageSizeBytes = 65_536,
-            MaxRecipientsPerMessage = 100,
-            ConnectionTimeoutSeconds = 10,
-            MaxConnectionsPerIp = 10,
-        },
-    };
+            Smtp = new SmtpConfig
+            {
+                Hostname = "email.mk8n.com",
+                EnableSmtp = false,
+            },
+            Imap = new ImapConfig
+            {
+                EnableImap = false,
+            },
+            Pop3 = new Pop3Config(),
+            Sieve = new SieveConfig
+            {
+                Port = port,
+                EnableManageSieve = true,
+                EnableStartTls = true,
+                MaxScriptsPerUser = maximumScripts,
+            },
+            Jmap = new JmapConfig
+            {
+                EnableJmap = false,
+                IsDefault = false,
+            },
+            Dav = new DavConfig
+            {
+                EnableDav = false,
+            },
+            OAuth = new OAuthConfig
+            {
+                EnableOAuth = enableOAuth,
+                PublicBaseUrl = "https://email.mk8n.com",
+            },
+            Tls = new TlsConfig
+            {
+                CertificatePath = _certificatePath,
+            },
+            Limits = new LimitsConfig
+            {
+                MaxMessageSizeBytes = 65_536,
+                MaxRecipientsPerMessage = 100,
+                ConnectionTimeoutSeconds = 10,
+                MaxConnectionsPerIp = 10,
+            },
+        };
 
     private static string PlainCredentials() =>
         Convert.ToBase64String(Encoding.UTF8.GetBytes($"\0{TestUsername}\0{TestPassword}"));
@@ -308,13 +350,15 @@ public sealed class ManageSieveProtocolTests
     {
         public static async Task<ServerFixture> StartAsync(
             EnvironmentConfig environment,
-            int port)
+            int port,
+            IGatewayTrafficJournal? journal = null)
         {
             var serviceCollection = new ServiceCollection();
             var databaseName = $"manage-sieve-{Guid.NewGuid():N}";
             serviceCollection.AddSingleton<IMailAuthenticator>(new StubMailAuthenticator());
             serviceCollection.AddSingleton<IOAuthTokenService>(new StubOAuthTokenService());
             serviceCollection.AddScoped<ISieveScriptService, SieveScriptService>();
+            serviceCollection.AddScoped<ISieveApplicationService, SieveApplicationService>();
             serviceCollection.AddDbContext<EmailDbContext>(options =>
                 options.UseInMemoryDatabase(databaseName)
                     .ConfigureWarnings(warnings =>
@@ -351,7 +395,8 @@ public sealed class ManageSieveProtocolTests
             var hostedService = new ManageSieveServerService(
                 services.GetRequiredService<IServiceScopeFactory>(),
                 environment,
-                NullLogger<ManageSieveServerService>.Instance);
+                NullLogger<ManageSieveServerService>.Instance,
+                journal);
             var fixture = new ServerFixture(services, hostedService);
             await hostedService.StartAsync(CancellationToken.None);
 
@@ -566,5 +611,27 @@ public sealed class ManageSieveProtocolTests
             await _stream.WriteAsync(StrictUtf8.GetBytes(value), timeout.Token);
             await _stream.FlushAsync(timeout.Token);
         }
+    }
+
+    private sealed class RecordingSieveJournal : IGatewayTrafficJournal
+    {
+        public ConcurrentQueue<GatewayTrafficRecord> Records { get; } = new();
+        public bool RejectWrites { get; init; }
+
+        public Task AppendAsync(
+            GatewayTrafficRecord record,
+            CancellationToken cancellationToken = default)
+        {
+            if (RejectWrites)
+                throw new InvalidOperationException("The journal is unavailable.");
+            Records.Enqueue(record);
+            return Task.CompletedTask;
+        }
+
+        public Task<IReadOnlyList<GatewayTrafficRecord>> ReadSessionAsync(
+            Guid sessionId,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<GatewayTrafficRecord>>(
+                Records.Where(record => record.SessionId == sessionId).ToArray());
     }
 }

@@ -11,6 +11,16 @@ public static class ApplicationOperations
     public const string SmtpHasMatchingFromAddress = "smtp.has-matching-from-address";
     public const string SmtpCanReceive = "smtp.can-receive";
     public const string SmtpEnqueue = "smtp.enqueue";
+    public const string SieveAuthenticatePassword = "sieve.authenticate-password";
+    public const string SieveAuthenticateOAuth = "sieve.authenticate-oauth";
+    public const string SieveCheckSpace = "sieve.check-space";
+    public const string SieveList = "sieve.list";
+    public const string SieveGet = "sieve.get";
+    public const string SievePut = "sieve.put";
+    public const string SieveSetActive = "sieve.set-active";
+    public const string SieveDelete = "sieve.delete";
+    public const string SieveRename = "sieve.rename";
+    public const string SieveValidate = "sieve.validate";
     public const string AdminAuthenticate = "admin.authenticate";
     public const string AdminDashboardGet = "admin.dashboard.get";
     public const string AdminDomainsGet = "admin.domains.get";

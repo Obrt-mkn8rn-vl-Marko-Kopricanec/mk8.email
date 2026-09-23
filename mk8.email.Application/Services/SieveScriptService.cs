@@ -3,6 +3,7 @@ using System.Text;
 using Microsoft.EntityFrameworkCore;
 using mk8.email.Application.Interfaces;
 using mk8.email.Application.Protocol;
+using mk8.email.Contracts.Sieve;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Infrastructure.Models;
 

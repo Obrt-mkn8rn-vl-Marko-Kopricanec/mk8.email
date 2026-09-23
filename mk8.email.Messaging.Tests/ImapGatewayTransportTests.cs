@@ -124,6 +124,9 @@ public sealed class ImapGatewayTransportTests
                 application.UserId, "INBOX", false,
                 [new ImapAppendMessage(Guid.CreateVersion7(), ["\\Seen"], null,
                     appendBody)]), timeout.Token);
+            var searched = await client.SearchMessagesAsync(new ImapSearchRequest(
+                application.UserId, Guid.CreateVersion7(), "SUBJECT transport", [7], false),
+                timeout.Token);
             Assert.AreEqual(application.UserId, password.UserId);
             Assert.AreEqual(application.UserId, oauth.UserId);
             Assert.AreEqual("imap-secret", application.Password);
@@ -169,6 +172,9 @@ public sealed class ImapGatewayTransportTests
             Assert.AreEqual("INBOX", application.LastAppendCommit?.MailboxName);
             CollectionAssert.AreEqual(appendBody,
                 application.LastAppendCommit?.Messages[0].RawMessage);
+            Assert.HasCount(1, searched.Matches);
+            Assert.AreEqual(5L, searched.HighestModSequence);
+            Assert.AreEqual("SUBJECT transport", application.LastSearchRequest?.Criteria);
 
             await using var operations = gatewayDataSource.CreateCommand(
                 "SELECT operation FROM application_requests ORDER BY created_at");
@@ -196,6 +202,7 @@ public sealed class ImapGatewayTransportTests
                     ApplicationOperations.ImapCopyMessages,
                     ApplicationOperations.ImapCheckAppendCapacity,
                     ApplicationOperations.ImapAppendMessages,
+                    ApplicationOperations.ImapSearchMessages,
                 },
                 observed);
 
@@ -232,7 +239,7 @@ public sealed class ImapGatewayTransportTests
                     Assert.IsFalse(ciphertext.Contains("imap-access-token", StringComparison.Ordinal));
                 }
             }
-            Assert.AreEqual(34, recordCount);
+            Assert.AreEqual(36, recordCount);
             Assert.AreEqual(1, blobRecordCount);
         }
         finally
@@ -259,6 +266,7 @@ public sealed class ImapGatewayTransportTests
         public ImapCopyRequest? LastCopyRequest { get; private set; }
         public ImapAppendPreflightRequest? LastAppendRequest { get; private set; }
         public ImapAppendRequest? LastAppendCommit { get; private set; }
+        public ImapSearchRequest? LastSearchRequest { get; private set; }
 
         public Task<ImapIdentityResult> AuthenticatePasswordAsync(
             ImapPasswordAuthentication request,
@@ -401,6 +409,15 @@ public sealed class ImapGatewayTransportTests
             LastAppendCommit = request;
             return Task.FromResult(new ImapAppendResult(
                 ImapAppendDisposition.Appended, 1, [7]));
+        }
+
+        public Task<ImapSearchResult> SearchMessagesAsync(
+            ImapSearchRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            LastSearchRequest = request;
+            return Task.FromResult(new ImapSearchResult(
+                true, null, [new ImapSearchMatch(7, 2)], 5));
         }
     }
 }

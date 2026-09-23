@@ -69,6 +69,10 @@ public interface IImapApplicationService
     Task<ImapAppendResult> AppendMessagesAsync(
         ImapAppendRequest request,
         CancellationToken cancellationToken = default);
+
+    Task<ImapSearchResult> SearchMessagesAsync(
+        ImapSearchRequest request,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record ImapPasswordAuthentication(string Username, string Password);
@@ -346,3 +350,18 @@ public sealed record ImapAppendResult(
     ImapAppendDisposition Disposition,
     int UidValidity,
     List<int> Uids);
+
+public sealed record ImapSearchRequest(
+    Guid UserId,
+    Guid FolderId,
+    string Criteria,
+    List<int> SavedSearchUids,
+    bool Utf8Enabled);
+
+public sealed record ImapSearchResult(
+    bool FolderFound,
+    string? FailureResponse,
+    List<ImapSearchMatch> Matches,
+    long? HighestModSequence);
+
+public sealed record ImapSearchMatch(int Uid, int SequenceNumber);

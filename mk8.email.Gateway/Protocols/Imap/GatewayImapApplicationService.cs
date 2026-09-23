@@ -108,4 +108,10 @@ public sealed class GatewayImapApplicationService(
         CancellationToken cancellationToken = default) =>
         transport.SendAsync<ImapAppendRequest, ImapAppendResult>(
             "imap", ApplicationOperations.ImapAppendMessages, request, cancellationToken);
+
+    public Task<ImapSearchResult> SearchMessagesAsync(
+        ImapSearchRequest request,
+        CancellationToken cancellationToken = default) =>
+        transport.SendAsync<ImapSearchRequest, ImapSearchResult>(
+            "imap", ApplicationOperations.ImapSearchMessages, request, cancellationToken);
 }

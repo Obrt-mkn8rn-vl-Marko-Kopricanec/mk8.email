@@ -2037,22 +2037,56 @@ ILogger<ImapServerService> logger) : BackgroundService
             return;
         }
 
-        using var scope = scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-        var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
-        await using var transaction = db.Database.IsRelational()
-            ? await db.Database.BeginTransactionAsync(IsolationLevel.RepeatableRead, ct)
-            : null;
-        var query = db.Emails
-            .AsNoTracking()
-            .Where(email => email.FolderId == session.SelectedFolderId!.Value);
-        var searchResult = await ImapSearchEngine.FindSearchCandidatesAsync(
-            query,
-            content,
-            searchCriteria.Trim(),
-            session.SavedSearchUids,
-            session.Utf8Enabled,
-            ct);
+        ImapSearchResult searchResult;
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
+            searchResult = await application.SearchMessagesAsync(new ImapSearchRequest(
+                session.UserId,
+                session.SelectedFolderId!.Value,
+                searchCriteria,
+                session.SavedSearchUids.ToList(),
+                session.Utf8Enabled), ct);
+            if (searchResult is null
+                || searchResult.Matches is null
+                || searchResult.HighestModSequence is < 0
+                || !searchResult.FolderFound
+                    && (searchResult.FailureResponse is not null
+                        || searchResult.Matches.Count > 0
+                        || searchResult.HighestModSequence is not null)
+                || searchResult.FailureResponse is { } failure
+                    && (failure.ContainsAny(['\r', '\n', '\0'])
+                        || !failure.StartsWith("BAD ", StringComparison.OrdinalIgnoreCase)
+                            && !failure.StartsWith("NO ", StringComparison.OrdinalIgnoreCase)
+                        || searchResult.Matches.Count > 0
+                        || searchResult.HighestModSequence is not null)
+                || searchResult.Matches.Any(match => match is null
+                    || match.Uid < 1 || match.SequenceNumber < 1)
+                || searchResult.Matches.Zip(searchResult.Matches.Skip(1))
+                    .Any(pair => pair.Second.Uid <= pair.First.Uid
+                        || pair.Second.SequenceNumber <= pair.First.SequenceNumber))
+            {
+                throw new InvalidOperationException("The IMAP SEARCH result is invalid.");
+            }
+        }
+        catch (Exception exception) when (
+            exception is not OperationCanceledException && !ct.IsCancellationRequested)
+        {
+            if (saveResults)
+                session.SavedSearchUids = [];
+            logger.LogWarning(exception, "IMAP SEARCH unavailable for {UserId}", session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] SEARCH backend unavailable");
+            return;
+        }
+
+        if (!searchResult.FolderFound)
+        {
+            if (saveResults)
+                session.SavedSearchUids = [];
+            await writer.WriteLineAsync($"{tag} NO Mailbox not found");
+            return;
+        }
         if (searchResult.FailureResponse is not null)
         {
             if (saveResults
@@ -2067,8 +2101,6 @@ ILogger<ImapServerService> logger) : BackgroundService
         var numbers = searchResult.Matches
             .Select(candidate => useUid ? candidate.Uid : candidate.SequenceNumber)
             .ToList();
-        if (transaction is not null)
-            await transaction.CommitAsync(ct);
 
         if (saveResults)
         {
@@ -4298,7 +4330,7 @@ ILogger<ImapServerService> logger) : BackgroundService
 
     private static HashSet<int> SelectSavedSearchUids(
         IReadOnlyCollection<string> returnOptions,
-        IReadOnlyList<ImapSearchEngine.SearchCandidate> matches)
+        IReadOnlyList<ImapSearchMatch> matches)
     {
         var saveAll = returnOptions.Contains("ALL")
             || returnOptions.Contains("COUNT")

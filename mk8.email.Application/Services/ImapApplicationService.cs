@@ -1220,6 +1220,51 @@ internal sealed class ImapApplicationService(
             folder.UidValidity, uids);
     }
 
+    public async Task<ImapSearchResult> SearchMessagesAsync(
+        ImapSearchRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.SavedSearchUids);
+        if (request.UserId == Guid.Empty
+            || request.FolderId == Guid.Empty
+            || request.Criteria is null
+            || request.Criteria.Length > 1_048_576
+            || request.SavedSearchUids.Any(uid => uid < 1))
+        {
+            throw new ArgumentException("The IMAP SEARCH request is invalid.", nameof(request));
+        }
+
+        await using var transaction = database.Database.IsRelational()
+            ? await database.Database.BeginTransactionAsync(
+                IsolationLevel.RepeatableRead, cancellationToken)
+            : null;
+        var folderExists = await database.Folders
+            .AsNoTracking()
+            .AnyAsync(folder => folder.Id == request.FolderId
+                && folder.Inbox.OwnerId == request.UserId,
+                cancellationToken);
+        if (!folderExists)
+            return new ImapSearchResult(false, null, [], null);
+
+        var search = await ImapSearchEngine.FindSearchCandidatesAsync(
+            database.Emails.AsNoTracking().Where(email => email.FolderId == request.FolderId),
+            content,
+            request.Criteria.Trim(),
+            request.SavedSearchUids.ToHashSet(),
+            request.Utf8Enabled,
+            cancellationToken);
+        if (transaction is not null)
+            await transaction.CommitAsync(cancellationToken);
+        return new ImapSearchResult(
+            true,
+            search.FailureResponse,
+            search.Matches
+                .Select(match => new ImapSearchMatch(match.Uid, match.SequenceNumber))
+                .ToList(),
+            search.HighestModSequence);
+    }
+
     public async Task<ImapQuotaResult> GetQuotaAsync(
         ImapQuotaRequest request,
         CancellationToken cancellationToken = default)

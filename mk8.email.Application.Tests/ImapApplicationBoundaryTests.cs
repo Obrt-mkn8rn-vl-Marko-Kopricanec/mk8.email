@@ -112,6 +112,15 @@ public sealed class ImapApplicationBoundaryTests
         Assert.HasCount(1, committed.Uids);
         Assert.AreEqual("INBOX", application.LastAppendMailbox);
 
+        var search = await SendAsync<ImapSearchRequest, ImapSearchResult>(
+            dispatcher,
+            ApplicationOperations.ImapSearchMessages,
+            new ImapSearchRequest(application.UserId, Guid.CreateVersion7(),
+                "SUBJECT test", [7], false));
+        Assert.IsTrue(search.FolderFound);
+        Assert.HasCount(1, search.Matches);
+        Assert.AreEqual("SUBJECT test", application.LastSearchCriteria);
+
         var idle = await SendAsync<ImapIdleSnapshotRequest, ImapIdleSnapshotResult>(
             dispatcher,
             ApplicationOperations.ImapGetIdleSnapshot,
@@ -157,6 +166,7 @@ public sealed class ImapApplicationBoundaryTests
         public string? LastQuotaMailbox { get; private set; }
         public long LastAppendBytes { get; private set; }
         public string? LastAppendMailbox { get; private set; }
+        public string? LastSearchCriteria { get; private set; }
 
         public Task<ImapIdentityResult> AuthenticatePasswordAsync(
             ImapPasswordAuthentication request,
@@ -261,6 +271,15 @@ public sealed class ImapApplicationBoundaryTests
             LastAppendMailbox = request.MailboxName;
             return Task.FromResult(new ImapAppendResult(
                 ImapAppendDisposition.Appended, 1, [2]));
+        }
+
+        public Task<ImapSearchResult> SearchMessagesAsync(
+            ImapSearchRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            LastSearchCriteria = request.Criteria;
+            return Task.FromResult(new ImapSearchResult(
+                true, null, [new ImapSearchMatch(7, 2)], null));
         }
 
         public Task<ImapIdleSnapshotResult> GetIdleSnapshotAsync(

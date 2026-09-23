@@ -51,6 +51,10 @@ getent passwd mk8email >/dev/null || fail "The mk8email service account is missi
 getent group mk8email >/dev/null || fail "The mk8email service group is missing."
 [ "$(id -gn mk8email)" = mk8email ] \
     || fail "The mk8email service account has the wrong primary group."
+if systemctl is-active --quiet "$unit" \
+    || [ "$(systemctl is-enabled "$unit" 2>/dev/null || true)" = enabled ]; then
+    fail "Deactivate the selected role before staging a replacement unit."
+fi
 command -v dotnet >/dev/null 2>&1 || fail "The .NET runtime is missing."
 [ -f "$executable" ] || fail "The selected role executable is not installed."
 [ -f /opt/mk8email/current/cli/mk8.email.Application.CLI.dll ] \

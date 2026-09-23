@@ -11,6 +11,11 @@ fail() {
     exit 1
 }
 
+if systemctl is-active --quiet mk8email-gateway.service \
+    || systemctl is-active --quiet mk8email-worker.service; then
+    fail "The distributed mail stack is already active; use a controlled upgrade procedure."
+fi
+
 /usr/local/sbin/verify-host-prerequisites
 
 test -f /etc/mk8email/schema-ready

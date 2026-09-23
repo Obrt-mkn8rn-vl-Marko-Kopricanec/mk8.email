@@ -59,6 +59,9 @@ for legacy_unit in mk8email.service mk8email-admin.service; do
         fail "The legacy mail units must be stopped before distributed activation."
     fi
 done
+if systemctl is-active --quiet "$unit"; then
+    fail "The distributed role is already active; activation cannot verify a new release without a restart."
+fi
 
 cli=/opt/mk8email/current/cli/mk8.email.Application.CLI.dll
 timeout 45s runuser -u mk8email -- /usr/bin/dotnet "$cli" "$validate" "$config" \

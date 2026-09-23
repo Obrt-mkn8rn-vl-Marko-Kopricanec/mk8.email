@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using mk8.email.Application.Interfaces;
 using mk8.email.Contracts.DTOs;
 using mk8.email.Contracts.Mail;
+using mk8.email.Contracts.Pop3;
 using mk8.email.Contracts.Sieve;
 using mk8.email.Contracts.Messaging;
 using mk8.email.Dav;
@@ -104,6 +105,31 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
                     await services.GetRequiredService<ISieveApplicationService>()
                         .ValidateAsync(
                             Deserialize<SieveValidationRequest>(request), cancellationToken)),
+                ApplicationOperations.Pop3AuthenticatePassword => Success(
+                    request.Id,
+                    await services.GetRequiredService<IPop3ApplicationService>()
+                        .AuthenticatePasswordAsync(
+                            Deserialize<Pop3PasswordAuthentication>(request), cancellationToken)),
+                ApplicationOperations.Pop3AuthenticateOAuth => Success(
+                    request.Id,
+                    await services.GetRequiredService<IPop3ApplicationService>()
+                        .AuthenticateOAuthAsync(
+                            Deserialize<Pop3OAuthAuthentication>(request), cancellationToken)),
+                ApplicationOperations.Pop3ListMaildrop => Success(
+                    request.Id,
+                    await services.GetRequiredService<IPop3ApplicationService>()
+                        .ListMaildropAsync(
+                            Deserialize<Pop3UserRequest>(request), cancellationToken)),
+                ApplicationOperations.Pop3GetMessage => Success(
+                    request.Id,
+                    await services.GetRequiredService<IPop3ApplicationService>()
+                        .GetMessageAsync(
+                            Deserialize<Pop3MessageRequest>(request), cancellationToken)),
+                ApplicationOperations.Pop3CommitDeletes => Success(
+                    request.Id,
+                    await services.GetRequiredService<IPop3ApplicationService>()
+                        .CommitDeletesAsync(
+                            Deserialize<Pop3DeleteRequest>(request), cancellationToken)),
                 ApplicationOperations.AdminAuthenticate => Success(
                     request.Id,
                     await services.GetRequiredService<IAuthService>().LoginAsync(

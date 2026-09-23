@@ -21,6 +21,11 @@ public static class ApplicationOperations
     public const string SieveDelete = "sieve.delete";
     public const string SieveRename = "sieve.rename";
     public const string SieveValidate = "sieve.validate";
+    public const string Pop3AuthenticatePassword = "pop3.authenticate-password";
+    public const string Pop3AuthenticateOAuth = "pop3.authenticate-oauth";
+    public const string Pop3ListMaildrop = "pop3.maildrop.list";
+    public const string Pop3GetMessage = "pop3.message.get";
+    public const string Pop3CommitDeletes = "pop3.deletes.commit";
     public const string AdminAuthenticate = "admin.authenticate";
     public const string AdminDashboardGet = "admin.dashboard.get";
     public const string AdminDomainsGet = "admin.domains.get";

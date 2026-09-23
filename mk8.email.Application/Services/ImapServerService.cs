@@ -19,6 +19,7 @@ using mk8.email.Contracts.Enums;
 using mk8.email.Infrastructure;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Infrastructure.Models;
+using mk8.email.MailWire;
 
 namespace mk8.email.Application.Services;
 

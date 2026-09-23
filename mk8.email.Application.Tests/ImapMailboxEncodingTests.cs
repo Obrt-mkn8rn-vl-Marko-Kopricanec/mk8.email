@@ -1,4 +1,4 @@
-using mk8.email.Application.Protocol;
+using mk8.email.MailWire;
 
 namespace mk8.email.Application.Tests;
 

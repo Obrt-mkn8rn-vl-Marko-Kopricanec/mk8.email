@@ -127,7 +127,7 @@ public static class DistributedBackupExporter
                 metadataPath,
                 JsonSerializer.Serialize(new
                 {
-                    SchemaVersion = 1,
+                    SchemaVersion = 2,
                     ExportedAtUtc = DateTimeOffset.UtcNow,
                     Snapshot = snapshot,
                     ReferenceCount = references,

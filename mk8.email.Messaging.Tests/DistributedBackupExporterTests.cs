@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Azure.Storage.Blobs;
 using Microsoft.EntityFrameworkCore;
 using mk8.email.Contracts.Storage;
@@ -33,11 +34,20 @@ public sealed class DistributedBackupExporterTests
         await using var dataSource = NpgsqlDataSource.Create(sourceDatabase.ConnectionString);
         var service = new BlobServiceClient(blobConnection);
         var container = service.GetBlobContainerClient($"mk8-export-{Guid.NewGuid():N}");
+        var restoredContainer = service.GetBlobContainerClient(
+            $"mk8-restored-{Guid.NewGuid():N}");
         var objects = new AzureBlobLargeObjectStore(
             service,
             new AzureBlobLargeObjectStoreOptions
             {
                 ContainerName = container.Name,
+                CreateContainerIfMissing = true,
+            });
+        var restoredObjects = new AzureBlobLargeObjectStore(
+            service,
+            new AzureBlobLargeObjectStoreOptions
+            {
+                ContainerName = restoredContainer.Name,
                 CreateContainerIfMissing = true,
             });
         var parent = Directory.CreateTempSubdirectory("mk8-distributed-export-");
@@ -52,44 +62,80 @@ public sealed class DistributedBackupExporterTests
                 "application/octet-stream");
             var rowId = Guid.NewGuid();
             await InsertJmapBlobAsync(dataSource, rowId, written.Reference);
+            var gatewayContent = "encrypted Gateway traffic"u8.ToArray();
+            var gatewayHash = Convert.ToHexStringLower(SHA256.HashData(gatewayContent));
+            await using var gatewayUpload = new MemoryStream(gatewayContent, writable: false);
+            var gatewayWritten = await objects.PutIfAbsentAsync(
+                "gateway/exported", gatewayUpload, gatewayContent.LongLength,
+                gatewayHash, "application/vnd.mk8.encrypted-payload");
+            var trafficId = Guid.NewGuid();
+            await InsertGatewayTrafficAsync(dataSource, trafficId, gatewayWritten.Reference);
 
             var result = await DistributedBackupExporter.ExportAsync(
                 dataSource, objects, sourceDatabase.ConnectionString,
                 destination, PgDumpExecutable);
 
-            Assert.AreEqual(1L, result.ReferenceCount);
-            Assert.AreEqual(1L, result.UniqueContentCount);
+            Assert.AreEqual(2L, result.ReferenceCount);
+            Assert.AreEqual(2L, result.UniqueContentCount);
             CollectionAssert.AreEqual(
                 content, await File.ReadAllBytesAsync(Path.Combine(destination, "blobs", sha256)));
             var manifest = await File.ReadAllLinesAsync(
                 Path.Combine(destination, "references.jsonl"));
-            Assert.HasCount(1, manifest);
-            var referenceRow = JsonSerializer.Deserialize<DistributedBlobReferenceRow>(manifest[0]);
+            Assert.HasCount(2, manifest);
+            var referenceRow = manifest.Select(line =>
+                    JsonSerializer.Deserialize<DistributedBlobReferenceRow>(line))
+                .Single(row => row?.RowId == rowId);
             Assert.IsNotNull(referenceRow);
             Assert.AreEqual(rowId, referenceRow.RowId);
             Assert.AreEqual("jmap_blobs.object_name", referenceRow.Source);
             Assert.AreEqual(written.Reference, referenceRow.Reference);
+            Assert.AreEqual("application/octet-stream", referenceRow.ContentType);
+            var gatewayRow = manifest.Select(line =>
+                    JsonSerializer.Deserialize<DistributedBlobReferenceRow>(line))
+                .Single(row => row?.RowId == trafficId);
+            Assert.IsNotNull(gatewayRow);
+            Assert.AreEqual("gateway_traffic_records.payload_blob_name", gatewayRow.Source);
+            Assert.AreEqual("application/vnd.mk8.encrypted-payload", gatewayRow.ContentType);
             var metadata = JsonDocument.Parse(
                 await File.ReadAllTextAsync(Path.Combine(destination, "backup.json")));
-            Assert.AreEqual(1, metadata.RootElement.GetProperty("SchemaVersion").GetInt32());
+            Assert.AreEqual(2, metadata.RootElement.GetProperty("SchemaVersion").GetInt32());
             Assert.AreEqual(result.DatabaseSha256,
                 metadata.RootElement.GetProperty("DatabaseSha256").GetString());
             await VerifyChecksumsAsync(destination);
 
-            await RestoreDumpAsync(
-                Path.Combine(destination, "database.dump"),
-                restoredDatabase.ConnectionString);
             await using var restoredSource = NpgsqlDataSource.Create(
                 restoredDatabase.ConnectionString);
+            var restoredResult = await DistributedBackupRestorer.RestoreAsync(
+                destination, restoredSource, restoredDatabase.ConnectionString,
+                restoredObjects, PgRestoreExecutable);
+            Assert.AreEqual(2L, restoredResult.ReferenceCount);
+            Assert.AreEqual(2L, restoredResult.ImportedObjectCount);
             await using var restored = await restoredSource.OpenConnectionAsync();
             await using var query = restored.CreateCommand();
-            query.CommandText = "SELECT object_name FROM jmap_blobs WHERE id = @id";
+            query.CommandText = "SELECT object_etag FROM jmap_blobs WHERE id = @id";
             query.Parameters.AddWithValue("id", rowId);
-            Assert.AreEqual("jmap/exported", await query.ExecuteScalarAsync());
+            var restoredEtag = (string)(await query.ExecuteScalarAsync())!;
+            Assert.AreNotEqual(written.Reference.EntityTag, restoredEtag);
+            await using var copied = new MemoryStream();
+            await restoredObjects.CopyToAsync(
+                written.Reference with { EntityTag = restoredEtag }, copied);
+            CollectionAssert.AreEqual(content, copied.ToArray());
+            await using var gatewayQuery = restored.CreateCommand();
+            gatewayQuery.CommandText =
+                "SELECT payload_blob_etag FROM gateway_traffic_records WHERE id = @id";
+            gatewayQuery.Parameters.AddWithValue("id", trafficId);
+            var restoredGatewayEtag = (string)(await gatewayQuery.ExecuteScalarAsync())!;
+            await using var copiedGateway = new MemoryStream();
+            await restoredObjects.CopyToAsync(
+                gatewayWritten.Reference with { EntityTag = restoredGatewayEtag }, copiedGateway);
+            CollectionAssert.AreEqual(gatewayContent, copiedGateway.ToArray());
+            Assert.AreEqual(2L, await DistributedBlobReferenceAudit.AuditAsync(
+                restoredSource, restoredObjects));
         }
         finally
         {
             await container.DeleteIfExistsAsync();
+            await restoredContainer.DeleteIfExistsAsync();
             parent.Delete(recursive: true);
         }
     }
@@ -194,8 +240,126 @@ public sealed class DistributedBackupExporterTests
         }
     }
 
+    [TestMethod]
+    public async Task RestoreRejectsCorruptArchiveAndNonemptyTargetBeforeBlobWrites()
+    {
+        await using var sourceDatabase = await RequirePostgresAsync();
+        await using var targetDatabase = await RequirePostgresAsync();
+        await PrepareAsync(sourceDatabase);
+        await using var source = NpgsqlDataSource.Create(sourceDatabase.ConnectionString);
+        await using var target = NpgsqlDataSource.Create(targetDatabase.ConnectionString);
+        var originalObjects = new InMemoryLargeObjectStore();
+        var targetObjects = new InMemoryLargeObjectStore();
+        var content = "verified restore input"u8.ToArray();
+        var sha256 = Convert.ToHexStringLower(SHA256.HashData(content));
+        await using var upload = new MemoryStream(content, writable: false);
+        var written = await originalObjects.PutIfAbsentAsync(
+            "jmap/restore-preflight", upload, content.LongLength, sha256,
+            "application/octet-stream");
+        await InsertJmapBlobAsync(source, Guid.NewGuid(), written.Reference);
+        var parent = Directory.CreateTempSubdirectory("mk8-restore-preflight-");
+        var destination = Path.Combine(parent.FullName, "snapshot");
+        try
+        {
+            await DistributedBackupExporter.ExportAsync(
+                source, originalObjects, sourceDatabase.ConnectionString,
+                destination, PgDumpExecutable);
+            var blobFile = Path.Combine(destination, "blobs", sha256);
+            await File.WriteAllBytesAsync(blobFile, "tampered"u8.ToArray());
+            var corrupt = await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
+                DistributedBackupRestorer.RestoreAsync(
+                    destination, target, targetDatabase.ConnectionString,
+                    targetObjects, PgRestoreExecutable));
+            StringAssert.Contains(corrupt.Message, "checksum mismatch");
+            Assert.AreEqual(0, targetObjects.ObjectCount);
+
+            await File.WriteAllBytesAsync(blobFile, content);
+            await using (var connection = await target.OpenConnectionAsync())
+            await using (var create = connection.CreateCommand())
+            {
+                create.CommandText = "CREATE TABLE existing_target_data (id integer PRIMARY KEY)";
+                await create.ExecuteNonQueryAsync();
+            }
+            var nonempty = await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
+                DistributedBackupRestorer.RestoreAsync(
+                    destination, target, targetDatabase.ConnectionString,
+                    targetObjects, PgRestoreExecutable));
+            StringAssert.Contains(nonempty.Message, "not empty");
+            Assert.AreEqual(0, targetObjects.ObjectCount);
+        }
+        finally
+        {
+            parent.Delete(recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task RestoreRejectsManifestThatDoesNotMatchTheDumpBeforeRebinding()
+    {
+        await using var sourceDatabase = await RequirePostgresAsync();
+        await using var targetDatabase = await RequirePostgresAsync();
+        await PrepareAsync(sourceDatabase);
+        await using var source = NpgsqlDataSource.Create(sourceDatabase.ConnectionString);
+        await using var target = NpgsqlDataSource.Create(targetDatabase.ConnectionString);
+        var originalObjects = new InMemoryLargeObjectStore();
+        var targetObjects = new InMemoryLargeObjectStore();
+        var content = "manifest mismatch sentinel"u8.ToArray();
+        var sha256 = Convert.ToHexStringLower(SHA256.HashData(content));
+        await using var upload = new MemoryStream(content, writable: false);
+        var written = await originalObjects.PutIfAbsentAsync(
+            "jmap/mismatched", upload, content.LongLength, sha256,
+            "application/octet-stream");
+        var rowId = Guid.NewGuid();
+        await InsertJmapBlobAsync(source, rowId, written.Reference);
+        var parent = Directory.CreateTempSubdirectory("mk8-mismatch-restore-");
+        var destination = Path.Combine(parent.FullName, "snapshot");
+        try
+        {
+            await DistributedBackupExporter.ExportAsync(
+                source, originalObjects, sourceDatabase.ConnectionString,
+                destination, PgDumpExecutable);
+            var manifestPath = Path.Combine(destination, "references.jsonl");
+            var original = JsonSerializer.Deserialize<DistributedBlobReferenceRow>(
+                await File.ReadAllTextAsync(manifestPath));
+            Assert.IsNotNull(original);
+            await File.WriteAllTextAsync(
+                manifestPath,
+                JsonSerializer.Serialize(original with { RowId = Guid.NewGuid() }) + "\n");
+            var metadataPath = Path.Combine(destination, "backup.json");
+            var metadata = JsonNode.Parse(await File.ReadAllTextAsync(metadataPath));
+            Assert.IsNotNull(metadata);
+            await using (var input = File.OpenRead(manifestPath))
+            {
+                metadata["ManifestSha256"] =
+                    Convert.ToHexStringLower(await SHA256.HashDataAsync(input));
+            }
+            await File.WriteAllTextAsync(metadataPath, metadata.ToJsonString());
+            await RewriteChecksumsAsync(destination);
+
+            var mismatch = await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
+                DistributedBackupRestorer.RestoreAsync(
+                    destination, target, targetDatabase.ConnectionString,
+                    targetObjects, PgRestoreExecutable));
+            StringAssert.Contains(mismatch.Message, "do not match");
+            await using var restored = await target.OpenConnectionAsync();
+            await using var query = restored.CreateCommand();
+            query.CommandText = "SELECT object_etag FROM jmap_blobs WHERE id = @id";
+            query.Parameters.AddWithValue("id", rowId);
+            Assert.AreEqual(written.Reference.EntityTag, await query.ExecuteScalarAsync());
+        }
+        finally
+        {
+            parent.Delete(recursive: true);
+        }
+    }
+
     private static string PgDumpExecutable =>
         Environment.GetEnvironmentVariable("MK8_EMAIL_TEST_PG_DUMP") ?? "pg_dump";
+
+    private static string PgRestoreExecutable =>
+        Path.GetDirectoryName(PgDumpExecutable) is { Length: > 0 } folder
+            ? Path.Combine(folder, "pg_restore")
+            : "pg_restore";
 
     private static async Task InsertJmapBlobAsync(
         NpgsqlDataSource source,
@@ -225,6 +389,36 @@ public sealed class DistributedBackupExporterTests
         await insert.ExecuteNonQueryAsync();
     }
 
+    private static async Task InsertGatewayTrafficAsync(
+        NpgsqlDataSource source,
+        Guid rowId,
+        LargeObjectReference reference)
+    {
+        await using var connection = await source.OpenConnectionAsync();
+        await using var insert = connection.CreateCommand();
+        insert.CommandText = """
+            INSERT INTO gateway_traffic_records (
+                id, session_id, sequence, direction, protocol, content_type,
+                encryption_key_id, payload_blob_provider, payload_blob_name,
+                payload_blob_etag, payload_length, payload_nonce, payload_tag,
+                payload_sha256, metadata, recorded_at)
+            VALUES (
+                @id, @session_id, 1, 'inbound', 'smtp', 'text/plain',
+                'test-key', @provider, @name, @etag, @size_bytes,
+                decode(repeat('00', 12), 'hex'),
+                decode(repeat('00', 16), 'hex'),
+                @sha256, '{}'::jsonb, now())
+            """;
+        insert.Parameters.AddWithValue("id", rowId);
+        insert.Parameters.AddWithValue("session_id", Guid.NewGuid());
+        insert.Parameters.AddWithValue("provider", reference.Provider);
+        insert.Parameters.AddWithValue("name", reference.ObjectName);
+        insert.Parameters.AddWithValue("etag", reference.EntityTag);
+        insert.Parameters.AddWithValue("size_bytes", reference.Length);
+        insert.Parameters.AddWithValue("sha256", reference.Sha256);
+        await insert.ExecuteNonQueryAsync();
+    }
+
     private static async Task PrepareAsync(PostgresTestDatabase database)
     {
         await using var context = new EmailDbContext(
@@ -251,6 +445,21 @@ public sealed class DistributedBackupExporterTests
         }
     }
 
+    private static async Task RewriteChecksumsAsync(string destination)
+    {
+        var lines = new List<string>();
+        foreach (var file in Directory.EnumerateFiles(
+                     destination, "*", SearchOption.AllDirectories))
+        {
+            if (Path.GetFileName(file) == "SHA256SUMS")
+                continue;
+            await using var input = File.OpenRead(file);
+            var sha256 = Convert.ToHexStringLower(await SHA256.HashDataAsync(input));
+            lines.Add($"{sha256}  {Path.GetRelativePath(destination, file)}");
+        }
+        await File.WriteAllLinesAsync(Path.Combine(destination, "SHA256SUMS"), lines);
+    }
+
     private static async Task WaitForAdvisoryWaitAsync(NpgsqlDataSource source)
     {
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
@@ -274,10 +483,7 @@ public sealed class DistributedBackupExporterTests
     private static async Task RestoreDumpAsync(string dump, string connectionString)
     {
         var database = new NpgsqlConnectionStringBuilder(connectionString);
-        var pgRestore = Path.GetDirectoryName(PgDumpExecutable) is { Length: > 0 } folder
-            ? Path.Combine(folder, "pg_restore")
-            : "pg_restore";
-        var start = new ProcessStartInfo(pgRestore)
+        var start = new ProcessStartInfo(PgRestoreExecutable)
         {
             RedirectStandardError = true,
             UseShellExecute = false,

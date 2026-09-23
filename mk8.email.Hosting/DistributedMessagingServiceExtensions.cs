@@ -30,7 +30,8 @@ public static class DistributedMessagingServiceExtensions
                 "ObjectStorage.ConnectionString is required.");
         }
 
-        services.TryAddSingleton<ILargeObjectStore>(_ =>
+        services.TryAddSingleton(_ => NpgsqlDataSource.Create(environment.BuildConnectionString()));
+        services.TryAddSingleton(_ =>
             AzureBlobLargeObjectStore.FromConnectionString(
                 environment.ObjectStorage.ConnectionString,
                 new AzureBlobLargeObjectStoreOptions
@@ -39,6 +40,10 @@ public static class DistributedMessagingServiceExtensions
                     ObjectPrefix = environment.ObjectStorage.ObjectPrefix,
                     CreateContainerIfMissing = environment.ObjectStorage.CreateContainerIfMissing,
                 }));
+        services.TryAddSingleton<ILargeObjectStore>(serviceProvider =>
+            new PostgresCoordinatedLargeObjectStore(
+                serviceProvider.GetRequiredService<NpgsqlDataSource>(),
+                serviceProvider.GetRequiredService<AzureBlobLargeObjectStore>()));
         return services;
     }
 
@@ -61,7 +66,7 @@ public static class DistributedMessagingServiceExtensions
         };
 
         services.AddSingleton(options);
-        services.AddSingleton(_ => NpgsqlDataSource.Create(environment.BuildConnectionString()));
+        services.TryAddSingleton(_ => NpgsqlDataSource.Create(environment.BuildConnectionString()));
         services.AddSingleton<IMessagingPayloadProtector>(_ =>
         {
             var activeKey = new MessagingEncryptionKey(

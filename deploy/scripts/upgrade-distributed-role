@@ -293,6 +293,11 @@ interrupted=true
 stop_selected || fail "The selected role could not be stopped."
 switched=true
 atomic_current "$staged_release" || fail "The staged release could not become current."
+if [ "$role" = worker ]; then
+    timeout 30m runuser -u mk8email -- /usr/bin/dotnet \
+        "$staged_release/$executable" --prepare \
+        || fail "The staged Application Worker schema or Azure Blob migration failed."
+fi
 start_selected || fail "The upgraded role could not be started."
 wait_ready "$staged_cli" "$staged_release/wake/mk8.email.Wake.dll" \
     || fail "The upgraded role did not become ready."

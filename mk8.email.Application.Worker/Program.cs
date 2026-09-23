@@ -16,9 +16,10 @@ using mk8.email.Jmap;
 using mk8.email.Messaging;
 
 var drain = args.SequenceEqual(["--drain"]);
-if (!drain && !args.SequenceEqual(["--serve"]))
+var prepare = args.SequenceEqual(["--prepare"]);
+if (!drain && !prepare && !args.SequenceEqual(["--serve"]))
 {
-    Console.Error.WriteLine("The Application Worker requires --serve or --drain.");
+    Console.Error.WriteLine("The Application Worker requires --serve, --prepare, or --drain.");
     return 2;
 }
 
@@ -63,8 +64,9 @@ try
         provider.GetRequiredService<ApplicationRequestWorker>());
 
     using var host = builder.Build();
-    using (var scope = host.Services.CreateScope())
+    if (!drain)
     {
+        using var scope = host.Services.CreateScope();
         await scope.ServiceProvider.GetRequiredService<MailRuntimeSchemaService>()
             .EnsureAsync();
         await scope.ServiceProvider.GetRequiredService<MailQueueLargeObjectMigrationService>()
@@ -84,6 +86,13 @@ try
                 .MigrateAsync();
         }
     }
+    if (prepare)
+    {
+        await host.Services.GetRequiredService<MessagingSchemaInitializer>()
+            .StartAsync(CancellationToken.None);
+        Console.WriteLine("The Application Worker schemas and Azure Blob references are prepared.");
+        return 0;
+    }
     if (drain)
     {
         using var shutdown = new CancellationTokenSource();
@@ -99,8 +108,6 @@ try
         });
         try
         {
-            await host.Services.GetRequiredService<MessagingSchemaInitializer>()
-                .StartAsync(shutdown.Token);
             var queue = host.Services.GetRequiredService<MailQueueWorker>();
             var push = host.Services.GetService<IJmapPushWork>();
             var runner = new WorkerDrainRunner(

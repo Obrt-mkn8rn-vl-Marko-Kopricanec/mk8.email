@@ -101,6 +101,10 @@ timeout 45s runuser -u mk8email -- /usr/bin/dotnet "$cli" "$validate" "$config" 
     || fail "The role configuration failed validation."
 timeout 45s runuser -u mk8email -- /usr/bin/dotnet "$cli" "$probe" "$config" \
     || fail "The role PostgreSQL or Azure Blob backend failed its canary."
+if [ "$role" = worker ]; then
+    timeout 30m runuser -u mk8email -- /usr/bin/dotnet "$executable" --prepare \
+        || fail "The Application Worker schema or Azure Blob migration failed."
+fi
 
 was_active=false
 was_enabled=false

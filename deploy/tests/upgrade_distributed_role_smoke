@@ -159,6 +159,7 @@ test -f "$state/wake_active"
 test -f "$state/maintenance_active"
 grep -Fx 'cli:--probe-worker-backends' "$state/events" >/dev/null
 grep -Fx 'cli:--probe-worker-dispatch' "$state/events" >/dev/null
+grep -Fx 'cli:--prepare' "$state/events" >/dev/null
 grep -Fx 'wake:--probe' "$state/events" >/dev/null
 
 prepare_case worker_wake_preflight mk8email-worker.path worker/mk8.email.Application.Worker.dll
@@ -176,6 +177,21 @@ if grep -Fx stop "$state/events" >/dev/null; then
     printf '%s\n' "The Worker path stopped after failed Wake preflight." >&2
     exit 1
 fi
+
+prepare_case worker_prepare_rollback mk8email-worker.path worker/mk8.email.Application.Worker.dll
+: > "$state/fail_new_prepare"
+if sh "$state/upgrade" worker "$new_id" >/dev/null 2>&1; then
+    printf '%s\n' "The on-demand Worker accepted failed staged migration." >&2
+    exit 1
+fi
+test "$(readlink -f "$state/opt/mk8email/current")" \
+    = "$state/opt/mk8email/releases/$old_id"
+test -f "$state/active"
+test -f "$state/wake_active"
+test -f "$state/maintenance_active"
+grep -Fx 'cli:--prepare' "$state/events" >/dev/null
+test "$(grep -cx stop "$state/events")" -eq 2
+test "$(grep -cx stop_wake "$state/events")" -eq 2
 
 prepare_case worker_rollback mk8email-worker.path worker/mk8.email.Application.Worker.dll
 : > "$state/fail_new_start"

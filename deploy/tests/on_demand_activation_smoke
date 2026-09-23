@@ -89,6 +89,7 @@ test -f "$state/enabled-mk8email-worker.path"
 test -f "$state/enabled-mk8email-wake.service"
 test -f "$state/enabled-mk8email-worker-maintenance.timer"
 test -f "$state/dispatch_seen"
+grep -Fx 'mk8email --prepare' "$state/events" >/dev/null
 test ! -f "$state/active-mk8email-worker.service"
 test ! -f "$state/active-mk8email-worker-drain.service"
 sh "$state/deactivate" worker >/dev/null
@@ -103,6 +104,19 @@ fi
 assert_stopped
 if grep -Eq '^(enable|start) ' "$state/events"; then
     printf '%s\n' "A unit started after failed Worker backend preflight." >&2
+    exit 1
+fi
+
+prepare_case preparation_refusal
+: > "$state/fail_prepare"
+if sh "$state/activate" worker >/dev/null 2>&1; then
+    printf '%s\n' "Activation accepted a failed Worker migration." >&2
+    exit 1
+fi
+assert_stopped
+grep -Fx 'mk8email --prepare' "$state/events" >/dev/null
+if grep -Eq '^(enable|start) ' "$state/events"; then
+    printf '%s\n' "A unit started after failed Worker preparation." >&2
     exit 1
 fi
 

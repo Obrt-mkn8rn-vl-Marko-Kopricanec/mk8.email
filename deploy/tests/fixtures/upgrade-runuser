@@ -22,6 +22,12 @@ fi
 printf 'cli:%s\n' "$command" >> "$MK8_UPGRADE_SMOKE_STATE/events"
 case "$command" in
     --validate-gateway-config|--validate-worker-config) ;;
+    --prepare)
+        [ ! -f "$MK8_UPGRADE_SMOKE_STATE/active" ] \
+            && [ ! -f "$MK8_UPGRADE_SMOKE_STATE/wake_active" ] \
+            && [ ! -f "$MK8_UPGRADE_SMOKE_STATE/maintenance_active" ] \
+            && [ ! -f "$MK8_UPGRADE_SMOKE_STATE/fail_new_prepare" ]
+        ;;
     --healthcheck-gateway|--probe-worker-dispatch)
         if [ "$command" = --probe-worker-dispatch ] \
             && { [ ! -f "$MK8_UPGRADE_SMOKE_STATE/active" ] \

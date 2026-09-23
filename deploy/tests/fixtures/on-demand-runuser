@@ -13,6 +13,12 @@ case "$operation" in
     --probe-worker-backends)
         [ "$user" = mk8email ] && [ ! -f "$state/fail_backend" ]
         ;;
+    --prepare)
+        [ "$user" = mk8email ] \
+            && [ ! -f "$state/fail_prepare" ] \
+            && [ ! -f "$state/active-mk8email-wake.service" ] \
+            && [ ! -f "$state/active-mk8email-worker.path" ]
+        ;;
     --probe)
         [ "$user" = mk8wake ] \
             && [ -f "$state/active-mk8email-wake.service" ] \

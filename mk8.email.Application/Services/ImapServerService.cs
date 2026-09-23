@@ -1468,66 +1468,43 @@ ILogger<ImapServerService> logger) : BackgroundService
             return;
         }
 
-        using var scope = scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-
-        var folder = await ResolveFolderAsync(db, session.UserId, mailboxName, ct);
-        if (folder is null)
-        {
-            await writer.WriteLineAsync($"{tag} NO [NONEXISTENT] Mailbox not found");
-            return;
-        }
-
-        if (ImapMailboxResolver.IsSystemFolder(folder.Name))
-        {
-            await writer.WriteLineAsync($"{tag} NO [CANNOT] System mailboxes cannot be deleted");
-            return;
-        }
-
-        var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
-        var effects = scope.ServiceProvider.GetRequiredService<LargeObjectTransactionEffects>();
-        var marker = effects.Mark();
-        var commitAttempted = false;
-        await using var transaction = db.Database.IsRelational()
-            ? await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct)
-            : null;
+        ImapMailboxDeleteResult result;
         try
         {
-            var messages = await db.Emails
-                .Where(email => email.FolderId == folder.Id)
-                .ToListAsync(ct);
-            foreach (var message in messages)
-                content.DeleteOnCommit(message);
-            db.Folders.Remove(folder);
-            await db.SaveChangesAsync(ct);
-            if (transaction is not null)
-            {
-                commitAttempted = true;
-                await transaction.CommitAsync(ct);
-            }
-            await effects.CommitAsync(marker);
+            using var scope = scopeFactory.CreateScope();
+            var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
+            result = await application.DeleteMailboxAsync(
+                new ImapMailboxDeleteRequest(session.UserId, mailboxName), ct);
         }
-        catch
+        catch (Exception exception) when (
+            exception is not OperationCanceledException && !ct.IsCancellationRequested)
         {
-            if (transaction is not null)
-            {
-                try
-                {
-                    await transaction.RollbackAsync(CancellationToken.None);
-                }
-                catch (Exception rollbackException)
-                {
-                    logger.LogWarning(rollbackException, "Could not roll back IMAP mailbox deletion");
-                }
-            }
-            if (commitAttempted)
-                effects.Discard(marker);
-            else
-                await effects.RollbackAsync(marker);
-            throw;
+            logger.LogWarning(exception, "IMAP mailbox deletion is unavailable for {UserId}", session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailbox deletion unavailable");
+            return;
         }
 
-        if (session.SelectedFolderId == folder.Id)
+        switch (result.Disposition)
+        {
+            case ImapMailboxDeleteDisposition.NotFound:
+                await writer.WriteLineAsync($"{tag} NO [NONEXISTENT] Mailbox not found");
+                return;
+            case ImapMailboxDeleteDisposition.SystemFolder:
+                await writer.WriteLineAsync($"{tag} NO [CANNOT] System mailboxes cannot be deleted");
+                return;
+            case ImapMailboxDeleteDisposition.Deleted:
+                if (result.FolderId == Guid.Empty)
+                {
+                    await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailbox deletion unavailable");
+                    return;
+                }
+                break;
+            default:
+                await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailbox deletion unavailable");
+                return;
+        }
+
+        if (session.SelectedFolderId == result.FolderId)
         {
             session.SelectedFolderId = null;
             session.SelectedFolderName = null;

@@ -65,7 +65,8 @@ public sealed class ImapMailboxCreatePostgresTests
         async Task<ImapMailboxCreateResult> CreateAsync()
         {
             await using var database = new EmailDbContext(options);
-            var application = new ImapApplicationService(null!, null!, database);
+            var application = new ImapApplicationService(
+                null!, null!, database, null!, null!, null!);
             if (Interlocked.Increment(ref ready) == 2)
                 gate.SetResult();
             await gate.Task;

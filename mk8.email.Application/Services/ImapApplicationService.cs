@@ -1,5 +1,6 @@
 using System.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using mk8.email.Application.Interfaces;
 using mk8.email.Contracts.Imap;
 using mk8.email.Infrastructure.Data;
@@ -10,7 +11,10 @@ namespace mk8.email.Application.Services;
 internal sealed class ImapApplicationService(
     IMailAuthenticator authenticator,
     IOAuthTokenService oauthTokens,
-    EmailDbContext database) : IImapApplicationService
+    EmailDbContext database,
+    MailboxMessageContentService content,
+    LargeObjectTransactionEffects effects,
+    ILogger<ImapApplicationService> logger) : IImapApplicationService
 {
     public async Task<ImapIdentityResult> AuthenticatePasswordAsync(
         ImapPasswordAuthentication request,
@@ -252,5 +256,64 @@ internal sealed class ImapApplicationService(
         if (transaction is not null)
             await transaction.CommitAsync(cancellationToken);
         return new ImapMailboxRenameResult(ImapMailboxRenameDisposition.Renamed);
+    }
+
+    public async Task<ImapMailboxDeleteResult> DeleteMailboxAsync(
+        ImapMailboxDeleteRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.UserId == Guid.Empty || string.IsNullOrEmpty(request.MailboxName))
+            throw new ArgumentException("The IMAP mailbox deletion request is invalid.", nameof(request));
+
+        await using var transaction = database.Database.IsRelational()
+            ? await database.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken)
+            : null;
+        var folder = await ImapMailboxResolver.ResolveFolderAsync(
+            database, request.UserId, request.MailboxName, cancellationToken);
+        if (folder is null)
+            return new ImapMailboxDeleteResult(ImapMailboxDeleteDisposition.NotFound, Guid.Empty);
+        if (ImapMailboxResolver.IsSystemFolder(folder.Name))
+            return new ImapMailboxDeleteResult(ImapMailboxDeleteDisposition.SystemFolder, Guid.Empty);
+
+        var marker = effects.Mark();
+        var commitAttempted = false;
+        try
+        {
+            var messages = await database.Emails
+                .Where(email => email.FolderId == folder.Id)
+                .ToListAsync(cancellationToken);
+            foreach (var message in messages)
+                content.DeleteOnCommit(message);
+            database.Folders.Remove(folder);
+            await database.SaveChangesAsync(cancellationToken);
+            if (transaction is not null)
+            {
+                commitAttempted = true;
+                await transaction.CommitAsync(cancellationToken);
+            }
+            await effects.CommitAsync(marker);
+        }
+        catch
+        {
+            if (transaction is not null)
+            {
+                try
+                {
+                    await transaction.RollbackAsync(CancellationToken.None);
+                }
+                catch (Exception rollbackException)
+                {
+                    logger.LogWarning(rollbackException, "Could not roll back IMAP mailbox deletion");
+                }
+            }
+            if (commitAttempted)
+                effects.Discard(marker);
+            else
+                await effects.RollbackAsync(marker);
+            throw;
+        }
+
+        return new ImapMailboxDeleteResult(ImapMailboxDeleteDisposition.Deleted, folder.Id);
     }
 }

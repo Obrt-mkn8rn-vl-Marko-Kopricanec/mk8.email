@@ -71,6 +71,13 @@ public sealed class ImapApplicationBoundaryTests
             new ImapMailboxRenameRequest(application.UserId, "Projects", "Archive"));
         Assert.AreEqual(ImapMailboxRenameDisposition.Renamed, renamed.Disposition);
         Assert.AreEqual("Archive", application.LastRenamedMailbox);
+
+        var deleted = await SendAsync<ImapMailboxDeleteRequest, ImapMailboxDeleteResult>(
+            dispatcher,
+            ApplicationOperations.ImapDeleteMailbox,
+            new ImapMailboxDeleteRequest(application.UserId, "Archive"));
+        Assert.AreEqual(ImapMailboxDeleteDisposition.Deleted, deleted.Disposition);
+        Assert.AreEqual("Archive", application.LastDeletedMailbox);
     }
 
     private static async Task<TResponse> SendAsync<TRequest, TResponse>(
@@ -105,6 +112,7 @@ public sealed class ImapApplicationBoundaryTests
         public bool LastSubscriptionState { get; private set; } = true;
         public string? LastCreatedMailbox { get; private set; }
         public string? LastRenamedMailbox { get; private set; }
+        public string? LastDeletedMailbox { get; private set; }
 
         public Task<ImapIdentityResult> AuthenticatePasswordAsync(
             ImapPasswordAuthentication request,
@@ -163,6 +171,15 @@ public sealed class ImapApplicationBoundaryTests
         {
             LastRenamedMailbox = request.NewName;
             return Task.FromResult(new ImapMailboxRenameResult(ImapMailboxRenameDisposition.Renamed));
+        }
+
+        public Task<ImapMailboxDeleteResult> DeleteMailboxAsync(
+            ImapMailboxDeleteRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            LastDeletedMailbox = request.MailboxName;
+            return Task.FromResult(new ImapMailboxDeleteResult(
+                ImapMailboxDeleteDisposition.Deleted, Guid.CreateVersion7()));
         }
     }
 }

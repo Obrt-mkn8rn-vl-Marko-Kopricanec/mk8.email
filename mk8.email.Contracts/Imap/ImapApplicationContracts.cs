@@ -29,6 +29,10 @@ public interface IImapApplicationService
     Task<ImapMailboxRenameResult> RenameMailboxAsync(
         ImapMailboxRenameRequest request,
         CancellationToken cancellationToken = default);
+
+    Task<ImapMailboxDeleteResult> DeleteMailboxAsync(
+        ImapMailboxDeleteRequest request,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record ImapPasswordAuthentication(string Username, string Password);
@@ -103,3 +107,16 @@ public enum ImapMailboxRenameDisposition
 }
 
 public sealed record ImapMailboxRenameResult(ImapMailboxRenameDisposition Disposition);
+
+public sealed record ImapMailboxDeleteRequest(Guid UserId, string MailboxName);
+
+public enum ImapMailboxDeleteDisposition
+{
+    Deleted,
+    NotFound,
+    SystemFolder,
+}
+
+public sealed record ImapMailboxDeleteResult(
+    ImapMailboxDeleteDisposition Disposition,
+    Guid FolderId);

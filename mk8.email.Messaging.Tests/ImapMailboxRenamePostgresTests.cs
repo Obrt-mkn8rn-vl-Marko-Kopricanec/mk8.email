@@ -82,7 +82,8 @@ public sealed class ImapMailboxRenamePostgresTests
 
         await using (var database = new EmailDbContext(options))
         {
-            var application = new ImapApplicationService(null!, null!, database);
+            var application = new ImapApplicationService(
+                null!, null!, database, null!, null!, null!);
             var collision = await application.RenameMailboxAsync(
                 new ImapMailboxRenameRequest(userId, "Projects", "Archive"));
             Assert.AreEqual(ImapMailboxRenameDisposition.AlreadyExists, collision.Disposition);

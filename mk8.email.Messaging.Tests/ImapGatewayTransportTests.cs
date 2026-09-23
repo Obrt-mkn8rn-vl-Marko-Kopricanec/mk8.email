@@ -82,6 +82,8 @@ public sealed class ImapGatewayTransportTests
             var renamed = await client.RenameMailboxAsync(
                 new ImapMailboxRenameRequest(application.UserId, "Projects", "Archive"),
                 timeout.Token);
+            var deleted = await client.DeleteMailboxAsync(
+                new ImapMailboxDeleteRequest(application.UserId, "Archive"), timeout.Token);
             Assert.AreEqual(application.UserId, password.UserId);
             Assert.AreEqual(application.UserId, oauth.UserId);
             Assert.AreEqual("imap-secret", application.Password);
@@ -95,6 +97,8 @@ public sealed class ImapGatewayTransportTests
             Assert.AreEqual("Projects", application.CreatedMailbox);
             Assert.AreEqual(ImapMailboxRenameDisposition.Renamed, renamed.Disposition);
             Assert.AreEqual("Archive", application.RenamedMailbox);
+            Assert.AreEqual(ImapMailboxDeleteDisposition.Deleted, deleted.Disposition);
+            Assert.AreEqual("Archive", application.DeletedMailbox);
 
             await using var operations = gatewayDataSource.CreateCommand(
                 "SELECT operation FROM application_requests ORDER BY created_at");
@@ -112,6 +116,7 @@ public sealed class ImapGatewayTransportTests
                     ApplicationOperations.ImapSetMailboxSubscription,
                     ApplicationOperations.ImapCreateMailbox,
                     ApplicationOperations.ImapRenameMailbox,
+                    ApplicationOperations.ImapDeleteMailbox,
                 },
                 observed);
 
@@ -127,7 +132,7 @@ public sealed class ImapGatewayTransportTests
                 Assert.IsFalse(ciphertext.Contains("imap-secret", StringComparison.Ordinal));
                 Assert.IsFalse(ciphertext.Contains("imap-access-token", StringComparison.Ordinal));
             }
-            Assert.AreEqual(14, recordCount);
+            Assert.AreEqual(16, recordCount);
         }
         finally
         {
@@ -144,6 +149,7 @@ public sealed class ImapGatewayTransportTests
         public bool IsSubscribed { get; private set; } = true;
         public string? CreatedMailbox { get; private set; }
         public string? RenamedMailbox { get; private set; }
+        public string? DeletedMailbox { get; private set; }
 
         public Task<ImapIdentityResult> AuthenticatePasswordAsync(
             ImapPasswordAuthentication request,
@@ -198,6 +204,15 @@ public sealed class ImapGatewayTransportTests
         {
             RenamedMailbox = request.NewName;
             return Task.FromResult(new ImapMailboxRenameResult(ImapMailboxRenameDisposition.Renamed));
+        }
+
+        public Task<ImapMailboxDeleteResult> DeleteMailboxAsync(
+            ImapMailboxDeleteRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            DeletedMailbox = request.MailboxName;
+            return Task.FromResult(new ImapMailboxDeleteResult(
+                ImapMailboxDeleteDisposition.Deleted, Guid.CreateVersion7()));
         }
     }
 }

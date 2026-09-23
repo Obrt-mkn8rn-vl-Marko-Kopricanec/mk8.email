@@ -166,6 +166,11 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
                     await services.GetRequiredService<IImapApplicationService>()
                         .RenameMailboxAsync(
                             Deserialize<ImapMailboxRenameRequest>(request), cancellationToken)),
+                ApplicationOperations.ImapDeleteMailbox => Success(
+                    request.Id,
+                    await services.GetRequiredService<IImapApplicationService>()
+                        .DeleteMailboxAsync(
+                            Deserialize<ImapMailboxDeleteRequest>(request), cancellationToken)),
                 ApplicationOperations.AdminAuthenticate => Success(
                     request.Id,
                     await services.GetRequiredService<IAuthService>().LoginAsync(

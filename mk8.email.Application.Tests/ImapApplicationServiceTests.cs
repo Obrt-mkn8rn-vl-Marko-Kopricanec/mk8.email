@@ -59,7 +59,7 @@ public sealed class ImapApplicationServiceTests
         AddMessage(database, primaryFolder, uid: 2, sizeBytes: 20, isRead: true);
         await database.SaveChangesAsync();
 
-        var service = new ImapApplicationService(null!, null!, database);
+        var service = new ImapApplicationService(null!, null!, database, null!, null!, null!);
         var all = await service.ListMailboxesAsync(
             new ImapMailboxListRequest(owner.Id, SubscribedOnly: false));
         Assert.HasCount(3, all.Mailboxes);
@@ -169,6 +169,12 @@ public sealed class ImapApplicationServiceTests
             (await service.RenameMailboxAsync(
                 new ImapMailboxRenameRequest(owner.Id,
                     "alias/example.test/Archive", "alias/example.test/Existing"))).Disposition);
+        Assert.AreEqual(ImapMailboxDeleteDisposition.SystemFolder,
+            (await service.DeleteMailboxAsync(
+                new ImapMailboxDeleteRequest(owner.Id, "INBOX"))).Disposition);
+        Assert.AreEqual(ImapMailboxDeleteDisposition.NotFound,
+            (await service.DeleteMailboxAsync(
+                new ImapMailboxDeleteRequest(owner.Id, "Missing"))).Disposition);
         await Assert.ThrowsAsync<ArgumentException>(() => service.ListMailboxesAsync(
             new ImapMailboxListRequest(Guid.Empty, SubscribedOnly: false)));
         await Assert.ThrowsAsync<ArgumentException>(() => service.GetMailboxStatusesAsync(
@@ -179,6 +185,8 @@ public sealed class ImapApplicationServiceTests
             new ImapMailboxCreateRequest(Guid.Empty, "Projects")));
         await Assert.ThrowsAsync<ArgumentException>(() => service.RenameMailboxAsync(
             new ImapMailboxRenameRequest(Guid.Empty, "Projects", "Archive")));
+        await Assert.ThrowsAsync<ArgumentException>(() => service.DeleteMailboxAsync(
+            new ImapMailboxDeleteRequest(Guid.Empty, "Archive")));
     }
 
     private static InboxDB CreateInbox(

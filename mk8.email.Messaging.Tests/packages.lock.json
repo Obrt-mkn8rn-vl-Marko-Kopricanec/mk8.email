@@ -684,6 +684,7 @@
         "dependencies": {
           "DnsClient": "[1.8.0, )",
           "Microsoft.Extensions.DependencyInjection.Abstractions": "[10.0.4, )",
+          "Microsoft.Extensions.Hosting.Abstractions": "[10.0.4, )",
           "Microsoft.Extensions.Logging.Abstractions": "[10.0.4, )",
           "mk8.email.Configuration": "[1.0.0, )",
           "mk8.email.Contracts": "[1.0.0, )",

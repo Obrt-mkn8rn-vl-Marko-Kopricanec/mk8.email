@@ -5,6 +5,12 @@ namespace mk8.email.Contracts.Messaging;
 public static class ApplicationOperations
 {
     public const string SystemPing = "system.ping";
+    public const string SmtpAuthenticatePassword = "smtp.authenticate-password";
+    public const string SmtpAuthenticateOAuth = "smtp.authenticate-oauth";
+    public const string SmtpCanSendAs = "smtp.can-send-as";
+    public const string SmtpHasMatchingFromAddress = "smtp.has-matching-from-address";
+    public const string SmtpCanReceive = "smtp.can-receive";
+    public const string SmtpEnqueue = "smtp.enqueue";
     public const string AdminAuthenticate = "admin.authenticate";
     public const string AdminDashboardGet = "admin.dashboard.get";
     public const string AdminDomainsGet = "admin.domains.get";

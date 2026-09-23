@@ -8,18 +8,18 @@ using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using mk8.email.Application.Interfaces;
-using mk8.email.Application.Protocol;
 using mk8.email.Configuration;
-using mk8.email.Infrastructure;
-using mk8.email.Infrastructure.Models;
+using mk8.email.Contracts.Mail;
+using mk8.email.MailWire;
+using mk8.email.Messaging;
 
-namespace mk8.email.Application.Services;
+namespace mk8.email.Smtp.Presentation;
 
 public class SmtpServerService(
     IServiceScopeFactory scopeFactory,
     EnvironmentConfig env,
-    ILogger<SmtpServerService> logger) : BackgroundService
+    ILogger<SmtpServerService> logger,
+    IGatewayTrafficJournal? journal = null) : BackgroundService
 {
     private const int MaximumCommandLineCharacters = 4096;
     private const int MaximumDataLineCharacters = 998;
@@ -92,7 +92,7 @@ public class SmtpServerService(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var config = env.ToGlobalConfig();
+        var config = SmtpListenerOptions.FromEnvironment(env);
 
         var tasks = new List<Task>();
 
@@ -114,7 +114,7 @@ public class SmtpServerService(
         await Task.WhenAll(tasks);
     }
 
-    private async Task ListenAsync(int port, ListenerMode mode, GlobalConfigDB config, CancellationToken ct)
+    private async Task ListenAsync(int port, ListenerMode mode, SmtpListenerOptions config, CancellationToken ct)
     {
         var listener = new TcpListener(IPAddress.Any, port);
         listener.Start();
@@ -136,7 +136,7 @@ public class SmtpServerService(
         }
     }
 
-    private async Task HandleConnectionAsync(TcpClient client, ListenerMode mode, GlobalConfigDB config, CancellationToken ct)
+    private async Task HandleConnectionAsync(TcpClient client, ListenerMode mode, SmtpListenerOptions config, CancellationToken ct)
     {
         var remoteEndpoint = client.Client.RemoteEndPoint;
         var remoteIp = (remoteEndpoint as IPEndPoint)?.Address ?? IPAddress.None;
@@ -160,15 +160,17 @@ public class SmtpServerService(
                 timeout.CancelAfter(TimeSpan.FromSeconds(config.ConnectionTimeoutSeconds));
 
                 using var scope = scopeFactory.CreateScope();
-                var emailService = scope.ServiceProvider.GetRequiredService<IEmailService>();
-                var submissionQueue = scope.ServiceProvider.GetRequiredService<IMailSubmissionQueue>();
-                var senderAuthorization = scope.ServiceProvider.GetRequiredService<ISenderAuthorizationService>();
-                var mailAuthenticator = scope.ServiceProvider.GetRequiredService<IMailAuthenticator>();
-                var oauthTokenService = env.OAuth.EnableOAuth
-                    ? scope.ServiceProvider.GetRequiredService<IOAuthTokenService>()
-                    : null;
+                var application = scope.ServiceProvider.GetRequiredService<ISmtpApplicationService>();
 
                 Stream stream = client.GetStream();
+                if (journal is not null)
+                {
+                    var traffic = new SmtpTrafficSession(
+                        journal,
+                        remoteLabel,
+                        (client.Client.LocalEndPoint as IPEndPoint)?.Port ?? 0);
+                    stream = new SmtpTrafficStream(stream, traffic, leaveInnerOpen: false);
+                }
 
                 if (mode == ListenerMode.ImplicitTls)
                 {
@@ -210,11 +212,7 @@ public class SmtpServerService(
                         reader,
                         writer,
                         session,
-                        emailService,
-                        submissionQueue,
-                        senderAuthorization,
-                        mailAuthenticator,
-                        oauthTokenService,
+                        application,
                         config,
                         timeout,
                         stream,
@@ -238,10 +236,8 @@ public class SmtpServerService(
 
     private async Task RunSmtpSessionAsync(
         BoundedLineReader reader, StreamWriter writer, SmtpSession session,
-        IEmailService emailService, IMailSubmissionQueue submissionQueue,
-        ISenderAuthorizationService senderAuthorization,
-        IMailAuthenticator mailAuthenticator, IOAuthTokenService? oauthTokenService,
-        GlobalConfigDB config,
+        ISmtpApplicationService application,
+        SmtpListenerOptions config,
         CancellationTokenSource timeout, Stream? upgradableStream = null, string? clientIp = null)
     {
 
@@ -316,12 +312,28 @@ public class SmtpServerService(
                             continue;
                         }
 
-                        if (session.IsAuthenticated
-                            && (!await senderAuthorization.CanSendAsAsync(
-                                    session.AuthenticatedUser!, session.Sender ?? string.Empty, timeout.Token)
-                                || !senderAuthorization.HasMatchingFromAddress(
-                                    raw,
-                                    session.Sender ?? string.Empty)))
+                        var authorizedSender = true;
+                        if (session.IsAuthenticated)
+                        {
+                            try
+                            {
+                                authorizedSender = await application.CanSendAsAsync(
+                                        new SmtpSenderAuthorization(
+                                            session.AuthenticatedUser!, session.Sender ?? string.Empty),
+                                        timeout.Token)
+                                    && await application.HasMatchingFromAddressAsync(
+                                        new SmtpFromAddressCheck(raw, session.Sender ?? string.Empty),
+                                        timeout.Token);
+                            }
+                            catch (Exception exception) when (!timeout.IsCancellationRequested)
+                            {
+                                logger.LogWarning(exception, "SMTP sender policy is temporarily unavailable");
+                                await writer.WriteLineAsync("451 4.3.0 Sender policy is temporarily unavailable");
+                                session.Reset();
+                                continue;
+                            }
+                        }
+                        if (!authorizedSender)
                         {
                             await writer.WriteLineAsync("550 5.7.1 Sender identity is not authorized");
                             session.Reset();
@@ -340,7 +352,7 @@ public class SmtpServerService(
                             session.SmtpUtf8) + raw;
                         try
                         {
-                            await submissionQueue.EnqueueAsync(
+                            await application.EnqueueAsync(
                                 new MailSubmission(
                                     queueId,
                                     session.Sender ?? string.Empty,
@@ -462,8 +474,7 @@ public class SmtpServerService(
                         reader,
                         writer,
                         session,
-                        mailAuthenticator,
-                        oauthTokenService,
+                        application,
                         clientIp ?? "unknown",
                         timeout.Token);
                     if (session.AuthenticationFailures >= 5)
@@ -501,9 +512,24 @@ public class SmtpServerService(
                         await writer.WriteLineAsync(mailFailure);
                         break;
                     }
-                    if (session.IsAuthenticated
-                        && !await senderAuthorization.CanSendAsAsync(
-                            session.AuthenticatedUser!, mailCommand.Address, timeout.Token))
+                    var canSendAs = true;
+                    if (session.IsAuthenticated)
+                    {
+                        try
+                        {
+                            canSendAs = await application.CanSendAsAsync(
+                                new SmtpSenderAuthorization(
+                                    session.AuthenticatedUser!, mailCommand.Address),
+                                timeout.Token);
+                        }
+                        catch (Exception exception) when (!timeout.IsCancellationRequested)
+                        {
+                            logger.LogWarning(exception, "SMTP sender policy is temporarily unavailable");
+                            await writer.WriteLineAsync("451 4.3.0 Sender policy is temporarily unavailable");
+                            break;
+                        }
+                    }
+                    if (!canSendAs)
                     {
                         await writer.WriteLineAsync("553 5.7.1 Sender address is not authorized");
                         break;
@@ -555,7 +581,18 @@ public class SmtpServerService(
                             "553 5.6.7 Non-ASCII recipient requires SMTPUTF8");
                         break;
                     }
-                    var isLocal = await emailService.CanReceiveAsync(rcpt, timeout.Token);
+                    bool isLocal;
+                    try
+                    {
+                        isLocal = await application.CanReceiveAsync(
+                            new SmtpRecipientCheck(rcpt), timeout.Token);
+                    }
+                    catch (Exception exception) when (!timeout.IsCancellationRequested)
+                    {
+                        logger.LogWarning(exception, "SMTP recipient policy is temporarily unavailable");
+                        await writer.WriteLineAsync("451 4.3.0 Recipient policy is temporarily unavailable");
+                        break;
+                    }
                     if (isLocal)
                     {
                         AddRecipient(session, rcpt, isLocal: true, recipientDsn);
@@ -628,11 +665,7 @@ public class SmtpServerService(
                             tlsReader,
                             tlsWriter,
                             session,
-                            emailService,
-                            submissionQueue,
-                            senderAuthorization,
-                            mailAuthenticator,
-                            oauthTokenService,
+                            application,
                             config,
                             timeout,
                             clientIp: clientIp);
@@ -672,7 +705,7 @@ public class SmtpServerService(
         }
     }
 
-    private async Task WriteEhloAsync(StreamWriter writer, GlobalConfigDB config, bool isSecure)
+    private async Task WriteEhloAsync(StreamWriter writer, SmtpListenerOptions config, bool isSecure)
     {
         await writer.WriteLineAsync($"250-{config.SmtpHostname}");
         await writer.WriteLineAsync($"250-SIZE {config.MaxMessageSizeBytes}");
@@ -693,7 +726,7 @@ public class SmtpServerService(
         await writer.WriteLineAsync("250 OK");
     }
 
-    private static X509Certificate2 LoadCertificate(GlobalConfigDB config)
+    private static X509Certificate2 LoadCertificate(SmtpListenerOptions config)
     {
         if (config.TlsCertificateKeyPath is not null)
             return X509Certificate2.CreateFromPemFile(config.TlsCertificatePath!, config.TlsCertificateKeyPath);
@@ -732,8 +765,7 @@ public class SmtpServerService(
 
     private async Task HandleAuthAsync(
         string line, BoundedLineReader reader, StreamWriter writer,
-        SmtpSession session, IMailAuthenticator mailAuthenticator,
-        IOAuthTokenService? oauthTokenService,
+        SmtpSession session, ISmtpApplicationService application,
         string clientIp, CancellationToken ct)
     {
         if (session.IsAuthenticated)
@@ -756,7 +788,7 @@ public class SmtpServerService(
 
         switch (mechanism)
         {
-            case "XOAUTH2" when env.OAuth.EnableOAuth && oauthTokenService is not null:
+            case "XOAUTH2" when env.OAuth.EnableOAuth:
                 {
                     var encoded = parts.Length == 3 ? parts[2] : null;
                     if (encoded is null)
@@ -782,11 +814,19 @@ public class SmtpServerService(
                         return;
                     }
 
-                    var oauthUser = await oauthTokenService.AuthenticateAccessTokenAsync(
-                        accessToken,
-                        "smtp",
-                        ct);
-                    if (oauthUser is null
+                    SmtpIdentityResult oauthUser;
+                    try
+                    {
+                        oauthUser = await application.AuthenticateOAuthAsync(
+                            new SmtpOAuthAuthentication(accessToken), ct);
+                    }
+                    catch (Exception exception) when (!ct.IsCancellationRequested)
+                    {
+                        logger.LogWarning(exception, "SMTP authentication service is temporarily unavailable");
+                        await writer.WriteLineAsync("454 4.7.0 Authentication service is temporarily unavailable");
+                        return;
+                    }
+                    if (oauthUser.Username is null
                         || !string.Equals(
                             oauthUsername,
                             oauthUser.Username,
@@ -879,8 +919,19 @@ public class SmtpServerService(
             return;
         }
 
-        var user = await mailAuthenticator.AuthenticateAsync(username, password, ct);
-        if (user is null)
+        SmtpIdentityResult user;
+        try
+        {
+            user = await application.AuthenticatePasswordAsync(
+                new SmtpPasswordAuthentication(username, password), ct);
+        }
+        catch (Exception exception) when (!ct.IsCancellationRequested)
+        {
+            logger.LogWarning(exception, "SMTP authentication service is temporarily unavailable");
+            await writer.WriteLineAsync("454 4.7.0 Authentication service is temporarily unavailable");
+            return;
+        }
+        if (user.Username is null)
         {
             RecordAuthenticationFailure(session, clientIp);
             await writer.WriteLineAsync("535 5.7.8 Authentication failed");

@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using mk8.email.Application.Interfaces;
 using mk8.email.Contracts.DTOs;
+using mk8.email.Contracts.Mail;
 using mk8.email.Contracts.Messaging;
 using mk8.email.Dav;
 
@@ -28,6 +29,35 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
                 ApplicationOperations.SystemPing => Success(
                     request.Id,
                     new SystemPingResult(DateTimeOffset.UtcNow)),
+                ApplicationOperations.SmtpAuthenticatePassword => Success(
+                    request.Id,
+                    await services.GetRequiredService<ISmtpApplicationService>()
+                        .AuthenticatePasswordAsync(
+                            Deserialize<SmtpPasswordAuthentication>(request), cancellationToken)),
+                ApplicationOperations.SmtpAuthenticateOAuth => Success(
+                    request.Id,
+                    await services.GetRequiredService<ISmtpApplicationService>()
+                        .AuthenticateOAuthAsync(
+                            Deserialize<SmtpOAuthAuthentication>(request), cancellationToken)),
+                ApplicationOperations.SmtpCanSendAs => Success(
+                    request.Id,
+                    await services.GetRequiredService<ISmtpApplicationService>()
+                        .CanSendAsAsync(
+                            Deserialize<SmtpSenderAuthorization>(request), cancellationToken)),
+                ApplicationOperations.SmtpHasMatchingFromAddress => Success(
+                    request.Id,
+                    await services.GetRequiredService<ISmtpApplicationService>()
+                        .HasMatchingFromAddressAsync(
+                            Deserialize<SmtpFromAddressCheck>(request), cancellationToken)),
+                ApplicationOperations.SmtpCanReceive => Success(
+                    request.Id,
+                    await services.GetRequiredService<ISmtpApplicationService>()
+                        .CanReceiveAsync(
+                            Deserialize<SmtpRecipientCheck>(request), cancellationToken)),
+                ApplicationOperations.SmtpEnqueue => Success(
+                    request.Id,
+                    await services.GetRequiredService<ISmtpApplicationService>()
+                        .EnqueueAsync(Deserialize<MailSubmission>(request), cancellationToken)),
                 ApplicationOperations.AdminAuthenticate => Success(
                     request.Id,
                     await services.GetRequiredService<IAuthService>().LoginAsync(

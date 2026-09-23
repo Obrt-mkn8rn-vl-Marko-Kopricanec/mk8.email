@@ -1,9 +1,9 @@
 using System.Collections.Concurrent;
 using System.Net;
 
-namespace mk8.email.Application.Protocol;
+namespace mk8.email.MailWire;
 
-internal sealed class ConnectionLimiter(int maximumConnections)
+public sealed class ConnectionLimiter(int maximumConnections)
 {
     private readonly ConcurrentDictionary<IPAddress, int> _connectionsPerAddress = new();
     private readonly SemaphoreSlim _slots = new(maximumConnections, maximumConnections);

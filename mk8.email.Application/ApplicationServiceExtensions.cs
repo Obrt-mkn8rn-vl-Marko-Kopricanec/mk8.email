@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using mk8.email.Application.Interfaces;
 using mk8.email.Application.Services;
+using mk8.email.Contracts.Mail;
 
 namespace mk8.email.Application;
 
@@ -45,6 +46,7 @@ public static class ApplicationServiceExtensions
         services.AddScoped<ISieveFilterService, SieveFilterService>();
         services.AddScoped<IVacationResponder, VacationResponder>();
         services.AddScoped<IMailSubmissionQueue, PostgresMailSubmissionQueue>();
+        services.AddScoped<ISmtpApplicationService, SmtpApplicationService>();
         services.AddHostedService<MailQueueWorker>();
 
         return services;
@@ -53,7 +55,6 @@ public static class ApplicationServiceExtensions
     public static IServiceCollection AddMailProtocolServers(this IServiceCollection services)
     {
         services.AddMailApplicationWorker();
-        services.AddHostedService<SmtpServerService>();
         services.AddHostedService<ImapServerService>();
         services.AddHostedService<Pop3ServerService>();
         services.AddHostedService<ManageSieveServerService>();

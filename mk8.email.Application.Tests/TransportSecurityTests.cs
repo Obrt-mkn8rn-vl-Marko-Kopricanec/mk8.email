@@ -17,6 +17,9 @@ using mk8.email.Contracts.Storage;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
 using mk8.email.Infrastructure.Models;
+using mk8.email.Contracts.Messaging;
+using mk8.email.Messaging;
+using mk8.email.Smtp.Presentation;
 using mk8.email.Utils;
 
 namespace mk8.email.Application.Tests;
@@ -30,6 +33,70 @@ public sealed class TransportSecurityTests
 
     private string _testDirectory = null!;
     private string _certificatePath = null!;
+
+    [TestMethod]
+    [Timeout(10_000)]
+    public async Task SmtpGatewayPresentationJournalsWireBytesAndFailsClosed()
+    {
+        var port = ReservePort();
+        var journal = new RecordingSmtpJournal();
+        await using (var server = await ServerFixture.StartSmtpAsync(
+                         CreateEnvironment(smtpPort: port), port, journal: journal))
+        {
+            await using var connection = await ProtocolConnection.ConnectAsync(port);
+            Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("220 ", StringComparison.Ordinal));
+            await connection.WriteLineAsync("EHLO client.example");
+            await connection.ReadSmtpResponseAsync();
+            await connection.WriteLineAsync("QUIT");
+            Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("221 ", StringComparison.Ordinal));
+        }
+
+        var sessionId = journal.Records.Single(record =>
+            record.Direction == GatewayTrafficDirections.Inbound
+            && Encoding.Latin1.GetString(record.Payload).Contains(
+                "EHLO client.example\r\n", StringComparison.Ordinal)).SessionId;
+        var records = journal.Records.Where(record => record.SessionId == sessionId).ToArray();
+        Assert.IsTrue(records.Length >= 4);
+        Assert.IsTrue(records.Where(record => record.Direction == GatewayTrafficDirections.Inbound)
+            .Any(record => Encoding.Latin1.GetString(record.Payload).Contains(
+                "EHLO client.example\r\n", StringComparison.Ordinal)));
+        Assert.IsTrue(records.Where(record => record.Direction == GatewayTrafficDirections.Outbound)
+            .Any(record => Encoding.Latin1.GetString(record.Payload).Contains(
+                "220 ", StringComparison.Ordinal)));
+        Assert.IsTrue(records.All(record => record.Protocol == "smtp"));
+        CollectionAssert.AreEqual(
+            Enumerable.Range(0, records.Length).Select(value => (long)value).ToArray(),
+            records.Select(record => record.Sequence).ToArray());
+
+        var rejectedPort = ReservePort();
+        await using var rejectedServer = await ServerFixture.StartSmtpAsync(
+            CreateEnvironment(smtpPort: rejectedPort),
+            rejectedPort,
+            journal: new RecordingSmtpJournal { RejectWrites = true });
+        await using var rejectedConnection = await ProtocolConnection.ConnectAsync(rejectedPort);
+        await Assert.ThrowsAsync<EndOfStreamException>(
+            () => rejectedConnection.ReadLineAsync());
+    }
+
+    [TestMethod]
+    [Timeout(10_000)]
+    public async Task SmtpKeepsTheGatewaySessionAliveWhenRecipientPolicyIsUnavailable()
+    {
+        var port = ReservePort();
+        await using var server = await ServerFixture.StartSmtpAsync(
+            CreateEnvironment(smtpPort: port), port);
+        server.EmailService.ThrowOnCanReceive = true;
+        await using var connection = await ProtocolConnection.ConnectAsync(port);
+        await connection.ReadLineAsync();
+        await connection.WriteLineAsync("EHLO client.example");
+        await connection.ReadSmtpResponseAsync();
+        await connection.WriteLineAsync("MAIL FROM:<sender@example.test>");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("250 ", StringComparison.Ordinal));
+        await connection.WriteLineAsync("RCPT TO:<user@mk8n.com>");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("451 ", StringComparison.Ordinal));
+        await connection.WriteLineAsync("NOOP");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("250 ", StringComparison.Ordinal));
+    }
 
     [TestInitialize]
     public void Initialize()
@@ -3355,13 +3422,15 @@ public sealed class TransportSecurityTests
         public static async Task<ServerFixture> StartSmtpAsync(
             EnvironmentConfig environment,
             int port,
-            ILogger<SmtpServerService>? logger = null)
+            ILogger<SmtpServerService>? logger = null,
+            IGatewayTrafficJournal? journal = null)
         {
             var (services, emailService, mailQueue) = CreateServices(environment);
             var hostedService = new SmtpServerService(
                 services.GetRequiredService<IServiceScopeFactory>(),
                 environment,
-                logger ?? NullLogger<SmtpServerService>.Instance);
+                logger ?? NullLogger<SmtpServerService>.Instance,
+                journal);
             var fixture = new ServerFixture(services, hostedService, emailService, mailQueue);
             await fixture.StartAsync(port);
             return fixture;
@@ -3466,6 +3535,7 @@ public sealed class TransportSecurityTests
             serviceCollection.AddSingleton(environment);
             serviceCollection.AddSingleton<IEmailService>(emailService);
             serviceCollection.AddSingleton<IMailSubmissionQueue>(mailQueue);
+            serviceCollection.AddScoped<ISmtpApplicationService, SmtpApplicationService>();
             serviceCollection.AddScoped<ISenderAuthorizationService, SenderAuthorizationService>();
             serviceCollection.AddScoped<IMailAuthenticator, MailAuthenticator>();
             serviceCollection.AddScoped<IOAuthTokenService, OAuthTokenService>();
@@ -4201,9 +4271,13 @@ public sealed class TransportSecurityTests
 
     private sealed class StubEmailService : IEmailService
     {
+        public bool ThrowOnCanReceive { get; set; }
+
         public Task<bool> CanReceiveAsync(
             string recipient,
-            CancellationToken cancellationToken = default) => Task.FromResult(true);
+            CancellationToken cancellationToken = default) => ThrowOnCanReceive
+                ? throw new IOException("The application worker is unavailable.")
+                : Task.FromResult(true);
 
         public Task<bool> DeliverAsync(
             string sender,
@@ -4240,5 +4314,27 @@ public sealed class TransportSecurityTests
                 throw new IOException("Test queue failure.");
             return Task.FromResult(submission.QueueId);
         }
+    }
+
+    private sealed class RecordingSmtpJournal : IGatewayTrafficJournal
+    {
+        public ConcurrentQueue<GatewayTrafficRecord> Records { get; } = new();
+        public bool RejectWrites { get; init; }
+
+        public Task AppendAsync(
+            GatewayTrafficRecord record,
+            CancellationToken cancellationToken = default)
+        {
+            if (RejectWrites)
+                throw new InvalidOperationException("The journal is unavailable.");
+            Records.Enqueue(record);
+            return Task.CompletedTask;
+        }
+
+        public Task<IReadOnlyList<GatewayTrafficRecord>> ReadSessionAsync(
+            Guid sessionId,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<GatewayTrafficRecord>>(
+                Records.Where(record => record.SessionId == sessionId).ToArray());
     }
 }

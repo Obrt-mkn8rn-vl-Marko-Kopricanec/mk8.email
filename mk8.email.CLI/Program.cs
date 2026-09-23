@@ -319,6 +319,7 @@ static IHost BuildHost(
     {
         builder.Services.AddAzureBlobObjectStorage(environmentConfig);
         builder.Services.AddMailProtocolServers();
+        builder.Services.AddHostedService<SmtpServerService>();
         builder.Services.AddOutboundSmtpPresentation();
     }
     return builder.Build();

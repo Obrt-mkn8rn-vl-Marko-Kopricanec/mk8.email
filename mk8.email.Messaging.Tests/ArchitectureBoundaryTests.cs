@@ -75,10 +75,12 @@ public sealed class ArchitectureBoundaryTests
     }
 
     [TestMethod]
-    public void OutboundSmtpNetworkCodeIsOutsideApplicationCoreAndWorker()
+    public void SmtpNetworkAndListenerCodeIsOutsideApplicationCoreAndWorker()
     {
         var presentationAssembly = typeof(OutboundSmtpRelay).Assembly;
         Assert.AreEqual("mk8.email.Smtp.Presentation", presentationAssembly.GetName().Name);
+        Assert.AreSame(presentationAssembly, typeof(SmtpServerService).Assembly);
+        Assert.AreEqual("mk8.email.Contracts", typeof(ISmtpApplicationService).Assembly.GetName().Name);
         Assert.IsFalse(presentationAssembly.GetReferencedAssemblies().Any(reference =>
             reference.Name is not null
             && (reference.Name.StartsWith("mk8.email.Application", StringComparison.Ordinal)

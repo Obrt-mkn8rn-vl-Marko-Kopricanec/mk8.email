@@ -266,6 +266,29 @@ public sealed class EnvironmentConfigTests
     }
 
     [TestMethod]
+    public void GatewayDoesNotRequireApplicationOnlyDkimPrivateKey()
+    {
+        var missingWorkerKey = Path.Combine(_testDirectory, "worker-only-dkim-key");
+        var configuration = CreateValidConfiguration(
+            enableDkimSigning: true,
+            dkimPrivateKeyPath: missingWorkerKey);
+        var configurationPath = WriteFile(
+            "mk8email-gateway-with-dkim.config.json",
+            JsonSerializer.Serialize(configuration));
+
+        var gateway = EnvironmentLoader.LoadFromFile(
+            configurationPath,
+            role: EnvironmentValidationRole.Gateway);
+        Assert.AreEqual(0, gateway.Validate(role: EnvironmentValidationRole.Gateway).Count);
+
+        var exception = Assert.ThrowsExactly<InvalidOperationException>(() =>
+            EnvironmentLoader.LoadFromFile(
+                configurationPath,
+                role: EnvironmentValidationRole.ApplicationWorker));
+        StringAssert.Contains(exception.Message, "Dkim.PrivateKeyPath");
+    }
+
+    [TestMethod]
     public void DistributedMessagingRequiresAzureBlobAndValidEncryptionSettings()
     {
         var configuration = CreateValidConfiguration(
@@ -418,6 +441,7 @@ public sealed class EnvironmentConfigTests
         bool enableImap = true,
         bool enableSpfCheck = false,
         bool enableDkimSigning = false,
+        string? dkimPrivateKeyPath = null,
         string dkimSelector = "default",
         string rspamdEndpoint = "http://127.0.0.1:11333/checkv2",
         int queueMaxAttempts = 20,
@@ -536,7 +560,7 @@ public sealed class EnvironmentConfigTests
             },
             Dkim = new DkimConfig
             {
-                PrivateKeyPath = enableDkimSigning ? _certificatePath : null,
+                PrivateKeyPath = dkimPrivateKeyPath ?? (enableDkimSigning ? _certificatePath : null),
                 Selector = dkimSelector,
                 EnableSigning = enableDkimSigning,
             },

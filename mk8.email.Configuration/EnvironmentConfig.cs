@@ -260,7 +260,8 @@ public sealed class EnvironmentConfig
             RequireFile(errors, Tls.CertificateKeyPath, "Tls.CertificateKeyPath");
         if (Dkim.EnableSigning)
         {
-            RequireFile(errors, Dkim.PrivateKeyPath, "Dkim.PrivateKeyPath");
+            if (validatesApplication)
+                RequireFile(errors, Dkim.PrivateKeyPath, "Dkim.PrivateKeyPath");
             if (!DkimIdentityValidator.IsValidSelector(Dkim.Selector))
                 errors.Add("Dkim.Selector must be a DNS label.");
         }

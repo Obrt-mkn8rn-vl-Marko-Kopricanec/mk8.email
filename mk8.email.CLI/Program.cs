@@ -11,6 +11,8 @@ using mk8.email.Configuration;
 using mk8.email.Contracts.Storage;
 using mk8.email.Hosting;
 using mk8.email.Messaging;
+using Azure;
+using Azure.Storage.Blobs;
 using Npgsql;
 
 return await RunManagementCommandAsync(args);
@@ -151,6 +153,48 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
                     + $"{summary.UniqueContentCount} unique Blob contents. "
                     + "A target restore and Blob audit are still required.");
                 return 0;
+            }
+            finally
+            {
+                Console.CancelKeyPress -= cancel;
+            }
+        }
+        if (arguments.Length == 6
+            && arguments[0] is ("--publish-distributed-archive" or "--fetch-distributed-archive"))
+        {
+            var connectionString = DistributedArchiveStore.ReadPrivateConnectionString(
+                arguments[1]);
+            var service = new BlobServiceClient(connectionString);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromHours(4));
+            ConsoleCancelEventHandler cancel = (_, eventArgs) =>
+            {
+                eventArgs.Cancel = true;
+                timeout.Cancel();
+            };
+            Console.CancelKeyPress += cancel;
+            try
+            {
+                if (arguments[0] == "--publish-distributed-archive")
+                {
+                    await DistributedArchiveStore.PublishAsync(
+                        service, arguments[2], arguments[3], arguments[4],
+                        arguments[5], timeout.Token);
+                    Console.WriteLine($"Published encrypted archive {arguments[3]} to Azure Blob storage.");
+                }
+                else
+                {
+                    await DistributedArchiveStore.FetchAsync(
+                        service, arguments[2], arguments[3], arguments[4],
+                        arguments[5], timeout.Token);
+                    Console.WriteLine($"Fetched and verified encrypted archive {arguments[3]}.");
+                }
+                return 0;
+            }
+            catch (RequestFailedException exception)
+            {
+                Console.Error.WriteLine(
+                    $"Azure Blob archive transport failed: HTTP {exception.Status} ({exception.ErrorCode}).");
+                return 1;
             }
             finally
             {
@@ -482,6 +526,8 @@ static bool IsSupportedCommand(string[] arguments) =>
     || arguments.Length == 3 && arguments[0] == "--export-distributed-snapshot"
     || arguments.Length == 3 && arguments[0] == "--restore-distributed-snapshot"
     || arguments.Length == 2 && arguments[0] == "--verify-distributed-snapshot"
+    || arguments.Length == 6 && arguments[0] is
+        ("--publish-distributed-archive" or "--fetch-distributed-archive")
     || arguments.Length == 3 && arguments[0] == "--enroll-totp"
     || arguments.Length == 3 && arguments[0] == "--confirm-totp"
     || arguments.Length == 2 && arguments[0] == "--totp-status"

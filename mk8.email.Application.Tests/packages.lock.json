@@ -320,6 +320,7 @@
       "mk8.email.hosting": {
         "type": "Project",
         "dependencies": {
+          "Azure.Storage.Blobs": "[12.29.2, )",
           "Npgsql": "[10.0.2, )",
           "mk8.email.Configuration": "[1.0.0, )",
           "mk8.email.Contracts": "[1.0.0, )",

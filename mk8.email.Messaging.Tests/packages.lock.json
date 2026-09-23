@@ -654,6 +654,7 @@
       "mk8.email.hosting": {
         "type": "Project",
         "dependencies": {
+          "Azure.Storage.Blobs": "[12.29.2, )",
           "Microsoft.Extensions.DependencyInjection.Abstractions": "[10.0.4, )",
           "Npgsql": "[10.0.2, )",
           "mk8.email.Configuration": "[1.0.0, )",

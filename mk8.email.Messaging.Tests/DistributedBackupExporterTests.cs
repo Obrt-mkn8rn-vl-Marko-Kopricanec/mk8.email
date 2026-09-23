@@ -44,6 +44,8 @@ public sealed class DistributedBackupExporterTests
         var container = service.GetBlobContainerClient($"mk8-export-{Guid.NewGuid():N}");
         var restoredContainer = service.GetBlobContainerClient(
             $"mk8-restored-{Guid.NewGuid():N}");
+        var archiveContainer = service.GetBlobContainerClient(
+            $"mk8-archive-{Guid.NewGuid():N}");
         var objects = new AzureBlobLargeObjectStore(
             service,
             new AzureBlobLargeObjectStoreOptions
@@ -246,12 +248,107 @@ public sealed class DistributedBackupExporterTests
                 CollectionAssert.AreEqual(
                     await File.ReadAllBytesAsync(Path.Combine(published, "blobs", sha256)),
                     await File.ReadAllBytesAsync(Path.Combine(recoveredPath, "blobs", sha256)));
+
+                var connectionFile = Path.Combine(jobRoot, "archive-blob-connection.txt");
+                await File.WriteAllTextAsync(connectionFile, blobConnection + "\n");
+                File.SetUnixFileMode(connectionFile,
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                var archiveId = "snapshot-" + Guid.NewGuid().ToString("N");
+                var publishArguments = new[]
+                {
+                    "--publish-distributed-archive", connectionFile,
+                    archiveContainer.Name, archiveId, sealedPath, verifyKey,
+                };
+                var remotePublish = await RunArchiveTransportCliAsync(publishArguments);
+                Assert.AreEqual(0, remotePublish.ExitCode, remotePublish.Output);
+                var retryPublish = await RunArchiveTransportCliAsync(publishArguments);
+                Assert.AreEqual(0, retryPublish.ExitCode, retryPublish.Output);
+                var remoteEntries = new List<string>();
+                await foreach (var blob in archiveContainer.GetBlobsAsync())
+                    remoteEntries.Add(blob.Name);
+                Assert.HasCount(3, remoteEntries);
+                var completion = archiveContainer.GetBlobClient(
+                    $"distributed-archives/v1/{archiveId}/complete.json");
+                await completion.DeleteAsync();
+                var incomplete = Path.Combine(jobRoot, "incomplete-download");
+                var incompleteFetch = await RunArchiveTransportCliAsync(
+                    ["--fetch-distributed-archive", connectionFile,
+                        archiveContainer.Name, archiveId, incomplete, verifyKey]);
+                Assert.AreNotEqual(0, incompleteFetch.ExitCode);
+                Assert.IsFalse(Path.Exists(incomplete));
+                var republish = await RunArchiveTransportCliAsync(publishArguments);
+                Assert.AreEqual(0, republish.ExitCode, republish.Output);
+
+                File.SetUnixFileMode(connectionFile,
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead);
+                var exposedConnection = await RunArchiveTransportCliAsync(publishArguments);
+                Assert.AreNotEqual(0, exposedConnection.ExitCode);
+                File.SetUnixFileMode(connectionFile,
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                var hardLink = Path.Combine(jobRoot, "linked-verify.pem");
+                var linkResult = await RunExternalAsync("/usr/bin/ln", [verifyKey, hardLink]);
+                Assert.AreEqual(0, linkResult.ExitCode, linkResult.Output);
+                var linkedKeyDestination = Path.Combine(jobRoot, "linked-key-download");
+                var linkedKeyFetch = await RunArchiveTransportCliAsync(
+                    ["--fetch-distributed-archive", connectionFile,
+                        archiveContainer.Name, archiveId, linkedKeyDestination, verifyKey]);
+                Assert.AreNotEqual(0, linkedKeyFetch.ExitCode);
+                Assert.IsFalse(Path.Exists(linkedKeyDestination));
+                File.Delete(hardLink);
+
+                using (var unrelatedSigner = RSA.Create(3072))
+                {
+                    var unrelatedKey = Path.Combine(jobRoot, "unrelated-verify.pem");
+                    await File.WriteAllTextAsync(
+                        unrelatedKey, unrelatedSigner.ExportSubjectPublicKeyInfoPem());
+                    File.SetUnixFileMode(unrelatedKey,
+                        UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                    var wrongKeyDestination = Path.Combine(jobRoot, "wrong-key-download");
+                    var wrongKeyFetch = await RunArchiveTransportCliAsync(
+                        ["--fetch-distributed-archive", connectionFile,
+                            archiveContainer.Name, archiveId, wrongKeyDestination, unrelatedKey]);
+                    Assert.AreNotEqual(0, wrongKeyFetch.ExitCode);
+                    Assert.IsFalse(Path.Exists(wrongKeyDestination));
+                }
+                var downloaded = Path.Combine(jobRoot, "downloaded-sealed");
+                var remoteFetch = await RunArchiveTransportCliAsync(
+                    ["--fetch-distributed-archive", connectionFile,
+                        archiveContainer.Name, archiveId, downloaded, verifyKey]);
+                Assert.AreEqual(0, remoteFetch.ExitCode, remoteFetch.Output);
+                Assert.AreEqual(
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute,
+                    File.GetUnixFileMode(downloaded));
+                Assert.AreEqual(
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite,
+                    File.GetUnixFileMode(Path.Combine(downloaded, "snapshot.tar.age")));
+                CollectionAssert.AreEqual(
+                    await File.ReadAllBytesAsync(Path.Combine(sealedPath, "snapshot.tar.age")),
+                    await File.ReadAllBytesAsync(Path.Combine(downloaded, "snapshot.tar.age")));
+                var offHostRecovered = Path.Combine(jobRoot, "off-host-recovered");
+                var remoteUnseal = await RunArchiveAsync(
+                    ["unseal", downloaded, identity, verifyKey, offHostRecovered]);
+                Assert.AreEqual(0, remoteUnseal.ExitCode, remoteUnseal.Output);
+                var offHostSummary = await DistributedBackupRestorer.VerifyAsync(
+                    offHostRecovered);
+                Assert.AreEqual(2L, offHostSummary.ReferenceCount);
+
+                var remoteCipher = archiveContainer.GetBlobClient(
+                    $"distributed-archives/v1/{archiveId}/snapshot.tar.age");
+                await using (var tampered = new MemoryStream("tampered"u8.ToArray()))
+                    await remoteCipher.UploadAsync(tampered, overwrite: true);
+                var rejected = Path.Combine(jobRoot, "tampered-download");
+                var tamperedFetch = await RunArchiveTransportCliAsync(
+                    ["--fetch-distributed-archive", connectionFile,
+                        archiveContainer.Name, archiveId, rejected, verifyKey]);
+                Assert.AreNotEqual(0, tamperedFetch.ExitCode);
+                Assert.IsFalse(Path.Exists(rejected));
             }
         }
         finally
         {
             await container.DeleteIfExistsAsync();
             await restoredContainer.DeleteIfExistsAsync();
+            await archiveContainer.DeleteIfExistsAsync();
             parent.Delete(recursive: true);
         }
     }
@@ -601,6 +698,22 @@ public sealed class DistributedBackupExporterTests
         Assert.IsTrue(File.Exists(assembly), "The management CLI executable is missing.");
         Assert.IsTrue(File.Exists(script), "The distributed archive wrapper is missing.");
         return await RunExternalAsync(script, [.. arguments, host, assembly]);
+    }
+
+    private static async Task<(int ExitCode, string Output)> RunArchiveTransportCliAsync(
+        IReadOnlyList<string> arguments)
+    {
+        var host = Environment.GetEnvironmentVariable("MK8_EMAIL_TEST_DOTNET_HOST")
+            ?? Environment.GetEnvironmentVariable("DOTNET_HOST_PATH")
+            ?? "dotnet";
+        var configuration = new DirectoryInfo(AppContext.BaseDirectory).Parent?.Name
+            ?? throw new InvalidOperationException("The test configuration directory is missing.");
+        var repository = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../.."));
+        var assembly = Path.Combine(
+            repository, "mk8.email.CLI", "bin", configuration,
+            "net10.0", "mk8.email.Application.CLI.dll");
+        Assert.IsTrue(File.Exists(assembly), "The management CLI executable is missing.");
+        return await RunExternalAsync(host, [assembly, .. arguments]);
     }
 
     private static async Task<(int ExitCode, string Output)> RunExternalAsync(

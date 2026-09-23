@@ -9,9 +9,6 @@ using mk8.email.Contracts.Enums;
 using mk8.email.Infrastructure;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
-using mk8.email.Hosting;
-using mk8.email.Imap.Presentation;
-using mk8.email.Smtp.Presentation;
 
 return await RunManagementCommandAsync(args);
 
@@ -62,7 +59,7 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
 
         if (arguments.SequenceEqual(["--initialize-empty-database"]))
         {
-            using var host = BuildHost(arguments, environmentConfig, includeMailServers: false);
+            using var host = BuildHost(arguments, environmentConfig);
             using var scope = host.Services.CreateScope();
             var result = await scope.ServiceProvider
                 .GetRequiredService<IDatabaseInitializationService>()
@@ -73,7 +70,7 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
 
         if (arguments.SequenceEqual(["--ensure-runtime-schema"]))
         {
-            using var host = BuildHost(arguments, environmentConfig, includeMailServers: false);
+            using var host = BuildHost(arguments, environmentConfig);
             using var scope = host.Services.CreateScope();
             await scope.ServiceProvider
                 .GetRequiredService<MailRuntimeSchemaService>()
@@ -84,7 +81,7 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
 
         if (arguments.Length == 3 && arguments[0] == "--ensure-domain")
         {
-            using var host = BuildHost(arguments, environmentConfig, includeMailServers: false);
+            using var host = BuildHost(arguments, environmentConfig);
             using var scope = host.Services.CreateScope();
             var result = await scope.ServiceProvider
                 .GetRequiredService<IMailAdministrationService>()
@@ -104,7 +101,7 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
 
             var password = File.ReadAllText(passwordPath).TrimEnd('\r', '\n');
             _ = Enum.TryParse<UserRole>(arguments[2], ignoreCase: true, out var role);
-            using var host = BuildHost(arguments, environmentConfig, includeMailServers: false);
+            using var host = BuildHost(arguments, environmentConfig);
             using var scope = host.Services.CreateScope();
             var result = await scope.ServiceProvider
                 .GetRequiredService<IMailAdministrationService>()
@@ -115,7 +112,7 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
 
         if (arguments.Length == 3 && arguments[0] == "--set-catchall")
         {
-            using var host = BuildHost(arguments, environmentConfig, includeMailServers: false);
+            using var host = BuildHost(arguments, environmentConfig);
             using var scope = host.Services.CreateScope();
             var result = await scope.ServiceProvider
                 .GetRequiredService<IMailAdministrationService>()
@@ -127,7 +124,7 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
         if (arguments.Length == 3 && arguments[0] == "--set-domain-active")
         {
             _ = bool.TryParse(arguments[2], out var isActive);
-            using var host = BuildHost(arguments, environmentConfig, includeMailServers: false);
+            using var host = BuildHost(arguments, environmentConfig);
             using var scope = host.Services.CreateScope();
             var result = await scope.ServiceProvider
                 .GetRequiredService<IMailAdministrationService>()
@@ -138,7 +135,7 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
 
         if (arguments.Length == 3 && arguments[0] == "--create-app-password")
         {
-            using var host = BuildHost(arguments, environmentConfig, includeMailServers: false);
+            using var host = BuildHost(arguments, environmentConfig);
             using var scope = host.Services.CreateScope();
             var result = await scope.ServiceProvider
                 .GetRequiredService<IApplicationPasswordService>()
@@ -154,7 +151,7 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
 
         if (arguments.Length == 2 && arguments[0] == "--list-app-passwords")
         {
-            using var host = BuildHost(arguments, environmentConfig, includeMailServers: false);
+            using var host = BuildHost(arguments, environmentConfig);
             using var scope = host.Services.CreateScope();
             var passwords = await scope.ServiceProvider
                 .GetRequiredService<IApplicationPasswordService>()
@@ -174,7 +171,7 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
         if (arguments.Length == 3 && arguments[0] == "--revoke-app-password")
         {
             _ = Guid.TryParse(arguments[2], out var applicationPasswordId);
-            using var host = BuildHost(arguments, environmentConfig, includeMailServers: false);
+            using var host = BuildHost(arguments, environmentConfig);
             using var scope = host.Services.CreateScope();
             var revoked = await scope.ServiceProvider
                 .GetRequiredService<IApplicationPasswordService>()
@@ -187,7 +184,7 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
 
         if (arguments.Length == 3 && arguments[0] == "--enroll-totp")
         {
-            using var host = BuildHost(arguments, environmentConfig, includeMailServers: false);
+            using var host = BuildHost(arguments, environmentConfig);
             using var scope = host.Services.CreateScope();
             var result = await scope.ServiceProvider.GetRequiredService<IMfaService>()
                 .BeginTotpEnrollmentAsync(arguments[1], arguments[2]);
@@ -201,7 +198,7 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
 
         if (arguments.Length == 3 && arguments[0] == "--confirm-totp")
         {
-            using var host = BuildHost(arguments, environmentConfig, includeMailServers: false);
+            using var host = BuildHost(arguments, environmentConfig);
             using var scope = host.Services.CreateScope();
             var result = await scope.ServiceProvider.GetRequiredService<IMfaService>()
                 .ConfirmTotpEnrollmentAsync(arguments[1], arguments[2]);
@@ -215,7 +212,7 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
 
         if (arguments.Length == 2 && arguments[0] == "--totp-status")
         {
-            using var host = BuildHost(arguments, environmentConfig, includeMailServers: false);
+            using var host = BuildHost(arguments, environmentConfig);
             using var scope = host.Services.CreateScope();
             var status = await scope.ServiceProvider.GetRequiredService<IMfaService>()
                 .GetStatusAsync(arguments[1]);
@@ -233,7 +230,7 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
 
         if (arguments.Length == 2 && arguments[0] == "--regenerate-recovery-codes")
         {
-            using var host = BuildHost(arguments, environmentConfig, includeMailServers: false);
+            using var host = BuildHost(arguments, environmentConfig);
             using var scope = host.Services.CreateScope();
             var result = await scope.ServiceProvider.GetRequiredService<IMfaService>()
                 .RegenerateRecoveryCodesAsync(arguments[1]);
@@ -247,7 +244,7 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
 
         if (arguments.Length == 2 && arguments[0] == "--disable-totp")
         {
-            using var host = BuildHost(arguments, environmentConfig, includeMailServers: false);
+            using var host = BuildHost(arguments, environmentConfig);
             using var scope = host.Services.CreateScope();
             var disabled = await scope.ServiceProvider.GetRequiredService<IMfaService>()
                 .DisableTotpAsync(arguments[1]);
@@ -257,22 +254,7 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
             return disabled ? 0 : 1;
         }
 
-        using var protocolHost = BuildHost(arguments, environmentConfig, includeMailServers: true);
-        using (var scope = protocolHost.Services.CreateScope())
-        {
-            await scope.ServiceProvider.GetRequiredService<ISeederService>().SeedAsync();
-            await scope.ServiceProvider
-                .GetRequiredService<MailboxMessageLargeObjectMigrationService>()
-                .MigrateAsync();
-            if (environmentConfig.Dav.EnableDav)
-            {
-                await scope.ServiceProvider
-                    .GetRequiredService<DavResourceLargeObjectMigrationService>()
-                    .MigrateAsync();
-            }
-        }
-        await protocolHost.RunAsync();
-        return 0;
+        throw new InvalidOperationException("The management command is not supported.");
     }
     catch (Exception exception)
     {
@@ -296,19 +278,16 @@ static bool IsSupportedCommand(string[] arguments) =>
     || arguments.Length == 3 && arguments[0] == "--confirm-totp"
     || arguments.Length == 2 && arguments[0] == "--totp-status"
     || arguments.Length == 2 && arguments[0] == "--regenerate-recovery-codes"
-    || arguments.Length == 2 && arguments[0] == "--disable-totp"
-    || arguments.SequenceEqual(["--serve"]);
+    || arguments.Length == 2 && arguments[0] == "--disable-totp";
 
 static void WriteUsage()
 {
     Console.Error.WriteLine("Use one valid management command.");
-    Console.Error.WriteLine("The mail server requires the --serve command.");
 }
 
 static IHost BuildHost(
     string[] arguments,
-    EnvironmentConfig environmentConfig,
-    bool includeMailServers)
+    EnvironmentConfig environmentConfig)
 {
     var builder = Host.CreateApplicationBuilder(arguments);
     builder.Logging.ClearProviders();
@@ -316,13 +295,5 @@ static IHost BuildHost(
     builder.Logging.AddFilter("Microsoft.EntityFrameworkCore.Database.Command", LogLevel.Warning);
     builder.Services.AddInfrastructure(environmentConfig);
     builder.Services.AddApplication();
-    if (includeMailServers)
-    {
-        builder.Services.AddAzureBlobObjectStorage(environmentConfig);
-        builder.Services.AddMailApplicationWorker();
-        builder.Services.AddHostedService<ImapServerService>();
-        builder.Services.AddHostedService<SmtpServerService>();
-        builder.Services.AddOutboundSmtpPresentation();
-    }
     return builder.Build();
 }

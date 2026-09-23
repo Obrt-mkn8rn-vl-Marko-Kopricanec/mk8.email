@@ -1,0 +1,126 @@
+#!/bin/sh
+set -eu
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+export LC_ALL=C
+
+if [ "$(id -u)" -ne 0 ] || [ "$#" -ne 1 ]; then
+    printf '%s\n' "Usage: configure-wake-database-access PASSWORD_FILE" >&2
+    exit 2
+fi
+
+password_file=$1
+if [ -L "$password_file" ] || [ ! -f "$password_file" ] \
+    || [ "$(stat -c '%U:%G %a %h' "$password_file" 2>/dev/null || true)" != 'root:root 600 1' ]; then
+    printf '%s\n' "The Wake database password file has unsafe metadata." >&2
+    exit 1
+fi
+password_bytes=$(wc -c < "$password_file" | tr -d ' ')
+if [ "$password_bytes" -ne 64 ] && [ "$password_bytes" -ne 65 ]; then
+    printf '%s\n' "The Wake database password must contain 64 hexadecimal characters." >&2
+    exit 1
+fi
+if ! grep -aEq '^[0-9a-f]{64}$' "$password_file"; then
+    printf '%s\n' "The Wake database password must be one lowercase hexadecimal line." >&2
+    exit 1
+fi
+wake_password=$(tr -d '\n' < "$password_file")
+case "$wake_password" in
+    *[!0123456789abcdef]*|'')
+        printf '%s\n' "The Wake database password must be lowercase hexadecimal." >&2
+        exit 1
+        ;;
+esac
+if [ "${#wake_password}" -ne 64 ]; then
+    printf '%s\n' "The Wake database password has the wrong length." >&2
+    exit 1
+fi
+
+if ! runuser -u postgres -- psql --dbname=mk8email --no-psqlrc \
+    --tuples-only --no-align --set=ON_ERROR_STOP=1 \
+    --command="SELECT to_regclass('public.application_requests') IS NOT NULL
+        AND to_regclass('public.mail_queue_messages') IS NOT NULL
+        AND to_regclass('public.jmap_push_subscriptions') IS NOT NULL
+        AND to_regclass('public.jmap_changes') IS NOT NULL
+        AND to_regclass('public.users') IS NOT NULL
+        AND to_regclass('public.inboxes') IS NOT NULL
+        AND to_regclass('public.addresses') IS NOT NULL
+        AND to_regclass('public.companies') IS NOT NULL" \
+    | grep -qx t; then
+    printf '%s\n' "The application and messaging schemas must exist before Wake access is configured." >&2
+    exit 1
+fi
+
+MK8_WAKE_DB_PASSWORD=$wake_password
+export MK8_WAKE_DB_PASSWORD
+runuser --preserve-environment -u postgres -- psql --dbname=mk8email \
+    --no-psqlrc --set=ON_ERROR_STOP=1 <<'SQL'
+BEGIN;
+SELECT pg_advisory_xact_lock(5563539125731845289);
+
+DO $validate$
+DECLARE
+    wake_role oid;
+BEGIN
+    SELECT oid INTO wake_role FROM pg_roles WHERE rolname = 'mk8wake';
+    IF wake_role IS NULL THEN
+        RETURN;
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM pg_roles
+        WHERE oid = wake_role
+            AND (rolsuper OR rolcreatedb OR rolcreaterole
+                OR rolreplication OR rolbypassrls))
+        OR EXISTS (SELECT 1 FROM pg_auth_members WHERE member = wake_role)
+        OR EXISTS (SELECT 1 FROM pg_database WHERE datdba = wake_role)
+        OR EXISTS (SELECT 1 FROM pg_namespace WHERE nspowner = wake_role)
+        OR EXISTS (SELECT 1 FROM pg_class WHERE relowner = wake_role)
+        OR EXISTS (SELECT 1 FROM pg_proc WHERE proowner = wake_role)
+        OR EXISTS (SELECT 1 FROM pg_type WHERE typowner = wake_role)
+        OR EXISTS (
+            SELECT 1 FROM pg_attribute AS attribute
+            CROSS JOIN LATERAL aclexplode(attribute.attacl) AS privilege
+            WHERE privilege.grantee = wake_role)
+    THEN
+        RAISE EXCEPTION 'The existing Wake role has unsafe ownership, membership, or column grants';
+    END IF;
+END
+$validate$;
+
+SELECT 'CREATE ROLE mk8wake LOGIN' WHERE NOT EXISTS (
+    SELECT 1 FROM pg_roles WHERE rolname = 'mk8wake') \gexec
+\getenv wake_password MK8_WAKE_DB_PASSWORD
+ALTER ROLE mk8wake PASSWORD :'wake_password';
+ALTER ROLE mk8wake LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
+    NOREPLICATION NOBYPASSRLS NOINHERIT;
+ALTER ROLE mk8wake CONNECTION LIMIT 8;
+ALTER ROLE mk8wake SET statement_timeout TO '15s';
+ALTER ROLE mk8wake SET lock_timeout TO '5s';
+
+REVOKE ALL ON DATABASE mk8email FROM mk8wake;
+GRANT CONNECT ON DATABASE mk8email TO mk8wake;
+REVOKE ALL ON SCHEMA public FROM mk8wake;
+GRANT USAGE ON SCHEMA public TO mk8wake;
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM mk8wake;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM mk8wake;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM mk8wake;
+GRANT SELECT ON public.application_requests, public.mail_queue_messages,
+    public.jmap_push_subscriptions, public.jmap_changes, public.users,
+    public.inboxes, public.addresses, public.companies TO mk8wake;
+
+DO $verify$
+BEGIN
+    IF has_database_privilege('mk8wake', 'mk8email', 'CREATE')
+        OR has_database_privilege('mk8wake', 'mk8email', 'TEMPORARY')
+        OR has_schema_privilege('mk8wake', 'public', 'CREATE')
+    THEN
+        RAISE EXCEPTION 'The Wake role inherits unsafe PUBLIC privileges';
+    END IF;
+END
+$verify$;
+COMMIT;
+SQL
+unset MK8_WAKE_DB_PASSWORD wake_password
+
+printf '%s\n' "The restricted Wake database role is configured."

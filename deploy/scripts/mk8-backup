@@ -151,6 +151,7 @@ tar --create --gzip --file="$stage/configuration.tar.gz" --directory=/ \
     usr/local/sbin/upgrade-distributed-role \
     usr/local/sbin/configure-apt-sources \
     usr/local/sbin/configure-gateway-database-access \
+    usr/local/sbin/configure-wake-database-access \
     usr/local/sbin/configure-mail-database-access \
     usr/local/sbin/deactivate-mail-stack \
     usr/local/sbin/deactivate-distributed-role \

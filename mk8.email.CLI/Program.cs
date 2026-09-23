@@ -49,6 +49,19 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
         var isDevelopment = arguments.Contains("--dev", StringComparer.Ordinal)
             || arguments.Contains("--development", StringComparer.Ordinal)
             || Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") == "Development";
+        if (arguments.Length == 2
+            && arguments[0] is ("--validate-gateway-config" or "--validate-worker-config"))
+        {
+            var role = arguments[0] == "--validate-gateway-config"
+                ? EnvironmentValidationRole.Gateway
+                : EnvironmentValidationRole.ApplicationWorker;
+            var validated = EnvironmentLoader.LoadFromFile(
+                arguments[1], isDevelopment, role);
+            if (!validated.Messaging.Enabled)
+                throw new InvalidOperationException("Distributed messaging must be enabled.");
+            Console.WriteLine($"The {role} configuration is valid.");
+            return 0;
+        }
         var environmentConfig = EnvironmentLoader.Load(isDevelopment);
 
         if (arguments.SequenceEqual(["--healthcheck"]))
@@ -278,7 +291,9 @@ static bool IsSupportedCommand(string[] arguments) =>
     || arguments.Length == 3 && arguments[0] == "--confirm-totp"
     || arguments.Length == 2 && arguments[0] == "--totp-status"
     || arguments.Length == 2 && arguments[0] == "--regenerate-recovery-codes"
-    || arguments.Length == 2 && arguments[0] == "--disable-totp";
+    || arguments.Length == 2 && arguments[0] == "--disable-totp"
+    || arguments.Length == 2 && arguments[0] is
+        ("--validate-gateway-config" or "--validate-worker-config");
 
 static void WriteUsage()
 {

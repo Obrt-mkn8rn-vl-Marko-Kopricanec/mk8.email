@@ -334,11 +334,21 @@ public sealed class EnvironmentConfigTests
             JsonSerializer.Serialize(configuration));
 
         var loaded = EnvironmentLoader.LoadFromFile(configurationPath);
+        var gateway = EnvironmentLoader.LoadFromFile(
+            configurationPath, role: EnvironmentValidationRole.Gateway);
+        var worker = EnvironmentLoader.LoadFromFile(
+            configurationPath, role: EnvironmentValidationRole.ApplicationWorker);
 
         Assert.AreEqual(activeKey, loaded.Messaging.EncryptionKey);
         Assert.AreEqual(oldKey, loaded.Messaging.DecryptionKeys.Single().Key);
         Assert.AreEqual(connectionString, loaded.ObjectStorage.ConnectionString);
         Assert.AreEqual(0, loaded.Validate().Count);
+        Assert.AreEqual(activeKey, gateway.Messaging.EncryptionKey);
+        Assert.AreEqual(connectionString, gateway.ObjectStorage.ConnectionString);
+        Assert.AreEqual(0, gateway.Validate(role: EnvironmentValidationRole.Gateway).Count);
+        Assert.AreEqual(activeKey, worker.Messaging.EncryptionKey);
+        Assert.AreEqual(connectionString, worker.ObjectStorage.ConnectionString);
+        Assert.AreEqual(0, worker.Validate(role: EnvironmentValidationRole.ApplicationWorker).Count);
     }
 
     [TestMethod]

@@ -61,6 +61,10 @@ public interface IImapApplicationService
     Task<ImapCopyResult> CopyMessagesAsync(
         ImapCopyRequest request,
         CancellationToken cancellationToken = default);
+
+    Task<ImapAppendPreflightResult> CheckAppendCapacityAsync(
+        ImapAppendPreflightRequest request,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record ImapPasswordAuthentication(string Username, string Password);
@@ -298,3 +302,17 @@ public sealed record ImapCopyResult(
     int DestinationUidValidity,
     List<int> SourceUids,
     List<int> DestinationUids);
+
+public sealed record ImapAppendPreflightRequest(
+    Guid UserId,
+    string MailboxName,
+    long AddedBytes);
+
+public enum ImapAppendPreflightDisposition
+{
+    Ready,
+    MailboxNotFound,
+    OverQuota,
+}
+
+public sealed record ImapAppendPreflightResult(ImapAppendPreflightDisposition Disposition);

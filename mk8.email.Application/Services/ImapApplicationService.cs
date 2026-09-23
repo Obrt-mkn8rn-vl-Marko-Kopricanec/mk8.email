@@ -991,6 +991,44 @@ internal sealed class ImapApplicationService(
             destination.UidValidity, sourceUids, destinationUids);
     }
 
+    public async Task<ImapAppendPreflightResult> CheckAppendCapacityAsync(
+        ImapAppendPreflightRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.UserId == Guid.Empty
+            || string.IsNullOrEmpty(request.MailboxName)
+            || request.AddedBytes < 0)
+        {
+            throw new ArgumentException("The IMAP APPEND preflight request is invalid.",
+                nameof(request));
+        }
+
+        var folder = await ImapMailboxResolver.ResolveFolderAsync(
+            database, request.UserId, request.MailboxName, cancellationToken);
+        if (folder is null)
+            return new ImapAppendPreflightResult(ImapAppendPreflightDisposition.MailboxNotFound);
+
+        var quotaBytes = await database.Users
+            .AsNoTracking()
+            .Where(user => user.Id == request.UserId)
+            .Select(user => (long?)user.QuotaBytes)
+            .SingleOrDefaultAsync(cancellationToken);
+        if (quotaBytes is null)
+            return new ImapAppendPreflightResult(ImapAppendPreflightDisposition.MailboxNotFound);
+        if (quotaBytes <= 0)
+            return new ImapAppendPreflightResult(ImapAppendPreflightDisposition.Ready);
+
+        var usedBytes = await database.Emails
+            .AsNoTracking()
+            .Where(email => email.Folder.Inbox.OwnerId == request.UserId)
+            .SumAsync(email => (long?)email.SizeBytes, cancellationToken) ?? 0;
+        return new ImapAppendPreflightResult(
+            usedBytes < quotaBytes && request.AddedBytes <= quotaBytes - usedBytes
+                ? ImapAppendPreflightDisposition.Ready
+                : ImapAppendPreflightDisposition.OverQuota);
+    }
+
     public async Task<ImapQuotaResult> GetQuotaAsync(
         ImapQuotaRequest request,
         CancellationToken cancellationToken = default)

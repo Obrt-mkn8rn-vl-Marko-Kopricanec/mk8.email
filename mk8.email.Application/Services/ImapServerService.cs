@@ -6212,9 +6212,7 @@ ILogger<ImapServerService> logger) : BackgroundService
     {
         var ct = timeout.Token;
         using var scope = scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-        var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
-        var effects = scope.ServiceProvider.GetRequiredService<LargeObjectTransactionEffects>();
+        var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
 
         var remaining = args;
         var pendingMessages = new List<EmailDB>();
@@ -6237,17 +6235,7 @@ ILogger<ImapServerService> logger) : BackgroundService
                 break;
             }
 
-            if (targetMailbox is null)
-            {
-                var targetFolder = await ResolveFolderAsync(db, session.UserId, mailboxName, ct);
-                if (targetFolder is null)
-                {
-                    await writer.WriteLineAsync($"{tag} NO [TRYCREATE] Mailbox not found");
-                    return;
-                }
-
-                targetMailbox = mailboxName;
-            }
+            targetMailbox ??= mailboxName;
 
             if (!TryValidateFlagList(flags, out var flagFailure))
             {
@@ -6311,7 +6299,32 @@ ILogger<ImapServerService> logger) : BackgroundService
             }
 
             var nextPendingBytes = pendingBytes + literalSize.Value;
-            if (!await HasUserQuotaCapacityAsync(db, session.UserId, nextPendingBytes, ct))
+            ImapAppendPreflightResult preflight;
+            try
+            {
+                preflight = await application.CheckAppendCapacityAsync(
+                    new ImapAppendPreflightRequest(
+                        session.UserId, targetMailbox, nextPendingBytes), ct);
+            }
+            catch (Exception exception) when (
+                exception is not OperationCanceledException && !ct.IsCancellationRequested)
+            {
+                logger.LogWarning(exception, "IMAP APPEND preflight unavailable for {UserId}",
+                    session.UserId);
+                await RejectAppendBeforeLiteralAsync(
+                    writer, tag, session, isLiteralPlus,
+                    "[UNAVAILABLE] APPEND backend unavailable");
+                return;
+            }
+
+            if (preflight?.Disposition == ImapAppendPreflightDisposition.MailboxNotFound)
+            {
+                await RejectAppendBeforeLiteralAsync(
+                    writer, tag, session, isLiteralPlus,
+                    "[TRYCREATE] Mailbox not found");
+                return;
+            }
+            if (preflight?.Disposition == ImapAppendPreflightDisposition.OverQuota)
             {
                 await RejectAppendBeforeLiteralAsync(
                     writer,
@@ -6319,6 +6332,13 @@ ILogger<ImapServerService> logger) : BackgroundService
                     session,
                     isLiteralPlus,
                     "[OVERQUOTA] APPEND exceeds the mailbox quota");
+                return;
+            }
+            if (preflight?.Disposition != ImapAppendPreflightDisposition.Ready)
+            {
+                await RejectAppendBeforeLiteralAsync(
+                    writer, tag, session, isLiteralPlus,
+                    "[UNAVAILABLE] APPEND backend unavailable");
                 return;
             }
 
@@ -6434,6 +6454,9 @@ ILogger<ImapServerService> logger) : BackgroundService
                 $"\"{EscapeImapString(FormatWireMailboxName(targetMailbox, session.Utf8Enabled))}\" {nextLine.Trim()}";
         }
 
+        var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
+        var effects = scope.ServiceProvider.GetRequiredService<LargeObjectTransactionEffects>();
         db.ChangeTracker.Clear();
         await using var transaction = db.Database.IsRelational()
             ? await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct)

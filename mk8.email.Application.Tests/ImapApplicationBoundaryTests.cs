@@ -95,6 +95,13 @@ public sealed class ImapApplicationBoundaryTests
         Assert.AreEqual(2048L, quota.LimitBytes);
         Assert.AreEqual("INBOX", application.LastQuotaMailbox);
 
+        var append = await SendAsync<ImapAppendPreflightRequest, ImapAppendPreflightResult>(
+            dispatcher,
+            ApplicationOperations.ImapCheckAppendCapacity,
+            new ImapAppendPreflightRequest(application.UserId, "INBOX", 123));
+        Assert.AreEqual(ImapAppendPreflightDisposition.Ready, append.Disposition);
+        Assert.AreEqual(123L, application.LastAppendBytes);
+
         var idle = await SendAsync<ImapIdleSnapshotRequest, ImapIdleSnapshotResult>(
             dispatcher,
             ApplicationOperations.ImapGetIdleSnapshot,
@@ -138,6 +145,7 @@ public sealed class ImapApplicationBoundaryTests
         public string? LastDeletedMailbox { get; private set; }
         public string? LastSelectedMailbox { get; private set; }
         public string? LastQuotaMailbox { get; private set; }
+        public long LastAppendBytes { get; private set; }
 
         public Task<ImapIdentityResult> AuthenticatePasswordAsync(
             ImapPasswordAuthentication request,
@@ -224,6 +232,15 @@ public sealed class ImapApplicationBoundaryTests
         {
             LastQuotaMailbox = request.MailboxName;
             return Task.FromResult(new ImapQuotaResult(true, 12, 2048));
+        }
+
+        public Task<ImapAppendPreflightResult> CheckAppendCapacityAsync(
+            ImapAppendPreflightRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            LastAppendBytes = request.AddedBytes;
+            return Task.FromResult(new ImapAppendPreflightResult(
+                ImapAppendPreflightDisposition.Ready));
         }
 
         public Task<ImapIdleSnapshotResult> GetIdleSnapshotAsync(

@@ -50,6 +50,13 @@ public sealed class ImapApplicationBoundaryTests
                 application.UserId, ["INBOX"], true, true, true));
         Assert.AreEqual(2, statuses.Statuses["INBOX"].MessageCount);
         Assert.AreEqual(12L, statuses.Statuses["INBOX"].SizeBytes);
+
+        var subscription = await SendAsync<ImapMailboxSubscriptionRequest, ImapMailboxSubscriptionResult>(
+            dispatcher,
+            ApplicationOperations.ImapSetMailboxSubscription,
+            new ImapMailboxSubscriptionRequest(application.UserId, "INBOX", false));
+        Assert.IsTrue(subscription.Found);
+        Assert.IsFalse(application.LastSubscriptionState);
     }
 
     private static async Task<TResponse> SendAsync<TRequest, TResponse>(
@@ -81,6 +88,7 @@ public sealed class ImapApplicationBoundaryTests
         public string? LastPassword { get; private set; }
         public string? LastAccessToken { get; private set; }
         public bool LastSubscribedOnly { get; private set; }
+        public bool LastSubscriptionState { get; private set; } = true;
 
         public Task<ImapIdentityResult> AuthenticatePasswordAsync(
             ImapPasswordAuthentication request,
@@ -115,5 +123,13 @@ public sealed class ImapApplicationBoundaryTests
                 ["INBOX"] = new(
                     Guid.CreateVersion7(), 1, 3, 5, "mailbox-id", 2, 1, 12),
             }));
+
+        public Task<ImapMailboxSubscriptionResult> SetMailboxSubscriptionAsync(
+            ImapMailboxSubscriptionRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            LastSubscriptionState = request.IsSubscribed;
+            return Task.FromResult(new ImapMailboxSubscriptionResult(true));
+        }
     }
 }

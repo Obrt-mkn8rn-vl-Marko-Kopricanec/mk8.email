@@ -236,9 +236,11 @@ public sealed class TransportSecurityTests
         Assert.AreEqual("a3 NO [UNAVAILABLE] Mailbox status unavailable", await connection.ReadLineAsync());
         await connection.WriteLineAsync("a4 LIST \"\" \"*\" RETURN (STATUS (MESSAGES))");
         Assert.AreEqual("a4 NO [UNAVAILABLE] Mailbox status unavailable", await connection.ReadLineAsync());
-        await connection.WriteLineAsync("a5 CAPABILITY");
+        await connection.WriteLineAsync("a5 SUBSCRIBE INBOX");
+        Assert.AreEqual("a5 NO [UNAVAILABLE] Mailbox subscription unavailable", await connection.ReadLineAsync());
+        await connection.WriteLineAsync("a6 CAPABILITY");
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("* CAPABILITY ", StringComparison.Ordinal));
-        Assert.AreEqual("a5 OK CAPABILITY completed", await connection.ReadLineAsync());
+        Assert.AreEqual("a6 OK CAPABILITY completed", await connection.ReadLineAsync());
     }
 
     [TestInitialize]
@@ -3602,6 +3604,11 @@ public sealed class TransportSecurityTests
             ImapMailboxStatusRequest request,
             CancellationToken cancellationToken = default) =>
             Task.FromException<ImapMailboxStatusResult>(new IOException("Worker unavailable"));
+
+        public Task<ImapMailboxSubscriptionResult> SetMailboxSubscriptionAsync(
+            ImapMailboxSubscriptionRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromException<ImapMailboxSubscriptionResult>(new IOException("Worker unavailable"));
     }
 
     private sealed class UnavailableImapMailboxApplicationService(
@@ -3628,6 +3635,11 @@ public sealed class TransportSecurityTests
             ImapMailboxStatusRequest request,
             CancellationToken cancellationToken = default) =>
             Task.FromException<ImapMailboxStatusResult>(new IOException("Worker unavailable"));
+
+        public Task<ImapMailboxSubscriptionResult> SetMailboxSubscriptionAsync(
+            ImapMailboxSubscriptionRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromException<ImapMailboxSubscriptionResult>(new IOException("Worker unavailable"));
     }
 
     private sealed class ServerFixture(

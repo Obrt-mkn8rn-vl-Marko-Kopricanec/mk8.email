@@ -2544,18 +2544,27 @@ ILogger<ImapServerService> logger) : BackgroundService
             return;
         }
 
-        using var scope = scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        ImapMailboxSubscriptionResult result;
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
+            result = await application.SetMailboxSubscriptionAsync(
+                new ImapMailboxSubscriptionRequest(session.UserId, mailboxName, subscribe), ct);
+        }
+        catch (Exception exception) when (
+            exception is not OperationCanceledException && !ct.IsCancellationRequested)
+        {
+            logger.LogWarning(exception, "IMAP mailbox subscription is unavailable for {UserId}", session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailbox subscription unavailable");
+            return;
+        }
 
-        var folder = await ResolveFolderAsync(db, session.UserId, mailboxName, ct);
-        if (folder is null)
+        if (!result.Found)
         {
             await writer.WriteLineAsync($"{tag} NO Mailbox not found");
             return;
         }
-
-        folder.IsSubscribed = subscribe;
-        await db.SaveChangesAsync(ct);
 
         var cmd = subscribe ? "SUBSCRIBE" : "UNSUBSCRIBE";
         await writer.WriteLineAsync($"{tag} OK {cmd} completed");

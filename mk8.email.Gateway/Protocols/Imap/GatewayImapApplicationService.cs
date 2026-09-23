@@ -30,4 +30,10 @@ public sealed class GatewayImapApplicationService(
         CancellationToken cancellationToken = default) =>
         transport.SendAsync<ImapMailboxStatusRequest, ImapMailboxStatusResult>(
             "imap", ApplicationOperations.ImapGetMailboxStatuses, request, cancellationToken);
+
+    public Task<ImapMailboxSubscriptionResult> SetMailboxSubscriptionAsync(
+        ImapMailboxSubscriptionRequest request,
+        CancellationToken cancellationToken = default) =>
+        transport.SendAsync<ImapMailboxSubscriptionRequest, ImapMailboxSubscriptionResult>(
+            "imap", ApplicationOperations.ImapSetMailboxSubscription, request, cancellationToken);
 }

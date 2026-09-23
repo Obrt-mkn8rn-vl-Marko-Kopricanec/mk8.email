@@ -74,6 +74,9 @@ public sealed class ImapGatewayTransportTests
             var statuses = await client.GetMailboxStatusesAsync(
                 new ImapMailboxStatusRequest(application.UserId, ["INBOX"], true, true, true),
                 timeout.Token);
+            var subscription = await client.SetMailboxSubscriptionAsync(
+                new ImapMailboxSubscriptionRequest(application.UserId, "INBOX", false),
+                timeout.Token);
             Assert.AreEqual(application.UserId, password.UserId);
             Assert.AreEqual(application.UserId, oauth.UserId);
             Assert.AreEqual("imap-secret", application.Password);
@@ -81,6 +84,8 @@ public sealed class ImapGatewayTransportTests
             Assert.HasCount(1, mailboxes.Mailboxes);
             Assert.AreEqual("INBOX", mailboxes.Mailboxes[0].FolderName);
             Assert.AreEqual(2, statuses.Statuses["INBOX"].MessageCount);
+            Assert.IsTrue(subscription.Found);
+            Assert.IsFalse(application.IsSubscribed);
 
             await using var operations = gatewayDataSource.CreateCommand(
                 "SELECT operation FROM application_requests ORDER BY created_at");
@@ -95,6 +100,7 @@ public sealed class ImapGatewayTransportTests
                     ApplicationOperations.ImapAuthenticateOAuth,
                     ApplicationOperations.ImapListMailboxes,
                     ApplicationOperations.ImapGetMailboxStatuses,
+                    ApplicationOperations.ImapSetMailboxSubscription,
                 },
                 observed);
 
@@ -110,7 +116,7 @@ public sealed class ImapGatewayTransportTests
                 Assert.IsFalse(ciphertext.Contains("imap-secret", StringComparison.Ordinal));
                 Assert.IsFalse(ciphertext.Contains("imap-access-token", StringComparison.Ordinal));
             }
-            Assert.AreEqual(8, recordCount);
+            Assert.AreEqual(10, recordCount);
         }
         finally
         {
@@ -124,6 +130,7 @@ public sealed class ImapGatewayTransportTests
         public Guid UserId { get; } = Guid.CreateVersion7();
         public string? Password { get; private set; }
         public string? AccessToken { get; private set; }
+        public bool IsSubscribed { get; private set; } = true;
 
         public Task<ImapIdentityResult> AuthenticatePasswordAsync(
             ImapPasswordAuthentication request,
@@ -154,5 +161,13 @@ public sealed class ImapGatewayTransportTests
             {
                 ["INBOX"] = new(Guid.CreateVersion7(), 1, 3, 5, "mailbox-id", 2, 1, 12),
             }));
+
+        public Task<ImapMailboxSubscriptionResult> SetMailboxSubscriptionAsync(
+            ImapMailboxSubscriptionRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            IsSubscribed = request.IsSubscribed;
+            return Task.FromResult(new ImapMailboxSubscriptionResult(true));
+        }
     }
 }

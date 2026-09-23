@@ -106,10 +106,28 @@ public sealed class ImapApplicationServiceTests
         Assert.IsNull(sizeOnly.Statuses["INBOX"].MessageCount);
         Assert.IsNull(sizeOnly.Statuses["INBOX"].UnseenCount);
         Assert.AreEqual(30L, sizeOnly.Statuses["INBOX"].SizeBytes);
+        Assert.IsTrue((await service.SetMailboxSubscriptionAsync(
+            new ImapMailboxSubscriptionRequest(owner.Id, "INBOX", false))).Found);
+        Assert.IsFalse(primaryFolder.IsSubscribed);
+        var afterUnsubscribe = await service.ListMailboxesAsync(
+            new ImapMailboxListRequest(owner.Id, SubscribedOnly: true));
+        Assert.HasCount(1, afterUnsubscribe.Mailboxes);
+        Assert.AreEqual("alias", afterUnsubscribe.Mailboxes[0].InboxName);
+        Assert.IsTrue((await service.SetMailboxSubscriptionAsync(
+            new ImapMailboxSubscriptionRequest(owner.Id, "INBOX", true))).Found);
+        Assert.IsTrue((await service.SetMailboxSubscriptionAsync(
+            new ImapMailboxSubscriptionRequest(owner.Id, "INBOX", true))).Found);
+        Assert.IsTrue(primaryFolder.IsSubscribed);
+        Assert.IsFalse((await service.SetMailboxSubscriptionAsync(
+            new ImapMailboxSubscriptionRequest(owner.Id, "other/example.test/Inbox", false))).Found);
+        Assert.IsFalse((await service.SetMailboxSubscriptionAsync(
+            new ImapMailboxSubscriptionRequest(owner.Id, "Missing", false))).Found);
         await Assert.ThrowsAsync<ArgumentException>(() => service.ListMailboxesAsync(
             new ImapMailboxListRequest(Guid.Empty, SubscribedOnly: false)));
         await Assert.ThrowsAsync<ArgumentException>(() => service.GetMailboxStatusesAsync(
             new ImapMailboxStatusRequest(Guid.Empty, ["INBOX"], true, true, true)));
+        await Assert.ThrowsAsync<ArgumentException>(() => service.SetMailboxSubscriptionAsync(
+            new ImapMailboxSubscriptionRequest(Guid.Empty, "INBOX", true)));
     }
 
     private static InboxDB CreateInbox(

@@ -17,6 +17,10 @@ public interface IImapApplicationService
     Task<ImapMailboxStatusResult> GetMailboxStatusesAsync(
         ImapMailboxStatusRequest request,
         CancellationToken cancellationToken = default);
+
+    Task<ImapMailboxSubscriptionResult> SetMailboxSubscriptionAsync(
+        ImapMailboxSubscriptionRequest request,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record ImapPasswordAuthentication(string Username, string Password);
@@ -54,3 +58,10 @@ public sealed record ImapMailboxStatus(
     long? SizeBytes);
 
 public sealed record ImapMailboxStatusResult(Dictionary<string, ImapMailboxStatus> Statuses);
+
+public sealed record ImapMailboxSubscriptionRequest(
+    Guid UserId,
+    string MailboxName,
+    bool IsSubscribed);
+
+public sealed record ImapMailboxSubscriptionResult(bool Found);

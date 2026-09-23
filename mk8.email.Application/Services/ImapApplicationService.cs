@@ -117,4 +117,26 @@ internal sealed class ImapApplicationService(
 
         return new ImapMailboxStatusResult(statuses);
     }
+
+    public async Task<ImapMailboxSubscriptionResult> SetMailboxSubscriptionAsync(
+        ImapMailboxSubscriptionRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.UserId == Guid.Empty || string.IsNullOrEmpty(request.MailboxName))
+            throw new ArgumentException("The IMAP mailbox subscription request is invalid.", nameof(request));
+
+        var folder = await ImapMailboxResolver.ResolveFolderAsync(
+            database, request.UserId, request.MailboxName, cancellationToken);
+        if (folder is null)
+            return new ImapMailboxSubscriptionResult(false);
+
+        if (folder.IsSubscribed != request.IsSubscribed)
+        {
+            folder.IsSubscribed = request.IsSubscribed;
+            await database.SaveChangesAsync(cancellationToken);
+        }
+
+        return new ImapMailboxSubscriptionResult(true);
+    }
 }

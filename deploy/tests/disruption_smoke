@@ -39,16 +39,17 @@ gateway_journal_count() {
 
 wait_for_mail_recovery() {
     attempt=0
-    while [ "$attempt" -lt 30 ]; do
+    while [ "$attempt" -lt 6 ]; do
         if systemctl is-active --quiet mk8email-gateway.service \
-            && systemctl is-active --quiet mk8email-worker.service \
+            && systemctl is-active --quiet mk8email-wake.service \
+            && systemctl is-active --quiet mk8email-worker.path \
             && systemctl is-active --quiet rspamd.service \
             && clamdscan --config-file=/etc/clamav/clamd.conf --ping 1 >/dev/null 2>&1 \
             && timeout 20s runuser -u mk8email -- /usr/bin/dotnet \
                 /opt/mk8email/current/cli/mk8.email.Application.CLI.dll \
                 --healthcheck-gateway /etc/mk8email/mk8email.gateway.config.json \
                 >/dev/null 2>&1 \
-            && curl --silent --fail --max-time 10 --noproxy '*' \
+            && curl --silent --fail --max-time 35 --noproxy '*' \
                 --header 'Host: admin.mk8n.com' \
                 http://127.0.0.1:8080/health/application >/dev/null; then
             return 0
@@ -66,14 +67,15 @@ case "$1" in
         admin_password_file=$2
         test -s "$admin_password_file"
         restore_scanner() {
-            systemctl start clamav-daemon.socket clamav-daemon.service mk8email-worker.service
+            systemctl start clamav-daemon.socket clamav-daemon.service
         }
 
         trap restore_scanner EXIT HUP INT TERM
         systemctl stop clamav-daemon.service clamav-daemon.socket
         ! systemctl is-active --quiet clamav-daemon.service
         systemctl is-active --quiet mk8email-gateway.service
-        systemctl is-active --quiet mk8email-worker.service
+        systemctl is-active --quiet mk8email-wake.service
+        systemctl is-active --quiet mk8email-worker.path
         marker=$("$test_root/mail_smoke.py" scanner-down)
         restore_scanner
         wait_for_mail_recovery
@@ -87,16 +89,19 @@ case "$1" in
         admin_password_file=$2
         test -s "$admin_password_file"
         restore_delivery() {
-            systemctl start clamav-daemon.socket clamav-daemon.service mk8email-worker.service
+            systemctl start clamav-daemon.socket clamav-daemon.service \
+                mk8email-wake.service mk8email-worker.path
         }
 
         trap restore_delivery EXIT HUP INT TERM
         systemctl stop clamav-daemon.service clamav-daemon.socket
         systemctl is-active --quiet mk8email-gateway.service
-        systemctl is-active --quiet mk8email-worker.service
+        systemctl is-active --quiet mk8email-wake.service
+        systemctl is-active --quiet mk8email-worker.path
         marker=$("$test_root/mail_smoke.py" scanner-down)
-        systemctl stop mk8email-worker.service
+        systemctl stop mk8email-worker.path mk8email-worker-drain.service
         systemctl is-active --quiet mk8email-gateway.service
+        systemctl is-active --quiet mk8email-wake.service
         before=$(gateway_journal_count)
         curl --silent --fail --max-time 5 --noproxy '*' \
             --header 'Host: admin.mk8n.com' \
@@ -111,7 +116,7 @@ case "$1" in
         test "$unavailable_status" = 503
         after=$(gateway_journal_count)
         test "$after" -ge "$((before + 2))"
-        systemctl start clamav-daemon.socket clamav-daemon.service mk8email-worker.service
+        restore_delivery
         wait_for_mail_recovery
         release_queue_probe "$marker"
         "$test_root/mail_smoke.py" queue-receive \

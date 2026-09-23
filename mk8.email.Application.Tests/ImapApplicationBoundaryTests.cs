@@ -86,6 +86,14 @@ public sealed class ImapApplicationBoundaryTests
         Assert.IsNotNull(selected.Mailbox);
         Assert.AreEqual(2, selected.Mailbox.MessageCount);
         Assert.AreEqual("INBOX", application.LastSelectedMailbox);
+
+        var quota = await SendAsync<ImapQuotaRequest, ImapQuotaResult>(
+            dispatcher,
+            ApplicationOperations.ImapGetQuota,
+            new ImapQuotaRequest(application.UserId, "INBOX"));
+        Assert.IsTrue(quota.MailboxFound);
+        Assert.AreEqual(2048L, quota.LimitBytes);
+        Assert.AreEqual("INBOX", application.LastQuotaMailbox);
     }
 
     private static async Task<TResponse> SendAsync<TRequest, TResponse>(
@@ -122,6 +130,7 @@ public sealed class ImapApplicationBoundaryTests
         public string? LastRenamedMailbox { get; private set; }
         public string? LastDeletedMailbox { get; private set; }
         public string? LastSelectedMailbox { get; private set; }
+        public string? LastQuotaMailbox { get; private set; }
 
         public Task<ImapIdentityResult> AuthenticatePasswordAsync(
             ImapPasswordAuthentication request,
@@ -200,6 +209,14 @@ public sealed class ImapApplicationBoundaryTests
                 Guid.CreateVersion7(), 1, 3, 5, "mailbox-id", 2, 1,
                 ["$Label1"], [77],
                 [new ImapChangedMessage(1, 1, 3, false, false, false, false, false, ["$Label1"])])));
+        }
+
+        public Task<ImapQuotaResult> GetQuotaAsync(
+            ImapQuotaRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            LastQuotaMailbox = request.MailboxName;
+            return Task.FromResult(new ImapQuotaResult(true, 12, 2048));
         }
     }
 }

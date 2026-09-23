@@ -4275,29 +4275,33 @@ ILogger<ImapServerService> logger) : BackgroundService
             return;
         }
 
-        using var scope = scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        ImapQuotaResult quota;
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
+            quota = await application.GetQuotaAsync(
+                new ImapQuotaRequest(session.UserId, mailboxName), ct);
+        }
+        catch (Exception exception) when (
+            exception is not OperationCanceledException && !ct.IsCancellationRequested)
+        {
+            logger.LogWarning(exception, "IMAP quota lookup is unavailable for {UserId}", session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Quota unavailable");
+            return;
+        }
 
-        if (await ResolveFolderAsync(db, session.UserId, mailboxName, ct) is null)
+        if (!quota.MailboxFound)
         {
             await writer.WriteLineAsync($"{tag} NO [NONEXISTENT] Mailbox not found");
             return;
         }
 
-        var user = await db.Users.AsNoTracking()
-            .FirstOrDefaultAsync(u => u.Id == session.UserId, ct);
-
-        var usedBytes = await db.Emails
-            .Where(e => e.Folder.Inbox.OwnerId == session.UserId)
-            .SumAsync(e => (long)e.SizeBytes, ct);
-
-        var quotaBytes = user?.QuotaBytes ?? 0;
-
         await writer.WriteLineAsync(
             $"* QUOTAROOT \"{EscapeImapString(FormatWireMailboxName(mailboxName, session.Utf8Enabled))}\" \"\"");
-        if (quotaBytes > 0)
+        if (quota.LimitBytes > 0)
             await writer.WriteLineAsync(
-                $"* QUOTA \"\" (STORAGE {ToQuotaStorageUnits(usedBytes)} {ToQuotaStorageUnits(quotaBytes)})");
+                $"* QUOTA \"\" (STORAGE {ToQuotaStorageUnits(quota.UsedBytes)} {ToQuotaStorageUnits(quota.LimitBytes)})");
         else
             await writer.WriteLineAsync("* QUOTA \"\" ()");
         await writer.WriteLineAsync($"{tag} OK GETQUOTAROOT completed");
@@ -4312,21 +4316,24 @@ ILogger<ImapServerService> logger) : BackgroundService
             return;
         }
 
-        using var scope = scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        ImapQuotaResult quota;
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
+            quota = await application.GetQuotaAsync(new ImapQuotaRequest(session.UserId, null), ct);
+        }
+        catch (Exception exception) when (
+            exception is not OperationCanceledException && !ct.IsCancellationRequested)
+        {
+            logger.LogWarning(exception, "IMAP quota lookup is unavailable for {UserId}", session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Quota unavailable");
+            return;
+        }
 
-        var user = await db.Users.AsNoTracking()
-            .FirstOrDefaultAsync(u => u.Id == session.UserId, ct);
-
-        var usedBytes = await db.Emails
-            .Where(e => e.Folder.Inbox.OwnerId == session.UserId)
-            .SumAsync(e => (long)e.SizeBytes, ct);
-
-        var quotaBytes = user?.QuotaBytes ?? 0;
-
-        if (quotaBytes > 0)
+        if (quota.LimitBytes > 0)
             await writer.WriteLineAsync(
-                $"* QUOTA \"\" (STORAGE {ToQuotaStorageUnits(usedBytes)} {ToQuotaStorageUnits(quotaBytes)})");
+                $"* QUOTA \"\" (STORAGE {ToQuotaStorageUnits(quota.UsedBytes)} {ToQuotaStorageUnits(quota.LimitBytes)})");
         else
             await writer.WriteLineAsync("* QUOTA \"\" ()");
         await writer.WriteLineAsync($"{tag} OK GETQUOTA completed");

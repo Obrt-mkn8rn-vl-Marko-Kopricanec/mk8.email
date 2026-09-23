@@ -86,6 +86,8 @@ public sealed class ImapGatewayTransportTests
                 new ImapMailboxDeleteRequest(application.UserId, "Archive"), timeout.Token);
             var selected = await client.SelectMailboxAsync(
                 new ImapMailboxSelectRequest(application.UserId, "INBOX", 1, 2), timeout.Token);
+            var quota = await client.GetQuotaAsync(
+                new ImapQuotaRequest(application.UserId, "INBOX"), timeout.Token);
             Assert.AreEqual(application.UserId, password.UserId);
             Assert.AreEqual(application.UserId, oauth.UserId);
             Assert.AreEqual("imap-secret", application.Password);
@@ -104,6 +106,8 @@ public sealed class ImapGatewayTransportTests
             Assert.IsNotNull(selected.Mailbox);
             Assert.AreEqual(2, selected.Mailbox.MessageCount);
             Assert.AreEqual("INBOX", application.SelectedMailbox);
+            Assert.AreEqual(2048L, quota.LimitBytes);
+            Assert.AreEqual("INBOX", application.QuotaMailbox);
 
             await using var operations = gatewayDataSource.CreateCommand(
                 "SELECT operation FROM application_requests ORDER BY created_at");
@@ -123,6 +127,7 @@ public sealed class ImapGatewayTransportTests
                     ApplicationOperations.ImapRenameMailbox,
                     ApplicationOperations.ImapDeleteMailbox,
                     ApplicationOperations.ImapSelectMailbox,
+                    ApplicationOperations.ImapGetQuota,
                 },
                 observed);
 
@@ -138,7 +143,7 @@ public sealed class ImapGatewayTransportTests
                 Assert.IsFalse(ciphertext.Contains("imap-secret", StringComparison.Ordinal));
                 Assert.IsFalse(ciphertext.Contains("imap-access-token", StringComparison.Ordinal));
             }
-            Assert.AreEqual(18, recordCount);
+            Assert.AreEqual(20, recordCount);
         }
         finally
         {
@@ -157,6 +162,7 @@ public sealed class ImapGatewayTransportTests
         public string? RenamedMailbox { get; private set; }
         public string? DeletedMailbox { get; private set; }
         public string? SelectedMailbox { get; private set; }
+        public string? QuotaMailbox { get; private set; }
 
         public Task<ImapIdentityResult> AuthenticatePasswordAsync(
             ImapPasswordAuthentication request,
@@ -231,6 +237,14 @@ public sealed class ImapGatewayTransportTests
                 Guid.CreateVersion7(), 1, 3, 5, "mailbox-id", 2, 1,
                 ["$Label1"], [77],
                 [new ImapChangedMessage(1, 1, 3, false, false, false, false, false, ["$Label1"])])));
+        }
+
+        public Task<ImapQuotaResult> GetQuotaAsync(
+            ImapQuotaRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            QuotaMailbox = request.MailboxName;
+            return Task.FromResult(new ImapQuotaResult(true, 12, 2048));
         }
     }
 }

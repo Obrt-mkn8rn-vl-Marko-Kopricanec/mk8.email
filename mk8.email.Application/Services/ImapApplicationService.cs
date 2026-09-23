@@ -399,4 +399,31 @@ internal sealed class ImapApplicationService(
             vanishedUids,
             changedMessages));
     }
+
+    public async Task<ImapQuotaResult> GetQuotaAsync(
+        ImapQuotaRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.UserId == Guid.Empty)
+            throw new ArgumentException("The IMAP quota request is invalid.", nameof(request));
+
+        if (request.MailboxName is not null
+            && await ImapMailboxResolver.ResolveFolderAsync(
+                database, request.UserId, request.MailboxName, cancellationToken) is null)
+        {
+            return new ImapQuotaResult(false, 0, 0);
+        }
+
+        var quotaBytes = await database.Users
+            .AsNoTracking()
+            .Where(user => user.Id == request.UserId)
+            .Select(user => (long?)user.QuotaBytes)
+            .SingleOrDefaultAsync(cancellationToken) ?? 0;
+        var usedBytes = await database.Emails
+            .AsNoTracking()
+            .Where(email => email.Folder.Inbox.OwnerId == request.UserId)
+            .SumAsync(email => (long?)email.SizeBytes, cancellationToken) ?? 0;
+        return new ImapQuotaResult(true, usedBytes, quotaBytes);
+    }
 }

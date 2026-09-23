@@ -42,7 +42,9 @@ public sealed class ImapMailboxSelectPostgresTests
                 Company = company,
             };
             var owner = NewUser(ownerId, "owner@example.test", company);
+            owner.QuotaBytes = 4096;
             var other = NewUser(Guid.CreateVersion7(), "other@example.test", company);
+            other.QuotaBytes = 8192;
             var primary = NewInbox(owner, address, "owner");
             var foreign = NewInbox(other, address, "other");
             var inbox = new FolderDB
@@ -61,9 +63,9 @@ public sealed class ImapMailboxSelectPostgresTests
                 Inbox = foreign,
             };
             database.Emails.AddRange(
-                NewMessage(inbox, 1, 5, isRead: false, keywords: ["$Label1"]),
-                NewMessage(inbox, 2, 6, isRead: true, keywords: ["$Label2"]),
-                NewMessage(foreignInbox, 1, 9, isRead: false, keywords: ["Foreign"]));
+                NewMessage(inbox, 1, 5, 10, isRead: false, keywords: ["$Label1"]),
+                NewMessage(inbox, 2, 6, 20, isRead: true, keywords: ["$Label2"]),
+                NewMessage(foreignInbox, 1, 9, 99, isRead: false, keywords: ["Foreign"]));
             database.ExpungedUids.Add(new ExpungedUidDB
             {
                 Id = Guid.CreateVersion7(),
@@ -99,6 +101,12 @@ public sealed class ImapMailboxSelectPostgresTests
             Assert.IsNotNull(mismatched);
             Assert.IsEmpty(mismatched.VanishedUids);
             Assert.IsEmpty(mismatched.ChangedMessages);
+            var quota = await application.GetQuotaAsync(new ImapQuotaRequest(ownerId, "INBOX"));
+            Assert.IsTrue(quota.MailboxFound);
+            Assert.AreEqual(30L, quota.UsedBytes);
+            Assert.AreEqual(4096L, quota.LimitBytes);
+            Assert.IsFalse((await application.GetQuotaAsync(new ImapQuotaRequest(
+                ownerId, "other/example.test/Inbox"))).MailboxFound);
         }
     }
 
@@ -124,6 +132,7 @@ public sealed class ImapMailboxSelectPostgresTests
         FolderDB folder,
         int uid,
         long modSeq,
+        int sizeBytes,
         bool isRead,
         string[] keywords) => new()
         {
@@ -131,6 +140,7 @@ public sealed class ImapMailboxSelectPostgresTests
             Folder = folder,
             Uid = uid,
             ModSeq = modSeq,
+            SizeBytes = sizeBytes,
             IsRead = isRead,
             Keywords = keywords,
             Sender = "sender@example.test",

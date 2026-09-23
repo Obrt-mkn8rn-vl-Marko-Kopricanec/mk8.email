@@ -246,9 +246,13 @@ public sealed class TransportSecurityTests
         Assert.AreEqual("a8 NO [UNAVAILABLE] Mailbox deletion unavailable", await connection.ReadLineAsync());
         await connection.WriteLineAsync("a9 SELECT INBOX");
         Assert.AreEqual("a9 NO [UNAVAILABLE] Mailbox selection unavailable", await connection.ReadLineAsync());
-        await connection.WriteLineAsync("a10 CAPABILITY");
+        await connection.WriteLineAsync("a10 GETQUOTAROOT INBOX");
+        Assert.AreEqual("a10 NO [UNAVAILABLE] Quota unavailable", await connection.ReadLineAsync());
+        await connection.WriteLineAsync("a11 GETQUOTA \"\"");
+        Assert.AreEqual("a11 NO [UNAVAILABLE] Quota unavailable", await connection.ReadLineAsync());
+        await connection.WriteLineAsync("a12 CAPABILITY");
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("* CAPABILITY ", StringComparison.Ordinal));
-        Assert.AreEqual("a10 OK CAPABILITY completed", await connection.ReadLineAsync());
+        Assert.AreEqual("a12 OK CAPABILITY completed", await connection.ReadLineAsync());
     }
 
     [TestMethod]
@@ -3661,6 +3665,11 @@ public sealed class TransportSecurityTests
             ImapMailboxSelectRequest request,
             CancellationToken cancellationToken = default) =>
             Task.FromException<ImapMailboxSelectResult>(new IOException("Worker unavailable"));
+
+        public Task<ImapQuotaResult> GetQuotaAsync(
+            ImapQuotaRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromException<ImapQuotaResult>(new IOException("Worker unavailable"));
     }
 
     private sealed class UnavailableImapMailboxApplicationService(
@@ -3715,6 +3724,11 @@ public sealed class TransportSecurityTests
             ? Task.FromResult(new ImapMailboxSelectResult(new ImapSelectedMailbox(
                 Guid.Empty, 1, 1, 1, "mailbox-id", 1, null, [], [], [])))
             : Task.FromException<ImapMailboxSelectResult>(new IOException("Worker unavailable"));
+
+        public Task<ImapQuotaResult> GetQuotaAsync(
+            ImapQuotaRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromException<ImapQuotaResult>(new IOException("Worker unavailable"));
     }
 
     private sealed class ServerFixture(

@@ -37,6 +37,10 @@ public interface IImapApplicationService
     Task<ImapMailboxSelectResult> SelectMailboxAsync(
         ImapMailboxSelectRequest request,
         CancellationToken cancellationToken = default);
+
+    Task<ImapQuotaResult> GetQuotaAsync(
+        ImapQuotaRequest request,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record ImapPasswordAuthentication(string Username, string Password);
@@ -155,3 +159,10 @@ public sealed record ImapChangedMessage(
     bool IsDraft,
     bool IsAnswered,
     string[] Keywords);
+
+public sealed record ImapQuotaRequest(Guid UserId, string? MailboxName);
+
+public sealed record ImapQuotaResult(
+    bool MailboxFound,
+    long UsedBytes,
+    long LimitBytes);

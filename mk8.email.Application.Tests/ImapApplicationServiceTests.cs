@@ -38,6 +38,7 @@ public sealed class ImapApplicationServiceTests
             PasswordHash = "unused",
             Role = "User",
             IsActive = true,
+            QuotaBytes = 4096,
             Company = company,
         };
         var other = new UserDB
@@ -117,6 +118,14 @@ public sealed class ImapApplicationServiceTests
         Assert.IsNull(sizeOnly.Statuses["INBOX"].MessageCount);
         Assert.IsNull(sizeOnly.Statuses["INBOX"].UnseenCount);
         Assert.AreEqual(30L, sizeOnly.Statuses["INBOX"].SizeBytes);
+        var quota = await service.GetQuotaAsync(new ImapQuotaRequest(owner.Id, "INBOX"));
+        Assert.IsTrue(quota.MailboxFound);
+        Assert.AreEqual(30L, quota.UsedBytes);
+        Assert.AreEqual(4096L, quota.LimitBytes);
+        Assert.IsFalse((await service.GetQuotaAsync(new ImapQuotaRequest(
+            owner.Id, "other/example.test/Inbox"))).MailboxFound);
+        Assert.IsTrue((await service.GetQuotaAsync(
+            new ImapQuotaRequest(owner.Id, null))).MailboxFound);
         var selected = (await service.SelectMailboxAsync(
             new ImapMailboxSelectRequest(owner.Id, "INBOX", primaryFolder.UidValidity, 1))).Mailbox;
         Assert.IsNotNull(selected);
@@ -219,6 +228,8 @@ public sealed class ImapApplicationServiceTests
             new ImapMailboxDeleteRequest(Guid.Empty, "Archive")));
         await Assert.ThrowsAsync<ArgumentException>(() => service.SelectMailboxAsync(
             new ImapMailboxSelectRequest(Guid.Empty, "INBOX", null, null)));
+        await Assert.ThrowsAsync<ArgumentException>(() => service.GetQuotaAsync(
+            new ImapQuotaRequest(Guid.Empty, null)));
     }
 
     private static InboxDB CreateInbox(

@@ -191,6 +191,7 @@ app.MapGet("/health/ready", async (
     var ready = await transport.IsAvailableAsync(cancellationToken);
     return ready ? Results.Ok(new { status = "ready" }) : Results.StatusCode(503);
 }).AllowAnonymous();
+app.MapGet("/health/application", GatewayApplicationHealth.CheckAsync).AllowAnonymous();
 if (environmentConfig.OAuth.EnableOAuth)
     app.MapOAuthEndpoints();
 if (environmentConfig.Jmap.EnableJmap)

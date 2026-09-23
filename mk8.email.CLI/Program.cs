@@ -9,6 +9,9 @@ using mk8.email.Contracts.Enums;
 using mk8.email.Infrastructure;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
+using mk8.email.Contracts.Storage;
+using mk8.email.Hosting;
+using Npgsql;
 
 return await RunManagementCommandAsync(args);
 
@@ -50,15 +53,30 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
             || arguments.Contains("--development", StringComparer.Ordinal)
             || Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") == "Development";
         if (arguments.Length == 2
-            && arguments[0] is ("--validate-gateway-config" or "--validate-worker-config"))
+            && arguments[0] is ("--validate-gateway-config" or "--validate-worker-config"
+                or "--probe-gateway-backends" or "--probe-worker-backends"))
         {
-            var role = arguments[0] == "--validate-gateway-config"
+            var role = arguments[0] is ("--validate-gateway-config" or "--probe-gateway-backends")
                 ? EnvironmentValidationRole.Gateway
                 : EnvironmentValidationRole.ApplicationWorker;
             var validated = EnvironmentLoader.LoadFromFile(
                 arguments[1], isDevelopment, role);
             if (!validated.Messaging.Enabled)
                 throw new InvalidOperationException("Distributed messaging must be enabled.");
+            if (arguments[0].StartsWith("--probe-", StringComparison.Ordinal))
+            {
+                using var probeTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                await using var source = NpgsqlDataSource.Create(validated.BuildConnectionString());
+                await using var objects = new ServiceCollection()
+                    .AddAzureBlobObjectStorage(validated)
+                    .BuildServiceProvider();
+                await DistributedBackendProbe.ProbeAsync(
+                    source,
+                    objects.GetRequiredService<ILargeObjectStore>(),
+                    probeTimeout.Token);
+                Console.WriteLine($"The {role} distributed backends are reachable.");
+                return 0;
+            }
             Console.WriteLine($"The {role} configuration is valid.");
             return 0;
         }
@@ -293,7 +311,8 @@ static bool IsSupportedCommand(string[] arguments) =>
     || arguments.Length == 2 && arguments[0] == "--regenerate-recovery-codes"
     || arguments.Length == 2 && arguments[0] == "--disable-totp"
     || arguments.Length == 2 && arguments[0] is
-        ("--validate-gateway-config" or "--validate-worker-config");
+        ("--validate-gateway-config" or "--validate-worker-config"
+            or "--probe-gateway-backends" or "--probe-worker-backends");
 
 static void WriteUsage()
 {

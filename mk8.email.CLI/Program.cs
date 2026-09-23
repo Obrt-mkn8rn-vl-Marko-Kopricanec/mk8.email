@@ -11,6 +11,7 @@ using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
 using mk8.email.Contracts.Storage;
 using mk8.email.Hosting;
+using mk8.email.Messaging;
 using Npgsql;
 
 return await RunManagementCommandAsync(args);
@@ -54,7 +55,8 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
             || Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") == "Development";
         if (arguments.Length == 2
             && arguments[0] is ("--validate-gateway-config" or "--validate-worker-config"
-                or "--probe-gateway-backends" or "--probe-worker-backends"))
+                or "--probe-gateway-backends" or "--probe-worker-backends"
+                or "--probe-worker-dispatch"))
         {
             var role = arguments[0] is ("--validate-gateway-config" or "--probe-gateway-backends")
                 ? EnvironmentValidationRole.Gateway
@@ -63,6 +65,17 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
                 arguments[1], isDevelopment, role);
             if (!validated.Messaging.Enabled)
                 throw new InvalidOperationException("Distributed messaging must be enabled.");
+            if (arguments[0] == "--probe-worker-dispatch")
+            {
+                await using var probeServices = new ServiceCollection()
+                    .AddDistributedMessaging(validated)
+                    .BuildServiceProvider();
+                await DistributedApplicationProbe.ProbeAsync(
+                    probeServices.GetRequiredService<IApplicationRequestClient>(),
+                    TimeSpan.FromSeconds(10));
+                Console.WriteLine("The Application Worker completed a distributed request.");
+                return 0;
+            }
             if (arguments[0].StartsWith("--probe-", StringComparison.Ordinal))
             {
                 using var probeTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
@@ -312,7 +325,8 @@ static bool IsSupportedCommand(string[] arguments) =>
     || arguments.Length == 2 && arguments[0] == "--disable-totp"
     || arguments.Length == 2 && arguments[0] is
         ("--validate-gateway-config" or "--validate-worker-config"
-            or "--probe-gateway-backends" or "--probe-worker-backends");
+            or "--probe-gateway-backends" or "--probe-worker-backends"
+            or "--probe-worker-dispatch");
 
 static void WriteUsage()
 {

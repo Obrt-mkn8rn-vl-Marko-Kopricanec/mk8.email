@@ -7,6 +7,7 @@ using mk8.email.Application.Worker;
 using mk8.email.Contracts.Messaging;
 using mk8.email.Gateway.ApplicationBridge;
 using mk8.email.Gateway.Protocols.OAuth;
+using mk8.email.Hosting;
 using Npgsql;
 
 namespace mk8.email.Messaging.Tests;
@@ -85,6 +86,7 @@ public sealed class ApplicationRequestWorkerTests
 
         Assert.AreEqual("application/json", response.ContentType);
         Assert.IsFalse(response.IsError);
+        await DistributedApplicationProbe.ProbeAsync(gateway, TimeSpan.FromSeconds(5), timeout.Token);
         await worker.StopAsync(timeout.Token);
         worker.Dispose();
     }

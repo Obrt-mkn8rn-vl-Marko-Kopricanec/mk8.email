@@ -42,6 +42,7 @@ public sealed class WebPushPresentationTests
         using var sender = new GatewayWebPushService(handler, journal, options.MaxPayloadBytes);
         var gatewayWorker = new GatewayPresentationWorker(
             gatewayBus,
+            new PostgresApplicationTransportControl(gatewayDataSource),
             journal,
             sender,
             new UnusedSmtpRelay(),

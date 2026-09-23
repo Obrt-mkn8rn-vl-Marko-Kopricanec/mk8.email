@@ -95,14 +95,16 @@ public static class DistributedMessagingServiceExtensions
             serviceProvider.GetRequiredService<PostgresPresentationBus>());
         services.AddSingleton<IPresentationRequestConsumer>(serviceProvider =>
             serviceProvider.GetRequiredService<PostgresPresentationBus>());
-        services.AddSingleton<IGatewayTrafficJournal>(serviceProvider =>
+        services.AddSingleton(serviceProvider =>
             new PostgresGatewayTrafficJournal(
                 serviceProvider.GetRequiredService<NpgsqlDataSource>(),
                 serviceProvider.GetRequiredService<IMessagingPayloadProtector>(),
                 serviceProvider.GetRequiredService<PostgresMessagingOptions>(),
                 serviceProvider.GetRequiredService<ILargeObjectStore>()));
+        services.AddSingleton<IGatewayTrafficJournal, RestoreAwareGatewayTrafficJournal>();
         services.AddSingleton<IPop3MaildropLeaseStore, PostgresPop3MaildropLeaseStore>();
-        services.AddSingleton<IApplicationTransportControl, PostgresApplicationTransportControl>();
+        services.AddSingleton<PostgresApplicationTransportControl>();
+        services.AddSingleton<IApplicationTransportControl, RestoreAwareApplicationTransportControl>();
         return services;
     }
 }

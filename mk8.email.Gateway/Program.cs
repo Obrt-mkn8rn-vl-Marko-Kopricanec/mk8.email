@@ -21,7 +21,6 @@ using mk8.email.Hosting;
 using mk8.email.Imap.Presentation;
 using mk8.email.Messaging;
 using mk8.email.Smtp.Presentation;
-using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
 var environmentConfig = EnvironmentLoader.Load(
@@ -152,8 +151,6 @@ builder.Services.AddRazorPages(options =>
 });
 
 var app = builder.Build();
-await DistributedRestoreActivationGuard.RequireReadyAsync(
-    app.Services.GetRequiredService<NpgsqlDataSource>());
 
 if (!app.Environment.IsDevelopment())
     app.UseExceptionHandler("/Error");

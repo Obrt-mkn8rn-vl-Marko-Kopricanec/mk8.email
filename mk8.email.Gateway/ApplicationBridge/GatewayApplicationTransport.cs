@@ -41,8 +41,9 @@ public sealed class GatewayApplicationTransport(
             now,
             now.Add(options.RequestTimeout),
             requestId.ToString("N"));
-        await traffic.AppendAsync(
-            new GatewayTrafficRecord(
+        try
+        {
+            await traffic.AppendAsync(new GatewayTrafficRecord(
                 Guid.CreateVersion7(),
                 sessionId,
                 0,
@@ -53,7 +54,17 @@ public sealed class GatewayApplicationTransport(
                 metadata,
                 now,
                 requestId),
-            cancellationToken);
+                cancellationToken);
+        }
+        catch (Exception exception) when (
+            exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            throw new GatewayApplicationException(
+                "traffic-journal-unavailable",
+                "The gateway could not durably record the application request.",
+                isUnavailable: true,
+                exception);
+        }
 
         ApplicationResponse response;
         try

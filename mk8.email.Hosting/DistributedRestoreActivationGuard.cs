@@ -4,11 +4,27 @@ using Npgsql;
 namespace mk8.email.Hosting;
 
 /// <summary>
-/// Prevents either distributed role from opening a database whose Blob ETags
-/// have not been rebound after a snapshot restore.
+/// Prevents the Application Worker from starting and Gateway operations from
+/// using a database whose Blob ETags have not been rebound after a restore.
 /// </summary>
 public static class DistributedRestoreActivationGuard
 {
+    public static async Task<bool> IsReadyAsync(
+        NpgsqlDataSource dataSource,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            await RequireReadyAsync(dataSource, cancellationToken);
+            return true;
+        }
+        catch (Exception exception) when (exception is NpgsqlException
+            or TimeoutException or InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
     public static async Task RequireReadyAsync(
         NpgsqlDataSource dataSource,
         CancellationToken cancellationToken = default)

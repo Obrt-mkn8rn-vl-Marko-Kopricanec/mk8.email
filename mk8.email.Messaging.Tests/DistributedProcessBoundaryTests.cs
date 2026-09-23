@@ -232,7 +232,7 @@ public sealed class DistributedProcessBoundaryTests
     }
 
     [TestMethod]
-    public async Task PendingRestoreStopsGatewayAndWorkerBeforeSchemaOrListenersStart()
+    public async Task PendingRestoreKeepsGatewayLiveButBlocksTrafficUntilItIsComplete()
     {
         await using var database = await RequirePostgresAsync();
         var directory = Directory.CreateTempSubdirectory("mk8-pending-restore-process-");
@@ -251,53 +251,8 @@ public sealed class DistributedProcessBoundaryTests
                 await create.ExecuteNonQueryAsync();
             }
 
-            var databaseConnection = new NpgsqlConnectionStringBuilder(database.ConnectionString);
-            var config = new EnvironmentConfig
-            {
-                Database = new DatabaseConfig
-                {
-                    Host = databaseConnection.Host!,
-                    Port = databaseConnection.Port,
-                    Name = databaseConnection.Database!,
-                    Username = databaseConnection.Username!,
-                    Password = string.IsNullOrEmpty(databaseConnection.Password)
-                        ? "local-test-only-password"
-                        : databaseConnection.Password,
-                },
-                Smtp = new SmtpConfig
-                {
-                    Hostname = "email.example.test",
-                    EnableSmtp = false,
-                },
-                Imap = new ImapConfig { EnableImap = false, EnableImplicitTls = false },
-                Pop3 = new Pop3Config { EnablePop3 = false, EnableImplicitTls = false },
-                Sieve = new SieveConfig { EnableManageSieve = false },
-                Jmap = new JmapConfig
-                {
-                    EnableJmap = true,
-                    IsDefault = true,
-                    PublicBaseUrl = "https://email.example.test",
-                },
-                Dav = new DavConfig { EnableDav = false },
-                Admin = new AdminConfig
-                {
-                    AllowedNetworks = ["127.0.0.0/8"],
-                    DataProtectionKeyPath = Path.Combine(directory.FullName, "keys"),
-                    AuditLogPath = Path.Combine(directory.FullName, "audit.jsonl"),
-                    HealthStatusPath = Path.Combine(directory.FullName, "status.json"),
-                },
-                Messaging = new MessagingConfig
-                {
-                    Enabled = true,
-                    EncryptionKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
-                },
-                ObjectStorage = new ObjectStorageConfig
-                {
-                    ConnectionString = "UseDevelopmentStorage=true",
-                    ContainerName = "mk8-pending-restore-test",
-                    CreateContainerIfMissing = true,
-                },
-            };
+            var config = CreateGatewayTestConfig(
+                new NpgsqlConnectionStringBuilder(database.ConnectionString), directory);
             Assert.HasCount(0, config.Validate(false, EnvironmentValidationRole.Gateway));
             Assert.HasCount(0, config.Validate(false, EnvironmentValidationRole.ApplicationWorker));
             Directory.CreateDirectory(config.Admin.DataProtectionKeyPath);
@@ -311,38 +266,181 @@ public sealed class DistributedProcessBoundaryTests
                 StringAssert.Contains(worker.Output, "restore is incomplete");
             }
 
+            var port = ReserveLoopbackPort();
             using var gateway = StartProcess(
                 "mk8.email.Gateway", "mk8.email.Gateway.dll", null, configPath,
-                "http://127.0.0.1:0");
+                $"http://127.0.0.1:{port}");
             var gatewayOutput = gateway.StandardOutput.ReadToEndAsync();
             var gatewayErrors = gateway.StandardError.ReadToEndAsync();
-            using (var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15)))
+            try
             {
-                try
+                using var client = new HttpClient
                 {
-                    await gateway.WaitForExitAsync(deadline.Token);
-                }
-                catch (OperationCanceledException)
-                {
-                    gateway.Kill(entireProcessTree: true);
-                    await gateway.WaitForExitAsync();
-                    Assert.Fail("Gateway started despite a pending restore.");
-                }
-            }
-            var output = await gatewayOutput + await gatewayErrors;
-            Assert.AreNotEqual(0, gateway.ExitCode, output);
-            StringAssert.Contains(output, "restore is incomplete");
+                    BaseAddress = new Uri($"http://127.0.0.1:{port}"),
+                    Timeout = TimeSpan.FromSeconds(15),
+                };
+                await WaitForGatewayAsync(client, gateway, TimeSpan.FromSeconds(15));
+                Assert.AreEqual(HttpStatusCode.ServiceUnavailable,
+                    (await client.GetAsync("/health/ready")).StatusCode);
+                Assert.AreEqual(HttpStatusCode.ServiceUnavailable,
+                    (await client.GetAsync("/.well-known/jmap")).StatusCode);
+                Assert.AreEqual(HttpStatusCode.ServiceUnavailable,
+                    (await client.GetAsync("/health/application")).StatusCode);
 
-            await using var inspection = new NpgsqlConnection(database.ConnectionString);
-            await inspection.OpenAsync();
-            Assert.AreEqual(0L, await CountAsync(
-                inspection, "SELECT count(*) FROM pg_class WHERE oid = to_regclass('public.users')"));
+                await using var inspection = new NpgsqlConnection(database.ConnectionString);
+                await inspection.OpenAsync();
+                Assert.AreEqual(0L, await CountAsync(
+                    inspection,
+                    "SELECT count(*) FROM pg_class WHERE oid = to_regclass('public.users')"));
+
+                // A restore can recreate messaging tables while its marker is still pending.
+                await using (var dataSource = NpgsqlDataSource.Create(database.ConnectionString))
+                    await PostgresMessagingSchema.EnsureAsync(dataSource);
+                Assert.AreEqual(HttpStatusCode.ServiceUnavailable,
+                    (await client.GetAsync("/health/ready")).StatusCode);
+                Assert.AreEqual(HttpStatusCode.ServiceUnavailable,
+                    (await client.GetAsync("/.well-known/jmap")).StatusCode);
+                Assert.AreEqual(HttpStatusCode.ServiceUnavailable,
+                    (await client.GetAsync("/health/application")).StatusCode);
+                Assert.AreEqual(0L, await CountAsync(
+                    inspection, "SELECT count(*) FROM gateway_traffic_records"));
+                Assert.AreEqual(0L, await CountAsync(
+                    inspection, "SELECT count(*) FROM application_requests"));
+
+                await using (var complete = inspection.CreateCommand())
+                {
+                    complete.CommandText =
+                        "UPDATE public.mk8_restore_state SET state = 'complete' WHERE id = 1";
+                    Assert.AreEqual(1, await complete.ExecuteNonQueryAsync());
+                }
+                Assert.AreEqual(HttpStatusCode.OK,
+                    (await client.GetAsync("/health/ready")).StatusCode);
+                Assert.AreEqual(HttpStatusCode.Unauthorized,
+                    (await client.GetAsync("/.well-known/jmap")).StatusCode);
+                Assert.AreEqual(2L, await CountAsync(
+                    inspection, "SELECT count(*) FROM gateway_traffic_records"));
+                Assert.IsFalse(gateway.HasExited);
+            }
+            finally
+            {
+                if (!gateway.HasExited)
+                    gateway.Kill(entireProcessTree: true);
+                await gateway.WaitForExitAsync();
+                await Task.WhenAll(gatewayOutput, gatewayErrors);
+            }
         }
         finally
         {
             directory.Delete(recursive: true);
         }
     }
+
+    [TestMethod]
+    public async Task PostgreSqlOutageLeavesGatewayLiveAndProtocolTrafficUnavailable()
+    {
+        var directory = Directory.CreateTempSubdirectory("mk8-gateway-db-outage-");
+        try
+        {
+            var unavailableDatabase = new NpgsqlConnectionStringBuilder
+            {
+                Host = "127.0.0.1",
+                Port = ReserveLoopbackPort(),
+                Database = "offline",
+                Username = "offline",
+                Password = "local-test-only-password",
+            };
+            var config = CreateGatewayTestConfig(unavailableDatabase, directory);
+            Assert.HasCount(0, config.Validate(false, EnvironmentValidationRole.Gateway));
+            Directory.CreateDirectory(config.Admin.DataProtectionKeyPath);
+            var configPath = Path.Combine(directory.FullName, "distributed.json");
+            await File.WriteAllTextAsync(configPath, JsonSerializer.Serialize(config));
+
+            var port = ReserveLoopbackPort();
+            using var gateway = StartProcess(
+                "mk8.email.Gateway", "mk8.email.Gateway.dll", null, configPath,
+                $"http://127.0.0.1:{port}");
+            var gatewayOutput = gateway.StandardOutput.ReadToEndAsync();
+            var gatewayErrors = gateway.StandardError.ReadToEndAsync();
+            try
+            {
+                using var client = new HttpClient
+                {
+                    BaseAddress = new Uri($"http://127.0.0.1:{port}"),
+                    Timeout = TimeSpan.FromSeconds(15),
+                };
+                await WaitForGatewayAsync(client, gateway, TimeSpan.FromSeconds(15));
+                Assert.AreEqual(HttpStatusCode.ServiceUnavailable,
+                    (await client.GetAsync("/health/ready")).StatusCode);
+                Assert.AreEqual(HttpStatusCode.ServiceUnavailable,
+                    (await client.GetAsync("/.well-known/jmap")).StatusCode);
+                Assert.AreEqual(HttpStatusCode.ServiceUnavailable,
+                    (await client.GetAsync("/health/application")).StatusCode);
+                Assert.AreEqual(HttpStatusCode.OK,
+                    (await client.GetAsync("/health/live")).StatusCode);
+                Assert.IsFalse(gateway.HasExited);
+            }
+            finally
+            {
+                if (!gateway.HasExited)
+                    gateway.Kill(entireProcessTree: true);
+                await gateway.WaitForExitAsync();
+                await Task.WhenAll(gatewayOutput, gatewayErrors);
+            }
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    private static EnvironmentConfig CreateGatewayTestConfig(
+        NpgsqlConnectionStringBuilder database,
+        DirectoryInfo directory) => new()
+        {
+            Database = new DatabaseConfig
+            {
+                Host = database.Host!,
+                Port = database.Port,
+                Name = database.Database!,
+                Username = database.Username!,
+                Password = string.IsNullOrEmpty(database.Password)
+                ? "local-test-only-password"
+                : database.Password,
+            },
+            Smtp = new SmtpConfig
+            {
+                Hostname = "email.example.test",
+                EnableSmtp = false,
+            },
+            Imap = new ImapConfig { EnableImap = false, EnableImplicitTls = false },
+            Pop3 = new Pop3Config { EnablePop3 = false, EnableImplicitTls = false },
+            Sieve = new SieveConfig { EnableManageSieve = false },
+            Jmap = new JmapConfig
+            {
+                EnableJmap = true,
+                IsDefault = true,
+                PublicBaseUrl = "https://email.example.test",
+            },
+            Dav = new DavConfig { EnableDav = false },
+            Admin = new AdminConfig
+            {
+                AllowedNetworks = ["127.0.0.0/8"],
+                DataProtectionKeyPath = Path.Combine(directory.FullName, "keys"),
+                AuditLogPath = Path.Combine(directory.FullName, "audit.jsonl"),
+                HealthStatusPath = Path.Combine(directory.FullName, "status.json"),
+            },
+            Messaging = new MessagingConfig
+            {
+                Enabled = true,
+                EncryptionKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
+            },
+            ObjectStorage = new ObjectStorageConfig
+            {
+                ConnectionString = "UseDevelopmentStorage=true",
+                ContainerName = "mk8-gateway-test",
+                CreateContainerIfMissing = true,
+            },
+        };
 
     private static async Task WaitForGatewayAsync(
         HttpClient client,

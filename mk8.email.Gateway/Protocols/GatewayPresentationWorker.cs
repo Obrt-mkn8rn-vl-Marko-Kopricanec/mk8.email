@@ -10,6 +10,7 @@ namespace mk8.email.Gateway.Protocols;
 
 internal sealed class GatewayPresentationWorker(
     IPresentationRequestConsumer requests,
+    IApplicationTransportControl transport,
     IGatewayTrafficJournal traffic,
     GatewayWebPushService webPush,
     ISmtpPresentationRelay smtpRelay,
@@ -31,6 +32,12 @@ internal sealed class GatewayPresentationWorker(
             {
                 try
                 {
+                    if (!await transport.IsAvailableAsync(stoppingToken))
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+                        continue;
+                    }
+
                     active.RemoveWhere(task => task.IsCompleted);
                     if (active.Count >= MaximumConcurrentOperations)
                     {

@@ -175,8 +175,31 @@ public sealed class GatewayDatabasePrivilegesTests
                     Encoding.ASCII.GetBytes("EHLO client.example\r\n"),
                     new Dictionary<string, string>(),
                     DateTimeOffset.UtcNow);
-                var journal = new PostgresGatewayTrafficJournal(gatewayDataSource, protector);
+                var journal = new RestoreAwareGatewayTrafficJournal(
+                    gatewayDataSource,
+                    new PostgresGatewayTrafficJournal(gatewayDataSource, protector));
                 await journal.AppendAsync(record);
+                Assert.HasCount(1, await journal.ReadSessionAsync(sessionId));
+
+                var guardedTransport = new RestoreAwareApplicationTransportControl(
+                    gatewayDataSource, transport);
+                Assert.IsTrue(await guardedTransport.IsAvailableAsync());
+                await using (var pending = admin.CreateCommand())
+                {
+                    pending.CommandText =
+                        "UPDATE mk8_restore_state SET state = 'pending' WHERE id = 1";
+                    await pending.ExecuteNonQueryAsync();
+                }
+                Assert.IsFalse(await guardedTransport.IsAvailableAsync());
+                await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
+                    journal.AppendAsync(record with { Id = Guid.CreateVersion7(), Sequence = 1 }));
+                await using (var complete = admin.CreateCommand())
+                {
+                    complete.CommandText =
+                        "UPDATE mk8_restore_state SET state = 'complete' WHERE id = 1";
+                    await complete.ExecuteNonQueryAsync();
+                }
+                Assert.IsTrue(await guardedTransport.IsAvailableAsync());
                 Assert.HasCount(1, await journal.ReadSessionAsync(sessionId));
 
                 var now = DateTimeOffset.UtcNow;

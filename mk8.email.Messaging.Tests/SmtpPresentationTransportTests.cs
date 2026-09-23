@@ -66,6 +66,7 @@ public sealed class SmtpPresentationTransportTests
         var smtp = new BlockingSmtpRelay();
         var gatewayWorker = new GatewayPresentationWorker(
             gatewayBus,
+            new PostgresApplicationTransportControl(gatewayDataSource),
             journal,
             webPush,
             smtp,
@@ -163,6 +164,7 @@ public sealed class SmtpPresentationTransportTests
             var smtp = new RecordingSmtpRelay();
             var gatewayWorker = new GatewayPresentationWorker(
                 gatewayBus,
+                new PostgresApplicationTransportControl(gatewayDataSource),
                 journal,
                 webPush,
                 smtp,
@@ -242,6 +244,7 @@ public sealed class SmtpPresentationTransportTests
         var smtp = new RecordingSmtpRelay();
         var gatewayWorker = new GatewayPresentationWorker(
             gatewayBus,
+            new PostgresApplicationTransportControl(gatewayDataSource),
             journal,
             webPush,
             smtp,

@@ -149,6 +149,16 @@ public sealed class ImapApplicationBoundaryTests
         Assert.HasCount(1, seen.Messages);
         Assert.AreEqual(7L, seen.Messages[0].ModSeq);
 
+        var page = await SendAsync<ImapFetchPageRequest, ImapFetchPageResult>(
+            dispatcher,
+            ApplicationOperations.ImapFetchPage,
+            new ImapFetchPageRequest(application.UserId, Guid.CreateVersion7(),
+                true, new ImapMessageSelection([new ImapMessageRange(1, null)], null),
+                0, null, null, true));
+        Assert.IsTrue(page.FolderFound);
+        Assert.AreEqual(7, page.SnapshotMaxUid);
+        Assert.IsTrue(application.LastFetchIncludedContent);
+
         var idle = await SendAsync<ImapIdleSnapshotRequest, ImapIdleSnapshotResult>(
             dispatcher,
             ApplicationOperations.ImapGetIdleSnapshot,
@@ -336,6 +346,16 @@ public sealed class ImapApplicationBoundaryTests
             CancellationToken cancellationToken = default) =>
             Task.FromResult(new ImapMarkSeenResult(true,
                 [new ImapSeenMessage(request.MessageIds[0], true, 7)]));
+
+        public bool LastFetchIncludedContent { get; private set; }
+
+        public Task<ImapFetchPageResult> GetFetchPageAsync(
+            ImapFetchPageRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            LastFetchIncludedContent = request.IncludeStoredContent;
+            return Task.FromResult(new ImapFetchPageResult(true, 7, 7, 7, false, []));
+        }
 
         public Task<ImapIdleSnapshotResult> GetIdleSnapshotAsync(
             ImapIdleSnapshotRequest request,

@@ -22,6 +22,10 @@ internal sealed class ImapApplicationService(
     EnvironmentConfig? environment = null) : IImapApplicationService
 {
     private const int MaximumMultiAppendMessages = 20;
+    private const int FetchScanPageSize = 256;
+    private const int FetchMetadataPageSize = 128;
+    private const int FetchContentPageSize = 8;
+    private const int FetchContentPageBytes = 16 * 1024 * 1024;
 
     public async Task<ImapIdentityResult> AuthenticatePasswordAsync(
         ImapPasswordAuthentication request,
@@ -1483,6 +1487,185 @@ internal sealed class ImapApplicationService(
         if (transaction is not null)
             await transaction.CommitAsync(cancellationToken);
         return new ImapMarkSeenResult(true, results);
+    }
+
+    public async Task<ImapFetchPageResult> GetFetchPageAsync(
+        ImapFetchPageRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.UserId == Guid.Empty
+            || request.FolderId == Guid.Empty
+            || request.Selection is null
+            || !IsValidMessageSelection(request.Selection)
+            || request.AfterUid < 0
+            || (request.SnapshotMaxUid is null)
+                != (request.SnapshotMaximumIdentifier is null)
+            || request.SnapshotMaxUid is < 0
+            || request.SnapshotMaximumIdentifier is < 0
+            || request.SnapshotMaxUid is { } snapshotMaxUid
+                && request.AfterUid > snapshotMaxUid)
+        {
+            throw new ArgumentException("The IMAP FETCH page request is invalid.", nameof(request));
+        }
+
+        await using var transaction = database.Database.IsRelational()
+            ? await database.Database.BeginTransactionAsync(
+                IsolationLevel.RepeatableRead, cancellationToken)
+            : null;
+        var folderExists = await database.Folders
+            .AsNoTracking()
+            .AnyAsync(folder => folder.Id == request.FolderId
+                && folder.Inbox.OwnerId == request.UserId,
+                cancellationToken);
+        if (!folderExists)
+            return new ImapFetchPageResult(false, 0, 0, request.AfterUid, false, []);
+
+        var query = database.Emails
+            .AsNoTracking()
+            .Where(email => email.FolderId == request.FolderId);
+        var maxUid = request.SnapshotMaxUid
+            ?? await query.MaxAsync(email => (int?)email.Uid, cancellationToken)
+            ?? 0;
+        var maximumIdentifier = request.SnapshotMaximumIdentifier
+            ?? (request.UseUid ? maxUid : await query.CountAsync(cancellationToken));
+        var sequenceBefore = request.AfterUid == 0
+            ? 0
+            : await query.CountAsync(email => email.Uid <= request.AfterUid,
+                cancellationToken);
+        var candidates = await query
+            .Where(email => email.Uid > request.AfterUid && email.Uid <= maxUid)
+            .OrderBy(email => email.Uid)
+            .Select(email => new { email.Id, email.Uid })
+            .Take(FetchScanPageSize + 1)
+            .ToListAsync(cancellationToken);
+        var resolvedRanges = request.Selection.Ranges is { } ranges
+            ? ResolveMessageRanges(ranges.Select(range => (range.Start, range.End)),
+                maximumIdentifier)
+            : null;
+        var savedSearchUids = request.Selection.SavedSearchUids?.ToHashSet();
+        var selected = new List<ImapFetchMessage>();
+        var selectedLimit = request.IncludeStoredContent
+            ? FetchContentPageSize
+            : FetchMetadataPageSize;
+        var messageQuery = request.IncludeStoredContent
+            ? query
+            : query.Select(email => new EmailDB
+            {
+                Id = email.Id,
+                Sender = email.Sender,
+                Recipient = email.Recipient,
+                Subject = email.Subject,
+                Body = email.SizeBytes > 0 ? string.Empty : email.Body,
+                IsRead = email.IsRead,
+                IsDeleted = email.IsDeleted,
+                IsFlagged = email.IsFlagged,
+                IsDraft = email.IsDraft,
+                IsAnswered = email.IsAnswered,
+                Keywords = email.Keywords,
+                ModSeq = email.ModSeq,
+                Uid = email.Uid,
+                EmailObjectId = email.EmailObjectId,
+                ThreadObjectId = email.ThreadObjectId,
+                SizeBytes = email.SizeBytes,
+                RawHeaders = email.SizeBytes > 0 ? null : email.RawHeaders,
+                MessageId = email.MessageId,
+                InReplyTo = email.InReplyTo,
+                Cc = email.Cc,
+                ReceivedAt = email.ReceivedAt,
+            });
+        var candidateIds = candidates.Select(candidate => candidate.Id).ToArray();
+        var metadataById = request.IncludeStoredContent
+            ? null
+            : await messageQuery
+                .Where(email => candidateIds.Contains(email.Id))
+                .ToDictionaryAsync(email => email.Id, cancellationToken);
+        var contentBytes = 0L;
+        var nextAfterUid = request.AfterUid;
+        var processed = 0;
+        var rangeIndex = 0;
+        for (var index = 0; index < candidates.Count && index < FetchScanPageSize; index++)
+        {
+            if (selected.Count >= selectedLimit)
+                break;
+
+            var candidate = candidates[index];
+            var identifier = request.UseUid
+                ? candidate.Uid
+                : sequenceBefore + index + 1;
+            var matches = savedSearchUids is null
+                || savedSearchUids.Contains(candidate.Uid);
+            if (resolvedRanges is not null)
+            {
+                while (rangeIndex < resolvedRanges.Count
+                    && resolvedRanges[rangeIndex].End < identifier)
+                {
+                    rangeIndex++;
+                }
+                matches = matches && rangeIndex < resolvedRanges.Count
+                    && resolvedRanges[rangeIndex].Start <= identifier;
+            }
+
+            if (matches)
+            {
+                var email = metadataById is not null
+                    ? metadataById[candidate.Id]
+                    : await messageQuery.SingleAsync(
+                        message => message.Id == candidate.Id, cancellationToken);
+                var raw = request.IncludeStoredContent
+                    ? await content.ReadAsync(email, cancellationToken)
+                    : null;
+                if (raw is not null
+                    && selected.Count > 0
+                    && contentBytes + raw.LongLength > FetchContentPageBytes)
+                {
+                    break;
+                }
+                if (raw is not null)
+                    contentBytes += raw.LongLength;
+                selected.Add(new ImapFetchMessage(
+                    email.Id,
+                    sequenceBefore + index + 1,
+                    email.Uid,
+                    email.ModSeq,
+                    email.IsRead,
+                    email.IsDeleted,
+                    email.IsFlagged,
+                    email.IsDraft,
+                    email.IsAnswered,
+                    email.Keywords ?? [],
+                    email.ReceivedAt,
+                    email.SizeBytes,
+                    email.Sender,
+                    email.Recipient,
+                    email.Cc,
+                    email.Subject,
+                    request.IncludeStoredContent || email.SizeBytes == 0
+                        ? email.Body
+                        : string.Empty,
+                    request.IncludeStoredContent || email.SizeBytes == 0
+                        ? email.RawHeaders
+                        : null,
+                    email.MessageId,
+                    email.InReplyTo,
+                    email.EmailObjectId,
+                    email.ThreadObjectId,
+                    raw));
+            }
+
+            nextAfterUid = candidate.Uid;
+            processed++;
+        }
+
+        if (transaction is not null)
+            await transaction.CommitAsync(cancellationToken);
+        return new ImapFetchPageResult(
+            true,
+            maxUid,
+            maximumIdentifier,
+            nextAfterUid,
+            processed < candidates.Count,
+            selected);
     }
 
     public async Task<ImapQuotaResult> GetQuotaAsync(

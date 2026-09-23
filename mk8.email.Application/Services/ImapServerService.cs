@@ -1,4 +1,3 @@
-using System.Data;
 using System.IO.Compression;
 using System.Net;
 using System.Net.Security;
@@ -7,7 +6,6 @@ using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.RegularExpressions;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -16,7 +14,6 @@ using mk8.email.Configuration;
 using mk8.email.Contracts.Enums;
 using mk8.email.Contracts.Imap;
 using mk8.email.Infrastructure;
-using mk8.email.Infrastructure.Data;
 using mk8.email.Infrastructure.Models;
 using mk8.email.MailWire;
 
@@ -61,6 +58,32 @@ ILogger<ImapServerService> logger) : BackgroundService
         public HashSet<int> SavedSearchUids { get; set; } = [];
         public required string RemoteIp { get; init; }
         public int AuthenticationFailures { get; set; }
+    }
+
+    private sealed class FetchPresentationMessage(ImapFetchMessage fetched)
+    {
+        public Guid Id { get; } = fetched.Id;
+        public int Uid { get; } = fetched.Uid;
+        public long ModSeq { get; set; } = fetched.ModSeq;
+        public bool IsRead { get; set; } = fetched.IsRead;
+        public bool IsDeleted { get; } = fetched.IsDeleted;
+        public bool IsFlagged { get; } = fetched.IsFlagged;
+        public bool IsDraft { get; } = fetched.IsDraft;
+        public bool IsAnswered { get; } = fetched.IsAnswered;
+        public string[] Keywords { get; } = fetched.Keywords;
+        public DateTime ReceivedAt { get; } = fetched.ReceivedAt;
+        public int SizeBytes { get; } = fetched.SizeBytes;
+        public string Sender { get; } = fetched.Sender;
+        public string Recipient { get; } = fetched.Recipient;
+        public string? Cc { get; } = fetched.Cc;
+        public string Subject { get; } = fetched.Subject;
+        public string Body { get; set; } = fetched.Body;
+        public string? RawHeaders { get; set; } = fetched.RawHeaders;
+        public string? MessageId { get; } = fetched.MessageId;
+        public string? InReplyTo { get; } = fetched.InReplyTo;
+        public string? EmailObjectId { get; } = fetched.EmailObjectId;
+        public string? ThreadObjectId { get; } = fetched.ThreadObjectId;
+        public byte[]? RawMessage { get; set; }
     }
 
     private enum ImapState { NotAuthenticated, Authenticated, Selected, Logout }
@@ -1720,25 +1743,19 @@ ILogger<ImapServerService> logger) : BackgroundService
         if (fetchItems.Contains("MODSEQ", StringComparison.OrdinalIgnoreCase))
             session.CondstoreEnabled = true;
 
-        using var scope = scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-        var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
         var folderId = session.SelectedFolderId!.Value;
-        var messageQuery = db.Emails.AsNoTracking().Where(email => email.FolderId == folderId);
-        var orderedUids = await messageQuery
-            .OrderBy(email => email.Uid)
-            .Select(email => email.Uid)
-            .ToListAsync(ct);
-        var maximumIdentifier = useUid
-            ? orderedUids.LastOrDefault()
-            : orderedUids.Count;
-        if (!TryResolveMessageSet(
-                messageSet,
-                maximumIdentifier,
-                orderedUids,
-                useUid,
-                session.SavedSearchUids,
-                out var parsedMessageSet))
+        ImapMessageSelection selection;
+        if (messageSet == "$")
+        {
+            selection = new ImapMessageSelection(null, session.SavedSearchUids.ToList());
+        }
+        else if (ImapUidSetParser.TryParse(messageSet, out var ranges))
+        {
+            selection = new ImapMessageSelection(
+                ranges.Select(range => new ImapMessageRange(range.Start, range.End)).ToList(),
+                null);
+        }
+        else
         {
             await writer.WriteLineAsync($"{tag} BAD Invalid message set");
             return;
@@ -1752,87 +1769,181 @@ ILogger<ImapServerService> logger) : BackgroundService
             || BodyStandaloneRegex().IsMatch(normalizedFetchItems)
             || NumericBodySectionRegex().IsMatch(normalizedFetchItems)
             || binaryRequests.Count > 0;
-        var fetchQuery = CreateFetchQuery(messageQuery, includeStoredContent);
-        var sequenceNumber = 0;
-
-        await foreach (var email in fetchQuery.AsAsyncEnumerable().WithCancellation(ct))
+        using var scope = scopeFactory.CreateScope();
+        var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
+        var afterUid = 0;
+        int? snapshotMaxUid = null;
+        int? snapshotMaximumIdentifier = null;
+        while (true)
         {
-            sequenceNumber++;
-            var identifier = useUid ? email.Uid : sequenceNumber;
-            if (!MessageSetContains(parsedMessageSet, identifier))
-                continue;
-
-            if (includeStoredContent)
+            ImapFetchPageResult page;
+            try
             {
-                var rawMessage = await content.ReadAsync(email, ct);
-                ApplyTransientRawMessage(email, rawMessage);
+                page = await application.GetFetchPageAsync(new ImapFetchPageRequest(
+                    session.UserId,
+                    folderId,
+                    useUid,
+                    selection,
+                    afterUid,
+                    snapshotMaxUid,
+                    snapshotMaximumIdentifier,
+                    includeStoredContent), ct);
+                if (!IsValidFetchPage(page, afterUid, snapshotMaxUid,
+                    snapshotMaximumIdentifier, includeStoredContent))
+                {
+                    throw new InvalidOperationException("The IMAP FETCH page is invalid.");
+                }
             }
-
-            using var mimeMessage = needsMimeProjection
-                ? ImapMimeMessage.TryParse(BuildRfc822(email))
-                : null;
-
-            if (!TryDecodeBinarySections(
-                    mimeMessage,
-                    binaryRequests,
-                    out var binarySections,
-                    out var binaryFailure))
+            catch (Exception exception) when (
+                exception is not OperationCanceledException && !ct.IsCancellationRequested)
             {
-                await writer.WriteLineAsync($"{tag} NO {binaryFailure}");
+                logger.LogWarning(exception, "IMAP FETCH unavailable for {UserId}", session.UserId);
+                await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] FETCH backend unavailable");
+                return;
+            }
+            if (!page.FolderFound)
+            {
+                await writer.WriteLineAsync($"{tag} NO Mailbox not found");
                 return;
             }
 
-            if (implicitSeen && !email.IsRead && !session.SelectedReadOnly)
+            foreach (var fetched in page.Messages)
             {
-                ImapMarkSeenResult seenResult;
-                try
+                var email = ToTransientFetchMessage(fetched);
+                if (fetched.RawMessage is not null)
+                    ApplyTransientRawMessage(email, fetched.RawMessage);
+
+                using var mimeMessage = needsMimeProjection
+                    ? ImapMimeMessage.TryParse(BuildRfc822(email))
+                    : null;
+
+                if (!TryDecodeBinarySections(
+                        mimeMessage,
+                        binaryRequests,
+                        out var binarySections,
+                        out var binaryFailure))
                 {
-                    var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
-                    seenResult = await application.MarkMessagesSeenAsync(new ImapMarkSeenRequest(
-                        session.UserId, folderId, [email.Id]), ct);
-                    if (seenResult is null
-                        || seenResult.Messages is null
-                        || seenResult.FolderFound && seenResult.Messages.Count != 1
-                        || !seenResult.FolderFound && seenResult.Messages.Count != 0
-                        || seenResult.Messages.Any(message => message is null
-                            || message.Id != email.Id
-                            || message.Found && message.ModSeq < 0
-                            || !message.Found && message.ModSeq != 0))
+                    await writer.WriteLineAsync($"{tag} NO {binaryFailure}");
+                    return;
+                }
+
+                if (implicitSeen && !email.IsRead && !session.SelectedReadOnly)
+                {
+                    ImapMarkSeenResult seenResult;
+                    try
                     {
-                        throw new InvalidOperationException("The IMAP seen update is invalid.");
+                        seenResult = await application.MarkMessagesSeenAsync(new ImapMarkSeenRequest(
+                            session.UserId, folderId, [email.Id]), ct);
+                        if (seenResult is null
+                            || seenResult.Messages is null
+                            || seenResult.FolderFound && seenResult.Messages.Count != 1
+                            || !seenResult.FolderFound && seenResult.Messages.Count != 0
+                            || seenResult.Messages.Any(message => message is null
+                                || message.Id != email.Id
+                                || message.Found && message.ModSeq < 0
+                                || !message.Found && message.ModSeq != 0))
+                        {
+                            throw new InvalidOperationException("The IMAP seen update is invalid.");
+                        }
                     }
+                    catch (Exception exception) when (
+                        exception is not OperationCanceledException && !ct.IsCancellationRequested)
+                    {
+                        logger.LogWarning(exception,
+                            "IMAP FETCH seen update unavailable for {UserId}", session.UserId);
+                        await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] FETCH backend unavailable");
+                        return;
+                    }
+                    if (!seenResult.FolderFound || !seenResult.Messages[0].Found)
+                    {
+                        await writer.WriteLineAsync($"{tag} NO Message unavailable");
+                        return;
+                    }
+                    email.IsRead = true;
+                    email.ModSeq = seenResult.Messages[0].ModSeq;
                 }
-                catch (Exception exception) when (
-                    exception is not OperationCanceledException && !ct.IsCancellationRequested)
-                {
-                    logger.LogWarning(exception,
-                        "IMAP FETCH seen update unavailable for {UserId}", session.UserId);
-                    await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] FETCH backend unavailable");
-                    return;
-                }
-                if (!seenResult.FolderFound || !seenResult.Messages[0].Found)
-                {
-                    await writer.WriteLineAsync($"{tag} NO Message unavailable");
-                    return;
-                }
-                email.IsRead = true;
-                email.ModSeq = seenResult.Messages[0].ModSeq;
+
+                var response = BuildFetchResponse(
+                    fetched.SequenceNumber,
+                    email,
+                    fetchItems,
+                    useUid,
+                    mimeMessage,
+                    binaryRequests,
+                    binarySections);
+                await writer.WriteLineAsync(response);
             }
 
-            var response = BuildFetchResponse(
-                sequenceNumber,
-                email,
-                fetchItems,
-                useUid,
-                mimeMessage,
-                binaryRequests,
-                binarySections);
-            await writer.WriteLineAsync(response);
+            if (!page.HasMore)
+                break;
+            afterUid = page.NextAfterUid;
+            snapshotMaxUid = page.SnapshotMaxUid;
+            snapshotMaximumIdentifier = page.SnapshotMaximumIdentifier;
         }
 
         var commandName = useUid ? "UID FETCH" : "FETCH";
         await writer.WriteLineAsync($"{tag} OK {commandName} completed");
     }
+
+    private static bool IsValidFetchPage(
+        ImapFetchPageResult? page,
+        int afterUid,
+        int? snapshotMaxUid,
+        int? snapshotMaximumIdentifier,
+        bool includeStoredContent)
+    {
+        if (page is null || page.Messages is null)
+            return false;
+        if (!page.FolderFound)
+        {
+            return page.SnapshotMaxUid == 0
+                && page.SnapshotMaximumIdentifier == 0
+                && page.NextAfterUid == afterUid
+                && !page.HasMore
+                && page.Messages.Count == 0;
+        }
+        if (page.SnapshotMaxUid < 0
+            || page.SnapshotMaximumIdentifier < 0
+            || page.NextAfterUid < afterUid
+            || page.NextAfterUid > page.SnapshotMaxUid
+            || page.HasMore && page.NextAfterUid == afterUid
+            || snapshotMaxUid is not null && page.SnapshotMaxUid != snapshotMaxUid
+            || snapshotMaximumIdentifier is not null
+                && page.SnapshotMaximumIdentifier != snapshotMaximumIdentifier
+            || page.Messages.Count > (includeStoredContent ? 8 : 128))
+        {
+            return false;
+        }
+
+        var previousUid = afterUid;
+        var previousSequence = 0;
+        foreach (var message in page.Messages)
+        {
+            if (message is null
+                || message.Id == Guid.Empty
+                || message.Uid <= previousUid
+                || message.Uid > page.NextAfterUid
+                || message.SequenceNumber <= previousSequence
+                || message.ModSeq < 0
+                || message.SizeBytes < 0
+                || message.Sender is null
+                || message.Recipient is null
+                || message.Subject is null
+                || message.Body is null
+                || message.Keywords is null
+                || message.Keywords.Any(keyword => keyword is null)
+                || (message.RawMessage is not null) != includeStoredContent)
+            {
+                return false;
+            }
+            previousUid = message.Uid;
+            previousSequence = message.SequenceNumber;
+        }
+        return true;
+    }
+
+    private static FetchPresentationMessage ToTransientFetchMessage(
+        ImapFetchMessage fetched) => new(fetched);
 
     private async Task HandleStoreAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
         => await HandleStoreCoreAsync(writer, tag, args, session, useUid: false, ct);
@@ -2504,45 +2615,6 @@ ILogger<ImapServerService> logger) : BackgroundService
             .ToList();
     }
 
-    private static Task<FolderDB?> ResolveFolderAsync(
-        EmailDbContext db, Guid userId, string mailboxName, CancellationToken ct) =>
-        ImapMailboxResolver.ResolveFolderAsync(db, userId, mailboxName, ct);
-
-    private static EmailDB AttachFlagUpdate(
-        EmailDbContext db,
-        EmailDB metadata,
-        long modSeq)
-    {
-        var update = new EmailDB
-        {
-            Id = metadata.Id,
-            IsRead = metadata.IsRead,
-            IsDeleted = metadata.IsDeleted,
-            IsFlagged = metadata.IsFlagged,
-            IsDraft = metadata.IsDraft,
-            IsAnswered = metadata.IsAnswered,
-            Keywords = metadata.Keywords.ToArray(),
-            ModSeq = modSeq,
-        };
-        db.Emails.Attach(update);
-        var entry = db.Entry(update);
-        entry.Property(email => email.IsRead).IsModified = true;
-        entry.Property(email => email.IsDeleted).IsModified = true;
-        entry.Property(email => email.IsFlagged).IsModified = true;
-        entry.Property(email => email.IsDraft).IsModified = true;
-        entry.Property(email => email.IsAnswered).IsModified = true;
-        entry.Property(email => email.Keywords).IsModified = true;
-        entry.Property(email => email.ModSeq).IsModified = true;
-        return update;
-    }
-
-    private static void AttachDelete(EmailDbContext db, EmailDB metadata)
-    {
-        var update = new EmailDB { Id = metadata.Id };
-        db.Emails.Attach(update);
-        db.Emails.Remove(update);
-    }
-
     private static string FormatMailboxName(
         string inboxName,
         string domain,
@@ -2609,16 +2681,13 @@ ILogger<ImapServerService> logger) : BackgroundService
     private static string FormatUidSet(List<int> uids) =>
         uids.Count > 0 ? string.Join(',', uids) : "0";
 
-    private static string FormatMailboxObjectId(FolderDB folder) =>
-        FormatObjectId('F', folder.MailboxId, folder.Id);
-
-    private static string FormatEmailObjectId(EmailDB email) =>
+    private static string FormatEmailObjectId(FetchPresentationMessage email) =>
         FormatEmailObjectId(email.Id, email.EmailObjectId);
 
     private static string FormatEmailObjectId(Guid id, string? emailObjectId) =>
         FormatObjectId('M', emailObjectId, id);
 
-    private static string? FormatThreadObjectId(EmailDB email) =>
+    private static string? FormatThreadObjectId(FetchPresentationMessage email) =>
         FormatThreadObjectId(email.Id, email.ThreadObjectId);
 
     private static string? FormatThreadObjectId(Guid id, string? threadObjectId) =>
@@ -2895,42 +2964,6 @@ ILogger<ImapServerService> logger) : BackgroundService
         return true;
     }
 
-    private static IQueryable<EmailDB> CreateFetchQuery(
-        IQueryable<EmailDB> messageQuery,
-        bool includeStoredContent)
-    {
-        if (includeStoredContent)
-            return messageQuery.OrderBy(email => email.Uid);
-
-        return messageQuery
-            .Select(email => new EmailDB
-            {
-                Id = email.Id,
-                Sender = email.Sender,
-                Recipient = email.Recipient,
-                Subject = email.Subject,
-                Body = email.SizeBytes > 0 ? string.Empty : email.Body,
-                IsRead = email.IsRead,
-                IsDeleted = email.IsDeleted,
-                IsFlagged = email.IsFlagged,
-                IsDraft = email.IsDraft,
-                IsAnswered = email.IsAnswered,
-                Keywords = email.Keywords,
-                ModSeq = email.ModSeq,
-                Uid = email.Uid,
-                EmailObjectId = email.EmailObjectId,
-                ThreadObjectId = email.ThreadObjectId,
-                SizeBytes = email.SizeBytes,
-                RawHeaders = email.SizeBytes > 0 ? null : email.RawHeaders,
-                MessageId = email.MessageId,
-                InReplyTo = email.InReplyTo,
-                Cc = email.Cc,
-                ReceivedAt = email.ReceivedAt,
-                FolderId = email.FolderId,
-            })
-            .OrderBy(email => email.Uid);
-    }
-
     private static bool IsFetchMacro(string items, string macro) =>
         items == macro || items.StartsWith(macro + " ") || items.EndsWith(" " + macro) || items.Contains(" " + macro + " ");
 
@@ -3003,7 +3036,7 @@ ILogger<ImapServerService> logger) : BackgroundService
 
     private static string BuildFetchResponse(
         int seqNum,
-        EmailDB email,
+        FetchPresentationMessage email,
         string fetchItems,
         bool useUid,
         ImapMimeMessage? mimeMessage,
@@ -3205,7 +3238,7 @@ ILogger<ImapServerService> logger) : BackgroundService
         return (content.AsMemory(start, length), offset);
     }
 
-    private static string BuildFallbackBodyStructure(EmailDB email, bool extended)
+    private static string BuildFallbackBodyStructure(FetchPresentationMessage email, bool extended)
     {
         var size = MailWireEncoding.Instance.GetByteCount(email.Body);
         var lines = email.Body.Length == 0
@@ -3219,7 +3252,7 @@ ILogger<ImapServerService> logger) : BackgroundService
         return structure + ")";
     }
 
-    private static string BuildFlagsList(EmailDB email) => BuildFlagsList(
+    private static string BuildFlagsList(FetchPresentationMessage email) => BuildFlagsList(
         email.IsRead,
         email.IsDeleted,
         email.IsFlagged,
@@ -3264,7 +3297,7 @@ ILogger<ImapServerService> logger) : BackgroundService
         return string.Join(' ', flags);
     }
 
-    private static string BuildRfc822(EmailDB email)
+    private static string BuildRfc822(FetchPresentationMessage email)
     {
         if (email.RawMessage is not null)
             return MailWireEncoding.Instance.GetString(email.RawMessage);
@@ -3289,7 +3322,8 @@ ILogger<ImapServerService> logger) : BackgroundService
         return sb.ToString();
     }
 
-    private static void ApplyTransientRawMessage(EmailDB email, byte[] rawMessage)
+    private static void ApplyTransientRawMessage(
+        FetchPresentationMessage email, byte[] rawMessage)
     {
         email.RawMessage = rawMessage;
         var raw = MailWireEncoding.Instance.GetString(rawMessage);
@@ -3313,7 +3347,7 @@ ILogger<ImapServerService> logger) : BackgroundService
         email.Body = string.Empty;
     }
 
-    private static string BuildRfc822Header(EmailDB email)
+    private static string BuildRfc822Header(FetchPresentationMessage email)
     {
         if (email.RawMessage is not null)
         {
@@ -3354,29 +3388,6 @@ ILogger<ImapServerService> logger) : BackgroundService
 
     private static bool IsValidImapKeyword(string keyword)
         => ImapFlagMutation.IsValidKeyword(keyword);
-
-    private static bool TryApplyFlags(
-        EmailDB email,
-        string action,
-        IReadOnlyList<string> flags,
-        out string failure)
-    {
-        var mode = action switch
-        {
-            "FLAGS" or "FLAGS.SILENT" => ImapFlagMutationMode.Replace,
-            "+FLAGS" or "+FLAGS.SILENT" => ImapFlagMutationMode.Add,
-            "-FLAGS" or "-FLAGS.SILENT" => ImapFlagMutationMode.Remove,
-            _ => (ImapFlagMutationMode?)null,
-        };
-        if (mode is null)
-        {
-            failure = "Invalid STORE action";
-            return false;
-        }
-        return ImapFlagMutation.TryApply(email, mode.Value, flags, out failure);
-    }
-
-    private static bool IsMarkedDeleted(EmailDB email) => email.IsDeleted;
 
     private static bool TryParseMessageSet(
         string value,
@@ -4140,7 +4151,7 @@ ILogger<ImapServerService> logger) : BackgroundService
     private static long ToQuotaStorageUnits(long bytes) =>
         bytes <= 0 ? 0 : 1 + (bytes - 1) / 1024;
 
-    private static string BuildEnvelope(EmailDB email)
+    private static string BuildEnvelope(FetchPresentationMessage email)
     {
         var (senderLocal, senderDomain) = SplitAddress(email.Sender);
         var (rcptLocal, rcptDomain) = SplitAddress(email.Recipient);
@@ -4177,7 +4188,8 @@ ILogger<ImapServerService> logger) : BackgroundService
             : (address, string.Empty);
     }
 
-    private static string FilterHeaders(EmailDB email, string[] requestedFields)
+    private static string FilterHeaders(
+        FetchPresentationMessage email, string[] requestedFields)
     {
         var headers = email.RawHeaders ?? BuildRfc822Header(email);
         var sb = new StringBuilder();
@@ -4221,7 +4233,8 @@ ILogger<ImapServerService> logger) : BackgroundService
         return sb.ToString();
     }
 
-    private static string FilterHeadersNot(EmailDB email, string[] excludedFields)
+    private static string FilterHeadersNot(
+        FetchPresentationMessage email, string[] excludedFields)
     {
         var headers = email.RawHeaders ?? BuildRfc822Header(email);
         var sb = new StringBuilder();

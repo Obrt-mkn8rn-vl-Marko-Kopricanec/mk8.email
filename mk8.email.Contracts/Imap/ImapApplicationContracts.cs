@@ -85,6 +85,10 @@ public interface IImapApplicationService
     Task<ImapMarkSeenResult> MarkMessagesSeenAsync(
         ImapMarkSeenRequest request,
         CancellationToken cancellationToken = default);
+
+    Task<ImapFetchPageResult> GetFetchPageAsync(
+        ImapFetchPageRequest request,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record ImapPasswordAuthentication(string Username, string Password);
@@ -441,3 +445,46 @@ public sealed record ImapMarkSeenResult(
     List<ImapSeenMessage> Messages);
 
 public sealed record ImapSeenMessage(Guid Id, bool Found, long ModSeq);
+
+public sealed record ImapFetchPageRequest(
+    Guid UserId,
+    Guid FolderId,
+    bool UseUid,
+    ImapMessageSelection Selection,
+    int AfterUid,
+    int? SnapshotMaxUid,
+    int? SnapshotMaximumIdentifier,
+    bool IncludeStoredContent);
+
+public sealed record ImapFetchPageResult(
+    bool FolderFound,
+    int SnapshotMaxUid,
+    int SnapshotMaximumIdentifier,
+    int NextAfterUid,
+    bool HasMore,
+    List<ImapFetchMessage> Messages);
+
+public sealed record ImapFetchMessage(
+    Guid Id,
+    int SequenceNumber,
+    int Uid,
+    long ModSeq,
+    bool IsRead,
+    bool IsDeleted,
+    bool IsFlagged,
+    bool IsDraft,
+    bool IsAnswered,
+    string[] Keywords,
+    DateTime ReceivedAt,
+    int SizeBytes,
+    string Sender,
+    string Recipient,
+    string? Cc,
+    string Subject,
+    string Body,
+    string? RawHeaders,
+    string? MessageId,
+    string? InReplyTo,
+    string? EmailObjectId,
+    string? ThreadObjectId,
+    byte[]? RawMessage);

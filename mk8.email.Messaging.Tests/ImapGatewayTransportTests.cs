@@ -137,6 +137,10 @@ public sealed class ImapGatewayTransportTests
             var seenId = Guid.CreateVersion7();
             var seen = await client.MarkMessagesSeenAsync(new ImapMarkSeenRequest(
                 application.UserId, Guid.CreateVersion7(), [seenId]), timeout.Token);
+            var fetchPage = await client.GetFetchPageAsync(new ImapFetchPageRequest(
+                application.UserId, Guid.CreateVersion7(), true,
+                new ImapMessageSelection([new ImapMessageRange(1, null)], null),
+                0, null, null, true), timeout.Token);
             Assert.AreEqual(application.UserId, password.UserId);
             Assert.AreEqual(application.UserId, oauth.UserId);
             Assert.AreEqual("imap-secret", application.Password);
@@ -192,6 +196,10 @@ public sealed class ImapGatewayTransportTests
             Assert.AreEqual(ImapThreadAlgorithm.References, application.LastThreadRequest?.Algorithm);
             Assert.AreEqual(seenId, application.LastSeenRequest?.MessageIds[0]);
             Assert.AreEqual(7L, seen.Messages[0].ModSeq);
+            Assert.IsTrue(fetchPage.FolderFound);
+            Assert.IsTrue(application.LastFetchRequest?.IncludeStoredContent);
+            Assert.HasCount(1, fetchPage.Messages);
+            Assert.IsTrue(fetchPage.Messages[0].RawMessage is { Length: > 300 * 1024 });
 
             await using var operations = gatewayDataSource.CreateCommand(
                 "SELECT operation FROM application_requests ORDER BY created_at");
@@ -223,6 +231,7 @@ public sealed class ImapGatewayTransportTests
                     ApplicationOperations.ImapSortMessages,
                     ApplicationOperations.ImapThreadMessages,
                     ApplicationOperations.ImapMarkMessagesSeen,
+                    ApplicationOperations.ImapFetchPage,
                 },
                 observed);
 
@@ -232,6 +241,16 @@ public sealed class ImapGatewayTransportTests
             {
                 appendStorage.Parameters.AddWithValue("operation", ApplicationOperations.ImapAppendMessages);
                 await using var storedReader = await appendStorage.ExecuteReaderAsync(timeout.Token);
+                Assert.IsTrue(await storedReader.ReadAsync(timeout.Token));
+                Assert.IsTrue(storedReader.GetBoolean(0));
+                Assert.AreEqual("azure-blob", storedReader.GetString(1));
+            }
+            await using (var fetchStorage = gatewayDataSource.CreateCommand(
+                "SELECT response_payload_inline IS NULL, response_payload_blob_provider "
+                + "FROM application_requests WHERE operation = @operation"))
+            {
+                fetchStorage.Parameters.AddWithValue("operation", ApplicationOperations.ImapFetchPage);
+                await using var storedReader = await fetchStorage.ExecuteReaderAsync(timeout.Token);
                 Assert.IsTrue(await storedReader.ReadAsync(timeout.Token));
                 Assert.IsTrue(storedReader.GetBoolean(0));
                 Assert.AreEqual("azure-blob", storedReader.GetString(1));
@@ -259,8 +278,8 @@ public sealed class ImapGatewayTransportTests
                     Assert.IsFalse(ciphertext.Contains("imap-access-token", StringComparison.Ordinal));
                 }
             }
-            Assert.AreEqual(42, recordCount);
-            Assert.AreEqual(1, blobRecordCount);
+            Assert.AreEqual(44, recordCount);
+            Assert.AreEqual(2, blobRecordCount);
         }
         finally
         {
@@ -290,6 +309,7 @@ public sealed class ImapGatewayTransportTests
         public ImapSortRequest? LastSortRequest { get; private set; }
         public ImapThreadRequest? LastThreadRequest { get; private set; }
         public ImapMarkSeenRequest? LastSeenRequest { get; private set; }
+        public ImapFetchPageRequest? LastFetchRequest { get; private set; }
 
         public Task<ImapIdentityResult> AuthenticatePasswordAsync(
             ImapPasswordAuthentication request,
@@ -468,6 +488,21 @@ public sealed class ImapGatewayTransportTests
             LastSeenRequest = request;
             return Task.FromResult(new ImapMarkSeenResult(true,
                 [new ImapSeenMessage(request.MessageIds[0], true, 7)]));
+        }
+
+        public Task<ImapFetchPageResult> GetFetchPageAsync(
+            ImapFetchPageRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            LastFetchRequest = request;
+            var raw = Encoding.UTF8.GetBytes(
+                "Subject: transport fetch\r\n\r\n" + new string('y', 300 * 1024));
+            return Task.FromResult(new ImapFetchPageResult(true, 7, 7, 7, false,
+                [new ImapFetchMessage(Guid.CreateVersion7(), 2, 7, 5,
+                    false, false, false, false, false, [], DateTime.UtcNow,
+                    raw.Length, "sender@example.test", "user@example.test", null,
+                    "transport fetch", string.Empty, null, null, null, null,
+                    null, raw)]));
         }
     }
 }

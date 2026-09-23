@@ -13,7 +13,7 @@ namespace mk8.email.Messaging.Tests;
 public sealed class ImapSearchPostgresTests
 {
     [TestMethod]
-    [Timeout(20_000)]
+    [Timeout(60_000)]
     public async Task SearchIsOwnerScopedAndReadsAzureCompatibleMessageContent()
     {
         await using var server = await PostgresTestDatabase.TryCreateAsync();
@@ -242,6 +242,48 @@ public sealed class ImapSearchPostgresTests
             Assert.IsFalse(missing.Messages[0].Found);
             await Assert.ThrowsAsync<ArgumentException>(() => application.MarkMessagesSeenAsync(
                 seenRequest with { MessageIds = [messageIds[0], messageIds[0]] }));
+
+            var fetchRequest = new ImapFetchPageRequest(
+                ownerId, folderId, true,
+                new ImapMessageSelection([new ImapMessageRange(1, null)], null),
+                0, null, null, false);
+            Assert.IsFalse((await application.GetFetchPageAsync(fetchRequest with
+            {
+                UserId = otherId,
+            })).FolderFound);
+            var metadataPage = await application.GetFetchPageAsync(fetchRequest);
+            Assert.IsTrue(metadataPage.FolderFound);
+            Assert.IsFalse(metadataPage.HasMore);
+            CollectionAssert.AreEqual(new[] { 1, 2, 3 },
+                metadataPage.Messages.Select(message => message.Uid).ToArray());
+            Assert.IsTrue(metadataPage.Messages.All(message =>
+                message.RawMessage is null && message.Body.Length == 0
+                && message.RawHeaders is null));
+            var rawPage = await application.GetFetchPageAsync(fetchRequest with
+            {
+                Selection = new ImapMessageSelection(null, [1]),
+                IncludeStoredContent = true,
+            });
+            Assert.HasCount(1, rawPage.Messages);
+            var rawMessage = rawPage.Messages[0].RawMessage
+                ?? throw new AssertFailedException("The Blob-backed message was missing.");
+            StringAssert.Contains(
+                Encoding.ASCII.GetString(rawMessage), "needle one");
+            var sequencePage = await application.GetFetchPageAsync(fetchRequest with
+            {
+                UseUid = false,
+                Selection = new ImapMessageSelection(
+                    [new ImapMessageRange(2, 2)], null),
+            });
+            Assert.HasCount(1, sequencePage.Messages);
+            Assert.AreEqual(2, sequencePage.Messages[0].Uid);
+            await Assert.ThrowsAsync<ArgumentException>(() => application.GetFetchPageAsync(
+                fetchRequest with
+                {
+                    AfterUid = 4,
+                    SnapshotMaxUid = 3,
+                    SnapshotMaximumIdentifier = 3,
+                }));
         }
         await using (var database = new EmailDbContext(options))
         {
@@ -259,6 +301,91 @@ public sealed class ImapSearchPostgresTests
             CollectionAssert.AreEqual(new long[] { 4, 5, 3 },
                 flags.Select(email => email.ModSeq).ToArray());
         }
-        Assert.AreEqual(3, objects.ObjectCount);
+
+        await using (var database = new EmailDbContext(options))
+        {
+            var effects = new LargeObjectTransactionEffects(
+                objects, NullLogger<LargeObjectTransactionEffects>.Instance);
+            var content = new MailboxMessageContentService(objects, effects);
+            var marker = effects.Mark();
+            var folder = await database.Folders.SingleAsync(item => item.Id == folderId);
+            for (var uid = 4; uid <= 260; uid++)
+            {
+                var email = new EmailDB
+                {
+                    Id = Guid.CreateVersion7(),
+                    FolderId = folderId,
+                    Uid = uid,
+                    ModSeq = 6,
+                    Sender = "sender@example.test",
+                    Recipient = "owner@example.test",
+                    Subject = $"Bulk {uid}",
+                };
+                await content.SetAsync(email,
+                    Encoding.ASCII.GetBytes($"Subject: Bulk {uid}\r\n\r\nbody\r\n"),
+                    CancellationToken.None);
+                database.Emails.Add(email);
+            }
+            folder.NextUid = 261;
+            folder.HighestModSeq = 6;
+            await database.SaveChangesAsync();
+            await effects.CommitAsync(marker);
+        }
+        await using (var database = new EmailDbContext(options))
+        {
+            var effects = new LargeObjectTransactionEffects(
+                objects, NullLogger<LargeObjectTransactionEffects>.Instance);
+            var application = new ImapApplicationService(
+                null!, null!, database,
+                new MailboxMessageContentService(objects, effects),
+                effects, NullLogger<ImapApplicationService>.Instance);
+            var request = new ImapFetchPageRequest(
+                ownerId, folderId, true,
+                new ImapMessageSelection([new ImapMessageRange(1, null)], null),
+                0, null, null, false);
+            var fetchedUids = new List<int>();
+            var pageCount = 0;
+            while (true)
+            {
+                var page = await application.GetFetchPageAsync(request);
+                pageCount++;
+                fetchedUids.AddRange(page.Messages.Select(message => message.Uid));
+                Assert.AreEqual(260, page.SnapshotMaxUid);
+                Assert.AreEqual(260, page.SnapshotMaximumIdentifier);
+                if (!page.HasMore)
+                    break;
+                request = request with
+                {
+                    AfterUid = page.NextAfterUid,
+                    SnapshotMaxUid = page.SnapshotMaxUid,
+                    SnapshotMaximumIdentifier = page.SnapshotMaximumIdentifier,
+                };
+            }
+            Assert.AreEqual(3, pageCount);
+            CollectionAssert.AreEqual(Enumerable.Range(1, 260).ToArray(),
+                fetchedUids.ToArray());
+
+            var sparseRequest = request with
+            {
+                Selection = new ImapMessageSelection(null, [260]),
+                AfterUid = 0,
+                SnapshotMaxUid = null,
+                SnapshotMaximumIdentifier = null,
+            };
+            var emptyScan = await application.GetFetchPageAsync(sparseRequest);
+            Assert.IsEmpty(emptyScan.Messages);
+            Assert.IsTrue(emptyScan.HasMore);
+            Assert.AreEqual(256, emptyScan.NextAfterUid);
+            var sparsePage = await application.GetFetchPageAsync(sparseRequest with
+            {
+                AfterUid = emptyScan.NextAfterUid,
+                SnapshotMaxUid = emptyScan.SnapshotMaxUid,
+                SnapshotMaximumIdentifier = emptyScan.SnapshotMaximumIdentifier,
+            });
+            Assert.IsFalse(sparsePage.HasMore);
+            Assert.HasCount(1, sparsePage.Messages);
+            Assert.AreEqual(260, sparsePage.Messages[0].Uid);
+        }
+        Assert.AreEqual(260, objects.ObjectCount);
     }
 }

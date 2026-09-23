@@ -236,6 +236,11 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
                     await services.GetRequiredService<IImapApplicationService>()
                         .MarkMessagesSeenAsync(
                             Deserialize<ImapMarkSeenRequest>(request), cancellationToken)),
+                ApplicationOperations.ImapFetchPage => Success(
+                    request.Id,
+                    await services.GetRequiredService<IImapApplicationService>()
+                        .GetFetchPageAsync(
+                            Deserialize<ImapFetchPageRequest>(request), cancellationToken)),
                 ApplicationOperations.AdminAuthenticate => Success(
                     request.Id,
                     await services.GetRequiredService<IAuthService>().LoginAsync(

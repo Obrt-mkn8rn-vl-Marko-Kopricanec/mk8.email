@@ -132,4 +132,10 @@ public sealed class GatewayImapApplicationService(
         CancellationToken cancellationToken = default) =>
         transport.SendAsync<ImapMarkSeenRequest, ImapMarkSeenResult>(
             "imap", ApplicationOperations.ImapMarkMessagesSeen, request, cancellationToken);
+
+    public Task<ImapFetchPageResult> GetFetchPageAsync(
+        ImapFetchPageRequest request,
+        CancellationToken cancellationToken = default) =>
+        transport.SendAsync<ImapFetchPageRequest, ImapFetchPageResult>(
+            "imap", ApplicationOperations.ImapFetchPage, request, cancellationToken);
 }

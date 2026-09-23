@@ -2956,11 +2956,12 @@ public sealed class TransportSecurityTests
             var application = new UnavailableImapMailboxApplicationService(
                 listingUnavailable: false,
                 selectionAvailable: true,
-                seenMalformed: malformed);
+                seenMalformed: malformed)
+            {
+                SelectedFolderId = Guid.CreateVersion7(),
+            };
             await using var server = await ServerFixture.StartImapAsync(
                 environment, port, applicationService: application);
-            await server.SeedInboxMessagesForSearchAsync();
-            application.SelectedFolderId = await server.GetInboxFolderIdAsync();
             await using var connection = await ProtocolConnection.ConnectAsync(port);
 
             await connection.ReadLineAsync();
@@ -2980,6 +2981,75 @@ public sealed class TransportSecurityTests
             var capability = await ReadUntilTaggedResponseAsync(connection, "a5");
             Assert.IsTrue(capability[^1].StartsWith("a5 OK", StringComparison.Ordinal));
         }
+    }
+
+    [TestMethod]
+    [Timeout(10_000)]
+    public async Task ImapFetchPageFailsClosedWhenWorkerIsUnavailableOrMalformed()
+    {
+        foreach (var malformed in new[] { false, true })
+        {
+            var port = ReservePort();
+            var environment = CreateEnvironment(imapPort: port);
+            await using var server = await ServerFixture.StartImapAsync(
+                environment, port,
+                applicationService: new UnavailableImapMailboxApplicationService(
+                    listingUnavailable: false,
+                    selectionAvailable: true,
+                    fetchMalformed: malformed));
+            await using var connection = await ProtocolConnection.ConnectAsync(port);
+
+            await connection.ReadLineAsync();
+            await connection.WriteLineAsync("a1 STARTTLS");
+            Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a1 OK", StringComparison.Ordinal));
+            await connection.UpgradeToTlsAsync("email.mk8n.com");
+            await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"");
+            Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a2 OK", StringComparison.Ordinal));
+            await connection.WriteLineAsync("a3 SELECT INBOX");
+            var selected = await ReadUntilTaggedResponseAsync(connection, "a3");
+            Assert.IsTrue(selected[^1].StartsWith("a3 OK", StringComparison.Ordinal));
+
+            await connection.WriteLineAsync("a4 UID FETCH 1 FLAGS");
+            Assert.IsTrue((await connection.ReadLineAsync()).StartsWith(
+                "a4 NO [UNAVAILABLE]", StringComparison.Ordinal));
+            await connection.WriteLineAsync("a5 CAPABILITY");
+            var capability = await ReadUntilTaggedResponseAsync(connection, "a5");
+            Assert.IsTrue(capability[^1].StartsWith("a5 OK", StringComparison.Ordinal));
+        }
+    }
+
+    [TestMethod]
+    [Timeout(10_000)]
+    public async Task ImapFetchRendersPagedWorkerMessagesWithoutLocalMailboxRows()
+    {
+        var port = ReservePort();
+        var environment = CreateEnvironment(imapPort: port);
+        var application = new UnavailableImapMailboxApplicationService(
+            listingUnavailable: false,
+            selectionAvailable: true,
+            fetchPaged: true)
+        {
+            SelectedFolderId = Guid.CreateVersion7(),
+        };
+        await using var server = await ServerFixture.StartImapAsync(
+            environment, port, applicationService: application);
+        await using var connection = await ProtocolConnection.ConnectAsync(port);
+
+        await connection.ReadLineAsync();
+        await connection.WriteLineAsync("a1 STARTTLS");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a1 OK", StringComparison.Ordinal));
+        await connection.UpgradeToTlsAsync("email.mk8n.com");
+        await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a2 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a3 SELECT INBOX");
+        var selected = await ReadUntilTaggedResponseAsync(connection, "a3");
+        Assert.IsTrue(selected[^1].StartsWith("a3 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a4 UID FETCH 1:* (UID FLAGS)");
+        Assert.AreEqual("* 1 FETCH (FLAGS () UID 1)", await connection.ReadLineAsync());
+        Assert.AreEqual("* 2 FETCH (FLAGS () UID 2)", await connection.ReadLineAsync());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a4 OK", StringComparison.Ordinal));
+        CollectionAssert.AreEqual(new[] { 0, 1 }, application.FetchCursors);
     }
 
     [TestMethod]
@@ -4031,6 +4101,11 @@ public sealed class TransportSecurityTests
             ImapMarkSeenRequest request,
             CancellationToken cancellationToken = default) =>
             Task.FromException<ImapMarkSeenResult>(new IOException("Worker unavailable"));
+
+        public Task<ImapFetchPageResult> GetFetchPageAsync(
+            ImapFetchPageRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromException<ImapFetchPageResult>(new IOException("Worker unavailable"));
     }
 
     private sealed class UnavailableImapMailboxApplicationService(
@@ -4045,9 +4120,12 @@ public sealed class TransportSecurityTests
         bool searchMalformed = false,
         bool sortMalformed = false,
         bool threadMalformed = false,
-        bool seenMalformed = false) : IImapApplicationService
+        bool seenMalformed = false,
+        bool fetchMalformed = false,
+        bool fetchPaged = false) : IImapApplicationService
     {
         public Guid? SelectedFolderId { get; set; }
+        public List<int> FetchCursors { get; } = [];
 
         public Task<ImapIdentityResult> AuthenticatePasswordAsync(
             ImapPasswordAuthentication request,
@@ -4180,6 +4258,37 @@ public sealed class TransportSecurityTests
             ? Task.FromResult(new ImapMarkSeenResult(true,
                 [new ImapSeenMessage(Guid.CreateVersion7(), true, 7)]))
             : Task.FromException<ImapMarkSeenResult>(new IOException("Worker unavailable"));
+
+        public Task<ImapFetchPageResult> GetFetchPageAsync(
+            ImapFetchPageRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            if (fetchMalformed)
+                return Task.FromResult(new ImapFetchPageResult(
+                    true, 1, 1, 0, true, []));
+            if (SelectedFolderId is null)
+                return Task.FromException<ImapFetchPageResult>(
+                    new IOException("Worker unavailable"));
+            if (fetchPaged)
+            {
+                FetchCursors.Add(request.AfterUid);
+                var uid = request.AfterUid + 1;
+                return Task.FromResult(new ImapFetchPageResult(true, 2, 2, uid,
+                    uid == 1,
+                    [new ImapFetchMessage(Guid.CreateVersion7(), uid, uid, uid,
+                        false, false, false, false, false, [], DateTime.UtcNow,
+                        0, "sender@example.test", TestUsername, null, "test",
+                        string.Empty, null, null, null, null, null, null)]));
+            }
+
+            var raw = "Subject: test\r\n\r\nbody\r\n"u8.ToArray();
+            return Task.FromResult(new ImapFetchPageResult(true, 1, 1, 1, false,
+                [new ImapFetchMessage(Guid.CreateVersion7(), 1, 1, 1,
+                    false, false, false, false, false, [],
+                    DateTime.UtcNow, raw.Length, "sender@example.test",
+                    TestUsername, null, "test", "body\r\n",
+                    "Subject: test", null, null, null, null, raw)]));
+        }
     }
 
     private sealed class ServerFixture(
@@ -4274,16 +4383,6 @@ public sealed class TransportSecurityTests
             using var scope = services.CreateScope();
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
             return await database.Emails.CountAsync();
-        }
-
-        public async Task<Guid> GetInboxFolderIdAsync()
-        {
-            using var scope = services.CreateScope();
-            var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-            return await database.Folders
-                .Where(folder => folder.Name == DefaultFolders.Inbox)
-                .Select(folder => folder.Id)
-                .SingleAsync();
         }
 
         public async Task<int> CountExpungedUidsAsync()

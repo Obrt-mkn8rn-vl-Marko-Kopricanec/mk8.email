@@ -1,0 +1,123 @@
+#!/bin/sh
+set -eu
+
+if [ "$#" -ne 2 ] || [ -z "${XDG_RUNTIME_DIR:-}" ] \
+    || [ ! -d "$XDG_RUNTIME_DIR" ]; then
+    printf '%s\n' \
+        'Usage: systemd_path_retrigger_smoke PATH_UNIT DRAIN_UNIT (with a user systemd manager)' >&2
+    exit 2
+fi
+
+path_source=$1
+drain_source=$2
+grep -Fx 'DirectoryNotEmpty=/run/mk8email-wake' "$path_source" >/dev/null
+grep -Fx 'Unit=mk8email-worker-drain.service' "$path_source" >/dev/null
+grep -Fx 'ExecStartPre=+/usr/bin/rm -f -- /run/mk8email-wake/trigger' \
+    "$drain_source" >/dev/null
+grep -Fx 'ExecStart=/usr/bin/dotnet /opt/mk8email/current/worker/mk8.email.Application.Worker.dll --drain' \
+    "$drain_source" >/dev/null
+
+if ! systemctl --user is-system-running --quiet; then
+    printf '%s\n' 'A running user systemd manager is required.' >&2
+    exit 1
+fi
+
+unit_directory=$XDG_RUNTIME_DIR/systemd/user
+install -d -m 0700 "$unit_directory"
+test_root=$(mktemp -d "$XDG_RUNTIME_DIR/mk8-path-smoke.XXXXXX")
+unit_name=mk8-path-smoke-$$
+path_unit=$unit_name.path
+service_unit=$unit_name.service
+path_file=$unit_directory/$path_unit
+service_file=$unit_directory/$service_unit
+trigger_directory=$test_root/signals
+install -d -m 0700 "$trigger_directory"
+
+cleanup() {
+    systemctl --user stop "$path_unit" "$service_unit" >/dev/null 2>&1 || true
+    systemctl --user reset-failed "$path_unit" "$service_unit" >/dev/null 2>&1 || true
+    rm -f -- "$path_file" "$service_file"
+    systemctl --user daemon-reload >/dev/null 2>&1 || true
+    case "$test_root" in
+        "$XDG_RUNTIME_DIR"/mk8-path-smoke.??????) rm -r -- "$test_root" ;;
+    esac
+}
+trap cleanup EXIT HUP INT TERM
+
+umask 077
+printf '%s\n' \
+    '[Unit]' \
+    'Description=mk8.email isolated path re-trigger smoke' \
+    '[Path]' \
+    "DirectoryNotEmpty=$trigger_directory" \
+    "Unit=$service_unit" \
+    > "$path_file"
+printf '%s\n' \
+    '[Unit]' \
+    'Description=mk8.email isolated one-shot drain smoke' \
+    '[Service]' \
+    'Type=oneshot' \
+    "ExecStartPre=/usr/bin/rm -f -- $trigger_directory/trigger" \
+    "ExecStart=/usr/bin/sh -c 'printf x >> $test_root/events; /usr/bin/sleep 2'" \
+    > "$service_file"
+
+: > "$trigger_directory/trigger"
+systemctl --user daemon-reload
+systemctl --user start "$path_unit"
+
+first_started=false
+attempt=0
+while [ "$attempt" -lt 100 ]; do
+    if [ -f "$test_root/events" ] && [ "$(wc -c < "$test_root/events")" -ge 1 ]; then
+        first_started=true
+        break
+    fi
+    attempt=$((attempt + 1))
+    sleep 0.1
+done
+[ "$first_started" = true ] || {
+    printf '%s\n' 'The first path activation did not start a drain.' >&2
+    exit 1
+}
+[ ! -e "$trigger_directory/trigger" ] || {
+    printf '%s\n' 'The consumed trigger was not removed before the drain.' >&2
+    exit 1
+}
+
+: > "$trigger_directory/trigger"
+second_started=false
+attempt=0
+while [ "$attempt" -lt 100 ]; do
+    if [ "$(wc -c < "$test_root/events")" -ge 2 ]; then
+        second_started=true
+        break
+    fi
+    attempt=$((attempt + 1))
+    sleep 0.1
+done
+[ "$second_started" = true ] || {
+    printf '%s\n' 'A trigger written during the first drain did not start a second drain.' >&2
+    exit 1
+}
+second_completed=false
+attempt=0
+while [ "$attempt" -lt 100 ]; do
+    if [ "$(systemctl --user show --property=ActiveState --value "$service_unit")" \
+        = inactive ]; then
+        second_completed=true
+        break
+    fi
+    attempt=$((attempt + 1))
+    sleep 0.1
+done
+[ "$second_completed" = true ] || {
+    printf '%s\n' 'The second drain did not finish.' >&2
+    exit 1
+}
+if [ "$(wc -c < "$test_root/events")" -ne 2 ] \
+    || [ -e "$trigger_directory/trigger" ]; then
+    printf '%s\n' 'The path re-triggered without another signal.' >&2
+    exit 1
+fi
+systemctl --user is-active --quiet "$path_unit"
+printf '%s\n' 'User-systemd path re-trigger ordering passed with two one-shot activations.'

@@ -105,6 +105,7 @@ jobs:
             deploy/tests/on_demand_activation_smoke \
             deploy/tests/prerequisites_smoke \
             deploy/tests/release_retention_smoke \
+            deploy/tests/systemd_path_retrigger_smoke \
             deploy/tests/tls_smoke \
             deploy/tests/upgrade_distributed_role_smoke \
             deploy/tests/wake_database_access_smoke

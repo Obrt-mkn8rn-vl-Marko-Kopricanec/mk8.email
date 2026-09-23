@@ -216,6 +216,37 @@ public sealed class DistributedBackupExporterTests
             var publishedSummary = await DistributedBackupRestorer.VerifyAsync(published);
             Assert.AreEqual(2L, publishedSummary.ReferenceCount);
             Assert.AreEqual(2L, publishedSummary.UniqueContentCount);
+
+            var identity = Path.Combine(jobRoot, "age-identity.txt");
+            var recipients = Path.Combine(jobRoot, "age-recipients.txt");
+            var generated = await RunExternalAsync("/usr/bin/age-keygen", ["-o", identity]);
+            Assert.AreEqual(0, generated.ExitCode, generated.Output);
+            var publicRecipient = await RunExternalAsync("/usr/bin/age-keygen", ["-y", identity]);
+            Assert.AreEqual(0, publicRecipient.ExitCode, publicRecipient.Output);
+            await File.WriteAllTextAsync(recipients, publicRecipient.Output.Trim() + "\n");
+            File.SetUnixFileMode(recipients, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            using (var signer = RSA.Create(3072))
+            {
+                var signingKey = Path.Combine(jobRoot, "archive-signing.pem");
+                var verifyKey = Path.Combine(jobRoot, "archive-verify.pem");
+                await File.WriteAllTextAsync(signingKey, signer.ExportPkcs8PrivateKeyPem());
+                await File.WriteAllTextAsync(verifyKey, signer.ExportSubjectPublicKeyInfoPem());
+                File.SetUnixFileMode(signingKey, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                File.SetUnixFileMode(verifyKey, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                var sealedPath = Path.Combine(jobRoot, "sealed");
+                var recoveredPath = Path.Combine(jobRoot, "recovered");
+                var sealedResult = await RunArchiveAsync(
+                    ["seal", published, recipients, signingKey, verifyKey, sealedPath]);
+                Assert.AreEqual(0, sealedResult.ExitCode, sealedResult.Output);
+                var recoveredResult = await RunArchiveAsync(
+                    ["unseal", sealedPath, identity, verifyKey, recoveredPath]);
+                Assert.AreEqual(0, recoveredResult.ExitCode, recoveredResult.Output);
+                var recoveredSummary = await DistributedBackupRestorer.VerifyAsync(recoveredPath);
+                Assert.AreEqual(2L, recoveredSummary.ReferenceCount);
+                CollectionAssert.AreEqual(
+                    await File.ReadAllBytesAsync(Path.Combine(published, "blobs", sha256)),
+                    await File.ReadAllBytesAsync(Path.Combine(recoveredPath, "blobs", sha256)));
+            }
         }
         finally
         {
@@ -553,6 +584,54 @@ public sealed class DistributedBackupExporterTests
 
     private static string PgDumpExecutable =>
         Environment.GetEnvironmentVariable("MK8_EMAIL_TEST_PG_DUMP") ?? "pg_dump";
+
+    private static async Task<(int ExitCode, string Output)> RunArchiveAsync(
+        IReadOnlyList<string> arguments)
+    {
+        var host = Environment.GetEnvironmentVariable("MK8_EMAIL_TEST_DOTNET_HOST")
+            ?? Environment.GetEnvironmentVariable("DOTNET_HOST_PATH")
+            ?? "dotnet";
+        var configuration = new DirectoryInfo(AppContext.BaseDirectory).Parent?.Name
+            ?? throw new InvalidOperationException("The test configuration directory is missing.");
+        var repository = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../.."));
+        var assembly = Path.Combine(
+            repository, "mk8.email.CLI", "bin", configuration,
+            "net10.0", "mk8.email.Application.CLI.dll");
+        var script = Path.Combine(repository, "deploy", "scripts", "mk8-distributed-archive");
+        Assert.IsTrue(File.Exists(assembly), "The management CLI executable is missing.");
+        Assert.IsTrue(File.Exists(script), "The distributed archive wrapper is missing.");
+        return await RunExternalAsync(script, [.. arguments, host, assembly]);
+    }
+
+    private static async Task<(int ExitCode, string Output)> RunExternalAsync(
+        string executable,
+        IReadOnlyList<string> arguments)
+    {
+        var start = new ProcessStartInfo(executable)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        foreach (var argument in arguments)
+            start.ArgumentList.Add(argument);
+        using var process = Process.Start(start)
+            ?? throw new InvalidOperationException("The archive tool did not start.");
+        var output = process.StandardOutput.ReadToEndAsync();
+        var error = process.StandardError.ReadToEndAsync();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        try
+        {
+            await process.WaitForExitAsync(deadline.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync();
+            Assert.Fail("The archive tool exceeded its deadline.");
+        }
+        return (process.ExitCode, await output + await error);
+    }
 
     private static async Task<(int ExitCode, string Output)> RunBackupJobAsync(
         string configPath,

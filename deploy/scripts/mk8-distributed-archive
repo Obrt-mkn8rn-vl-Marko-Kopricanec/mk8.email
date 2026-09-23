@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export DOTNET_ENVIRONMENT=Production
+export DOTNET_EnableDiagnostics=0
+
+fail() {
+    printf '%s\n' "$1" >&2
+    exit 1
+}
+
+require_absolute() {
+    [[ $1 == /* ]] || fail "Archive paths must be absolute."
+}
+
+require_private_directory() {
+    local directory=$1
+    require_absolute "$directory"
+    [[ ! -L $directory && -d $directory ]] \
+        || fail "The archive directory is missing or unsafe."
+    [[ $(/usr/bin/realpath -e -- "$directory") == "$directory" ]] \
+        || fail "The archive directory must be canonical."
+    [[ $(/usr/bin/stat -c '%u %a' -- "$directory") == "$(/usr/bin/id -u) 700" ]] \
+        || fail "The archive directory must be private and caller-owned."
+}
+
+require_private_file() {
+    local file=$1
+    require_absolute "$file"
+    require_private_directory "${file%/*}"
+    [[ ! -L $file && -f $file ]] \
+        || fail "An archive key or payload file is missing or unsafe."
+    [[ $(/usr/bin/realpath -e -- "$file") == "$file" ]] \
+        || fail "An archive key or payload path must be canonical."
+    [[ $(/usr/bin/stat -c '%u %a %h' -- "$file") == "$(/usr/bin/id -u) 600 1" ]] \
+        || fail "Archive keys and payloads must be private, caller-owned, and single-linked."
+}
+
+require_runtime() {
+    [[ -x $1 && -f $2 && ! -L $2 ]] \
+        || fail "The .NET runtime or management CLI is missing."
+}
+
+prepare_output() {
+    output=$1
+    require_absolute "$output"
+    output_parent=${output%/*}
+    [[ -n $output_parent ]] || output_parent=/
+    require_private_directory "$output_parent"
+    [[ ! -e $output && ! -L $output ]] \
+        || fail "The archive output already exists."
+    case "$output_parent" in
+        "$source_directory"|"$source_directory"/*)
+            fail "The archive output cannot be inside its input." ;;
+    esac
+}
+
+publish_output() {
+    /usr/bin/mv --no-clobber -T -- "$stage" "$output"
+    [[ ! -e $stage ]] || fail "The archive output appeared during publication."
+    stage=
+    /usr/bin/sync -f -- "$output_parent"
+    printf '%s\n' "$output"
+}
+
+stage=
+output=
+output_parent=
+source_directory=
+cleanup() {
+    if [[ -n $stage && $stage == "$output_parent"/.archive-???????? \
+        && -d $stage && ! -L $stage ]]; then
+        /usr/bin/rm -rf -- "$stage"
+    fi
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+umask 077
+
+case "${1:-}" in
+    seal)
+        [[ $# -eq 8 ]] || fail "Usage: mk8-distributed-archive seal SNAPSHOT RECIPIENTS SIGNING_KEY VERIFY_KEY OUTPUT DOTNET CLI"
+        source_directory=$2
+        recipients=$3
+        signing_key=$4
+        verify_key=$5
+        runtime=$7
+        cli=$8
+        require_private_directory "$source_directory"
+        require_private_file "$recipients"
+        require_private_file "$signing_key"
+        require_private_file "$verify_key"
+        key_bits=$(/usr/bin/openssl rsa -in "$signing_key" -noout -text 2>/dev/null \
+            | /usr/bin/sed -n '1s/^Private-Key: (\([0-9][0-9]*\) bit.*/\1/p')
+        [[ $key_bits =~ ^[0-9]+$ && $key_bits -ge 3072 ]] \
+            || fail "The archive signing key must be RSA with at least 3072 bits."
+        require_absolute "$runtime"
+        require_absolute "$cli"
+        require_runtime "$runtime" "$cli"
+        prepare_output "$6"
+        "$runtime" "$cli" --verify-distributed-snapshot "$source_directory" >/dev/null
+
+        stage=$(/usr/bin/mktemp -d "$output_parent/.archive-XXXXXXXX")
+        /usr/bin/tar -C "$source_directory" --sort=name --numeric-owner \
+            --owner=0 --group=0 --mtime='@0' -cf - . \
+            | /usr/bin/age -R "$recipients" -o "$stage/snapshot.tar.age"
+        /usr/bin/openssl dgst -sha256 -sign "$signing_key" \
+            -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:-1 \
+            -out "$stage/snapshot.tar.age.sig" "$stage/snapshot.tar.age"
+        /usr/bin/openssl dgst -sha256 -verify "$verify_key" \
+            -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:-1 \
+            -signature "$stage/snapshot.tar.age.sig" \
+            "$stage/snapshot.tar.age" >/dev/null
+        /usr/bin/sync -f -- "$stage/snapshot.tar.age"
+        /usr/bin/sync -f -- "$stage/snapshot.tar.age.sig"
+        /usr/bin/sync -f -- "$stage"
+        publish_output
+        ;;
+    unseal)
+        [[ $# -eq 7 ]] || fail "Usage: mk8-distributed-archive unseal ARCHIVE IDENTITY VERIFY_KEY OUTPUT DOTNET CLI"
+        source_directory=$2
+        identity=$3
+        verify_key=$4
+        runtime=$6
+        cli=$7
+        require_private_directory "$source_directory"
+        require_private_file "$source_directory/snapshot.tar.age"
+        require_private_file "$source_directory/snapshot.tar.age.sig"
+        require_private_file "$identity"
+        require_private_file "$verify_key"
+        require_absolute "$runtime"
+        require_absolute "$cli"
+        require_runtime "$runtime" "$cli"
+        prepare_output "$5"
+        for entry in "$source_directory"/* "$source_directory"/.[!.]* "$source_directory"/..?*; do
+            [[ -e $entry || -L $entry ]] || continue
+            case "$entry" in
+                "$source_directory/snapshot.tar.age"|"$source_directory/snapshot.tar.age.sig") ;;
+                *) fail "The sealed archive contains an unexpected entry." ;;
+            esac
+        done
+        /usr/bin/openssl dgst -sha256 -verify "$verify_key" \
+            -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:-1 \
+            -signature "$source_directory/snapshot.tar.age.sig" \
+            "$source_directory/snapshot.tar.age" >/dev/null
+
+        script_path=$(/usr/bin/realpath -e -- "$0")
+        extractor=${script_path%/*}/extract-distributed-snapshot-tar.py
+        [[ -f $extractor && ! -L $extractor ]] \
+            || fail "The strict distributed snapshot extractor is missing."
+        stage=$(/usr/bin/mktemp -d "$output_parent/.archive-XXXXXXXX")
+        /usr/bin/age --decrypt --identity "$identity" \
+            "$source_directory/snapshot.tar.age" \
+            | /usr/bin/python3 "$extractor" "$stage"
+        "$runtime" "$cli" --verify-distributed-snapshot "$stage" >/dev/null
+        /usr/bin/sync -f -- "$stage"
+        publish_output
+        ;;
+    *)
+        fail "Usage: mk8-distributed-archive seal|unseal ..." ;;
+esac

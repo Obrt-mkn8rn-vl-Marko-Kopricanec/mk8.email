@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+[[ $# -eq 2 ]] || exit 2
+archive_script=$1
+runtime=$2
+test_root=$(/usr/bin/mktemp -d)
+cleanup() {
+    if [[ -d $test_root && ! -L $test_root ]]; then
+        /usr/bin/rm -rf -- "$test_root"
+    fi
+}
+trap cleanup EXIT
+umask 077
+
+cli=$test_root/management.dll
+snapshot=$test_root/snapshot
+identity=$test_root/identity.txt
+recipients=$test_root/recipients.txt
+signing_key=$test_root/signing.pem
+verify_key=$test_root/verify.pem
+sealed=$test_root/sealed
+recovered=$test_root/recovered
+/usr/bin/printf '%s\n' 'mock CLI' > "$cli"
+/usr/bin/mkdir -m 0700 -- "$snapshot" "$snapshot/blobs"
+/usr/bin/printf '%s\n' 'private database bytes' > "$snapshot/database.dump"
+/usr/bin/printf '%s\n' '{}' > "$snapshot/backup.json"
+/usr/bin/printf '%s\n' 'reference manifest' > "$snapshot/references.jsonl"
+/usr/bin/printf '%s\n' 'checksums' > "$snapshot/SHA256SUMS"
+/usr/bin/age-keygen -o "$identity" >/dev/null 2>&1
+/usr/bin/age-keygen -y "$identity" > "$recipients"
+/usr/bin/openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 \
+    -out "$signing_key" >/dev/null 2>&1
+/usr/bin/openssl pkey -in "$signing_key" -pubout -out "$verify_key" >/dev/null 2>&1
+
+[[ $("$archive_script" seal "$snapshot" "$recipients" "$signing_key" \
+    "$verify_key" "$sealed" "$runtime" "$cli") == "$sealed" ]]
+[[ -s $sealed/snapshot.tar.age && -s $sealed/snapshot.tar.age.sig ]]
+if /usr/bin/grep -aq 'private database bytes' "$sealed/snapshot.tar.age"; then
+    /usr/bin/printf '%s\n' 'The sealed archive exposed plaintext.' >&2
+    exit 1
+fi
+[[ $("$archive_script" unseal "$sealed" "$identity" "$verify_key" \
+    "$recovered" "$runtime" "$cli") == "$recovered" ]]
+/usr/bin/cmp -- "$snapshot/database.dump" "$recovered/database.dump"
+[[ -d $recovered/blobs && -s $recovered/SHA256SUMS ]]
+
+if env MOCK_BACKUP_FAIL=verify "$archive_script" seal "$snapshot" "$recipients" \
+    "$signing_key" "$verify_key" "$test_root/failed-seal" "$runtime" "$cli" \
+    >/dev/null 2>&1; then
+    /usr/bin/printf '%s\n' 'An unverified snapshot was sealed.' >&2
+    exit 1
+fi
+[[ ! -e $test_root/failed-seal ]]
+
+chmod 0644 "$recipients"
+if "$archive_script" seal "$snapshot" "$recipients" "$signing_key" \
+    "$verify_key" "$test_root/unsafe-seal" "$runtime" "$cli" \
+    >/dev/null 2>&1; then
+    /usr/bin/printf '%s\n' 'An unsafe recipient file was accepted.' >&2
+    exit 1
+fi
+chmod 0600 "$recipients"
+
+/usr/bin/openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+    -out "$test_root/weak-signing.pem" >/dev/null 2>&1
+if "$archive_script" seal "$snapshot" "$recipients" "$test_root/weak-signing.pem" \
+    "$verify_key" "$test_root/weak-seal" "$runtime" "$cli" >/dev/null 2>&1; then
+    /usr/bin/printf '%s\n' 'A weak signing key was accepted.' >&2
+    exit 1
+fi
+[[ ! -e $test_root/weak-seal ]]
+
+/usr/bin/cp -a -- "$sealed" "$test_root/tampered"
+/usr/bin/printf '%s\n' 'tampered' >> "$test_root/tampered/snapshot.tar.age"
+if "$archive_script" unseal "$test_root/tampered" "$identity" "$verify_key" \
+    "$test_root/tampered-output" "$runtime" "$cli" >/dev/null 2>&1; then
+    /usr/bin/printf '%s\n' 'A tampered ciphertext was restored.' >&2
+    exit 1
+fi
+[[ ! -e $test_root/tampered-output ]]
+
+/usr/bin/age-keygen -o "$test_root/other-identity" >/dev/null 2>&1
+if "$archive_script" unseal "$sealed" "$test_root/other-identity" "$verify_key" \
+    "$test_root/wrong-identity-output" "$runtime" "$cli" >/dev/null 2>&1; then
+    /usr/bin/printf '%s\n' 'A wrong decryption identity was accepted.' >&2
+    exit 1
+fi
+[[ ! -e $test_root/wrong-identity-output ]]
+
+malicious=$test_root/malicious
+/usr/bin/mkdir -m 0700 -- "$malicious" "$test_root/malicious-archive"
+for name in database.dump backup.json references.jsonl SHA256SUMS; do
+    /usr/bin/printf '%s\n' 'forged' > "$malicious/$name"
+done
+/usr/bin/ln -s -- "$test_root/outside" "$malicious/blobs"
+/usr/bin/tar -C "$malicious" -cf - . \
+    | /usr/bin/age -R "$recipients" -o "$test_root/malicious-archive/snapshot.tar.age"
+/usr/bin/openssl dgst -sha256 -sign "$signing_key" \
+    -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:-1 \
+    -out "$test_root/malicious-archive/snapshot.tar.age.sig" \
+    "$test_root/malicious-archive/snapshot.tar.age"
+if "$archive_script" unseal "$test_root/malicious-archive" "$identity" "$verify_key" \
+    "$test_root/malicious-output" "$runtime" "$cli" >/dev/null 2>&1; then
+    /usr/bin/printf '%s\n' 'A signed symlink archive was extracted.' >&2
+    exit 1
+fi
+[[ ! -e $test_root/malicious-output && ! -e $test_root/outside ]]
+
+traversal=$test_root/traversal
+/usr/bin/mkdir -m 0700 -- "$traversal" "$traversal/blobs" "$test_root/traversal-archive"
+for name in database.dump backup.json references.jsonl SHA256SUMS; do
+    /usr/bin/printf '%s\n' 'forged' > "$traversal/$name"
+done
+/usr/bin/tar -C "$traversal" \
+    --transform='s#^\./database\.dump$#../outside#' -cf - . \
+    | /usr/bin/age -R "$recipients" -o "$test_root/traversal-archive/snapshot.tar.age"
+/usr/bin/openssl dgst -sha256 -sign "$signing_key" \
+    -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:-1 \
+    -out "$test_root/traversal-archive/snapshot.tar.age.sig" \
+    "$test_root/traversal-archive/snapshot.tar.age"
+if "$archive_script" unseal "$test_root/traversal-archive" "$identity" "$verify_key" \
+    "$test_root/traversal-output" "$runtime" "$cli" >/dev/null 2>&1; then
+    /usr/bin/printf '%s\n' 'A signed traversal archive was extracted.' >&2
+    exit 1
+fi
+[[ ! -e $test_root/traversal-output && ! -e $test_root/outside ]]
+[[ -z $(/usr/bin/find "$test_root" -mindepth 1 -maxdepth 1 \
+    -name '.archive-*' -print -quit) ]]
+
+/usr/bin/printf '%s\n' 'Encrypted and signed distributed archive smoke passed.'

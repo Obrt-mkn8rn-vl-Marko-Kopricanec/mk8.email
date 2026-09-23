@@ -56,6 +56,9 @@ jobs:
           docker build --quiet --target gateway --tag mk8email-gateway-ci:${{ github.sha }} .
           docker build --quiet --target worker --tag mk8email-worker-ci:${{ github.sha }} .
 
+      - name: Install backup archive test tool
+        run: sudo apt-get update && sudo apt-get install -y age
+
       - name: Validate operations code
         run: |
           shellcheck \
@@ -84,6 +87,7 @@ jobs:
             deploy/scripts/mk8email \
             deploy/scripts/mk8-backup \
             deploy/scripts/mk8-distributed-backup \
+            deploy/scripts/mk8-distributed-archive \
             deploy/scripts/mk8-export-backup \
             deploy/scripts/mk8-mail-health \
             deploy/scripts/prune-native-releases \
@@ -96,6 +100,7 @@ jobs:
             deploy/tests/container_on_demand_smoke \
             deploy/tests/disruption_smoke \
             deploy/tests/distributed_backup_job_smoke \
+            deploy/tests/distributed_archive_smoke \
             deploy/tests/fixtures/distributed-backup-dotnet \
             deploy/tests/fixtures/upgrade-curl \
             deploy/tests/fixtures/upgrade-runuser \
@@ -116,7 +121,10 @@ jobs:
             deploy/tests/upgrade_distributed_role_smoke \
             deploy/tests/wake_database_access_smoke
           PYTHONPYCACHEPREFIX="$RUNNER_TEMP/mk8email-pycache" \
-            python3 -m py_compile deploy/tests/dashboard_smoke.py deploy/tests/distributed_config_smoke.py deploy/tests/mail_smoke.py deploy/tests/multi_domain_smoke.py
+            python3 -m py_compile \
+              deploy/scripts/extract-distributed-snapshot-tar.py \
+              deploy/tests/dashboard_smoke.py deploy/tests/distributed_config_smoke.py \
+              deploy/tests/mail_smoke.py deploy/tests/multi_domain_smoke.py
           python3 deploy/tests/distributed_config_smoke.py
           sh deploy/tests/container_on_demand_smoke \
             "$PWD/deploy/scripts/container-worker-entrypoint" \
@@ -125,6 +133,7 @@ jobs:
           sh deploy/tests/upgrade_distributed_role_smoke "$PWD/deploy/scripts/upgrade-distributed-role"
           sh deploy/tests/on_demand_activation_smoke "$PWD/deploy/scripts/activate-distributed-role" "$PWD/deploy/scripts/deactivate-distributed-role"
           sh deploy/tests/distributed_backup_job_smoke "$PWD/deploy/scripts/mk8-distributed-backup" "$PWD/deploy/tests/fixtures/distributed-backup-dotnet"
+          bash deploy/tests/distributed_archive_smoke "$PWD/deploy/scripts/mk8-distributed-archive" "$PWD/deploy/tests/fixtures/distributed-backup-dotnet"
           systemd-analyze verify deploy/systemd/mk8email-wake.service deploy/systemd/mk8email-worker.path deploy/systemd/mk8email-worker-drain.service deploy/systemd/mk8email-worker-maintenance.timer
 
       - name: Validate deployment profile tooling

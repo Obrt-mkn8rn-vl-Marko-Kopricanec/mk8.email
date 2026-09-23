@@ -91,6 +91,8 @@ public sealed class ImapGatewayTransportTests
             var idle = await client.GetIdleSnapshotAsync(
                 new ImapIdleSnapshotRequest(application.UserId, Guid.CreateVersion7()),
                 timeout.Token);
+            var expunged = await client.ExpungeDeletedAsync(
+                new ImapExpungeRequest(application.UserId, Guid.CreateVersion7()), timeout.Token);
             Assert.AreEqual(application.UserId, password.UserId);
             Assert.AreEqual(application.UserId, oauth.UserId);
             Assert.AreEqual("imap-secret", application.Password);
@@ -113,6 +115,9 @@ public sealed class ImapGatewayTransportTests
             Assert.AreEqual("INBOX", application.QuotaMailbox);
             Assert.IsTrue(idle.FolderFound);
             Assert.HasCount(1, idle.Messages);
+            Assert.IsTrue(expunged.FolderFound);
+            Assert.HasCount(1, expunged.Messages);
+            Assert.AreEqual(2, expunged.Messages[0].SequenceNumber);
 
             await using var operations = gatewayDataSource.CreateCommand(
                 "SELECT operation FROM application_requests ORDER BY created_at");
@@ -134,6 +139,7 @@ public sealed class ImapGatewayTransportTests
                     ApplicationOperations.ImapSelectMailbox,
                     ApplicationOperations.ImapGetQuota,
                     ApplicationOperations.ImapGetIdleSnapshot,
+                    ApplicationOperations.ImapExpungeDeleted,
                 },
                 observed);
 
@@ -149,7 +155,7 @@ public sealed class ImapGatewayTransportTests
                 Assert.IsFalse(ciphertext.Contains("imap-secret", StringComparison.Ordinal));
                 Assert.IsFalse(ciphertext.Contains("imap-access-token", StringComparison.Ordinal));
             }
-            Assert.AreEqual(22, recordCount);
+            Assert.AreEqual(24, recordCount);
         }
         finally
         {
@@ -259,5 +265,11 @@ public sealed class ImapGatewayTransportTests
             Task.FromResult(new ImapIdleSnapshotResult(true, 5,
                 [new ImapIdleMessage(Guid.CreateVersion7(), 1, 5,
                     false, false, false, false, false, ["$Label1"])]));
+
+        public Task<ImapExpungeResult> ExpungeDeletedAsync(
+            ImapExpungeRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ImapExpungeResult(true,
+                [new ImapExpungedMessage(2, 7)]));
     }
 }

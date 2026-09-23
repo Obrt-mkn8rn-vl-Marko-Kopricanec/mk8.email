@@ -45,6 +45,10 @@ public interface IImapApplicationService
     Task<ImapIdleSnapshotResult> GetIdleSnapshotAsync(
         ImapIdleSnapshotRequest request,
         CancellationToken cancellationToken = default);
+
+    Task<ImapExpungeResult> ExpungeDeletedAsync(
+        ImapExpungeRequest request,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record ImapPasswordAuthentication(string Username, string Password);
@@ -188,3 +192,11 @@ public sealed record ImapIdleMessage(
     bool IsDraft,
     bool IsAnswered,
     string[] Keywords);
+
+public sealed record ImapExpungeRequest(Guid UserId, Guid FolderId);
+
+public sealed record ImapExpungeResult(
+    bool FolderFound,
+    List<ImapExpungedMessage> Messages);
+
+public sealed record ImapExpungedMessage(int SequenceNumber, int Uid);

@@ -232,5 +232,10 @@ public sealed class ImapApplicationBoundaryTests
             Task.FromResult(new ImapIdleSnapshotResult(true, 5,
                 [new ImapIdleMessage(Guid.CreateVersion7(), 1, 5,
                     false, false, false, false, false, ["$Label1"])]));
+
+        public Task<ImapExpungeResult> ExpungeDeletedAsync(
+            ImapExpungeRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ImapExpungeResult(true, []));
     }
 }

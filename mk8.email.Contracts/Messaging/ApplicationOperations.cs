@@ -37,6 +37,7 @@ public static class ApplicationOperations
     public const string ImapSelectMailbox = "imap.mailboxes.select";
     public const string ImapGetQuota = "imap.quota.get";
     public const string ImapGetIdleSnapshot = "imap.idle.snapshot";
+    public const string ImapExpungeDeleted = "imap.messages.expunge";
     public const string AdminAuthenticate = "admin.authenticate";
     public const string AdminDashboardGet = "admin.dashboard.get";
     public const string AdminDomainsGet = "admin.domains.get";

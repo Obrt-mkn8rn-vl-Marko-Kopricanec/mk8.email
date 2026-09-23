@@ -400,6 +400,97 @@ internal sealed class ImapApplicationService(
             changedMessages));
     }
 
+    public async Task<ImapExpungeResult> ExpungeDeletedAsync(
+        ImapExpungeRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.UserId == Guid.Empty || request.FolderId == Guid.Empty)
+            throw new ArgumentException("The IMAP expunge request is invalid.", nameof(request));
+
+        await using var transaction = database.Database.IsRelational()
+            ? await database.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken)
+            : null;
+        var folder = await database.Folders.SingleOrDefaultAsync(
+            candidate => candidate.Id == request.FolderId
+                && candidate.Inbox.OwnerId == request.UserId,
+            cancellationToken);
+        if (folder is null)
+            return new ImapExpungeResult(false, []);
+
+        var messages = await database.Emails
+            .AsNoTracking()
+            .Where(email => email.FolderId == folder.Id)
+            .OrderBy(email => email.Uid)
+            .Select(email => new EmailDB
+            {
+                Id = email.Id,
+                Uid = email.Uid,
+                IsDeleted = email.IsDeleted,
+                SizeBytes = email.SizeBytes,
+                RawMessageObjectProvider = email.RawMessageObjectProvider,
+                RawMessageObjectName = email.RawMessageObjectName,
+                RawMessageObjectSha256 = email.RawMessageObjectSha256,
+                RawMessageObjectEntityTag = email.RawMessageObjectEntityTag,
+            })
+            .ToListAsync(cancellationToken);
+        var expunged = new List<ImapExpungedMessage>();
+        var marker = effects.Mark();
+        var commitAttempted = false;
+        try
+        {
+            for (var index = 0; index < messages.Count; index++)
+            {
+                var message = messages[index];
+                if (!message.IsDeleted)
+                    continue;
+
+                folder.HighestModSeq++;
+                database.ExpungedUids.Add(new ExpungedUidDB
+                {
+                    Id = Guid.CreateVersion7(),
+                    Uid = message.Uid,
+                    ModSeq = folder.HighestModSeq,
+                    FolderId = folder.Id,
+                });
+                content.DeleteOnCommit(message);
+                database.Emails.Remove(new EmailDB { Id = message.Id });
+                expunged.Add(new ImapExpungedMessage(
+                    index + 1 - expunged.Count, message.Uid));
+            }
+
+            if (expunged.Count > 0)
+                await database.SaveChangesAsync(cancellationToken);
+            if (transaction is not null)
+            {
+                commitAttempted = true;
+                await transaction.CommitAsync(cancellationToken);
+            }
+            await effects.CommitAsync(marker);
+        }
+        catch
+        {
+            if (transaction is not null)
+            {
+                try
+                {
+                    await transaction.RollbackAsync(CancellationToken.None);
+                }
+                catch (Exception rollbackException)
+                {
+                    logger.LogWarning(rollbackException, "Could not roll back IMAP expunge");
+                }
+            }
+            if (commitAttempted)
+                effects.Discard(marker);
+            else
+                await effects.RollbackAsync(marker);
+            throw;
+        }
+
+        return new ImapExpungeResult(true, expunged);
+    }
+
     public async Task<ImapQuotaResult> GetQuotaAsync(
         ImapQuotaRequest request,
         CancellationToken cancellationToken = default)

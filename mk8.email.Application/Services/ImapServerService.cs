@@ -586,7 +586,17 @@ ILogger<ImapServerService> logger) : BackgroundService
                         break;
                     }
                     if (!session.SelectedReadOnly)
-                        await ExpungeDeletedAsync(session, ct);
+                    {
+                        var closeResult = await TryExpungeDeletedAsync(
+                            writer, tag, "CLOSE", session, ct);
+                        if (closeResult is null)
+                            break;
+                        if (!closeResult.FolderFound)
+                        {
+                            await writer.WriteLineAsync($"{tag} NO Mailbox not found");
+                            break;
+                        }
+                    }
                     session.SelectedFolderId = null;
                     session.SelectedFolderName = null;
                     session.State = ImapState.Authenticated;
@@ -2059,65 +2069,58 @@ ILogger<ImapServerService> logger) : BackgroundService
 
     private async Task HandleExpungeAsync(StreamWriter writer, string tag, ImapSession session, CancellationToken ct)
     {
-        using var scope = scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-        var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
-        var effects = scope.ServiceProvider.GetRequiredService<LargeObjectTransactionEffects>();
-        var marker = effects.Mark();
-        await using var transaction = db.Database.IsRelational()
-            ? await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct)
-            : null;
-
-        var emails = await GetEmailMetadataInFolderAsync(
-            db,
-            session.SelectedFolderId!.Value,
-            ct);
-
-        var folder = await db.Folders.FindAsync([session.SelectedFolderId!.Value], ct);
-        var expunged = 0;
-        var vanishedUids = new List<int>();
-
-        for (var i = 0; i < emails.Count; i++)
+        var result = await TryExpungeDeletedAsync(writer, tag, "EXPUNGE", session, ct);
+        if (result is null)
+            return;
+        if (!result.FolderFound)
         {
-            if (IsMarkedDeleted(emails[i]))
-            {
-                var expungeModSeq = ++folder!.HighestModSeq;
-
-                if (session.QresyncEnabled)
-                {
-                    vanishedUids.Add(emails[i].Uid);
-                }
-                else
-                {
-                    var seqNum = i + 1 - expunged;
-                    await writer.WriteLineAsync($"* {seqNum} EXPUNGE");
-                }
-
-                db.ExpungedUids.Add(new ExpungedUidDB
-                {
-                    Id = Guid.CreateVersion7(),
-                    Uid = emails[i].Uid,
-                    ModSeq = expungeModSeq,
-                    FolderId = session.SelectedFolderId!.Value,
-                });
-
-                content.DeleteOnCommit(emails[i]);
-                AttachDelete(db, emails[i]);
-                expunged++;
-            }
+            await writer.WriteLineAsync($"{tag} NO Mailbox not found");
+            return;
         }
 
-        if (session.QresyncEnabled && vanishedUids.Count > 0)
+        if (session.QresyncEnabled)
         {
-            var vanishedSet = FormatUidRange(vanishedUids);
-            await writer.WriteLineAsync($"* VANISHED {vanishedSet}");
+            if (result.Messages.Count > 0)
+                await writer.WriteLineAsync($"* VANISHED {FormatUidRange(
+                    result.Messages.Select(message => message.Uid).ToList())}");
         }
-
-        await db.SaveChangesAsync(ct);
-        if (transaction is not null)
-            await transaction.CommitAsync(ct);
-        await effects.CommitAsync(marker);
+        else
+        {
+            foreach (var message in result.Messages)
+                await writer.WriteLineAsync($"* {message.SequenceNumber} EXPUNGE");
+        }
         await writer.WriteLineAsync($"{tag} OK EXPUNGE completed");
+    }
+
+    private async Task<ImapExpungeResult?> TryExpungeDeletedAsync(
+        StreamWriter writer, string tag, string operation, ImapSession session, CancellationToken ct)
+    {
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
+            var result = await application.ExpungeDeletedAsync(new ImapExpungeRequest(
+                session.UserId, session.SelectedFolderId!.Value), ct);
+            if (result.Messages is null
+                || (!result.FolderFound && result.Messages.Count > 0)
+                || result.Messages.Any(message => message is null
+                    || message.SequenceNumber < 1 || message.Uid < 1)
+                || result.Messages.Zip(result.Messages.Skip(1))
+                    .Any(pair => pair.Second.Uid <= pair.First.Uid
+                        || pair.Second.SequenceNumber < pair.First.SequenceNumber))
+            {
+                throw new InvalidOperationException("The IMAP expunge result is invalid.");
+            }
+            return result;
+        }
+        catch (Exception exception) when (
+            exception is not OperationCanceledException && !ct.IsCancellationRequested)
+        {
+            logger.LogWarning(exception, "IMAP {Operation} is unavailable for {UserId}",
+                operation, session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] {operation} backend unavailable");
+            return null;
+        }
     }
 
     private async Task HandleCopyAsync(
@@ -2706,49 +2709,6 @@ ILogger<ImapServerService> logger) : BackgroundService
         var update = new EmailDB { Id = metadata.Id };
         db.Emails.Attach(update);
         db.Emails.Remove(update);
-    }
-
-    private async Task ExpungeDeletedAsync(ImapSession session, CancellationToken ct)
-    {
-        using var scope = scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-        var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
-        var effects = scope.ServiceProvider.GetRequiredService<LargeObjectTransactionEffects>();
-        var marker = effects.Mark();
-        await using var transaction = db.Database.IsRelational()
-            ? await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct)
-            : null;
-
-        var deleted = await GetEmailMetadataInFolderAsync(
-            db,
-            session.SelectedFolderId!.Value,
-            ct);
-
-        var toRemove = deleted.Where(IsMarkedDeleted).ToList();
-        if (toRemove.Count > 0)
-        {
-            var folder = await db.Folders.FindAsync([session.SelectedFolderId!.Value], ct);
-            foreach (var email in toRemove)
-            {
-                var expungeModSeq = ++folder!.HighestModSeq;
-                db.ExpungedUids.Add(new ExpungedUidDB
-                {
-                    Id = Guid.CreateVersion7(),
-                    Uid = email.Uid,
-                    ModSeq = expungeModSeq,
-                    FolderId = session.SelectedFolderId!.Value,
-                });
-            }
-            foreach (var email in toRemove)
-            {
-                content.DeleteOnCommit(email);
-                AttachDelete(db, email);
-            }
-        }
-        await db.SaveChangesAsync(ct);
-        if (transaction is not null)
-            await transaction.CommitAsync(ct);
-        await effects.CommitAsync(marker);
     }
 
     private static string FormatMailboxName(

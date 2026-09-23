@@ -72,4 +72,10 @@ public sealed class GatewayImapApplicationService(
         CancellationToken cancellationToken = default) =>
         transport.SendAsync<ImapIdleSnapshotRequest, ImapIdleSnapshotResult>(
             "imap", ApplicationOperations.ImapGetIdleSnapshot, request, cancellationToken);
+
+    public Task<ImapExpungeResult> ExpungeDeletedAsync(
+        ImapExpungeRequest request,
+        CancellationToken cancellationToken = default) =>
+        transport.SendAsync<ImapExpungeRequest, ImapExpungeResult>(
+            "imap", ApplicationOperations.ImapExpungeDeleted, request, cancellationToken);
 }

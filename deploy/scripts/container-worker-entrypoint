@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+if [ "$#" -ne 0 ]; then
+    printf '%s\n' 'The container Worker entrypoint accepts no arguments.' >&2
+    exit 2
+fi
+
+dotnet /app/worker/mk8.email.Application.Worker.dll --prepare
+exec dotnet /app/wake/mk8.email.Wake.dll --serve-worker \
+    /run/secrets/wake_database_connection \
+    /app/worker/mk8.email.Application.Worker.dll \
+    /run/secrets/worker_config

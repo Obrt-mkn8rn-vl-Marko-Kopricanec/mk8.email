@@ -64,6 +64,7 @@ jobs:
             deploy/scripts/configure-apt-sources \
             deploy/scripts/configure-gateway-database-access \
             deploy/scripts/configure-wake-database-access \
+            deploy/scripts/container-worker-entrypoint \
             deploy/scripts/configure-mail-database-access \
             deploy/scripts/deactivate-distributed-role \
             deploy/scripts/ensure-wake-service-account \
@@ -91,6 +92,7 @@ jobs:
             deploy/tests/backup_restore_smoke \
             deploy/tests/build_environment_smoke \
             deploy/tests/certificate_deploy_smoke \
+            deploy/tests/container_on_demand_smoke \
             deploy/tests/disruption_smoke \
             deploy/tests/fixtures/upgrade-curl \
             deploy/tests/fixtures/upgrade-runuser \
@@ -98,6 +100,7 @@ jobs:
             deploy/tests/fixtures/on-demand-id \
             deploy/tests/fixtures/on-demand-runuser \
             deploy/tests/fixtures/on-demand-systemctl \
+            deploy/tests/fixtures/container-dotnet \
             deploy/tests/host_hardening_smoke \
             deploy/tests/management_cli_smoke \
             deploy/tests/multi_domain_smoke \
@@ -112,6 +115,10 @@ jobs:
           PYTHONPYCACHEPREFIX="$RUNNER_TEMP/mk8email-pycache" \
             python3 -m py_compile deploy/tests/dashboard_smoke.py deploy/tests/distributed_config_smoke.py deploy/tests/mail_smoke.py deploy/tests/multi_domain_smoke.py
           python3 deploy/tests/distributed_config_smoke.py
+          sh deploy/tests/container_on_demand_smoke \
+            "$PWD/deploy/scripts/container-worker-entrypoint" \
+            "$PWD/deploy/tests/fixtures/container-dotnet" \
+            "$PWD/Dockerfile"
           sh deploy/tests/upgrade_distributed_role_smoke "$PWD/deploy/scripts/upgrade-distributed-role"
           sh deploy/tests/on_demand_activation_smoke "$PWD/deploy/scripts/activate-distributed-role" "$PWD/deploy/scripts/deactivate-distributed-role"
           systemd-analyze verify deploy/systemd/mk8email-wake.service deploy/systemd/mk8email-worker.path deploy/systemd/mk8email-worker-drain.service deploy/systemd/mk8email-worker-maintenance.timer

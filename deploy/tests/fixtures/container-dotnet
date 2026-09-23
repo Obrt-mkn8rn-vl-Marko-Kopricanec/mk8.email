@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+
+printf '%s\n' "$*" >> "$MK8_CONTAINER_TEST_CALLS"
+case "$*" in
+    '/app/worker/mk8.email.Application.Worker.dll --prepare')
+        [ "${MK8_CONTAINER_TEST_FAIL_PREPARE:-0}" != 1 ]
+        ;;
+    '/app/wake/mk8.email.Wake.dll --serve-worker /run/secrets/wake_database_connection /app/worker/mk8.email.Application.Worker.dll /run/secrets/worker_config')
+        ;;
+    *)
+        printf '%s\n' 'Unexpected container dotnet invocation.' >&2
+        exit 1
+        ;;
+esac

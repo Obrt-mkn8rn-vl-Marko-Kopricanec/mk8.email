@@ -178,6 +178,36 @@ public sealed class DistributedProcessBoundaryTests
                         await wake.WaitForExitAsync();
                         await Task.WhenAll(wakeOutput, wakeErrors);
                     }
+
+                    var shallowProbe = await RunWakeDatabaseProbeAsync(wakeConnectionPath);
+                    Assert.AreEqual(0, shallowProbe.ExitCode, shallowProbe.Output);
+                    StringAssert.Contains(shallowProbe.Output, "due=false");
+
+                    using var containerWake = StartWorkerLaunchingWakeProcess(
+                        wakeConnectionPath, configPath);
+                    var containerWakeOutput = containerWake.StandardOutput.ReadToEndAsync();
+                    var containerWakeErrors = containerWake.StandardError.ReadToEndAsync();
+                    try
+                    {
+                        Assert.AreEqual(HttpStatusCode.OK,
+                            (await client.GetAsync("/health/application")).StatusCode);
+                        Assert.AreEqual(2, await CountAsync(
+                            inspection,
+                            "SELECT count(*) FROM application_requests "
+                            + "WHERE protocol = 'health' AND state = 'completed'"));
+                        Assert.AreEqual(4, await CountAsync(
+                            inspection,
+                            "SELECT count(*) FROM gateway_traffic_records WHERE protocol = 'health'"));
+                        Assert.IsFalse(containerWake.HasExited);
+                        Assert.IsFalse(gateway.HasExited);
+                    }
+                    finally
+                    {
+                        if (!containerWake.HasExited)
+                            containerWake.Kill(entireProcessTree: true);
+                        await containerWake.WaitForExitAsync();
+                        await Task.WhenAll(containerWakeOutput, containerWakeErrors);
+                    }
                 }
                 finally
                 {
@@ -357,6 +387,48 @@ public sealed class DistributedProcessBoundaryTests
             ?? throw new InvalidOperationException("The Wake process did not start.");
     }
 
+    private static Process StartWorkerLaunchingWakeProcess(
+        string connectionPath,
+        string configPath)
+    {
+        var start = CreateProcessStartInfo("mk8.email.Wake", "mk8.email.Wake.dll");
+        start.Environment.Remove(EnvironmentLoader.ConfigPathVariable);
+        start.Environment.Remove("MK8_EMAIL_TEST_AZURE_BLOB_CONNECTION");
+        start.ArgumentList.Add("--serve-worker");
+        start.ArgumentList.Add(connectionPath);
+        start.ArgumentList.Add(ProcessAssemblyPath(
+            "mk8.email.Application.Worker", "mk8.email.Application.Worker.dll"));
+        start.ArgumentList.Add(configPath);
+        return Process.Start(start)
+            ?? throw new InvalidOperationException("The container-style Wake process did not start.");
+    }
+
+    private static async Task<(int ExitCode, string Output)> RunWakeDatabaseProbeAsync(
+        string connectionPath)
+    {
+        var start = CreateProcessStartInfo("mk8.email.Wake", "mk8.email.Wake.dll");
+        start.Environment.Remove(EnvironmentLoader.ConfigPathVariable);
+        start.Environment.Remove("MK8_EMAIL_TEST_AZURE_BLOB_CONNECTION");
+        start.ArgumentList.Add("--probe-db");
+        start.ArgumentList.Add(connectionPath);
+        using var process = Process.Start(start)
+            ?? throw new InvalidOperationException("The Wake database probe did not start.");
+        var output = process.StandardOutput.ReadToEndAsync();
+        var errors = process.StandardError.ReadToEndAsync();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        try
+        {
+            await process.WaitForExitAsync(deadline.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync();
+            Assert.Fail("The Wake database probe exceeded its process deadline.");
+        }
+        return (process.ExitCode, await output + await errors);
+    }
+
     private static ProcessStartInfo CreateProcessStartInfo(
         string project,
         string assemblyName)
@@ -364,12 +436,7 @@ public sealed class DistributedProcessBoundaryTests
         var dotnetHost = Environment.GetEnvironmentVariable("MK8_EMAIL_TEST_DOTNET_HOST")
             ?? Environment.GetEnvironmentVariable("DOTNET_HOST_PATH")
             ?? "dotnet";
-        var configuration = new DirectoryInfo(AppContext.BaseDirectory).Parent?.Name
-            ?? throw new InvalidOperationException("The test configuration directory is missing.");
-        var repository = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../.."));
-        var assembly = Path.Combine(
-            repository, project, "bin", configuration, "net10.0", assemblyName);
-        Assert.IsTrue(File.Exists(assembly), "The built process executable is missing.");
+        var assembly = ProcessAssemblyPath(project, assemblyName);
         var start = new ProcessStartInfo(dotnetHost)
         {
             RedirectStandardOutput = true,
@@ -379,6 +446,17 @@ public sealed class DistributedProcessBoundaryTests
         };
         start.ArgumentList.Add(assembly);
         return start;
+    }
+
+    private static string ProcessAssemblyPath(string project, string assemblyName)
+    {
+        var configuration = new DirectoryInfo(AppContext.BaseDirectory).Parent?.Name
+            ?? throw new InvalidOperationException("The test configuration directory is missing.");
+        var repository = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../.."));
+        var assembly = Path.Combine(
+            repository, project, "bin", configuration, "net10.0", assemblyName);
+        Assert.IsTrue(File.Exists(assembly), "The built process executable is missing.");
+        return assembly;
     }
 
     private static async Task<PostgresTestDatabase> RequirePostgresAsync()

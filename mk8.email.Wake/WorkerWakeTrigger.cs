@@ -1,7 +1,14 @@
 namespace mk8.email.Wake;
 
-internal sealed class WorkerWakeTrigger(string directory)
+internal sealed class WorkerWakeTrigger(string directory) : IWorkerWakeAction
 {
+    public Task SignalAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        Signal();
+        return Task.CompletedTask;
+    }
+
     public void Validate()
     {
         if (!Path.IsPathFullyQualified(directory)

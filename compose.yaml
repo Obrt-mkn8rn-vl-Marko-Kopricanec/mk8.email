@@ -59,6 +59,7 @@ services:
       MK8EMAIL_CONFIG_FILE: /run/secrets/worker_config
     secrets:
       - worker_config
+      - wake_database_connection
       - database_password
       - messaging_encryption_key
       - object_storage_connection
@@ -90,6 +91,8 @@ secrets:
     file: ./deploy/secrets/gateway_config.json
   worker_config:
     file: ./deploy/secrets/worker_config.json
+  wake_database_connection:
+    file: ./deploy/secrets/wake_database_connection
   database_password:
     file: ./deploy/secrets/database_password
   gateway_database_password:

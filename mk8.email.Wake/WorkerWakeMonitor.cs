@@ -5,7 +5,7 @@ namespace mk8.email.Wake;
 internal sealed class WorkerWakeMonitor(
     NpgsqlDataSource dataSource,
     WorkerWakeProbe probe,
-    WorkerWakeTrigger trigger,
+    IWorkerWakeAction wakeAction,
     TimeProvider timeProvider)
 {
     public async Task RunAsync(CancellationToken cancellationToken)
@@ -31,7 +31,7 @@ internal sealed class WorkerWakeMonitor(
                     var snapshot = await probe.ReadAsync(cancellationToken)
                         .ConfigureAwait(false);
                     if (snapshot.HasDueWork)
-                        trigger.Signal();
+                        await wakeAction.SignalAsync(cancellationToken).ConfigureAwait(false);
 
                     var wait = snapshot.HasDueWork
                         ? TimeSpan.FromSeconds(2)

@@ -1,0 +1,42 @@
+#!/bin/sh
+set -eu
+
+if [ "$#" -ne 3 ]; then
+    printf '%s\n' 'Usage: container_on_demand_smoke ENTRYPOINT FIXTURE DOCKERFILE' >&2
+    exit 2
+fi
+
+entrypoint=$1
+fixture=$2
+dockerfile=$3
+grep -Fx 'ENTRYPOINT ["/app/container-worker-entrypoint"]' "$dockerfile" >/dev/null
+grep -F '"--probe-db", "/run/secrets/wake_database_connection"' "$dockerfile" >/dev/null
+
+test_root=$(mktemp -d /tmp/mk8-container-smoke.XXXXXX)
+cleanup() {
+    case "$test_root" in
+        /tmp/mk8-container-smoke.??????) rm -r -- "$test_root" ;;
+    esac
+}
+trap cleanup EXIT HUP INT TERM
+install -d -m 0700 "$test_root/bin"
+install -m 0700 "$fixture" "$test_root/bin/dotnet"
+calls=$test_root/calls
+
+MK8_CONTAINER_TEST_CALLS=$calls PATH="$test_root/bin:$PATH" \
+    sh "$entrypoint"
+[ "$(wc -l < "$calls")" -eq 2 ]
+grep -Fx '/app/worker/mk8.email.Application.Worker.dll --prepare' "$calls" >/dev/null
+grep -Fx '/app/wake/mk8.email.Wake.dll --serve-worker /run/secrets/wake_database_connection /app/worker/mk8.email.Application.Worker.dll /run/secrets/worker_config' \
+    "$calls" >/dev/null
+
+: > "$calls"
+if MK8_CONTAINER_TEST_CALLS=$calls MK8_CONTAINER_TEST_FAIL_PREPARE=1 \
+    PATH="$test_root/bin:$PATH" sh "$entrypoint" >/dev/null 2>&1; then
+    printf '%s\n' 'The entrypoint continued after failed Worker preparation.' >&2
+    exit 1
+fi
+[ "$(wc -l < "$calls")" -eq 1 ]
+grep -Fx '/app/worker/mk8.email.Application.Worker.dll --prepare' "$calls" >/dev/null
+
+printf '%s\n' 'Container entrypoint prepares once, then supervises on-demand drains.'

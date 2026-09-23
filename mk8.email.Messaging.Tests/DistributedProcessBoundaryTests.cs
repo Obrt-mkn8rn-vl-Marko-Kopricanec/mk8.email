@@ -18,7 +18,7 @@ namespace mk8.email.Messaging.Tests;
 public sealed class DistributedProcessBoundaryTests
 {
     [TestMethod]
-    public async Task GatewayJournalsWhileWorkerIsStoppedAndLaterDispatchesAcrossProcesses()
+    public async Task GatewayJournalsWhileWorkerIsStoppedAndWakeTriggersLaterDispatchAcrossProcesses()
     {
         await using var database = await RequirePostgresAsync();
         var blobConnection = RequireAzureBlobConnection();
@@ -90,59 +90,108 @@ public sealed class DistributedProcessBoundaryTests
             var prepared = await RunWorkerAsync("--prepare", configPath);
             Assert.AreEqual(0, prepared.ExitCode, prepared.Output);
 
-            var port = ReserveLoopbackPort();
-            using var gateway = StartProcess(
-                "mk8.email.Gateway", "mk8.email.Gateway.dll", null, configPath,
-                $"http://127.0.0.1:{port}");
-            var gatewayOutput = gateway.StandardOutput.ReadToEndAsync();
-            var gatewayErrors = gateway.StandardError.ReadToEndAsync();
+            var wakeRole = $"mk8_process_wake_{Guid.NewGuid():N}";
+            var wakePassword = Guid.NewGuid().ToString("N");
+            await using var roleAdmin = new NpgsqlConnection(database.ConnectionString);
+            await roleAdmin.OpenAsync();
+            await CreateRestrictedWakeRoleAsync(
+                roleAdmin, database.DatabaseName, wakeRole, wakePassword);
             try
             {
-                using var client = new HttpClient
+                var wakeConnection = new NpgsqlConnectionStringBuilder(database.ConnectionString)
                 {
-                    BaseAddress = new Uri($"http://127.0.0.1:{port}"),
-                    Timeout = TimeSpan.FromSeconds(35),
+                    Username = wakeRole,
+                    Password = wakePassword,
+                    Pooling = false,
                 };
-                await WaitForGatewayAsync(client, gateway, TimeSpan.FromSeconds(15));
+                var wakeConnectionPath = Path.Combine(directory.FullName, "wake-connection.txt");
+                await File.WriteAllTextAsync(wakeConnectionPath, wakeConnection.ConnectionString);
+                var triggerDirectory = Path.Combine(directory.FullName, "wake-signals");
+                Directory.CreateDirectory(triggerDirectory);
 
-                Assert.AreEqual(HttpStatusCode.OK,
-                    (await client.GetAsync("/health/live")).StatusCode);
-                Assert.AreEqual(HttpStatusCode.OK,
-                    (await client.GetAsync("/health/ready")).StatusCode);
-                Assert.AreEqual(HttpStatusCode.Unauthorized,
-                    (await client.GetAsync("/.well-known/jmap")).StatusCode);
+                var port = ReserveLoopbackPort();
+                using var gateway = StartProcess(
+                    "mk8.email.Gateway", "mk8.email.Gateway.dll", null, configPath,
+                    $"http://127.0.0.1:{port}");
+                var gatewayOutput = gateway.StandardOutput.ReadToEndAsync();
+                var gatewayErrors = gateway.StandardError.ReadToEndAsync();
+                try
+                {
+                    using var client = new HttpClient
+                    {
+                        BaseAddress = new Uri($"http://127.0.0.1:{port}"),
+                        Timeout = TimeSpan.FromSeconds(35),
+                    };
+                    await WaitForGatewayAsync(client, gateway, TimeSpan.FromSeconds(15));
 
-                await using var inspection = new NpgsqlConnection(database.ConnectionString);
-                await inspection.OpenAsync();
-                Assert.AreEqual(2, await CountAsync(
-                    inspection,
-                    "SELECT count(*) FROM gateway_traffic_records WHERE protocol = 'jmap'"));
+                    Assert.AreEqual(HttpStatusCode.OK,
+                        (await client.GetAsync("/health/live")).StatusCode);
+                    Assert.AreEqual(HttpStatusCode.OK,
+                        (await client.GetAsync("/health/ready")).StatusCode);
+                    Assert.AreEqual(HttpStatusCode.Unauthorized,
+                        (await client.GetAsync("/.well-known/jmap")).StatusCode);
 
-                var pendingProbe = client.GetAsync("/health/application");
-                await WaitForQueuedProbeAsync(inspection, TimeSpan.FromSeconds(10));
-                Assert.IsFalse(gateway.HasExited);
-                Assert.IsFalse(pendingProbe.IsCompleted);
-                Assert.AreEqual(HttpStatusCode.OK,
-                    (await client.GetAsync("/health/live")).StatusCode);
+                    await using var inspection = new NpgsqlConnection(database.ConnectionString);
+                    await inspection.OpenAsync();
+                    Assert.AreEqual(2, await CountAsync(
+                        inspection,
+                        "SELECT count(*) FROM gateway_traffic_records WHERE protocol = 'jmap'"));
 
-                var drained = await RunWorkerAsync("--drain", configPath);
-                Assert.AreEqual(0, drained.ExitCode, drained.Output);
-                Assert.AreEqual(HttpStatusCode.OK, (await pendingProbe).StatusCode);
-                Assert.AreEqual(1, await CountAsync(
-                    inspection,
-                    "SELECT count(*) FROM application_requests "
-                    + "WHERE protocol = 'health' AND state = 'completed'"));
-                Assert.AreEqual(2, await CountAsync(
-                    inspection,
-                    "SELECT count(*) FROM gateway_traffic_records WHERE protocol = 'health'"));
-                Assert.IsFalse(gateway.HasExited);
+                    var pendingProbe = client.GetAsync("/health/application");
+                    await WaitForQueuedProbeAsync(inspection, TimeSpan.FromSeconds(10));
+                    Assert.IsFalse(gateway.HasExited);
+                    Assert.IsFalse(pendingProbe.IsCompleted);
+                    Assert.AreEqual(HttpStatusCode.OK,
+                        (await client.GetAsync("/health/live")).StatusCode);
+
+                    using var wake = StartWakeProcess(wakeConnectionPath, triggerDirectory);
+                    var wakeOutput = wake.StandardOutput.ReadToEndAsync();
+                    var wakeErrors = wake.StandardError.ReadToEndAsync();
+                    try
+                    {
+                        var trigger = Path.Combine(triggerDirectory, "trigger");
+                        await WaitForWakeTriggerAsync(trigger, wake, TimeSpan.FromSeconds(15));
+                        Assert.IsFalse(pendingProbe.IsCompleted);
+                        Assert.AreEqual(1, await CountAsync(
+                            inspection,
+                            "SELECT count(*) FROM application_requests "
+                            + "WHERE protocol = 'health' AND state = 'pending'"));
+                        File.Delete(trigger); // The path unit consumes the signal before --drain.
+
+                        var drained = await RunWorkerAsync("--drain", configPath);
+                        Assert.AreEqual(0, drained.ExitCode, drained.Output);
+                        Assert.AreEqual(HttpStatusCode.OK, (await pendingProbe).StatusCode);
+                        Assert.AreEqual(1, await CountAsync(
+                            inspection,
+                            "SELECT count(*) FROM application_requests "
+                            + "WHERE protocol = 'health' AND state = 'completed'"));
+                        Assert.AreEqual(2, await CountAsync(
+                            inspection,
+                            "SELECT count(*) FROM gateway_traffic_records WHERE protocol = 'health'"));
+                        Assert.IsFalse(gateway.HasExited);
+                        Assert.IsFalse(wake.HasExited);
+                    }
+                    finally
+                    {
+                        if (!wake.HasExited)
+                            wake.Kill(entireProcessTree: true);
+                        await wake.WaitForExitAsync();
+                        await Task.WhenAll(wakeOutput, wakeErrors);
+                    }
+                }
+                finally
+                {
+                    if (!gateway.HasExited)
+                        gateway.Kill(entireProcessTree: true);
+                    await gateway.WaitForExitAsync();
+                    await Task.WhenAll(gatewayOutput, gatewayErrors);
+                }
             }
             finally
             {
-                if (!gateway.HasExited)
-                    gateway.Kill(entireProcessTree: true);
-                await gateway.WaitForExitAsync();
-                await Task.WhenAll(gatewayOutput, gatewayErrors);
+                await using var cleanup = roleAdmin.CreateCommand();
+                cleanup.CommandText = $"DROP OWNED BY \"{wakeRole}\"; DROP ROLE \"{wakeRole}\"";
+                await cleanup.ExecuteNonQueryAsync();
             }
         }
         finally
@@ -190,6 +239,56 @@ public sealed class DistributedProcessBoundaryTests
         Assert.Fail("Gateway did not persist the Application probe while Worker was stopped.");
     }
 
+    private static async Task WaitForWakeTriggerAsync(
+        string path,
+        Process wake,
+        TimeSpan timeout)
+    {
+        using var cancellation = new CancellationTokenSource(timeout);
+        while (!cancellation.IsCancellationRequested)
+        {
+            Assert.IsFalse(wake.HasExited, "The restricted Wake process stopped before signalling.");
+            if (File.Exists(path))
+                return;
+            await Task.Delay(100, cancellation.Token);
+        }
+        Assert.Fail("Wake did not signal queued work within its deadline.");
+    }
+
+    private static async Task CreateRestrictedWakeRoleAsync(
+        NpgsqlConnection admin,
+        string databaseName,
+        string role,
+        string password)
+    {
+        await using var transaction = await admin.BeginTransactionAsync();
+        await using var setup = admin.CreateCommand();
+        setup.Transaction = transaction;
+        setup.CommandText = $"""
+            REVOKE ALL ON DATABASE "{databaseName}" FROM PUBLIC;
+            REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+            CREATE ROLE "{role}" LOGIN PASSWORD '{password}'
+                NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION
+                NOBYPASSRLS NOINHERIT;
+            GRANT CONNECT ON DATABASE "{databaseName}" TO "{role}";
+            GRANT USAGE ON SCHEMA public TO "{role}";
+            GRANT SELECT (state, lease_expires_at, deadline_at)
+                ON application_requests TO "{role}";
+            GRANT SELECT (state, next_attempt_at, lease_expires_at)
+                ON mail_queue_messages TO "{role}";
+            GRANT SELECT (expires_at, is_verified, next_push_at, user_id,
+                last_pushed_change) ON jmap_push_subscriptions TO "{role}";
+            GRANT SELECT (id, is_active) ON users TO "{role}";
+            GRANT SELECT (id, owner_id, alias_for_inbox_id, name, address_id)
+                ON inboxes TO "{role}";
+            GRANT SELECT (id, company_id, is_active) ON addresses TO "{role}";
+            GRANT SELECT (id, is_active) ON companies TO "{role}";
+            GRANT SELECT (account_id, sequence) ON jmap_changes TO "{role}";
+            """;
+        await setup.ExecuteNonQueryAsync();
+        await transaction.CommitAsync();
+    }
+
     private static async Task<long> CountAsync(NpgsqlConnection connection, string sql)
     {
         await using var command = connection.CreateCommand();
@@ -235,6 +334,33 @@ public sealed class DistributedProcessBoundaryTests
         string configPath,
         string? urls = null)
     {
+        var start = CreateProcessStartInfo(project, assemblyName);
+        if (mode is not null)
+            start.ArgumentList.Add(mode);
+        start.Environment[EnvironmentLoader.ConfigPathVariable] = configPath;
+        start.Environment["DOTNET_ENVIRONMENT"] = "Production";
+        if (urls is not null)
+            start.Environment["ASPNETCORE_URLS"] = urls;
+        return Process.Start(start)
+            ?? throw new InvalidOperationException("The test process did not start.");
+    }
+
+    private static Process StartWakeProcess(string connectionPath, string triggerDirectory)
+    {
+        var start = CreateProcessStartInfo("mk8.email.Wake", "mk8.email.Wake.dll");
+        start.Environment.Remove(EnvironmentLoader.ConfigPathVariable);
+        start.Environment.Remove("MK8_EMAIL_TEST_AZURE_BLOB_CONNECTION");
+        start.ArgumentList.Add("--serve");
+        start.ArgumentList.Add(connectionPath);
+        start.ArgumentList.Add(triggerDirectory);
+        return Process.Start(start)
+            ?? throw new InvalidOperationException("The Wake process did not start.");
+    }
+
+    private static ProcessStartInfo CreateProcessStartInfo(
+        string project,
+        string assemblyName)
+    {
         var dotnetHost = Environment.GetEnvironmentVariable("MK8_EMAIL_TEST_DOTNET_HOST")
             ?? Environment.GetEnvironmentVariable("DOTNET_HOST_PATH")
             ?? "dotnet";
@@ -252,14 +378,7 @@ public sealed class DistributedProcessBoundaryTests
             WorkingDirectory = Path.GetDirectoryName(assembly)!,
         };
         start.ArgumentList.Add(assembly);
-        if (mode is not null)
-            start.ArgumentList.Add(mode);
-        start.Environment[EnvironmentLoader.ConfigPathVariable] = configPath;
-        start.Environment["DOTNET_ENVIRONMENT"] = "Production";
-        if (urls is not null)
-            start.Environment["ASPNETCORE_URLS"] = urls;
-        return Process.Start(start)
-            ?? throw new InvalidOperationException("The test process did not start.");
+        return start;
     }
 
     private static async Task<PostgresTestDatabase> RequirePostgresAsync()

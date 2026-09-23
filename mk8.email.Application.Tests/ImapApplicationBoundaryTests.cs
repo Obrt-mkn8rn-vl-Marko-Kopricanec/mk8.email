@@ -42,6 +42,14 @@ public sealed class ImapApplicationBoundaryTests
         Assert.HasCount(1, mailboxes.Mailboxes);
         Assert.AreEqual("INBOX", mailboxes.Mailboxes[0].FolderName);
         Assert.IsTrue(application.LastSubscribedOnly);
+
+        var statuses = await SendAsync<ImapMailboxStatusRequest, ImapMailboxStatusResult>(
+            dispatcher,
+            ApplicationOperations.ImapGetMailboxStatuses,
+            new ImapMailboxStatusRequest(
+                application.UserId, ["INBOX"], true, true, true));
+        Assert.AreEqual(2, statuses.Statuses["INBOX"].MessageCount);
+        Assert.AreEqual(12L, statuses.Statuses["INBOX"].SizeBytes);
     }
 
     private static async Task<TResponse> SendAsync<TRequest, TResponse>(
@@ -98,5 +106,14 @@ public sealed class ImapApplicationBoundaryTests
             return Task.FromResult(new ImapMailboxListResult(
                 [new ImapMailboxInfo("user", "example.test", "INBOX", true, true)]));
         }
+
+        public Task<ImapMailboxStatusResult> GetMailboxStatusesAsync(
+            ImapMailboxStatusRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ImapMailboxStatusResult(new Dictionary<string, ImapMailboxStatus>
+            {
+                ["INBOX"] = new(
+                    Guid.CreateVersion7(), 1, 3, 5, "mailbox-id", 2, 1, 12),
+            }));
     }
 }

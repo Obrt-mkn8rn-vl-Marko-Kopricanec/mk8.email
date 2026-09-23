@@ -72,4 +72,49 @@ internal sealed class ImapApplicationService(
                 folder.IsSubscribed))
             .ToList());
     }
+
+    public async Task<ImapMailboxStatusResult> GetMailboxStatusesAsync(
+        ImapMailboxStatusRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.MailboxNames);
+        if (request.UserId == Guid.Empty || request.MailboxNames.Any(name => name is null))
+            throw new ArgumentException("The IMAP mailbox status request is invalid.", nameof(request));
+
+        var statuses = new Dictionary<string, ImapMailboxStatus>(StringComparer.Ordinal);
+        foreach (var mailboxName in request.MailboxNames.Distinct(StringComparer.Ordinal))
+        {
+            var folder = await ImapMailboxResolver.ResolveFolderAsync(
+                database, request.UserId, mailboxName, cancellationToken);
+            if (folder is null)
+                continue;
+
+            var messageCount = request.IncludeMessageCount
+                ? await database.Emails.CountAsync(
+                    email => email.FolderId == folder.Id, cancellationToken)
+                : (int?)null;
+            var unseenCount = request.IncludeUnseenCount
+                ? await database.Emails.CountAsync(
+                    email => email.FolderId == folder.Id && !email.IsRead,
+                    cancellationToken)
+                : (int?)null;
+            var sizeBytes = request.IncludeSize
+                ? await database.Emails
+                    .Where(email => email.FolderId == folder.Id)
+                    .SumAsync(email => (long?)email.SizeBytes, cancellationToken) ?? 0
+                : (long?)null;
+            statuses.Add(mailboxName, new ImapMailboxStatus(
+                folder.Id,
+                folder.UidValidity,
+                folder.NextUid,
+                folder.HighestModSeq,
+                folder.MailboxId,
+                messageCount,
+                unseenCount,
+                sizeBytes));
+        }
+
+        return new ImapMailboxStatusResult(statuses);
+    }
 }

@@ -79,7 +79,6 @@ ILogger<ImapServerService> logger) : BackgroundService
         bool Peek,
         uint? Offset,
         uint? Count);
-    private readonly record struct MailboxLocation(Guid InboxId, string FolderName);
     private sealed record MailboxFolderInfo(
         string InboxName,
         string Domain,
@@ -1125,9 +1124,29 @@ ILogger<ImapServerService> logger) : BackgroundService
             return;
         }
         var entries = BuildMailboxListEntries(folders);
-
-        using var scope = options.StatusItems.Length > 0 ? scopeFactory.CreateScope() : null;
-        var db = scope?.ServiceProvider.GetRequiredService<EmailDbContext>();
+        Dictionary<string, string> statusLines = new(StringComparer.Ordinal);
+        if (options.StatusItems.Length > 0)
+        {
+            try
+            {
+                statusLines = await GetMailboxStatusLinesAsync(
+                    session.UserId,
+                    entries
+                        .Where(entry => entry.IsSelectable
+                            && MatchesAnyPattern(entry.FullName, options.Reference, options.Patterns))
+                        .Select(entry => entry.FullName)
+                        .ToList(),
+                    options.StatusItems,
+                    ct);
+            }
+            catch (Exception exception) when (
+                exception is not OperationCanceledException && !ct.IsCancellationRequested)
+            {
+                logger.LogWarning(exception, "IMAP LIST-STATUS is unavailable for {UserId}", session.UserId);
+                await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailbox status unavailable");
+                return;
+            }
+        }
 
         foreach (var entry in entries)
         {
@@ -1163,16 +1182,10 @@ ILogger<ImapServerService> logger) : BackgroundService
 
             if (entry.IsSelectable
                 && matchesSelection
-                && db is not null
-                && options.StatusItems.Length > 0)
+                && statusLines.TryGetValue(entry.FullName, out var statusResult))
             {
-                var folder = await ResolveFolderAsync(db, session.UserId, entry.FullName, ct);
-                if (folder is not null)
-                {
-                    var statusResult = await BuildStatusResultAsync(db, folder, options.StatusItems, ct);
-                    await writer.WriteLineAsync(
-                        $"* STATUS \"{EscapeImapString(FormatWireMailboxName(entry.FullName, session.Utf8Enabled))}\" ({statusResult})");
-                }
+                await writer.WriteLineAsync(
+                    $"* STATUS \"{EscapeImapString(FormatWireMailboxName(entry.FullName, session.Utf8Enabled))}\" ({statusResult})");
             }
         }
 
@@ -1607,31 +1620,56 @@ ILogger<ImapServerService> logger) : BackgroundService
         }
         var statusItemsRaw = args[(parenIdx + 1)..].TrimEnd(')').Trim();
         var statusItems = statusItemsRaw.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-
-        using var scope = scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-
-        var folder = await ResolveFolderAsync(db, session.UserId, mailboxName, ct);
-        if (folder is null)
+        Dictionary<string, string> statusLines;
+        try
+        {
+            statusLines = await GetMailboxStatusLinesAsync(
+                session.UserId, [mailboxName], statusItems, ct);
+        }
+        catch (Exception exception) when (
+            exception is not OperationCanceledException && !ct.IsCancellationRequested)
+        {
+            logger.LogWarning(exception, "IMAP STATUS is unavailable for {UserId}", session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailbox status unavailable");
+            return;
+        }
+        if (!statusLines.TryGetValue(mailboxName, out var statusResult))
         {
             await writer.WriteLineAsync($"{tag} NO Mailbox not found");
             return;
         }
-
-        var statusResult = await BuildStatusResultAsync(db, folder, statusItems, ct);
 
         await writer.WriteLineAsync(
             $"* STATUS \"{EscapeImapString(FormatWireMailboxName(mailboxName, session.Utf8Enabled))}\" ({statusResult})");
         await writer.WriteLineAsync($"{tag} OK STATUS completed");
     }
 
-    private static async Task<string> BuildStatusResultAsync(
-        EmailDbContext db, FolderDB folder, string[] statusItems, CancellationToken ct)
+    private async Task<Dictionary<string, string>> GetMailboxStatusLinesAsync(
+        Guid userId,
+        List<string> mailboxNames,
+        string[] statusItems,
+        CancellationToken cancellationToken)
     {
-        int? totalCount = null;
-        int? unseenCount = null;
-        long? totalSize = null;
+        using var scope = scopeFactory.CreateScope();
+        var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
+        var result = await application.GetMailboxStatusesAsync(
+            new ImapMailboxStatusRequest(
+                userId,
+                mailboxNames,
+                statusItems.Contains("MESSAGES", StringComparer.OrdinalIgnoreCase),
+                statusItems.Contains("UNSEEN", StringComparer.OrdinalIgnoreCase),
+                statusItems.Contains("SIZE", StringComparer.OrdinalIgnoreCase)),
+            cancellationToken);
+        return result.Statuses.ToDictionary(
+            entry => entry.Key,
+            entry => BuildStatusResult(entry.Value, statusItems),
+            StringComparer.Ordinal);
+    }
 
+    private static string BuildStatusResult(
+        ImapMailboxStatus status,
+        string[] statusItems)
+    {
         var results = new StringBuilder();
         foreach (var item in statusItems)
         {
@@ -1639,34 +1677,28 @@ ILogger<ImapServerService> logger) : BackgroundService
             switch (item.ToUpperInvariant())
             {
                 case "MESSAGES":
-                    totalCount ??= await db.Emails.CountAsync(e => e.FolderId == folder.Id, ct);
-                    results.Append($"MESSAGES {totalCount}");
+                    results.Append($"MESSAGES {status.MessageCount ?? throw new InvalidOperationException("Missing message count.")}");
                     break;
                 case "RECENT":
                     results.Append("RECENT 0");
                     break;
                 case "UNSEEN":
-                    unseenCount ??= await db.Emails.CountAsync(e => e.FolderId == folder.Id && !e.IsRead, ct);
-                    results.Append($"UNSEEN {unseenCount}");
+                    results.Append($"UNSEEN {status.UnseenCount ?? throw new InvalidOperationException("Missing unseen count.")}");
                     break;
                 case "UIDVALIDITY":
-                    results.Append($"UIDVALIDITY {folder.UidValidity}");
+                    results.Append($"UIDVALIDITY {status.UidValidity}");
                     break;
                 case "UIDNEXT":
-                    results.Append($"UIDNEXT {folder.NextUid}");
+                    results.Append($"UIDNEXT {status.NextUid}");
                     break;
                 case "HIGHESTMODSEQ":
-                    results.Append($"HIGHESTMODSEQ {folder.HighestModSeq}");
+                    results.Append($"HIGHESTMODSEQ {status.HighestModSeq}");
                     break;
                 case "SIZE":
-                    totalSize ??= await db.Emails
-                        .Where(email => email.FolderId == folder.Id)
-                        .SumAsync(email => (long?)email.SizeBytes, ct)
-                        ?? 0;
-                    results.Append($"SIZE {totalSize}");
+                    results.Append($"SIZE {status.SizeBytes ?? throw new InvalidOperationException("Missing mailbox size.")}");
                     break;
                 case "MAILBOXID":
-                    results.Append($"MAILBOXID ({FormatMailboxObjectId(folder)})");
+                    results.Append($"MAILBOXID ({FormatObjectId('F', status.MailboxId, status.FolderId)})");
                     break;
             }
         }
@@ -2548,67 +2580,13 @@ ILogger<ImapServerService> logger) : BackgroundService
             .ToList();
     }
 
-    private static async Task<FolderDB?> ResolveFolderAsync(EmailDbContext db, Guid userId, string mailboxName, CancellationToken ct)
-    {
-        var location = await ResolveMailboxLocationAsync(db, userId, mailboxName, ct);
-        if (location is null)
-            return null;
+    private static Task<FolderDB?> ResolveFolderAsync(
+        EmailDbContext db, Guid userId, string mailboxName, CancellationToken ct) =>
+        ImapMailboxResolver.ResolveFolderAsync(db, userId, mailboxName, ct);
 
-        return await db.Folders
-            .FirstOrDefaultAsync(folder => folder.InboxId == location.Value.InboxId
-                                        && folder.Name == location.Value.FolderName, ct);
-    }
-
-    private static async Task<MailboxLocation?> ResolveMailboxLocationAsync(
-        EmailDbContext db,
-        Guid userId,
-        string mailboxName,
-        CancellationToken ct)
-    {
-        if (string.IsNullOrEmpty(mailboxName))
-            return null;
-
-        var username = await db.Users
-            .AsNoTracking()
-            .Where(user => user.Id == userId)
-            .Select(user => user.Username)
-            .SingleOrDefaultAsync(ct);
-        if (username is null)
-            return null;
-
-        var qualifiedParts = mailboxName.Split('/', 3);
-        if (qualifiedParts.Length == 3)
-        {
-            var qualifiedInboxId = await db.Inboxes
-                .AsNoTracking()
-                .Where(inbox => inbox.OwnerId == userId
-                             && inbox.Name == qualifiedParts[0]
-                             && inbox.Address.Domain == qualifiedParts[1])
-                .Select(inbox => (Guid?)inbox.Id)
-                .SingleOrDefaultAsync(ct);
-            if (qualifiedInboxId is not null)
-                return new MailboxLocation(qualifiedInboxId.Value, qualifiedParts[2]);
-        }
-
-        var separator = username.LastIndexOf('@');
-        if (separator <= 0 || separator == username.Length - 1)
-            return null;
-
-        var primaryLocalPart = username[..separator];
-        var primaryDomain = username[(separator + 1)..];
-        var primaryInboxId = await db.Inboxes
-            .AsNoTracking()
-            .Where(inbox => inbox.OwnerId == userId
-                         && inbox.Name == primaryLocalPart
-                         && inbox.Address.Domain == primaryDomain)
-            .Select(inbox => (Guid?)inbox.Id)
-            .SingleOrDefaultAsync(ct);
-        return primaryInboxId is null
-            ? null
-            : new MailboxLocation(
-                primaryInboxId.Value,
-                NormalizePrimaryFolderName(mailboxName));
-    }
+    private static Task<ImapMailboxLocation?> ResolveMailboxLocationAsync(
+        EmailDbContext db, Guid userId, string mailboxName, CancellationToken ct) =>
+        ImapMailboxResolver.ResolveLocationAsync(db, userId, mailboxName, ct);
 
     private static bool IsValidFolderName(string folderName)
     {
@@ -2901,15 +2879,6 @@ ILogger<ImapServerService> logger) : BackgroundService
                     isSelectable && folder.IsSubscribed);
             })
             .ToList();
-    }
-
-    private static string NormalizePrimaryFolderName(string folderName)
-    {
-        if (string.Equals(folderName, "INBOX", StringComparison.OrdinalIgnoreCase))
-            return DefaultFolders.Inbox;
-
-        return DefaultFolders.All.FirstOrDefault(
-            name => string.Equals(name, folderName, StringComparison.OrdinalIgnoreCase)) ?? folderName;
     }
 
     private static string FormatUidSet(List<int> uids) =>

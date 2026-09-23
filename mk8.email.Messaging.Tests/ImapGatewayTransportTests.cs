@@ -71,12 +71,16 @@ public sealed class ImapGatewayTransportTests
                 new ImapOAuthAuthentication("user@example.test", "imap-access-token"), timeout.Token);
             var mailboxes = await client.ListMailboxesAsync(
                 new ImapMailboxListRequest(application.UserId, SubscribedOnly: true), timeout.Token);
+            var statuses = await client.GetMailboxStatusesAsync(
+                new ImapMailboxStatusRequest(application.UserId, ["INBOX"], true, true, true),
+                timeout.Token);
             Assert.AreEqual(application.UserId, password.UserId);
             Assert.AreEqual(application.UserId, oauth.UserId);
             Assert.AreEqual("imap-secret", application.Password);
             Assert.AreEqual("imap-access-token", application.AccessToken);
             Assert.HasCount(1, mailboxes.Mailboxes);
             Assert.AreEqual("INBOX", mailboxes.Mailboxes[0].FolderName);
+            Assert.AreEqual(2, statuses.Statuses["INBOX"].MessageCount);
 
             await using var operations = gatewayDataSource.CreateCommand(
                 "SELECT operation FROM application_requests ORDER BY created_at");
@@ -90,6 +94,7 @@ public sealed class ImapGatewayTransportTests
                     ApplicationOperations.ImapAuthenticatePassword,
                     ApplicationOperations.ImapAuthenticateOAuth,
                     ApplicationOperations.ImapListMailboxes,
+                    ApplicationOperations.ImapGetMailboxStatuses,
                 },
                 observed);
 
@@ -105,7 +110,7 @@ public sealed class ImapGatewayTransportTests
                 Assert.IsFalse(ciphertext.Contains("imap-secret", StringComparison.Ordinal));
                 Assert.IsFalse(ciphertext.Contains("imap-access-token", StringComparison.Ordinal));
             }
-            Assert.AreEqual(6, recordCount);
+            Assert.AreEqual(8, recordCount);
         }
         finally
         {
@@ -141,5 +146,13 @@ public sealed class ImapGatewayTransportTests
             CancellationToken cancellationToken = default) =>
             Task.FromResult(new ImapMailboxListResult(
                 [new ImapMailboxInfo("user", "example.test", "INBOX", true, true)]));
+
+        public Task<ImapMailboxStatusResult> GetMailboxStatusesAsync(
+            ImapMailboxStatusRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ImapMailboxStatusResult(new Dictionary<string, ImapMailboxStatus>
+            {
+                ["INBOX"] = new(Guid.CreateVersion7(), 1, 3, 5, "mailbox-id", 2, 1, 12),
+            }));
     }
 }

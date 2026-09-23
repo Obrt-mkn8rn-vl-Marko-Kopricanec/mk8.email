@@ -12,10 +12,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using MimeKit;
-using mk8.email.Application.Interfaces;
 using mk8.email.Application.Protocol;
 using mk8.email.Configuration;
 using mk8.email.Contracts.Enums;
+using mk8.email.Contracts.Imap;
 using mk8.email.Infrastructure;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Infrastructure.Models;
@@ -881,15 +881,26 @@ ILogger<ImapServerService> logger) : BackgroundService
             return;
         }
 
-        var user = await AuthenticateUserAsync(username, password, ct);
-        if (user is null)
+        ImapIdentityResult user;
+        try
+        {
+            user = await AuthenticateUserAsync(username, password, ct);
+        }
+        catch (Exception exception) when (
+            exception is not OperationCanceledException && !ct.IsCancellationRequested)
+        {
+            logger.LogWarning(exception, "IMAP password authentication service is unavailable");
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Authentication service unavailable");
+            return;
+        }
+        if (user.UserId is null || user.Username is null)
         {
             RecordAuthenticationFailure(session);
             await writer.WriteLineAsync($"{tag} NO LOGIN failed");
             return;
         }
 
-        session.UserId = user.Id;
+        session.UserId = user.UserId.Value;
         session.UserName = user.Username;
         session.State = ImapState.Authenticated;
         await writer.WriteLineAsync($"{tag} OK LOGIN completed");
@@ -967,23 +978,28 @@ ILogger<ImapServerService> logger) : BackgroundService
             }
 
             using var scope = scopeFactory.CreateScope();
-            var tokenService = scope.ServiceProvider.GetRequiredService<IOAuthTokenService>();
-            var oauthUser = await tokenService.AuthenticateAccessTokenAsync(
-                accessToken,
-                "imap",
-                ct);
-            if (oauthUser is null
-                || !string.Equals(
-                    oauthUsername,
-                    oauthUser.Username,
-                    StringComparison.OrdinalIgnoreCase))
+            var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
+            ImapIdentityResult oauthUser;
+            try
+            {
+                oauthUser = await application.AuthenticateOAuthAsync(
+                    new ImapOAuthAuthentication(oauthUsername, accessToken), ct);
+            }
+            catch (Exception exception) when (
+                exception is not OperationCanceledException && !ct.IsCancellationRequested)
+            {
+                logger.LogWarning(exception, "IMAP OAuth authentication service is unavailable");
+                await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Authentication service unavailable");
+                return;
+            }
+            if (oauthUser.UserId is null || oauthUser.Username is null)
             {
                 RecordAuthenticationFailure(session);
                 await writer.WriteLineAsync($"{tag} NO Authentication failed");
                 return;
             }
 
-            session.UserId = oauthUser.Id;
+            session.UserId = oauthUser.UserId.Value;
             session.UserName = oauthUser.Username;
             session.State = ImapState.Authenticated;
             await writer.WriteLineAsync($"{tag} OK AUTHENTICATE completed");
@@ -1024,28 +1040,40 @@ ILogger<ImapServerService> logger) : BackgroundService
             return;
         }
 
-        var user = await AuthenticateUserAsync(username, password, ct);
-        if (user is null)
+        ImapIdentityResult user;
+        try
+        {
+            user = await AuthenticateUserAsync(username, password, ct);
+        }
+        catch (Exception exception) when (
+            exception is not OperationCanceledException && !ct.IsCancellationRequested)
+        {
+            logger.LogWarning(exception, "IMAP SASL password authentication service is unavailable");
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Authentication service unavailable");
+            return;
+        }
+        if (user.UserId is null || user.Username is null)
         {
             RecordAuthenticationFailure(session);
             await writer.WriteLineAsync($"{tag} NO Authentication failed");
             return;
         }
 
-        session.UserId = user.Id;
+        session.UserId = user.UserId.Value;
         session.UserName = user.Username;
         session.State = ImapState.Authenticated;
         await writer.WriteLineAsync($"{tag} OK AUTHENTICATE completed");
     }
 
-    private async Task<AuthenticatedMailUser?> AuthenticateUserAsync(
+    private async Task<ImapIdentityResult> AuthenticateUserAsync(
         string username,
         string password,
         CancellationToken ct)
     {
         using var scope = scopeFactory.CreateScope();
-        var authenticator = scope.ServiceProvider.GetRequiredService<IMailAuthenticator>();
-        return await authenticator.AuthenticateAsync(username, password, ct);
+        var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
+        return await application.AuthenticatePasswordAsync(
+            new ImapPasswordAuthentication(username, password), ct);
     }
 
     private void RecordAuthenticationFailure(ImapSession session)

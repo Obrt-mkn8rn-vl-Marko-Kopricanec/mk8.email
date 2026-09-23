@@ -18,6 +18,7 @@ using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
 using mk8.email.Infrastructure.Models;
 using mk8.email.Contracts.Messaging;
+using mk8.email.Contracts.Imap;
 using mk8.email.Contracts.Pop3;
 using mk8.email.Gateway.Protocols.Pop3;
 using mk8.email.Messaging;
@@ -167,6 +168,29 @@ public sealed class TransportSecurityTests
         while (await connection.ReadLineAsync() != ".")
         {
         }
+    }
+
+    [TestMethod]
+    [Timeout(10_000)]
+    public async Task ImapKeepsConnectionAliveWhenAuthenticationWorkerIsUnavailable()
+    {
+        var port = ReservePort();
+        await using var server = await ServerFixture.StartImapAsync(
+            CreateEnvironment(imapPort: port),
+            port,
+            applicationService: new UnavailableImapApplicationService());
+        await using var connection = await ProtocolConnection.ConnectAsync(port);
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("* OK ", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a1 STARTTLS");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a1 OK ", StringComparison.Ordinal));
+        await connection.UpgradeToTlsAsync("email.mk8n.com");
+        await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"");
+        Assert.AreEqual(
+            "a2 NO [UNAVAILABLE] Authentication service unavailable",
+            await connection.ReadLineAsync());
+        await connection.WriteLineAsync("a3 CAPABILITY");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("* CAPABILITY ", StringComparison.Ordinal));
+        Assert.AreEqual("a3 OK CAPABILITY completed", await connection.ReadLineAsync());
     }
 
     [TestInitialize]
@@ -3509,6 +3533,19 @@ public sealed class TransportSecurityTests
             throw new InvalidOperationException("Authentication did not succeed.");
     }
 
+    private sealed class UnavailableImapApplicationService : IImapApplicationService
+    {
+        public Task<ImapIdentityResult> AuthenticatePasswordAsync(
+            ImapPasswordAuthentication request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromException<ImapIdentityResult>(new IOException("Worker unavailable"));
+
+        public Task<ImapIdentityResult> AuthenticateOAuthAsync(
+            ImapOAuthAuthentication request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromException<ImapIdentityResult>(new IOException("Worker unavailable"));
+    }
+
     private sealed class ServerFixture(
         ServiceProvider services,
         IHostedService hostedService,
@@ -3538,9 +3575,11 @@ public sealed class TransportSecurityTests
         public static async Task<ServerFixture> StartImapAsync(
             EnvironmentConfig environment,
             int port,
-            ILogger<ImapServerService>? logger = null)
+            ILogger<ImapServerService>? logger = null,
+            IImapApplicationService? applicationService = null)
         {
-            var (services, emailService, mailQueue) = CreateServices(environment);
+            var (services, emailService, mailQueue) = CreateServices(
+                environment, imapApplicationService: applicationService);
             var hostedService = new ImapServerService(
                 services.GetRequiredService<IServiceScopeFactory>(),
                 environment,
@@ -3631,7 +3670,8 @@ public sealed class TransportSecurityTests
             StubEmailService EmailService,
             StubMailSubmissionQueue MailQueue) CreateServices(
                 EnvironmentConfig environment,
-                IPop3ApplicationService? applicationService = null)
+                IPop3ApplicationService? applicationService = null,
+                IImapApplicationService? imapApplicationService = null)
         {
             var emailService = new StubEmailService();
             var mailQueue = new StubMailSubmissionQueue();
@@ -3641,6 +3681,10 @@ public sealed class TransportSecurityTests
             serviceCollection.AddSingleton<IEmailService>(emailService);
             serviceCollection.AddSingleton<IMailSubmissionQueue>(mailQueue);
             serviceCollection.AddScoped<ISmtpApplicationService, SmtpApplicationService>();
+            if (imapApplicationService is null)
+                serviceCollection.AddScoped<IImapApplicationService, ImapApplicationService>();
+            else
+                serviceCollection.AddSingleton(imapApplicationService);
             if (applicationService is null)
                 serviceCollection.AddScoped<IPop3ApplicationService, Pop3ApplicationService>();
             else

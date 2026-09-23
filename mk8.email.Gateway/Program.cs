@@ -5,12 +5,14 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
 using mk8.email.Configuration;
 using mk8.email.Contracts.Mail;
+using mk8.email.Contracts.Imap;
 using mk8.email.Contracts.Pop3;
 using mk8.email.Contracts.Sieve;
 using mk8.email.Gateway.ApplicationBridge;
 using mk8.email.Gateway.Protocols;
 using mk8.email.Gateway.Protocols.Dav;
 using mk8.email.Gateway.Protocols.Jmap;
+using mk8.email.Gateway.Protocols.Imap;
 using mk8.email.Gateway.Protocols.OAuth;
 using mk8.email.Gateway.Protocols.Pop3;
 using mk8.email.Gateway.Protocols.Sieve;
@@ -48,6 +50,7 @@ builder.Services.AddDistributedMessaging(environmentConfig);
 builder.Services.AddGatewayApplicationClient();
 builder.Services.AddSingleton<ISmtpApplicationService, GatewaySmtpApplicationService>();
 builder.Services.AddSingleton<IPop3ApplicationService, GatewayPop3ApplicationService>();
+builder.Services.AddSingleton<IImapApplicationService, GatewayImapApplicationService>();
 builder.Services.AddSingleton<ISieveApplicationService, GatewaySieveApplicationService>();
 builder.Services.AddHostedService(provider => new SmtpServerService(
     provider.GetRequiredService<IServiceScopeFactory>(),

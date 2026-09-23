@@ -4,8 +4,10 @@ using mk8.email.MailWire;
 using mk8.email.Smtp.Presentation;
 using mk8.email.Contracts.Sieve;
 using mk8.email.Contracts.Pop3;
+using mk8.email.Contracts.Imap;
 using mk8.email.Gateway.Protocols.Sieve;
 using mk8.email.Gateway.Protocols.Pop3;
+using mk8.email.Gateway.Protocols.Imap;
 
 namespace mk8.email.Messaging.Tests;
 
@@ -232,6 +234,13 @@ public sealed class ArchitectureBoundaryTests
             reference.Name is not null
             && (reference.Name.StartsWith("mk8.email.Application", StringComparison.Ordinal)
                 || reference.Name.StartsWith("mk8.email.Infrastructure", StringComparison.Ordinal))));
+    }
+
+    [TestMethod]
+    public void ImapApplicationContractIsTransportNeutral()
+    {
+        Assert.AreEqual("mk8.email.Contracts", typeof(IImapApplicationService).Assembly.GetName().Name);
+        Assert.AreEqual("mk8.email.Gateway", typeof(GatewayImapApplicationService).Assembly.GetName().Name);
     }
 
     [TestMethod]

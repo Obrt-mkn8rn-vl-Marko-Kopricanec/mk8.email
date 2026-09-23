@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using mk8.email.Application.Interfaces;
 using mk8.email.Contracts.DTOs;
 using mk8.email.Contracts.Mail;
+using mk8.email.Contracts.Imap;
 using mk8.email.Contracts.Pop3;
 using mk8.email.Contracts.Sieve;
 using mk8.email.Contracts.Messaging;
@@ -130,6 +131,16 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
                     await services.GetRequiredService<IPop3ApplicationService>()
                         .CommitDeletesAsync(
                             Deserialize<Pop3DeleteRequest>(request), cancellationToken)),
+                ApplicationOperations.ImapAuthenticatePassword => Success(
+                    request.Id,
+                    await services.GetRequiredService<IImapApplicationService>()
+                        .AuthenticatePasswordAsync(
+                            Deserialize<ImapPasswordAuthentication>(request), cancellationToken)),
+                ApplicationOperations.ImapAuthenticateOAuth => Success(
+                    request.Id,
+                    await services.GetRequiredService<IImapApplicationService>()
+                        .AuthenticateOAuthAsync(
+                            Deserialize<ImapOAuthAuthentication>(request), cancellationToken)),
                 ApplicationOperations.AdminAuthenticate => Success(
                     request.Id,
                     await services.GetRequiredService<IAuthService>().LoginAsync(

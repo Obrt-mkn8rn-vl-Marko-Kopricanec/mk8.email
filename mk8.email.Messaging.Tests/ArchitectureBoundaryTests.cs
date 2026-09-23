@@ -3,7 +3,9 @@ using mk8.email.Contracts.Mail;
 using mk8.email.MailWire;
 using mk8.email.Smtp.Presentation;
 using mk8.email.Contracts.Sieve;
+using mk8.email.Contracts.Pop3;
 using mk8.email.Gateway.Protocols.Sieve;
+using mk8.email.Gateway.Protocols.Pop3;
 
 namespace mk8.email.Messaging.Tests;
 
@@ -215,6 +217,17 @@ public sealed class ArchitectureBoundaryTests
         Assert.AreEqual("mk8.email.Gateway", typeof(ManageSieveServerService).Assembly.GetName().Name);
         Assert.AreEqual("mk8.email.Contracts", typeof(ISieveApplicationService).Assembly.GetName().Name);
         Assert.IsFalse(typeof(ManageSieveServerService).Assembly.GetReferencedAssemblies().Any(reference =>
+            reference.Name is not null
+            && (reference.Name.StartsWith("mk8.email.Application", StringComparison.Ordinal)
+                || reference.Name.StartsWith("mk8.email.Infrastructure", StringComparison.Ordinal))));
+    }
+
+    [TestMethod]
+    public void GatewayOwnsPop3PresentationWithoutApplicationLogic()
+    {
+        Assert.AreEqual("mk8.email.Gateway", typeof(Pop3ServerService).Assembly.GetName().Name);
+        Assert.AreEqual("mk8.email.Contracts", typeof(IPop3ApplicationService).Assembly.GetName().Name);
+        Assert.IsFalse(typeof(Pop3ServerService).Assembly.GetReferencedAssemblies().Any(reference =>
             reference.Name is not null
             && (reference.Name.StartsWith("mk8.email.Application", StringComparison.Ordinal)
                 || reference.Name.StartsWith("mk8.email.Infrastructure", StringComparison.Ordinal))));

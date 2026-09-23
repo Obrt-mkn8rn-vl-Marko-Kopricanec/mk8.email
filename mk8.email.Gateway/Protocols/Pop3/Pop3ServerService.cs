@@ -1,29 +1,26 @@
-using System.Collections.Concurrent;
-using System.Data;
+using System.Globalization;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using mk8.email.Application.Interfaces;
-using mk8.email.Application.Protocol;
-using mk8.email.Contracts.Enums;
-using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
-using mk8.email.Infrastructure.Models;
+using mk8.email.Contracts.Pop3;
 using mk8.email.MailWire;
+using mk8.email.Messaging;
 
-namespace mk8.email.Application.Services;
+namespace mk8.email.Gateway.Protocols.Pop3;
 
 public sealed class Pop3ServerService(
     IServiceScopeFactory scopeFactory,
     EnvironmentConfig environment,
-    ILogger<Pop3ServerService> logger) : BackgroundService
+    ILogger<Pop3ServerService> logger,
+    IPop3MaildropLeaseStore leaseStore,
+    IGatewayTrafficJournal? journal = null) : BackgroundService
 {
     private const int MaximumCommandLineCharacters = 510;
     private const int MaximumAuthenticationLineCharacters = 4096;
@@ -45,7 +42,7 @@ public sealed class Pop3ServerService(
         public Pop3State State { get; set; }
         public string? PendingUsername { get; set; }
         public Guid? UserId { get; set; }
-        public Guid? LockedUserId { get; set; }
+        public Pop3MaildropLease? MaildropLease { get; set; }
         public int AuthenticationFailures { get; set; }
         public required string RemoteIp { get; init; }
         public List<Pop3Message> Messages { get; } = [];
@@ -53,7 +50,6 @@ public sealed class Pop3ServerService(
     }
 
     private readonly ConnectionLimiter _connectionLimiter = new(MaximumConcurrentConnections);
-    private readonly ConcurrentDictionary<Guid, byte> _activeMaildrops = new();
     private readonly SemaphoreSlim _retrievalLimiter = new(4, 4);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -138,6 +134,19 @@ public sealed class Pop3ServerService(
             {
                 timeout.CancelAfter(TimeSpan.FromSeconds(environment.Limits.ConnectionTimeoutSeconds));
                 Stream stream = client.GetStream();
+                if (journal is not null)
+                {
+                    var traffic = new GatewayTrafficSession(
+                        journal,
+                        "pop3",
+                        new Dictionary<string, string>
+                        {
+                            ["remoteEndpoint"] = remoteLabel,
+                            ["listenerPort"] = ((client.Client.LocalEndPoint as IPEndPoint)?.Port ?? 0)
+                                .ToString(CultureInfo.InvariantCulture),
+                        });
+                    stream = new GatewayTrafficStream(stream, traffic, leaveInnerOpen: false);
+                }
 
                 if (mode == ListenerMode.ImplicitTls)
                 {
@@ -195,7 +204,7 @@ public sealed class Pop3ServerService(
         }
         finally
         {
-            ReleaseMaildrop(session);
+            await ReleaseMaildropAsync(session);
         }
     }
 
@@ -245,6 +254,32 @@ public sealed class Pop3ServerService(
             var separator = line.IndexOf(' ');
             var command = (separator < 0 ? line : line[..separator]).ToUpperInvariant();
             var argument = separator < 0 ? string.Empty : line[(separator + 1)..].TrimStart();
+
+            if (session.MaildropLease is { } maildropLease)
+            {
+                bool renewed;
+                try
+                {
+                    renewed = await leaseStore.RenewAsync(
+                        maildropLease,
+                        MaildropLeaseLifetime,
+                        cancellationToken);
+                }
+                catch (Exception exception) when (
+                    exception is not OperationCanceledException && !cancellationToken.IsCancellationRequested)
+                {
+                    logger.LogWarning(exception, "POP3 maildrop lease renewal failed for {UserId}", session.UserId);
+                    await writer.WriteLineAsync("-ERR [SYS/TEMP] maildrop lock is unavailable");
+                    session.State = Pop3State.Update;
+                    break;
+                }
+                if (!renewed)
+                {
+                    await writer.WriteLineAsync("-ERR [SYS/TEMP] maildrop lock was lost");
+                    session.State = Pop3State.Update;
+                    break;
+                }
+            }
 
             switch (command)
             {
@@ -368,6 +403,9 @@ public sealed class Pop3ServerService(
 
         return SessionUpgrade.None;
     }
+
+    private TimeSpan MaildropLeaseLifetime =>
+        TimeSpan.FromSeconds(environment.Limits.ConnectionTimeoutSeconds + 30);
 
     private async Task WriteCapabilitiesAsync(StreamWriter writer, Pop3Session session)
     {
@@ -514,16 +552,21 @@ public sealed class Pop3ServerService(
             }
 
             using var scope = scopeFactory.CreateScope();
-            var tokenService = scope.ServiceProvider.GetRequiredService<IOAuthTokenService>();
-            var oauthUser = await tokenService.AuthenticateAccessTokenAsync(
-                accessToken,
-                "pop",
-                cancellationToken);
-            if (oauthUser is null
-                || !string.Equals(
-                    oauthUsername,
-                    oauthUser.Username,
-                    StringComparison.OrdinalIgnoreCase))
+            var application = scope.ServiceProvider.GetRequiredService<IPop3ApplicationService>();
+            Pop3IdentityResult oauthUser;
+            try
+            {
+                oauthUser = await application.AuthenticateOAuthAsync(
+                    new Pop3OAuthAuthentication(oauthUsername, accessToken), cancellationToken);
+            }
+            catch (Exception exception) when (
+                exception is not OperationCanceledException && !cancellationToken.IsCancellationRequested)
+            {
+                logger.LogWarning(exception, "POP3 OAuth authentication service is unavailable");
+                await writer.WriteLineAsync("-ERR [SYS/TEMP] authentication service is unavailable");
+                return;
+            }
+            if (oauthUser.UserId is null || oauthUser.Username is null)
             {
                 RecordAuthenticationFailure(session);
                 await writer.WriteLineAsync("-ERR [AUTH] authentication failed");
@@ -582,9 +625,21 @@ public sealed class Pop3ServerService(
         CancellationToken cancellationToken)
     {
         using var scope = scopeFactory.CreateScope();
-        var authenticator = scope.ServiceProvider.GetRequiredService<IMailAuthenticator>();
-        var user = await authenticator.AuthenticateAsync(username, password, cancellationToken);
-        if (user is null)
+        var application = scope.ServiceProvider.GetRequiredService<IPop3ApplicationService>();
+        Pop3IdentityResult user;
+        try
+        {
+            user = await application.AuthenticatePasswordAsync(
+                new Pop3PasswordAuthentication(username, password), cancellationToken);
+        }
+        catch (Exception exception) when (
+            exception is not OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        {
+            logger.LogWarning(exception, "POP3 password authentication service is unavailable");
+            await writer.WriteLineAsync("-ERR [SYS/TEMP] authentication service is unavailable");
+            return;
+        }
+        if (user.UserId is null || user.Username is null)
         {
             RecordAuthenticationFailure(session);
             await writer.WriteLineAsync("-ERR [AUTH] authentication failed");
@@ -596,74 +651,69 @@ public sealed class Pop3ServerService(
 
     private async Task OpenMaildropAsync(
         StreamWriter writer,
-        AuthenticatedMailUser user,
+        Pop3IdentityResult user,
         Pop3Session session,
         CancellationToken cancellationToken)
     {
-        if (!_activeMaildrops.TryAdd(user.Id, 0))
+        var userId = user.UserId
+            ?? throw new InvalidOperationException("The authenticated POP3 identity is missing.");
+        Pop3MaildropLease? maildropLease;
+        try
+        {
+            maildropLease = await leaseStore.TryAcquireAsync(
+                userId,
+                MaildropLeaseLifetime,
+                cancellationToken);
+        }
+        catch (Exception exception) when (
+            exception is not OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        {
+            logger.LogWarning(exception, "POP3 maildrop lease service is unavailable for {UserId}", userId);
+            await writer.WriteLineAsync("-ERR [SYS/TEMP] maildrop is temporarily unavailable");
+            return;
+        }
+        if (maildropLease is null)
         {
             await writer.WriteLineAsync("-ERR [IN-USE] maildrop is already locked");
             return;
         }
 
-        session.LockedUserId = user.Id;
+        session.MaildropLease = maildropLease;
         try
         {
-            await LoadMaildropAsync(user, session, cancellationToken);
+            using var scope = scopeFactory.CreateScope();
+            var application = scope.ServiceProvider.GetRequiredService<IPop3ApplicationService>();
+            var snapshot = await application.ListMaildropAsync(
+                new Pop3UserRequest(userId), cancellationToken);
+            session.Messages.Clear();
+            foreach (var message in snapshot.Messages)
+            {
+                session.Messages.Add(new Pop3Message(
+                    session.Messages.Count + 1,
+                    message.Id,
+                    message.Uid,
+                    message.SizeBytes));
+            }
+        }
+        catch (Exception exception) when (
+            exception is not OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        {
+            await ReleaseMaildropAsync(session);
+            logger.LogWarning(exception, "POP3 maildrop snapshot is unavailable for {UserId}", userId);
+            await writer.WriteLineAsync("-ERR [SYS/TEMP] maildrop is temporarily unavailable");
+            return;
         }
         catch
         {
-            ReleaseMaildrop(session);
+            await ReleaseMaildropAsync(session);
             throw;
         }
 
-        session.UserId = user.Id;
+        session.UserId = userId;
         session.State = Pop3State.Transaction;
         session.PendingUsername = null;
         var (count, size) = GetMaildropStatistics(session);
         await writer.WriteLineAsync($"+OK maildrop has {count} messages ({size} octets)");
-    }
-
-    private async Task LoadMaildropAsync(
-        AuthenticatedMailUser user,
-        Pop3Session session,
-        CancellationToken cancellationToken)
-    {
-        var separator = user.Username.LastIndexOf('@');
-        if (separator <= 0 || separator == user.Username.Length - 1)
-            throw new InvalidOperationException("The authenticated POP3 account has no primary mailbox.");
-
-        var localPart = user.Username[..separator];
-        var domain = user.Username[(separator + 1)..];
-        using var scope = scopeFactory.CreateScope();
-        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-        var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
-        var folderId = await database.Folders
-            .AsNoTracking()
-            .Where(folder => folder.Inbox.OwnerId == user.Id
-                && folder.Inbox.AliasForInboxId == null
-                && folder.Inbox.Name == localPart
-                && folder.Inbox.Address.Domain == domain
-                && folder.Name == DefaultFolders.Inbox)
-            .Select(folder => (Guid?)folder.Id)
-            .SingleOrDefaultAsync(cancellationToken)
-            ?? throw new InvalidOperationException("The authenticated POP3 account has no INBOX.");
-
-        var query = database.Emails
-            .AsNoTracking()
-            .Where(email => email.FolderId == folderId && !email.IsDeleted)
-            .OrderBy(email => email.Uid);
-
-        await foreach (var email in query.AsAsyncEnumerable().WithCancellation(cancellationToken))
-        {
-            email.RawMessage = await content.ReadAsync(email, cancellationToken);
-            var wireMessage = BuildWireMessage(email);
-            session.Messages.Add(new Pop3Message(
-                session.Messages.Count + 1,
-                email.Id,
-                email.Uid,
-                wireMessage.Length));
-        }
     }
 
     private static async Task<bool> RequireTransactionAsync(
@@ -782,7 +832,18 @@ public sealed class Pop3ServerService(
 
         try
         {
-            var wireMessage = await GetWireMessageAsync(message.Id, session, cancellationToken);
+            byte[]? wireMessage;
+            try
+            {
+                wireMessage = await GetWireMessageAsync(message.Id, session, cancellationToken);
+            }
+            catch (Exception exception) when (
+                exception is not OperationCanceledException && !cancellationToken.IsCancellationRequested)
+            {
+                logger.LogWarning(exception, "POP3 message read is unavailable for {MessageId}", message.Id);
+                await writer.WriteLineAsync("-ERR [SYS/TEMP] message is temporarily unavailable");
+                return;
+            }
             if (wireMessage is null)
             {
                 await writer.WriteLineAsync("-ERR [SYS/TEMP] message is no longer available");
@@ -807,18 +868,15 @@ public sealed class Pop3ServerService(
         CancellationToken cancellationToken)
     {
         using var scope = scopeFactory.CreateScope();
-        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-        var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
-        var email = await database.Emails
-            .AsNoTracking()
-            .Where(candidate => candidate.Id == messageId
-                && candidate.Folder.Inbox.OwnerId == session.UserId
-                && !candidate.IsDeleted)
-            .SingleOrDefaultAsync(cancellationToken);
-        if (email is null)
-            return null;
-        email.RawMessage = await content.ReadAsync(email, cancellationToken);
-        return BuildWireMessage(email);
+        var application = scope.ServiceProvider.GetRequiredService<IPop3ApplicationService>();
+        var result = await application.GetMessageAsync(
+            new Pop3MessageRequest(
+                session.UserId ?? throw new InvalidOperationException("The POP3 session is not authenticated."),
+                messageId),
+            cancellationToken);
+        return result.RawMessage is null
+            ? null
+            : Pop3WireCodec.NormalizeCrlf(result.RawMessage);
     }
 
     private static async Task HandleDeleteAsync(
@@ -852,11 +910,14 @@ public sealed class Pop3ServerService(
         try
         {
             var deletedCount = await CommitDeletesAsync(session, cancellationToken);
+            await ReleaseMaildropAsync(session);
             await writer.WriteLineAsync($"+OK goodbye ({deletedCount} messages deleted)");
         }
-        catch (Exception exception) when (exception is DbUpdateException or InvalidOperationException)
+        catch (Exception exception) when (
+            exception is not OperationCanceledException && !cancellationToken.IsCancellationRequested)
         {
             logger.LogWarning(exception, "POP3 update failed for user {UserId}", session.UserId);
+            await ReleaseMaildropAsync(session);
             await writer.WriteLineAsync("-ERR [SYS/TEMP] unable to update maildrop");
         }
         finally
@@ -871,74 +932,14 @@ public sealed class Pop3ServerService(
     {
         if (session.DeletedMessageIds.Count == 0)
             return 0;
-
         using var scope = scopeFactory.CreateScope();
-        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-        var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
-        var effects = scope.ServiceProvider.GetRequiredService<LargeObjectTransactionEffects>();
-        var marker = effects.Mark();
-        var commitAttempted = false;
-        await using var transaction = database.Database.IsRelational()
-            ? await database.Database.BeginTransactionAsync(
-                IsolationLevel.Serializable,
-                cancellationToken)
-            : null;
-        var messageIds = session.DeletedMessageIds.ToArray();
-        var emails = await database.Emails
-            .Where(email => messageIds.Contains(email.Id)
-                && email.Folder.Inbox.OwnerId == session.UserId)
-            .OrderBy(email => email.FolderId)
-            .ThenBy(email => email.Uid)
-            .ToListAsync(cancellationToken);
-        var folderIds = emails.Select(email => email.FolderId).Distinct().ToArray();
-        var folders = await database.Folders
-            .Where(folder => folderIds.Contains(folder.Id))
-            .ToDictionaryAsync(folder => folder.Id, cancellationToken);
-
-        foreach (var email in emails)
-        {
-            var folder = folders[email.FolderId];
-            database.ExpungedUids.Add(new ExpungedUidDB
-            {
-                Id = Guid.CreateVersion7(),
-                Uid = email.Uid,
-                ModSeq = ++folder.HighestModSeq,
-                FolderId = folder.Id,
-            });
-            content.DeleteOnCommit(email);
-            database.Emails.Remove(email);
-        }
-
-        try
-        {
-            await database.SaveChangesAsync(cancellationToken);
-            if (transaction is not null)
-            {
-                commitAttempted = true;
-                await transaction.CommitAsync(cancellationToken);
-            }
-            await effects.CommitAsync(marker);
-        }
-        catch
-        {
-            if (transaction is not null)
-            {
-                try
-                {
-                    await transaction.RollbackAsync(CancellationToken.None);
-                }
-                catch (Exception rollbackException)
-                {
-                    logger.LogWarning(rollbackException, "Could not roll back POP3 deletion");
-                }
-            }
-            if (commitAttempted)
-                effects.Discard(marker);
-            else
-                await effects.RollbackAsync(marker);
-            throw;
-        }
-        return emails.Count;
+        var application = scope.ServiceProvider.GetRequiredService<IPop3ApplicationService>();
+        var result = await application.CommitDeletesAsync(
+            new Pop3DeleteRequest(
+                session.UserId ?? throw new InvalidOperationException("The POP3 session is not authenticated."),
+                session.DeletedMessageIds.ToArray()),
+            cancellationToken);
+        return result.DeletedCount;
     }
 
     private static Pop3Message? FindMessage(string argument, Pop3Session session)
@@ -959,41 +960,6 @@ public sealed class Pop3ServerService(
         return (available.Count(), available.Sum(message => (long)message.SizeBytes));
     }
 
-    private static byte[] BuildWireMessage(EmailDB email)
-    {
-        byte[] raw;
-        if (email.RawMessage is not null)
-        {
-            raw = email.RawMessage;
-        }
-        else if (email.RawHeaders is not null)
-        {
-            raw = MailWireEncoding.Instance.GetBytes(
-                email.RawHeaders + "\r\n\r\n" + email.Body);
-        }
-        else
-        {
-            var builder = new StringBuilder();
-            builder.Append($"From: {email.Sender}\r\n");
-            builder.Append($"To: {email.Recipient}\r\n");
-            if (!string.IsNullOrEmpty(email.Cc))
-                builder.Append($"Cc: {email.Cc}\r\n");
-            builder.Append($"Subject: {email.Subject}\r\n");
-            builder.Append($"Date: {email.ReceivedAt:ddd, dd MMM yyyy HH:mm:ss +0000}\r\n");
-            if (!string.IsNullOrEmpty(email.MessageId))
-                builder.Append($"Message-ID: {email.MessageId}\r\n");
-            if (!string.IsNullOrEmpty(email.InReplyTo))
-                builder.Append($"In-Reply-To: {email.InReplyTo}\r\n");
-            builder.Append("MIME-Version: 1.0\r\n");
-            builder.Append("Content-Type: text/plain; charset=UTF-8\r\n");
-            builder.Append("\r\n");
-            builder.Append(email.Body);
-            raw = MailWireEncoding.Instance.GetBytes(builder.ToString());
-        }
-
-        return Pop3WireCodec.NormalizeCrlf(raw);
-    }
-
     private void RecordAuthenticationFailure(Pop3Session session)
     {
         session.AuthenticationFailures++;
@@ -1002,13 +968,22 @@ public sealed class Pop3ServerService(
             session.RemoteIp);
     }
 
-    private void ReleaseMaildrop(Pop3Session session)
+    private async Task ReleaseMaildropAsync(Pop3Session session)
     {
-        if (session.LockedUserId is not { } userId)
+        if (session.MaildropLease is not { } lease)
             return;
-
-        _activeMaildrops.TryRemove(userId, out _);
-        session.LockedUserId = null;
+        session.MaildropLease = null;
+        try
+        {
+            await leaseStore.ReleaseAsync(lease, CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                exception,
+                "Could not release POP3 maildrop lease for user {UserId}; it will expire",
+                lease.UserId);
+        }
     }
 
     private X509Certificate2 LoadCertificate()

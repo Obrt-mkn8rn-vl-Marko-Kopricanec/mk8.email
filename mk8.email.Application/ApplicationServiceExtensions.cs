@@ -62,7 +62,6 @@ public static class ApplicationServiceExtensions
     {
         services.AddMailApplicationWorker();
         services.AddHostedService<ImapServerService>();
-        services.AddHostedService<Pop3ServerService>();
 
         return services;
     }

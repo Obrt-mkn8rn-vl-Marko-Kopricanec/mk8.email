@@ -5,12 +5,14 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
 using mk8.email.Configuration;
 using mk8.email.Contracts.Mail;
+using mk8.email.Contracts.Pop3;
 using mk8.email.Contracts.Sieve;
 using mk8.email.Gateway.ApplicationBridge;
 using mk8.email.Gateway.Protocols;
 using mk8.email.Gateway.Protocols.Dav;
 using mk8.email.Gateway.Protocols.Jmap;
 using mk8.email.Gateway.Protocols.OAuth;
+using mk8.email.Gateway.Protocols.Pop3;
 using mk8.email.Gateway.Protocols.Sieve;
 using mk8.email.Gateway.Security;
 using mk8.email.Hosting;
@@ -45,6 +47,7 @@ builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
 builder.Services.AddDistributedMessaging(environmentConfig);
 builder.Services.AddGatewayApplicationClient();
 builder.Services.AddSingleton<ISmtpApplicationService, GatewaySmtpApplicationService>();
+builder.Services.AddSingleton<IPop3ApplicationService, GatewayPop3ApplicationService>();
 builder.Services.AddSingleton<ISieveApplicationService, GatewaySieveApplicationService>();
 builder.Services.AddHostedService(provider => new SmtpServerService(
     provider.GetRequiredService<IServiceScopeFactory>(),
@@ -57,6 +60,15 @@ if (environmentConfig.Sieve.EnableManageSieve)
         provider.GetRequiredService<IServiceScopeFactory>(),
         environmentConfig,
         provider.GetRequiredService<ILogger<ManageSieveServerService>>(),
+        provider.GetRequiredService<IGatewayTrafficJournal>()));
+}
+if (environmentConfig.Pop3.EnablePop3 || environmentConfig.Pop3.EnableImplicitTls)
+{
+    builder.Services.AddHostedService(provider => new Pop3ServerService(
+        provider.GetRequiredService<IServiceScopeFactory>(),
+        environmentConfig,
+        provider.GetRequiredService<ILogger<Pop3ServerService>>(),
+        provider.GetRequiredService<IPop3MaildropLeaseStore>(),
         provider.GetRequiredService<IGatewayTrafficJournal>()));
 }
 builder.Services.AddOutboundSmtpPresentation();

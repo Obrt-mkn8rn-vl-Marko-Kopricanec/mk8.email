@@ -18,6 +18,8 @@ using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
 using mk8.email.Infrastructure.Models;
 using mk8.email.Contracts.Messaging;
+using mk8.email.Contracts.Pop3;
+using mk8.email.Gateway.Protocols.Pop3;
 using mk8.email.Messaging;
 using mk8.email.Smtp.Presentation;
 using mk8.email.Utils;
@@ -96,6 +98,75 @@ public sealed class TransportSecurityTests
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("451 ", StringComparison.Ordinal));
         await connection.WriteLineAsync("NOOP");
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("250 ", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    [Timeout(10_000)]
+    public async Task Pop3GatewayPresentationJournalsWireBytesAndFailsClosed()
+    {
+        var port = ReservePort();
+        var journal = new RecordingSmtpJournal();
+        await using (var server = await ServerFixture.StartPop3Async(
+                         CreateEnvironment(pop3Port: port), port, journal: journal))
+        {
+            await using var connection = await ProtocolConnection.ConnectAsync(port);
+            Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("+OK ", StringComparison.Ordinal));
+            await connection.WriteLineAsync("CAPA");
+            Assert.AreEqual("+OK Capability list follows", await connection.ReadLineAsync());
+            while (await connection.ReadLineAsync() != ".")
+            {
+            }
+            await connection.WriteLineAsync("QUIT");
+            Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("+OK ", StringComparison.Ordinal));
+        }
+
+        var sessionId = journal.Records.Single(record =>
+            record.Direction == GatewayTrafficDirections.Inbound
+            && Encoding.Latin1.GetString(record.Payload).Contains("CAPA\r\n", StringComparison.Ordinal))
+            .SessionId;
+        var records = journal.Records.Where(record => record.SessionId == sessionId).ToArray();
+        Assert.IsTrue(records.Any(record => record.Direction == GatewayTrafficDirections.Outbound
+            && Encoding.Latin1.GetString(record.Payload).Contains("+OK ", StringComparison.Ordinal)));
+        Assert.IsTrue(records.All(record => record.Protocol == "pop3"));
+        CollectionAssert.AreEqual(
+            Enumerable.Range(0, records.Length).Select(value => (long)value).ToArray(),
+            records.Select(record => record.Sequence).ToArray());
+
+        var rejectedPort = ReservePort();
+        await using var rejectedServer = await ServerFixture.StartPop3Async(
+            CreateEnvironment(pop3Port: rejectedPort),
+            rejectedPort,
+            journal: new RecordingSmtpJournal { RejectWrites = true });
+        await using var rejectedConnection = await ProtocolConnection.ConnectAsync(rejectedPort);
+        await Assert.ThrowsAsync<EndOfStreamException>(
+            () => rejectedConnection.ReadLineAsync());
+    }
+
+    [TestMethod]
+    [Timeout(10_000)]
+    public async Task Pop3GatewayKeepsConnectionAliveWhenApplicationIsUnavailable()
+    {
+        var port = ReservePort();
+        await using var server = await ServerFixture.StartPop3Async(
+            CreateEnvironment(pop3Port: port),
+            port,
+            applicationService: new UnavailablePop3ApplicationService());
+        await using var connection = await ProtocolConnection.ConnectAsync(port);
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("+OK ", StringComparison.Ordinal));
+        await connection.WriteLineAsync("STLS");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("+OK ", StringComparison.Ordinal));
+        await connection.UpgradeToTlsAsync("email.mk8n.com");
+        await connection.WriteLineAsync($"USER {TestUsername}");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("+OK ", StringComparison.Ordinal));
+        await connection.WriteLineAsync($"PASS {TestPassword}");
+        Assert.AreEqual(
+            "-ERR [SYS/TEMP] authentication service is unavailable",
+            await connection.ReadLineAsync());
+        await connection.WriteLineAsync("CAPA");
+        Assert.AreEqual("+OK Capability list follows", await connection.ReadLineAsync());
+        while (await connection.ReadLineAsync() != ".")
+        {
+        }
     }
 
     [TestInitialize]
@@ -3410,6 +3481,34 @@ public sealed class TransportSecurityTests
         await connection.ReadSmtpResponseAsync();
     }
 
+    private sealed class UnavailablePop3ApplicationService : IPop3ApplicationService
+    {
+        public Task<Pop3IdentityResult> AuthenticatePasswordAsync(
+            Pop3PasswordAuthentication request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromException<Pop3IdentityResult>(new IOException("Worker unavailable"));
+
+        public Task<Pop3IdentityResult> AuthenticateOAuthAsync(
+            Pop3OAuthAuthentication request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromException<Pop3IdentityResult>(new IOException("Worker unavailable"));
+
+        public Task<Pop3MaildropSnapshot> ListMaildropAsync(
+            Pop3UserRequest request,
+            CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("Authentication did not succeed.");
+
+        public Task<Pop3MessageResult> GetMessageAsync(
+            Pop3MessageRequest request,
+            CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("Authentication did not succeed.");
+
+        public Task<Pop3DeleteResult> CommitDeletesAsync(
+            Pop3DeleteRequest request,
+            CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("Authentication did not succeed.");
+    }
+
     private sealed class ServerFixture(
         ServiceProvider services,
         IHostedService hostedService,
@@ -3454,13 +3553,17 @@ public sealed class TransportSecurityTests
         public static async Task<ServerFixture> StartPop3Async(
             EnvironmentConfig environment,
             int port,
-            ILogger<Pop3ServerService>? logger = null)
+            ILogger<Pop3ServerService>? logger = null,
+            IGatewayTrafficJournal? journal = null,
+            IPop3ApplicationService? applicationService = null)
         {
-            var (services, emailService, mailQueue) = CreateServices(environment);
+            var (services, emailService, mailQueue) = CreateServices(environment, applicationService);
             var hostedService = new Pop3ServerService(
                 services.GetRequiredService<IServiceScopeFactory>(),
                 environment,
-                logger ?? NullLogger<Pop3ServerService>.Instance);
+                logger ?? NullLogger<Pop3ServerService>.Instance,
+                services.GetRequiredService<IPop3MaildropLeaseStore>(),
+                journal);
             var fixture = new ServerFixture(services, hostedService, emailService, mailQueue);
             await fixture.StartAsync(port);
             return fixture;
@@ -3526,7 +3629,9 @@ public sealed class TransportSecurityTests
         private static (
             ServiceProvider Services,
             StubEmailService EmailService,
-            StubMailSubmissionQueue MailQueue) CreateServices(EnvironmentConfig environment)
+            StubMailSubmissionQueue MailQueue) CreateServices(
+                EnvironmentConfig environment,
+                IPop3ApplicationService? applicationService = null)
         {
             var emailService = new StubEmailService();
             var mailQueue = new StubMailSubmissionQueue();
@@ -3536,6 +3641,11 @@ public sealed class TransportSecurityTests
             serviceCollection.AddSingleton<IEmailService>(emailService);
             serviceCollection.AddSingleton<IMailSubmissionQueue>(mailQueue);
             serviceCollection.AddScoped<ISmtpApplicationService, SmtpApplicationService>();
+            if (applicationService is null)
+                serviceCollection.AddScoped<IPop3ApplicationService, Pop3ApplicationService>();
+            else
+                serviceCollection.AddSingleton(applicationService);
+            serviceCollection.AddSingleton<IPop3MaildropLeaseStore, InMemoryPop3MaildropLeaseStore>();
             serviceCollection.AddScoped<ISenderAuthorizationService, SenderAuthorizationService>();
             serviceCollection.AddScoped<IMailAuthenticator, MailAuthenticator>();
             serviceCollection.AddScoped<IOAuthTokenService, OAuthTokenService>();
@@ -3546,6 +3656,7 @@ public sealed class TransportSecurityTests
             serviceCollection.AddScoped<MailboxMessageContentService>();
             serviceCollection.AddDbContext<EmailDbContext>(options =>
                 options.UseInMemoryDatabase(databaseName));
+            serviceCollection.AddLogging();
             var services = serviceCollection.BuildServiceProvider();
             using (var scope = services.CreateScope())
             {

@@ -165,6 +165,7 @@ tar --create --gzip --file="$stage/configuration.tar.gz" --directory=/ \
     usr/local/sbin/verify-host-prerequisites \
     usr/local/lib/mk8email/tests \
     usr/local/share/mk8email/domain-templates \
+    usr/local/share/mk8email/distributed \
     usr/local/share/mk8email/prerequisites
 
 if find "$stage" -type l -print -quit | grep -q .; then

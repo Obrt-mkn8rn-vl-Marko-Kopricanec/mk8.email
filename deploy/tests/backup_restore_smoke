@@ -104,6 +104,8 @@ tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
     | grep -Fx 'usr/local/share/mk8email/domain-templates/nginx-domain.conf' >/dev/null
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
+    | grep -Fx 'usr/local/share/mk8email/distributed/config.example.json' >/dev/null
+tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
     | grep -Fx 'etc/mk8email/domains/mk8n.com/dkim-selector' >/dev/null
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
     | grep -Fx 'etc/mk8email/secrets/mfa_encryption_key' >/dev/null

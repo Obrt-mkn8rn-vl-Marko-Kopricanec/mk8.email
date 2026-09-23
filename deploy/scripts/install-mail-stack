@@ -322,6 +322,10 @@ install -o root -g root -m 0644 "$asset_root/deploy/domain-templates/mta-sts.txt
     /usr/local/share/mk8email/domain-templates/mta-sts.txt
 install -o root -g root -m 0644 "$asset_root/deploy/domain-templates/nginx-domain.conf" \
     /usr/local/share/mk8email/domain-templates/nginx-domain.conf
+install -d -o root -g root -m 0755 /usr/local/share/mk8email/distributed
+install -o root -g root -m 0644 \
+    "$asset_root/deploy/native/mk8email.distributed.config.example.json" \
+    /usr/local/share/mk8email/distributed/config.example.json
 
 install -d -o root -g root -m 0755 /usr/local/lib/mk8email/tests
 install -o root -g root -m 0755 "$asset_root/deploy/tests/backup_restore_smoke" /usr/local/lib/mk8email/tests/backup_restore_smoke

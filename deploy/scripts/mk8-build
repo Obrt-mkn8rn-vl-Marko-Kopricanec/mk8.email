@@ -211,9 +211,11 @@ run_unit "mk8-build-$short_commit-$$" yes /bin/sh -eu -c '
         python3 -m py_compile \
         deploy/scripts/normalize-static-web-assets.py \
         deploy/tests/dashboard_smoke.py deploy/tests/mail_smoke.py \
+        deploy/tests/distributed_config_smoke.py \
         deploy/tests/multi_domain_smoke.py \
         deploy/tests/static_web_assets_smoke.py
     python3 deploy/tests/static_web_assets_smoke.py
+    python3 deploy/tests/distributed_config_smoke.py
     "$sdk" publish mk8.email.CLI/mk8.email.Application.CLI.csproj \
         --configuration Release --no-build \
         --artifacts-path "$run_root/artifacts" \

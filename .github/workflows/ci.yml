@@ -76,7 +76,8 @@ jobs:
             deploy/tests/release_retention_smoke \
             deploy/tests/tls_smoke
           PYTHONPYCACHEPREFIX="$RUNNER_TEMP/mk8email-pycache" \
-            python3 -m py_compile deploy/tests/dashboard_smoke.py deploy/tests/mail_smoke.py deploy/tests/multi_domain_smoke.py
+            python3 -m py_compile deploy/tests/dashboard_smoke.py deploy/tests/distributed_config_smoke.py deploy/tests/mail_smoke.py deploy/tests/multi_domain_smoke.py
+          python3 deploy/tests/distributed_config_smoke.py
 
       - name: Validate deployment profile tooling
         shell: pwsh

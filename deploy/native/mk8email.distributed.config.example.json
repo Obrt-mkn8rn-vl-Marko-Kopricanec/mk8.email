@@ -1,0 +1,139 @@
+{
+  "Database": {
+    "Host": "127.0.0.1",
+    "Port": 5432,
+    "Name": "mk8email",
+    "Username": "mk8email",
+    "PasswordFile": "/etc/mk8email/secrets/database_password"
+  },
+  "Smtp": {
+    "Hostname": "email.mk8n.com",
+    "Port": 25,
+    "SubmissionPort": 587,
+    "ImplicitTlsPort": 465,
+    "EnableSmtp": true,
+    "EnableSubmission": true,
+    "EnableImplicitTls": true,
+    "EnableStartTls": true,
+    "RequireTls": false,
+    "RequireAuth": true,
+    "AllowRelay": true
+  },
+  "Imap": {
+    "Port": 143,
+    "ImplicitTlsPort": 993,
+    "EnableImap": false,
+    "EnableImplicitTls": true
+  },
+  "Pop3": {
+    "Port": 110,
+    "ImplicitTlsPort": 995,
+    "EnablePop3": true,
+    "EnableImplicitTls": true,
+    "EnableStartTls": true
+  },
+  "Sieve": {
+    "Port": 4190,
+    "EnableManageSieve": true,
+    "EnableStartTls": true,
+    "MaxScriptsPerUser": 64
+  },
+  "Jmap": {
+    "Port": 8081,
+    "EnableJmap": true,
+    "IsDefault": true,
+    "PublicBaseUrl": "https://email.mk8n.com",
+    "MaxUploadSizeBytes": 26214400,
+    "MaxRequestSizeBytes": 10485760,
+    "MaxCallsInRequest": 64,
+    "MaxObjectsInGet": 500,
+    "MaxObjectsInSet": 500,
+    "MaxConcurrentRequests": 8,
+    "MaxConcurrentUploads": 4,
+    "UploadRetentionHours": 24,
+    "MaxUnreferencedBlobBytesPerAccount": 104857600
+  },
+  "Dav": {
+    "EnableDav": true,
+    "MaxResourceSizeBytes": 10485760,
+    "MaxCollectionsPerUser": 100,
+    "MaxResourcesPerCollection": 100000
+  },
+  "OAuth": {
+    "EnableOAuth": true,
+    "EnableOpenIdConnect": true,
+    "PublicBaseUrl": "https://email.mk8n.com",
+    "ClientId": "thunderbird",
+    "AccessTokenMinutes": 10,
+    "RefreshTokenDays": 90,
+    "AuthorizationCodeMinutes": 5,
+    "IdTokenMinutes": 10,
+    "SigningKeyFile": "/etc/mk8email/secrets/oidc_signing_key.pem"
+  },
+  "Mfa": {
+    "EnableTotp": true,
+    "Issuer": "mk8.email",
+    "EncryptionKeyFile": "/etc/mk8email/secrets/mfa_encryption_key",
+    "RecoveryCodeCount": 10
+  },
+  "Tls": {
+    "CertificatePath": "/etc/mk8email/tls/fullchain.pem",
+    "CertificateKeyPath": "/etc/mk8email/tls/privkey.pem"
+  },
+  "Dkim": {
+    "PrivateKeyPath": null,
+    "Selector": "s202609",
+    "EnableSigning": false
+  },
+  "Security": {
+    "EnableSpfCheck": false,
+    "EnableDmarcCheck": false,
+    "PasswordHashScheme": "BLF-CRYPT"
+  },
+  "Filtering": {
+    "RspamdEndpoint": "http://127.0.0.1:11333/checkv2",
+    "TimeoutSeconds": 70
+  },
+  "Queue": {
+    "PollIntervalMilliseconds": 500,
+    "LeaseSeconds": 300,
+    "MaxAttempts": 20,
+    "MaxAgeHours": 120,
+    "CompletedRetentionDays": 14
+  },
+  "Limits": {
+    "MaxMessageSizeBytes": 26214400,
+    "MaxRecipientsPerMessage": 100,
+    "ConnectionTimeoutSeconds": 300,
+    "MaxConnectionsPerIp": 10
+  },
+  "General": {
+    "AllowRegistration": false
+  },
+  "Admin": {
+    "AllowedNetworks": [
+      "127.0.0.0/8",
+      "@@MK8_LAN_CIDR@@"
+    ],
+    "DataProtectionKeyPath": "/var/lib/mk8email-admin/data-protection",
+    "AuditLogPath": "/var/log/mk8email-admin/audit.jsonl",
+    "HealthStatusPath": "/var/lib/mk8-mail-health/status.json",
+    "SessionMinutes": 30
+  },
+  "Messaging": {
+    "Enabled": true,
+    "EncryptionKeyId": "primary",
+    "EncryptionKeyFile": "/etc/mk8email/secrets/messaging_encryption_key",
+    "MaxPayloadBytes": 67108864,
+    "InlinePayloadThresholdBytes": 262144,
+    "LeaseSeconds": 120,
+    "NotificationFallbackSeconds": 30
+  },
+  "ObjectStorage": {
+    "Provider": "azure-blob",
+    "ConnectionStringFile": "/etc/mk8email/secrets/object_storage_connection",
+    "ContainerName": "mk8-email-objects",
+    "ObjectPrefix": "",
+    "CreateContainerIfMissing": false
+  }
+}

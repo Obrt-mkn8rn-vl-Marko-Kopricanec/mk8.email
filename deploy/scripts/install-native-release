@@ -1,8 +1,12 @@
 #!/bin/sh
 set -eu
 
-if [ "$#" -ne 5 ]; then
-    printf '%s\n' "Usage: install-native-release ARCHIVE RELEASE_ID COMMIT ARTIFACT_SHA256 ASSET_SHA256" >&2
+if [ "$#" -ne 5 ] && [ "$#" -ne 6 ]; then
+    printf '%s\n' "Usage: install-native-release ARCHIVE RELEASE_ID COMMIT ARTIFACT_SHA256 ASSET_SHA256 [--stage-only]" >&2
+    exit 2
+fi
+if [ "$#" -eq 6 ] && [ "$6" != --stage-only ]; then
+    printf '%s\n' "The optional release mode must be --stage-only." >&2
     exit 2
 fi
 
@@ -90,6 +94,8 @@ find "$stage" -type f -exec chmod 0444 {} +
 mv "$stage" "$release_dir"
 stage=
 touch "$release_dir"
-ln -sfnT "$release_dir" /opt/mk8email/current
+if [ "$#" -eq 5 ]; then
+    ln -sfnT "$release_dir" /opt/mk8email/current
+fi
 
 printf '%s\n' "$release_dir"

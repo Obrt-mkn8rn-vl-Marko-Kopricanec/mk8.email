@@ -49,6 +49,9 @@ asset_digest=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 artifact_digest=$(sha256sum "$archive" | cut -d' ' -f1)
 release_id=$(printf '%s\n%s\n' "$artifact_digest" "$asset_digest" \
     | sha256sum | cut -c1-16)
+stage_asset_digest=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+stage_release_id=$(printf '%s\n%s\n' "$artifact_digest" "$stage_asset_digest" \
+    | sha256sum | cut -c1-16)
 unsafe_digest=$(sha256sum "$unsafe_archive" | cut -d' ' -f1)
 unsafe_release_id=$(printf '%s\n%s\n' "$unsafe_digest" "$asset_digest" \
     | sha256sum | cut -c1-16)
@@ -67,10 +70,12 @@ unshare --mount sh -eu -c '
     source_commit=$5
     artifact_digest=$6
     asset_digest=$7
-    unsafe_archive=$8
-    unsafe_release_id=$9
-    missing_worker_archive=${10}
-    missing_worker_release_id=${11}
+    stage_asset_digest=$8
+    stage_release_id=$9
+    unsafe_archive=${10}
+    unsafe_release_id=${11}
+    missing_worker_archive=${12}
+    missing_worker_release_id=${13}
 
     sh "$install_script" "$archive" "$release_id" "$source_commit" \
         "$artifact_digest" "$asset_digest" >/dev/null
@@ -85,6 +90,19 @@ unshare --mount sh -eu -c '
     grep -Fx "assets_sha256=$asset_digest" \
         "$release/.mk8email-release" >/dev/null
     grep -Fx "release_id=$release_id" "$release/.mk8email-release" >/dev/null
+
+    sh "$install_script" "$archive" "$stage_release_id" "$source_commit" \
+        "$artifact_digest" "$stage_asset_digest" --stage-only >/dev/null
+    test -f "/opt/mk8email/releases/$stage_release_id/worker/mk8.email.Application.Worker.dll"
+    test "$(readlink -f /opt/mk8email/current)" = "$release"
+    grep -Fx "release_id=$stage_release_id" \
+        "/opt/mk8email/releases/$stage_release_id/.mk8email-release" >/dev/null
+    if sh "$install_script" "$archive" "$stage_release_id" "$source_commit" \
+        "$artifact_digest" "$stage_asset_digest" --invalid-mode \
+        >/dev/null 2>&1; then
+        printf "%s\n" "The installer accepted an unknown release mode." >&2
+        exit 1
+    fi
 
     if sh "$install_script" "$archive" 0000000000000000 "$source_commit" \
         "$artifact_digest" "$asset_digest" >/dev/null 2>&1; then
@@ -109,6 +127,7 @@ unshare --mount sh -eu -c '
         -name ".installing-*" -print -quit)"
 ' sh "$test_opt" "$install_script" "$archive" "$release_id" \
     "$source_commit" "$artifact_digest" "$asset_digest" \
+    "$stage_asset_digest" "$stage_release_id" \
     "$unsafe_archive" "$unsafe_release_id" \
     "$missing_worker_archive" "$missing_worker_release_id"
 

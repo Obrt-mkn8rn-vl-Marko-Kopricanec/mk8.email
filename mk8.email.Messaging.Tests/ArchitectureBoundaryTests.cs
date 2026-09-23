@@ -9,6 +9,7 @@ using mk8.email.Gateway.Protocols.Sieve;
 using mk8.email.Gateway.Protocols.Pop3;
 using mk8.email.Gateway.Protocols.Imap;
 using mk8.email.Imap.Presentation;
+using mk8.email.Wake;
 
 namespace mk8.email.Messaging.Tests;
 
@@ -27,6 +28,21 @@ public sealed class ArchitectureBoundaryTests
             reference.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal)
             || reference.StartsWith("Microsoft.EntityFrameworkCore", StringComparison.Ordinal)
             || reference.StartsWith("Npgsql", StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
+    public void WorkerWakeProcessDoesNotLoadApplicationOrPresentationLogic()
+    {
+        var references = typeof(WorkerWakeProbe).Assembly
+            .GetReferencedAssemblies()
+            .Select(reference => reference.Name ?? string.Empty)
+            .ToArray();
+
+        Assert.IsFalse(references.Any(reference =>
+            reference.StartsWith("mk8.email.Application", StringComparison.Ordinal)
+            || reference.StartsWith("mk8.email.Gateway", StringComparison.Ordinal)
+            || reference.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal)
+            || reference.StartsWith("Azure.Storage", StringComparison.Ordinal)));
     }
 
     [TestMethod]

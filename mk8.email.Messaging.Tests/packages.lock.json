@@ -718,6 +718,12 @@
         "dependencies": {
           "BCrypt.Net-Next": "[4.2.0, )"
         }
+      },
+      "mk8.email.wake": {
+        "type": "Project",
+        "dependencies": {
+          "Npgsql": "[10.0.2, )"
+        }
       }
     }
   }

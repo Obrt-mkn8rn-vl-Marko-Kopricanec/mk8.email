@@ -69,10 +69,14 @@ public sealed class ImapGatewayTransportTests
                 new ImapPasswordAuthentication("user@example.test", "imap-secret"), timeout.Token);
             var oauth = await client.AuthenticateOAuthAsync(
                 new ImapOAuthAuthentication("user@example.test", "imap-access-token"), timeout.Token);
+            var mailboxes = await client.ListMailboxesAsync(
+                new ImapMailboxListRequest(application.UserId, SubscribedOnly: true), timeout.Token);
             Assert.AreEqual(application.UserId, password.UserId);
             Assert.AreEqual(application.UserId, oauth.UserId);
             Assert.AreEqual("imap-secret", application.Password);
             Assert.AreEqual("imap-access-token", application.AccessToken);
+            Assert.HasCount(1, mailboxes.Mailboxes);
+            Assert.AreEqual("INBOX", mailboxes.Mailboxes[0].FolderName);
 
             await using var operations = gatewayDataSource.CreateCommand(
                 "SELECT operation FROM application_requests ORDER BY created_at");
@@ -85,6 +89,7 @@ public sealed class ImapGatewayTransportTests
                 {
                     ApplicationOperations.ImapAuthenticatePassword,
                     ApplicationOperations.ImapAuthenticateOAuth,
+                    ApplicationOperations.ImapListMailboxes,
                 },
                 observed);
 
@@ -100,7 +105,7 @@ public sealed class ImapGatewayTransportTests
                 Assert.IsFalse(ciphertext.Contains("imap-secret", StringComparison.Ordinal));
                 Assert.IsFalse(ciphertext.Contains("imap-access-token", StringComparison.Ordinal));
             }
-            Assert.AreEqual(4, recordCount);
+            Assert.AreEqual(6, recordCount);
         }
         finally
         {
@@ -130,5 +135,11 @@ public sealed class ImapGatewayTransportTests
             AccessToken = request.AccessToken;
             return Task.FromResult(new ImapIdentityResult(UserId, request.Username));
         }
+
+        public Task<ImapMailboxListResult> ListMailboxesAsync(
+            ImapMailboxListRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ImapMailboxListResult(
+                [new ImapMailboxInfo("user", "example.test", "INBOX", true, true)]));
     }
 }

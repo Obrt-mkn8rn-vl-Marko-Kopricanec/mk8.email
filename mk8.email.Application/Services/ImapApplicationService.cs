@@ -1,11 +1,14 @@
+using Microsoft.EntityFrameworkCore;
 using mk8.email.Application.Interfaces;
 using mk8.email.Contracts.Imap;
+using mk8.email.Infrastructure.Data;
 
 namespace mk8.email.Application.Services;
 
 internal sealed class ImapApplicationService(
     IMailAuthenticator authenticator,
-    IOAuthTokenService oauthTokens) : IImapApplicationService
+    IOAuthTokenService oauthTokens,
+    EmailDbContext database) : IImapApplicationService
 {
     public async Task<ImapIdentityResult> AuthenticatePasswordAsync(
         ImapPasswordAuthentication request,
@@ -28,5 +31,45 @@ internal sealed class ImapApplicationService(
             || !string.Equals(request.Username, user.Username, StringComparison.OrdinalIgnoreCase)
             ? new ImapIdentityResult(null, null)
             : new ImapIdentityResult(user.Id, user.Username);
+    }
+
+    public async Task<ImapMailboxListResult> ListMailboxesAsync(
+        ImapMailboxListRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.UserId == Guid.Empty)
+            throw new ArgumentException("The IMAP account identifier is invalid.", nameof(request));
+
+        var query = database.Folders
+            .AsNoTracking()
+            .Where(folder => folder.Inbox.OwnerId == request.UserId);
+        if (request.SubscribedOnly)
+            query = query.Where(folder => folder.IsSubscribed);
+
+        var folders = await query
+            .Select(folder => new
+            {
+                InboxName = folder.Inbox.Name,
+                folder.Inbox.Address.Domain,
+                FolderName = folder.Name,
+                OwnerUsername = folder.Inbox.Owner.Username,
+                folder.IsSubscribed,
+            })
+            .OrderBy(folder => folder.Domain)
+            .ThenBy(folder => folder.InboxName)
+            .ThenBy(folder => folder.FolderName)
+            .ToListAsync(cancellationToken);
+        return new ImapMailboxListResult(folders
+            .Select(folder => new ImapMailboxInfo(
+                folder.InboxName,
+                folder.Domain,
+                folder.FolderName,
+                string.Equals(
+                    folder.OwnerUsername,
+                    $"{folder.InboxName}@{folder.Domain}",
+                    StringComparison.OrdinalIgnoreCase),
+                folder.IsSubscribed))
+            .ToList());
     }
 }

@@ -28,6 +28,7 @@ public static class ApplicationOperations
     public const string Pop3CommitDeletes = "pop3.deletes.commit";
     public const string ImapAuthenticatePassword = "imap.authenticate-password";
     public const string ImapAuthenticateOAuth = "imap.authenticate-oauth";
+    public const string ImapListMailboxes = "imap.mailboxes.list";
     public const string AdminAuthenticate = "admin.authenticate";
     public const string AdminDashboardGet = "admin.dashboard.get";
     public const string AdminDomainsGet = "admin.domains.get";

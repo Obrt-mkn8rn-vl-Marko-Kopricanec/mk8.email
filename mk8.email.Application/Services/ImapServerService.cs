@@ -1112,7 +1112,18 @@ ILogger<ImapServerService> logger) : BackgroundService
             return;
         }
 
-        var folders = await GetUserFoldersAsync(session.UserId, ct);
+        List<MailboxFolderInfo> folders;
+        try
+        {
+            folders = await GetUserFoldersAsync(session.UserId, ct);
+        }
+        catch (Exception exception) when (
+            exception is not OperationCanceledException && !ct.IsCancellationRequested)
+        {
+            logger.LogWarning(exception, "IMAP mailbox listing is unavailable for {UserId}", session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailboxes unavailable");
+            return;
+        }
         var entries = BuildMailboxListEntries(folders);
 
         using var scope = options.StatusItems.Length > 0 ? scopeFactory.CreateScope() : null;
@@ -1176,7 +1187,18 @@ ILogger<ImapServerService> logger) : BackgroundService
             return;
         }
 
-        var folders = await GetUserFoldersAsync(session.UserId, ct, subscribedOnly: true);
+        List<MailboxFolderInfo> folders;
+        try
+        {
+            folders = await GetUserFoldersAsync(session.UserId, ct, subscribedOnly: true);
+        }
+        catch (Exception exception) when (
+            exception is not OperationCanceledException && !ct.IsCancellationRequested)
+        {
+            logger.LogWarning(exception, "IMAP subscribed mailbox listing is unavailable for {UserId}", session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailboxes unavailable");
+            return;
+        }
 
         foreach (var entry in BuildMailboxListEntries(folders))
         {
@@ -2513,36 +2535,15 @@ ILogger<ImapServerService> logger) : BackgroundService
         Guid userId, CancellationToken ct, bool subscribedOnly = false)
     {
         using var scope = scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-
-        var query = db.Folders
-            .AsNoTracking()
-            .Where(f => f.Inbox.OwnerId == userId);
-
-        if (subscribedOnly)
-            query = query.Where(f => f.IsSubscribed);
-
-        var folders = await query
-            .Select(f => new
-            {
-                InboxName = f.Inbox.Name,
-                f.Inbox.Address.Domain,
-                FolderName = f.Name,
-                OwnerUsername = f.Inbox.Owner.Username,
-                f.IsSubscribed,
-            })
-            .OrderBy(f => f.Domain).ThenBy(f => f.InboxName).ThenBy(f => f.FolderName)
-            .ToListAsync(ct);
-
-        return folders
+        var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
+        var result = await application.ListMailboxesAsync(
+            new ImapMailboxListRequest(userId, subscribedOnly), ct);
+        return result.Mailboxes
             .Select(folder => new MailboxFolderInfo(
                 folder.InboxName,
                 folder.Domain,
                 folder.FolderName,
-                string.Equals(
-                    folder.OwnerUsername,
-                    $"{folder.InboxName}@{folder.Domain}",
-                    StringComparison.OrdinalIgnoreCase),
+                folder.IsPrimary,
                 folder.IsSubscribed))
             .ToList();
     }

@@ -20,7 +20,7 @@ public sealed class ImapApplicationBoundaryTests
             .BuildServiceProvider();
         var dispatcher = new ApplicationRequestDispatcher(services);
 
-        var password = await SendAsync<ImapPasswordAuthentication>(
+        var password = await SendAsync<ImapPasswordAuthentication, ImapIdentityResult>(
             dispatcher,
             ApplicationOperations.ImapAuthenticatePassword,
             new ImapPasswordAuthentication("user@example.test", "secret"));
@@ -28,15 +28,23 @@ public sealed class ImapApplicationBoundaryTests
         Assert.AreEqual("user@example.test", password.Username);
         Assert.AreEqual("secret", application.LastPassword);
 
-        var oauth = await SendAsync<ImapOAuthAuthentication>(
+        var oauth = await SendAsync<ImapOAuthAuthentication, ImapIdentityResult>(
             dispatcher,
             ApplicationOperations.ImapAuthenticateOAuth,
             new ImapOAuthAuthentication("user@example.test", "access-token"));
         Assert.AreEqual(application.UserId, oauth.UserId);
         Assert.AreEqual("access-token", application.LastAccessToken);
+
+        var mailboxes = await SendAsync<ImapMailboxListRequest, ImapMailboxListResult>(
+            dispatcher,
+            ApplicationOperations.ImapListMailboxes,
+            new ImapMailboxListRequest(application.UserId, SubscribedOnly: true));
+        Assert.HasCount(1, mailboxes.Mailboxes);
+        Assert.AreEqual("INBOX", mailboxes.Mailboxes[0].FolderName);
+        Assert.IsTrue(application.LastSubscribedOnly);
     }
 
-    private static async Task<ImapIdentityResult> SendAsync<TRequest>(
+    private static async Task<TResponse> SendAsync<TRequest, TResponse>(
         ApplicationRequestDispatcher dispatcher,
         string operation,
         TRequest value)
@@ -55,8 +63,8 @@ public sealed class ImapApplicationBoundaryTests
             now.AddMinutes(1));
         var response = await dispatcher.DispatchAsync(request);
         Assert.IsFalse(response.IsError, response.ErrorCode);
-        return JsonSerializer.Deserialize<ImapIdentityResult>(response.Payload, JsonOptions)
-            ?? throw new InvalidOperationException("The IMAP authentication response was empty.");
+        return JsonSerializer.Deserialize<TResponse>(response.Payload, JsonOptions)
+            ?? throw new InvalidOperationException("The IMAP application response was empty.");
     }
 
     private sealed class RecordingImapApplication : IImapApplicationService
@@ -64,6 +72,7 @@ public sealed class ImapApplicationBoundaryTests
         public Guid UserId { get; } = Guid.CreateVersion7();
         public string? LastPassword { get; private set; }
         public string? LastAccessToken { get; private set; }
+        public bool LastSubscribedOnly { get; private set; }
 
         public Task<ImapIdentityResult> AuthenticatePasswordAsync(
             ImapPasswordAuthentication request,
@@ -79,6 +88,15 @@ public sealed class ImapApplicationBoundaryTests
         {
             LastAccessToken = request.AccessToken;
             return Task.FromResult(new ImapIdentityResult(UserId, request.Username));
+        }
+
+        public Task<ImapMailboxListResult> ListMailboxesAsync(
+            ImapMailboxListRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            LastSubscribedOnly = request.SubscribedOnly;
+            return Task.FromResult(new ImapMailboxListResult(
+                [new ImapMailboxInfo("user", "example.test", "INBOX", true, true)]));
         }
     }
 }

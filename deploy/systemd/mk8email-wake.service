@@ -1,0 +1,55 @@
+[Unit]
+Description=mk8.email independent Worker wake monitor
+Documentation=https://github.com/mkn8rn/mk8.email
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/etc/mk8email/distributed-ready
+ConditionPathExists=/etc/mk8email/mk8email.wake.connection
+
+[Service]
+Type=simple
+User=mk8wake
+Group=mk8wake
+WorkingDirectory=/opt/mk8email/current/wake
+Environment=DOTNET_ENVIRONMENT=Production
+Environment=DOTNET_EnableDiagnostics=0
+ExecStart=/usr/bin/dotnet /opt/mk8email/current/wake/mk8.email.Wake.dll --serve /etc/mk8email/mk8email.wake.connection /run/mk8email-wake
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=30s
+TimeoutStopSec=15s
+KillSignal=SIGINT
+UMask=0077
+LimitNOFILE=1024
+TasksMax=64
+MemoryMax=256M
+RuntimeDirectory=mk8email-wake
+RuntimeDirectoryMode=0700
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectProc=invisible
+ProtectSystem=strict
+ProcSubset=pid
+ReadOnlyPaths=/etc/mk8email /opt/mk8email/current
+ReadWritePaths=/run/mk8email-wake
+NoExecPaths=/tmp
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

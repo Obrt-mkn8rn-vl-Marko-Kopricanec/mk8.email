@@ -180,6 +180,7 @@ run_unit "mk8-build-$short_commit-$$" yes /bin/sh -eu -c '
         deploy/scripts/configure-wake-database-access \
         deploy/scripts/configure-mail-database-access \
         deploy/scripts/deactivate-distributed-role \
+        deploy/scripts/ensure-wake-service-account \
         deploy/scripts/deactivate-mail-stack \
         deploy/scripts/deploy-admin-certificate \
         deploy/scripts/deploy-mk8-domain-certificate \

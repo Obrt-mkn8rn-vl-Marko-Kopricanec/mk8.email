@@ -1,0 +1,13 @@
+[Unit]
+Description=Wake mk8.email Application Worker for durable work
+Documentation=https://github.com/mkn8rn/mk8.email
+Requires=mk8email-wake.service
+After=mk8email-wake.service
+ConditionPathExists=/etc/mk8email/distributed-ready
+
+[Path]
+DirectoryNotEmpty=/run/mk8email-wake
+Unit=mk8email-worker.service
+
+[Install]
+WantedBy=multi-user.target

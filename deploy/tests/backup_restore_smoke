@@ -76,6 +76,8 @@ tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
     | grep -Fx 'usr/local/sbin/configure-wake-database-access' >/dev/null
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
+    | grep -Fx 'usr/local/sbin/ensure-wake-service-account' >/dev/null
+tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
     | grep -Fx 'usr/local/sbin/deactivate-distributed-role' >/dev/null
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
     | grep -Fx 'usr/local/sbin/mk8-domain' >/dev/null
@@ -93,6 +95,10 @@ tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
     | grep -Fx 'etc/systemd/system/mk8email-gateway.service' >/dev/null
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
     | grep -Fx 'etc/systemd/system/mk8email-worker.service' >/dev/null
+tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
+    | grep -Fx 'etc/systemd/system/mk8email-wake.service' >/dev/null
+tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
+    | grep -Fx 'etc/systemd/system/mk8email-worker.path' >/dev/null
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
     | grep -Fx 'usr/local/lib/mk8email/tests/host_hardening_smoke' >/dev/null
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \

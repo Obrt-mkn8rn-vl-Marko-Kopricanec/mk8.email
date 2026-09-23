@@ -18,6 +18,10 @@ case "$2" in
     worker)
         unit=mk8email-worker.service
         executable=/opt/mk8email/current/worker/mk8.email.Application.Worker.dll
+        wake_executable=/opt/mk8email/current/wake/mk8.email.Wake.dll
+        wake_unit_source=$asset_root/deploy/systemd/mk8email-wake.service
+        wake_path_source=$asset_root/deploy/systemd/mk8email-worker.path
+        wake_account_source=$asset_root/deploy/scripts/ensure-wake-service-account
         ;;
     *)
         printf '%s\n' "Usage: install-distributed-role ASSET_ROOT gateway|worker" >&2
@@ -55,6 +59,15 @@ if systemctl is-active --quiet "$unit" \
     || [ "$(systemctl is-enabled "$unit" 2>/dev/null || true)" = enabled ]; then
     fail "Deactivate the selected role before staging a replacement unit."
 fi
+if [ "$2" = worker ]; then
+    for wake_unit in mk8email-wake.service mk8email-worker.path; do
+        if systemctl is-active --quiet "$wake_unit" \
+            || [ "$(systemctl is-enabled "$wake_unit" 2>/dev/null || true)" = enabled ]; then
+            fail "Deactivate the Worker wake path before replacing its units."
+        fi
+    done
+    [ -f "$wake_executable" ] || fail "The Wake executable is not installed."
+fi
 command -v dotnet >/dev/null 2>&1 || fail "The .NET runtime is missing."
 [ -f "$executable" ] || fail "The selected role executable is not installed."
 [ -f /opt/mk8email/current/cli/mk8.email.Application.CLI.dll ] \
@@ -74,6 +87,17 @@ if grep -Eq '@@[A-Za-z0-9_]+@@' "$unit_source"; then
 fi
 systemd-analyze verify "$unit_source" \
     || fail "The selected role unit asset did not pass systemd verification."
+if [ "$2" = worker ]; then
+    validate_asset "$wake_unit_source"
+    validate_asset "$wake_path_source"
+    validate_asset "$wake_account_source"
+    sh -n "$wake_account_source" || fail "The Wake account helper is invalid shell."
+    if grep -Eq '@@[A-Za-z0-9_]+@@' "$wake_unit_source" "$wake_path_source"; then
+        fail "A Wake unit still contains an unresolved deployment token."
+    fi
+    systemd-analyze verify "$wake_unit_source" "$wake_path_source" \
+        || fail "The Wake units did not pass systemd verification."
+fi
 if [ -L /etc/mk8email ] \
     || { [ -e /etc/mk8email ] && [ ! -d /etc/mk8email ]; }; then
     fail "The role configuration directory is unsafe."
@@ -82,6 +106,12 @@ validate_target /usr/local/sbin/activate-distributed-role
 validate_target /usr/local/sbin/deactivate-distributed-role
 validate_target /usr/local/sbin/upgrade-distributed-role
 validate_target "/etc/systemd/system/$unit"
+if [ "$2" = worker ]; then
+    validate_target /usr/local/sbin/ensure-wake-service-account
+    validate_target /etc/systemd/system/mk8email-wake.service
+    validate_target /etc/systemd/system/mk8email-worker.path
+    sh "$wake_account_source" || fail "The Wake service identity is unsafe."
+fi
 
 install -d -o root -g mk8email -m 0751 /etc/mk8email
 install -o root -g root -m 0755 "$activation_source" \
@@ -92,7 +122,18 @@ install -o root -g root -m 0755 "$upgrade_source" \
     /usr/local/sbin/upgrade-distributed-role
 install -o root -g root -m 0644 "$unit_source" \
     "/etc/systemd/system/$unit"
+if [ "$2" = worker ]; then
+    install -o root -g root -m 0755 "$wake_account_source" \
+        /usr/local/sbin/ensure-wake-service-account
+    install -o root -g root -m 0644 "$wake_unit_source" \
+        /etc/systemd/system/mk8email-wake.service
+    install -o root -g root -m 0644 "$wake_path_source" \
+        /etc/systemd/system/mk8email-worker.path
+fi
 systemctl daemon-reload
 systemd-analyze verify "$unit"
+if [ "$2" = worker ]; then
+    systemd-analyze verify mk8email-wake.service mk8email-worker.path
+fi
 
 printf 'The distributed %s role is installed but not activated.\n' "$2"

@@ -132,6 +132,8 @@ tar --create --gzip --file="$stage/configuration.tar.gz" --directory=/ \
     etc/systemd/system/mk8email-gateway.service \
     etc/systemd/system/mk8email.service \
     etc/systemd/system/mk8email-worker.service \
+    etc/systemd/system/mk8email-wake.service \
+    etc/systemd/system/mk8email-worker.path \
     etc/systemd/system/nginx.service.d \
     etc/systemd/system/postgresql@.service.d \
     etc/systemd/system/rspamd.service.d \
@@ -152,6 +154,7 @@ tar --create --gzip --file="$stage/configuration.tar.gz" --directory=/ \
     usr/local/sbin/configure-apt-sources \
     usr/local/sbin/configure-gateway-database-access \
     usr/local/sbin/configure-wake-database-access \
+    usr/local/sbin/ensure-wake-service-account \
     usr/local/sbin/configure-mail-database-access \
     usr/local/sbin/deactivate-mail-stack \
     usr/local/sbin/deactivate-distributed-role \

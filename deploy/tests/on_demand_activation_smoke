@@ -1,0 +1,134 @@
+#!/bin/sh
+set -eu
+
+if [ "$#" -ne 2 ]; then
+    printf '%s\n' "Usage: on_demand_activation_smoke ACTIVATE_SCRIPT DEACTIVATE_SCRIPT" >&2
+    exit 2
+fi
+
+activation_source=$1
+deactivation_source=$2
+fixture_root=$(dirname -- "$0")/fixtures
+test_owner=$(id -un)
+test_group=$(id -gn)
+test_root=$(mktemp -d /tmp/mk8-on-demand-smoke.XXXXXX)
+cleanup() {
+    case "$test_root" in
+        /tmp/mk8-on-demand-smoke.??????) rm -r -- "$test_root" ;;
+    esac
+}
+trap cleanup EXIT HUP INT TERM
+
+prepare_case() {
+    case_name=$1
+    state=$test_root/$case_name
+    install -d -m 0700 "$state" "$state/mock" "$state/run/lock" \
+        "$state/etc/mk8email" "$state/opt/mk8email/current/admin" \
+        "$state/opt/mk8email/current/worker" \
+        "$state/opt/mk8email/current/wake" \
+        "$state/opt/mk8email/current/cli"
+    install -m 0755 "$fixture_root/on-demand-systemctl" "$state/mock/systemctl"
+    install -m 0755 "$fixture_root/on-demand-runuser" "$state/mock/runuser"
+    install -m 0755 "$fixture_root/on-demand-id" "$state/mock/id"
+    ln -s /bin/true "$state/mock/sleep"
+    : > "$state/mock/dotnet"
+    chmod 0755 "$state/mock/dotnet"
+    : > "$state/etc/mk8email/distributed-ready"
+    chmod 0600 "$state/etc/mk8email/distributed-ready"
+    : > "$state/etc/mk8email/mk8email.worker.config.json"
+    : > "$state/etc/mk8email/mk8email.wake.connection"
+    chmod 0640 "$state/etc/mk8email/mk8email.worker.config.json" \
+        "$state/etc/mk8email/mk8email.wake.connection"
+    : > "$state/opt/mk8email/current/worker/mk8.email.Application.Worker.dll"
+    : > "$state/opt/mk8email/current/wake/mk8.email.Wake.dll"
+    : > "$state/opt/mk8email/current/cli/mk8.email.Application.CLI.dll"
+    : > "$state/events"
+
+    # The copies redirect only fixed deployment paths and root identity checks.
+    # shellcheck disable=SC2016
+    sed \
+        -e 's@if \[ "$(id -u)" -ne 0 \] || \[ "$#" -ne 1 \]; then@if [ "$#" -ne 1 ]; then@' \
+        -e "s|/opt/mk8email|$state/opt/mk8email|g" \
+        -e "s|/etc/mk8email|$state/etc/mk8email|g" \
+        -e "s|/run/lock|$state/run/lock|g" \
+        -e "s|/run/mk8email-wake|$state/run/mk8email-wake|g" \
+        -e "s|/usr/bin/dotnet|$state/mock/dotnet|g" \
+        -e "s|root:mk8email 640 1|$test_owner:$test_group 640 1|g" \
+        -e "s|root:mk8wake 640 1|$test_owner:$test_group 640 1|g" \
+        -e "s|root:root 600 1|$test_owner:$test_group 600 1|g" \
+        -e "s|PATH=/usr/sbin:/usr/bin:/sbin:/bin|PATH=$state/mock:/usr/sbin:/usr/bin:/sbin:/bin|g" \
+        "$activation_source" > "$state/activate"
+    chmod 0755 "$state/activate"
+    # shellcheck disable=SC2016
+    sed \
+        -e 's@if \[ "$(id -u)" -ne 0 \] || \[ "$#" -ne 1 \]; then@if [ "$#" -ne 1 ]; then@' \
+        -e "s|/run/lock|$state/run/lock|g" \
+        -e "s|systemctl |$state/mock/systemctl |g" \
+        "$deactivation_source" > "$state/deactivate"
+    chmod 0755 "$state/deactivate"
+    MK8_ON_DEMAND_SMOKE_STATE=$state
+    export MK8_ON_DEMAND_SMOKE_STATE
+}
+
+assert_stopped() {
+    test ! -f "$state/active-mk8email-worker.path"
+    test ! -f "$state/active-mk8email-wake.service"
+    test ! -f "$state/active-mk8email-worker-drain.service"
+    test ! -f "$state/enabled-mk8email-worker.path"
+    test ! -f "$state/enabled-mk8email-wake.service"
+}
+
+prepare_case worker_success
+sh "$state/activate" worker >/dev/null
+test -f "$state/active-mk8email-worker.path"
+test -f "$state/active-mk8email-wake.service"
+test -f "$state/enabled-mk8email-worker.path"
+test -f "$state/enabled-mk8email-wake.service"
+test -f "$state/dispatch_seen"
+test ! -f "$state/active-mk8email-worker.service"
+test ! -f "$state/active-mk8email-worker-drain.service"
+sh "$state/deactivate" worker >/dev/null
+assert_stopped
+
+prepare_case backend_refusal
+: > "$state/fail_backend"
+if sh "$state/activate" worker >/dev/null 2>&1; then
+    printf '%s\n' "Activation accepted a failed Worker backend canary." >&2
+    exit 1
+fi
+assert_stopped
+if grep -Eq '^(enable|start) ' "$state/events"; then
+    printf '%s\n' "A unit started after failed Worker backend preflight." >&2
+    exit 1
+fi
+
+prepare_case wake_probe_rollback
+: > "$state/fail_wake_probe"
+if sh "$state/activate" worker >/dev/null 2>&1; then
+    printf '%s\n' "Activation accepted a failed Wake database canary." >&2
+    exit 1
+fi
+assert_stopped
+grep -Fx 'start mk8email-wake.service' "$state/events" >/dev/null
+grep -Fx 'stop mk8email-wake.service' "$state/events" >/dev/null
+
+prepare_case dispatch_rollback
+: > "$state/fail_dispatch"
+if sh "$state/activate" worker >/dev/null 2>&1; then
+    printf '%s\n' "Activation accepted failed Application dispatch." >&2
+    exit 1
+fi
+assert_stopped
+grep -Fx 'start mk8email-worker.path' "$state/events" >/dev/null
+grep -Fx 'stop mk8email-worker.path' "$state/events" >/dev/null
+
+prepare_case unsafe_secret_refusal
+chmod 0644 "$state/etc/mk8email/mk8email.wake.connection"
+if sh "$state/activate" worker >/dev/null 2>&1; then
+    printf '%s\n' "Activation accepted an unsafe Wake connection file." >&2
+    exit 1
+fi
+assert_stopped
+test ! -s "$state/events"
+
+printf '%s\n' "On-demand Worker activation and rollback control-flow smoke passed."

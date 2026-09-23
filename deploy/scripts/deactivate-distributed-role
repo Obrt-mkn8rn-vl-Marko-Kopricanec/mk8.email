@@ -8,7 +8,12 @@ fi
 
 case "$1" in
     gateway) unit=mk8email-gateway.service ;;
-    worker) unit=mk8email-worker.service ;;
+    worker)
+        unit=mk8email-worker.path
+        wake_unit=mk8email-wake.service
+        drain_unit=mk8email-worker-drain.service
+        resident_unit=mk8email-worker.service
+        ;;
     *)
         printf '%s\n' "Usage: deactivate-distributed-role gateway|worker" >&2
         exit 2
@@ -23,4 +28,8 @@ flock --exclusive --nonblock 9 || {
 
 systemctl stop "$unit"
 systemctl disable "$unit"
+if [ "$1" = worker ]; then
+    systemctl stop "$drain_unit" "$wake_unit" "$resident_unit"
+    systemctl disable "$wake_unit" "$resident_unit"
+fi
 printf 'The distributed %s role is inactive.\n' "$1"

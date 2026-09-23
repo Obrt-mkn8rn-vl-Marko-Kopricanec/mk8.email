@@ -95,10 +95,14 @@ jobs:
             deploy/tests/fixtures/upgrade-curl \
             deploy/tests/fixtures/upgrade-runuser \
             deploy/tests/fixtures/upgrade-systemctl \
+            deploy/tests/fixtures/on-demand-id \
+            deploy/tests/fixtures/on-demand-runuser \
+            deploy/tests/fixtures/on-demand-systemctl \
             deploy/tests/host_hardening_smoke \
             deploy/tests/management_cli_smoke \
             deploy/tests/multi_domain_smoke \
             deploy/tests/native_release_smoke \
+            deploy/tests/on_demand_activation_smoke \
             deploy/tests/prerequisites_smoke \
             deploy/tests/release_retention_smoke \
             deploy/tests/tls_smoke \
@@ -107,6 +111,7 @@ jobs:
             python3 -m py_compile deploy/tests/dashboard_smoke.py deploy/tests/distributed_config_smoke.py deploy/tests/mail_smoke.py deploy/tests/multi_domain_smoke.py
           python3 deploy/tests/distributed_config_smoke.py
           sh deploy/tests/upgrade_distributed_role_smoke "$PWD/deploy/scripts/upgrade-distributed-role"
+          sh deploy/tests/on_demand_activation_smoke "$PWD/deploy/scripts/activate-distributed-role" "$PWD/deploy/scripts/deactivate-distributed-role"
           systemd-analyze verify deploy/systemd/mk8email-wake.service deploy/systemd/mk8email-worker.path deploy/systemd/mk8email-worker-drain.service
 
       - name: Validate deployment profile tooling

@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+
+case "$1:$2" in
+    '-gn:mk8wake'|'-nG:mk8wake') printf '%s\n' mk8wake ;;
+    *) /usr/bin/id "$@" ;;
+esac

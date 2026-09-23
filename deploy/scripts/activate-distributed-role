@@ -10,6 +10,7 @@ if [ "$(id -u)" -ne 0 ] || [ "$#" -ne 1 ]; then
     printf '%s\n' "Usage: activate-distributed-role gateway|worker" >&2
     exit 2
 fi
+role=$1
 
 case "$1" in
     gateway)
@@ -20,7 +21,12 @@ case "$1" in
         probe=--probe-gateway-backends
         ;;
     worker)
-        unit=mk8email-worker.service
+        unit=mk8email-worker.path
+        wake_unit=mk8email-wake.service
+        drain_unit=mk8email-worker-drain.service
+        resident_unit=mk8email-worker.service
+        wake_connection=/etc/mk8email/mk8email.wake.connection
+        wake_executable=/opt/mk8email/current/wake/mk8.email.Wake.dll
         config=/etc/mk8email/mk8email.worker.config.json
         executable=/opt/mk8email/current/worker/mk8.email.Application.Worker.dll
         validate=--validate-worker-config
@@ -53,6 +59,18 @@ fi
 [ -f "$executable" ] || fail "The role executable is missing from the current release."
 [ -f /opt/mk8email/current/cli/mk8.email.Application.CLI.dll ] \
     || fail "The management CLI is missing from the current release."
+if [ "$1" = worker ]; then
+    if [ -L "$wake_connection" ] || [ ! -f "$wake_connection" ] \
+        || [ "$(stat -c '%U:%G %a %h' "$wake_connection" 2>/dev/null || true)" \
+            != 'root:mk8wake 640 1' ]; then
+        fail "The dedicated Wake connection file is missing or unsafe."
+    fi
+    [ -f "$wake_executable" ] || fail "The Wake executable is missing from the current release."
+    [ "$(id -gn mk8wake 2>/dev/null || true)" = mk8wake ] \
+        || fail "The dedicated Wake service identity is missing."
+    [ "$(id -nG mk8wake 2>/dev/null || true)" = mk8wake ] \
+        || fail "The Wake identity belongs to another service group."
+fi
 
 for legacy_unit in mk8email.service mk8email-admin.service; do
     if systemctl is-active --quiet "$legacy_unit"; then
@@ -61,6 +79,18 @@ for legacy_unit in mk8email.service mk8email-admin.service; do
 done
 if systemctl is-active --quiet "$unit"; then
     fail "The distributed role is already active; activation cannot verify a new release without a restart."
+fi
+if [ "$1" = worker ]; then
+    for forbidden_unit in "$wake_unit" "$drain_unit" "$resident_unit"; do
+        if systemctl is-active --quiet "$forbidden_unit"; then
+            fail "A Worker process or Wake service is already active."
+        fi
+    done
+    for forbidden_unit in "$unit" "$wake_unit" "$drain_unit" "$resident_unit"; do
+        if [ "$(systemctl is-enabled "$forbidden_unit" 2>/dev/null || true)" = enabled ]; then
+            fail "A Worker or Wake unit is already enabled."
+        fi
+    done
 fi
 
 cli=/opt/mk8email/current/cli/mk8.email.Application.CLI.dll
@@ -82,16 +112,30 @@ cleanup() {
     if [ "$completed" = true ]; then
         return
     fi
-    if [ "$was_active" = false ]; then
-        systemctl stop "$unit" 2>/dev/null || true
-    fi
-    if [ "$was_enabled" = false ]; then
-        systemctl disable "$unit" 2>/dev/null || true
+    if [ "$role" = worker ]; then
+        systemctl stop "$unit" "$wake_unit" "$drain_unit" 2>/dev/null || true
+        systemctl disable "$unit" "$wake_unit" 2>/dev/null || true
+    else
+        if [ "$was_active" = false ]; then
+            systemctl stop "$unit" 2>/dev/null || true
+        fi
+        if [ "$was_enabled" = false ]; then
+            systemctl disable "$unit" 2>/dev/null || true
+        fi
     fi
 }
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 
+if [ "$1" = worker ]; then
+    systemctl enable "$wake_unit"
+    systemctl start "$wake_unit"
+    systemctl is-active --quiet "$wake_unit" \
+        || fail "The Wake monitor did not start."
+    timeout 20s runuser -u mk8wake -- /usr/bin/dotnet "$wake_executable" \
+        --probe "$wake_connection" /run/mk8email-wake \
+        || fail "The Wake database role or trigger directory failed its canary."
+fi
 systemctl enable "$unit"
 systemctl start "$unit"
 
@@ -111,7 +155,8 @@ while [ "$attempt" -lt 15 ]; do
                 fi
                 ;;
             worker)
-                if timeout 15s runuser -u mk8email -- /usr/bin/dotnet "$cli" \
+                if systemctl is-active --quiet "$wake_unit" \
+                    && timeout 45s runuser -u mk8email -- /usr/bin/dotnet "$cli" \
                     --probe-worker-dispatch "$config" >/dev/null; then
                     ready=true
                     break

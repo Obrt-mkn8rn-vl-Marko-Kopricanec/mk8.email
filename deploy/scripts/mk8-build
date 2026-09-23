@@ -210,10 +210,14 @@ run_unit "mk8-build-$short_commit-$$" yes /bin/sh -eu -c '
         deploy/tests/fixtures/upgrade-curl \
         deploy/tests/fixtures/upgrade-runuser \
         deploy/tests/fixtures/upgrade-systemctl \
+        deploy/tests/fixtures/on-demand-id \
+        deploy/tests/fixtures/on-demand-runuser \
+        deploy/tests/fixtures/on-demand-systemctl \
         deploy/tests/host_hardening_smoke \
         deploy/tests/management_cli_smoke \
         deploy/tests/multi_domain_smoke \
         deploy/tests/native_release_smoke \
+        deploy/tests/on_demand_activation_smoke \
         deploy/tests/prerequisites_smoke \
         deploy/tests/release_retention_smoke \
         deploy/tests/tls_smoke \
@@ -228,6 +232,9 @@ run_unit "mk8-build-$short_commit-$$" yes /bin/sh -eu -c '
     python3 deploy/tests/static_web_assets_smoke.py
     python3 deploy/tests/distributed_config_smoke.py
     sh deploy/tests/upgrade_distributed_role_smoke "$stable_source/deploy/scripts/upgrade-distributed-role"
+    sh deploy/tests/on_demand_activation_smoke \
+        "$stable_source/deploy/scripts/activate-distributed-role" \
+        "$stable_source/deploy/scripts/deactivate-distributed-role"
     "$sdk" publish mk8.email.CLI/mk8.email.Application.CLI.csproj \
         --configuration Release --no-build \
         --artifacts-path "$run_root/artifacts" \

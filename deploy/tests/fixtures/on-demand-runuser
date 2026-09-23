@@ -1,0 +1,30 @@
+#!/bin/sh
+set -eu
+
+state=$MK8_ON_DEMAND_SMOKE_STATE
+[ "$1" = -u ] && [ "$3" = -- ] || exit 1
+user=$2
+operation=$6
+printf '%s %s\n' "$user" "$operation" >> "$state/events"
+case "$operation" in
+    --validate-worker-config)
+        [ "$user" = mk8email ]
+        ;;
+    --probe-worker-backends)
+        [ "$user" = mk8email ] && [ ! -f "$state/fail_backend" ]
+        ;;
+    --probe)
+        [ "$user" = mk8wake ] \
+            && [ -f "$state/active-mk8email-wake.service" ] \
+            && [ -f "$7" ] && [ -d "$8" ] \
+            && [ ! -f "$state/fail_wake_probe" ]
+        ;;
+    --probe-worker-dispatch)
+        [ "$user" = mk8email ] \
+            && [ -f "$state/active-mk8email-wake.service" ] \
+            && [ -f "$state/active-mk8email-worker.path" ] \
+            && [ ! -f "$state/fail_dispatch" ] || exit 1
+        : > "$state/dispatch_seen"
+        ;;
+    *) exit 1 ;;
+esac

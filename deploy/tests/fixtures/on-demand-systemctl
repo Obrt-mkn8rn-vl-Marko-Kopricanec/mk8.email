@@ -1,0 +1,37 @@
+#!/bin/sh
+set -eu
+
+state=$MK8_ON_DEMAND_SMOKE_STATE
+action=$1
+shift
+case "$action" in
+    is-active)
+        [ "$1" = --quiet ] || exit 1
+        [ -f "$state/active-$2" ]
+        ;;
+    is-enabled)
+        if [ -f "$state/enabled-$1" ]; then
+            printf '%s\n' enabled
+        else
+            printf '%s\n' disabled
+        fi
+        ;;
+    enable|disable|start|stop)
+        for unit in "$@"; do
+            printf '%s %s\n' "$action" "$unit" >> "$state/events"
+            case "$action" in
+                enable) : > "$state/enabled-$unit" ;;
+                disable) rm -f -- "$state/enabled-$unit" ;;
+                start)
+                    if [ "$unit" = mk8email-wake.service ]; then
+                        [ ! -f "$state/fail_wake_start" ] || exit 1
+                        install -d -m 0700 "$state/run/mk8email-wake"
+                    fi
+                    : > "$state/active-$unit"
+                    ;;
+                stop) rm -f -- "$state/active-$unit" ;;
+            esac
+        done
+        ;;
+    *) exit 1 ;;
+esac

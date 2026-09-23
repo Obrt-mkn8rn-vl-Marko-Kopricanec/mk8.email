@@ -343,6 +343,16 @@ public sealed class EnvironmentConfig
             }
             if (Messaging.MaxPayloadBytes is < 65_536 or > 1_073_741_824)
                 errors.Add("Messaging.MaxPayloadBytes must be from 65536 through 1073741824.");
+            // APPEND sends a typed JSON request containing base64-encoded message octets.
+            // Reserve one MiB for MULTIAPPEND flags, mailbox names, and request metadata.
+            var minimumAppendPayloadBytes =
+                (4L * Limits.MaxMessageSizeBytes + 2) / 3 + 1_048_576;
+            if (Messaging.MaxPayloadBytes < minimumAppendPayloadBytes)
+            {
+                errors.Add(
+                    "Messaging.MaxPayloadBytes must accommodate base64-encoded "
+                    + "Limits.MaxMessageSizeBytes plus IMAP APPEND request overhead.");
+            }
             if (Messaging.InlinePayloadThresholdBytes is < 0 or > 1_048_576
                 || Messaging.InlinePayloadThresholdBytes > Messaging.MaxPayloadBytes)
             {

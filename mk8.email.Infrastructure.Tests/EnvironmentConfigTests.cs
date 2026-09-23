@@ -283,6 +283,32 @@ public sealed class EnvironmentConfigTests
     }
 
     [TestMethod]
+    public void DistributedMessagingPayloadMustFitAdvertisedAppendLimit()
+    {
+        var key = Convert.ToBase64String(
+            System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+        var connectionString =
+            "DefaultEndpointsProtocol=https;AccountName=mk8;AccountKey=test;"
+            + "BlobEndpoint=https://blob.example.test/;";
+        var insufficient = CreateValidConfiguration(
+            messagingEnabled: true,
+            messagingEncryptionKey: key,
+            objectStorageConnectionString: connectionString,
+            messagingMaxPayloadBytes: 32 * 1024 * 1024);
+        StringAssert.Contains(
+            string.Join('|', insufficient.Validate()),
+            "Messaging.MaxPayloadBytes must accommodate base64-encoded "
+            + "Limits.MaxMessageSizeBytes plus IMAP APPEND request overhead.");
+
+        var sufficient = CreateValidConfiguration(
+            messagingEnabled: true,
+            messagingEncryptionKey: key,
+            objectStorageConnectionString: connectionString,
+            messagingMaxPayloadBytes: 64 * 1024 * 1024);
+        Assert.AreEqual(0, sufficient.Validate().Count);
+    }
+
+    [TestMethod]
     public void LoaderReadsDistributedMessagingSecretsFromFiles()
     {
         var activeKey = Convert.ToBase64String(
@@ -412,6 +438,7 @@ public sealed class EnvironmentConfigTests
         bool messagingEnabled = false,
         string messagingEncryptionKey = "",
         string? messagingEncryptionKeyFile = null,
+        int messagingMaxPayloadBytes = 64 * 1024 * 1024,
         IReadOnlyList<MessagingDecryptionKeyConfig>? messagingDecryptionKeys = null,
         string objectStorageProvider = "azure-blob",
         string objectStorageConnectionString = "",
@@ -547,6 +574,7 @@ public sealed class EnvironmentConfigTests
                 EncryptionKeyId = "current",
                 EncryptionKey = messagingEncryptionKey,
                 EncryptionKeyFile = messagingEncryptionKeyFile,
+                MaxPayloadBytes = messagingMaxPayloadBytes,
                 DecryptionKeys = messagingDecryptionKeys ?? [],
             },
             ObjectStorage = new ObjectStorageConfig

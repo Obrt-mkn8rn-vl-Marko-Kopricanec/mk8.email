@@ -1,50 +1,25 @@
 name: mk8-email-control-plane
 
 services:
-  database:
-    image: postgres:18.3-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: mk8email
-      POSTGRES_USER: mk8email
-      POSTGRES_PASSWORD_FILE: /run/secrets/database_password
-    secrets:
-      - database_password
-    volumes:
-      - postgres-data:/var/lib/postgresql
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mk8email -d mk8email"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-    security_opt:
-      - no-new-privileges:true
-    networks:
-      - backend
-    logging:
-      options:
-        max-size: 10m
-        max-file: "3"
-
-  admin:
-    image: mk8.email-admin:local
+  gateway:
+    image: mk8.email-gateway:local
     build:
       context: .
       dockerfile: Dockerfile
+      target: gateway
     restart: unless-stopped
     init: true
-    depends_on:
-      database:
-        condition: service_healthy
     environment:
       ASPNETCORE_URLS: http://0.0.0.0:8080
-      MK8EMAIL_CONFIG_FILE: /run/secrets/mk8email_config
+      DOTNET_ENVIRONMENT: Production
+      MK8EMAIL_CONFIG_FILE: /run/secrets/gateway_config
     secrets:
-      - mk8email_config
-      - database_password
+      - gateway_config
+      - gateway_database_password
+      - messaging_encryption_key
+      - object_storage_connection
       - tls_certificate
       - tls_private_key
-      - dkim_private_key
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
@@ -71,11 +46,62 @@ services:
         max-size: 10m
         max-file: "3"
 
+  worker:
+    image: mk8.email-worker:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: worker
+    restart: unless-stopped
+    init: true
+    environment:
+      DOTNET_ENVIRONMENT: Production
+      MK8EMAIL_CONFIG_FILE: /run/secrets/worker_config
+    secrets:
+      - worker_config
+      - database_password
+      - messaging_encryption_key
+      - object_storage_connection
+      - oidc_signing_key
+      - mfa_encryption_key
+      - dkim_private_key
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    ulimits:
+      nofile:
+        soft: 4096
+        hard: 8192
+    stop_grace_period: 60s
+    networks:
+      - backend
+    logging:
+      options:
+        max-size: 10m
+        max-file: "3"
+
 secrets:
-  mk8email_config:
-    file: ./deploy/mk8email.config.json
+  gateway_config:
+    file: ./deploy/secrets/gateway_config.json
+  worker_config:
+    file: ./deploy/secrets/worker_config.json
   database_password:
     file: ./deploy/secrets/database_password
+  gateway_database_password:
+    file: ./deploy/secrets/gateway_database_password
+  messaging_encryption_key:
+    file: ./deploy/secrets/messaging_encryption_key
+  object_storage_connection:
+    file: ./deploy/secrets/object_storage_connection
+  oidc_signing_key:
+    file: ./deploy/secrets/oidc_signing_key.pem
+  mfa_encryption_key:
+    file: ./deploy/secrets/mfa_encryption_key
   tls_certificate:
     file: ./deploy/secrets/tls_certificate.pem
   tls_private_key:
@@ -84,13 +110,11 @@ secrets:
     file: ./deploy/secrets/dkim_private_key.pem
 
 volumes:
-  postgres-data:
   admin-state:
   admin-logs:
 
 networks:
-  backend:
-    internal: true
+  backend: {}
   edge:
     ipam:
       config:

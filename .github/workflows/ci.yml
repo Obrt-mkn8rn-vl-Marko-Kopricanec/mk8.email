@@ -21,7 +21,7 @@ env:
 jobs:
   build-test-package:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:17-alpine
@@ -50,6 +50,11 @@ jobs:
 
       - name: Build
         run: dotnet build mk8.email.slnx --configuration Release --no-restore --property:TreatWarningsAsErrors=true --property:ContinuousIntegrationBuild=true
+
+      - name: Build Gateway and Worker container targets
+        run: |
+          docker build --quiet --target gateway --tag mk8email-gateway-ci:${{ github.sha }} .
+          docker build --quiet --target worker --tag mk8email-worker-ci:${{ github.sha }} .
 
       - name: Validate operations code
         run: |

@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -7,18 +7,17 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.4" />
-    <PackageReference Include="Microsoft.OpenApi" Version="2.7.5" />
+    <PackageReference Include="MimeKit" Version="4.17.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.4" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.4" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.4" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\mk8.email.Configuration\mk8.email.Configuration.csproj" />
     <ProjectReference Include="..\mk8.email.Contracts\mk8.email.Contracts.csproj" />
     <ProjectReference Include="..\mk8.email.MailWire\mk8.email.MailWire.csproj" />
-    <ProjectReference Include="..\mk8.email.Hosting\mk8.email.Hosting.csproj" />
-    <ProjectReference Include="..\mk8.email.Imap.Presentation\mk8.email.Imap.Presentation.csproj" />
     <ProjectReference Include="..\mk8.email.Messaging\mk8.email.Messaging.csproj" />
-    <ProjectReference Include="..\mk8.email.Smtp.Presentation\mk8.email.Smtp.Presentation.csproj" />
   </ItemGroup>
 
 </Project>

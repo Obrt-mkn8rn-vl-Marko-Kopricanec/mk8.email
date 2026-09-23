@@ -18,6 +18,7 @@ using mk8.email.Gateway.Protocols.Pop3;
 using mk8.email.Gateway.Protocols.Sieve;
 using mk8.email.Gateway.Security;
 using mk8.email.Hosting;
+using mk8.email.Imap.Presentation;
 using mk8.email.Messaging;
 using mk8.email.Smtp.Presentation;
 
@@ -51,6 +52,14 @@ builder.Services.AddGatewayApplicationClient();
 builder.Services.AddSingleton<ISmtpApplicationService, GatewaySmtpApplicationService>();
 builder.Services.AddSingleton<IPop3ApplicationService, GatewayPop3ApplicationService>();
 builder.Services.AddSingleton<IImapApplicationService, GatewayImapApplicationService>();
+if (environmentConfig.Imap.EnableImap || environmentConfig.Imap.EnableImplicitTls)
+{
+    builder.Services.AddHostedService(provider => new ImapServerService(
+        provider.GetRequiredService<IServiceScopeFactory>(),
+        environmentConfig,
+        provider.GetRequiredService<ILogger<ImapServerService>>(),
+        provider.GetRequiredService<IGatewayTrafficJournal>()));
+}
 builder.Services.AddSingleton<ISieveApplicationService, GatewaySieveApplicationService>();
 builder.Services.AddHostedService(provider => new SmtpServerService(
     provider.GetRequiredService<IServiceScopeFactory>(),

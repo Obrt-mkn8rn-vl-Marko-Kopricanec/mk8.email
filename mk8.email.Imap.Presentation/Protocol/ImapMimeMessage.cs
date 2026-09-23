@@ -1,7 +1,8 @@
 using System.Text;
 using MimeKit;
+using mk8.email.MailWire;
 
-namespace mk8.email.Application.Protocol;
+namespace mk8.email.Imap.Presentation.Protocol;
 
 internal enum ImapBinarySectionStatus
 {

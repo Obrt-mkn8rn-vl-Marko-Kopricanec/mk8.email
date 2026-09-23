@@ -21,6 +21,7 @@ using mk8.email.Contracts.Messaging;
 using mk8.email.Contracts.Imap;
 using mk8.email.Contracts.Pop3;
 using mk8.email.Gateway.Protocols.Pop3;
+using mk8.email.Imap.Presentation;
 using mk8.email.Messaging;
 using mk8.email.Smtp.Presentation;
 using mk8.email.Utils;
@@ -168,6 +169,48 @@ public sealed class TransportSecurityTests
         while (await connection.ReadLineAsync() != ".")
         {
         }
+    }
+
+    [TestMethod]
+    [Timeout(10_000)]
+    public async Task ImapGatewayPresentationJournalsWireBytesAndFailsClosed()
+    {
+        var port = ReservePort();
+        var journal = new RecordingSmtpJournal();
+        await using (var server = await ServerFixture.StartImapAsync(
+                         CreateEnvironment(imapPort: port), port, journal: journal))
+        {
+            await using var connection = await ProtocolConnection.ConnectAsync(port);
+            Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("* OK ", StringComparison.Ordinal));
+            await connection.WriteLineAsync("a1 CAPABILITY");
+            Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("* CAPABILITY ", StringComparison.Ordinal));
+            Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a1 OK ", StringComparison.Ordinal));
+            await connection.WriteLineAsync("a2 LOGOUT");
+            Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("* BYE ", StringComparison.Ordinal));
+            Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a2 OK ", StringComparison.Ordinal));
+        }
+
+        var sessionId = journal.Records.Single(record =>
+            record.Direction == GatewayTrafficDirections.Inbound
+            && Encoding.Latin1.GetString(record.Payload).Contains("a1 CAPABILITY\r\n", StringComparison.Ordinal))
+            .SessionId;
+        var records = journal.Records.Where(record => record.SessionId == sessionId).ToArray();
+        Assert.IsTrue(records.Any(record => record.Direction == GatewayTrafficDirections.Outbound
+            && Encoding.Latin1.GetString(record.Payload).Contains("* OK ", StringComparison.Ordinal)));
+        Assert.IsTrue(records.Any(record => record.Direction == GatewayTrafficDirections.Outbound
+            && Encoding.Latin1.GetString(record.Payload).Contains("* CAPABILITY ", StringComparison.Ordinal)));
+        Assert.IsTrue(records.All(record => record.Protocol == "imap"));
+        CollectionAssert.AreEqual(
+            Enumerable.Range(0, records.Length).Select(value => (long)value).ToArray(),
+            records.Select(record => record.Sequence).ToArray());
+
+        var rejectedPort = ReservePort();
+        await using var rejectedServer = await ServerFixture.StartImapAsync(
+            CreateEnvironment(imapPort: rejectedPort),
+            rejectedPort,
+            journal: new RecordingSmtpJournal { RejectWrites = true });
+        await using var rejectedConnection = await ProtocolConnection.ConnectAsync(rejectedPort);
+        await Assert.ThrowsAsync<EndOfStreamException>(() => rejectedConnection.ReadLineAsync());
     }
 
     [TestMethod]
@@ -4321,14 +4364,16 @@ public sealed class TransportSecurityTests
             EnvironmentConfig environment,
             int port,
             ILogger<ImapServerService>? logger = null,
-            IImapApplicationService? applicationService = null)
+            IImapApplicationService? applicationService = null,
+            IGatewayTrafficJournal? journal = null)
         {
             var (services, emailService, mailQueue) = CreateServices(
                 environment, imapApplicationService: applicationService);
             var hostedService = new ImapServerService(
                 services.GetRequiredService<IServiceScopeFactory>(),
                 environment,
-                logger ?? NullLogger<ImapServerService>.Instance);
+                logger ?? NullLogger<ImapServerService>.Instance,
+                journal);
             var fixture = new ServerFixture(services, hostedService, emailService, mailQueue);
             await fixture.StartAsync(port);
             return fixture;

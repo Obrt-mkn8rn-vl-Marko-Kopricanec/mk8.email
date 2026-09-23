@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Globalization;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -9,20 +10,20 @@ using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using mk8.email.Application.Protocol;
 using mk8.email.Configuration;
 using mk8.email.Contracts.Enums;
 using mk8.email.Contracts.Imap;
-using mk8.email.Infrastructure;
-using mk8.email.Infrastructure.Models;
+using mk8.email.Imap.Presentation.Protocol;
 using mk8.email.MailWire;
+using mk8.email.Messaging;
 
-namespace mk8.email.Application.Services;
+namespace mk8.email.Imap.Presentation;
 
 public partial class ImapServerService(
 IServiceScopeFactory scopeFactory,
 EnvironmentConfig env,
-ILogger<ImapServerService> logger) : BackgroundService
+ILogger<ImapServerService> logger,
+IGatewayTrafficJournal? journal = null) : BackgroundService
 {
     private const int MaximumCommandLineCharacters = 16 * 1024;
     private const int MaximumAuthenticationLineCharacters = 4096;
@@ -33,7 +34,7 @@ ILogger<ImapServerService> logger) : BackgroundService
     private const int MaximumSearchTokens = 4096;
     private const int MaximumMultiAppendMessages = 20;
     private const int MaximumCommandLiterals = 64;
-    private const int MaximumKeywordsPerMessage = ImapFlagMutation.MaximumKeywordsPerMessage;
+    private const int MaximumKeywordsPerMessage = ImapFlagSyntax.MaximumKeywordsPerMessage;
     private static readonly Encoding ProtocolEncoding = MailWireEncoding.Instance;
     private static readonly Encoding StrictUtf8 = new UTF8Encoding(
         encoderShouldEmitUTF8Identifier: false,
@@ -137,7 +138,7 @@ ILogger<ImapServerService> logger) : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var config = env.ToGlobalConfig();
+        var config = ImapListenerConfig.From(env);
 
         var tasks = new List<Task>();
 
@@ -156,7 +157,7 @@ ILogger<ImapServerService> logger) : BackgroundService
         await Task.WhenAll(tasks);
     }
 
-    private async Task ListenAsync(int port, ListenerMode mode, GlobalConfigDB config, CancellationToken ct)
+    private async Task ListenAsync(int port, ListenerMode mode, ImapListenerConfig config, CancellationToken ct)
     {
         var listener = new TcpListener(IPAddress.Any, port);
         listener.Start();
@@ -178,7 +179,7 @@ ILogger<ImapServerService> logger) : BackgroundService
         }
     }
 
-    private async Task HandleConnectionAsync(TcpClient client, ListenerMode mode, GlobalConfigDB config, CancellationToken ct)
+    private async Task HandleConnectionAsync(TcpClient client, ListenerMode mode, ImapListenerConfig config, CancellationToken ct)
     {
         var remoteEndpoint = client.Client.RemoteEndPoint;
         var remoteIp = (remoteEndpoint as IPEndPoint)?.Address ?? IPAddress.None;
@@ -202,6 +203,19 @@ ILogger<ImapServerService> logger) : BackgroundService
                 timeout.CancelAfter(TimeSpan.FromSeconds(config.ConnectionTimeoutSeconds));
 
                 Stream stream = client.GetStream();
+                if (journal is not null)
+                {
+                    var traffic = new GatewayTrafficSession(
+                        journal,
+                        "imap",
+                        new Dictionary<string, string>
+                        {
+                            ["remoteEndpoint"] = remoteLabel,
+                            ["listenerPort"] = ((client.Client.LocalEndPoint as IPEndPoint)?.Port ?? 0)
+                                .ToString(CultureInfo.InvariantCulture),
+                        });
+                    stream = new GatewayTrafficStream(stream, traffic, leaveInnerOpen: false);
+                }
                 SslStream? sslStream = null;
 
                 if (mode == ListenerMode.ImplicitTls)
@@ -273,7 +287,7 @@ ILogger<ImapServerService> logger) : BackgroundService
     }
 
     private async Task<SessionUpgrade> RunImapSessionAsync(
-        Stream stream, GlobalConfigDB config, ImapSession session, CancellationTokenSource timeout, bool sendGreeting = true)
+        Stream stream, ImapListenerConfig config, ImapSession session, CancellationTokenSource timeout, bool sendGreeting = true)
     {
         var ct = timeout.Token;
 
@@ -865,7 +879,7 @@ ILogger<ImapServerService> logger) : BackgroundService
     private async Task HandleCapabilityAsync(
         StreamWriter writer,
         string tag,
-        GlobalConfigDB config,
+        ImapListenerConfig config,
         ImapSession session)
     {
         var caps =
@@ -2719,7 +2733,7 @@ ILogger<ImapServerService> logger) : BackgroundService
                 or '_'
                 or '-');
 
-    private static X509Certificate2 LoadCertificate(GlobalConfigDB config)
+    private static X509Certificate2 LoadCertificate(ImapListenerConfig config)
     {
         if (config.TlsCertificateKeyPath is not null)
             return X509Certificate2.CreateFromPemFile(config.TlsCertificatePath!, config.TlsCertificateKeyPath);
@@ -3384,10 +3398,10 @@ ILogger<ImapServerService> logger) : BackgroundService
         action is "FLAGS" or "FLAGS.SILENT" or "+FLAGS" or "+FLAGS.SILENT" or "-FLAGS" or "-FLAGS.SILENT";
 
     private static bool TryValidateFlagList(IEnumerable<string> flags, out string failure)
-        => ImapFlagMutation.TryValidate(flags as IReadOnlyList<string> ?? flags.ToArray(), out failure);
+        => ImapFlagSyntax.TryValidate(flags as IReadOnlyList<string> ?? flags.ToArray(), out failure);
 
     private static bool IsValidImapKeyword(string keyword)
-        => ImapFlagMutation.IsValidKeyword(keyword);
+        => ImapFlagSyntax.IsValidKeyword(keyword);
 
     private static bool TryParseMessageSet(
         string value,

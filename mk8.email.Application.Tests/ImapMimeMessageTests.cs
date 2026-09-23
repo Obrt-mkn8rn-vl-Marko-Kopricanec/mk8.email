@@ -1,4 +1,4 @@
-using mk8.email.Application.Protocol;
+using mk8.email.Imap.Presentation.Protocol;
 
 namespace mk8.email.Application.Tests;
 

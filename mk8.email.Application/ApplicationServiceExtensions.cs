@@ -60,11 +60,4 @@ public static class ApplicationServiceExtensions
         return services;
     }
 
-    public static IServiceCollection AddMailProtocolServers(this IServiceCollection services)
-    {
-        services.AddMailApplicationWorker();
-        services.AddHostedService<ImapServerService>();
-
-        return services;
-    }
 }

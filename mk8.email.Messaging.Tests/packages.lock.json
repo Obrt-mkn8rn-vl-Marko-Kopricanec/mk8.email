@@ -636,6 +636,7 @@
           "mk8.email.Configuration": "[1.0.0, )",
           "mk8.email.Contracts": "[1.0.0, )",
           "mk8.email.Hosting": "[1.0.0, )",
+          "mk8.email.Imap.Presentation": "[1.0.0, )",
           "mk8.email.MailWire": "[1.0.0, )",
           "mk8.email.Messaging": "[1.0.0, )",
           "mk8.email.Smtp.Presentation": "[1.0.0, )"
@@ -650,6 +651,19 @@
           "mk8.email.Contracts": "[1.0.0, )",
           "mk8.email.Messaging": "[1.0.0, )",
           "mk8.email.Storage": "[1.0.0, )"
+        }
+      },
+      "mk8.email.imap.presentation": {
+        "type": "Project",
+        "dependencies": {
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "[10.0.4, )",
+          "Microsoft.Extensions.Hosting.Abstractions": "[10.0.4, )",
+          "Microsoft.Extensions.Logging.Abstractions": "[10.0.4, )",
+          "MimeKit": "[4.17.0, )",
+          "mk8.email.Configuration": "[1.0.0, )",
+          "mk8.email.Contracts": "[1.0.0, )",
+          "mk8.email.MailWire": "[1.0.0, )",
+          "mk8.email.Messaging": "[1.0.0, )"
         }
       },
       "mk8.email.infrastructure": {

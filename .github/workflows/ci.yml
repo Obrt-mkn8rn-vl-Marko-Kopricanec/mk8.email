@@ -107,7 +107,7 @@ jobs:
             python3 -m py_compile deploy/tests/dashboard_smoke.py deploy/tests/distributed_config_smoke.py deploy/tests/mail_smoke.py deploy/tests/multi_domain_smoke.py
           python3 deploy/tests/distributed_config_smoke.py
           sh deploy/tests/upgrade_distributed_role_smoke "$PWD/deploy/scripts/upgrade-distributed-role"
-          systemd-analyze verify deploy/systemd/mk8email-wake.service deploy/systemd/mk8email-worker.path
+          systemd-analyze verify deploy/systemd/mk8email-wake.service deploy/systemd/mk8email-worker.path deploy/systemd/mk8email-worker-drain.service
 
       - name: Validate deployment profile tooling
         shell: pwsh

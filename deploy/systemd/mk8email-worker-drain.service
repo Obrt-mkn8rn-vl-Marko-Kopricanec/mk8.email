@@ -1,0 +1,57 @@
+[Unit]
+Description=mk8.email one-shot Application Worker drain
+Documentation=https://github.com/mkn8rn/mk8.email
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/etc/mk8email/distributed-ready
+
+[Service]
+Type=oneshot
+User=mk8email
+Group=mk8email
+WorkingDirectory=/opt/mk8email/current/worker
+Environment=DOTNET_ENVIRONMENT=Production
+Environment=DOTNET_EnableDiagnostics=0
+Environment=MK8EMAIL_CONFIG_FILE=/etc/mk8email/mk8email.worker.config.json
+# Remove the consumed signal before Application starts. A later signal remains
+# in the directory and the path unit rechecks it after this drain exits.
+ExecStartPre=+/usr/bin/rm -f -- /run/mk8email-wake/trigger
+ExecStart=/usr/bin/dotnet /opt/mk8email/current/worker/mk8.email.Application.Worker.dll --drain
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=infinity
+TimeoutStopSec=60s
+KillSignal=SIGINT
+UMask=0077
+LimitNOFILE=8192
+TasksMax=512
+MemoryMax=1536M
+RuntimeDirectory=mk8email-worker
+RuntimeDirectoryMode=0750
+StateDirectory=mk8email
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectProc=invisible
+ProtectSystem=strict
+ProcSubset=pid
+ReadOnlyPaths=/etc/mk8email /opt/mk8email/current
+ReadWritePaths=/run/mk8email-wake
+NoExecPaths=/var/lib/mk8email /tmp
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+CapabilityBoundingSet=

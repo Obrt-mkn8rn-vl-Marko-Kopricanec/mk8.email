@@ -96,6 +96,8 @@ tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
     | grep -Fx 'etc/systemd/system/mk8email-worker.service' >/dev/null
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
+    | grep -Fx 'etc/systemd/system/mk8email-worker-drain.service' >/dev/null
+tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
     | grep -Fx 'etc/systemd/system/mk8email-wake.service' >/dev/null
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
     | grep -Fx 'etc/systemd/system/mk8email-worker.path' >/dev/null

@@ -21,6 +21,7 @@ case "$2" in
         wake_executable=/opt/mk8email/current/wake/mk8.email.Wake.dll
         wake_unit_source=$asset_root/deploy/systemd/mk8email-wake.service
         wake_path_source=$asset_root/deploy/systemd/mk8email-worker.path
+        drain_unit_source=$asset_root/deploy/systemd/mk8email-worker-drain.service
         wake_account_source=$asset_root/deploy/scripts/ensure-wake-service-account
         ;;
     *)
@@ -60,7 +61,8 @@ if systemctl is-active --quiet "$unit" \
     fail "Deactivate the selected role before staging a replacement unit."
 fi
 if [ "$2" = worker ]; then
-    for wake_unit in mk8email-wake.service mk8email-worker.path; do
+    for wake_unit in mk8email-wake.service mk8email-worker.path \
+        mk8email-worker-drain.service; do
         if systemctl is-active --quiet "$wake_unit" \
             || [ "$(systemctl is-enabled "$wake_unit" 2>/dev/null || true)" = enabled ]; then
             fail "Deactivate the Worker wake path before replacing its units."
@@ -90,12 +92,15 @@ systemd-analyze verify "$unit_source" \
 if [ "$2" = worker ]; then
     validate_asset "$wake_unit_source"
     validate_asset "$wake_path_source"
+    validate_asset "$drain_unit_source"
     validate_asset "$wake_account_source"
     sh -n "$wake_account_source" || fail "The Wake account helper is invalid shell."
-    if grep -Eq '@@[A-Za-z0-9_]+@@' "$wake_unit_source" "$wake_path_source"; then
+    if grep -Eq '@@[A-Za-z0-9_]+@@' \
+        "$wake_unit_source" "$wake_path_source" "$drain_unit_source"; then
         fail "A Wake unit still contains an unresolved deployment token."
     fi
     systemd-analyze verify "$wake_unit_source" "$wake_path_source" \
+        "$drain_unit_source" \
         || fail "The Wake units did not pass systemd verification."
 fi
 if [ -L /etc/mk8email ] \
@@ -110,6 +115,7 @@ if [ "$2" = worker ]; then
     validate_target /usr/local/sbin/ensure-wake-service-account
     validate_target /etc/systemd/system/mk8email-wake.service
     validate_target /etc/systemd/system/mk8email-worker.path
+    validate_target /etc/systemd/system/mk8email-worker-drain.service
     sh "$wake_account_source" || fail "The Wake service identity is unsafe."
 fi
 
@@ -129,11 +135,14 @@ if [ "$2" = worker ]; then
         /etc/systemd/system/mk8email-wake.service
     install -o root -g root -m 0644 "$wake_path_source" \
         /etc/systemd/system/mk8email-worker.path
+    install -o root -g root -m 0644 "$drain_unit_source" \
+        /etc/systemd/system/mk8email-worker-drain.service
 fi
 systemctl daemon-reload
 systemd-analyze verify "$unit"
 if [ "$2" = worker ]; then
-    systemd-analyze verify mk8email-wake.service mk8email-worker.path
+    systemd-analyze verify mk8email-wake.service mk8email-worker.path \
+        mk8email-worker-drain.service
 fi
 
 printf 'The distributed %s role is installed but not activated.\n' "$2"

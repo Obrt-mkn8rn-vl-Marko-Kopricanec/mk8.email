@@ -7,7 +7,7 @@ ConditionPathExists=/etc/mk8email/distributed-ready
 
 [Path]
 DirectoryNotEmpty=/run/mk8email-wake
-Unit=mk8email-worker.service
+Unit=mk8email-worker-drain.service
 
 [Install]
 WantedBy=multi-user.target

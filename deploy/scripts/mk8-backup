@@ -132,6 +132,7 @@ tar --create --gzip --file="$stage/configuration.tar.gz" --directory=/ \
     etc/systemd/system/mk8email-gateway.service \
     etc/systemd/system/mk8email.service \
     etc/systemd/system/mk8email-worker.service \
+    etc/systemd/system/mk8email-worker-drain.service \
     etc/systemd/system/mk8email-wake.service \
     etc/systemd/system/mk8email-worker.path \
     etc/systemd/system/nginx.service.d \

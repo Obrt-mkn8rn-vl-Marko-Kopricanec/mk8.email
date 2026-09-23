@@ -1788,6 +1788,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         var afterUid = 0;
         int? snapshotMaxUid = null;
         int? snapshotMaximumIdentifier = null;
+        int? snapshotMessageCount = null;
         while (true)
         {
             ImapFetchPageResult page;
@@ -1801,9 +1802,10 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                     afterUid,
                     snapshotMaxUid,
                     snapshotMaximumIdentifier,
+                    snapshotMessageCount,
                     includeStoredContent), ct);
                 if (!IsValidFetchPage(page, afterUid, snapshotMaxUid,
-                    snapshotMaximumIdentifier, includeStoredContent))
+                    snapshotMaximumIdentifier, snapshotMessageCount, includeStoredContent))
                 {
                     throw new InvalidOperationException("The IMAP FETCH page is invalid.");
                 }
@@ -1893,6 +1895,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             afterUid = page.NextAfterUid;
             snapshotMaxUid = page.SnapshotMaxUid;
             snapshotMaximumIdentifier = page.SnapshotMaximumIdentifier;
+            snapshotMessageCount = page.SnapshotMessageCount;
         }
 
         var commandName = useUid ? "UID FETCH" : "FETCH";
@@ -1904,6 +1907,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         int afterUid,
         int? snapshotMaxUid,
         int? snapshotMaximumIdentifier,
+        int? snapshotMessageCount,
         bool includeStoredContent)
     {
         if (page is null || page.Messages is null)
@@ -1912,18 +1916,23 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         {
             return page.SnapshotMaxUid == 0
                 && page.SnapshotMaximumIdentifier == 0
+                && page.SnapshotMessageCount == 0
                 && page.NextAfterUid == afterUid
                 && !page.HasMore
                 && page.Messages.Count == 0;
         }
         if (page.SnapshotMaxUid < 0
             || page.SnapshotMaximumIdentifier < 0
+            || page.SnapshotMessageCount < 0
+            || page.SnapshotMessageCount > page.SnapshotMaxUid
             || page.NextAfterUid < afterUid
             || page.NextAfterUid > page.SnapshotMaxUid
             || page.HasMore && page.NextAfterUid == afterUid
             || snapshotMaxUid is not null && page.SnapshotMaxUid != snapshotMaxUid
             || snapshotMaximumIdentifier is not null
                 && page.SnapshotMaximumIdentifier != snapshotMaximumIdentifier
+            || snapshotMessageCount is not null
+                && page.SnapshotMessageCount != snapshotMessageCount
             || page.Messages.Count > (includeStoredContent ? 8 : 128))
         {
             return false;
@@ -1938,6 +1947,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                 || message.Uid <= previousUid
                 || message.Uid > page.NextAfterUid
                 || message.SequenceNumber <= previousSequence
+                || message.SequenceNumber > page.SnapshotMessageCount
                 || message.ModSeq < 0
                 || message.SizeBytes < 0
                 || message.Sender is null

@@ -246,7 +246,7 @@ public sealed class ImapSearchPostgresTests
             var fetchRequest = new ImapFetchPageRequest(
                 ownerId, folderId, true,
                 new ImapMessageSelection([new ImapMessageRange(1, null)], null),
-                0, null, null, false);
+                0, null, null, null, false);
             Assert.IsFalse((await application.GetFetchPageAsync(fetchRequest with
             {
                 UserId = otherId,
@@ -283,6 +283,7 @@ public sealed class ImapSearchPostgresTests
                     AfterUid = 4,
                     SnapshotMaxUid = 3,
                     SnapshotMaximumIdentifier = 3,
+                    SnapshotMessageCount = 3,
                 }));
         }
         await using (var database = new EmailDbContext(options))
@@ -342,7 +343,7 @@ public sealed class ImapSearchPostgresTests
             var request = new ImapFetchPageRequest(
                 ownerId, folderId, true,
                 new ImapMessageSelection([new ImapMessageRange(1, null)], null),
-                0, null, null, false);
+                0, null, null, null, false);
             var fetchedUids = new List<int>();
             var pageCount = 0;
             while (true)
@@ -352,6 +353,7 @@ public sealed class ImapSearchPostgresTests
                 fetchedUids.AddRange(page.Messages.Select(message => message.Uid));
                 Assert.AreEqual(260, page.SnapshotMaxUid);
                 Assert.AreEqual(260, page.SnapshotMaximumIdentifier);
+                Assert.AreEqual(260, page.SnapshotMessageCount);
                 if (!page.HasMore)
                     break;
                 request = request with
@@ -359,6 +361,7 @@ public sealed class ImapSearchPostgresTests
                     AfterUid = page.NextAfterUid,
                     SnapshotMaxUid = page.SnapshotMaxUid,
                     SnapshotMaximumIdentifier = page.SnapshotMaximumIdentifier,
+                    SnapshotMessageCount = page.SnapshotMessageCount,
                 };
             }
             Assert.AreEqual(3, pageCount);
@@ -371,6 +374,7 @@ public sealed class ImapSearchPostgresTests
                 AfterUid = 0,
                 SnapshotMaxUid = null,
                 SnapshotMaximumIdentifier = null,
+                SnapshotMessageCount = null,
             };
             var emptyScan = await application.GetFetchPageAsync(sparseRequest);
             Assert.IsEmpty(emptyScan.Messages);
@@ -381,10 +385,34 @@ public sealed class ImapSearchPostgresTests
                 AfterUid = emptyScan.NextAfterUid,
                 SnapshotMaxUid = emptyScan.SnapshotMaxUid,
                 SnapshotMaximumIdentifier = emptyScan.SnapshotMaximumIdentifier,
+                SnapshotMessageCount = emptyScan.SnapshotMessageCount,
             });
             Assert.IsFalse(sparsePage.HasMore);
             Assert.HasCount(1, sparsePage.Messages);
             Assert.AreEqual(260, sparsePage.Messages[0].Uid);
+
+            var beforeExpunge = await application.GetFetchPageAsync(sparseRequest with
+            {
+                Selection = new ImapMessageSelection(
+                    [new ImapMessageRange(1, null)], null),
+            });
+            Assert.IsTrue(beforeExpunge.HasMore);
+            await using (var concurrent = new EmailDbContext(options))
+            {
+                Assert.AreEqual(1, await concurrent.Emails
+                    .Where(email => email.FolderId == folderId && email.Uid == 1)
+                    .ExecuteDeleteAsync());
+            }
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                application.GetFetchPageAsync(sparseRequest with
+                {
+                    Selection = new ImapMessageSelection(
+                        [new ImapMessageRange(1, null)], null),
+                    AfterUid = beforeExpunge.NextAfterUid,
+                    SnapshotMaxUid = beforeExpunge.SnapshotMaxUid,
+                    SnapshotMaximumIdentifier = beforeExpunge.SnapshotMaximumIdentifier,
+                    SnapshotMessageCount = beforeExpunge.SnapshotMessageCount,
+                }));
         }
         Assert.AreEqual(260, objects.ObjectCount);
     }

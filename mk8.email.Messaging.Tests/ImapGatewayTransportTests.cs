@@ -140,7 +140,7 @@ public sealed class ImapGatewayTransportTests
             var fetchPage = await client.GetFetchPageAsync(new ImapFetchPageRequest(
                 application.UserId, Guid.CreateVersion7(), true,
                 new ImapMessageSelection([new ImapMessageRange(1, null)], null),
-                0, null, null, true), timeout.Token);
+                0, null, null, null, true), timeout.Token);
             Assert.AreEqual(application.UserId, password.UserId);
             Assert.AreEqual(application.UserId, oauth.UserId);
             Assert.AreEqual("imap-secret", application.Password);
@@ -497,7 +497,7 @@ public sealed class ImapGatewayTransportTests
             LastFetchRequest = request;
             var raw = Encoding.UTF8.GetBytes(
                 "Subject: transport fetch\r\n\r\n" + new string('y', 300 * 1024));
-            return Task.FromResult(new ImapFetchPageResult(true, 7, 7, 7, false,
+            return Task.FromResult(new ImapFetchPageResult(true, 7, 7, 7, 7, false,
                 [new ImapFetchMessage(Guid.CreateVersion7(), 2, 7, 5,
                     false, false, false, false, false, [], DateTime.UtcNow,
                     raw.Length, "sender@example.test", "user@example.test", null,

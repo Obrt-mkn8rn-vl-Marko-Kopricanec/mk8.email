@@ -454,12 +454,14 @@ public sealed record ImapFetchPageRequest(
     int AfterUid,
     int? SnapshotMaxUid,
     int? SnapshotMaximumIdentifier,
+    int? SnapshotMessageCount,
     bool IncludeStoredContent);
 
 public sealed record ImapFetchPageResult(
     bool FolderFound,
     int SnapshotMaxUid,
     int SnapshotMaximumIdentifier,
+    int SnapshotMessageCount,
     int NextAfterUid,
     bool HasMore,
     List<ImapFetchMessage> Messages);

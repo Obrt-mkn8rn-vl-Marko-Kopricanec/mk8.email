@@ -3096,6 +3096,40 @@ public sealed class TransportSecurityTests
     }
 
     [TestMethod]
+    [Timeout(10_000)]
+    public async Task ImapFetchRejectsChangedMailboxSnapshotBeforeSecondPage()
+    {
+        var port = ReservePort();
+        var application = new UnavailableImapMailboxApplicationService(
+            listingUnavailable: false,
+            selectionAvailable: true,
+            fetchPaged: true,
+            fetchDrift: true)
+        {
+            SelectedFolderId = Guid.CreateVersion7(),
+        };
+        await using var server = await ServerFixture.StartImapAsync(
+            CreateEnvironment(imapPort: port), port, applicationService: application);
+        await using var connection = await ProtocolConnection.ConnectAsync(port);
+
+        await connection.ReadLineAsync();
+        await connection.WriteLineAsync("a1 STARTTLS");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a1 OK", StringComparison.Ordinal));
+        await connection.UpgradeToTlsAsync("email.mk8n.com");
+        await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a2 OK", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a3 SELECT INBOX");
+        var selected = await ReadUntilTaggedResponseAsync(connection, "a3");
+        Assert.IsTrue(selected[^1].StartsWith("a3 OK", StringComparison.Ordinal));
+
+        await connection.WriteLineAsync("a4 UID FETCH 1:* (UID FLAGS)");
+        Assert.AreEqual("* 1 FETCH (FLAGS () UID 1)", await connection.ReadLineAsync());
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith(
+            "a4 NO [UNAVAILABLE]", StringComparison.Ordinal));
+        CollectionAssert.AreEqual(new[] { 0, 1 }, application.FetchCursors);
+    }
+
+    [TestMethod]
     [Timeout(15_000)]
     public async Task ImapBoundsConcurrentMessageWrites()
     {
@@ -4165,7 +4199,8 @@ public sealed class TransportSecurityTests
         bool threadMalformed = false,
         bool seenMalformed = false,
         bool fetchMalformed = false,
-        bool fetchPaged = false) : IImapApplicationService
+        bool fetchPaged = false,
+        bool fetchDrift = false) : IImapApplicationService
     {
         public Guid? SelectedFolderId { get; set; }
         public List<int> FetchCursors { get; } = [];
@@ -4308,7 +4343,7 @@ public sealed class TransportSecurityTests
         {
             if (fetchMalformed)
                 return Task.FromResult(new ImapFetchPageResult(
-                    true, 1, 1, 0, true, []));
+                    true, 1, 1, 1, 0, true, []));
             if (SelectedFolderId is null)
                 return Task.FromException<ImapFetchPageResult>(
                     new IOException("Worker unavailable"));
@@ -4316,7 +4351,8 @@ public sealed class TransportSecurityTests
             {
                 FetchCursors.Add(request.AfterUid);
                 var uid = request.AfterUid + 1;
-                return Task.FromResult(new ImapFetchPageResult(true, 2, 2, uid,
+                return Task.FromResult(new ImapFetchPageResult(
+                    true, 2, 2, fetchDrift && uid == 2 ? 1 : 2, uid,
                     uid == 1,
                     [new ImapFetchMessage(Guid.CreateVersion7(), uid, uid, uid,
                         false, false, false, false, false, [], DateTime.UtcNow,
@@ -4325,7 +4361,7 @@ public sealed class TransportSecurityTests
             }
 
             var raw = "Subject: test\r\n\r\nbody\r\n"u8.ToArray();
-            return Task.FromResult(new ImapFetchPageResult(true, 1, 1, 1, false,
+            return Task.FromResult(new ImapFetchPageResult(true, 1, 1, 1, 1, false,
                 [new ImapFetchMessage(Guid.CreateVersion7(), 1, 1, 1,
                     false, false, false, false, false, [],
                     DateTime.UtcNow, raw.Length, "sender@example.test",

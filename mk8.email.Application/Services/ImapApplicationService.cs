@@ -1501,10 +1501,16 @@ internal sealed class ImapApplicationService(
             || request.AfterUid < 0
             || (request.SnapshotMaxUid is null)
                 != (request.SnapshotMaximumIdentifier is null)
+            || (request.SnapshotMaxUid is null)
+                != (request.SnapshotMessageCount is null)
             || request.SnapshotMaxUid is < 0
             || request.SnapshotMaximumIdentifier is < 0
+            || request.SnapshotMessageCount is < 0
             || request.SnapshotMaxUid is { } snapshotMaxUid
-                && request.AfterUid > snapshotMaxUid)
+                && request.AfterUid > snapshotMaxUid
+            || request.SnapshotMaxUid is { } maxUidValue
+                && request.SnapshotMaximumIdentifier
+                    != (request.UseUid ? maxUidValue : request.SnapshotMessageCount))
         {
             throw new ArgumentException("The IMAP FETCH page request is invalid.", nameof(request));
         }
@@ -1519,7 +1525,7 @@ internal sealed class ImapApplicationService(
                 && folder.Inbox.OwnerId == request.UserId,
                 cancellationToken);
         if (!folderExists)
-            return new ImapFetchPageResult(false, 0, 0, request.AfterUid, false, []);
+            return new ImapFetchPageResult(false, 0, 0, 0, request.AfterUid, false, []);
 
         var query = database.Emails
             .AsNoTracking()
@@ -1527,8 +1533,16 @@ internal sealed class ImapApplicationService(
         var maxUid = request.SnapshotMaxUid
             ?? await query.MaxAsync(email => (int?)email.Uid, cancellationToken)
             ?? 0;
+        var messageCount = await query.CountAsync(
+            email => email.Uid <= maxUid, cancellationToken);
+        if (request.SnapshotMessageCount is { } snapshotCount
+            && messageCount != snapshotCount)
+        {
+            throw new InvalidOperationException(
+                "The IMAP FETCH mailbox changed during paged enumeration.");
+        }
         var maximumIdentifier = request.SnapshotMaximumIdentifier
-            ?? (request.UseUid ? maxUid : await query.CountAsync(cancellationToken));
+            ?? (request.UseUid ? maxUid : messageCount);
         var sequenceBefore = request.AfterUid == 0
             ? 0
             : await query.CountAsync(email => email.Uid <= request.AfterUid,
@@ -1663,6 +1677,7 @@ internal sealed class ImapApplicationService(
             true,
             maxUid,
             maximumIdentifier,
+            messageCount,
             nextAfterUid,
             processed < candidates.Count,
             selected);

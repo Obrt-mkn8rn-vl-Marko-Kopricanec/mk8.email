@@ -1,10 +1,10 @@
 using mk8.email.Contracts.Messaging;
 
-namespace mk8.email.Smtp.Presentation;
+namespace mk8.email.Messaging;
 
-internal sealed class SmtpTrafficStream(
+public sealed class GatewayTrafficStream(
     Stream inner,
-    SmtpTrafficSession traffic,
+    GatewayTrafficSession traffic,
     bool leaveInnerOpen) : Stream
 {
     private int _disposed;

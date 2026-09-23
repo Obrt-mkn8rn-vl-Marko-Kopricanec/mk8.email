@@ -2,6 +2,7 @@ using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Text;
+using System.Globalization;
 using Microsoft.Extensions.Logging;
 using mk8.email.Contracts.Mail;
 using mk8.email.Messaging;
@@ -215,12 +216,20 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRel
         Guid? applicationRequestId,
         CancellationToken cancellationToken)
     {
-        SmtpTrafficSession? traffic = null;
+        GatewayTrafficSession? traffic = null;
         if (applicationRequestId is { } requestId)
         {
             if (_traffic is null)
                 throw new InvalidOperationException("Gateway SMTP delivery requires a traffic journal.");
-            traffic = new SmtpTrafficSession(_traffic, endpoint, requestId);
+            traffic = new GatewayTrafficSession(
+                _traffic,
+                SmtpPresentationOperations.Protocol,
+                new Dictionary<string, string>
+                {
+                    ["remoteHost"] = endpoint.Host,
+                    ["remotePort"] = endpoint.Port.ToString(CultureInfo.InvariantCulture),
+                },
+                requestId);
         }
 
         try
@@ -494,7 +503,7 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRel
     {
         private readonly TcpClient _client;
         private readonly RemoteCertificateValidationCallback? _certificateValidationCallback;
-        private readonly SmtpTrafficSession? _traffic;
+        private readonly GatewayTrafficSession? _traffic;
         private readonly NetworkStream _rawStream;
         private Stream _stream;
         private StreamReader _streamReader;
@@ -504,7 +513,7 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRel
         private SmtpConnection(
             TcpClient client,
             RemoteCertificateValidationCallback? certificateValidationCallback,
-            SmtpTrafficSession? traffic)
+            GatewayTrafficSession? traffic)
         {
             _client = client;
             _certificateValidationCallback = certificateValidationCallback;
@@ -512,7 +521,7 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRel
             _rawStream = client.GetStream();
             _stream = traffic is null
                 ? _rawStream
-                : new SmtpTrafficStream(_rawStream, traffic, leaveInnerOpen: true);
+                : new GatewayTrafficStream(_rawStream, traffic, leaveInnerOpen: true);
             _streamReader = CreateStreamReader(_stream);
             _lineReader = new BoundedLineReader(_streamReader);
             _writer = CreateWriter(_stream);
@@ -521,7 +530,7 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRel
         public static async Task<SmtpConnection> ConnectAsync(
             MailExchangeEndpoint endpoint,
             RemoteCertificateValidationCallback? certificateValidationCallback,
-            SmtpTrafficSession? traffic,
+            GatewayTrafficSession? traffic,
             CancellationToken cancellationToken)
         {
             var client = new TcpClient();
@@ -624,7 +633,7 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRel
 
             _stream = _traffic is null
                 ? tlsStream
-                : new SmtpTrafficStream(tlsStream, _traffic, leaveInnerOpen: false);
+                : new GatewayTrafficStream(tlsStream, _traffic, leaveInnerOpen: false);
             _streamReader = CreateStreamReader(_stream);
             _lineReader = new BoundedLineReader(_streamReader);
             _writer = CreateWriter(_stream);

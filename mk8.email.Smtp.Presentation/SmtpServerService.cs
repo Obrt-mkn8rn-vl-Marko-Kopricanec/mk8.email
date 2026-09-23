@@ -165,11 +165,16 @@ public class SmtpServerService(
                 Stream stream = client.GetStream();
                 if (journal is not null)
                 {
-                    var traffic = new SmtpTrafficSession(
+                    var traffic = new GatewayTrafficSession(
                         journal,
-                        remoteLabel,
-                        (client.Client.LocalEndPoint as IPEndPoint)?.Port ?? 0);
-                    stream = new SmtpTrafficStream(stream, traffic, leaveInnerOpen: false);
+                        SmtpPresentationOperations.Protocol,
+                        new Dictionary<string, string>
+                        {
+                            ["remoteEndpoint"] = remoteLabel,
+                            ["listenerPort"] = ((client.Client.LocalEndPoint as IPEndPoint)?.Port ?? 0)
+                                .ToString(CultureInfo.InvariantCulture),
+                        });
+                    stream = new GatewayTrafficStream(stream, traffic, leaveInnerOpen: false);
                 }
 
                 if (mode == ListenerMode.ImplicitTls)

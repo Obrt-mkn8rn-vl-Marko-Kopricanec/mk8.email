@@ -9,6 +9,7 @@ mk8.email is split into a continuously available presentation plane and an indep
 - **Contracts** contains transport-neutral request, response, journal, storage, and outbound-mail operation contracts. It has no ASP.NET Core, Entity Framework Core, Npgsql, or Azure SDK dependency.
 - **MailWire** contains bounded line reading, OAuth SASL parsing, connection limiting, and SMTP address, DSN, and wire-encoding helpers without application or database dependencies.
 - **Messaging** implements the encrypted PostgreSQL control plane. Requests survive an absent worker, are claimed with leases and `FOR UPDATE SKIP LOCKED`, and use PostgreSQL notifications only as wake-up hints; durable state remains authoritative.
+- **Messaging** also exposes a protocol-neutral, fail-closed byte-stream recorder for Gateway-owned raw listeners. Each read and write is assigned a durable traffic-session sequence before the protocol handler proceeds.
 - **Storage** implements the large-object data plane through the Azure Blob Storage protocol. The adapter accepts an injected `BlobServiceClient`, so production can target Azure or mk8.sava's Azure Blob-compatible endpoint without leaking an Azure SDK dependency into Application logic.
 
 Gateway and Application Worker may use different hosts. They share only the PostgreSQL messaging database, the configured Azure Blob-compatible object store, compatible encryption keys, and the contracts assembly.

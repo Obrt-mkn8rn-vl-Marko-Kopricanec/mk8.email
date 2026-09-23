@@ -407,6 +407,21 @@ internal sealed class ImapApplicationService(
         ArgumentNullException.ThrowIfNull(request);
         if (request.UserId == Guid.Empty || request.FolderId == Guid.Empty)
             throw new ArgumentException("The IMAP expunge request is invalid.", nameof(request));
+        var selection = request.UidSelection;
+        if (selection is not null
+            && (selection.Ranges is null) == (selection.SavedSearchUids is null))
+        {
+            throw new ArgumentException("The IMAP UID selection is invalid.", nameof(request));
+        }
+        if ((selection?.Ranges is { } requestedRanges
+            && (requestedRanges.Count == 0
+                || requestedRanges.Any(range => range is null
+                    || range.Start is < 1 || range.End is < 1)))
+            || (selection?.SavedSearchUids is { } savedUids
+                && savedUids.Any(uid => uid < 1)))
+        {
+            throw new ArgumentException("The IMAP UID selection is invalid.", nameof(request));
+        }
 
         await using var transaction = database.Database.IsRelational()
             ? await database.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken)
@@ -434,6 +449,12 @@ internal sealed class ImapApplicationService(
                 RawMessageObjectEntityTag = email.RawMessageObjectEntityTag,
             })
             .ToListAsync(cancellationToken);
+        var maximumUid = messages.Count > 0 ? messages[^1].Uid : 0;
+        var resolvedRanges = selection?.Ranges is { } ranges
+            ? ResolveUidRanges(ranges, maximumUid)
+            : null;
+        var savedSearchUids = selection?.SavedSearchUids?.ToHashSet();
+        var rangeIndex = 0;
         var expunged = new List<ImapExpungedMessage>();
         var marker = effects.Mark();
         var commitAttempted = false;
@@ -444,6 +465,21 @@ internal sealed class ImapApplicationService(
                 var message = messages[index];
                 if (!message.IsDeleted)
                     continue;
+                if (savedSearchUids is not null && !savedSearchUids.Contains(message.Uid))
+                    continue;
+                if (resolvedRanges is not null)
+                {
+                    while (rangeIndex < resolvedRanges.Count
+                        && resolvedRanges[rangeIndex].End < message.Uid)
+                    {
+                        rangeIndex++;
+                    }
+                    if (rangeIndex == resolvedRanges.Count
+                        || resolvedRanges[rangeIndex].Start > message.Uid)
+                    {
+                        continue;
+                    }
+                }
 
                 folder.HighestModSeq++;
                 database.ExpungedUids.Add(new ExpungedUidDB
@@ -489,6 +525,34 @@ internal sealed class ImapApplicationService(
         }
 
         return new ImapExpungeResult(true, expunged);
+    }
+
+    private static List<(int Start, int End)> ResolveUidRanges(
+        List<ImapUidRange> ranges, int maximumUid)
+    {
+        var sorted = ranges
+            .Select(range =>
+            {
+                var start = range.Start ?? maximumUid;
+                var end = range.End ?? maximumUid;
+                return (Start: Math.Min(start, end), End: Math.Max(start, end));
+            })
+            .OrderBy(range => range.Start)
+            .ThenBy(range => range.End)
+            .ToList();
+        var merged = new List<(int Start, int End)>();
+        foreach (var range in sorted)
+        {
+            if (merged.Count == 0 || range.Start > (long)merged[^1].End + 1)
+            {
+                merged.Add(range);
+            }
+            else
+            {
+                merged[^1] = (merged[^1].Start, Math.Max(merged[^1].End, range.End));
+            }
+        }
+        return merged;
     }
 
     public async Task<ImapQuotaResult> GetQuotaAsync(

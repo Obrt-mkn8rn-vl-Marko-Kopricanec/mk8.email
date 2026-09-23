@@ -89,7 +89,7 @@ public sealed class ImapExpungePostgresTests
                     Id = Guid.CreateVersion7(),
                     Folder = folder,
                     Uid = uid,
-                    IsDeleted = uid is 2 or 4,
+                    IsDeleted = uid is 2 or 3 or 4,
                     Sender = "sender@example.test",
                     Recipient = "owner@example.test",
                     Subject = $"Message {uid}",
@@ -115,6 +115,11 @@ public sealed class ImapExpungePostgresTests
             Assert.AreEqual(4, objects.ObjectCount);
             await Assert.ThrowsAsync<ArgumentException>(() => application.ExpungeDeletedAsync(
                 new ImapExpungeRequest(Guid.Empty, folderId)));
+            await Assert.ThrowsAsync<ArgumentException>(() => application.ExpungeDeletedAsync(
+                new ImapExpungeRequest(userId, folderId, new ImapUidSelection([], null))));
+            await Assert.ThrowsAsync<ArgumentException>(() => application.ExpungeDeletedAsync(
+                new ImapExpungeRequest(userId, folderId,
+                    new ImapUidSelection([new ImapUidRange(0, 1)], null))));
             await database.Database.ExecuteSqlRawAsync(
                 """
                 CREATE FUNCTION reject_imap_expunge() RETURNS trigger AS $$
@@ -154,34 +159,43 @@ public sealed class ImapExpungePostgresTests
         {
             var effects = CreateEffects(objects);
             var application = CreateApplication(database, objects, effects);
-            var result = await application.ExpungeDeletedAsync(
-                new ImapExpungeRequest(userId, folderId));
-            Assert.IsTrue(result.FolderFound);
+            var highest = await application.ExpungeDeletedAsync(
+                new ImapExpungeRequest(userId, folderId,
+                    new ImapUidSelection([new ImapUidRange(null, null)], null)));
             CollectionAssert.AreEqual(
-                new[] { new ImapExpungedMessage(2, 2), new ImapExpungedMessage(3, 4) },
-                result.Messages);
+                new[] { new ImapExpungedMessage(4, 4) }, highest.Messages);
+            var saved = await application.ExpungeDeletedAsync(
+                new ImapExpungeRequest(userId, folderId,
+                    new ImapUidSelection(null, [3])));
+            CollectionAssert.AreEqual(
+                new[] { new ImapExpungedMessage(3, 3) }, saved.Messages);
+            var remaining = await application.ExpungeDeletedAsync(
+                new ImapExpungeRequest(userId, folderId));
+            Assert.IsTrue(remaining.FolderFound);
+            CollectionAssert.AreEqual(
+                new[] { new ImapExpungedMessage(2, 2) }, remaining.Messages);
             var repeat = await application.ExpungeDeletedAsync(
                 new ImapExpungeRequest(userId, folderId));
             Assert.IsTrue(repeat.FolderFound);
             Assert.IsEmpty(repeat.Messages);
         }
-        Assert.AreEqual(2, objects.ObjectCount);
-        Assert.AreEqual(2, objects.DeleteCount);
+        Assert.AreEqual(1, objects.ObjectCount);
+        Assert.AreEqual(3, objects.DeleteCount);
         await using (var database = new EmailDbContext(options))
         {
-            CollectionAssert.AreEqual(new[] { 1, 3 }, await database.Emails
+            CollectionAssert.AreEqual(new[] { 1 }, await database.Emails
                 .OrderBy(email => email.Uid)
                 .Select(email => email.Uid)
                 .ToListAsync());
-            CollectionAssert.AreEqual(new[] { 2, 4 }, await database.ExpungedUids
+            CollectionAssert.AreEqual(new[] { 2, 3, 4 }, await database.ExpungedUids
                 .OrderBy(expunged => expunged.Uid)
                 .Select(expunged => expunged.Uid)
                 .ToListAsync());
-            CollectionAssert.AreEqual(new long[] { 5, 6 }, await database.ExpungedUids
+            CollectionAssert.AreEqual(new long[] { 7, 6, 5 }, await database.ExpungedUids
                 .OrderBy(expunged => expunged.Uid)
                 .Select(expunged => expunged.ModSeq)
                 .ToListAsync());
-            Assert.AreEqual(6L, await database.Folders
+            Assert.AreEqual(7L, await database.Folders
                 .Where(folder => folder.Id == folderId)
                 .Select(folder => folder.HighestModSeq)
                 .SingleAsync());

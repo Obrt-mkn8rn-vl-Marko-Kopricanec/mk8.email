@@ -2078,29 +2078,24 @@ ILogger<ImapServerService> logger) : BackgroundService
             return;
         }
 
-        if (session.QresyncEnabled)
-        {
-            if (result.Messages.Count > 0)
-                await writer.WriteLineAsync($"* VANISHED {FormatUidRange(
-                    result.Messages.Select(message => message.Uid).ToList())}");
-        }
-        else
-        {
-            foreach (var message in result.Messages)
-                await writer.WriteLineAsync($"* {message.SequenceNumber} EXPUNGE");
-        }
+        await WriteExpungeMessagesAsync(writer, session, result);
         await writer.WriteLineAsync($"{tag} OK EXPUNGE completed");
     }
 
     private async Task<ImapExpungeResult?> TryExpungeDeletedAsync(
-        StreamWriter writer, string tag, string operation, ImapSession session, CancellationToken ct)
+        StreamWriter writer,
+        string tag,
+        string operation,
+        ImapSession session,
+        CancellationToken ct,
+        ImapUidSelection? selection = null)
     {
         try
         {
             using var scope = scopeFactory.CreateScope();
             var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
             var result = await application.ExpungeDeletedAsync(new ImapExpungeRequest(
-                session.UserId, session.SelectedFolderId!.Value), ct);
+                session.UserId, session.SelectedFolderId!.Value, selection), ct);
             if (result.Messages is null
                 || (!result.FolderFound && result.Messages.Count > 0)
                 || result.Messages.Any(message => message is null
@@ -2120,6 +2115,22 @@ ILogger<ImapServerService> logger) : BackgroundService
                 operation, session.UserId);
             await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] {operation} backend unavailable");
             return null;
+        }
+    }
+
+    private static async Task WriteExpungeMessagesAsync(
+        StreamWriter writer, ImapSession session, ImapExpungeResult result)
+    {
+        if (session.QresyncEnabled)
+        {
+            if (result.Messages.Count > 0)
+                await writer.WriteLineAsync($"* VANISHED {FormatUidRange(
+                    result.Messages.Select(message => message.Uid).ToList())}");
+        }
+        else
+        {
+            foreach (var message in result.Messages)
+                await writer.WriteLineAsync($"* {message.SequenceNumber} EXPUNGE");
         }
     }
 
@@ -6273,78 +6284,33 @@ ILogger<ImapServerService> logger) : BackgroundService
     private async Task HandleUidExpungeAsync(
         StreamWriter writer, string tag, string uidSetArg, ImapSession session, CancellationToken ct)
     {
-        using var scope = scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-        var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
-        var effects = scope.ServiceProvider.GetRequiredService<LargeObjectTransactionEffects>();
-        var marker = effects.Mark();
-        await using var transaction = db.Database.IsRelational()
-            ? await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct)
-            : null;
-
-        var emails = await GetEmailMetadataInFolderAsync(
-            db,
-            session.SelectedFolderId!.Value,
-            ct);
-
-        var folder = await db.Folders.FindAsync([session.SelectedFolderId!.Value], ct);
-        var maxUid = emails.Count > 0 ? emails[^1].Uid : 0;
-        if (!TryResolveMessageSet(
-                uidSetArg,
-                maxUid,
-                emails.Select(email => email.Uid).ToList(),
-                useUid: true,
-                session.SavedSearchUids,
-                out var parsedMessageSet))
+        ImapUidSelection selection;
+        if (uidSetArg == "$")
+        {
+            selection = new ImapUidSelection(null, session.SavedSearchUids.ToList());
+        }
+        else if (ImapUidSetParser.TryParse(uidSetArg, out var ranges))
+        {
+            selection = new ImapUidSelection(
+                ranges.Select(range => new ImapUidRange(range.Start, range.End)).ToList(), null);
+        }
+        else
         {
             await writer.WriteLineAsync($"{tag} BAD Invalid message set");
             return;
         }
 
-        var expunged = 0;
-        var vanishedUids = new List<int>();
-
-        for (var i = 0; i < emails.Count; i++)
+        var result = await TryExpungeDeletedAsync(
+            writer, tag, "UID EXPUNGE", session, ct, selection);
+        if (result is null)
+            return;
+        if (!result.FolderFound)
         {
-            var email = emails[i];
-            if (!IsMarkedDeleted(email)) continue;
-            if (!MessageSetContains(parsedMessageSet, email.Uid)) continue;
-
-            var expungeModSeq = ++folder!.HighestModSeq;
-
-            if (session.QresyncEnabled)
-            {
-                vanishedUids.Add(email.Uid);
-            }
-            else
-            {
-                var seqNum = i + 1 - expunged;
-                await writer.WriteLineAsync($"* {seqNum} EXPUNGE");
-            }
-
-            db.ExpungedUids.Add(new ExpungedUidDB
-            {
-                Id = Guid.CreateVersion7(),
-                Uid = email.Uid,
-                ModSeq = expungeModSeq,
-                FolderId = session.SelectedFolderId!.Value,
-            });
-
-            content.DeleteOnCommit(email);
-            AttachDelete(db, email);
-            expunged++;
+            await writer.WriteLineAsync($"{tag} NO Mailbox not found");
+            return;
         }
 
-        if (session.QresyncEnabled && vanishedUids.Count > 0)
-        {
-            var vanishedSet = FormatUidRange(vanishedUids);
-            await writer.WriteLineAsync($"* VANISHED {vanishedSet}");
-        }
-
-        await db.SaveChangesAsync(ct);
-        if (transaction is not null)
-            await transaction.CommitAsync(ct);
-        await effects.CommitAsync(marker);
+        await WriteExpungeMessagesAsync(writer, session, result);
         await writer.WriteLineAsync($"{tag} OK UID EXPUNGE completed");
     }
 

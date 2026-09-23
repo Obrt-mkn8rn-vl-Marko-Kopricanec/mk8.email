@@ -92,7 +92,8 @@ public sealed class ImapGatewayTransportTests
                 new ImapIdleSnapshotRequest(application.UserId, Guid.CreateVersion7()),
                 timeout.Token);
             var expunged = await client.ExpungeDeletedAsync(
-                new ImapExpungeRequest(application.UserId, Guid.CreateVersion7()), timeout.Token);
+                new ImapExpungeRequest(application.UserId, Guid.CreateVersion7(),
+                    new ImapUidSelection([new ImapUidRange(2, null)], null)), timeout.Token);
             Assert.AreEqual(application.UserId, password.UserId);
             Assert.AreEqual(application.UserId, oauth.UserId);
             Assert.AreEqual("imap-secret", application.Password);
@@ -118,6 +119,10 @@ public sealed class ImapGatewayTransportTests
             Assert.IsTrue(expunged.FolderFound);
             Assert.HasCount(1, expunged.Messages);
             Assert.AreEqual(2, expunged.Messages[0].SequenceNumber);
+            var selectedUidRanges = application.LastExpungeSelection?.Ranges;
+            Assert.IsNotNull(selectedUidRanges);
+            Assert.AreEqual(2, selectedUidRanges[0].Start);
+            Assert.IsNull(selectedUidRanges[0].End);
 
             await using var operations = gatewayDataSource.CreateCommand(
                 "SELECT operation FROM application_requests ORDER BY created_at");
@@ -175,6 +180,7 @@ public sealed class ImapGatewayTransportTests
         public string? DeletedMailbox { get; private set; }
         public string? SelectedMailbox { get; private set; }
         public string? QuotaMailbox { get; private set; }
+        public ImapUidSelection? LastExpungeSelection { get; private set; }
 
         public Task<ImapIdentityResult> AuthenticatePasswordAsync(
             ImapPasswordAuthentication request,
@@ -268,8 +274,11 @@ public sealed class ImapGatewayTransportTests
 
         public Task<ImapExpungeResult> ExpungeDeletedAsync(
             ImapExpungeRequest request,
-            CancellationToken cancellationToken = default) =>
-            Task.FromResult(new ImapExpungeResult(true,
+            CancellationToken cancellationToken = default)
+        {
+            LastExpungeSelection = request.UidSelection;
+            return Task.FromResult(new ImapExpungeResult(true,
                 [new ImapExpungedMessage(2, 7)]));
+        }
     }
 }

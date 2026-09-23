@@ -193,7 +193,16 @@ public sealed record ImapIdleMessage(
     bool IsAnswered,
     string[] Keywords);
 
-public sealed record ImapExpungeRequest(Guid UserId, Guid FolderId);
+public sealed record ImapExpungeRequest(
+    Guid UserId,
+    Guid FolderId,
+    ImapUidSelection? UidSelection = null);
+
+public sealed record ImapUidSelection(
+    List<ImapUidRange>? Ranges,
+    List<int>? SavedSearchUids);
+
+public sealed record ImapUidRange(int? Start, int? End);
 
 public sealed record ImapExpungeResult(
     bool FolderFound,

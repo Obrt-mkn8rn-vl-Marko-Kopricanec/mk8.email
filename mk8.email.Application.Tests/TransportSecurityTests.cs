@@ -328,10 +328,12 @@ public sealed class TransportSecurityTests
         Assert.IsTrue(selected[^1].StartsWith("a3 OK [READ-WRITE]", StringComparison.Ordinal));
         await connection.WriteLineAsync("a4 EXPUNGE");
         Assert.AreEqual("a4 NO [UNAVAILABLE] EXPUNGE backend unavailable", await connection.ReadLineAsync());
-        await connection.WriteLineAsync("a5 CLOSE");
-        Assert.AreEqual("a5 NO [UNAVAILABLE] CLOSE backend unavailable", await connection.ReadLineAsync());
-        await connection.WriteLineAsync("a6 UNSELECT");
-        Assert.AreEqual("a6 OK UNSELECT completed", await connection.ReadLineAsync());
+        await connection.WriteLineAsync("a5 UID EXPUNGE *");
+        Assert.AreEqual("a5 NO [UNAVAILABLE] UID EXPUNGE backend unavailable", await connection.ReadLineAsync());
+        await connection.WriteLineAsync("a6 CLOSE");
+        Assert.AreEqual("a6 NO [UNAVAILABLE] CLOSE backend unavailable", await connection.ReadLineAsync());
+        await connection.WriteLineAsync("a7 UNSELECT");
+        Assert.AreEqual("a7 OK UNSELECT completed", await connection.ReadLineAsync());
     }
 
     [TestInitialize]
@@ -2010,7 +2012,7 @@ public sealed class TransportSecurityTests
 
         await connection.WriteLineAsync("a11 UID STORE 1 +FLAGS.SILENT (\\Deleted)");
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a11 OK", StringComparison.Ordinal));
-        await connection.WriteLineAsync("a12 EXPUNGE");
+        await connection.WriteLineAsync("a12 UID EXPUNGE $");
         Assert.AreEqual("* 1 EXPUNGE", await connection.ReadLineAsync());
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a12 OK", StringComparison.Ordinal));
 

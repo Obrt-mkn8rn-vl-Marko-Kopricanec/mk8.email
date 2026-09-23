@@ -1,13 +1,33 @@
 #!/bin/sh
 set -eu
 
-[ "$1" = -u ] && [ "$2" = mk8email ] && [ "$3" = -- ] \
+[ "$1" = -u ] && [ "$3" = -- ] \
     || exit 1
 command=$6
+if [ "$2" = mk8wake ]; then
+    [ "$command" = --probe ] \
+        && [ -f "$MK8_UPGRADE_SMOKE_STATE/wake_active" ] || exit 1
+    printf 'wake:%s\n' "$command" >> "$MK8_UPGRADE_SMOKE_STATE/events"
+    if [ "$5" = "$MK8_UPGRADE_SMOKE_STATE/opt/mk8email/releases/bbbbbbbbbbbbbbbb/wake/mk8.email.Wake.dll" ]; then
+        [ ! -f "$MK8_UPGRADE_SMOKE_STATE/fail_wake_preflight" ] || exit 1
+        if [ -f "$MK8_UPGRADE_SMOKE_STATE/fail_new_wake_health" ] \
+            && [ "$(readlink -f "$MK8_UPGRADE_SMOKE_STATE/opt/mk8email/current")" \
+                = "$MK8_UPGRADE_SMOKE_STATE/opt/mk8email/releases/bbbbbbbbbbbbbbbb" ]; then
+            exit 1
+        fi
+    fi
+    exit 0
+fi
+[ "$2" = mk8email ] || exit 1
 printf 'cli:%s\n' "$command" >> "$MK8_UPGRADE_SMOKE_STATE/events"
 case "$command" in
     --validate-gateway-config|--validate-worker-config) ;;
     --healthcheck-gateway|--probe-worker-dispatch)
+        if [ "$command" = --probe-worker-dispatch ] \
+            && { [ ! -f "$MK8_UPGRADE_SMOKE_STATE/active" ] \
+                || [ ! -f "$MK8_UPGRADE_SMOKE_STATE/wake_active" ]; }; then
+            exit 1
+        fi
         if [ -f "$MK8_UPGRADE_SMOKE_STATE/fail_new_health" ] \
             && [ "$5" = "$MK8_UPGRADE_SMOKE_STATE/opt/mk8email/releases/bbbbbbbbbbbbbbbb/cli/mk8.email.Application.CLI.dll" ]; then
             exit 1

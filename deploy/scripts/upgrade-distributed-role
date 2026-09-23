@@ -10,19 +10,24 @@ if [ "$(id -u)" -ne 0 ] || [ "$#" -ne 2 ]; then
     printf '%s\n' "Usage: upgrade-distributed-role gateway|worker STAGED_RELEASE_ID" >&2
     exit 2
 fi
+role=$1
 
 case "$1" in
     gateway)
         unit=mk8email-gateway.service
-        other_unit=mk8email-worker.service
+        other_units='mk8email-worker.service mk8email-worker.path mk8email-wake.service mk8email-worker-drain.service'
         config=/etc/mk8email/mk8email.gateway.config.json
         executable=admin/mk8.email.Gateway.dll
         validate=--validate-gateway-config
         probe=--probe-gateway-backends
         ;;
     worker)
-        unit=mk8email-worker.service
-        other_unit=mk8email-gateway.service
+        unit=mk8email-worker.path
+        wake_unit=mk8email-wake.service
+        drain_unit=mk8email-worker-drain.service
+        resident_unit=mk8email-worker.service
+        wake_connection=/etc/mk8email/mk8email.wake.connection
+        other_units=mk8email-gateway.service
         config=/etc/mk8email/mk8email.worker.config.json
         executable=worker/mk8.email.Application.Worker.dll
         validate=--validate-worker-config
@@ -70,6 +75,10 @@ validate_release() {
         || [ ! -f "$release/$executable" ]; then
         fail "A release is missing the selected role or management CLI."
     fi
+    if [ "$role" = worker ] \
+        && [ ! -f "$release/wake/mk8.email.Wake.dll" ]; then
+        fail "A release is missing the independent Wake executable."
+    fi
 }
 
 current=/opt/mk8email/current
@@ -107,18 +116,35 @@ if [ -L "$config" ] || [ ! -f "$config" ] \
     || [ "$(stat -c '%U:%G %a %h' "$config" 2>/dev/null || true)" != 'root:mk8email 640 1' ]; then
     fail "The role configuration is missing or unsafe."
 fi
+if [ "$role" = worker ]; then
+    if [ -L "$wake_connection" ] || [ ! -f "$wake_connection" ] \
+        || [ "$(stat -c '%U:%G %a %h' "$wake_connection" 2>/dev/null || true)" \
+            != 'root:mk8wake 640 1' ]; then
+        fail "The dedicated Wake connection file is missing or unsafe."
+    fi
+    systemctl is-active --quiet "$wake_unit" \
+        || fail "The Wake monitor must be active before a Worker upgrade."
+    [ "$(systemctl is-enabled "$wake_unit" 2>/dev/null || true)" = enabled ] \
+        || fail "The Wake monitor must be enabled before a Worker upgrade."
+    if systemctl is-active --quiet "$resident_unit" \
+        || [ "$(systemctl is-enabled "$resident_unit" 2>/dev/null || true)" = enabled ]; then
+        fail "A resident Worker cannot be upgraded as an on-demand role."
+    fi
+fi
 systemctl is-active --quiet "$unit" \
     || fail "The selected role must be active before an upgrade."
 [ "$(systemctl is-enabled "$unit" 2>/dev/null || true)" = enabled ] \
     || fail "The selected role must be enabled before an upgrade."
-other_state=$(systemctl is-enabled "$other_unit" 2>/dev/null || true)
-if systemctl is-active --quiet "$other_unit"; then
-    fail "A shared-host role is present; use the coordinated production upgrade path."
-fi
-case "$other_state" in
-    disabled|not-found|masked) ;;
-    *) fail "A shared-host role is enabled or has an unsafe unit state." ;;
-esac
+for other_unit in $other_units; do
+    other_state=$(systemctl is-enabled "$other_unit" 2>/dev/null || true)
+    if systemctl is-active --quiet "$other_unit"; then
+        fail "A shared-host role is present; use the coordinated production upgrade path."
+    fi
+    case "$other_state" in
+        disabled|not-found|masked|static) ;;
+        *) fail "A shared-host role is enabled or has an unsafe unit state." ;;
+    esac
+done
 for legacy_unit in mk8email.service mk8email-admin.service; do
     if systemctl is-active --quiet "$legacy_unit"; then
         fail "A legacy mail unit is active."
@@ -135,6 +161,12 @@ timeout 45s runuser -u mk8email -- /usr/bin/dotnet "$staged_cli" "$validate" "$c
     || fail "The staged role configuration failed validation."
 timeout 45s runuser -u mk8email -- /usr/bin/dotnet "$staged_cli" "$probe" "$config" \
     || fail "The staged PostgreSQL or Azure Blob backend canary failed."
+if [ "$role" = worker ]; then
+    timeout 20s runuser -u mk8wake -- /usr/bin/dotnet \
+        "$staged_release/wake/mk8.email.Wake.dll" --probe \
+        "$wake_connection" /run/mk8email-wake \
+        || fail "The staged Wake executable or database role failed its canary."
+fi
 
 atomic_current() {
     destination=$1
@@ -149,8 +181,29 @@ atomic_current() {
     sync -f /opt/mk8email
 }
 
+stop_selected() {
+    if [ "$role" = worker ]; then
+        systemctl stop "$unit" || return 1
+        systemctl stop "$wake_unit" || return 1
+        systemctl stop "$drain_unit" || return 1
+    else
+        systemctl stop "$unit" || return 1
+    fi
+}
+
+start_selected() {
+    if [ "$role" = worker ]; then
+        systemctl start "$wake_unit" || return 1
+        systemctl is-active --quiet "$wake_unit" || return 1
+        systemctl start "$unit" || return 1
+    else
+        systemctl start "$unit" || return 1
+    fi
+}
+
 wait_ready() {
     ready_cli=$1
+    ready_wake=$2
     ready=false
     attempt=0
     while [ "$attempt" -lt 15 ]; do
@@ -164,10 +217,15 @@ wait_ready() {
                     ready=true
                     break
                 fi
-            elif timeout 15s runuser -u mk8email -- /usr/bin/dotnet "$ready_cli" \
-                --probe-worker-dispatch "$config" >/dev/null; then
-                ready=true
-                break
+            elif systemctl is-active --quiet "$wake_unit" \
+                && ! systemctl is-active --quiet "$resident_unit" \
+                && timeout 20s runuser -u mk8wake -- /usr/bin/dotnet \
+                    "$ready_wake" --probe "$wake_connection" /run/mk8email-wake \
+                    >/dev/null \
+                && timeout 45s runuser -u mk8email -- /usr/bin/dotnet \
+                    "$ready_cli" --probe-worker-dispatch "$config" >/dev/null; then
+                    ready=true
+                    break
             fi
         fi
         attempt=$((attempt + 1))
@@ -184,22 +242,29 @@ rollback() {
     trap - EXIT HUP INT TERM
     if [ "$completed" != true ] && [ "$interrupted" = true ]; then
         set +e
-        systemctl stop "$unit" >/dev/null 2>&1
-        if [ "$switched" = true ]; then
-            atomic_current "$previous_release"
-            link_status=$?
-        else
-            link_status=0
-        fi
-        if [ "$link_status" -eq 0 ]; then
-            systemctl start "$unit"
-            start_status=$?
-            if [ "$start_status" -eq 0 ]; then
-                wait_ready "$previous_release/cli/mk8.email.Application.CLI.dll"
-                start_status=$?
-            fi
-        else
+        stop_selected >/dev/null 2>&1
+        stop_status=$?
+        if [ "$stop_status" -ne 0 ]; then
+            link_status=1
             start_status=1
+        else
+            if [ "$switched" = true ]; then
+                atomic_current "$previous_release"
+                link_status=$?
+            else
+                link_status=0
+            fi
+            if [ "$link_status" -eq 0 ]; then
+                start_selected
+                start_status=$?
+                if [ "$start_status" -eq 0 ]; then
+                    wait_ready "$previous_release/cli/mk8.email.Application.CLI.dll" \
+                        "$previous_release/wake/mk8.email.Wake.dll"
+                    start_status=$?
+                fi
+            else
+                start_status=1
+            fi
         fi
         if [ "$link_status" -ne 0 ] || [ "$start_status" -ne 0 ]; then
             printf '%s\n' "The prior role could not be restored; immediate operator action is required." >&2
@@ -217,11 +282,12 @@ trap rollback EXIT
 trap 'exit 130' HUP INT TERM
 
 interrupted=true
-systemctl stop "$unit" || fail "The selected role could not be stopped."
+stop_selected || fail "The selected role could not be stopped."
 switched=true
 atomic_current "$staged_release" || fail "The staged release could not become current."
-systemctl start "$unit" || fail "The upgraded role could not be started."
-wait_ready "$staged_cli" || fail "The upgraded role did not become ready."
+start_selected || fail "The upgraded role could not be started."
+wait_ready "$staged_cli" "$staged_release/wake/mk8.email.Wake.dll" \
+    || fail "The upgraded role did not become ready."
 
 completed=true
 trap - EXIT HUP INT TERM

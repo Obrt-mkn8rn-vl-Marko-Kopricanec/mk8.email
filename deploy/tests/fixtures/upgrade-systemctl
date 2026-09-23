@@ -5,31 +5,61 @@ state=$MK8_UPGRADE_SMOKE_STATE
 unit=$MK8_UPGRADE_SMOKE_UNIT
 case "$1" in
     is-active)
-        [ "$2" = --quiet ] && [ "$3" = "$unit" ] && [ -f "$state/active" ]
+        [ "$2" = --quiet ] || exit 1
+        if [ "$3" = "$unit" ]; then
+            [ -f "$state/active" ]
+        elif [ "$unit" = mk8email-worker.path ] \
+            && [ "$3" = mk8email-wake.service ]; then
+            [ -f "$state/wake_active" ]
+        else
+            exit 1
+        fi
         ;;
     is-enabled)
         if [ "$2" = "$unit" ]; then
             printf '%s\n' enabled
+        elif [ "$unit" = mk8email-worker.path ] \
+            && [ "$2" = mk8email-wake.service ]; then
+            printf '%s\n' enabled
         elif [ -f "$state/other_enabled" ]; then
             printf '%s\n' enabled
+        elif [ "$2" = mk8email-worker-drain.service ]; then
+            printf '%s\n' static
         else
             printf '%s\n' disabled
         fi
         ;;
     stop)
-        [ "$2" = "$unit" ] || exit 1
-        printf '%s\n' stop >> "$state/events"
-        rm -f -- "$state/active"
-        ;;
-    start)
-        [ "$2" = "$unit" ] || exit 1
-        printf '%s\n' start >> "$state/events"
-        if [ -f "$state/fail_new_start" ] \
-            && [ "$(readlink -f "$state/opt/mk8email/current")" \
-                = "$state/opt/mk8email/releases/bbbbbbbbbbbbbbbb" ]; then
+        if [ "$2" = "$unit" ]; then
+            printf '%s\n' stop >> "$state/events"
+            rm -f -- "$state/active"
+        elif [ "$unit" = mk8email-worker.path ] \
+            && [ "$2" = mk8email-wake.service ]; then
+            printf '%s\n' stop_wake >> "$state/events"
+            rm -f -- "$state/wake_active"
+        elif [ "$unit" = mk8email-worker.path ] \
+            && [ "$2" = mk8email-worker-drain.service ]; then
+            printf '%s\n' stop_drain >> "$state/events"
+        else
             exit 1
         fi
-        touch "$state/active"
+        ;;
+    start)
+        if [ "$2" = "$unit" ]; then
+            printf '%s\n' start >> "$state/events"
+            if [ -f "$state/fail_new_start" ] \
+                && [ "$(readlink -f "$state/opt/mk8email/current")" \
+                    = "$state/opt/mk8email/releases/bbbbbbbbbbbbbbbb" ]; then
+                exit 1
+            fi
+            touch "$state/active"
+        elif [ "$unit" = mk8email-worker.path ] \
+            && [ "$2" = mk8email-wake.service ]; then
+            printf '%s\n' start_wake >> "$state/events"
+            touch "$state/wake_active"
+        else
+            exit 1
+        fi
         ;;
     *) exit 1 ;;
 esac

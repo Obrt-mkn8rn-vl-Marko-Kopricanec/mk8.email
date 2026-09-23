@@ -44,6 +44,10 @@ prepare_case() {
         install -d -m 0755 "$release/cli" "$release/$(dirname "$selected_executable")"
         : > "$release/cli/mk8.email.Application.CLI.dll"
         : > "$release/$selected_executable"
+        if [ "$selected_unit" = mk8email-worker.path ]; then
+            install -d -m 0755 "$release/wake"
+            : > "$release/wake/mk8.email.Wake.dll"
+        fi
         printf 'release_id=%s\n' "$release_id" > "$release/.mk8email-release"
         find "$release" -type f -exec chmod 0444 {} +
         find "$release" -type d -exec chmod 0555 {} +
@@ -53,11 +57,17 @@ prepare_case() {
     chmod 0600 "$state/etc/mk8email/distributed-ready"
     case "$selected_unit" in
         mk8email-gateway.service) role=gateway ;;
-        mk8email-worker.service) role=worker ;;
+        mk8email-worker.path) role=worker ;;
         *) exit 1 ;;
     esac
     : > "$state/etc/mk8email/mk8email.$role.config.json"
     chmod 0640 "$state/etc/mk8email/mk8email.$role.config.json"
+    if [ "$role" = worker ]; then
+        : > "$state/etc/mk8email/mk8email.wake.connection"
+        chmod 0640 "$state/etc/mk8email/mk8email.wake.connection"
+        : > "$state/wake_active"
+        install -d -m 0700 "$state/run/mk8email-wake"
+    fi
     : > "$state/active"
     : > "$state/events"
 
@@ -68,8 +78,10 @@ prepare_case() {
         -e "s|/opt/mk8email|$state/opt/mk8email|g" \
         -e "s|/etc/mk8email|$state/etc/mk8email|g" \
         -e "s|/run/lock|$state/run/lock|g" \
+        -e "s|/run/mk8email-wake|$state/run/mk8email-wake|g" \
         -e "s|/usr/bin/dotnet|$state/mock/dotnet|g" \
         -e "s|root:mk8email 640 1|root:root 640 1|g" \
+        -e "s|root:mk8wake 640 1|root:root 640 1|g" \
         -e "s|root:root|$test_owner:$test_group|g" \
         -e "s|-user root|-user $test_owner|g" \
         -e "s|PATH=/usr/sbin:/usr/bin:/sbin:/bin|PATH=$state/mock:/usr/sbin:/usr/bin:/sbin:/bin|g" \
@@ -137,12 +149,64 @@ test "$(readlink -f "$state/opt/mk8email/current")" \
 test -f "$state/active"
 test ! -s "$state/events"
 
-prepare_case worker_success mk8email-worker.service worker/mk8.email.Application.Worker.dll
+prepare_case worker_success mk8email-worker.path worker/mk8.email.Application.Worker.dll
 sh "$state/upgrade" worker "$new_id" >/dev/null
 test "$(readlink -f "$state/opt/mk8email/current")" \
     = "$state/opt/mk8email/releases/$new_id"
 test -f "$state/active"
+test -f "$state/wake_active"
 grep -Fx 'cli:--probe-worker-backends' "$state/events" >/dev/null
 grep -Fx 'cli:--probe-worker-dispatch' "$state/events" >/dev/null
+grep -Fx 'wake:--probe' "$state/events" >/dev/null
+
+prepare_case worker_wake_preflight mk8email-worker.path worker/mk8.email.Application.Worker.dll
+: > "$state/fail_wake_preflight"
+if sh "$state/upgrade" worker "$new_id" >/dev/null 2>&1; then
+    printf '%s\n' "The Worker switched after failed Wake preflight." >&2
+    exit 1
+fi
+test "$(readlink -f "$state/opt/mk8email/current")" \
+    = "$state/opt/mk8email/releases/$old_id"
+test -f "$state/active"
+test -f "$state/wake_active"
+if grep -Fx stop "$state/events" >/dev/null; then
+    printf '%s\n' "The Worker path stopped after failed Wake preflight." >&2
+    exit 1
+fi
+
+prepare_case worker_rollback mk8email-worker.path worker/mk8.email.Application.Worker.dll
+: > "$state/fail_new_start"
+if sh "$state/upgrade" worker "$new_id" >/dev/null 2>&1; then
+    printf '%s\n' "The on-demand Worker accepted a failed path start." >&2
+    exit 1
+fi
+test "$(readlink -f "$state/opt/mk8email/current")" \
+    = "$state/opt/mk8email/releases/$old_id"
+test -f "$state/active"
+test -f "$state/wake_active"
+test "$(grep -cx stop "$state/events")" -eq 2
+test "$(grep -cx stop_wake "$state/events")" -eq 2
+
+prepare_case worker_health_rollback mk8email-worker.path worker/mk8.email.Application.Worker.dll
+: > "$state/fail_new_health"
+if sh "$state/upgrade" worker "$new_id" >/dev/null 2>&1; then
+    printf '%s\n' "The on-demand Worker accepted failed dispatch health." >&2
+    exit 1
+fi
+test "$(readlink -f "$state/opt/mk8email/current")" \
+    = "$state/opt/mk8email/releases/$old_id"
+test -f "$state/active"
+test -f "$state/wake_active"
+
+prepare_case worker_wake_health_rollback mk8email-worker.path worker/mk8.email.Application.Worker.dll
+: > "$state/fail_new_wake_health"
+if sh "$state/upgrade" worker "$new_id" >/dev/null 2>&1; then
+    printf '%s\n' "The on-demand Worker accepted failed Wake health." >&2
+    exit 1
+fi
+test "$(readlink -f "$state/opt/mk8email/current")" \
+    = "$state/opt/mk8email/releases/$old_id"
+test -f "$state/active"
+test -f "$state/wake_active"
 
 printf '%s\n' "Distributed role upgrade and rollback control-flow smoke passed."

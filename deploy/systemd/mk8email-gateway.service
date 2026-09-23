@@ -1,0 +1,63 @@
+[Unit]
+Description=mk8.email presentation Gateway
+Documentation=https://github.com/mkn8rn/mk8.email
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/etc/mk8email/distributed-ready
+
+[Service]
+Type=simple
+User=mk8email
+Group=mk8email
+WorkingDirectory=/opt/mk8email/current/admin
+Environment=ASPNETCORE_URLS=http://127.0.0.1:8080
+Environment=ASPNETCORE_FORWARDEDHEADERS_ENABLED=false
+Environment=DOTNET_ENVIRONMENT=Production
+Environment=DOTNET_EnableDiagnostics=0
+Environment=MK8EMAIL_CONFIG_FILE=/etc/mk8email/mk8email.gateway.config.json
+Environment="AllowedHosts=@@MK8_SERVER_IPV4@@;admin.mk8n.com;email.mk8n.com;localhost"
+ExecStart=/usr/bin/dotnet /opt/mk8email/current/admin/mk8.email.Gateway.dll
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=60s
+TimeoutStopSec=30s
+KillSignal=SIGINT
+UMask=0077
+LimitNOFILE=8192
+TasksMax=512
+MemoryMax=1536M
+RuntimeDirectory=mk8email-gateway
+RuntimeDirectoryMode=0750
+StateDirectory=mk8email-admin
+StateDirectoryMode=0750
+LogsDirectory=mk8email-admin
+LogsDirectoryMode=0750
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectProc=invisible
+ProtectSystem=strict
+ProcSubset=pid
+ReadOnlyPaths=/etc/mk8email /opt/mk8email/current
+ReadWritePaths=/var/lib/mk8email-admin /var/log/mk8email-admin
+NoExecPaths=/var/lib/mk8email-admin /var/log/mk8email-admin /tmp
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

@@ -78,6 +78,10 @@ tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
     | grep -Fx 'etc/systemd/system/default.target' >/dev/null
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
+    | grep -Fx 'etc/systemd/system/mk8email-gateway.service' >/dev/null
+tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
+    | grep -Fx 'etc/systemd/system/mk8email-worker.service' >/dev/null
+tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
     | grep -Fx 'usr/local/lib/mk8email/tests/host_hardening_smoke' >/dev/null
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
     | grep -Fx 'usr/local/lib/mk8email/tests/apt_sources_smoke' >/dev/null

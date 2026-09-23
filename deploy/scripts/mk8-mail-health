@@ -71,9 +71,10 @@ write_status_snapshot() {
     mv -f -- "$status_snapshot" "$status_json"
 }
 
-for service_name in postgresql.service mk8email.service rspamd.service \
+for service_name in postgresql.service mk8email-gateway.service \
+    mk8email-worker.service rspamd.service \
     clamav-daemon.service clamav-freshclam.service valkey-server.service \
-    mk8email-admin.service nginx.service nftables.service fail2ban.service \
+    nginx.service nftables.service fail2ban.service \
     auditd.service apparmor.service acct.service cron.service \
     smartmontools.service sysstat.service unattended-upgrades.service \
     mk8-backup.timer mk8-mail-health.timer dailyaidecheck.timer \
@@ -140,8 +141,19 @@ valkey-cli -h 127.0.0.1 -p 6379 ping 2>/dev/null | grep -qx PONG \
     || record_error "Valkey is not ready."
 clamdscan --config-file=/etc/clamav/clamd.conf --ping 1 >/dev/null 2>&1 \
     || record_error "ClamAV is not ready."
-/usr/local/sbin/mk8email --healthcheck >/dev/null 2>&1 \
-    || record_error "A native mail protocol service is not ready."
+timeout 20s runuser -u mk8email -- /usr/bin/dotnet \
+    /opt/mk8email/current/cli/mk8.email.Application.CLI.dll \
+    --healthcheck-gateway /etc/mk8email/mk8email.gateway.config.json \
+    >/dev/null 2>&1 \
+    || record_error "A Gateway mail listener is not ready."
+curl --silent --fail --max-time 10 --noproxy '*' \
+    --header 'Host: admin.mk8n.com' \
+    http://127.0.0.1:8080/health/ready >/dev/null \
+    || record_error "The Gateway durable transport is not ready."
+curl --silent --fail --max-time 30 --noproxy '*' \
+    --header 'Host: admin.mk8n.com' \
+    http://127.0.0.1:8080/health/application >/dev/null \
+    || record_error "The Application Worker did not complete the Gateway probe."
 signature_path=$(find /var/lib/clamav -maxdepth 1 -type f \
     \( -name '*.cvd' -o -name '*.cld' \) -printf '%T@ %p\n' \
     | sort -nr | sed -n '1s/^[^ ]* //p')

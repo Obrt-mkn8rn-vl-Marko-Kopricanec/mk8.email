@@ -51,6 +51,10 @@ run_failure 2 env -u MK8EMAIL_CONFIG_FILE \
 grep -F "Use one valid management command." "$output" >/dev/null
 
 run_failure 2 env -u MK8EMAIL_CONFIG_FILE \
+    /usr/bin/dotnet "$cli_dll" --healthcheck-gateway
+grep -F "Use one valid management command." "$output" >/dev/null
+
+run_failure 2 env -u MK8EMAIL_CONFIG_FILE \
     /usr/bin/dotnet "$cli_dll" --probe-worker-backends
 grep -F "Use one valid management command." "$output" >/dev/null
 

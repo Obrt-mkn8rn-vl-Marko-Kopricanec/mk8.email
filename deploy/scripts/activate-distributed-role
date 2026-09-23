@@ -100,7 +100,9 @@ while [ "$attempt" -lt 15 ]; do
             gateway)
                 if curl --silent --fail --max-time 3 --noproxy '*' \
                     --header 'Host: admin.mk8n.com' \
-                    http://127.0.0.1:8080/health/ready >/dev/null; then
+                    http://127.0.0.1:8080/health/ready >/dev/null \
+                    && timeout 20s runuser -u mk8email -- /usr/bin/dotnet "$cli" \
+                        --healthcheck-gateway "$config" >/dev/null; then
                     ready=true
                     break
                 fi

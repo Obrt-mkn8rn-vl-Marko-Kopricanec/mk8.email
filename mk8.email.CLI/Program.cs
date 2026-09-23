@@ -4,7 +4,6 @@ using Microsoft.Extensions.Logging;
 using mk8.email.Application;
 using mk8.email.Application.Interfaces;
 using mk8.email.Application.Services;
-using mk8.email.CLI;
 using mk8.email.Contracts.Enums;
 using mk8.email.Infrastructure;
 using mk8.email.Infrastructure.Data;
@@ -55,16 +54,25 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
             || Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") == "Development";
         if (arguments.Length == 2
             && arguments[0] is ("--validate-gateway-config" or "--validate-worker-config"
+                or "--healthcheck-gateway"
                 or "--probe-gateway-backends" or "--probe-worker-backends"
                 or "--probe-worker-dispatch"))
         {
-            var role = arguments[0] is ("--validate-gateway-config" or "--probe-gateway-backends")
+            var role = arguments[0] is ("--validate-gateway-config" or "--healthcheck-gateway"
+                or "--probe-gateway-backends")
                 ? EnvironmentValidationRole.Gateway
                 : EnvironmentValidationRole.ApplicationWorker;
             var validated = EnvironmentLoader.LoadFromFile(
                 arguments[1], isDevelopment, role);
             if (!validated.Messaging.Enabled)
                 throw new InvalidOperationException("Distributed messaging must be enabled.");
+            if (arguments[0] == "--healthcheck-gateway")
+            {
+                using var healthTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                return await GatewayListenerHealthCheck.IsHealthyAsync(validated, healthTimeout.Token)
+                    ? 0
+                    : 1;
+            }
             if (arguments[0] == "--probe-worker-dispatch")
             {
                 await using var probeServices = new ServiceCollection()
@@ -98,7 +106,7 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
         if (arguments.SequenceEqual(["--healthcheck"]))
         {
             using var healthTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            return await ServerHealthCheck.IsHealthyAsync(environmentConfig, healthTimeout.Token) ? 0 : 1;
+            return await GatewayListenerHealthCheck.IsHealthyAsync(environmentConfig, healthTimeout.Token) ? 0 : 1;
         }
 
         if (arguments.SequenceEqual(["--initialize-empty-database"]))
@@ -325,6 +333,7 @@ static bool IsSupportedCommand(string[] arguments) =>
     || arguments.Length == 2 && arguments[0] == "--disable-totp"
     || arguments.Length == 2 && arguments[0] is
         ("--validate-gateway-config" or "--validate-worker-config"
+            or "--healthcheck-gateway"
             or "--probe-gateway-backends" or "--probe-worker-backends"
             or "--probe-worker-dispatch");
 

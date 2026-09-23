@@ -2,12 +2,15 @@ using System.Net;
 using System.Net.Sockets;
 using mk8.email.Configuration;
 
-namespace mk8.email.CLI;
+namespace mk8.email.Hosting;
 
-internal static class ServerHealthCheck
+public static class GatewayListenerHealthCheck
 {
-    public static async Task<bool> IsHealthyAsync(EnvironmentConfig environment, CancellationToken cancellationToken)
+    public static async Task<bool> IsHealthyAsync(
+        EnvironmentConfig environment,
+        CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(environment);
         foreach (var port in GetEnabledPorts(environment))
         {
             try
@@ -36,5 +39,11 @@ internal static class ServerHealthCheck
             yield return environment.Imap.Port;
         if (environment.Imap.EnableImplicitTls)
             yield return environment.Imap.ImplicitTlsPort;
+        if (environment.Pop3.EnablePop3)
+            yield return environment.Pop3.Port;
+        if (environment.Pop3.EnableImplicitTls)
+            yield return environment.Pop3.ImplicitTlsPort;
+        if (environment.Sieve.EnableManageSieve)
+            yield return environment.Sieve.Port;
     }
 }

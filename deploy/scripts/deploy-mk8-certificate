@@ -157,7 +157,7 @@ expected_fingerprint=$(openssl x509 -in "$lineage/fullchain.pem" \
 
 systemctl is-active --quiet nginx.service \
     || fail "nginx must be active before certificate deployment."
-systemctl is-active --quiet mk8email.service \
+systemctl is-active --quiet mk8email-gateway.service \
     || fail "mk8.email must be active before certificate deployment."
 nginx -t
 
@@ -228,7 +228,7 @@ probe_certificate pop3s email.mk8n.com -connect 127.0.0.1:995
 probe_certificate sieve email.mk8n.com -starttls sieve -connect 127.0.0.1:4190
 
 systemctl is-active --quiet nginx.service
-systemctl is-active --quiet mk8email.service
+systemctl is-active --quiet mk8email-gateway.service
 if systemctl is-active --quiet postfix.service \
     || systemctl is-active --quiet dovecot.service; then
     fail "A forbidden mail service is active."

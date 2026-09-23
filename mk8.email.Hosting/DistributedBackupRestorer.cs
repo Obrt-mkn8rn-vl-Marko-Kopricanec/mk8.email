@@ -13,6 +13,13 @@ public sealed record DistributedBackupRestoreResult(
     long ReferenceCount,
     long ImportedObjectCount);
 
+public sealed record DistributedBackupArchiveSummary(
+    int SchemaVersion,
+    long ReferenceCount,
+    long UniqueContentCount,
+    string DatabaseSha256,
+    string ManifestSha256);
+
 /// <summary>
 /// Restores a verified distributed export into an empty PostgreSQL database and
 /// an Azure Blob-compatible store, then atomically rebinds every database ETag.
@@ -30,6 +37,19 @@ public static class DistributedBackupRestorer
     private sealed record RebindingRow(
         DistributedBlobReferenceRow Original,
         string NewEntityTag);
+
+    public static async Task<DistributedBackupArchiveSummary> VerifyAsync(
+        string backupDirectory,
+        CancellationToken cancellationToken = default)
+    {
+        var metadata = await VerifyArchiveAsync(backupDirectory, cancellationToken);
+        return new DistributedBackupArchiveSummary(
+            metadata.SchemaVersion,
+            metadata.ReferenceCount,
+            metadata.UniqueContentCount,
+            metadata.DatabaseSha256,
+            metadata.ManifestSha256);
+    }
 
     public static async Task<DistributedBackupRestoreResult> RestoreAsync(
         string backupDirectory,

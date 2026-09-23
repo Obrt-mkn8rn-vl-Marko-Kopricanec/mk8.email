@@ -104,6 +104,13 @@ public sealed class DistributedBackupExporterTests
             Assert.AreEqual(result.DatabaseSha256,
                 metadata.RootElement.GetProperty("DatabaseSha256").GetString());
             await VerifyChecksumsAsync(destination);
+            var verified = await DistributedBackupRestorer.VerifyAsync(destination);
+            Assert.AreEqual(3, verified.SchemaVersion);
+            Assert.AreEqual(2L, verified.ReferenceCount);
+            Assert.AreEqual(2L, verified.UniqueContentCount);
+            var verifiedCli = await RunVerifierCliAsync(destination);
+            Assert.AreEqual(0, verifiedCli.ExitCode, verifiedCli.Output);
+            StringAssert.Contains(verifiedCli.Output, "snapshot v3: 2 references");
 
             await using var restoredSource = NpgsqlDataSource.Create(
                 restoredDatabase.ConnectionString);
@@ -185,6 +192,9 @@ public sealed class DistributedBackupExporterTests
             metadata["SchemaVersion"] = 2;
             await File.WriteAllTextAsync(metadataPath, metadata.ToJsonString());
             await RewriteChecksumsAsync(destination);
+            var verified = await RunVerifierCliAsync(destination);
+            Assert.AreEqual(0, verified.ExitCode, verified.Output);
+            StringAssert.Contains(verified.Output, "snapshot v2: 0 references");
 
             var result = await DistributedBackupRestorer.RestoreAsync(
                 destination, target, targetDatabase.ConnectionString,
@@ -324,6 +334,9 @@ public sealed class DistributedBackupExporterTests
                 destination, PgDumpExecutable);
             var blobFile = Path.Combine(destination, "blobs", sha256);
             await File.WriteAllBytesAsync(blobFile, "tampered"u8.ToArray());
+            var invalidCli = await RunVerifierCliAsync(destination);
+            Assert.AreEqual(1, invalidCli.ExitCode, invalidCli.Output);
+            StringAssert.Contains(invalidCli.Output, "checksum mismatch");
             var corrupt = await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
                 DistributedBackupRestorer.RestoreAsync(
                     destination, target, targetDatabase.ConnectionString,
@@ -485,6 +498,49 @@ public sealed class DistributedBackupExporterTests
 
     private static string PgDumpExecutable =>
         Environment.GetEnvironmentVariable("MK8_EMAIL_TEST_PG_DUMP") ?? "pg_dump";
+
+    private static async Task<(int ExitCode, string Output)> RunVerifierCliAsync(
+        string backupDirectory)
+    {
+        var host = Environment.GetEnvironmentVariable("MK8_EMAIL_TEST_DOTNET_HOST")
+            ?? Environment.GetEnvironmentVariable("DOTNET_HOST_PATH")
+            ?? "dotnet";
+        var configuration = new DirectoryInfo(AppContext.BaseDirectory).Parent?.Name
+            ?? throw new InvalidOperationException("The test configuration directory is missing.");
+        var repository = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../.."));
+        var assembly = Path.Combine(
+            repository, "mk8.email.CLI", "bin", configuration,
+            "net10.0", "mk8.email.Application.CLI.dll");
+        Assert.IsTrue(File.Exists(assembly), "The management CLI executable is missing.");
+        var start = new ProcessStartInfo(host)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        start.ArgumentList.Add(assembly);
+        start.ArgumentList.Add("--verify-distributed-snapshot");
+        start.ArgumentList.Add(backupDirectory);
+        start.Environment.Remove("MK8EMAIL_CONFIG_FILE");
+        start.Environment.Remove("MK8_EMAIL_TEST_POSTGRES");
+        start.Environment.Remove("MK8_EMAIL_TEST_AZURE_BLOB_CONNECTION");
+        using var process = Process.Start(start)
+            ?? throw new InvalidOperationException("The management CLI did not start.");
+        var output = process.StandardOutput.ReadToEndAsync();
+        var error = process.StandardError.ReadToEndAsync();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        try
+        {
+            await process.WaitForExitAsync(deadline.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync();
+            Assert.Fail("The archive verification CLI exceeded its deadline.");
+        }
+        return (process.ExitCode, await output + await error);
+    }
 
     private static string PgRestoreExecutable =>
         Path.GetDirectoryName(PgDumpExecutable) is { Length: > 0 } folder

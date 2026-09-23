@@ -132,6 +132,31 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
             Console.WriteLine($"Verified {count} database-referenced Azure Blob object(s).");
             return 0;
         }
+        if (arguments.Length == 2 && arguments[0] == "--verify-distributed-snapshot")
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromHours(2));
+            ConsoleCancelEventHandler cancel = (_, eventArgs) =>
+            {
+                eventArgs.Cancel = true;
+                timeout.Cancel();
+            };
+            Console.CancelKeyPress += cancel;
+            try
+            {
+                var summary = await DistributedBackupRestorer.VerifyAsync(
+                    arguments[1], timeout.Token);
+                Console.WriteLine(
+                    $"Verified distributed snapshot v{summary.SchemaVersion}: "
+                    + $"{summary.ReferenceCount} references, "
+                    + $"{summary.UniqueContentCount} unique Blob contents. "
+                    + "A target restore and Blob audit are still required.");
+                return 0;
+            }
+            finally
+            {
+                Console.CancelKeyPress -= cancel;
+            }
+        }
         if (arguments.Length == 3 && arguments[0] == "--export-distributed-snapshot")
         {
             var validated = EnvironmentLoader.LoadFromFile(
@@ -446,6 +471,7 @@ static bool IsSupportedCommand(string[] arguments) =>
     || arguments.Length == 3 && arguments[0] == "--purge-quarantined-smoke-message"
     || arguments.Length == 3 && arguments[0] == "--export-distributed-snapshot"
     || arguments.Length == 3 && arguments[0] == "--restore-distributed-snapshot"
+    || arguments.Length == 2 && arguments[0] == "--verify-distributed-snapshot"
     || arguments.Length == 3 && arguments[0] == "--enroll-totp"
     || arguments.Length == 3 && arguments[0] == "--confirm-totp"
     || arguments.Length == 2 && arguments[0] == "--totp-status"

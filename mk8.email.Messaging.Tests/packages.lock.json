@@ -582,6 +582,15 @@
         "resolved": "4.5.0",
         "contentHash": "wLBKzFnDCxP12VL9ANydSYhk59fC4cvOr9ypYQLPnAj48NQIhqnjdD2yhP8yEKyBJEjERWS9DisKL7rX5eU25Q=="
       },
+      "mk8.email.application.cli": {
+        "type": "Project",
+        "dependencies": {
+          "Microsoft.Extensions.Hosting": "[10.0.4, )",
+          "mk8.email.Application.Core": "[1.0.0, )",
+          "mk8.email.Hosting": "[1.0.0, )",
+          "mk8.email.Infrastructure": "[1.0.0, )"
+        }
+      },
       "mk8.email.application.core": {
         "type": "Project",
         "dependencies": {

@@ -31,7 +31,12 @@ assert_same_pid() {
 }
 
 gateway_pid=$(active_pid mk8email-gateway.service)
-worker_pid=$(active_pid mk8email-worker.service)
+wake_pid=$(active_pid mk8email-wake.service)
+systemctl is-active --quiet mk8email-worker.path \
+    || fail "The Worker wake path is not active before the backup."
+if systemctl is-active --quiet mk8email-worker.service; then
+    fail "The resident Application Worker is active before the backup."
+fi
 prosody_pid=$(active_pid prosody.service)
 xmpp_tunnel_pid=$(active_pid cloudflared-xmpp.service)
 
@@ -50,7 +55,9 @@ esac
     || fail "The backup service did not create a new backup."
 
 assert_same_pid mk8email-gateway.service "$gateway_pid"
-assert_same_pid mk8email-worker.service "$worker_pid"
+assert_same_pid mk8email-wake.service "$wake_pid"
+systemctl is-active --quiet mk8email-worker.path \
+    || fail "The Worker wake path stopped during the backup."
 assert_same_pid prosody.service "$prosody_pid"
 assert_same_pid cloudflared-xmpp.service "$xmpp_tunnel_pid"
 
@@ -66,5 +73,5 @@ test -s "$encrypted_root/$encrypted_name.sha256"
 (cd "$encrypted_root" \
     && sha256sum --quiet --strict --check "$encrypted_name.sha256")
 
-printf 'Backup continuity passed: backup=%s gateway_pid=%s worker_pid=%s prosody_pid=%s xmpp_tunnel_pid=%s\n' \
-    "$latest_after" "$gateway_pid" "$worker_pid" "$prosody_pid" "$xmpp_tunnel_pid"
+printf 'Backup continuity passed: backup=%s gateway_pid=%s wake_pid=%s prosody_pid=%s xmpp_tunnel_pid=%s\n' \
+    "$latest_after" "$gateway_pid" "$wake_pid" "$prosody_pid" "$xmpp_tunnel_pid"

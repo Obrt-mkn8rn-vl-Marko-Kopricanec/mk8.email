@@ -76,7 +76,7 @@ write_status_snapshot() {
 }
 
 for service_name in postgresql.service mk8email-gateway.service \
-    mk8email-worker.service rspamd.service \
+    mk8email-wake.service mk8email-worker.path rspamd.service \
     clamav-daemon.service clamav-freshclam.service valkey-server.service \
     nginx.service nftables.service fail2ban.service \
     auditd.service apparmor.service acct.service cron.service \
@@ -86,6 +86,13 @@ for service_name in postgresql.service mk8email-gateway.service \
     logrotate.timer sysstat-collect.timer sysstat-summary.timer; do
     systemctl is-active --quiet "$service_name" || record_error "$service_name is not active."
 done
+if systemctl is-active --quiet mk8email-worker.service \
+    || [ "$(systemctl is-enabled mk8email-worker.service 2>/dev/null || true)" = enabled ]; then
+    record_error "The resident Application Worker must be disabled."
+fi
+if systemctl is-failed --quiet mk8email-worker-drain.service; then
+    record_error "The on-demand Application Worker failed its last drain."
+fi
 
 for forbidden_service in postfix.service dovecot.service; do
     if systemctl is-active --quiet "$forbidden_service"; then
@@ -145,6 +152,11 @@ valkey-cli -h 127.0.0.1 -p 6379 ping 2>/dev/null | grep -qx PONG \
     || record_error "Valkey is not ready."
 clamdscan --config-file=/etc/clamav/clamd.conf --ping 1 >/dev/null 2>&1 \
     || record_error "ClamAV is not ready."
+timeout 20s runuser -u mk8wake -- /usr/bin/dotnet \
+    /opt/mk8email/current/wake/mk8.email.Wake.dll \
+    --probe /etc/mk8email/mk8email.wake.connection /run/mk8email-wake \
+    >/dev/null 2>&1 \
+    || record_error "The restricted Wake database role or trigger path is not ready."
 timeout 20s runuser -u mk8email -- /usr/bin/dotnet \
     /opt/mk8email/current/cli/mk8.email.Application.CLI.dll \
     --healthcheck-gateway /etc/mk8email/mk8email.gateway.config.json \
@@ -154,10 +166,6 @@ curl --silent --fail --max-time 10 --noproxy '*' \
     --header 'Host: admin.mk8n.com' \
     http://127.0.0.1:8080/health/ready >/dev/null \
     || record_error "The Gateway durable transport is not ready."
-curl --silent --fail --max-time 30 --noproxy '*' \
-    --header 'Host: admin.mk8n.com' \
-    http://127.0.0.1:8080/health/application >/dev/null \
-    || record_error "The Application Worker did not complete the Gateway probe."
 signature_path=$(find /var/lib/clamav -maxdepth 1 -type f \
     \( -name '*.cvd' -o -name '*.cld' \) -printf '%T@ %p\n' \
     | sort -nr | sed -n '1s/^[^ ]* //p')
@@ -432,6 +440,10 @@ case "$current_release" in
 esac
 
 if [ "$deep" = true ]; then
+    curl --silent --fail --max-time 30 --noproxy '*' \
+        --header 'Host: admin.mk8n.com' \
+        http://127.0.0.1:8080/health/application >/dev/null \
+        || record_error "The Application Worker did not complete the Gateway probe."
     if [ -n "$latest_backup" ] && [ -s "$latest_backup/SHA256SUMS" ]; then
         (cd "$latest_backup" && sha256sum --quiet --strict --check SHA256SUMS) \
             || record_error "The latest local backup failed checksum verification."

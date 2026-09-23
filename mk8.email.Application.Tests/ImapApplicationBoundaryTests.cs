@@ -242,5 +242,10 @@ public sealed class ImapApplicationBoundaryTests
             ImapStoreRequest request,
             CancellationToken cancellationToken = default) =>
             Task.FromResult(new ImapStoreResult(ImapStoreDisposition.Stored, [], []));
+
+        public Task<ImapMoveResult> MoveMessagesAsync(
+            ImapMoveRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ImapMoveResult(ImapMoveDisposition.Moved, 1, [], [], []));
     }
 }

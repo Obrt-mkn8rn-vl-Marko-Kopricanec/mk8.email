@@ -567,13 +567,7 @@ internal sealed class ImapApplicationService(
             throw new ArgumentException("The IMAP STORE request is invalid.", nameof(request));
         }
         var selection = request.Selection;
-        if ((selection.Ranges is null) == (selection.SavedSearchUids is null)
-            || (selection.Ranges is { } requestedRanges
-                && (requestedRanges.Count == 0
-                    || requestedRanges.Any(range => range is null
-                        || range.Start is < 1 || range.End is < 1)))
-            || (selection.SavedSearchUids is { } savedUids
-                && savedUids.Any(uid => uid < 1))
+        if (!IsValidMessageSelection(selection)
             || !ImapFlagMutation.TryValidate(request.Flags, out _))
         {
             throw new ArgumentException("The IMAP STORE request is invalid.", nameof(request));
@@ -700,6 +694,128 @@ internal sealed class ImapApplicationService(
         entry.Property(email => email.ModSeq).IsModified = true;
         return update;
     }
+
+    public async Task<ImapMoveResult> MoveMessagesAsync(
+        ImapMoveRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.UserId == Guid.Empty || request.SourceFolderId == Guid.Empty
+            || string.IsNullOrEmpty(request.DestinationMailboxName)
+            || request.Selection is null || !IsValidMessageSelection(request.Selection))
+        {
+            throw new ArgumentException("The IMAP MOVE request is invalid.", nameof(request));
+        }
+
+        await using var transaction = database.Database.IsRelational()
+            ? await database.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken)
+            : null;
+        var source = await database.Folders.SingleOrDefaultAsync(
+            folder => folder.Id == request.SourceFolderId
+                && folder.Inbox.OwnerId == request.UserId,
+            cancellationToken);
+        if (source is null)
+            return new ImapMoveResult(ImapMoveDisposition.SourceNotFound, 0, [], [], []);
+        var destination = await ImapMailboxResolver.ResolveFolderAsync(
+            database, request.UserId, request.DestinationMailboxName, cancellationToken);
+        if (destination is null)
+            return new ImapMoveResult(ImapMoveDisposition.DestinationNotFound, 0, [], [], []);
+
+        var messages = await database.Emails
+            .AsNoTracking()
+            .Where(email => email.FolderId == source.Id)
+            .OrderBy(email => email.Uid)
+            .Select(email => new EmailDB
+            {
+                Id = email.Id,
+                FolderId = email.FolderId,
+                Uid = email.Uid,
+                ModSeq = email.ModSeq,
+            })
+            .ToListAsync(cancellationToken);
+        var maximumIdentifier = request.UseUid
+            ? messages.Count > 0 ? messages[^1].Uid : 0
+            : messages.Count;
+        var resolvedRanges = request.Selection.Ranges is { } ranges
+            ? ResolveMessageRanges(ranges.Select(range => (range.Start, range.End)), maximumIdentifier)
+            : null;
+        var savedSearchUids = request.Selection.SavedSearchUids?.ToHashSet();
+        var rangeIndex = 0;
+        var sourceUids = new List<int>();
+        var destinationUids = new List<int>();
+        var expungeSequenceNumbers = new List<int>();
+        for (var index = 0; index < messages.Count; index++)
+        {
+            var message = messages[index];
+            var identifier = request.UseUid ? message.Uid : index + 1;
+            if (savedSearchUids is not null && !savedSearchUids.Contains(message.Uid))
+                continue;
+            if (resolvedRanges is not null)
+            {
+                while (rangeIndex < resolvedRanges.Count
+                    && resolvedRanges[rangeIndex].End < identifier)
+                {
+                    rangeIndex++;
+                }
+                if (rangeIndex == resolvedRanges.Count
+                    || resolvedRanges[rangeIndex].Start > identifier)
+                {
+                    continue;
+                }
+            }
+
+            var sourceModSeq = ++source.HighestModSeq;
+            database.ExpungedUids.Add(new ExpungedUidDB
+            {
+                Id = Guid.CreateVersion7(),
+                Uid = message.Uid,
+                ModSeq = sourceModSeq,
+                FolderId = source.Id,
+            });
+            var destinationUid = destination.NextUid++;
+            var destinationModSeq = ++destination.HighestModSeq;
+            AttachMoveUpdate(database, message, destination.Id, destinationUid, destinationModSeq);
+            expungeSequenceNumbers.Add(index + 1 - sourceUids.Count);
+            sourceUids.Add(message.Uid);
+            destinationUids.Add(destinationUid);
+        }
+
+        if (sourceUids.Count > 0)
+            await database.SaveChangesAsync(cancellationToken);
+        if (transaction is not null)
+            await transaction.CommitAsync(cancellationToken);
+        return new ImapMoveResult(ImapMoveDisposition.Moved,
+            destination.UidValidity, sourceUids, destinationUids, expungeSequenceNumbers);
+    }
+
+    private static void AttachMoveUpdate(
+        EmailDbContext database,
+        EmailDB metadata,
+        Guid destinationFolderId,
+        int destinationUid,
+        long destinationModSeq)
+    {
+        var update = new EmailDB
+        {
+            Id = metadata.Id,
+            FolderId = destinationFolderId,
+            Uid = destinationUid,
+            ModSeq = destinationModSeq,
+        };
+        database.Emails.Attach(update);
+        var entry = database.Entry(update);
+        entry.Property(email => email.FolderId).IsModified = true;
+        entry.Property(email => email.Uid).IsModified = true;
+        entry.Property(email => email.ModSeq).IsModified = true;
+    }
+
+    private static bool IsValidMessageSelection(ImapMessageSelection selection) =>
+        (selection.Ranges is null) != (selection.SavedSearchUids is null)
+        && (selection.Ranges is not { } ranges
+            || ranges.Count > 0 && ranges.All(range => range is not null
+                && range.Start is not < 1 && range.End is not < 1))
+        && (selection.SavedSearchUids is not { } savedUids
+            || savedUids.All(uid => uid > 0));
 
     public async Task<ImapQuotaResult> GetQuotaAsync(
         ImapQuotaRequest request,

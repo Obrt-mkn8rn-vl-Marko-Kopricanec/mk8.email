@@ -39,6 +39,7 @@ public static class ApplicationOperations
     public const string ImapGetIdleSnapshot = "imap.idle.snapshot";
     public const string ImapExpungeDeleted = "imap.messages.expunge";
     public const string ImapStoreFlags = "imap.messages.flags.store";
+    public const string ImapMoveMessages = "imap.messages.move";
     public const string AdminAuthenticate = "admin.authenticate";
     public const string AdminDashboardGet = "admin.dashboard.get";
     public const string AdminDomainsGet = "admin.domains.get";

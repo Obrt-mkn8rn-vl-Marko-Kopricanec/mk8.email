@@ -2627,31 +2627,6 @@ ILogger<ImapServerService> logger) : BackgroundService
         return update;
     }
 
-    private static EmailDB AttachMoveUpdate(
-        EmailDbContext db,
-        EmailDB metadata,
-        Guid destinationFolderId,
-        int destinationUid,
-        long destinationModSeq)
-    {
-        var update = new EmailDB
-        {
-            Id = metadata.Id,
-            FolderId = metadata.FolderId,
-            Uid = metadata.Uid,
-            ModSeq = metadata.ModSeq,
-        };
-        db.Emails.Attach(update);
-        update.FolderId = destinationFolderId;
-        update.Uid = destinationUid;
-        update.ModSeq = destinationModSeq;
-        var entry = db.Entry(update);
-        entry.Property(email => email.FolderId).IsModified = true;
-        entry.Property(email => email.Uid).IsModified = true;
-        entry.Property(email => email.ModSeq).IsModified = true;
-        return update;
-    }
-
     private static void AttachDelete(EmailDbContext db, EmailDB metadata)
     {
         var update = new EmailDB { Id = metadata.Id };
@@ -6210,99 +6185,99 @@ ILogger<ImapServerService> logger) : BackgroundService
             return;
         }
 
-        using var scope = scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-        await using var transaction = db.Database.IsRelational()
-            ? await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct)
-            : null;
-
-        var sourceFolder = await db.Folders.FindAsync([session.SelectedFolderId!.Value], ct);
-        if (sourceFolder is null)
+        ImapMessageSelection selection;
+        if (messageSet == "$")
         {
-            await writer.WriteLineAsync($"{tag} NO Selected mailbox not found");
-            return;
+            selection = new ImapMessageSelection(null, session.SavedSearchUids.ToList());
         }
-
-        var destFolder = await ResolveFolderAsync(db, session.UserId, destMailbox, ct);
-        if (destFolder is null)
+        else if (ImapUidSetParser.TryParse(messageSet, out var ranges))
         {
-            await writer.WriteLineAsync($"{tag} NO [TRYCREATE] Destination mailbox not found");
-            return;
+            selection = new ImapMessageSelection(
+                ranges.Select(range => new ImapMessageRange(range.Start, range.End)).ToList(),
+                null);
         }
-
-        var emails = await GetEmailMetadataInFolderAsync(db, session.SelectedFolderId!.Value, ct);
-        var maximumIdentifier = useUid
-            ? (emails.Count > 0 ? emails[^1].Uid : 0)
-            : emails.Count;
-        if (!TryResolveMessageSet(
-                messageSet,
-                maximumIdentifier,
-                emails.Select(email => email.Uid).ToList(),
-                useUid,
-                session.SavedSearchUids,
-                out var parsedMessageSet))
+        else
         {
             await writer.WriteLineAsync($"{tag} BAD Invalid message set");
             return;
         }
 
-        var selected = emails
-            .Select((email, index) => (Email: email, SequenceNumber: index + 1))
-            .Where(item => MessageSetContains(
-                parsedMessageSet,
-                useUid ? item.Email.Uid : item.SequenceNumber))
-            .ToList();
-
         var commandName = useUid ? "UID MOVE" : "MOVE";
-        if (selected.Count == 0)
+        List<string> responseLines;
+        try
         {
-            await writer.WriteLineAsync($"{tag} OK {commandName} completed");
+            using var scope = scopeFactory.CreateScope();
+            var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
+            var result = await application.MoveMessagesAsync(new ImapMoveRequest(
+                session.UserId, session.SelectedFolderId!.Value,
+                destMailbox, useUid, selection), ct);
+            responseLines = BuildMoveResponseLines(tag, commandName, result, session.QresyncEnabled);
+        }
+        catch (Exception exception) when (
+            exception is not OperationCanceledException && !ct.IsCancellationRequested)
+        {
+            logger.LogWarning(exception, "IMAP {Command} is unavailable for {UserId}",
+                commandName, session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] {commandName} backend unavailable");
             return;
         }
 
-        var srcUids = new List<int>(selected.Count);
-        var dstUids = new List<int>(selected.Count);
-        var expungeSequenceNumbers = new List<int>(selected.Count);
-        var expunged = 0;
-        foreach (var item in selected)
+        foreach (var line in responseLines)
+            await writer.WriteLineAsync(line);
+    }
+
+    private static List<string> BuildMoveResponseLines(
+        string tag, string commandName, ImapMoveResult result, bool qresyncEnabled)
+    {
+        if (result.SourceUids is null || result.DestinationUids is null
+            || result.ExpungeSequenceNumbers is null
+            || result.SourceUids.Count != result.DestinationUids.Count
+            || result.SourceUids.Count != result.ExpungeSequenceNumbers.Count
+            || result.SourceUids.Any(uid => uid < 1)
+            || result.DestinationUids.Any(uid => uid < 1)
+            || result.ExpungeSequenceNumbers.Any(sequence => sequence < 1)
+            || result.SourceUids.Zip(result.SourceUids.Skip(1))
+                .Any(pair => pair.Second <= pair.First)
+            || result.DestinationUids.Zip(result.DestinationUids.Skip(1))
+                .Any(pair => pair.Second <= pair.First)
+            || result.ExpungeSequenceNumbers.Zip(result.ExpungeSequenceNumbers.Skip(1))
+                .Any(pair => pair.Second < pair.First))
         {
-            var email = item.Email;
-            var sourceUid = email.Uid;
-            var sourceModSeq = ++sourceFolder.HighestModSeq;
-            db.ExpungedUids.Add(new ExpungedUidDB
-            {
-                Id = Guid.CreateVersion7(),
-                Uid = sourceUid,
-                ModSeq = sourceModSeq,
-                FolderId = sourceFolder.Id,
-            });
-
-            srcUids.Add(sourceUid);
-            var destinationUid = destFolder.NextUid++;
-            var destinationModSeq = ++destFolder.HighestModSeq;
-            AttachMoveUpdate(db, email, destFolder.Id, destinationUid, destinationModSeq);
-            dstUids.Add(destinationUid);
-
-            expungeSequenceNumbers.Add(item.SequenceNumber - expunged);
-            expunged++;
+            throw new InvalidOperationException("The IMAP MOVE result is invalid.");
         }
 
-        await db.SaveChangesAsync(ct);
-        if (transaction is not null)
-            await transaction.CommitAsync(ct);
-
-        if (session.QresyncEnabled && srcUids.Count > 0)
+        if (result.Disposition != ImapMoveDisposition.Moved)
         {
-            await writer.WriteLineAsync($"* VANISHED {FormatUidRange(srcUids)}");
+            if (result.SourceUids.Count > 0 || result.DestinationUidValidity != 0)
+                throw new InvalidOperationException("The IMAP MOVE result is invalid.");
+            return result.Disposition switch
+            {
+                ImapMoveDisposition.SourceNotFound => [$"{tag} NO Selected mailbox not found"],
+                ImapMoveDisposition.DestinationNotFound =>
+                    [$"{tag} NO [TRYCREATE] Destination mailbox not found"],
+                _ => throw new InvalidOperationException("The IMAP MOVE result is invalid."),
+            };
+        }
+
+        if (result.DestinationUidValidity < 1)
+            throw new InvalidOperationException("The IMAP MOVE result is invalid.");
+        if (result.SourceUids.Count == 0)
+            return [$"{tag} OK {commandName} completed"];
+
+        var lines = new List<string>();
+        if (qresyncEnabled)
+        {
+            lines.Add($"* VANISHED {FormatUidRange(result.SourceUids)}");
         }
         else
         {
-            foreach (var sequenceNumber in expungeSequenceNumbers)
-                await writer.WriteLineAsync($"* {sequenceNumber} EXPUNGE");
+            lines.AddRange(result.ExpungeSequenceNumbers
+                .Select(sequence => $"* {sequence} EXPUNGE"));
         }
-
-        await writer.WriteLineAsync(
-            $"{tag} OK [COPYUID {destFolder.UidValidity} {FormatUidSet(srcUids)} {FormatUidSet(dstUids)}] {commandName} completed");
+        lines.Add($"{tag} OK [COPYUID {result.DestinationUidValidity} "
+            + $"{FormatUidSet(result.SourceUids)} {FormatUidSet(result.DestinationUids)}] "
+            + $"{commandName} completed");
+        return lines;
     }
 
     private async Task HandleAppendAsync(

@@ -336,20 +336,25 @@ public sealed class TransportSecurityTests
         Assert.AreEqual("a7 NO [UNAVAILABLE] UID EXPUNGE backend unavailable", await connection.ReadLineAsync());
         await connection.WriteLineAsync("a8 CLOSE");
         Assert.AreEqual("a8 NO [UNAVAILABLE] CLOSE backend unavailable", await connection.ReadLineAsync());
-        await connection.WriteLineAsync("a9 UNSELECT");
-        Assert.AreEqual("a9 OK UNSELECT completed", await connection.ReadLineAsync());
+        await connection.WriteLineAsync("a9 MOVE 1 Archive");
+        Assert.AreEqual("a9 NO [UNAVAILABLE] MOVE backend unavailable", await connection.ReadLineAsync());
+        await connection.WriteLineAsync("a10 UID MOVE $ Archive");
+        Assert.AreEqual("a10 NO [UNAVAILABLE] UID MOVE backend unavailable", await connection.ReadLineAsync());
+        await connection.WriteLineAsync("a11 UNSELECT");
+        Assert.AreEqual("a11 OK UNSELECT completed", await connection.ReadLineAsync());
     }
 
     [TestMethod]
     [Timeout(10_000)]
-    public async Task ImapStoreRejectsMalformedWorkerResultBeforeSendingFetchRows()
+    public async Task ImapMutationsRejectMalformedWorkerResultsBeforeOutput()
     {
         var port = ReservePort();
         await using var server = await ServerFixture.StartImapAsync(
             CreateEnvironment(imapPort: port),
             port,
             applicationService: new UnavailableImapMailboxApplicationService(
-                listingUnavailable: false, selectionAvailable: true, storeMalformed: true));
+                listingUnavailable: false, selectionAvailable: true,
+                storeMalformed: true, moveMalformed: true));
         await using var connection = await ProtocolConnection.ConnectAsync(port);
         Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("* OK ", StringComparison.Ordinal));
         await connection.WriteLineAsync("a1 STARTTLS");
@@ -362,8 +367,10 @@ public sealed class TransportSecurityTests
         Assert.IsTrue(selected[^1].StartsWith("a3 OK [READ-WRITE]", StringComparison.Ordinal));
         await connection.WriteLineAsync("a4 STORE 1 +FLAGS (\\Seen)");
         Assert.AreEqual("a4 NO [UNAVAILABLE] STORE backend unavailable", await connection.ReadLineAsync());
-        await connection.WriteLineAsync("a5 UNSELECT");
-        Assert.AreEqual("a5 OK UNSELECT completed", await connection.ReadLineAsync());
+        await connection.WriteLineAsync("a5 MOVE 1 Archive");
+        Assert.AreEqual("a5 NO [UNAVAILABLE] MOVE backend unavailable", await connection.ReadLineAsync());
+        await connection.WriteLineAsync("a6 UNSELECT");
+        Assert.AreEqual("a6 OK UNSELECT completed", await connection.ReadLineAsync());
     }
 
     [TestInitialize]
@@ -3772,13 +3779,19 @@ public sealed class TransportSecurityTests
             ImapStoreRequest request,
             CancellationToken cancellationToken = default) =>
             Task.FromException<ImapStoreResult>(new IOException("Worker unavailable"));
+
+        public Task<ImapMoveResult> MoveMessagesAsync(
+            ImapMoveRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromException<ImapMoveResult>(new IOException("Worker unavailable"));
     }
 
     private sealed class UnavailableImapMailboxApplicationService(
         bool listingUnavailable = true,
         bool selectionMalformed = false,
         bool selectionAvailable = false,
-        bool storeMalformed = false) : IImapApplicationService
+        bool storeMalformed = false,
+        bool moveMalformed = false) : IImapApplicationService
     {
         public Task<ImapIdentityResult> AuthenticatePasswordAsync(
             ImapPasswordAuthentication request,
@@ -3853,6 +3866,13 @@ public sealed class TransportSecurityTests
             ? Task.FromResult(new ImapStoreResult(ImapStoreDisposition.Stored, [],
                 [new ImapChangedMessage(0, 0, 0, false, false, false, false, false, [])]))
             : Task.FromException<ImapStoreResult>(new IOException("Worker unavailable"));
+
+        public Task<ImapMoveResult> MoveMessagesAsync(
+            ImapMoveRequest request,
+            CancellationToken cancellationToken = default) => moveMalformed
+            ? Task.FromResult(new ImapMoveResult(ImapMoveDisposition.Moved, 1,
+                [1], [2], []))
+            : Task.FromException<ImapMoveResult>(new IOException("Worker unavailable"));
     }
 
     private sealed class ServerFixture(

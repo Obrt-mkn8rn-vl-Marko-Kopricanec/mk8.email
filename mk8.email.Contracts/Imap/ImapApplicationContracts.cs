@@ -53,6 +53,10 @@ public interface IImapApplicationService
     Task<ImapStoreResult> StoreFlagsAsync(
         ImapStoreRequest request,
         CancellationToken cancellationToken = default);
+
+    Task<ImapMoveResult> MoveMessagesAsync(
+        ImapMoveRequest request,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record ImapPasswordAuthentication(string Username, string Password);
@@ -247,3 +251,24 @@ public sealed record ImapStoreResult(
     ImapStoreDisposition Disposition,
     List<int> Modified,
     List<ImapChangedMessage> Updated);
+
+public sealed record ImapMoveRequest(
+    Guid UserId,
+    Guid SourceFolderId,
+    string DestinationMailboxName,
+    bool UseUid,
+    ImapMessageSelection Selection);
+
+public enum ImapMoveDisposition
+{
+    Moved,
+    SourceNotFound,
+    DestinationNotFound,
+}
+
+public sealed record ImapMoveResult(
+    ImapMoveDisposition Disposition,
+    int DestinationUidValidity,
+    List<int> SourceUids,
+    List<int> DestinationUids,
+    List<int> ExpungeSequenceNumbers);

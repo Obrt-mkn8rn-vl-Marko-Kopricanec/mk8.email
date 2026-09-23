@@ -1339,6 +1339,89 @@ internal sealed class ImapApplicationService(
             search.HighestModSequence);
     }
 
+    public async Task<ImapThreadResult> ThreadMessagesAsync(
+        ImapThreadRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.SavedSearchUids);
+        if (request.UserId == Guid.Empty
+            || request.FolderId == Guid.Empty
+            || request.SearchCriteria is null
+            || request.SearchCriteria.Length > 1_048_576
+            || request.SavedSearchUids.Any(uid => uid < 1)
+            || !Enum.IsDefined(request.Algorithm)
+            || request.Charset is null
+            || !request.Charset.Equals("US-ASCII", StringComparison.OrdinalIgnoreCase)
+                && !request.Charset.Equals("UTF-8", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException("The IMAP THREAD request is invalid.", nameof(request));
+        }
+
+        await using var transaction = database.Database.IsRelational()
+            ? await database.Database.BeginTransactionAsync(
+                IsolationLevel.RepeatableRead, cancellationToken)
+            : null;
+        var folderExists = await database.Folders
+            .AsNoTracking()
+            .AnyAsync(folder => folder.Id == request.FolderId
+                && folder.Inbox.OwnerId == request.UserId,
+                cancellationToken);
+        if (!folderExists)
+            return new ImapThreadResult(false, null, []);
+
+        var query = database.Emails
+            .AsNoTracking()
+            .Where(email => email.FolderId == request.FolderId);
+        var search = await ImapSearchEngine.FindSearchCandidatesAsync(
+            query,
+            content,
+            request.SearchCriteria,
+            request.SavedSearchUids.ToHashSet(),
+            request.Utf8Enabled,
+            cancellationToken,
+            request.Charset);
+        if (search.FailureResponse is not null)
+            return new ImapThreadResult(true, search.FailureResponse, []);
+
+        var matchedIds = search.Matches.Select(match => match.Id).ToArray();
+        var sequenceById = search.Matches.ToDictionary(
+            match => match.Id, match => match.SequenceNumber);
+        var stored = await query
+            .Where(email => matchedIds.Contains(email.Id))
+            .ToListAsync(cancellationToken);
+        List<ImapThreadNode> nodes;
+        if (request.Algorithm == ImapThreadAlgorithm.OrderedSubject)
+        {
+            var messages = new List<ImapSortEngine.SortMessage>(stored.Count);
+            foreach (var email in stored)
+            {
+                var raw = await content.ReadAsync(email, cancellationToken);
+                var metadata = ImapSortEngine.CreateStoredMessage(
+                    email, sequenceById[email.Id], raw);
+                messages.Add(ImapSortEngine.CreateSortMessage(metadata));
+            }
+            nodes = ImapThreadEngine.BuildOrderedSubject(messages, request.UseUid);
+        }
+        else
+        {
+            var messages = new List<Rfc5256ThreadMessage>(stored.Count);
+            foreach (var email in stored)
+            {
+                var raw = await content.ReadAsync(email, cancellationToken);
+                var metadata = ImapSortEngine.CreateStoredMessage(
+                    email, sequenceById[email.Id], raw);
+                messages.Add(ImapThreadEngine.CreateReferenceMessage(
+                    metadata, email.MessageId, email.InReplyTo, request.UseUid));
+            }
+            nodes = Rfc5256Threading.BuildReferencesTree(messages);
+        }
+
+        if (transaction is not null)
+            await transaction.CommitAsync(cancellationToken);
+        return new ImapThreadResult(true, null, nodes);
+    }
+
     public async Task<ImapQuotaResult> GetQuotaAsync(
         ImapQuotaRequest request,
         CancellationToken cancellationToken = default)

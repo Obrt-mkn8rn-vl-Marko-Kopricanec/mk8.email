@@ -120,4 +120,10 @@ public sealed class GatewayImapApplicationService(
         CancellationToken cancellationToken = default) =>
         transport.SendAsync<ImapSortRequest, ImapSortResult>(
             "imap", ApplicationOperations.ImapSortMessages, request, cancellationToken);
+
+    public Task<ImapThreadResult> ThreadMessagesAsync(
+        ImapThreadRequest request,
+        CancellationToken cancellationToken = default) =>
+        transport.SendAsync<ImapThreadRequest, ImapThreadResult>(
+            "imap", ApplicationOperations.ImapThreadMessages, request, cancellationToken);
 }

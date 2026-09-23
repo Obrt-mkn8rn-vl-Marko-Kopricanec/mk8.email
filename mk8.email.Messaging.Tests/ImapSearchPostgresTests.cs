@@ -100,8 +100,16 @@ public sealed class ImapSearchPostgresTests
                     Recipient = "owner@example.test",
                     Subject = uid == 1 ? "Zebra metadata" : subject,
                 };
+                var rawSubject = uid == 3 ? "Re: Alpha" : subject;
+                var replyHeader = uid == 3
+                    ? "In-Reply-To: <message-1@example.test>\r\n"
+                    : string.Empty;
                 var raw = Encoding.ASCII.GetBytes(
-                    $"Subject: {subject}\r\nX-Label: {label}\r\n\r\n{body}\r\n");
+                    $"Subject: {rawSubject}\r\n" +
+                    $"Date: Mon, 01 Jan 2024 00:00:0{uid} +0000\r\n" +
+                    $"Message-ID: <message-{uid}@example.test>\r\n" +
+                    replyHeader +
+                    $"X-Label: {label}\r\n\r\n{body}\r\n");
                 await content.SetAsync(email, raw, CancellationToken.None);
                 database.Emails.Add(email);
             }
@@ -153,11 +161,11 @@ public sealed class ImapSearchPostgresTests
                 sortRequest with { UserId = otherId })).FolderFound);
             var sorted = await application.SortMessagesAsync(sortRequest);
             Assert.IsTrue(sorted.FolderFound);
-            CollectionAssert.AreEqual(new[] { 3, 2, 1 },
+            CollectionAssert.AreEqual(new[] { 2, 1, 3 },
                 sorted.SortedMatches.Select(match => match.Uid).ToArray());
             var savedSort = await application.SortMessagesAsync(
                 sortRequest with { SearchCriteria = "$", SavedSearchUids = [1, 3] });
-            CollectionAssert.AreEqual(new[] { 3, 1 },
+            CollectionAssert.AreEqual(new[] { 1, 3 },
                 savedSort.SortedMatches.Select(match => match.Uid).ToArray());
             await Assert.ThrowsAsync<ArgumentException>(() => application.SortMessagesAsync(
                 sortRequest with { Charset = "UNSUPPORTED" }));
@@ -166,6 +174,48 @@ public sealed class ImapSearchPostgresTests
                 {
                     SortCriteria = [new ImapSortCriterion((ImapSortKey)999, false)],
                 }));
+
+            var threadRequest = new ImapThreadRequest(
+                ownerId, folderId, "ALL", [], false, "US-ASCII",
+                ImapThreadAlgorithm.References, true);
+            Assert.IsFalse((await application.ThreadMessagesAsync(
+                threadRequest with { UserId = otherId })).FolderFound);
+            var references = await application.ThreadMessagesAsync(threadRequest);
+            Assert.IsTrue(references.FolderFound);
+            Assert.IsNull(references.FailureResponse);
+            Assert.HasCount(3, references.Nodes);
+            var referenceIndex = references.Nodes
+                .Select((node, index) => (
+                    Identifier: node.Identifier ?? throw new AssertFailedException(
+                        "Unexpected dummy thread node."), index))
+                .ToDictionary(item => item.Identifier, item => item.index);
+            Assert.AreEqual(referenceIndex[1],
+                references.Nodes[referenceIndex[3]].ParentIndex);
+            Assert.AreEqual(-1, references.Nodes[referenceIndex[2]].ParentIndex);
+
+            var ordered = await application.ThreadMessagesAsync(threadRequest with
+            {
+                Algorithm = ImapThreadAlgorithm.OrderedSubject,
+            });
+            Assert.HasCount(3, ordered.Nodes);
+            var orderedIndex = ordered.Nodes
+                .Select((node, index) => (
+                    Identifier: node.Identifier ?? throw new AssertFailedException(
+                        "Unexpected dummy thread node."), index))
+                .ToDictionary(item => item.Identifier, item => item.index);
+            Assert.AreEqual(orderedIndex[1],
+                ordered.Nodes[orderedIndex[3]].ParentIndex);
+            var savedThread = await application.ThreadMessagesAsync(threadRequest with
+            {
+                SearchCriteria = "$",
+                SavedSearchUids = [1, 3],
+            });
+            Assert.HasCount(2, savedThread.Nodes);
+            Assert.IsFalse(savedThread.Nodes.Any(node => node.Identifier == 2));
+            await Assert.ThrowsAsync<ArgumentException>(() => application.ThreadMessagesAsync(
+                threadRequest with { Charset = "UNSUPPORTED" }));
+            await Assert.ThrowsAsync<ArgumentException>(() => application.ThreadMessagesAsync(
+                threadRequest with { Algorithm = (ImapThreadAlgorithm)999 }));
         }
         Assert.AreEqual(3, objects.ObjectCount);
     }

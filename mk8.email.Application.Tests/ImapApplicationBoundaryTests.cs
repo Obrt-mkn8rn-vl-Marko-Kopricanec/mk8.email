@@ -131,6 +131,15 @@ public sealed class ImapApplicationBoundaryTests
         Assert.HasCount(1, sort.SortedMatches);
         Assert.AreEqual(ImapSortKey.Subject, application.LastSortKey);
 
+        var thread = await SendAsync<ImapThreadRequest, ImapThreadResult>(
+            dispatcher,
+            ApplicationOperations.ImapThreadMessages,
+            new ImapThreadRequest(application.UserId, Guid.CreateVersion7(),
+                "ALL", [7], false, "US-ASCII", ImapThreadAlgorithm.References, true));
+        Assert.IsTrue(thread.FolderFound);
+        Assert.HasCount(1, thread.Nodes);
+        Assert.AreEqual(ImapThreadAlgorithm.References, application.LastThreadAlgorithm);
+
         var idle = await SendAsync<ImapIdleSnapshotRequest, ImapIdleSnapshotResult>(
             dispatcher,
             ApplicationOperations.ImapGetIdleSnapshot,
@@ -300,6 +309,17 @@ public sealed class ImapApplicationBoundaryTests
             LastSortKey = request.SortCriteria[0].Key;
             return Task.FromResult(new ImapSortResult(
                 true, null, [new ImapSearchMatch(7, 2)], null));
+        }
+
+        public ImapThreadAlgorithm? LastThreadAlgorithm { get; private set; }
+
+        public Task<ImapThreadResult> ThreadMessagesAsync(
+            ImapThreadRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            LastThreadAlgorithm = request.Algorithm;
+            return Task.FromResult(new ImapThreadResult(
+                true, null, [new ImapThreadNode(7, -1)]));
         }
 
         public Task<ImapIdleSnapshotResult> GetIdleSnapshotAsync(

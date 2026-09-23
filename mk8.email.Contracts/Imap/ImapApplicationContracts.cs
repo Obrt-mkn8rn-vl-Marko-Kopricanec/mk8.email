@@ -77,6 +77,10 @@ public interface IImapApplicationService
     Task<ImapSortResult> SortMessagesAsync(
         ImapSortRequest request,
         CancellationToken cancellationToken = default);
+
+    Task<ImapThreadResult> ThreadMessagesAsync(
+        ImapThreadRequest request,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record ImapPasswordAuthentication(string Username, string Password);
@@ -397,3 +401,28 @@ public sealed record ImapSortResult(
     string? FailureResponse,
     List<ImapSearchMatch> SortedMatches,
     long? HighestModSequence);
+
+public enum ImapThreadAlgorithm
+{
+    References,
+    OrderedSubject,
+}
+
+public sealed record ImapThreadRequest(
+    Guid UserId,
+    Guid FolderId,
+    string SearchCriteria,
+    List<int> SavedSearchUids,
+    bool Utf8Enabled,
+    string Charset,
+    ImapThreadAlgorithm Algorithm,
+    bool UseUid);
+
+// Nodes are in preorder. A parent is either -1 (a root) or an earlier index.
+// Null identifiers represent RFC 5256 dummy containers, not message rows.
+public sealed record ImapThreadNode(int? Identifier, int ParentIndex);
+
+public sealed record ImapThreadResult(
+    bool FolderFound,
+    string? FailureResponse,
+    List<ImapThreadNode> Nodes);

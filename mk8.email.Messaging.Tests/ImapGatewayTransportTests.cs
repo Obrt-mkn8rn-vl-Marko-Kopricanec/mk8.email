@@ -131,6 +131,9 @@ public sealed class ImapGatewayTransportTests
                 application.UserId, Guid.CreateVersion7(), "ALL", [7], false,
                 "US-ASCII", [new ImapSortCriterion(ImapSortKey.Subject, true)]),
                 timeout.Token);
+            var threaded = await client.ThreadMessagesAsync(new ImapThreadRequest(
+                application.UserId, Guid.CreateVersion7(), "ALL", [7], false,
+                "US-ASCII", ImapThreadAlgorithm.References, true), timeout.Token);
             Assert.AreEqual(application.UserId, password.UserId);
             Assert.AreEqual(application.UserId, oauth.UserId);
             Assert.AreEqual("imap-secret", application.Password);
@@ -181,6 +184,9 @@ public sealed class ImapGatewayTransportTests
             Assert.AreEqual("SUBJECT transport", application.LastSearchRequest?.Criteria);
             Assert.HasCount(1, sorted.SortedMatches);
             Assert.AreEqual(ImapSortKey.Subject, application.LastSortRequest?.SortCriteria[0].Key);
+            Assert.HasCount(2, threaded.Nodes);
+            Assert.AreEqual(0, threaded.Nodes[1].ParentIndex);
+            Assert.AreEqual(ImapThreadAlgorithm.References, application.LastThreadRequest?.Algorithm);
 
             await using var operations = gatewayDataSource.CreateCommand(
                 "SELECT operation FROM application_requests ORDER BY created_at");
@@ -210,6 +216,7 @@ public sealed class ImapGatewayTransportTests
                     ApplicationOperations.ImapAppendMessages,
                     ApplicationOperations.ImapSearchMessages,
                     ApplicationOperations.ImapSortMessages,
+                    ApplicationOperations.ImapThreadMessages,
                 },
                 observed);
 
@@ -246,7 +253,7 @@ public sealed class ImapGatewayTransportTests
                     Assert.IsFalse(ciphertext.Contains("imap-access-token", StringComparison.Ordinal));
                 }
             }
-            Assert.AreEqual(38, recordCount);
+            Assert.AreEqual(40, recordCount);
             Assert.AreEqual(1, blobRecordCount);
         }
         finally
@@ -275,6 +282,7 @@ public sealed class ImapGatewayTransportTests
         public ImapAppendRequest? LastAppendCommit { get; private set; }
         public ImapSearchRequest? LastSearchRequest { get; private set; }
         public ImapSortRequest? LastSortRequest { get; private set; }
+        public ImapThreadRequest? LastThreadRequest { get; private set; }
 
         public Task<ImapIdentityResult> AuthenticatePasswordAsync(
             ImapPasswordAuthentication request,
@@ -435,6 +443,15 @@ public sealed class ImapGatewayTransportTests
             LastSortRequest = request;
             return Task.FromResult(new ImapSortResult(
                 true, null, [new ImapSearchMatch(7, 2)], 5));
+        }
+
+        public Task<ImapThreadResult> ThreadMessagesAsync(
+            ImapThreadRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            LastThreadRequest = request;
+            return Task.FromResult(new ImapThreadResult(true, null,
+                [new ImapThreadNode(7, -1), new ImapThreadNode(8, 0)]));
         }
     }
 }

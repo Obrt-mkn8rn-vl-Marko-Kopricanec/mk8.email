@@ -1,5 +1,6 @@
 using System.Text;
 using MimeKit.Utils;
+using mk8.email.Contracts.Imap;
 
 namespace mk8.email.Application.Protocol;
 
@@ -40,10 +41,18 @@ internal static class Rfc5256Threading
         return NormalizeParsedMessageId(MimeUtils.ParseMessageId(value));
     }
 
-    public static string BuildReferences(IReadOnlyList<Rfc5256ThreadMessage> messages)
+    public static string BuildReferences(IReadOnlyList<Rfc5256ThreadMessage> messages) =>
+        Render(BuildReferenceGraph(messages));
+
+    public static List<ImapThreadNode> BuildReferencesTree(
+        IReadOnlyList<Rfc5256ThreadMessage> messages) =>
+        Flatten(BuildReferenceGraph(messages));
+
+    private static IReadOnlyList<ThreadNode> BuildReferenceGraph(
+        IReadOnlyList<Rfc5256ThreadMessage> messages)
     {
         if (messages.Count == 0)
-            return string.Empty;
+            return [];
 
         var orderedMessages = messages
             .OrderBy(message => message.SequenceNumber)
@@ -122,7 +131,25 @@ internal static class Rfc5256Threading
 
         MergeRootsBySubject(root, ref nextOrder);
         SortAllSiblingSets(root);
-        return Render(root.Children);
+        return root.Children;
+    }
+
+    private static List<ImapThreadNode> Flatten(IReadOnlyList<ThreadNode> roots)
+    {
+        var result = new List<ImapThreadNode>();
+        var pending = new Stack<(ThreadNode Node, int ParentIndex)>();
+        for (var index = roots.Count - 1; index >= 0; index--)
+            pending.Push((roots[index], -1));
+
+        while (pending.Count > 0)
+        {
+            var (node, parentIndex) = pending.Pop();
+            var nodeIndex = result.Count;
+            result.Add(new ImapThreadNode(node.Message?.Identifier, parentIndex));
+            for (var index = node.Children.Count - 1; index >= 0; index--)
+                pending.Push((node.Children[index], nodeIndex));
+        }
+        return result;
     }
 
     private static string? NormalizeParsedMessageId(string? value)

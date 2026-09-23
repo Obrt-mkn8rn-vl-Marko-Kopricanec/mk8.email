@@ -11,7 +11,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using MimeKit;
 using mk8.email.Application.Protocol;
 using mk8.email.Configuration;
 using mk8.email.Contracts.Enums;
@@ -4273,39 +4272,6 @@ ILogger<ImapServerService> logger) : BackgroundService
 
     private readonly record struct SearchToken(SearchTokenKind Kind, string Value);
 
-    private sealed record SortStoredMessage(
-        Guid Id,
-        int Uid,
-        int SequenceNumber,
-        DateTime ReceivedAt,
-        int SizeBytes,
-        string Sender,
-        string Recipient,
-        string? Cc,
-        string Subject,
-        string? RawHeaders);
-
-    private sealed record SortMessage(
-        int Uid,
-        int SequenceNumber,
-        DateTime ReceivedAt,
-        DateTime SentAt,
-        int SizeBytes,
-        byte[] FromSortKey,
-        byte[] ToSortKey,
-        byte[] CcSortKey,
-        byte[] SubjectSortKey);
-
-    private sealed record ThreadStoredMessage(
-        Guid Id,
-        int Uid,
-        int SequenceNumber,
-        DateTime ReceivedAt,
-        string Subject,
-        string? RawHeaders,
-        string? MessageId,
-        string? InReplyTo);
-
     // — ESEARCH helpers (RFC 4731) —
 
     private static bool StartsWithCharsetSearchKey(string criteria)
@@ -4530,104 +4496,59 @@ ILogger<ImapServerService> logger) : BackgroundService
             return;
         }
 
-        using var scope = scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-        var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
-        await using var transaction = db.Database.IsRelational()
-            ? await db.Database.BeginTransactionAsync(IsolationLevel.RepeatableRead, ct)
-            : null;
-
-        var folderQuery = db.Emails
-            .AsNoTracking()
-            .Where(email => email.FolderId == session.SelectedFolderId!.Value);
-        var searchResult = await ImapSearchEngine.FindSearchCandidatesAsync(
-            folderQuery,
-            content,
-            searchCriteria,
-            session.SavedSearchUids,
-            session.Utf8Enabled,
-            ct,
-            charset);
-        if (searchResult.FailureResponse is not null)
+        ImapThreadResult threadResult;
+        string threads;
+        try
         {
-            await writer.WriteLineAsync($"{tag} {searchResult.FailureResponse}");
-            return;
-        }
-
-        var matchedIds = searchResult.Matches.Select(candidate => candidate.Id).ToArray();
-
-        if (algorithm == "ORDEREDSUBJECT")
-        {
-            var sequenceById = searchResult.Matches.ToDictionary(
-                candidate => candidate.Id,
-                candidate => candidate.SequenceNumber);
-            var storedEmails = await folderQuery
-                .Where(email => matchedIds.Contains(email.Id))
-                .ToListAsync(ct);
-            var storedMessages = new List<SortStoredMessage>(storedEmails.Count);
-            foreach (var email in storedEmails)
+            using var scope = scopeFactory.CreateScope();
+            var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
+            threadResult = await application.ThreadMessagesAsync(new ImapThreadRequest(
+                session.UserId,
+                session.SelectedFolderId!.Value,
+                searchCriteria,
+                session.SavedSearchUids.ToList(),
+                session.Utf8Enabled,
+                charset,
+                algorithm == "REFERENCES"
+                    ? ImapThreadAlgorithm.References
+                    : ImapThreadAlgorithm.OrderedSubject,
+                useUid), ct);
+            if (threadResult is null
+                || threadResult.Nodes is null
+                || !threadResult.FolderFound
+                    && (threadResult.FailureResponse is not null
+                        || threadResult.Nodes.Count > 0)
+                || threadResult.FailureResponse is { } failure
+                    && (failure.ContainsAny(['\r', '\n', '\0'])
+                        || !failure.StartsWith("BAD ", StringComparison.OrdinalIgnoreCase)
+                            && !failure.StartsWith("NO ", StringComparison.OrdinalIgnoreCase)
+                        || threadResult.Nodes.Count > 0))
             {
-                ApplyTransientRawMessage(email, await content.ReadAsync(email, ct));
-                storedMessages.Add(new SortStoredMessage(
-                    email.Id,
-                    email.Uid,
-                    0,
-                    email.ReceivedAt,
-                    email.SizeBytes,
-                    email.Sender,
-                    email.Recipient,
-                    email.Cc,
-                    email.Subject,
-                    email.RawHeaders));
+                throw new InvalidOperationException("The IMAP THREAD result is invalid.");
             }
-            if (transaction is not null)
-                await transaction.CommitAsync(ct);
-
-            var messages = storedMessages
-                .Select(message => CreateSortMessage(
-                    message with { SequenceNumber = sequenceById[message.Id] }))
-                .ToList();
-            var threads = BuildOrderedSubjectThreads(messages, useUid);
-            var responseSuffix = threads.Length == 0 ? string.Empty : $" {threads}";
-            await writer.WriteLineAsync($"* THREAD{responseSuffix}");
-            await writer.WriteLineAsync(
-                $"{tag} OK {(useUid ? "UID THREAD" : "THREAD")} completed");
+            threads = RenderThreadNodes(threadResult.Nodes);
+        }
+        catch (Exception exception) when (
+            exception is not OperationCanceledException && !ct.IsCancellationRequested)
+        {
+            logger.LogWarning(exception, "IMAP THREAD unavailable for {UserId}", session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] THREAD backend unavailable");
             return;
         }
 
-        var referenceSequenceById = searchResult.Matches.ToDictionary(
-            candidate => candidate.Id,
-            candidate => candidate.SequenceNumber);
-        var referenceStoredEmails = await folderQuery
-            .Where(email => matchedIds.Contains(email.Id))
-            .ToListAsync(ct);
-        var referenceStoredMessages = new List<ThreadStoredMessage>(referenceStoredEmails.Count);
-        foreach (var email in referenceStoredEmails)
+        if (!threadResult.FolderFound)
         {
-            ApplyTransientRawMessage(email, await content.ReadAsync(email, ct));
-            referenceStoredMessages.Add(new ThreadStoredMessage(
-                email.Id,
-                email.Uid,
-                0,
-                email.ReceivedAt,
-                email.Subject,
-                email.RawHeaders,
-                email.MessageId,
-                email.InReplyTo));
+            await writer.WriteLineAsync($"{tag} NO Mailbox not found");
+            return;
         }
-        if (transaction is not null)
-            await transaction.CommitAsync(ct);
+        if (threadResult.FailureResponse is not null)
+        {
+            await writer.WriteLineAsync($"{tag} {threadResult.FailureResponse}");
+            return;
+        }
 
-        var referenceMessages = referenceStoredMessages
-            .Select(message => CreateReferenceThreadMessage(
-                message with { SequenceNumber = referenceSequenceById[message.Id] },
-                useUid))
-            .ToArray();
-        var referenceThreads = Rfc5256Threading.BuildReferences(referenceMessages);
-        var referenceSuffix = referenceThreads.Length == 0
-            ? string.Empty
-            : $" {referenceThreads}";
-        await writer.WriteLineAsync($"* THREAD{referenceSuffix}");
+        var responseSuffix = threads.Length == 0 ? string.Empty : $" {threads}";
+        await writer.WriteLineAsync($"* THREAD{responseSuffix}");
         await writer.WriteLineAsync(
             $"{tag} OK {(useUid ? "UID THREAD" : "THREAD")} completed");
     }
@@ -4777,240 +4698,75 @@ ILogger<ImapServerService> logger) : BackgroundService
         return true;
     }
 
-    private static string BuildOrderedSubjectThreads(
-        List<SortMessage> messages,
-        bool useUid)
+    private static string RenderThreadNodes(IReadOnlyList<ImapThreadNode> nodes)
     {
-        messages.Sort(static (left, right) =>
-        {
-            var subjectComparison = left.SubjectSortKey.AsSpan().SequenceCompareTo(
-                right.SubjectSortKey);
-            return subjectComparison != 0
-                ? subjectComparison
-                : CompareThreadSentDate(left, right);
-        });
+        var children = new List<int>[nodes.Count];
+        var roots = new List<int>();
+        var identifiers = new HashSet<int>();
+        for (var index = 0; index < nodes.Count; index++)
+            children[index] = [];
 
-        var groups = new List<List<SortMessage>>();
-        for (var index = 0; index < messages.Count;)
+        for (var index = 0; index < nodes.Count; index++)
         {
-            var group = new List<SortMessage> { messages[index++] };
-            while (index < messages.Count
-                   && group[0].SubjectSortKey.AsSpan().SequenceEqual(
-                       messages[index].SubjectSortKey))
+            var node = nodes[index];
+            if (node is null
+                || node.ParentIndex < -1
+                || node.ParentIndex >= index
+                || node.Identifier is { } identifier
+                    && (identifier < 1 || !identifiers.Add(identifier)))
             {
-                group.Add(messages[index++]);
+                throw new InvalidOperationException("The IMAP THREAD graph is invalid.");
             }
-            groups.Add(group);
+            if (node.ParentIndex == -1)
+                roots.Add(index);
+            else
+                children[node.ParentIndex].Add(index);
         }
-        groups.Sort(static (left, right) => CompareThreadSentDate(left[0], right[0]));
 
         var result = new StringBuilder();
-        foreach (var group in groups)
+        foreach (var root in roots)
         {
-            result.Append('(').Append(ThreadIdentifier(group[0], useUid));
-            if (group.Count == 2)
+            var actions = new Stack<(int Index, bool Close)>();
+            actions.Push((root, false));
+            while (actions.Count > 0)
             {
-                result.Append(' ').Append(ThreadIdentifier(group[1], useUid));
-            }
-            else if (group.Count > 2)
-            {
-                result.Append(' ');
-                for (var index = 1; index < group.Count; index++)
+                var action = actions.Pop();
+                if (action.Close)
                 {
-                    result.Append('(')
-                        .Append(ThreadIdentifier(group[index], useUid))
-                        .Append(')');
+                    result.Append(')');
+                    continue;
                 }
+
+                var nodeIndex = action.Index;
+                var node = nodes[nodeIndex];
+                result.Append('(');
+                actions.Push((-1, true));
+                if (node.Identifier is null)
+                {
+                    if (children[nodeIndex].Count == 0)
+                        throw new InvalidOperationException("The IMAP THREAD graph is invalid.");
+                    for (var index = children[nodeIndex].Count - 1; index >= 0; index--)
+                        actions.Push((children[nodeIndex][index], false));
+                    continue;
+                }
+
+                result.Append(node.Identifier.Value);
+                var tail = nodeIndex;
+                while (children[tail].Count == 1
+                       && nodes[children[tail][0]].Identifier is { } childIdentifier)
+                {
+                    tail = children[tail][0];
+                    result.Append(' ').Append(childIdentifier);
+                }
+                if (children[tail].Count == 0)
+                    continue;
+
+                result.Append(' ');
+                for (var index = children[tail].Count - 1; index >= 0; index--)
+                    actions.Push((children[tail][index], false));
             }
-            result.Append(')');
         }
         return result.ToString();
-    }
-
-    private static int CompareThreadSentDate(SortMessage left, SortMessage right)
-    {
-        var dateComparison = left.SentAt.CompareTo(right.SentAt);
-        return dateComparison != 0
-            ? dateComparison
-            : left.SequenceNumber.CompareTo(right.SequenceNumber);
-    }
-
-    private static int ThreadIdentifier(SortMessage message, bool useUid) =>
-        useUid ? message.Uid : message.SequenceNumber;
-
-    private static Rfc5256ThreadMessage CreateReferenceThreadMessage(
-        ThreadStoredMessage stored,
-        bool useUid)
-    {
-        var sentAt = stored.ReceivedAt;
-        var subject = stored.Subject;
-        var messageId = Rfc5256Threading.ParseFirstMessageId(stored.MessageId);
-        IReadOnlyList<string> references = Rfc5256Threading.ParseMessageIds(stored.InReplyTo)
-            .Take(1)
-            .ToArray();
-
-        if (!string.IsNullOrEmpty(stored.RawHeaders))
-        {
-            try
-            {
-                var rawHeaders = stored.RawHeaders.EndsWith("\r\n\r\n", StringComparison.Ordinal)
-                    || stored.RawHeaders.EndsWith("\n\n", StringComparison.Ordinal)
-                    ? stored.RawHeaders
-                    : stored.RawHeaders + "\r\n\r\n";
-                using var stream = new MemoryStream(
-                    MailWireEncoding.Instance.GetBytes(rawHeaders),
-                    writable: false);
-                using var message = MimeMessage.Load(stream, persistent: false);
-                subject = message.Subject ?? string.Empty;
-                var dateHeader = message.Headers.FirstOrDefault(header =>
-                    header.Field.Equals("Date", StringComparison.OrdinalIgnoreCase));
-                if (dateHeader is not null
-                    && MimeKit.Utils.DateUtils.TryParse(dateHeader.Value, out var parsedDate))
-                {
-                    sentAt = parsedDate.UtcDateTime;
-                }
-
-                messageId = MessageIdsFromHeaders(message, "Message-ID")
-                    .FirstOrDefault();
-                var headerReferences = MessageIdsFromHeaders(message, "References");
-                references = headerReferences.Count > 0
-                    ? headerReferences
-                    : MessageIdsFromHeaders(message, "In-Reply-To")
-                        .Take(1)
-                        .ToArray();
-            }
-            catch (Exception exception) when (
-                exception is FormatException or IOException or ParseException)
-            {
-                // Legacy rows can contain malformed raw headers. Their normalized
-                // columns remain a deterministic fallback for REFERENCES.
-            }
-        }
-
-        var analyzedSubject = Rfc5256.AnalyzeSubject(subject);
-        return new Rfc5256ThreadMessage(
-            useUid ? stored.Uid : stored.SequenceNumber,
-            stored.SequenceNumber,
-            sentAt,
-            Convert.ToBase64String(
-                Rfc5256.UnicodeCasemapSortKey(analyzedSubject.BaseSubject)),
-            analyzedSubject.IsReplyOrForward,
-            messageId,
-            references);
-    }
-
-    private static IReadOnlyList<string> MessageIdsFromHeaders(
-        MimeMessage message,
-        string fieldName)
-    {
-        var result = new List<string>();
-        foreach (var header in message.Headers)
-        {
-            if (!header.Field.Equals(fieldName, StringComparison.OrdinalIgnoreCase))
-                continue;
-            result.AddRange(Rfc5256Threading.ParseMessageIds(header.Value));
-        }
-        return result;
-    }
-
-    private static SortMessage CreateSortMessage(SortStoredMessage stored)
-    {
-        var sentAt = stored.ReceivedAt;
-        var from = FirstMailboxLocalPart(stored.Sender);
-        var to = FirstMailboxLocalPart(stored.Recipient);
-        var cc = FirstMailboxLocalPart(stored.Cc);
-        var subject = stored.Subject;
-
-        if (!string.IsNullOrEmpty(stored.RawHeaders))
-        {
-            try
-            {
-                var rawHeaders = stored.RawHeaders.EndsWith("\r\n\r\n", StringComparison.Ordinal)
-                    || stored.RawHeaders.EndsWith("\n\n", StringComparison.Ordinal)
-                    ? stored.RawHeaders
-                    : stored.RawHeaders + "\r\n\r\n";
-                using var stream = new MemoryStream(
-                    MailWireEncoding.Instance.GetBytes(rawHeaders),
-                    writable: false);
-                using var message = MimeMessage.Load(stream, persistent: false);
-                from = FirstMailboxLocalPart(message.From);
-                to = FirstMailboxLocalPart(message.To);
-                cc = FirstMailboxLocalPart(message.Cc);
-                subject = message.Subject ?? string.Empty;
-                var dateHeader = message.Headers.FirstOrDefault(header =>
-                    header.Field.Equals("Date", StringComparison.OrdinalIgnoreCase));
-                if (dateHeader is not null
-                    && MimeKit.Utils.DateUtils.TryParse(dateHeader.Value, out var parsedDate))
-                {
-                    sentAt = parsedDate.UtcDateTime;
-                }
-            }
-            catch (Exception exception) when (
-                exception is FormatException or IOException or ParseException)
-            {
-                // Legacy rows can contain malformed raw headers. Their normalized
-                // columns remain a deterministic fallback for SORT and THREAD.
-            }
-        }
-
-        return new SortMessage(
-            stored.Uid,
-            stored.SequenceNumber,
-            stored.ReceivedAt,
-            sentAt,
-            stored.SizeBytes,
-            Rfc5256.UnicodeCasemapSortKey(from),
-            Rfc5256.UnicodeCasemapSortKey(to),
-            Rfc5256.UnicodeCasemapSortKey(cc),
-            Rfc5256.UnicodeCasemapSortKey(Rfc5256.BaseSubject(subject)));
-    }
-
-    private static string FirstMailboxLocalPart(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value)
-            || !InternetAddressList.TryParse(value, out var addresses))
-        {
-            return string.Empty;
-        }
-        return FirstMailboxLocalPart(addresses);
-    }
-
-    private static string FirstMailboxLocalPart(InternetAddressList addresses)
-    {
-        var address = addresses.Mailboxes.FirstOrDefault()?.Address;
-        if (string.IsNullOrEmpty(address))
-            return string.Empty;
-        var separator = address.LastIndexOf('@');
-        return separator > 0 ? address[..separator] : address;
-    }
-
-    private static int CompareSortMessages(
-        SortMessage left,
-        SortMessage right,
-        IReadOnlyList<ImapSortCriterion> criteria)
-    {
-        foreach (var criterion in criteria)
-        {
-            var comparison = criterion.Key switch
-            {
-                ImapSortKey.Arrival => left.ReceivedAt.CompareTo(right.ReceivedAt),
-                ImapSortKey.Cc => left.CcSortKey.AsSpan().SequenceCompareTo(right.CcSortKey),
-                ImapSortKey.Date => left.SentAt.CompareTo(right.SentAt),
-                ImapSortKey.From => left.FromSortKey.AsSpan().SequenceCompareTo(right.FromSortKey),
-                ImapSortKey.Size => left.SizeBytes.CompareTo(right.SizeBytes),
-                ImapSortKey.Subject => left.SubjectSortKey.AsSpan().SequenceCompareTo(
-                    right.SubjectSortKey),
-                ImapSortKey.To => left.ToSortKey.AsSpan().SequenceCompareTo(right.ToSortKey),
-                _ => 0,
-            };
-            if (comparison == 0)
-                continue;
-            if (!criterion.Reverse)
-                return comparison;
-            return comparison < 0 ? 1 : -1;
-        }
-
-        return left.SequenceNumber.CompareTo(right.SequenceNumber);
     }
 
     private async Task HandleUidExpungeAsync(

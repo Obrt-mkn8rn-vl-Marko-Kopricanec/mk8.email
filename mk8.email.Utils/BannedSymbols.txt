@@ -1,0 +1,5 @@
+// The hashing utility is pure and must not access transport, disk, or ambient configuration.
+T:Microsoft.AspNetCore.Http.HttpContext;Password hashing must not depend on ASP.NET Core
+T:System.Net.Http.HttpClient;Password hashing must not send network requests
+T:System.IO.File;Password hashing must not read or write files
+M:System.Environment.GetEnvironmentVariable(System.String);Password hashing must not read ambient secrets

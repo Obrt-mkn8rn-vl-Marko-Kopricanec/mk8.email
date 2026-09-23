@@ -1,0 +1,6 @@
+#nullable enable
+mk8.email.Utils.PasswordHasher
+const mk8.email.Utils.PasswordHasher.BcryptSchemePrefix = "{BLF-CRYPT}" -> string!
+const mk8.email.Utils.PasswordHasher.Scheme = "BLF-CRYPT" -> string!
+static mk8.email.Utils.PasswordHasher.Hash(string! password) -> string!
+static mk8.email.Utils.PasswordHasher.Verify(string! password, string! passwordHash) -> bool

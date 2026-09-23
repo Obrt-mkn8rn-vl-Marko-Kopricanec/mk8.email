@@ -1,12 +1,12 @@
 namespace mk8.email.Wake;
 
-public sealed class WorkerWakeTrigger(string directory)
+internal sealed class WorkerWakeTrigger(string directory)
 {
     public void Validate()
     {
         if (!Path.IsPathFullyQualified(directory)
             || !Directory.Exists(directory)
-            || (File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0)
+            || (File.GetAttributes(directory) & FileAttributes.ReparsePoint) != FileAttributes.None)
         {
             throw new InvalidOperationException("The Worker wake directory is missing or unsafe.");
         }

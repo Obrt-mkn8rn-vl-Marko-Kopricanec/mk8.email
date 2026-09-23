@@ -2,15 +2,16 @@ using Npgsql;
 
 namespace mk8.email.Wake;
 
-public static class WorkerWakeDatabasePrivilegeProbe
+internal static class WorkerWakeDatabasePrivilegeProbe
 {
+#pragma warning disable MA0051 // Keep the privilege audit query intact for security review.
     public static async Task ProbeAsync(
         NpgsqlDataSource dataSource,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(dataSource);
 
-        await using var command = dataSource.CreateCommand(
+        var command = dataSource.CreateCommand(
             """
             WITH required_columns(table_name, column_name) AS (
                 VALUES
@@ -116,10 +117,12 @@ public static class WorkerWakeDatabasePrivilegeProbe
                                 AND relation.relname = required.table_name
                                 AND attribute.attname = required.column_name))
             """);
-        if (await command.ExecuteScalarAsync(cancellationToken) is not true)
+        await using var commandLifetime = command.ConfigureAwait(false);
+        if (await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not true)
         {
             throw new InvalidOperationException(
                 "The Worker wake database role needs exactly its read-only scheduling permissions.");
         }
     }
+#pragma warning restore MA0051
 }

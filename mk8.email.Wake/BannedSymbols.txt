@@ -1,0 +1,4 @@
+// Wake is a narrow PostgreSQL scheduler, not an HTTP/API or Blob client.
+T:System.Net.Http.HttpClient;Wake must not send HTTP requests
+T:Microsoft.AspNetCore.Http.HttpContext;Wake must not depend on ASP.NET Core
+T:Azure.Storage.Blobs.BlobServiceClient;Wake must not access attachment or journal objects

@@ -2,13 +2,12 @@ using Npgsql;
 
 namespace mk8.email.Wake;
 
-public sealed record WorkerWakeSnapshot(bool HasDueWork, DateTimeOffset? NextDueAt);
-
-public sealed class WorkerWakeProbe(NpgsqlDataSource dataSource, bool includeJmap = true)
+internal sealed class WorkerWakeProbe(NpgsqlDataSource dataSource, bool includeJmap = true)
 {
+#pragma warning disable MA0051 // Keep the single scheduling SQL query together for auditability.
     public async Task<WorkerWakeSnapshot> ReadAsync(CancellationToken cancellationToken = default)
     {
-        await using var command = dataSource.CreateCommand(
+        var command = dataSource.CreateCommand(
             """
             WITH tick AS (SELECT clock_timestamp() AS at_time)
             SELECT
@@ -63,12 +62,17 @@ public sealed class WorkerWakeProbe(NpgsqlDataSource dataSource, bool includeJma
                     END
                 ) AS next_due_at
             """);
+        await using var commandLifetime = command.ConfigureAwait(false);
         command.Parameters.AddWithValue("jmap_enabled", includeJmap);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken))
+        var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        await using var readerLifetime = reader.ConfigureAwait(false);
+        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             throw new InvalidOperationException("The Worker wake query returned no result.");
         return new WorkerWakeSnapshot(
             reader.GetBoolean(0),
-            reader.IsDBNull(1) ? null : new DateTimeOffset(reader.GetDateTime(1)));
+            await reader.IsDBNullAsync(1, cancellationToken).ConfigureAwait(false)
+                ? null
+                : new DateTimeOffset(reader.GetDateTime(1)));
     }
+#pragma warning restore MA0051
 }

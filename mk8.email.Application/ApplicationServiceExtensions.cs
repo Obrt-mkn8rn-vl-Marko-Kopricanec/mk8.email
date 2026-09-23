@@ -24,7 +24,6 @@ public static class ApplicationServiceExtensions
         services.AddSingleton<IOpenIdConnectService, OpenIdConnectService>();
         services.AddScoped<IMfaService, MfaService>();
         services.AddScoped<IMailAuthenticator, MailAuthenticator>();
-        services.AddScoped<IMailSystemStatusService, MailSystemStatusService>();
         services.AddScoped<ISeederService, SeederService>();
         services.AddScoped<IDatabaseInitializationService, DatabaseInitializationService>();
         services.AddScoped<IApplicationRequestDispatcher, ApplicationRequestDispatcher>();

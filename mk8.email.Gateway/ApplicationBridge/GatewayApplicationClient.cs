@@ -3,7 +3,9 @@ using mk8.email.Contracts.Messaging;
 
 namespace mk8.email.Gateway.ApplicationBridge;
 
-public sealed class GatewayApplicationClient(IGatewayApplicationTransport transport)
+public sealed class GatewayApplicationClient(
+    IGatewayApplicationTransport transport,
+    GatewayMailSystemStatusReader statusReader)
     : IGatewayApplicationClient
 {
     public Task<LoginResultDTO> AuthenticateAsync(
@@ -14,11 +16,16 @@ public sealed class GatewayApplicationClient(IGatewayApplicationTransport transp
             request,
             cancellationToken);
 
-    public Task<AdminDashboardDTO> GetDashboardAsync(CancellationToken cancellationToken = default) =>
-        SendAsync<object, AdminDashboardDTO>(
+    public async Task<AdminDashboardDTO> GetDashboardAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var data = await SendAsync<object, AdminDashboardDataDTO>(
             ApplicationOperations.AdminDashboardGet,
             new { },
             cancellationToken);
+        var status = await statusReader.GetStatusAsync(cancellationToken);
+        return new AdminDashboardDTO(data.Domains, data.Accounts, status);
+    }
 
     public Task<IReadOnlyList<MailDomainSummaryDTO>> GetDomainsAsync(
         CancellationToken cancellationToken = default) =>

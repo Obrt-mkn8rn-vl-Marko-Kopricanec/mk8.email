@@ -399,14 +399,13 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
         var administration = services.GetRequiredService<IMailAdministrationService>();
         var domains = await administration.GetDomainsAsync(cancellationToken);
         var accounts = await administration.GetAccountsAsync(cancellationToken);
-        var status = await services.GetRequiredService<IMailSystemStatusService>()
-            .GetStatusAsync(cancellationToken);
         return Success(
             requestId,
+            // Preserve the prior wire shape while Gateway owns the local status read.
             new AdminDashboardDTO(
                 domains,
                 accounts,
-                status));
+                MailSystemStatusDTO.Unavailable));
     }
 
     private async Task<ApplicationResponse> EnsureDomainAsync(

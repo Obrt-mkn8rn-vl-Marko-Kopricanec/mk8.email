@@ -1,11 +1,11 @@
 using Microsoft.Extensions.Logging.Abstractions;
-using mk8.email.Application.Services;
 using mk8.email.Configuration;
+using mk8.email.Gateway.ApplicationBridge;
 
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class MailSystemStatusServiceTests
+public sealed class GatewayMailSystemStatusReaderTests
 {
     private string _testDirectory = null!;
     private string _statusPath = null!;
@@ -66,7 +66,10 @@ public sealed class MailSystemStatusServiceTests
         Assert.IsNull(result.CheckedAt);
     }
 
-    private MailSystemStatusService CreateService() => new(
-        new AdminConfig { HealthStatusPath = _statusPath },
-        NullLogger<MailSystemStatusService>.Instance);
+    private GatewayMailSystemStatusReader CreateService() => new(
+        new EnvironmentConfig
+        {
+            Admin = new AdminConfig { HealthStatusPath = _statusPath },
+        },
+        NullLogger<GatewayMailSystemStatusReader>.Instance);
 }

@@ -1,14 +1,12 @@
 using System.Text.Json;
-using Microsoft.Extensions.Logging;
-using mk8.email.Application.Interfaces;
-using mk8.email.Contracts.DTOs;
 using mk8.email.Configuration;
+using mk8.email.Contracts.DTOs;
 
-namespace mk8.email.Application.Services;
+namespace mk8.email.Gateway.ApplicationBridge;
 
-public sealed class MailSystemStatusService(
-    AdminConfig config,
-    ILogger<MailSystemStatusService> logger) : IMailSystemStatusService
+public sealed class GatewayMailSystemStatusReader(
+    EnvironmentConfig environment,
+    ILogger<GatewayMailSystemStatusReader> logger)
 {
     private const long MaximumStatusFileBytes = 16 * 1024;
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -17,9 +15,10 @@ public sealed class MailSystemStatusService(
         UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow,
     };
 
-    public async Task<MailSystemStatusDTO> GetStatusAsync(CancellationToken cancellationToken = default)
+    public async Task<MailSystemStatusDTO> GetStatusAsync(
+        CancellationToken cancellationToken = default)
     {
-        var path = Path.GetFullPath(config.HealthStatusPath);
+        var path = Path.GetFullPath(environment.Admin.HealthStatusPath);
         try
         {
             var information = new FileInfo(path);

@@ -138,6 +138,19 @@ public sealed class ArchitectureBoundaryTests
     }
 
     [TestMethod]
+    public void HostLocalHealthSnapshotBelongsToGatewayNotApplication()
+    {
+        Assert.AreEqual(
+            "mk8.email.Gateway",
+            typeof(mk8.email.Gateway.ApplicationBridge.GatewayMailSystemStatusReader)
+                .Assembly.GetName().Name);
+        Assert.IsFalse(typeof(mk8.email.Application.Services.ApplicationRequestDispatcher)
+            .Assembly.GetTypes().Any(type => type.GetConstructors().Any(constructor =>
+                constructor.GetParameters().Any(parameter =>
+                    parameter.ParameterType == typeof(mk8.email.Configuration.AdminConfig)))));
+    }
+
+    [TestMethod]
     public void DavApplicationLogicHasNoAspNetOrPresentationDependency()
     {
         var references = typeof(mk8.email.Dav.DavServiceExtensions).Assembly

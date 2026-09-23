@@ -1,5 +1,7 @@
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Logging.Abstractions;
+using mk8.email.Configuration;
 using mk8.email.Contracts.DTOs;
 using mk8.email.Contracts.Enums;
 using mk8.email.Contracts.Messaging;
@@ -94,6 +96,41 @@ public sealed class GatewayApplicationClientTests
     }
 
     [TestMethod]
+    public async Task DashboardCombinesApplicationDataWithGatewayLocalHealthSnapshot()
+    {
+        var directory = Directory.CreateTempSubdirectory("mk8-gateway-dashboard-");
+        try
+        {
+            var statusPath = Path.Combine(directory.FullName, "status.json");
+            await File.WriteAllTextAsync(statusPath,
+                """
+                {"state":"healthy","checkedAt":"2026-09-23T12:00:00Z",
+                 "queueCount":0,"errorCount":0}
+                """);
+            var expected = new AdminDashboardDTO([], [], MailSystemStatusDTO.Unavailable);
+            var requests = new StubRequestClient(request => new ApplicationResponse(
+                request.Id,
+                "application/json",
+                JsonSerializer.SerializeToUtf8Bytes(expected, JsonOptions),
+                new Dictionary<string, string>()));
+            var journal = new StubTrafficJournal();
+            var client = CreateClient(requests, journal, statusPath);
+
+            var result = await client.GetDashboardAsync();
+
+            Assert.AreEqual(ApplicationOperations.AdminDashboardGet, requests.Request?.Operation);
+            Assert.AreEqual("healthy", result.SystemStatus.State);
+            Assert.HasCount(0, result.Domains);
+            Assert.HasCount(0, result.Accounts);
+            Assert.HasCount(2, journal.Records);
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [TestMethod]
     public async Task OAuthClientUsesTypedOperationAndOAuthTrafficJournal()
     {
         var expected = new OAuthPublicKeyValue(
@@ -128,8 +165,19 @@ public sealed class GatewayApplicationClientTests
 
     private static GatewayApplicationClient CreateClient(
         IApplicationRequestClient requests,
-        IGatewayTrafficJournal journal) =>
-        new(new GatewayApplicationTransport(requests, journal, TestOptions()));
+        IGatewayTrafficJournal journal,
+        string? statusPath = null) =>
+        new(
+            new GatewayApplicationTransport(requests, journal, TestOptions()),
+            new GatewayMailSystemStatusReader(
+                new EnvironmentConfig
+                {
+                    Admin = new AdminConfig
+                    {
+                        HealthStatusPath = statusPath ?? "gateway-status-unavailable.json",
+                    },
+                },
+                NullLogger<GatewayMailSystemStatusReader>.Instance));
 
     private sealed class StubRequestClient(
         Func<ApplicationRequest, ApplicationResponse> responseFactory) : IApplicationRequestClient

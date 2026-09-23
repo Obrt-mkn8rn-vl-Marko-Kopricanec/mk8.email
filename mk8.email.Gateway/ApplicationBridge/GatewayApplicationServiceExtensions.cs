@@ -12,6 +12,7 @@ public static class GatewayApplicationServiceExtensions
             TimeSpan.FromSeconds(25),
             TimeSpan.FromSeconds(10)));
         services.AddSingleton<IGatewayApplicationTransport, GatewayApplicationTransport>();
+        services.AddSingleton<GatewayMailSystemStatusReader>();
         services.AddSingleton<IGatewayApplicationClient, GatewayApplicationClient>();
         services.AddSingleton<IGatewayOAuthClient, GatewayOAuthClient>();
         services.AddSingleton<IGatewayJmapClient, GatewayJmapClient>();

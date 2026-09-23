@@ -18,6 +18,10 @@ public sealed class SieveSchemaTests
         Assert.IsNotNull(recipient);
         Assert.AreEqual("sieve_scripts", script.GetTableName());
         Assert.AreEqual(512, script.FindProperty(nameof(SieveScriptDB.Name))?.GetMaxLength());
+        Assert.IsTrue(script.FindProperty(nameof(SieveScriptDB.Content))!.IsNullable);
+        Assert.AreEqual("size_bytes", script.FindProperty(nameof(SieveScriptDB.SizeBytes))?.GetColumnName());
+        Assert.AreEqual(32, script.FindProperty(nameof(SieveScriptDB.ObjectProvider))?.GetMaxLength());
+        Assert.AreEqual(1024, script.FindProperty(nameof(SieveScriptDB.ObjectName))?.GetMaxLength());
         var nameIndex = script.GetIndexes().Single(index =>
             index.Properties.Select(property => property.Name).SequenceEqual(
                 [nameof(SieveScriptDB.UserId), nameof(SieveScriptDB.Name)]));

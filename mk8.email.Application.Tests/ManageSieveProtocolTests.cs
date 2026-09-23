@@ -12,6 +12,7 @@ using mk8.email.Application.Interfaces;
 using mk8.email.Application.Services;
 using mk8.email.Contracts.Sieve;
 using mk8.email.Contracts.Messaging;
+using mk8.email.Contracts.Storage;
 using mk8.email.Gateway.Protocols.Sieve;
 using mk8.email.Messaging;
 using mk8.email.Infrastructure.Data;
@@ -359,6 +360,12 @@ public sealed class ManageSieveProtocolTests
             serviceCollection.AddSingleton<IOAuthTokenService>(new StubOAuthTokenService());
             serviceCollection.AddScoped<ISieveScriptService, SieveScriptService>();
             serviceCollection.AddScoped<ISieveApplicationService, SieveApplicationService>();
+            serviceCollection.AddSingleton<InMemoryLargeObjectStore>();
+            serviceCollection.AddSingleton<ILargeObjectStore>(provider =>
+                provider.GetRequiredService<InMemoryLargeObjectStore>());
+            serviceCollection.AddScoped<LargeObjectTransactionEffects>();
+            serviceCollection.AddScoped<SieveScriptContentService>();
+            serviceCollection.AddLogging();
             serviceCollection.AddDbContext<EmailDbContext>(options =>
                 options.UseInMemoryDatabase(databaseName)
                     .ConfigureWarnings(warnings =>

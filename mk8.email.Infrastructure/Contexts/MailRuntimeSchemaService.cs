@@ -72,6 +72,11 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["user_id"] = "uuid",
             ["name"] = "varchar",
             ["content"] = "text",
+            ["size_bytes"] = "int4",
+            ["object_provider"] = "varchar",
+            ["object_name"] = "varchar",
+            ["object_sha256"] = "varchar",
+            ["object_etag"] = "varchar",
             ["is_active"] = "bool",
             ["created_at"] = "timestamptz",
             ["updated_at"] = "timestamptz",
@@ -857,7 +862,12 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 id uuid PRIMARY KEY,
                 user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 name varchar(512) NOT NULL,
-                content text NOT NULL,
+                content text,
+                size_bytes integer NOT NULL DEFAULT 0,
+                object_provider varchar(32),
+                object_name varchar(1024),
+                object_sha256 varchar(64),
+                object_etag varchar(256),
                 is_active boolean NOT NULL DEFAULT false,
                 created_at timestamp with time zone NOT NULL,
                 updated_at timestamp with time zone NOT NULL
@@ -1161,6 +1171,13 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 ON sieve_scripts (user_id, name);
             ALTER TABLE sieve_scripts
                 ALTER COLUMN name TYPE varchar(512);
+            ALTER TABLE sieve_scripts
+                ALTER COLUMN content DROP NOT NULL,
+                ADD COLUMN IF NOT EXISTS size_bytes integer NOT NULL DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS object_provider varchar(32),
+                ADD COLUMN IF NOT EXISTS object_name varchar(1024),
+                ADD COLUMN IF NOT EXISTS object_sha256 varchar(64),
+                ADD COLUMN IF NOT EXISTS object_etag varchar(256);
             CREATE UNIQUE INDEX IF NOT EXISTS ix_sieve_scripts_user_active
                 ON sieve_scripts (user_id)
                 WHERE is_active;

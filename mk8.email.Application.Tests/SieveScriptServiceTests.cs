@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Logging.Abstractions;
 using mk8.email.Application.Services;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Infrastructure.Models;
@@ -23,7 +24,7 @@ public sealed class SieveScriptServiceTests
             Role = "User",
         });
         await database.SaveChangesAsync();
-        var service = new SieveScriptService(database);
+        var service = CreateService(database);
 
         var invalid = await service.PutAsync(userId, "invalid", "fileinto \"Archive\";");
         Assert.IsFalse(invalid.Succeeded);
@@ -66,13 +67,14 @@ public sealed class SieveScriptServiceTests
             Role = "User",
         });
         await database.SaveChangesAsync();
-        var service = new SieveScriptService(database);
+        var service = CreateService(database);
 
         Assert.IsFalse((await service.PutAsync(userId, string.Empty, "keep;")).Succeeded);
         Assert.IsFalse((await service.PutAsync(userId, new string('x', 129), "keep;")).Succeeded);
         Assert.IsTrue((await service.PutAsync(userId, string.Concat(Enumerable.Repeat("😀", 128)), "keep;")).Succeeded);
         Assert.IsFalse((await service.PutAsync(userId, string.Concat(Enumerable.Repeat("😀", 129)), "keep;")).Succeeded);
         Assert.IsFalse((await service.PutAsync(userId, "line\u2028separator", "keep;")).Succeeded);
+        Assert.IsFalse((await service.PutAsync(userId, "invalid-unicode", "keep;\ud800")).Succeeded);
         Assert.IsTrue((await service.PutAsync(userId, "Cafe\u0301", "keep;")).Succeeded);
         Assert.IsNotNull(await service.GetAsync(userId, "Café"));
     }
@@ -91,7 +93,7 @@ public sealed class SieveScriptServiceTests
             Role = "User",
         });
         await database.SaveChangesAsync();
-        var service = new SieveScriptService(database);
+        var service = CreateService(database);
 
         Assert.IsTrue((await service.PutAsync(userId, "first", "keep;", 1)).Succeeded);
         Assert.IsTrue((await service.PutAsync(userId, "first", "discard;", 1)).Succeeded);
@@ -107,5 +109,18 @@ public sealed class SieveScriptServiceTests
             .ConfigureWarnings(warnings => warnings.Ignore(InMemoryEventId.TransactionIgnoredWarning))
             .Options;
         return new EmailDbContext(options);
+    }
+
+    private static SieveScriptService CreateService(EmailDbContext database)
+    {
+        var store = new InMemoryLargeObjectStore();
+        var effects = new LargeObjectTransactionEffects(
+            store,
+            NullLogger<LargeObjectTransactionEffects>.Instance);
+        return new SieveScriptService(
+            database,
+            new SieveScriptContentService(store, effects),
+            effects,
+            NullLogger<SieveScriptService>.Instance);
     }
 }

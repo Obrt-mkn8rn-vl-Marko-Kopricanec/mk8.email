@@ -8,6 +8,7 @@ namespace mk8.email.Application.Services;
 
 internal sealed class SieveFilterService(
     EmailDbContext database,
+    SieveScriptContentService contentService,
     ILogger<SieveFilterService> logger) : ISieveFilterService
 {
     public async Task<SieveDeliveryPlan> EvaluateAsync(
@@ -23,7 +24,6 @@ internal sealed class SieveFilterService(
         var script = await database.SieveScripts
             .AsNoTracking()
             .Where(item => item.UserId == route.UserId && item.IsActive)
-            .Select(item => new { item.Id, item.Content })
             .SingleOrDefaultAsync(cancellationToken);
         if (script is null)
             return DefaultPlan(defaultFolder);
@@ -35,7 +35,8 @@ internal sealed class SieveFilterService(
                 .ToListAsync(cancellationToken))
             .ToHashSet(StringComparer.Ordinal);
 
-        var compilation = SieveScript.Compile(script.Content);
+        var compilation = SieveScript.Compile(
+            await contentService.ReadAsync(script, cancellationToken));
         if (!compilation.Succeeded)
         {
             logger.LogError(

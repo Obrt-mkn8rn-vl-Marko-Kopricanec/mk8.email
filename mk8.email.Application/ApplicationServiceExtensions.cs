@@ -33,6 +33,8 @@ public static class ApplicationServiceExtensions
         services.AddScoped<MailboxMessageLargeObjectMigrationService>();
         services.AddScoped<DavResourceContentService>();
         services.AddScoped<DavResourceLargeObjectMigrationService>();
+        services.AddScoped<SieveScriptContentService>();
+        services.AddScoped<SieveScriptLargeObjectMigrationService>();
 
         return services;
     }

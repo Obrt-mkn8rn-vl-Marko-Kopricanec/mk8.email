@@ -21,9 +21,27 @@ public sealed class SieveScriptDB
     [Column("name")]
     public string Name { get; set; } = string.Empty;
 
-    [Required]
     [Column("content")]
-    public string Content { get; set; } = string.Empty;
+    public string? Content { get; set; }
+
+    [Column("size_bytes")]
+    public int SizeBytes { get; set; }
+
+    [MaxLength(32)]
+    [Column("object_provider")]
+    public string? ObjectProvider { get; set; }
+
+    [MaxLength(1024)]
+    [Column("object_name")]
+    public string? ObjectName { get; set; }
+
+    [MaxLength(64)]
+    [Column("object_sha256")]
+    public string? ObjectSha256 { get; set; }
+
+    [MaxLength(256)]
+    [Column("object_etag")]
+    public string? ObjectEntityTag { get; set; }
 
     [Column("is_active")]
     public bool IsActive { get; set; }

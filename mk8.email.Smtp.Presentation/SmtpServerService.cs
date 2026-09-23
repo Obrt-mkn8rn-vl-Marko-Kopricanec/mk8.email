@@ -280,13 +280,14 @@ public class SmtpServerService(
                     session.InDataMode = false;
                     if (session.MessageTooLarge)
                     {
-                        await writer.WriteLineAsync("552 5.3.4 Message exceeds server limits");
                         session.Reset();
+                        await writer.WriteLineAsync("552 5.3.4 Message exceeds server limits");
                     }
                     else if (session.DataFailureResponse is not null)
                     {
-                        await writer.WriteLineAsync(session.DataFailureResponse);
+                        var failureResponse = session.DataFailureResponse;
                         session.Reset();
+                        await writer.WriteLineAsync(failureResponse);
                     }
                     else
                     {
@@ -295,25 +296,25 @@ public class SmtpServerService(
                         if (SmtpInternationalization.HeadersRequireSmtpUtf8(raw)
                             && !session.SmtpUtf8)
                         {
+                            session.Reset();
                             await writer.WriteLineAsync(
                                 "554 5.6.9 UTF-8 header message requires SMTPUTF8");
-                            session.Reset();
                             continue;
                         }
                         if (session.SmtpUtf8
                             && !SmtpInternationalization.HasValidUtf8Headers(raw))
                         {
+                            session.Reset();
                             await writer.WriteLineAsync(
                                 "554 5.6.0 Internationalized headers are not valid UTF-8");
-                            session.Reset();
                             continue;
                         }
                         if (SmtpInternationalization.ContainsEightBit(raw)
                             && !session.BodyIsEightBit)
                         {
+                            session.Reset();
                             await writer.WriteLineAsync(
                                 "554 5.6.3 Eight-bit content requires BODY=8BITMIME");
-                            session.Reset();
                             continue;
                         }
 
@@ -333,15 +334,15 @@ public class SmtpServerService(
                             catch (Exception exception) when (!timeout.IsCancellationRequested)
                             {
                                 logger.LogWarning(exception, "SMTP sender policy is temporarily unavailable");
-                                await writer.WriteLineAsync("451 4.3.0 Sender policy is temporarily unavailable");
                                 session.Reset();
+                                await writer.WriteLineAsync("451 4.3.0 Sender policy is temporarily unavailable");
                                 continue;
                             }
                         }
                         if (!authorizedSender)
                         {
-                            await writer.WriteLineAsync("550 5.7.1 Sender identity is not authorized");
                             session.Reset();
+                            await writer.WriteLineAsync("550 5.7.1 Sender identity is not authorized");
                             continue;
                         }
 
@@ -379,8 +380,8 @@ public class SmtpServerService(
                         catch (Exception exception)
                         {
                             logger.LogError(exception, "Could not persist SMTP queue message {QueueId}", queueId);
-                            await writer.WriteLineAsync("451 4.3.0 Queue storage is temporarily unavailable");
                             session.Reset();
+                            await writer.WriteLineAsync("451 4.3.0 Queue storage is temporarily unavailable");
                             continue;
                         }
 
@@ -388,8 +389,8 @@ public class SmtpServerService(
                             "Accepted SMTP queue message {QueueId} with {RecipientCount} recipients",
                             queueId,
                             session.Recipients.Count);
-                        await writer.WriteLineAsync($"250 2.0.0 Queued as {queueId:N}");
                         session.Reset();
+                        await writer.WriteLineAsync($"250 2.0.0 Queued as {queueId:N}");
                     }
                 }
                 else

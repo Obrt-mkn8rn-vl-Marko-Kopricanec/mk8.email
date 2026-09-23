@@ -998,6 +998,7 @@ public sealed class MailQueueTests
         services.AddScoped<MailQueueLargeObjectMigrationService>();
         services.AddScoped<MailboxMessageContentService>();
         services.AddScoped<MailboxMessageLargeObjectMigrationService>();
+        services.AddScoped<SieveScriptContentService>();
         services.AddLogging();
         services.AddSingleton<IMailScanner>(new StubScanner(scanResult));
         services.AddSingleton(relay);

@@ -1,6 +1,8 @@
 using System.Data;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Extensions.Logging;
 using mk8.email.Application.Interfaces;
 using mk8.email.Application.Protocol;
 using mk8.email.Contracts.Sieve;
@@ -9,8 +11,14 @@ using mk8.email.Infrastructure.Models;
 
 namespace mk8.email.Application.Services;
 
-internal sealed class SieveScriptService(EmailDbContext database) : ISieveScriptService
+internal sealed class SieveScriptService(
+    EmailDbContext database,
+    SieveScriptContentService contentService,
+    LargeObjectTransactionEffects transactionEffects,
+    ILogger<SieveScriptService> logger) : ISieveScriptService
 {
+    private static readonly UTF8Encoding StrictUtf8 = new(false, true);
+
     public SieveCompilationResult Validate(string content) => SieveScript.Compile(content);
 
     public async Task<SieveScriptOperationResult> CheckSpaceAsync(
@@ -61,16 +69,18 @@ internal sealed class SieveScriptService(EmailDbContext database) : ISieveScript
     {
         if (!TryNormalizeName(name, out var normalized))
             return null;
-        return await database.SieveScripts
+        var script = await database.SieveScripts
             .AsNoTracking()
             .Where(script => script.UserId == userId && script.Name == normalized)
-            .Select(script => new StoredSieveScript(
-                script.Name,
-                script.Content,
-                script.IsActive,
-                script.CreatedAt,
-                script.UpdatedAt))
             .SingleOrDefaultAsync(cancellationToken);
+        if (script is null)
+            return null;
+        return new StoredSieveScript(
+            script.Name,
+            await contentService.ReadAsync(script, cancellationToken),
+            script.IsActive,
+            script.CreatedAt,
+            script.UpdatedAt);
     }
 
     public async Task<SieveScriptOperationResult> PutAsync(
@@ -82,7 +92,16 @@ internal sealed class SieveScriptService(EmailDbContext database) : ISieveScript
     {
         if (!TryNormalizeName(name, out var normalized))
             return Failure("The script name is invalid.");
-        if (Encoding.UTF8.GetByteCount(content) is 0 or > SieveScript.MaximumScriptBytes)
+        int contentSize;
+        try
+        {
+            contentSize = StrictUtf8.GetByteCount(content);
+        }
+        catch (EncoderFallbackException)
+        {
+            return Failure("The script contains invalid Unicode.");
+        }
+        if (contentSize is 0 or > SieveScript.MaximumScriptBytes)
             return Failure("The script must contain from 1 through 1048576 bytes.", "QUOTA/MAXSIZE");
         var compilation = Validate(content);
         if (!compilation.Succeeded)
@@ -93,41 +112,60 @@ internal sealed class SieveScriptService(EmailDbContext database) : ISieveScript
         await using var transaction = database.Database.IsRelational()
             ? await database.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken)
             : null;
-        var now = DateTime.UtcNow;
-        var script = await database.SieveScripts.SingleOrDefaultAsync(
-            item => item.UserId == userId && item.Name == normalized,
-            cancellationToken);
-        if (script is null)
+        var marker = transactionEffects.Mark();
+        var commitAttempted = false;
+        try
         {
-            var scriptCount = await database.SieveScripts.CountAsync(
-                item => item.UserId == userId,
+            var now = DateTime.UtcNow;
+            var script = await database.SieveScripts.SingleOrDefaultAsync(
+                item => item.UserId == userId && item.Name == normalized,
                 cancellationToken);
-            if (scriptCount >= maximumScripts)
+            if (script is null)
             {
-                if (transaction is not null)
-                    await transaction.RollbackAsync(cancellationToken);
-                return Failure("The maximum number of scripts has been reached.", "QUOTA/MAXSCRIPTS");
+                var scriptCount = await database.SieveScripts.CountAsync(
+                    item => item.UserId == userId,
+                    cancellationToken);
+                if (scriptCount >= maximumScripts)
+                {
+                    if (transaction is not null)
+                        await transaction.RollbackAsync(cancellationToken);
+                    transactionEffects.Discard(marker);
+                    return Failure("The maximum number of scripts has been reached.", "QUOTA/MAXSCRIPTS");
+                }
+                script = new SieveScriptDB
+                {
+                    Id = Guid.CreateVersion7(),
+                    UserId = userId,
+                    Name = normalized,
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                };
+                database.SieveScripts.Add(script);
             }
-            database.SieveScripts.Add(new SieveScriptDB
+            else
             {
-                Id = Guid.CreateVersion7(),
-                UserId = userId,
-                Name = normalized,
-                Content = content,
-                CreatedAt = now,
-                UpdatedAt = now,
-            });
-        }
-        else
-        {
-            script.Content = content;
-            script.UpdatedAt = now;
-        }
+                script.UpdatedAt = now;
+            }
 
-        await database.SaveChangesAsync(cancellationToken);
-        if (transaction is not null)
-            await transaction.CommitAsync(cancellationToken);
-        return Success();
+            await contentService.SetAsync(script, content, cancellationToken);
+            await database.SaveChangesAsync(cancellationToken);
+            if (transaction is not null)
+            {
+                commitAttempted = true;
+                await transaction.CommitAsync(cancellationToken);
+            }
+            await transactionEffects.CommitAsync(marker);
+            return Success();
+        }
+        catch
+        {
+            await TryRollbackAsync(transaction);
+            if (commitAttempted)
+                transactionEffects.Discard(marker);
+            else
+                await transactionEffects.RollbackAsync(marker);
+            throw;
+        }
     }
 
     public async Task<SieveScriptOperationResult> SetActiveAsync(
@@ -188,16 +226,40 @@ internal sealed class SieveScriptService(EmailDbContext database) : ISieveScript
     {
         if (!TryNormalizeName(name, out var normalized))
             return Failure("The script name is invalid.");
-        var script = await database.SieveScripts.SingleOrDefaultAsync(
-            item => item.UserId == userId && item.Name == normalized,
-            cancellationToken);
-        if (script is null)
-            return Failure("The script does not exist.", "NONEXISTENT");
-        if (script.IsActive)
-            return Failure("The active script cannot be deleted.", "ACTIVE");
-        database.SieveScripts.Remove(script);
-        await database.SaveChangesAsync(cancellationToken);
-        return Success();
+        await using var transaction = database.Database.IsRelational()
+            ? await database.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken)
+            : null;
+        var marker = transactionEffects.Mark();
+        var commitAttempted = false;
+        try
+        {
+            var script = await database.SieveScripts.SingleOrDefaultAsync(
+                item => item.UserId == userId && item.Name == normalized,
+                cancellationToken);
+            if (script is null)
+                return Failure("The script does not exist.", "NONEXISTENT");
+            if (script.IsActive)
+                return Failure("The active script cannot be deleted.", "ACTIVE");
+            contentService.DeleteOnCommit(script);
+            database.SieveScripts.Remove(script);
+            await database.SaveChangesAsync(cancellationToken);
+            if (transaction is not null)
+            {
+                commitAttempted = true;
+                await transaction.CommitAsync(cancellationToken);
+            }
+            await transactionEffects.CommitAsync(marker);
+            return Success();
+        }
+        catch
+        {
+            await TryRollbackAsync(transaction);
+            if (commitAttempted)
+                transactionEffects.Discard(marker);
+            else
+                await transactionEffects.RollbackAsync(marker);
+            throw;
+        }
     }
 
     public async Task<SieveScriptOperationResult> RenameAsync(
@@ -244,6 +306,20 @@ internal sealed class SieveScriptService(EmailDbContext database) : ISieveScript
 
     private static string FormatDiagnostic(SieveDiagnostic diagnostic) =>
         $"Line {diagnostic.Line}, column {diagnostic.Column}: {diagnostic.Message}";
+
+    private async Task TryRollbackAsync(IDbContextTransaction? transaction)
+    {
+        if (transaction is null)
+            return;
+        try
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(exception, "Could not roll back a Sieve script content transaction");
+        }
+    }
 
     private static SieveScriptOperationResult Success() => new(true);
     private static SieveScriptOperationResult Failure(string error, string? responseCode = null) =>

@@ -1,0 +1,26 @@
+#!/bin/sh
+set -eu
+
+if [ "$(id -u)" -ne 0 ] || [ "$#" -ne 1 ]; then
+    printf '%s\n' "Usage: deactivate-distributed-role gateway|worker" >&2
+    exit 2
+fi
+
+case "$1" in
+    gateway) unit=mk8email-gateway.service ;;
+    worker) unit=mk8email-worker.service ;;
+    *)
+        printf '%s\n' "Usage: deactivate-distributed-role gateway|worker" >&2
+        exit 2
+        ;;
+esac
+
+exec 9>/run/lock/mk8email-distributed-activation.lock
+flock --exclusive --nonblock 9 || {
+    printf '%s\n' "Another distributed role activation is running." >&2
+    exit 1
+}
+
+systemctl stop "$unit"
+systemctl disable "$unit"
+printf 'The distributed %s role is inactive.\n' "$1"

@@ -1,0 +1,124 @@
+#!/bin/sh
+set -eu
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+export DOTNET_ENVIRONMENT=Production
+export DOTNET_EnableDiagnostics=0
+
+if [ "$(id -u)" -ne 0 ] || [ "$#" -ne 1 ]; then
+    printf '%s\n' "Usage: activate-distributed-role gateway|worker" >&2
+    exit 2
+fi
+
+case "$1" in
+    gateway)
+        unit=mk8email-gateway.service
+        config=/etc/mk8email/mk8email.gateway.config.json
+        executable=/opt/mk8email/current/admin/mk8.email.Gateway.dll
+        validate=--validate-gateway-config
+        probe=--probe-gateway-backends
+        ;;
+    worker)
+        unit=mk8email-worker.service
+        config=/etc/mk8email/mk8email.worker.config.json
+        executable=/opt/mk8email/current/worker/mk8.email.Application.Worker.dll
+        validate=--validate-worker-config
+        probe=--probe-worker-backends
+        ;;
+    *)
+        printf '%s\n' "Usage: activate-distributed-role gateway|worker" >&2
+        exit 2
+        ;;
+esac
+
+fail() {
+    printf '%s\n' "$1" >&2
+    exit 1
+}
+
+exec 9>/run/lock/mk8email-distributed-activation.lock
+flock --exclusive --nonblock 9 \
+    || fail "Another distributed role activation is running."
+
+marker=/etc/mk8email/distributed-ready
+if [ -L "$marker" ] || [ ! -f "$marker" ] \
+    || [ "$(stat -c '%U:%G %a %h' "$marker" 2>/dev/null || true)" != 'root:root 600 1' ]; then
+    fail "The root-owned distributed readiness marker is missing or unsafe."
+fi
+if [ -L "$config" ] || [ ! -f "$config" ] \
+    || [ "$(stat -c '%U:%G %a %h' "$config" 2>/dev/null || true)" != 'root:mk8email 640 1' ]; then
+    fail "The role configuration is missing or has unsafe metadata."
+fi
+[ -f "$executable" ] || fail "The role executable is missing from the current release."
+[ -f /opt/mk8email/current/cli/mk8.email.Application.CLI.dll ] \
+    || fail "The management CLI is missing from the current release."
+
+for legacy_unit in mk8email.service mk8email-admin.service; do
+    if systemctl is-active --quiet "$legacy_unit"; then
+        fail "The legacy mail units must be stopped before distributed activation."
+    fi
+done
+
+cli=/opt/mk8email/current/cli/mk8.email.Application.CLI.dll
+timeout 45s runuser -u mk8email -- /usr/bin/dotnet "$cli" "$validate" "$config" \
+    || fail "The role configuration failed validation."
+timeout 45s runuser -u mk8email -- /usr/bin/dotnet "$cli" "$probe" "$config" \
+    || fail "The role PostgreSQL or Azure Blob backend failed its canary."
+
+was_active=false
+was_enabled=false
+if systemctl is-active --quiet "$unit"; then
+    was_active=true
+fi
+if [ "$(systemctl is-enabled "$unit" 2>/dev/null || true)" = enabled ]; then
+    was_enabled=true
+fi
+completed=false
+cleanup() {
+    if [ "$completed" = true ]; then
+        return
+    fi
+    if [ "$was_active" = false ]; then
+        systemctl stop "$unit" 2>/dev/null || true
+    fi
+    if [ "$was_enabled" = false ]; then
+        systemctl disable "$unit" 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+
+systemctl enable "$unit"
+systemctl start "$unit"
+
+ready=false
+attempt=0
+while [ "$attempt" -lt 15 ]; do
+    if systemctl is-active --quiet "$unit"; then
+        case "$1" in
+            gateway)
+                if curl --silent --fail --max-time 3 --noproxy '*' \
+                    --header 'Host: admin.mk8n.com' \
+                    http://127.0.0.1:8080/health/ready >/dev/null; then
+                    ready=true
+                    break
+                fi
+                ;;
+            worker)
+                if timeout 15s runuser -u mk8email -- /usr/bin/dotnet "$cli" \
+                    --probe-worker-dispatch "$config" >/dev/null; then
+                    ready=true
+                    break
+                fi
+                ;;
+        esac
+    fi
+    attempt=$((attempt + 1))
+    sleep 2
+done
+[ "$ready" = true ] || fail "The distributed role did not become ready."
+
+completed=true
+trap - EXIT HUP INT TERM
+printf 'The distributed %s role is active.\n' "$1"

@@ -66,6 +66,10 @@ tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
     | grep -Fx 'usr/local/sbin/mk8email' >/dev/null
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
+    | grep -Fx 'usr/local/sbin/activate-distributed-role' >/dev/null
+tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
+    | grep -Fx 'usr/local/sbin/deactivate-distributed-role' >/dev/null
+tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
     | grep -Fx 'usr/local/sbin/mk8-domain' >/dev/null
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
     | grep -Fx 'usr/local/sbin/deploy-mk8-domain-certificate' >/dev/null

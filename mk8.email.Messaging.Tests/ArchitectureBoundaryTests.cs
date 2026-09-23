@@ -8,6 +8,7 @@ using mk8.email.Contracts.Imap;
 using mk8.email.Gateway.Protocols.Sieve;
 using mk8.email.Gateway.Protocols.Pop3;
 using mk8.email.Gateway.Protocols.Imap;
+using mk8.email.Imap.Presentation;
 
 namespace mk8.email.Messaging.Tests;
 
@@ -241,6 +242,27 @@ public sealed class ArchitectureBoundaryTests
     {
         Assert.AreEqual("mk8.email.Contracts", typeof(IImapApplicationService).Assembly.GetName().Name);
         Assert.AreEqual("mk8.email.Gateway", typeof(GatewayImapApplicationService).Assembly.GetName().Name);
+    }
+
+    [TestMethod]
+    public void ImapListenerLivesInPresentationAssemblyWithoutApplicationOrPersistenceDependencies()
+    {
+        var presentation = typeof(ImapServerService).Assembly;
+        Assert.AreEqual("mk8.email.Imap.Presentation", presentation.GetName().Name);
+        var references = presentation.GetReferencedAssemblies()
+            .Select(reference => reference.Name ?? string.Empty)
+            .ToArray();
+        Assert.IsFalse(references.Any(reference =>
+            reference.StartsWith("mk8.email.Application", StringComparison.Ordinal)
+            || reference.StartsWith("mk8.email.Infrastructure", StringComparison.Ordinal)
+            || reference.StartsWith("Microsoft.EntityFrameworkCore", StringComparison.Ordinal)
+            || reference.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal)));
+        Assert.IsFalse(typeof(mk8.email.Application.Services.MailQueueWorker).Assembly
+            .GetReferencedAssemblies().Any(reference =>
+                reference.Name == "mk8.email.Imap.Presentation"));
+        Assert.IsFalse(typeof(mk8.email.Application.Worker.ApplicationRequestWorker).Assembly
+            .GetReferencedAssemblies().Any(reference =>
+                reference.Name == "mk8.email.Imap.Presentation"));
     }
 
     [TestMethod]

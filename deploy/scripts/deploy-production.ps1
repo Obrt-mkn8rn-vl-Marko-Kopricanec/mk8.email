@@ -349,6 +349,8 @@ if [ -f /etc/mk8email/mail-stack-ready ]; then
     if systemctl cat mk8email.service 2>/dev/null \
         | grep -Eq '^ExecStart=.* --serve$'; then
         rollback_supported=true
+    elif systemctl is-active --quiet mk8email-gateway.service mk8email-worker.service; then
+        rollback_supported=true
     fi
     timeout 180s apt-get update
     /usr/local/sbin/verify-host-prerequisites

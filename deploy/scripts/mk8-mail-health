@@ -20,6 +20,10 @@ status_json=$state_directory/status.json
 backup_lock=/run/lock/mk8-backup.lock
 exec 8>"$backup_lock"
 if ! flock --shared --nonblock 8; then
+    if [ "$strict" = true ]; then
+        printf '%s\n' "The strict mail health check cannot run during a backup." >&2
+        exit 1
+    fi
     printf '%s\n' "The mail health check was skipped during a backup."
     exit 0
 fi

@@ -4273,19 +4273,6 @@ ILogger<ImapServerService> logger) : BackgroundService
 
     private readonly record struct SearchToken(SearchTokenKind Kind, string Value);
 
-    private enum ImapSortKey
-    {
-        Arrival,
-        Cc,
-        Date,
-        From,
-        Size,
-        Subject,
-        To,
-    }
-
-    private readonly record struct ImapSortCriterion(ImapSortKey Key, bool Reverse);
-
     private sealed record SortStoredMessage(
         Guid Id,
         int Uid,
@@ -4433,67 +4420,65 @@ ILogger<ImapServerService> logger) : BackgroundService
             return;
         }
 
-        using var scope = scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-        var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
-        await using var transaction = db.Database.IsRelational()
-            ? await db.Database.BeginTransactionAsync(IsolationLevel.RepeatableRead, ct)
-            : null;
-
-        var folderQuery = db.Emails
-            .AsNoTracking()
-            .Where(email => email.FolderId == session.SelectedFolderId!.Value);
-        var searchResult = await ImapSearchEngine.FindSearchCandidatesAsync(
-            folderQuery,
-            content,
-            searchCriteria,
-            session.SavedSearchUids,
-            session.Utf8Enabled,
-            ct,
-            charset);
-        if (searchResult.FailureResponse is not null)
+        ImapSortResult sortResult;
+        try
         {
-            await writer.WriteLineAsync($"{tag} {searchResult.FailureResponse}");
+            using var scope = scopeFactory.CreateScope();
+            var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
+            sortResult = await application.SortMessagesAsync(new ImapSortRequest(
+                session.UserId,
+                session.SelectedFolderId!.Value,
+                searchCriteria,
+                session.SavedSearchUids.ToList(),
+                session.Utf8Enabled,
+                charset,
+                sortCriteria.ToList()), ct);
+            if (sortResult is null
+                || sortResult.SortedMatches is null
+                || sortResult.HighestModSequence is < 0
+                || !sortResult.FolderFound
+                    && (sortResult.FailureResponse is not null
+                        || sortResult.SortedMatches.Count > 0
+                        || sortResult.HighestModSequence is not null)
+                || sortResult.FailureResponse is { } failure
+                    && (failure.ContainsAny(['\r', '\n', '\0'])
+                        || !failure.StartsWith("BAD ", StringComparison.OrdinalIgnoreCase)
+                            && !failure.StartsWith("NO ", StringComparison.OrdinalIgnoreCase)
+                        || sortResult.SortedMatches.Count > 0
+                        || sortResult.HighestModSequence is not null)
+                || sortResult.SortedMatches.Any(match => match is null
+                    || match.Uid < 1 || match.SequenceNumber < 1)
+                || sortResult.SortedMatches.Select(match => match.Uid).Distinct().Count()
+                    != sortResult.SortedMatches.Count
+                || sortResult.SortedMatches.Select(match => match.SequenceNumber).Distinct().Count()
+                    != sortResult.SortedMatches.Count)
+            {
+                throw new InvalidOperationException("The IMAP SORT result is invalid.");
+            }
+        }
+        catch (Exception exception) when (
+            exception is not OperationCanceledException && !ct.IsCancellationRequested)
+        {
+            logger.LogWarning(exception, "IMAP SORT unavailable for {UserId}", session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] SORT backend unavailable");
             return;
         }
 
-        var matchedIds = searchResult.Matches.Select(candidate => candidate.Id).ToArray();
-        var sequenceById = searchResult.Matches.ToDictionary(
-            candidate => candidate.Id,
-            candidate => candidate.SequenceNumber);
-        var storedEmails = await folderQuery
-            .Where(email => matchedIds.Contains(email.Id))
-            .ToListAsync(ct);
-        var storedMessages = new List<SortStoredMessage>(storedEmails.Count);
-        foreach (var email in storedEmails)
+        if (!sortResult.FolderFound)
         {
-            ApplyTransientRawMessage(email, await content.ReadAsync(email, ct));
-            storedMessages.Add(new SortStoredMessage(
-                email.Id,
-                email.Uid,
-                0,
-                email.ReceivedAt,
-                email.SizeBytes,
-                email.Sender,
-                email.Recipient,
-                email.Cc,
-                email.Subject,
-                email.RawHeaders));
+            await writer.WriteLineAsync($"{tag} NO Mailbox not found");
+            return;
         }
-        if (transaction is not null)
-            await transaction.CommitAsync(ct);
+        if (sortResult.FailureResponse is not null)
+        {
+            await writer.WriteLineAsync($"{tag} {sortResult.FailureResponse}");
+            return;
+        }
 
-        var messages = storedMessages
-            .Select(message => CreateSortMessage(
-                message with { SequenceNumber = sequenceById[message.Id] }))
-            .ToList();
-        messages.Sort((left, right) => CompareSortMessages(left, right, sortCriteria));
-
-        var result = string.Join(
-            ' ',
-            messages.Select(message => useUid ? message.Uid : message.SequenceNumber));
+        var result = string.Join(' ', sortResult.SortedMatches
+            .Select(message => useUid ? message.Uid : message.SequenceNumber));
         var resultSuffix = result.Length == 0 ? string.Empty : $" {result}";
-        var modSequenceSuffix = searchResult.HighestModSequence is { } highestModSequence
+        var modSequenceSuffix = sortResult.HighestModSequence is { } highestModSequence
             ? $" (MODSEQ {highestModSequence})"
             : string.Empty;
         await writer.WriteLineAsync($"* SORT{resultSuffix}{modSequenceSuffix}");

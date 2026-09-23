@@ -73,6 +73,10 @@ public interface IImapApplicationService
     Task<ImapSearchResult> SearchMessagesAsync(
         ImapSearchRequest request,
         CancellationToken cancellationToken = default);
+
+    Task<ImapSortResult> SortMessagesAsync(
+        ImapSortRequest request,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record ImapPasswordAuthentication(string Username, string Password);
@@ -365,3 +369,31 @@ public sealed record ImapSearchResult(
     long? HighestModSequence);
 
 public sealed record ImapSearchMatch(int Uid, int SequenceNumber);
+
+public enum ImapSortKey
+{
+    Arrival,
+    Cc,
+    Date,
+    From,
+    Size,
+    Subject,
+    To,
+}
+
+public sealed record ImapSortCriterion(ImapSortKey Key, bool Reverse);
+
+public sealed record ImapSortRequest(
+    Guid UserId,
+    Guid FolderId,
+    string SearchCriteria,
+    List<int> SavedSearchUids,
+    bool Utf8Enabled,
+    string Charset,
+    List<ImapSortCriterion> SortCriteria);
+
+public sealed record ImapSortResult(
+    bool FolderFound,
+    string? FailureResponse,
+    List<ImapSearchMatch> SortedMatches,
+    long? HighestModSequence);

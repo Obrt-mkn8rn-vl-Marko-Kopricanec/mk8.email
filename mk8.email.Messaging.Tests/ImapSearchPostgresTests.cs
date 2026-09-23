@@ -98,7 +98,7 @@ public sealed class ImapSearchPostgresTests
                     ModSeq = uid,
                     Sender = "sender@example.test",
                     Recipient = "owner@example.test",
-                    Subject = subject,
+                    Subject = uid == 1 ? "Zebra metadata" : subject,
                 };
                 var raw = Encoding.ASCII.GetBytes(
                     $"Subject: {subject}\r\nX-Label: {label}\r\n\r\n{body}\r\n");
@@ -145,6 +145,27 @@ public sealed class ImapSearchPostgresTests
             Assert.IsEmpty(invalid.Matches);
             await Assert.ThrowsAsync<ArgumentException>(() => application.SearchMessagesAsync(
                 new ImapSearchRequest(ownerId, folderId, "ALL", [-1], false)));
+
+            var sortRequest = new ImapSortRequest(
+                ownerId, folderId, "ALL", [], false, "US-ASCII",
+                [new ImapSortCriterion(ImapSortKey.Subject, true)]);
+            Assert.IsFalse((await application.SortMessagesAsync(
+                sortRequest with { UserId = otherId })).FolderFound);
+            var sorted = await application.SortMessagesAsync(sortRequest);
+            Assert.IsTrue(sorted.FolderFound);
+            CollectionAssert.AreEqual(new[] { 3, 2, 1 },
+                sorted.SortedMatches.Select(match => match.Uid).ToArray());
+            var savedSort = await application.SortMessagesAsync(
+                sortRequest with { SearchCriteria = "$", SavedSearchUids = [1, 3] });
+            CollectionAssert.AreEqual(new[] { 3, 1 },
+                savedSort.SortedMatches.Select(match => match.Uid).ToArray());
+            await Assert.ThrowsAsync<ArgumentException>(() => application.SortMessagesAsync(
+                sortRequest with { Charset = "UNSUPPORTED" }));
+            await Assert.ThrowsAsync<ArgumentException>(() => application.SortMessagesAsync(
+                sortRequest with
+                {
+                    SortCriteria = [new ImapSortCriterion((ImapSortKey)999, false)],
+                }));
         }
         Assert.AreEqual(3, objects.ObjectCount);
     }

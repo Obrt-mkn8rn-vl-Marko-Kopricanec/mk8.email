@@ -121,6 +121,16 @@ public sealed class ImapApplicationBoundaryTests
         Assert.HasCount(1, search.Matches);
         Assert.AreEqual("SUBJECT test", application.LastSearchCriteria);
 
+        var sort = await SendAsync<ImapSortRequest, ImapSortResult>(
+            dispatcher,
+            ApplicationOperations.ImapSortMessages,
+            new ImapSortRequest(application.UserId, Guid.CreateVersion7(),
+                "ALL", [], false, "US-ASCII",
+                [new ImapSortCriterion(ImapSortKey.Subject, true)]));
+        Assert.IsTrue(sort.FolderFound);
+        Assert.HasCount(1, sort.SortedMatches);
+        Assert.AreEqual(ImapSortKey.Subject, application.LastSortKey);
+
         var idle = await SendAsync<ImapIdleSnapshotRequest, ImapIdleSnapshotResult>(
             dispatcher,
             ApplicationOperations.ImapGetIdleSnapshot,
@@ -167,6 +177,7 @@ public sealed class ImapApplicationBoundaryTests
         public long LastAppendBytes { get; private set; }
         public string? LastAppendMailbox { get; private set; }
         public string? LastSearchCriteria { get; private set; }
+        public ImapSortKey? LastSortKey { get; private set; }
 
         public Task<ImapIdentityResult> AuthenticatePasswordAsync(
             ImapPasswordAuthentication request,
@@ -279,6 +290,15 @@ public sealed class ImapApplicationBoundaryTests
         {
             LastSearchCriteria = request.Criteria;
             return Task.FromResult(new ImapSearchResult(
+                true, null, [new ImapSearchMatch(7, 2)], null));
+        }
+
+        public Task<ImapSortResult> SortMessagesAsync(
+            ImapSortRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            LastSortKey = request.SortCriteria[0].Key;
+            return Task.FromResult(new ImapSortResult(
                 true, null, [new ImapSearchMatch(7, 2)], null));
         }
 

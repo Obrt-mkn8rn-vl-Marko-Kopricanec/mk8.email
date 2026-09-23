@@ -2876,6 +2876,41 @@ public sealed class TransportSecurityTests
     }
 
     [TestMethod]
+    [Timeout(10_000)]
+    public async Task ImapSortFailsClosedWhenWorkerIsUnavailableOrMalformed()
+    {
+        foreach (var malformed in new[] { false, true })
+        {
+            var port = ReservePort();
+            var environment = CreateEnvironment(imapPort: port);
+            await using var server = await ServerFixture.StartImapAsync(
+                environment, port,
+                applicationService: new UnavailableImapMailboxApplicationService(
+                    listingUnavailable: false,
+                    selectionAvailable: true,
+                    sortMalformed: malformed));
+            await using var connection = await ProtocolConnection.ConnectAsync(port);
+
+            await connection.ReadLineAsync();
+            await connection.WriteLineAsync("a1 STARTTLS");
+            Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a1 OK", StringComparison.Ordinal));
+            await connection.UpgradeToTlsAsync("email.mk8n.com");
+            await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"");
+            Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a2 OK", StringComparison.Ordinal));
+            await connection.WriteLineAsync("a3 SELECT INBOX");
+            var selected = await ReadUntilTaggedResponseAsync(connection, "a3");
+            Assert.IsTrue(selected[^1].StartsWith("a3 OK", StringComparison.Ordinal));
+
+            await connection.WriteLineAsync("a4 SORT (SUBJECT) US-ASCII ALL");
+            Assert.IsTrue((await connection.ReadLineAsync()).StartsWith(
+                "a4 NO [UNAVAILABLE]", StringComparison.Ordinal));
+            await connection.WriteLineAsync("a5 CAPABILITY");
+            var capability = await ReadUntilTaggedResponseAsync(connection, "a5");
+            Assert.IsTrue(capability[^1].StartsWith("a5 OK", StringComparison.Ordinal));
+        }
+    }
+
+    [TestMethod]
     [Timeout(15_000)]
     public async Task ImapBoundsConcurrentMessageWrites()
     {
@@ -3909,6 +3944,11 @@ public sealed class TransportSecurityTests
             ImapSearchRequest request,
             CancellationToken cancellationToken = default) =>
             Task.FromException<ImapSearchResult>(new IOException("Worker unavailable"));
+
+        public Task<ImapSortResult> SortMessagesAsync(
+            ImapSortRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromException<ImapSortResult>(new IOException("Worker unavailable"));
     }
 
     private sealed class UnavailableImapMailboxApplicationService(
@@ -3920,7 +3960,8 @@ public sealed class TransportSecurityTests
         bool copyMalformed = false,
         bool appendCommitUnavailable = false,
         bool appendMalformed = false,
-        bool searchMalformed = false) : IImapApplicationService
+        bool searchMalformed = false,
+        bool sortMalformed = false) : IImapApplicationService
     {
         public Task<ImapIdentityResult> AuthenticatePasswordAsync(
             ImapPasswordAuthentication request,
@@ -4031,6 +4072,13 @@ public sealed class TransportSecurityTests
             ? Task.FromResult(new ImapSearchResult(true, null,
                 [new ImapSearchMatch(0, 1)], null))
             : Task.FromException<ImapSearchResult>(new IOException("Worker unavailable"));
+
+        public Task<ImapSortResult> SortMessagesAsync(
+            ImapSortRequest request,
+            CancellationToken cancellationToken = default) => sortMalformed
+            ? Task.FromResult(new ImapSortResult(true, null,
+                [new ImapSearchMatch(7, 1), new ImapSearchMatch(7, 2)], null))
+            : Task.FromException<ImapSortResult>(new IOException("Worker unavailable"));
     }
 
     private sealed class ServerFixture(

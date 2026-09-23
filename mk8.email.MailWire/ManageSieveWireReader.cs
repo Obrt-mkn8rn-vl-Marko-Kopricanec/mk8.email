@@ -2,7 +2,7 @@ using System.Buffers;
 using System.Globalization;
 using System.Text;
 
-namespace mk8.email.Application.Protocol;
+namespace mk8.email.MailWire;
 
 internal enum ManageSieveTokenKind
 {
@@ -31,7 +31,7 @@ internal sealed class ManageSieveWireReader(Stream stream)
     private const int MaximumPhysicalLineBytes = 16 * 1024;
     private const int MaximumTokens = 32;
     private const int MaximumLiterals = 4;
-    private const int MaximumCommandBytes = SieveScript.MaximumScriptBytes + 64 * 1024;
+    private const int MaximumCommandBytes = SieveWireCapabilities.MaximumScriptBytes + 64 * 1024;
     private static readonly Encoding StrictUtf8 = new UTF8Encoding(
         encoderShouldEmitUTF8Identifier: false,
         throwOnInvalidBytes: true);
@@ -104,7 +104,7 @@ internal sealed class ManageSieveWireReader(Stream stream)
                 throw new ManageSieveProtocolException(
                     "The command has too many literals.",
                     isFatal: parsed.Value.IsNonSynchronizing);
-            if (parsed.Value.Length > SieveScript.MaximumScriptBytes
+            if (parsed.Value.Length > SieveWireCapabilities.MaximumScriptBytes
                 || totalBytes > MaximumCommandBytes - parsed.Value.Length)
             {
                 throw new ManageSieveProtocolException(

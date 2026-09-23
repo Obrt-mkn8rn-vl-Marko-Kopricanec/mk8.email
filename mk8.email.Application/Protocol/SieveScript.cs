@@ -30,24 +30,14 @@ internal sealed record SieveEvaluationResult(
 
 internal static class SieveScript
 {
-    public const int MaximumScriptBytes = 1024 * 1024;
+    public const int MaximumScriptBytes = SieveWireCapabilities.MaximumScriptBytes;
     public const int MaximumTokens = 50_000;
     public const int MaximumNestingDepth = 64;
-    public const int MaximumRedirects = 100;
+    public const int MaximumRedirects = SieveWireCapabilities.MaximumRedirects;
     private const int MaximumActions = 100;
 
     public static readonly IReadOnlySet<string> SupportedCapabilities =
-        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "body",
-            "comparator-i;ascii-casemap",
-            "copy",
-            "envelope",
-            "fileinto",
-            "imap4flags",
-            "mailbox",
-            "reject",
-        };
+        SieveWireCapabilities.Supported;
 
     public static SieveCompilationResult Compile(string source)
     {
@@ -862,81 +852,81 @@ internal static class SieveScript
             {
                 case "if": return ParseIf(depth + 1);
                 case "keep":
-                {
-                    var flags = ParseOptionalFlags(command);
-                    ExpectSemicolon(command);
-                    return new SieveKeep(flags);
-                }
+                    {
+                        var flags = ParseOptionalFlags(command);
+                        ExpectSemicolon(command);
+                        return new SieveKeep(flags);
+                    }
                 case "fileinto":
-                {
-                    Require("fileinto", command);
-                    var copy = false;
-                    var create = false;
-                    IReadOnlyList<string>? flags = null;
-                    var seenTags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    while (At(TokenKind.Tag))
                     {
-                        var tag = Consume();
-                        if (!seenTags.Add(tag.Value))
-                            Throw(tag, $"Duplicate fileinto tag ':{tag.Value}'.");
-                        switch (tag.Value.ToLowerInvariant())
+                        Require("fileinto", command);
+                        var copy = false;
+                        var create = false;
+                        IReadOnlyList<string>? flags = null;
+                        var seenTags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        while (At(TokenKind.Tag))
                         {
-                            case "copy": Require("copy", tag); copy = true; break;
-                            case "create": Require("mailbox", tag); create = true; break;
-                            case "flags":
-                                Require("imap4flags", tag);
-                                flags = ParseStringList();
-                                ValidateFlags(command, flags);
-                                break;
-                            default: Throw(tag, $"Unknown fileinto tag ':{tag.Value}'."); break;
+                            var tag = Consume();
+                            if (!seenTags.Add(tag.Value))
+                                Throw(tag, $"Duplicate fileinto tag ':{tag.Value}'.");
+                            switch (tag.Value.ToLowerInvariant())
+                            {
+                                case "copy": Require("copy", tag); copy = true; break;
+                                case "create": Require("mailbox", tag); create = true; break;
+                                case "flags":
+                                    Require("imap4flags", tag);
+                                    flags = ParseStringList();
+                                    ValidateFlags(command, flags);
+                                    break;
+                                default: Throw(tag, $"Unknown fileinto tag ':{tag.Value}'."); break;
+                            }
                         }
+                        var folder = Expect(TokenKind.String, "Expected a mailbox name.").Value;
+                        if (!MailboxName.IsValid(folder))
+                            Throw(command, "The mailbox name is invalid.");
+                        ExpectSemicolon(command);
+                        return new SieveFileInto(folder, copy, create, flags);
                     }
-                    var folder = Expect(TokenKind.String, "Expected a mailbox name.").Value;
-                    if (!MailboxName.IsValid(folder))
-                        Throw(command, "The mailbox name is invalid.");
-                    ExpectSemicolon(command);
-                    return new SieveFileInto(folder, copy, create, flags);
-                }
                 case "redirect":
-                {
-                    var copy = false;
-                    if (AtTag("copy"))
                     {
-                        Require("copy", Consume());
-                        copy = true;
+                        var copy = false;
+                        if (AtTag("copy"))
+                        {
+                            Require("copy", Consume());
+                            copy = true;
+                        }
+                        var address = Expect(TokenKind.String, "Expected a redirect address.").Value;
+                        if (!SmtpAddress.TryNormalize(address, allowEmpty: false, out address))
+                            Throw(command, "The redirect address is invalid.");
+                        ExpectSemicolon(command);
+                        return new SieveRedirect(address, copy);
                     }
-                    var address = Expect(TokenKind.String, "Expected a redirect address.").Value;
-                    if (!SmtpAddress.TryNormalize(address, allowEmpty: false, out address))
-                        Throw(command, "The redirect address is invalid.");
-                    ExpectSemicolon(command);
-                    return new SieveRedirect(address, copy);
-                }
                 case "discard": ExpectSemicolon(command); return new SieveDiscard();
                 case "stop": ExpectSemicolon(command); return new SieveStop();
                 case "reject":
-                {
-                    Require("reject", command);
-                    var reason = Expect(TokenKind.String, "Expected a rejection reason.").Value;
-                    if (reason.Length is < 1 or > 1024 || reason.Contains('\0'))
-                        Throw(command, "The rejection reason must contain from 1 through 1024 characters.");
-                    ExpectSemicolon(command);
-                    return new SieveReject(reason);
-                }
+                    {
+                        Require("reject", command);
+                        var reason = Expect(TokenKind.String, "Expected a rejection reason.").Value;
+                        if (reason.Length is < 1 or > 1024 || reason.Contains('\0'))
+                            Throw(command, "The rejection reason must contain from 1 through 1024 characters.");
+                        ExpectSemicolon(command);
+                        return new SieveReject(reason);
+                    }
                 case "setflag":
                 case "addflag":
                 case "removeflag":
-                {
-                    Require("imap4flags", command);
-                    var flags = ParseStringList();
-                    ValidateFlags(command, flags);
-                    ExpectSemicolon(command);
-                    return command.Value.ToLowerInvariant() switch
                     {
-                        "setflag" => new SieveSetFlags(flags),
-                        "addflag" => new SieveAddFlags(flags),
-                        _ => new SieveRemoveFlags(flags),
-                    };
-                }
+                        Require("imap4flags", command);
+                        var flags = ParseStringList();
+                        ValidateFlags(command, flags);
+                        ExpectSemicolon(command);
+                        return command.Value.ToLowerInvariant() switch
+                        {
+                            "setflag" => new SieveSetFlags(flags),
+                            "addflag" => new SieveAddFlags(flags),
+                            _ => new SieveRemoveFlags(flags),
+                        };
+                    }
                 default:
                     Throw(command, $"Unknown Sieve command '{command.Value}'.");
                     return null!;
@@ -994,40 +984,40 @@ internal static class SieveScript
                 case "anyof": return new SieveAnyOf(ParseTestList(depth + 1));
                 case "exists": return new SieveExists(ParseHeaderNameList(token));
                 case "size":
-                {
-                    var tag = Expect(TokenKind.Tag, "Expected :over or :under.");
-                    if (!tag.Value.Equals("over", StringComparison.OrdinalIgnoreCase)
-                        && !tag.Value.Equals("under", StringComparison.OrdinalIgnoreCase))
-                        Throw(tag, "Expected :over or :under.");
-                    var number = Expect(TokenKind.Number, "Expected a size.");
-                    return new SieveSize(ParseNumber(number), tag.Value.Equals("over", StringComparison.OrdinalIgnoreCase));
-                }
+                    {
+                        var tag = Expect(TokenKind.Tag, "Expected :over or :under.");
+                        if (!tag.Value.Equals("over", StringComparison.OrdinalIgnoreCase)
+                            && !tag.Value.Equals("under", StringComparison.OrdinalIgnoreCase))
+                            Throw(tag, "Expected :over or :under.");
+                        var number = Expect(TokenKind.Number, "Expected a size.");
+                        return new SieveSize(ParseNumber(number), tag.Value.Equals("over", StringComparison.OrdinalIgnoreCase));
+                    }
                 case "header":
-                {
-                    var options = ParseMatchOptions(token, allowAddressPart: false, allowBodyTransform: false, out _, out _, out _);
-                    return new SieveHeader(options, ParseHeaderNameList(token), ParseStringList());
-                }
+                    {
+                        var options = ParseMatchOptions(token, allowAddressPart: false, allowBodyTransform: false, out _, out _, out _);
+                        return new SieveHeader(options, ParseHeaderNameList(token), ParseStringList());
+                    }
                 case "address":
-                {
-                    var options = ParseMatchOptions(token, allowAddressPart: true, allowBodyTransform: false, out var part, out _, out _);
-                    return new SieveAddress(options, part, ParseHeaderNameList(token), ParseStringList());
-                }
+                    {
+                        var options = ParseMatchOptions(token, allowAddressPart: true, allowBodyTransform: false, out var part, out _, out _);
+                        return new SieveAddress(options, part, ParseHeaderNameList(token), ParseStringList());
+                    }
                 case "envelope":
-                {
-                    Require("envelope", token);
-                    var options = ParseMatchOptions(token, allowAddressPart: true, allowBodyTransform: false, out var part, out _, out _);
-                    var fields = ParseStringList();
-                    if (fields.Any(field => !field.Equals("from", StringComparison.OrdinalIgnoreCase)
-                        && !field.Equals("to", StringComparison.OrdinalIgnoreCase)))
-                        Throw(token, "Envelope tests support only from and to.");
-                    return new SieveEnvelope(options, part, fields, ParseStringList());
-                }
+                    {
+                        Require("envelope", token);
+                        var options = ParseMatchOptions(token, allowAddressPart: true, allowBodyTransform: false, out var part, out _, out _);
+                        var fields = ParseStringList();
+                        if (fields.Any(field => !field.Equals("from", StringComparison.OrdinalIgnoreCase)
+                            && !field.Equals("to", StringComparison.OrdinalIgnoreCase)))
+                            Throw(token, "Envelope tests support only from and to.");
+                        return new SieveEnvelope(options, part, fields, ParseStringList());
+                    }
                 case "body":
-                {
-                    Require("body", token);
-                    var options = ParseMatchOptions(token, allowAddressPart: false, allowBodyTransform: true, out _, out var transform, out var contentTypes);
-                    return new SieveBody(options, transform, contentTypes, ParseStringList());
-                }
+                    {
+                        Require("body", token);
+                        var options = ParseMatchOptions(token, allowAddressPart: false, allowBodyTransform: true, out _, out var transform, out var contentTypes);
+                        return new SieveBody(options, transform, contentTypes, ParseStringList());
+                    }
                 case "mailboxexists":
                     Require("mailbox", token);
                     var folders = ParseStringList();

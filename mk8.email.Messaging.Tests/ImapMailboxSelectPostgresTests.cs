@@ -25,6 +25,8 @@ public sealed class ImapMailboxSelectPostgresTests
             .UseNpgsql(server.ConnectionString)
             .Options;
         var ownerId = Guid.CreateVersion7();
+        var inboxId = Guid.CreateVersion7();
+        var foreignInboxId = Guid.CreateVersion7();
         await using (var database = new EmailDbContext(options))
         {
             await database.Database.EnsureCreatedAsync();
@@ -49,7 +51,7 @@ public sealed class ImapMailboxSelectPostgresTests
             var foreign = NewInbox(other, address, "other");
             var inbox = new FolderDB
             {
-                Id = Guid.CreateVersion7(),
+                Id = inboxId,
                 Name = "Inbox",
                 Inbox = primary,
                 UidValidity = 23,
@@ -58,7 +60,7 @@ public sealed class ImapMailboxSelectPostgresTests
             };
             var foreignInbox = new FolderDB
             {
-                Id = Guid.CreateVersion7(),
+                Id = foreignInboxId,
                 Name = "Inbox",
                 Inbox = foreign,
             };
@@ -107,6 +109,15 @@ public sealed class ImapMailboxSelectPostgresTests
             Assert.AreEqual(4096L, quota.LimitBytes);
             Assert.IsFalse((await application.GetQuotaAsync(new ImapQuotaRequest(
                 ownerId, "other/example.test/Inbox"))).MailboxFound);
+            var idle = await application.GetIdleSnapshotAsync(
+                new ImapIdleSnapshotRequest(ownerId, inboxId));
+            Assert.IsTrue(idle.FolderFound);
+            Assert.AreEqual(8L, idle.HighestModSeq);
+            Assert.HasCount(2, idle.Messages);
+            Assert.AreEqual(1, idle.Messages[0].Uid);
+            Assert.AreEqual(2, idle.Messages[1].Uid);
+            Assert.IsFalse((await application.GetIdleSnapshotAsync(
+                new ImapIdleSnapshotRequest(ownerId, foreignInboxId))).FolderFound);
         }
     }
 

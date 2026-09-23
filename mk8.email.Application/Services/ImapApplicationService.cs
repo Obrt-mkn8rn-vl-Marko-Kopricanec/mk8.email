@@ -426,4 +426,58 @@ internal sealed class ImapApplicationService(
             .SumAsync(email => (long?)email.SizeBytes, cancellationToken) ?? 0;
         return new ImapQuotaResult(true, usedBytes, quotaBytes);
     }
+
+    public async Task<ImapIdleSnapshotResult> GetIdleSnapshotAsync(
+        ImapIdleSnapshotRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.UserId == Guid.Empty || request.FolderId == Guid.Empty)
+            throw new ArgumentException("The IMAP IDLE snapshot request is invalid.", nameof(request));
+
+        await using var transaction = database.Database.IsRelational()
+            ? await database.Database.BeginTransactionAsync(IsolationLevel.RepeatableRead, cancellationToken)
+            : null;
+        var highestModSeq = await database.Folders
+            .AsNoTracking()
+            .Where(folder => folder.Id == request.FolderId
+                && folder.Inbox.OwnerId == request.UserId)
+            .Select(folder => (long?)folder.HighestModSeq)
+            .SingleOrDefaultAsync(cancellationToken);
+        if (highestModSeq is null)
+            return new ImapIdleSnapshotResult(false, 0, []);
+
+        var messages = await database.Emails
+            .AsNoTracking()
+            .Where(email => email.FolderId == request.FolderId)
+            .OrderBy(email => email.Uid)
+            .Select(email => new
+            {
+                email.Id,
+                email.Uid,
+                email.ModSeq,
+                email.IsRead,
+                email.IsDeleted,
+                email.IsFlagged,
+                email.IsDraft,
+                email.IsAnswered,
+                email.Keywords,
+            })
+            .ToListAsync(cancellationToken);
+        if (transaction is not null)
+            await transaction.CommitAsync(cancellationToken);
+        return new ImapIdleSnapshotResult(
+            true,
+            highestModSeq.Value,
+            messages.Select(message => new ImapIdleMessage(
+                message.Id,
+                message.Uid,
+                message.ModSeq,
+                message.IsRead,
+                message.IsDeleted,
+                message.IsFlagged,
+                message.IsDraft,
+                message.IsAnswered,
+                message.Keywords ?? [])).ToList());
+    }
 }

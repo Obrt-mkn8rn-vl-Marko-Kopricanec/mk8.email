@@ -279,6 +279,33 @@ public sealed class TransportSecurityTests
         Assert.AreEqual("a4 OK CAPABILITY completed", await connection.ReadLineAsync());
     }
 
+    [TestMethod]
+    [Timeout(10_000)]
+    public async Task ImapRejectsIdleBeforeContinuationWhenSnapshotWorkerIsUnavailable()
+    {
+        var port = ReservePort();
+        await using var server = await ServerFixture.StartImapAsync(
+            CreateEnvironment(imapPort: port),
+            port,
+            applicationService: new UnavailableImapMailboxApplicationService(
+                listingUnavailable: false, selectionAvailable: true));
+        await using var connection = await ProtocolConnection.ConnectAsync(port);
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("* OK ", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a1 STARTTLS");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("a1 OK ", StringComparison.Ordinal));
+        await connection.UpgradeToTlsAsync("email.mk8n.com");
+        await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"");
+        Assert.AreEqual("a2 OK LOGIN completed", await connection.ReadLineAsync());
+        await connection.WriteLineAsync("a3 SELECT INBOX");
+        var selected = await ReadUntilTaggedResponseAsync(connection, "a3");
+        Assert.IsTrue(selected[^1].StartsWith("a3 OK [READ-WRITE]", StringComparison.Ordinal));
+        await connection.WriteLineAsync("a4 IDLE");
+        Assert.AreEqual("a4 NO [UNAVAILABLE] IDLE backend unavailable", await connection.ReadLineAsync());
+        await connection.WriteLineAsync("a5 CAPABILITY");
+        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("* CAPABILITY ", StringComparison.Ordinal));
+        Assert.AreEqual("a5 OK CAPABILITY completed", await connection.ReadLineAsync());
+    }
+
     [TestInitialize]
     public void Initialize()
     {
@@ -3670,11 +3697,17 @@ public sealed class TransportSecurityTests
             ImapQuotaRequest request,
             CancellationToken cancellationToken = default) =>
             Task.FromException<ImapQuotaResult>(new IOException("Worker unavailable"));
+
+        public Task<ImapIdleSnapshotResult> GetIdleSnapshotAsync(
+            ImapIdleSnapshotRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromException<ImapIdleSnapshotResult>(new IOException("Worker unavailable"));
     }
 
     private sealed class UnavailableImapMailboxApplicationService(
         bool listingUnavailable = true,
-        bool selectionMalformed = false) : IImapApplicationService
+        bool selectionMalformed = false,
+        bool selectionAvailable = false) : IImapApplicationService
     {
         public Task<ImapIdentityResult> AuthenticatePasswordAsync(
             ImapPasswordAuthentication request,
@@ -3723,12 +3756,20 @@ public sealed class TransportSecurityTests
             CancellationToken cancellationToken = default) => selectionMalformed
             ? Task.FromResult(new ImapMailboxSelectResult(new ImapSelectedMailbox(
                 Guid.Empty, 1, 1, 1, "mailbox-id", 1, null, [], [], [])))
+            : selectionAvailable
+                ? Task.FromResult(new ImapMailboxSelectResult(new ImapSelectedMailbox(
+                    Guid.CreateVersion7(), 1, 1, 1, "mailbox-id", 0, null, [], [], [])))
             : Task.FromException<ImapMailboxSelectResult>(new IOException("Worker unavailable"));
 
         public Task<ImapQuotaResult> GetQuotaAsync(
             ImapQuotaRequest request,
             CancellationToken cancellationToken = default) =>
             Task.FromException<ImapQuotaResult>(new IOException("Worker unavailable"));
+
+        public Task<ImapIdleSnapshotResult> GetIdleSnapshotAsync(
+            ImapIdleSnapshotRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromException<ImapIdleSnapshotResult>(new IOException("Worker unavailable"));
     }
 
     private sealed class ServerFixture(

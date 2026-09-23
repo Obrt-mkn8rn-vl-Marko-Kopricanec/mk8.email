@@ -56,7 +56,8 @@ public sealed class ImapApplicationServiceTests
         AddFolder(database, primary, "Archive", subscribed: false);
         var alias = CreateInbox(owner, address, "alias");
         AddFolder(database, alias, DefaultFolders.Inbox, subscribed: true);
-        AddFolder(database, CreateInbox(other, address, "other"), DefaultFolders.Inbox, subscribed: true);
+        var otherFolder = AddFolder(
+            database, CreateInbox(other, address, "other"), DefaultFolders.Inbox, subscribed: true);
         AddMessage(database, primaryFolder, uid: 1, sizeBytes: 10, isRead: false,
             modSeq: 2, keywords: ["$Label1"]);
         AddMessage(database, primaryFolder, uid: 2, sizeBytes: 20, isRead: true,
@@ -126,6 +127,15 @@ public sealed class ImapApplicationServiceTests
             owner.Id, "other/example.test/Inbox"))).MailboxFound);
         Assert.IsTrue((await service.GetQuotaAsync(
             new ImapQuotaRequest(owner.Id, null))).MailboxFound);
+        var idle = await service.GetIdleSnapshotAsync(
+            new ImapIdleSnapshotRequest(owner.Id, primaryFolder.Id));
+        Assert.IsTrue(idle.FolderFound);
+        Assert.AreEqual(4L, idle.HighestModSeq);
+        Assert.HasCount(2, idle.Messages);
+        Assert.AreEqual(1, idle.Messages[0].Uid);
+        Assert.AreEqual(2, idle.Messages[1].Uid);
+        Assert.IsFalse((await service.GetIdleSnapshotAsync(
+            new ImapIdleSnapshotRequest(owner.Id, otherFolder.Id))).FolderFound);
         var selected = (await service.SelectMailboxAsync(
             new ImapMailboxSelectRequest(owner.Id, "INBOX", primaryFolder.UidValidity, 1))).Mailbox;
         Assert.IsNotNull(selected);
@@ -230,6 +240,8 @@ public sealed class ImapApplicationServiceTests
             new ImapMailboxSelectRequest(Guid.Empty, "INBOX", null, null)));
         await Assert.ThrowsAsync<ArgumentException>(() => service.GetQuotaAsync(
             new ImapQuotaRequest(Guid.Empty, null)));
+        await Assert.ThrowsAsync<ArgumentException>(() => service.GetIdleSnapshotAsync(
+            new ImapIdleSnapshotRequest(Guid.Empty, primaryFolder.Id)));
     }
 
     private static InboxDB CreateInbox(

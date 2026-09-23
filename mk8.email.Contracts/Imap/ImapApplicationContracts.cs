@@ -41,6 +41,10 @@ public interface IImapApplicationService
     Task<ImapQuotaResult> GetQuotaAsync(
         ImapQuotaRequest request,
         CancellationToken cancellationToken = default);
+
+    Task<ImapIdleSnapshotResult> GetIdleSnapshotAsync(
+        ImapIdleSnapshotRequest request,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record ImapPasswordAuthentication(string Username, string Password);
@@ -166,3 +170,21 @@ public sealed record ImapQuotaResult(
     bool MailboxFound,
     long UsedBytes,
     long LimitBytes);
+
+public sealed record ImapIdleSnapshotRequest(Guid UserId, Guid FolderId);
+
+public sealed record ImapIdleSnapshotResult(
+    bool FolderFound,
+    long HighestModSeq,
+    List<ImapIdleMessage> Messages);
+
+public sealed record ImapIdleMessage(
+    Guid Id,
+    int Uid,
+    long ModSeq,
+    bool IsRead,
+    bool IsDeleted,
+    bool IsFlagged,
+    bool IsDraft,
+    bool IsAnswered,
+    string[] Keywords);

@@ -88,6 +88,9 @@ public sealed class ImapGatewayTransportTests
                 new ImapMailboxSelectRequest(application.UserId, "INBOX", 1, 2), timeout.Token);
             var quota = await client.GetQuotaAsync(
                 new ImapQuotaRequest(application.UserId, "INBOX"), timeout.Token);
+            var idle = await client.GetIdleSnapshotAsync(
+                new ImapIdleSnapshotRequest(application.UserId, Guid.CreateVersion7()),
+                timeout.Token);
             Assert.AreEqual(application.UserId, password.UserId);
             Assert.AreEqual(application.UserId, oauth.UserId);
             Assert.AreEqual("imap-secret", application.Password);
@@ -108,6 +111,8 @@ public sealed class ImapGatewayTransportTests
             Assert.AreEqual("INBOX", application.SelectedMailbox);
             Assert.AreEqual(2048L, quota.LimitBytes);
             Assert.AreEqual("INBOX", application.QuotaMailbox);
+            Assert.IsTrue(idle.FolderFound);
+            Assert.HasCount(1, idle.Messages);
 
             await using var operations = gatewayDataSource.CreateCommand(
                 "SELECT operation FROM application_requests ORDER BY created_at");
@@ -128,6 +133,7 @@ public sealed class ImapGatewayTransportTests
                     ApplicationOperations.ImapDeleteMailbox,
                     ApplicationOperations.ImapSelectMailbox,
                     ApplicationOperations.ImapGetQuota,
+                    ApplicationOperations.ImapGetIdleSnapshot,
                 },
                 observed);
 
@@ -143,7 +149,7 @@ public sealed class ImapGatewayTransportTests
                 Assert.IsFalse(ciphertext.Contains("imap-secret", StringComparison.Ordinal));
                 Assert.IsFalse(ciphertext.Contains("imap-access-token", StringComparison.Ordinal));
             }
-            Assert.AreEqual(20, recordCount);
+            Assert.AreEqual(22, recordCount);
         }
         finally
         {
@@ -246,5 +252,12 @@ public sealed class ImapGatewayTransportTests
             QuotaMailbox = request.MailboxName;
             return Task.FromResult(new ImapQuotaResult(true, 12, 2048));
         }
+
+        public Task<ImapIdleSnapshotResult> GetIdleSnapshotAsync(
+            ImapIdleSnapshotRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ImapIdleSnapshotResult(true, 5,
+                [new ImapIdleMessage(Guid.CreateVersion7(), 1, 5,
+                    false, false, false, false, false, ["$Label1"])]));
     }
 }

@@ -66,4 +66,10 @@ public sealed class GatewayImapApplicationService(
         CancellationToken cancellationToken = default) =>
         transport.SendAsync<ImapQuotaRequest, ImapQuotaResult>(
             "imap", ApplicationOperations.ImapGetQuota, request, cancellationToken);
+
+    public Task<ImapIdleSnapshotResult> GetIdleSnapshotAsync(
+        ImapIdleSnapshotRequest request,
+        CancellationToken cancellationToken = default) =>
+        transport.SendAsync<ImapIdleSnapshotRequest, ImapIdleSnapshotResult>(
+            "imap", ApplicationOperations.ImapGetIdleSnapshot, request, cancellationToken);
 }

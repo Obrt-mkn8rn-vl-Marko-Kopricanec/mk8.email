@@ -3463,6 +3463,14 @@ ILogger<ImapServerService> logger) : BackgroundService
         message.IsAnswered,
         message.Keywords);
 
+    private static string BuildFlagsList(ImapIdleMessage message) => BuildFlagsList(
+        message.IsRead,
+        message.IsDeleted,
+        message.IsFlagged,
+        message.IsDraft,
+        message.IsAnswered,
+        message.Keywords);
+
     private static string BuildFlagsList(
         bool isRead,
         bool isDeleted,
@@ -7063,25 +7071,32 @@ ILogger<ImapServerService> logger) : BackgroundService
         BoundedLineReader reader, StreamWriter writer, string tag,
         ImapSession session, CancellationTokenSource timeout, int connectionTimeoutSeconds)
     {
-        await writer.WriteLineAsync("+ idling");
-
-        timeout.CancelAfter(TimeSpan.FromMinutes(30));
-
-        var knownMessages = new List<EmailDB>();
+        var knownMessages = new List<ImapIdleMessage>();
         long lastKnownModSeq = 0;
 
         if (session.SelectedFolderId is not null)
         {
-            using var initScope = scopeFactory.CreateScope();
-            var initDb = initScope.ServiceProvider.GetRequiredService<EmailDbContext>();
-            knownMessages = await GetEmailMetadataInFolderAsync(
-                initDb,
-                session.SelectedFolderId.Value,
-                timeout.Token);
-            var folder = await initDb.Folders.AsNoTracking().FirstOrDefaultAsync(f => f.Id == session.SelectedFolderId.Value, timeout.Token);
-            lastKnownModSeq = folder?.HighestModSeq ?? 0;
+            try
+            {
+                var initial = await GetIdleSnapshotAsync(
+                    session.UserId, session.SelectedFolderId.Value, timeout.Token);
+                ValidateIdleSnapshot(initial);
+                knownMessages = initial.Messages;
+                lastKnownModSeq = initial.HighestModSeq;
+            }
+            catch (Exception exception) when (
+                exception is not OperationCanceledException && !timeout.IsCancellationRequested)
+            {
+                logger.LogWarning(exception, "IMAP IDLE initialization is unavailable for {UserId}", session.UserId);
+                await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] IDLE backend unavailable");
+                return;
+            }
         }
 
+        await writer.WriteLineAsync("+ idling");
+        timeout.CancelAfter(TimeSpan.FromMinutes(30));
+
+        var backendUnavailableLogged = false;
         var readTask = reader.ReadLineAsync(MaximumCommandLineCharacters, timeout.Token).AsTask();
         while (!timeout.IsCancellationRequested)
         {
@@ -7113,19 +7128,17 @@ ILogger<ImapServerService> logger) : BackgroundService
             }
             else if (session.SelectedFolderId is not null)
             {
-                // DB polling: check for new messages or flag changes
+                List<ImapIdleMessage> currentMessages;
+                List<string> responseLines;
+                long currentModSeq;
                 try
                 {
-                    using var pollScope = scopeFactory.CreateScope();
-                    var pollDb = pollScope.ServiceProvider.GetRequiredService<EmailDbContext>();
-
-                    var currentMessages = await GetEmailMetadataInFolderAsync(
-                        pollDb,
-                        session.SelectedFolderId.Value,
-                        timeout.Token);
-                    var folder = await pollDb.Folders.AsNoTracking()
-                        .FirstOrDefaultAsync(f => f.Id == session.SelectedFolderId.Value, timeout.Token);
-                    var currentModSeq = folder?.HighestModSeq ?? 0;
+                    var snapshot = await GetIdleSnapshotAsync(
+                        session.UserId, session.SelectedFolderId.Value, timeout.Token);
+                    ValidateIdleSnapshot(snapshot);
+                    currentMessages = snapshot.Messages;
+                    currentModSeq = snapshot.HighestModSeq;
+                    responseLines = [];
 
                     var currentIds = currentMessages
                         .Select(email => email.Id)
@@ -7140,7 +7153,7 @@ ILogger<ImapServerService> logger) : BackgroundService
                             .Select(email => email.Uid)
                             .Order()
                             .ToList();
-                        await writer.WriteLineAsync($"* VANISHED {FormatUidRange(vanishedUids)}");
+                        responseLines.Add($"* VANISHED {FormatUidRange(vanishedUids)}");
                         survivingKnownMessages.RemoveAll(email => !currentIds.Contains(email.Id));
                     }
                     else if (removed.Count > 0)
@@ -7153,14 +7166,14 @@ ILogger<ImapServerService> logger) : BackgroundService
                                 continue;
                             }
 
-                            await writer.WriteLineAsync($"* {index + 1} EXPUNGE");
+                            responseLines.Add($"* {index + 1} EXPUNGE");
                             survivingKnownMessages.RemoveAt(index);
                         }
                     }
 
                     if (currentMessages.Count != survivingKnownMessages.Count)
                     {
-                        await writer.WriteLineAsync($"* {currentMessages.Count} EXISTS");
+                        responseLines.Add($"* {currentMessages.Count} EXISTS");
                     }
 
                     if (currentModSeq > lastKnownModSeq)
@@ -7182,22 +7195,62 @@ ILogger<ImapServerService> logger) : BackgroundService
                                     var modSeq = session.CondstoreEnabled
                                         ? $" MODSEQ ({email.ModSeq})"
                                         : string.Empty;
-                                    await writer.WriteLineAsync(
+                                    responseLines.Add(
                                         $"* {seqNum} FETCH (FLAGS ({flags}){modSeq})");
                                 }
                             }
                         }
 
-                        lastKnownModSeq = currentModSeq;
                     }
 
-                    knownMessages = currentMessages;
                 }
                 catch (OperationCanceledException)
                 {
                     break;
                 }
+                catch (Exception exception)
+                {
+                    if (!backendUnavailableLogged)
+                    {
+                        logger.LogWarning(exception, "IMAP IDLE polling is unavailable for {UserId}", session.UserId);
+                        backendUnavailableLogged = true;
+                    }
+                    continue;
+                }
+
+                foreach (var responseLine in responseLines)
+                    await writer.WriteLineAsync(responseLine);
+                if (currentModSeq > lastKnownModSeq)
+                    lastKnownModSeq = currentModSeq;
+                knownMessages = currentMessages;
+                backendUnavailableLogged = false;
             }
+        }
+    }
+
+    private async Task<ImapIdleSnapshotResult> GetIdleSnapshotAsync(
+        Guid userId,
+        Guid folderId,
+        CancellationToken cancellationToken)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
+        return await application.GetIdleSnapshotAsync(
+            new ImapIdleSnapshotRequest(userId, folderId), cancellationToken);
+    }
+
+    private static void ValidateIdleSnapshot(ImapIdleSnapshotResult snapshot)
+    {
+        if (snapshot.Messages is null
+            || snapshot.HighestModSeq < 0
+            || (!snapshot.FolderFound
+                && (snapshot.HighestModSeq != 0 || snapshot.Messages.Count != 0))
+            || snapshot.Messages.Any(message =>
+                message.Id == Guid.Empty || message.Uid < 1 || message.Keywords is null)
+            || snapshot.Messages.Select(message => message.Id).Distinct().Count() != snapshot.Messages.Count
+            || snapshot.Messages.Select(message => message.Uid).Distinct().Count() != snapshot.Messages.Count)
+        {
+            throw new InvalidOperationException("The IMAP IDLE snapshot is invalid.");
         }
     }
 

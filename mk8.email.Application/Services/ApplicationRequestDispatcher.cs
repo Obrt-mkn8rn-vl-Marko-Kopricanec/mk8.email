@@ -181,6 +181,11 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
                     await services.GetRequiredService<IImapApplicationService>()
                         .GetQuotaAsync(
                             Deserialize<ImapQuotaRequest>(request), cancellationToken)),
+                ApplicationOperations.ImapGetIdleSnapshot => Success(
+                    request.Id,
+                    await services.GetRequiredService<IImapApplicationService>()
+                        .GetIdleSnapshotAsync(
+                            Deserialize<ImapIdleSnapshotRequest>(request), cancellationToken)),
                 ApplicationOperations.AdminAuthenticate => Success(
                     request.Id,
                     await services.GetRequiredService<IAuthService>().LoginAsync(

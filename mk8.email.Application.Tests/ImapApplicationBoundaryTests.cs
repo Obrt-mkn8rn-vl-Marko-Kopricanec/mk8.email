@@ -94,6 +94,13 @@ public sealed class ImapApplicationBoundaryTests
         Assert.IsTrue(quota.MailboxFound);
         Assert.AreEqual(2048L, quota.LimitBytes);
         Assert.AreEqual("INBOX", application.LastQuotaMailbox);
+
+        var idle = await SendAsync<ImapIdleSnapshotRequest, ImapIdleSnapshotResult>(
+            dispatcher,
+            ApplicationOperations.ImapGetIdleSnapshot,
+            new ImapIdleSnapshotRequest(application.UserId, Guid.CreateVersion7()));
+        Assert.IsTrue(idle.FolderFound);
+        Assert.HasCount(1, idle.Messages);
     }
 
     private static async Task<TResponse> SendAsync<TRequest, TResponse>(
@@ -218,5 +225,12 @@ public sealed class ImapApplicationBoundaryTests
             LastQuotaMailbox = request.MailboxName;
             return Task.FromResult(new ImapQuotaResult(true, 12, 2048));
         }
+
+        public Task<ImapIdleSnapshotResult> GetIdleSnapshotAsync(
+            ImapIdleSnapshotRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ImapIdleSnapshotResult(true, 5,
+                [new ImapIdleMessage(Guid.CreateVersion7(), 1, 5,
+                    false, false, false, false, false, ["$Label1"])]));
     }
 }

@@ -16,7 +16,7 @@ public static class GatewayListenerHealthCheck
             try
             {
                 using var client = new TcpClient();
-                await client.ConnectAsync(IPAddress.Loopback, port, cancellationToken);
+                await client.ConnectAsync(IPAddress.Loopback, port, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception exception) when (exception is SocketException or OperationCanceledException)
             {

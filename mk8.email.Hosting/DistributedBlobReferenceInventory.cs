@@ -5,12 +5,6 @@ using Npgsql;
 
 namespace mk8.email.Hosting;
 
-public sealed record DistributedBlobReferenceRow(
-    string Source,
-    Guid RowId,
-    LargeObjectReference Reference,
-    string ContentType);
-
 /// <summary>
 /// Enumerates every PostgreSQL-backed large-object reference in a distributed mail stack.
 /// Backup and restore must use a single database snapshot and fail on schema drift.
@@ -29,7 +23,7 @@ public static class DistributedBlobReferenceInventory
         public string Key => $"{Table}.{Name}";
     }
 
-    internal static readonly Source[] Sources =
+    internal static readonly IReadOnlyList<Source> Sources = Array.AsReadOnly<Source>(
     [
         new("gateway_traffic_records", "payload_blob_name", "payload_blob_provider",
             "payload_sha256", "payload_blob_etag", "payload_length",
@@ -62,18 +56,22 @@ public static class DistributedBlobReferenceInventory
             "object_etag", "size_bytes", "content_type"),
         new("jmap_blobs", "object_name", "object_provider", "object_sha256",
             "object_etag", "size_bytes", "content_type"),
-    ];
+    ]);
 
+    // Validation compares all fixed reference sources against the live schema as one gate.
+#pragma warning disable MA0051
     public static async Task ValidateSchemaAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(connection);
+#pragma warning restore MA0051
         ArgumentNullException.ThrowIfNull(transaction);
 
         var columns = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
-        await using (var command = connection.CreateCommand())
+        var command = connection.CreateCommand();
+        await using (command.ConfigureAwait(false))
         {
             command.Transaction = transaction;
             command.CommandText = """
@@ -81,16 +79,19 @@ public static class DistributedBlobReferenceInventory
                 FROM information_schema.columns
                 WHERE table_schema = current_schema()
                 """;
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            while (await reader.ReadAsync(cancellationToken))
+            var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            await using (reader.ConfigureAwait(false))
             {
-                var table = reader.GetString(0);
-                if (!columns.TryGetValue(table, out var names))
+                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
                 {
-                    names = new HashSet<string>(StringComparer.Ordinal);
-                    columns.Add(table, names);
+                    var table = reader.GetString(0);
+                    if (!columns.TryGetValue(table, out var names))
+                    {
+                        names = new HashSet<string>(StringComparer.Ordinal);
+                        columns.Add(table, names);
+                    }
+                    names.Add(reader.GetString(1));
                 }
-                names.Add(reader.GetString(1));
             }
         }
 
@@ -103,8 +104,8 @@ public static class DistributedBlobReferenceInventory
             .ToHashSet(StringComparer.Ordinal);
         if (!actual.SetEquals(expected))
         {
-            var missing = string.Join(", ", expected.Except(actual).Order(StringComparer.Ordinal));
-            var unknown = string.Join(", ", actual.Except(expected).Order(StringComparer.Ordinal));
+            var missing = string.Join(", ", expected.Except(actual, StringComparer.Ordinal).Order(StringComparer.Ordinal));
+            var unknown = string.Join(", ", actual.Except(expected, StringComparer.Ordinal).Order(StringComparer.Ordinal));
             throw new InvalidOperationException(
                 $"Large-object reference schema drift (missing: {missing}; unknown: {unknown}).");
         }
@@ -159,47 +160,57 @@ public static class DistributedBlobReferenceInventory
     {
         ArgumentNullException.ThrowIfNull(connection);
         ArgumentNullException.ThrowIfNull(transaction);
-        await ValidateSchemaAsync(connection, transaction, cancellationToken);
+        await ValidateSchemaAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
 
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = BuildQuerySql();
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
+        var command = connection.CreateCommand();
+        await using (command.ConfigureAwait(false))
         {
-            var source = reader.GetString(0);
-            var rowId = reader.GetGuid(1);
-            if (reader.IsDBNull(2) || reader.IsDBNull(3) || reader.IsDBNull(4)
-                || reader.IsDBNull(5) || reader.IsDBNull(6))
+            command.Transaction = transaction;
+            // BuildQuerySql uses only the fixed internal Sources list, never request data.
+#pragma warning disable CA2100
+            command.CommandText = BuildQuerySql();
+#pragma warning restore CA2100
+            var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            await using var readerLifetime = reader.ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                throw new InvalidOperationException(
-                    $"Incomplete large-object reference at {source}, row {rowId}.");
-            }
+                var source = reader.GetString(0);
+                var rowId = reader.GetGuid(1);
+                if (await reader.IsDBNullAsync(2, cancellationToken).ConfigureAwait(false)
+                    || await reader.IsDBNullAsync(3, cancellationToken).ConfigureAwait(false)
+                    || await reader.IsDBNullAsync(4, cancellationToken).ConfigureAwait(false)
+                    || await reader.IsDBNullAsync(5, cancellationToken).ConfigureAwait(false)
+                    || await reader.IsDBNullAsync(6, cancellationToken).ConfigureAwait(false))
+                {
+                    throw new InvalidOperationException(
+                        $"Incomplete large-object reference at {source}, row {rowId}.");
+                }
 
-            var reference = new LargeObjectReference(
-                reader.GetString(2), reader.GetString(3), reader.GetInt64(4),
-                reader.GetString(5), reader.GetString(6));
-            if (reference.Provider != LargeObjectProviders.AzureBlob
-                || reference.Length < 0
-                || reference.Sha256.Length != 64
-                || reference.Sha256.Any(character => character is not
-                    (>= '0' and <= '9' or >= 'a' and <= 'f')))
-            {
-                throw new InvalidOperationException(
-                    $"Invalid large-object reference at {source}, row {rowId}.");
+                var reference = new LargeObjectReference(
+                    reader.GetString(2), reader.GetString(3), reader.GetInt64(4),
+                    reader.GetString(5), reader.GetString(6));
+                if (!string.Equals(reference.Provider, LargeObjectProviders.AzureBlob, StringComparison.Ordinal)
+                    || reference.Length < 0
+                    || reference.Sha256.Length != 64
+                    || reference.Sha256.Any(character => character is not
+                        (>= '0' and <= '9' or >= 'a' and <= 'f')))
+                {
+                    throw new InvalidOperationException(
+                        $"Invalid large-object reference at {source}, row {rowId}.");
+                }
+                if (await reader.IsDBNullAsync(7, cancellationToken).ConfigureAwait(false))
+                    throw new InvalidOperationException(
+                        $"Missing large-object content type at {source}, row {rowId}.");
+                var contentType = reader.GetString(7);
+                if (string.IsNullOrWhiteSpace(contentType)
+                    || contentType.Length > 255
+                    || contentType.Any(char.IsControl))
+                {
+                    throw new InvalidOperationException(
+                        $"Invalid large-object content type at {source}, row {rowId}.");
+                }
+                yield return new DistributedBlobReferenceRow(source, rowId, reference, contentType);
             }
-            if (reader.IsDBNull(7))
-                throw new InvalidOperationException(
-                    $"Missing large-object content type at {source}, row {rowId}.");
-            var contentType = reader.GetString(7);
-            if (string.IsNullOrWhiteSpace(contentType)
-                || contentType.Length > 255
-                || contentType.Any(char.IsControl))
-            {
-                throw new InvalidOperationException(
-                    $"Invalid large-object content type at {source}, row {rowId}.");
-            }
-            yield return new DistributedBlobReferenceRow(source, rowId, reference, contentType);
         }
     }
 }

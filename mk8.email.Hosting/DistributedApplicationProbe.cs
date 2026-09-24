@@ -29,11 +29,11 @@ public static class DistributedApplicationProbe
             ApplicationOperations.SystemPing,
             "application/json",
             "{}"u8.ToArray(),
-            new Dictionary<string, string>(),
+            new Dictionary<string, string>(StringComparer.Ordinal),
             now,
             now.Add(timeout),
             requestId.ToString("N"));
-        var response = await requests.SendAsync(request, probeCancellation.Token);
+        var response = await requests.SendAsync(request, probeCancellation.Token).ConfigureAwait(false);
         if (response.RequestId != requestId
             || response.IsError
             || !string.Equals(response.ContentType, "application/json", StringComparison.Ordinal))

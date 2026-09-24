@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Runtime.ExceptionServices;
 using mk8.email.Contracts.Storage;
 using Npgsql;
 
@@ -16,22 +17,29 @@ public static class DistributedBackendProbe
         if (!string.Equals(objects.Provider, LargeObjectProviders.AzureBlob, StringComparison.Ordinal))
             throw new InvalidOperationException("Distributed storage must use the Azure Blob protocol.");
 
-        await using (var connection = await dataSource.OpenConnectionAsync(cancellationToken))
-        await using (var command = connection.CreateCommand())
+        var connection = await dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+        await using (connection.ConfigureAwait(false))
         {
-            command.CommandText = "SELECT 1";
-            if (await command.ExecuteScalarAsync(cancellationToken) is not 1)
-                throw new InvalidOperationException("The distributed PostgreSQL probe failed.");
+            var command = connection.CreateCommand();
+            await using (command.ConfigureAwait(false))
+            {
+                command.CommandText = "SELECT 1";
+                if (await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not 1)
+                    throw new InvalidOperationException("The distributed PostgreSQL probe failed.");
+            }
         }
 
-        await ProbeObjectStorageAsync(objects, cancellationToken);
+        await ProbeObjectStorageAsync(objects, cancellationToken).ConfigureAwait(false);
     }
 
+    // Keep probe-write, readback, and cleanup exception preservation together.
+#pragma warning disable MA0051
     public static async Task ProbeObjectStorageAsync(
         ILargeObjectStore objects,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(objects);
+#pragma warning restore MA0051
         if (!string.Equals(objects.Provider, LargeObjectProviders.AzureBlob, StringComparison.Ordinal))
             throw new InvalidOperationException("Distributed storage must use the Azure Blob protocol.");
 
@@ -39,32 +47,60 @@ public static class DistributedBackendProbe
         var hash = Convert.ToHexStringLower(SHA256.HashData(content));
         var name = $"health/distributed/{Guid.CreateVersion7():N}";
         LargeObjectWriteResult? written = null;
+        Exception? probeFailure = null;
         try
         {
-            await using var source = new MemoryStream(content, writable: false);
-            written = await objects.PutIfAbsentAsync(
+            var source = new MemoryStream(content, writable: false);
+            await using (source.ConfigureAwait(false))
+            {
+                written = await objects.PutIfAbsentAsync(
                 name,
                 source,
                 content.LongLength,
                 hash,
                 "application/octet-stream",
-                cancellationToken);
-            if (!written.Created)
-                throw new InvalidOperationException("The distributed Blob probe object already existed.");
+                cancellationToken).ConfigureAwait(false);
+                if (!written.Created)
+                    throw new InvalidOperationException("The distributed Blob probe object already existed.");
 
-            await using var destination = new MemoryStream();
-            await objects.CopyToAsync(written.Reference, destination, cancellationToken);
-            if (!content.AsSpan().SequenceEqual(destination.ToArray()))
-                throw new InvalidOperationException("The distributed Blob probe read back different bytes.");
+                var destination = new MemoryStream();
+                await using var destinationLifetime = destination.ConfigureAwait(false);
+                await objects.CopyToAsync(written.Reference, destination, cancellationToken).ConfigureAwait(false);
+                if (!content.AsSpan().SequenceEqual(destination.ToArray()))
+                    throw new InvalidOperationException("The distributed Blob probe read back different bytes.");
+            }
         }
-        finally
+        // Capture any probe failure so cleanup still runs without masking either failure.
+#pragma warning disable CA1031
+        catch (Exception exception)
+#pragma warning restore CA1031
+        {
+            probeFailure = exception;
+        }
+
+        Exception? cleanupFailure = null;
+        try
         {
             using var cleanupTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             if (written?.Created == true
-                && !await objects.DeleteIfMatchAsync(written.Reference, cleanupTimeout.Token))
+                && !await objects.DeleteIfMatchAsync(written.Reference, cleanupTimeout.Token).ConfigureAwait(false))
             {
                 throw new InvalidOperationException("The distributed Blob probe object could not be removed.");
             }
         }
+        // Cleanup failures are also retained for a complete probe diagnosis.
+#pragma warning disable CA1031
+        catch (Exception exception)
+#pragma warning restore CA1031
+        {
+            cleanupFailure = exception;
+        }
+
+        if (probeFailure is not null && cleanupFailure is not null)
+            throw new AggregateException("The distributed Blob probe and cleanup both failed.", probeFailure, cleanupFailure);
+        if (probeFailure is not null)
+            ExceptionDispatchInfo.Capture(probeFailure).Throw();
+        if (cleanupFailure is not null)
+            ExceptionDispatchInfo.Capture(cleanupFailure).Throw();
     }
 }

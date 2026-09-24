@@ -21,6 +21,20 @@ public sealed class DistributedBackendProbeTests
     }
 
     [TestMethod]
+    public async Task CorruptBlobReadAndCleanupFailureReportBothErrors()
+    {
+        var objects = new CorruptingObjectStore(failDelete: true);
+
+        var failure = await Assert.ThrowsExactlyAsync<AggregateException>(
+            () => DistributedBackendProbe.ProbeObjectStorageAsync(objects));
+
+        Assert.AreEqual(2, failure.InnerExceptions.Count);
+        Assert.IsInstanceOfType<InvalidOperationException>(failure.InnerExceptions[0]);
+        Assert.IsInstanceOfType<InvalidOperationException>(failure.InnerExceptions[1]);
+        Assert.AreEqual(1, objects.DeleteCount);
+    }
+
+    [TestMethod]
     [TestCategory("PostgreSQL")]
     [TestCategory("AzureBlobCompatible")]
     public async Task RemoteDatabaseAndAzureBlobCanaryRoundTripWithoutLeavingAnObject()
@@ -63,7 +77,7 @@ public sealed class DistributedBackendProbeTests
         }
     }
 
-    private sealed class CorruptingObjectStore : ILargeObjectStore
+    private sealed class CorruptingObjectStore(bool failDelete = false) : ILargeObjectStore
     {
         public string Provider => LargeObjectProviders.AzureBlob;
         public int DeleteCount { get; private set; }
@@ -90,6 +104,8 @@ public sealed class DistributedBackendProbeTests
             CancellationToken cancellationToken = default)
         {
             DeleteCount++;
+            if (failDelete)
+                throw new InvalidOperationException("The canary cleanup failed.");
             return Task.FromResult(true);
         }
     }

@@ -18,40 +18,46 @@ public static class DistributedBlobReferenceAudit
     {
         ArgumentNullException.ThrowIfNull(dataSource);
         ArgumentNullException.ThrowIfNull(objects);
-        if (objects.Provider != LargeObjectProviders.AzureBlob)
+        if (!string.Equals(objects.Provider, LargeObjectProviders.AzureBlob, StringComparison.Ordinal))
             throw new InvalidOperationException("Distributed storage must use the Azure Blob protocol.");
 
-        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
-        await using var transaction = await connection.BeginTransactionAsync(
-            IsolationLevel.RepeatableRead, cancellationToken);
-        await using (var readOnly = connection.CreateCommand())
+        var connection = await dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+        await using (connection.ConfigureAwait(false))
         {
-            readOnly.Transaction = transaction;
-            readOnly.CommandText = "SET TRANSACTION READ ONLY";
-            await readOnly.ExecuteNonQueryAsync(cancellationToken);
-        }
-
-        long count = 0;
-        await foreach (var row in DistributedBlobReferenceInventory.EnumerateAsync(
-                           connection, transaction, cancellationToken))
-        {
-            using var hash = SHA256.Create();
-            await using (var sink = new CryptoStream(
-                             Stream.Null, hash, CryptoStreamMode.Write, leaveOpen: true))
+            var transaction = await connection.BeginTransactionAsync(
+                IsolationLevel.RepeatableRead, cancellationToken).ConfigureAwait(false);
+            await using var transactionLifetime = transaction.ConfigureAwait(false);
+            var readOnly = connection.CreateCommand();
+            await using (readOnly.ConfigureAwait(false))
             {
-                await objects.CopyToAsync(row.Reference, sink, cancellationToken);
-                sink.FlushFinalBlock();
+                readOnly.Transaction = transaction;
+                readOnly.CommandText = "SET TRANSACTION READ ONLY";
+                await readOnly.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             }
-            if (!CryptographicOperations.FixedTimeEquals(
-                    hash.Hash!, Convert.FromHexString(row.Reference.Sha256)))
-            {
-                throw new InvalidOperationException(
-                    $"Large-object content hash mismatch at {row.Source}, row {row.RowId}.");
-            }
-            count++;
-        }
 
-        await transaction.CommitAsync(cancellationToken);
-        return count;
+            long count = 0;
+            await foreach (var row in DistributedBlobReferenceInventory.EnumerateAsync(
+                               connection, transaction, cancellationToken).ConfigureAwait(false))
+            {
+                using var hash = SHA256.Create();
+                var sink = new CryptoStream(
+                                 Stream.Null, hash, CryptoStreamMode.Write, leaveOpen: true);
+                await using (sink.ConfigureAwait(false))
+                {
+                    await objects.CopyToAsync(row.Reference, sink, cancellationToken).ConfigureAwait(false);
+                    await sink.FlushFinalBlockAsync(cancellationToken).ConfigureAwait(false);
+                }
+                if (!CryptographicOperations.FixedTimeEquals(
+                        hash.Hash!, Convert.FromHexString(row.Reference.Sha256)))
+                {
+                    throw new InvalidOperationException(
+                        $"Large-object content hash mismatch at {row.Source}, row {row.RowId}.");
+                }
+                count++;
+            }
+
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return count;
+        }
     }
 }

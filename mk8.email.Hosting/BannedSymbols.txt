@@ -1,0 +1,5 @@
+T:Microsoft.AspNetCore.Http.HttpContext; hosting composition must not handle HTTP presentation
+T:Microsoft.AspNetCore.Builder.WebApplication; hosting composition must not run a web server
+T:Microsoft.EntityFrameworkCore.DbContext; hosting composition must not own mail application data
+T:System.Net.Sockets.TcpListener; hosting composition must not accept protocol connections
+T:System.Net.Mail.SmtpClient; hosting composition must not send mail directly

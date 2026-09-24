@@ -1,0 +1,117 @@
+#nullable enable
+const mk8.email.Hosting.PostgresBlobDeletionBarrier.LockId = 5569607221573009988 -> long
+mk8.email.Hosting.DistributedApplicationProbe
+mk8.email.Hosting.DistributedArchiveStore
+mk8.email.Hosting.DistributedBackendProbe
+mk8.email.Hosting.DistributedBackupArchiveSummary
+mk8.email.Hosting.DistributedBackupArchiveSummary.<Clone>$() -> mk8.email.Hosting.DistributedBackupArchiveSummary!
+mk8.email.Hosting.DistributedBackupArchiveSummary.DatabaseSha256.get -> string!
+mk8.email.Hosting.DistributedBackupArchiveSummary.DatabaseSha256.init -> void
+mk8.email.Hosting.DistributedBackupArchiveSummary.Deconstruct(out int SchemaVersion, out long ReferenceCount, out long UniqueContentCount, out string! DatabaseSha256, out string! ManifestSha256) -> void
+mk8.email.Hosting.DistributedBackupArchiveSummary.DistributedBackupArchiveSummary(int SchemaVersion, long ReferenceCount, long UniqueContentCount, string! DatabaseSha256, string! ManifestSha256) -> void
+mk8.email.Hosting.DistributedBackupArchiveSummary.Equals(mk8.email.Hosting.DistributedBackupArchiveSummary? other) -> bool
+mk8.email.Hosting.DistributedBackupArchiveSummary.ManifestSha256.get -> string!
+mk8.email.Hosting.DistributedBackupArchiveSummary.ManifestSha256.init -> void
+mk8.email.Hosting.DistributedBackupArchiveSummary.ReferenceCount.get -> long
+mk8.email.Hosting.DistributedBackupArchiveSummary.ReferenceCount.init -> void
+mk8.email.Hosting.DistributedBackupArchiveSummary.SchemaVersion.get -> int
+mk8.email.Hosting.DistributedBackupArchiveSummary.SchemaVersion.init -> void
+mk8.email.Hosting.DistributedBackupArchiveSummary.UniqueContentCount.get -> long
+mk8.email.Hosting.DistributedBackupArchiveSummary.UniqueContentCount.init -> void
+mk8.email.Hosting.DistributedBackupExporter
+mk8.email.Hosting.DistributedBackupExportResult
+mk8.email.Hosting.DistributedBackupExportResult.<Clone>$() -> mk8.email.Hosting.DistributedBackupExportResult!
+mk8.email.Hosting.DistributedBackupExportResult.DatabaseSha256.get -> string!
+mk8.email.Hosting.DistributedBackupExportResult.DatabaseSha256.init -> void
+mk8.email.Hosting.DistributedBackupExportResult.Deconstruct(out long ReferenceCount, out long UniqueContentCount, out string! DatabaseSha256, out string! ManifestSha256) -> void
+mk8.email.Hosting.DistributedBackupExportResult.DistributedBackupExportResult(long ReferenceCount, long UniqueContentCount, string! DatabaseSha256, string! ManifestSha256) -> void
+mk8.email.Hosting.DistributedBackupExportResult.Equals(mk8.email.Hosting.DistributedBackupExportResult? other) -> bool
+mk8.email.Hosting.DistributedBackupExportResult.ManifestSha256.get -> string!
+mk8.email.Hosting.DistributedBackupExportResult.ManifestSha256.init -> void
+mk8.email.Hosting.DistributedBackupExportResult.ReferenceCount.get -> long
+mk8.email.Hosting.DistributedBackupExportResult.ReferenceCount.init -> void
+mk8.email.Hosting.DistributedBackupExportResult.UniqueContentCount.get -> long
+mk8.email.Hosting.DistributedBackupExportResult.UniqueContentCount.init -> void
+mk8.email.Hosting.DistributedBackupRestorer
+mk8.email.Hosting.DistributedBackupRestoreResult
+mk8.email.Hosting.DistributedBackupRestoreResult.<Clone>$() -> mk8.email.Hosting.DistributedBackupRestoreResult!
+mk8.email.Hosting.DistributedBackupRestoreResult.Deconstruct(out long ReferenceCount, out long ImportedObjectCount) -> void
+mk8.email.Hosting.DistributedBackupRestoreResult.DistributedBackupRestoreResult(long ReferenceCount, long ImportedObjectCount) -> void
+mk8.email.Hosting.DistributedBackupRestoreResult.Equals(mk8.email.Hosting.DistributedBackupRestoreResult? other) -> bool
+mk8.email.Hosting.DistributedBackupRestoreResult.ImportedObjectCount.get -> long
+mk8.email.Hosting.DistributedBackupRestoreResult.ImportedObjectCount.init -> void
+mk8.email.Hosting.DistributedBackupRestoreResult.ReferenceCount.get -> long
+mk8.email.Hosting.DistributedBackupRestoreResult.ReferenceCount.init -> void
+mk8.email.Hosting.DistributedBlobReferenceAudit
+mk8.email.Hosting.DistributedBlobReferenceInventory
+mk8.email.Hosting.DistributedBlobReferenceRow
+mk8.email.Hosting.DistributedBlobReferenceRow.<Clone>$() -> mk8.email.Hosting.DistributedBlobReferenceRow!
+mk8.email.Hosting.DistributedBlobReferenceRow.ContentType.get -> string!
+mk8.email.Hosting.DistributedBlobReferenceRow.ContentType.init -> void
+mk8.email.Hosting.DistributedBlobReferenceRow.Deconstruct(out string! Source, out System.Guid RowId, out mk8.email.Contracts.Storage.LargeObjectReference! Reference, out string! ContentType) -> void
+mk8.email.Hosting.DistributedBlobReferenceRow.DistributedBlobReferenceRow(string! Source, System.Guid RowId, mk8.email.Contracts.Storage.LargeObjectReference! Reference, string! ContentType) -> void
+mk8.email.Hosting.DistributedBlobReferenceRow.Equals(mk8.email.Hosting.DistributedBlobReferenceRow? other) -> bool
+mk8.email.Hosting.DistributedBlobReferenceRow.Reference.get -> mk8.email.Contracts.Storage.LargeObjectReference!
+mk8.email.Hosting.DistributedBlobReferenceRow.Reference.init -> void
+mk8.email.Hosting.DistributedBlobReferenceRow.RowId.get -> System.Guid
+mk8.email.Hosting.DistributedBlobReferenceRow.RowId.init -> void
+mk8.email.Hosting.DistributedBlobReferenceRow.Source.get -> string!
+mk8.email.Hosting.DistributedBlobReferenceRow.Source.init -> void
+mk8.email.Hosting.DistributedMessagingServiceExtensions
+mk8.email.Hosting.DistributedRestoreActivationGuard
+mk8.email.Hosting.GatewayListenerHealthCheck
+mk8.email.Hosting.PostgresBlobDeletionBarrier
+mk8.email.Hosting.PostgresBlobDeletionBarrier.ExclusiveLease
+mk8.email.Hosting.PostgresBlobDeletionBarrier.ExclusiveLease.Connection.get -> Npgsql.NpgsqlConnection!
+mk8.email.Hosting.PostgresBlobDeletionBarrier.ExclusiveLease.DisposeAsync() -> System.Threading.Tasks.ValueTask
+mk8.email.Hosting.PostgresCoordinatedLargeObjectStore
+mk8.email.Hosting.PostgresCoordinatedLargeObjectStore.CopyToAsync(mk8.email.Contracts.Storage.LargeObjectReference! reference, System.IO.Stream! destination, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+mk8.email.Hosting.PostgresCoordinatedLargeObjectStore.DeleteIfMatchAsync(mk8.email.Contracts.Storage.LargeObjectReference! reference, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
+mk8.email.Hosting.PostgresCoordinatedLargeObjectStore.PostgresCoordinatedLargeObjectStore(Npgsql.NpgsqlDataSource! dataSource, mk8.email.Contracts.Storage.ILargeObjectStore! inner) -> void
+mk8.email.Hosting.PostgresCoordinatedLargeObjectStore.Provider.get -> string!
+mk8.email.Hosting.PostgresCoordinatedLargeObjectStore.PutIfAbsentAsync(string! objectName, System.IO.Stream! content, long length, string! sha256, string! contentType, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Storage.LargeObjectWriteResult!>!
+mk8.email.Hosting.RestoreAwareApplicationTransportControl
+mk8.email.Hosting.RestoreAwareApplicationTransportControl.IsAvailableAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
+mk8.email.Hosting.RestoreAwareApplicationTransportControl.RestoreAwareApplicationTransportControl(Npgsql.NpgsqlDataSource! dataSource, mk8.email.Messaging.PostgresApplicationTransportControl! transport) -> void
+mk8.email.Hosting.RestoreAwareGatewayTrafficJournal
+mk8.email.Hosting.RestoreAwareGatewayTrafficJournal.AppendAsync(mk8.email.Contracts.Messaging.GatewayTrafficRecord! record, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+mk8.email.Hosting.RestoreAwareGatewayTrafficJournal.ReadSessionAsync(System.Guid sessionId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.GatewayTrafficRecord!>!>!
+mk8.email.Hosting.RestoreAwareGatewayTrafficJournal.RestoreAwareGatewayTrafficJournal(Npgsql.NpgsqlDataSource! dataSource, mk8.email.Messaging.PostgresGatewayTrafficJournal! journal) -> void
+override mk8.email.Hosting.DistributedBackupArchiveSummary.Equals(object? obj) -> bool
+override mk8.email.Hosting.DistributedBackupArchiveSummary.GetHashCode() -> int
+override mk8.email.Hosting.DistributedBackupArchiveSummary.ToString() -> string!
+override mk8.email.Hosting.DistributedBackupExportResult.Equals(object? obj) -> bool
+override mk8.email.Hosting.DistributedBackupExportResult.GetHashCode() -> int
+override mk8.email.Hosting.DistributedBackupExportResult.ToString() -> string!
+override mk8.email.Hosting.DistributedBackupRestoreResult.Equals(object? obj) -> bool
+override mk8.email.Hosting.DistributedBackupRestoreResult.GetHashCode() -> int
+override mk8.email.Hosting.DistributedBackupRestoreResult.ToString() -> string!
+override mk8.email.Hosting.DistributedBlobReferenceRow.Equals(object? obj) -> bool
+override mk8.email.Hosting.DistributedBlobReferenceRow.GetHashCode() -> int
+override mk8.email.Hosting.DistributedBlobReferenceRow.ToString() -> string!
+static mk8.email.Hosting.DistributedApplicationProbe.ProbeAsync(mk8.email.Messaging.IApplicationRequestClient! requests, System.TimeSpan timeout, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+static mk8.email.Hosting.DistributedArchiveStore.FetchAsync(Azure.Storage.Blobs.BlobServiceClient! service, string! containerName, string! archiveId, string! destinationDirectory, string! verificationKeyPath, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+static mk8.email.Hosting.DistributedArchiveStore.PublishAsync(Azure.Storage.Blobs.BlobServiceClient! service, string! containerName, string! archiveId, string! archiveDirectory, string! verificationKeyPath, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+static mk8.email.Hosting.DistributedArchiveStore.ReadPrivateConnectionString(string! path) -> string!
+static mk8.email.Hosting.DistributedBackendProbe.ProbeAsync(Npgsql.NpgsqlDataSource! dataSource, mk8.email.Contracts.Storage.ILargeObjectStore! objects, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+static mk8.email.Hosting.DistributedBackendProbe.ProbeObjectStorageAsync(mk8.email.Contracts.Storage.ILargeObjectStore! objects, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+static mk8.email.Hosting.DistributedBackupArchiveSummary.operator !=(mk8.email.Hosting.DistributedBackupArchiveSummary? left, mk8.email.Hosting.DistributedBackupArchiveSummary? right) -> bool
+static mk8.email.Hosting.DistributedBackupArchiveSummary.operator ==(mk8.email.Hosting.DistributedBackupArchiveSummary? left, mk8.email.Hosting.DistributedBackupArchiveSummary? right) -> bool
+static mk8.email.Hosting.DistributedBackupExporter.ExportAsync(Npgsql.NpgsqlDataSource! dataSource, mk8.email.Contracts.Storage.ILargeObjectStore! objects, string! connectionString, string! destinationDirectory, string! pgDumpExecutable = "pg_dump", System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Hosting.DistributedBackupExportResult!>!
+static mk8.email.Hosting.DistributedBackupExportResult.operator !=(mk8.email.Hosting.DistributedBackupExportResult? left, mk8.email.Hosting.DistributedBackupExportResult? right) -> bool
+static mk8.email.Hosting.DistributedBackupExportResult.operator ==(mk8.email.Hosting.DistributedBackupExportResult? left, mk8.email.Hosting.DistributedBackupExportResult? right) -> bool
+static mk8.email.Hosting.DistributedBackupRestorer.RestoreAsync(string! backupDirectory, Npgsql.NpgsqlDataSource! targetDataSource, string! targetConnectionString, mk8.email.Contracts.Storage.ILargeObjectStore! targetObjects, string! pgRestoreExecutable = "pg_restore", System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Hosting.DistributedBackupRestoreResult!>!
+static mk8.email.Hosting.DistributedBackupRestorer.VerifyAsync(string! backupDirectory, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Hosting.DistributedBackupArchiveSummary!>!
+static mk8.email.Hosting.DistributedBackupRestoreResult.operator !=(mk8.email.Hosting.DistributedBackupRestoreResult? left, mk8.email.Hosting.DistributedBackupRestoreResult? right) -> bool
+static mk8.email.Hosting.DistributedBackupRestoreResult.operator ==(mk8.email.Hosting.DistributedBackupRestoreResult? left, mk8.email.Hosting.DistributedBackupRestoreResult? right) -> bool
+static mk8.email.Hosting.DistributedBlobReferenceAudit.AuditAsync(Npgsql.NpgsqlDataSource! dataSource, mk8.email.Contracts.Storage.ILargeObjectStore! objects, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<long>!
+static mk8.email.Hosting.DistributedBlobReferenceInventory.EnumerateAsync(Npgsql.NpgsqlConnection! connection, Npgsql.NpgsqlTransaction! transaction, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<mk8.email.Hosting.DistributedBlobReferenceRow!>!
+static mk8.email.Hosting.DistributedBlobReferenceInventory.ValidateSchemaAsync(Npgsql.NpgsqlConnection! connection, Npgsql.NpgsqlTransaction! transaction, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+static mk8.email.Hosting.DistributedBlobReferenceRow.operator !=(mk8.email.Hosting.DistributedBlobReferenceRow? left, mk8.email.Hosting.DistributedBlobReferenceRow? right) -> bool
+static mk8.email.Hosting.DistributedBlobReferenceRow.operator ==(mk8.email.Hosting.DistributedBlobReferenceRow? left, mk8.email.Hosting.DistributedBlobReferenceRow? right) -> bool
+static mk8.email.Hosting.DistributedMessagingServiceExtensions.AddAzureBlobObjectStorage(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, mk8.email.Configuration.EnvironmentConfig! environment) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
+static mk8.email.Hosting.DistributedMessagingServiceExtensions.AddDistributedMessaging(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, mk8.email.Configuration.EnvironmentConfig! environment) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
+static mk8.email.Hosting.DistributedRestoreActivationGuard.IsReadyAsync(Npgsql.NpgsqlDataSource! dataSource, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
+static mk8.email.Hosting.DistributedRestoreActivationGuard.RequireReadyAsync(Npgsql.NpgsqlDataSource! dataSource, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+static mk8.email.Hosting.GatewayListenerHealthCheck.IsHealthyAsync(mk8.email.Configuration.EnvironmentConfig! environment, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<bool>!
+static mk8.email.Hosting.PostgresBlobDeletionBarrier.AcquireExclusiveAsync(Npgsql.NpgsqlDataSource! dataSource, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Hosting.PostgresBlobDeletionBarrier.ExclusiveLease!>!

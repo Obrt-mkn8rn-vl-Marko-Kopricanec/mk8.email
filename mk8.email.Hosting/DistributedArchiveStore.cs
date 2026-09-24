@@ -40,12 +40,12 @@ public static partial class DistributedArchiveStore
             throw new InvalidOperationException("The sealed archive contains unexpected entries.");
 
         using var verifier = LoadVerifier(verificationKeyPath);
-        var cipherDigest = await DigestFileAsync(cipher, cancellationToken);
-        var signatureDigest = await DigestFileAsync(signature, cancellationToken);
+        var cipherDigest = await DigestFileAsync(cipher, cancellationToken).ConfigureAwait(false);
+        var signatureDigest = await DigestFileAsync(signature, cancellationToken).ConfigureAwait(false);
         if (cipherDigest.Length <= 0
             || signatureDigest.Length is <= 0 or > 4096)
             throw new InvalidOperationException("The sealed archive size is invalid.");
-        var signatureBytes = await File.ReadAllBytesAsync(signature, cancellationToken);
+        var signatureBytes = await File.ReadAllBytesAsync(signature, cancellationToken).ConfigureAwait(false);
         if (!verifier.VerifyHash(cipherDigest.Hash, signatureBytes,
                 HashAlgorithmName.SHA256, RSASignaturePadding.Pss))
             throw new CryptographicException("The sealed archive signature is invalid.");
@@ -56,32 +56,35 @@ public static partial class DistributedArchiveStore
             Convert.ToHexStringLower(signatureDigest.Hash), signatureDigest.Length,
             Convert.ToHexStringLower(SHA256.HashData(verifier.ExportSubjectPublicKeyInfo())));
         var container = service.GetBlobContainerClient(containerName);
-        await container.CreateIfNotExistsAsync(cancellationToken: cancellationToken);
+        await container.CreateIfNotExistsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
         var root = $"distributed-archives/v1/{archiveId}/";
         await PublishFileAsync(container.GetBlobClient(root + CipherName), cipher,
-            cipherDigest, cancellationToken);
+            cipherDigest, cancellationToken).ConfigureAwait(false);
         await PublishFileAsync(container.GetBlobClient(root + SignatureName), signature,
-            signatureDigest, cancellationToken);
+            signatureDigest, cancellationToken).ConfigureAwait(false);
 
         var indexBytes = JsonSerializer.SerializeToUtf8Bytes(index);
         var indexBlob = container.GetBlobClient(root + IndexName);
         try
         {
-            await using var source = new MemoryStream(indexBytes, writable: false);
-            await indexBlob.UploadAsync(source, new BlobUploadOptions
+            var source = new MemoryStream(indexBytes, writable: false);
+            await using (source.ConfigureAwait(false))
             {
-                Conditions = new BlobRequestConditions { IfNoneMatch = ETag.All },
-                HttpHeaders = new BlobHttpHeaders { ContentType = "application/json" },
-            }, cancellationToken);
+                await indexBlob.UploadAsync(source, new BlobUploadOptions
+                {
+                    Conditions = new BlobRequestConditions { IfNoneMatch = ETag.All },
+                    HttpHeaders = new BlobHttpHeaders { ContentType = "application/json" },
+                }, cancellationToken).ConfigureAwait(false);
+            }
         }
         catch (RequestFailedException exception) when (exception.Status is 409 or 412)
         {
-            var existing = await ReadIndexBytesAsync(indexBlob, cancellationToken);
+            var existing = await ReadIndexBytesAsync(indexBlob, cancellationToken).ConfigureAwait(false);
             if (!CryptographicOperations.FixedTimeEquals(existing, indexBytes))
                 throw new InvalidOperationException(
                     "The archive identifier already has a different completion index.");
         }
-        var confirmed = await ReadIndexBytesAsync(indexBlob, cancellationToken);
+        var confirmed = await ReadIndexBytesAsync(indexBlob, cancellationToken).ConfigureAwait(false);
         if (!CryptographicOperations.FixedTimeEquals(confirmed, indexBytes))
             throw new InvalidOperationException("The archive completion index did not round-trip.");
     }
@@ -99,10 +102,10 @@ public static partial class DistributedArchiveStore
             throw new PlatformNotSupportedException("Distributed archive transport requires Linux.");
         ValidateArchiveId(archiveId);
         if (!Path.IsPathFullyQualified(destinationDirectory)
-            || Path.GetFullPath(destinationDirectory) != destinationDirectory)
-            throw new ArgumentException("An absolute canonical archive destination is required.");
+            || !string.Equals(Path.GetFullPath(destinationDirectory), destinationDirectory, StringComparison.Ordinal))
+            throw new ArgumentException("An absolute canonical archive destination is required.", nameof(destinationDirectory));
         var parent = Path.GetDirectoryName(destinationDirectory)
-            ?? throw new ArgumentException("The archive destination has no parent.");
+            ?? throw new ArgumentException("The archive destination has no parent.", nameof(destinationDirectory));
         RequirePrivateDirectory(parent);
         if (Path.Exists(destinationDirectory))
             throw new IOException("The archive destination already exists.");
@@ -113,7 +116,7 @@ public static partial class DistributedArchiveStore
         var root = $"distributed-archives/v1/{archiveId}/";
         var container = service.GetBlobContainerClient(containerName);
         var indexBytes = await ReadIndexBytesAsync(
-            container.GetBlobClient(root + IndexName), cancellationToken);
+            container.GetBlobClient(root + IndexName), cancellationToken).ConfigureAwait(false);
         var index = ParseIndex(indexBytes, archiveId, keyHash);
 
         var stage = Path.Combine(parent, $".archive-download-{Guid.NewGuid():N}");
@@ -123,13 +126,13 @@ public static partial class DistributedArchiveStore
         {
             await FetchFileAsync(container.GetBlobClient(root + CipherName),
                 Path.Combine(stage, CipherName), index.CipherLength,
-                index.CipherSha256, cancellationToken);
+                index.CipherSha256, cancellationToken).ConfigureAwait(false);
             await FetchFileAsync(container.GetBlobClient(root + SignatureName),
                 Path.Combine(stage, SignatureName), index.SignatureLength,
-                index.SignatureSha256, cancellationToken);
+                index.SignatureSha256, cancellationToken).ConfigureAwait(false);
             var cipherHash = Convert.FromHexString(index.CipherSha256);
             var signature = await File.ReadAllBytesAsync(
-                Path.Combine(stage, SignatureName), cancellationToken);
+                Path.Combine(stage, SignatureName), cancellationToken).ConfigureAwait(false);
             if (!verifier.VerifyHash(cipherHash, signature,
                     HashAlgorithmName.SHA256, RSASignaturePadding.Pss))
                 throw new CryptographicException("The downloaded archive signature is invalid.");
@@ -149,7 +152,9 @@ public static partial class DistributedArchiveStore
         if (new FileInfo(path).Length > 16 * 1024)
             throw new InvalidOperationException("The Blob connection-string file is too large.");
         var value = File.ReadAllText(path).TrimEnd('\r', '\n');
-        if (string.IsNullOrWhiteSpace(value) || value.Contains('\n') || value.Contains('\r'))
+        if (string.IsNullOrWhiteSpace(value)
+            || value.Contains('\n', StringComparison.Ordinal)
+            || value.Contains('\r', StringComparison.Ordinal))
             throw new InvalidOperationException("The Blob connection-string file is invalid.");
         return value;
     }
@@ -160,23 +165,26 @@ public static partial class DistributedArchiveStore
     {
         try
         {
-            await using var source = new FileStream(path, FileMode.Open, FileAccess.Read,
+            var source = new FileStream(path, FileMode.Open, FileAccess.Read,
                 FileShare.Read, 81920, FileOptions.Asynchronous | FileOptions.SequentialScan);
-            await blob.UploadAsync(source, new BlobUploadOptions
+            await using (source.ConfigureAwait(false))
             {
-                Conditions = new BlobRequestConditions { IfNoneMatch = ETag.All },
-                HttpHeaders = new BlobHttpHeaders
+                await blob.UploadAsync(source, new BlobUploadOptions
                 {
-                    ContentType = "application/octet-stream",
-                },
-            }, cancellationToken);
+                    Conditions = new BlobRequestConditions { IfNoneMatch = ETag.All },
+                    HttpHeaders = new BlobHttpHeaders
+                    {
+                        ContentType = "application/octet-stream",
+                    },
+                }, cancellationToken).ConfigureAwait(false);
+            }
         }
         catch (RequestFailedException exception) when (exception.Status is 409 or 412)
         {
             // A retry may find this immutable object already present. Read it back below.
         }
 
-        var actual = await DigestBlobAsync(blob, cancellationToken);
+        var actual = await DigestBlobAsync(blob, cancellationToken).ConfigureAwait(false);
         if (actual.Length != expected.Length
             || !CryptographicOperations.FixedTimeEquals(actual.Hash, expected.Hash))
             throw new InvalidOperationException(
@@ -190,20 +198,24 @@ public static partial class DistributedArchiveStore
         if (!OperatingSystem.IsLinux())
             throw new PlatformNotSupportedException("Distributed archive transport requires Linux.");
         var properties = (await blob.GetPropertiesAsync(
-            cancellationToken: cancellationToken)).Value;
+            cancellationToken: cancellationToken).ConfigureAwait(false)).Value;
         if (properties.ContentLength != expectedLength)
             throw new InvalidOperationException("The remote archive length changed.");
-        await using (var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write,
-                         FileShare.None, 81920, FileOptions.Asynchronous))
+        var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write,
+                         FileShare.None, 81920, FileOptions.Asynchronous);
+        await using (file.ConfigureAwait(false))
         {
             File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
             await blob.DownloadToAsync(file, new BlobDownloadToOptions
             {
                 Conditions = new BlobRequestConditions { IfMatch = properties.ETag },
-            }, cancellationToken);
+            }, cancellationToken).ConfigureAwait(false);
+            // Flush(true) is the synchronous fsync durability barrier; FlushAsync cannot replace it.
+#pragma warning disable CA1849
             file.Flush(flushToDisk: true);
+#pragma warning restore CA1849
         }
-        var actual = await DigestFileAsync(path, cancellationToken);
+        var actual = await DigestFileAsync(path, cancellationToken).ConfigureAwait(false);
         if (actual.Length != expectedLength
             || !CryptographicOperations.FixedTimeEquals(
                 actual.Hash, Convert.FromHexString(expectedSha256)))
@@ -214,41 +226,50 @@ public static partial class DistributedArchiveStore
         BlobClient blob, CancellationToken cancellationToken)
     {
         var properties = (await blob.GetPropertiesAsync(
-            cancellationToken: cancellationToken)).Value;
+            cancellationToken: cancellationToken).ConfigureAwait(false)).Value;
         using var hash = SHA256.Create();
-        await using var sink = new CryptoStream(Stream.Null, hash,
+        var sink = new CryptoStream(Stream.Null, hash,
             CryptoStreamMode.Write, leaveOpen: true);
-        await blob.DownloadToAsync(sink, new BlobDownloadToOptions
+        await using (sink.ConfigureAwait(false))
         {
-            Conditions = new BlobRequestConditions { IfMatch = properties.ETag },
-        }, cancellationToken);
-        sink.FlushFinalBlock();
-        return new FileDigest(hash.Hash!, properties.ContentLength);
+            await blob.DownloadToAsync(sink, new BlobDownloadToOptions
+            {
+                Conditions = new BlobRequestConditions { IfMatch = properties.ETag },
+            }, cancellationToken).ConfigureAwait(false);
+            await sink.FlushFinalBlockAsync(cancellationToken).ConfigureAwait(false);
+            return new FileDigest(hash.Hash!, properties.ContentLength);
+        }
     }
 
     private static async Task<FileDigest> DigestFileAsync(
         string path, CancellationToken cancellationToken)
     {
-        await using var source = new FileStream(path, FileMode.Open, FileAccess.Read,
+        var source = new FileStream(path, FileMode.Open, FileAccess.Read,
             FileShare.Read, 81920, FileOptions.Asynchronous | FileOptions.SequentialScan);
-        var length = source.Length;
-        var hash = await SHA256.HashDataAsync(source, cancellationToken);
-        return new FileDigest(hash, length);
+        await using (source.ConfigureAwait(false))
+        {
+            var length = source.Length;
+            var hash = await SHA256.HashDataAsync(source, cancellationToken).ConfigureAwait(false);
+            return new FileDigest(hash, length);
+        }
     }
 
     private static async Task<byte[]> ReadIndexBytesAsync(
         BlobClient blob, CancellationToken cancellationToken)
     {
         var properties = (await blob.GetPropertiesAsync(
-            cancellationToken: cancellationToken)).Value;
+            cancellationToken: cancellationToken).ConfigureAwait(false)).Value;
         if (properties.ContentLength is <= 0 or > MaximumIndexBytes)
             throw new InvalidOperationException("The archive completion index is invalid.");
-        await using var target = new MemoryStream((int)properties.ContentLength);
-        await blob.DownloadToAsync(target, new BlobDownloadToOptions
+        var target = new MemoryStream((int)properties.ContentLength);
+        await using (target.ConfigureAwait(false))
         {
-            Conditions = new BlobRequestConditions { IfMatch = properties.ETag },
-        }, cancellationToken);
-        return target.ToArray();
+            await blob.DownloadToAsync(target, new BlobDownloadToOptions
+            {
+                Conditions = new BlobRequestConditions { IfMatch = properties.ETag },
+            }, cancellationToken).ConfigureAwait(false);
+            return target.ToArray();
+        }
     }
 
     private static ArchiveIndex ParseIndex(byte[] bytes, string archiveId, string keyHash)
@@ -260,8 +281,8 @@ public static partial class DistributedArchiveStore
         var index = JsonSerializer.Deserialize<ArchiveIndex>(bytes)
             ?? throw new InvalidOperationException("The archive completion index is missing.");
         if (index.SchemaVersion != 1
-            || index.ArchiveId != archiveId
-            || index.VerificationKeySha256 != keyHash
+            || !string.Equals(index.ArchiveId, archiveId, StringComparison.Ordinal)
+            || !string.Equals(index.VerificationKeySha256, keyHash, StringComparison.Ordinal)
             || index.CipherLength <= 0
             || index.SignatureLength is <= 0 or > 4096
             || !Sha256Pattern().IsMatch(index.CipherSha256 ?? "")
@@ -301,12 +322,12 @@ public static partial class DistributedArchiveStore
         if (!OperatingSystem.IsLinux())
             throw new PlatformNotSupportedException("Distributed archive transport requires Linux.");
         if (!Path.IsPathFullyQualified(path)
-            || Path.GetFullPath(path) != path
+            || !string.Equals(Path.GetFullPath(path), path, StringComparison.Ordinal)
             || !Directory.Exists(path)
             || File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint)
             || File.GetUnixFileMode(path) != (UnixFileMode.UserRead
                 | UnixFileMode.UserWrite | UnixFileMode.UserExecute)
-            || RunUtility("/usr/bin/realpath", ["-e", "--", path]) != path)
+            || !string.Equals(RunUtility("/usr/bin/realpath", ["-e", "--", path]), path, StringComparison.Ordinal))
             throw new InvalidOperationException(
                 "The archive directory must be canonical and mode 0700.");
         RequireOwnedPath(path, singleLinked: false);
@@ -317,7 +338,7 @@ public static partial class DistributedArchiveStore
         if (!OperatingSystem.IsLinux())
             throw new PlatformNotSupportedException("Distributed archive transport requires Linux.");
         RequirePrivateDirectory(Path.GetDirectoryName(path)
-            ?? throw new ArgumentException("The private file has no parent."));
+            ?? throw new ArgumentException("The private file has no parent.", nameof(path)));
         if (!File.Exists(path)
             || File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint)
             || File.GetUnixFileMode(path) != (UnixFileMode.UserRead | UnixFileMode.UserWrite))
@@ -371,10 +392,10 @@ public static partial class DistributedArchiveStore
         long SignatureLength,
         string VerificationKeySha256);
 
-    [GeneratedRegex("^[a-z0-9][a-z0-9-]{0,126}[a-z0-9]$")]
+    [GeneratedRegex("^[a-z0-9][a-z0-9-]{0,126}[a-z0-9]$", RegexOptions.None, 100)]
     private static partial Regex ArchiveIdPattern();
 
-    [GeneratedRegex("^[0-9a-f]{64}$")]
+    [GeneratedRegex("^[0-9a-f]{64}$", RegexOptions.None, 100)]
     private static partial Regex Sha256Pattern();
 
 }

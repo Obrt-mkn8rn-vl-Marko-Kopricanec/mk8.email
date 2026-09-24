@@ -201,6 +201,48 @@ public sealed class MailQueueAzureBlobPersistenceTests
     }
 
     [TestMethod]
+    public async Task FailedLegacyMigrationRetainsQueueRowAndRemovesCreatedBlob()
+    {
+        await using var databaseServer = await RequirePostgresAsync();
+        var serviceClient = new BlobServiceClient(RequireAzureBlobConnection());
+        var containerName = $"mk8-queue-{Guid.NewGuid():N}";
+        var container = serviceClient.GetBlobContainerClient(containerName);
+        var store = CreateStore(serviceClient, containerName);
+        var queueId = Guid.CreateVersion7();
+        await CreateSchemaAsync(databaseServer.ConnectionString);
+        await InsertLegacyAsync(databaseServer.ConnectionString, queueId, RawMessage);
+        await using (var constraint = CreateContext(databaseServer.ConnectionString))
+        {
+            await constraint.Database.ExecuteSqlRawAsync(
+                "ALTER TABLE mail_queue_messages ADD CONSTRAINT ck_test_keep_legacy_queue CHECK (raw_message IS NOT NULL)");
+        }
+
+        try
+        {
+            await using (var migration = CreateContext(databaseServer.ConnectionString))
+            {
+                await Assert.ThrowsExactlyAsync<DbUpdateException>(() =>
+                    new MailQueueLargeObjectMigrationService(
+                        migration,
+                        store,
+                        NullLogger<MailQueueLargeObjectMigrationService>.Instance)
+                        .MigrateAsync());
+            }
+
+            await using var verification = CreateContext(databaseServer.ConnectionString);
+            var legacy = await verification.MailQueueMessages.AsNoTracking()
+                .SingleAsync(message => message.Id == queueId);
+            Assert.AreEqual(RawMessage, legacy.RawMessage);
+            Assert.IsNull(legacy.RawMessageObjectName);
+            Assert.HasCount(0, await GetBlobNamesAsync(container, queueId));
+        }
+        finally
+        {
+            await container.DeleteIfExistsAsync();
+        }
+    }
+
+    [TestMethod]
     public async Task SubmissionAndWorkerRetryUseReferenceOnlyQueueContent()
     {
         await using var databaseServer = await RequirePostgresAsync();

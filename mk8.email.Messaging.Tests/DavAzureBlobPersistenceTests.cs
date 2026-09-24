@@ -88,6 +88,50 @@ public sealed class DavAzureBlobPersistenceTests
     }
 
     [TestMethod]
+    public async Task FailedLegacyMigrationRetainsDavRowAndRemovesCreatedBlob()
+    {
+        await using var databaseServer = await RequirePostgresAsync();
+        var serviceClient = new BlobServiceClient(RequireAzureBlobConnection());
+        var containerName = $"mk8-dav-{Guid.NewGuid():N}";
+        var container = serviceClient.GetBlobContainerClient(containerName);
+        var store = CreateStore(serviceClient, containerName);
+        var resourceId = Guid.CreateVersion7();
+        var content = Calendar("rollback-dav-resource", "Keep legacy body");
+        await CreateSchemaAsync(databaseServer.ConnectionString);
+        var collectionId = await InsertCollectionAsync(databaseServer.ConnectionString);
+        await InsertLegacyAsync(databaseServer.ConnectionString, collectionId, resourceId, content);
+        await using (var constraint = CreateContext(databaseServer.ConnectionString))
+        {
+            await constraint.Database.ExecuteSqlRawAsync(
+                "ALTER TABLE dav_resources ADD CONSTRAINT ck_test_keep_legacy_dav CHECK (content IS NOT NULL)");
+        }
+
+        try
+        {
+            await using (var migration = CreateContext(databaseServer.ConnectionString))
+            {
+                await Assert.ThrowsExactlyAsync<DbUpdateException>(() =>
+                    new DavResourceLargeObjectMigrationService(
+                        migration,
+                        store,
+                        NullLogger<DavResourceLargeObjectMigrationService>.Instance)
+                        .MigrateAsync());
+            }
+
+            await using var verification = CreateContext(databaseServer.ConnectionString);
+            var legacy = await verification.DavResources.AsNoTracking()
+                .SingleAsync(resource => resource.Id == resourceId);
+            CollectionAssert.AreEqual(content, legacy.Content);
+            Assert.IsNull(legacy.ObjectName);
+            Assert.HasCount(0, await GetBlobNamesAsync(container, resourceId));
+        }
+        finally
+        {
+            await container.DeleteIfExistsAsync();
+        }
+    }
+
+    [TestMethod]
     public async Task CallerTransactionsCleanUpCreatedReplacedAndDeletedDavObjects()
     {
         await using var databaseServer = await RequirePostgresAsync();

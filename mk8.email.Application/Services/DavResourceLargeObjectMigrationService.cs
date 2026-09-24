@@ -1,6 +1,7 @@
 using System.Data;
 using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
 using mk8.email.Contracts.Storage;
 using mk8.email.Infrastructure.Data;
@@ -133,38 +134,47 @@ public sealed class DavResourceLargeObjectMigrationService(
             }
             catch
             {
-                if (transaction is not null)
-                {
-                    try
-                    {
-                        await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
-                    }
-                    // Keep the migration failure primary if provider rollback also fails.
-#pragma warning disable CA1031
-                    catch (Exception rollbackException)
-                    {
-                        ApplicationServiceLog.DavMigrationRollbackFailed(
-                            logger, rollbackException, resource.Id);
-                    }
-#pragma warning restore CA1031
-                }
-                if (written is { Created: true } && !commitAttempted)
-                {
-                    try
-                    {
-                        await objects.DeleteIfMatchAsync(written.Reference, CancellationToken.None).ConfigureAwait(false);
-                    }
-                    // Failed orphan cleanup is logged without replacing the migration failure.
-#pragma warning disable CA1031
-                    catch (Exception cleanupException)
-                    {
-                        ApplicationServiceLog.DavMigrationCleanupFailed(
-                            logger, cleanupException, written.Reference.ObjectName);
-                    }
-#pragma warning restore CA1031
-                }
+                await RecoverFailureAsync(resource.Id, transaction, written, commitAttempted).ConfigureAwait(false);
                 throw;
             }
+        }
+    }
+
+    private async Task RecoverFailureAsync(
+        Guid resourceId,
+        IDbContextTransaction? transaction,
+        LargeObjectWriteResult? written,
+        bool commitAttempted)
+    {
+        if (transaction is not null)
+        {
+            try
+            {
+                await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            // Keep the migration failure primary if provider rollback also fails.
+#pragma warning disable CA1031
+            catch (Exception rollbackException)
+            {
+                ApplicationServiceLog.DavMigrationRollbackFailed(
+                    logger, rollbackException, resourceId);
+            }
+#pragma warning restore CA1031
+        }
+        if (written is { Created: true } && !commitAttempted)
+        {
+            try
+            {
+                await objects.DeleteIfMatchAsync(written.Reference, CancellationToken.None).ConfigureAwait(false);
+            }
+            // Failed orphan cleanup is logged without replacing the migration failure.
+#pragma warning disable CA1031
+            catch (Exception cleanupException)
+            {
+                ApplicationServiceLog.DavMigrationCleanupFailed(
+                    logger, cleanupException, written.Reference.ObjectName);
+            }
+#pragma warning restore CA1031
         }
     }
 

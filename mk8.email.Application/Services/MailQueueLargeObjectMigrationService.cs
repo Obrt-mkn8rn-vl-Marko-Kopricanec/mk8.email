@@ -1,6 +1,7 @@
 using System.Data;
 using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
 using mk8.email.Application.Protocol;
 using mk8.email.Contracts.Storage;
@@ -139,38 +140,47 @@ public sealed class MailQueueLargeObjectMigrationService(
             }
             catch
             {
-                if (transaction is not null)
-                {
-                    try
-                    {
-                        await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
-                    }
-                    // Keep the migration failure primary if provider rollback also fails.
-#pragma warning disable CA1031
-                    catch (Exception rollbackException)
-                    {
-                        ApplicationServiceLog.QueueMigrationRollbackFailed(
-                            logger, rollbackException, message.Id);
-                    }
-#pragma warning restore CA1031
-                }
-                if (written is { Created: true } && !commitAttempted)
-                {
-                    try
-                    {
-                        await objects.DeleteIfMatchAsync(written.Reference, CancellationToken.None).ConfigureAwait(false);
-                    }
-                    // Failed orphan cleanup is logged without replacing the migration failure.
-#pragma warning disable CA1031
-                    catch (Exception cleanupException)
-                    {
-                        ApplicationServiceLog.QueueMigrationCleanupFailed(
-                            logger, cleanupException, written.Reference.ObjectName);
-                    }
-#pragma warning restore CA1031
-                }
+                await RecoverFailureAsync(message.Id, transaction, written, commitAttempted).ConfigureAwait(false);
                 throw;
             }
+        }
+    }
+
+    private async Task RecoverFailureAsync(
+        Guid messageId,
+        IDbContextTransaction? transaction,
+        LargeObjectWriteResult? written,
+        bool commitAttempted)
+    {
+        if (transaction is not null)
+        {
+            try
+            {
+                await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            // Keep the migration failure primary if provider rollback also fails.
+#pragma warning disable CA1031
+            catch (Exception rollbackException)
+            {
+                ApplicationServiceLog.QueueMigrationRollbackFailed(
+                    logger, rollbackException, messageId);
+            }
+#pragma warning restore CA1031
+        }
+        if (written is { Created: true } && !commitAttempted)
+        {
+            try
+            {
+                await objects.DeleteIfMatchAsync(written.Reference, CancellationToken.None).ConfigureAwait(false);
+            }
+            // Failed orphan cleanup is logged without replacing the migration failure.
+#pragma warning disable CA1031
+            catch (Exception cleanupException)
+            {
+                ApplicationServiceLog.QueueMigrationCleanupFailed(
+                    logger, cleanupException, written.Reference.ObjectName);
+            }
+#pragma warning restore CA1031
         }
     }
 

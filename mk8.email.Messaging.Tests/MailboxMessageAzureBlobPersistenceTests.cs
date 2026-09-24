@@ -99,6 +99,57 @@ public sealed class MailboxMessageAzureBlobPersistenceTests
     }
 
     [TestMethod]
+    public async Task FailedLegacyMigrationRetainsMailboxRowAndRemovesCreatedBlob()
+    {
+        await using var databaseServer = await RequirePostgresAsync();
+        var serviceClient = new BlobServiceClient(RequireAzureBlobConnection());
+        var containerName = $"mk8-mailbox-{Guid.NewGuid():N}";
+        var container = serviceClient.GetBlobContainerClient(containerName);
+        var store = CreateStore(serviceClient, containerName);
+        var messageId = Guid.CreateVersion7();
+        var raw = Encoding.Latin1.GetBytes(
+            "From: sender@example.test\r\nTo: mailbox@example.test\r\nSubject: legacy\r\n\r\nbody\r\n");
+        await using (var setup = CreateContext(databaseServer.ConnectionString))
+        {
+            await setup.Database.EnsureCreatedAsync();
+            var folderId = await SeedMailboxAsync(setup);
+            var message = CreateMessage(messageId, folderId, 1);
+            message.RawMessage = raw;
+            message.SizeBytes = raw.Length;
+            setup.Emails.Add(message);
+            await setup.SaveChangesAsync();
+            await setup.Database.ExecuteSqlRawAsync(
+                "ALTER TABLE emails ADD CONSTRAINT ck_test_keep_legacy_mail CHECK (raw_message IS NOT NULL)");
+        }
+
+        try
+        {
+            await using (var migration = CreateContext(databaseServer.ConnectionString))
+            {
+                var effects = CreateEffects(store);
+                await Assert.ThrowsExactlyAsync<DbUpdateException>(() =>
+                    new MailboxMessageLargeObjectMigrationService(
+                        migration,
+                        store,
+                        new MailboxMessageContentService(store, effects),
+                        NullLogger<MailboxMessageLargeObjectMigrationService>.Instance)
+                        .MigrateAsync());
+            }
+
+            await using var verification = CreateContext(databaseServer.ConnectionString);
+            var legacy = await verification.Emails.AsNoTracking()
+                .SingleAsync(message => message.Id == messageId);
+            CollectionAssert.AreEqual(raw, legacy.RawMessage);
+            Assert.IsNull(legacy.RawMessageObjectName);
+            Assert.HasCount(0, await GetBlobNamesAsync(container, messageId));
+        }
+        finally
+        {
+            await container.DeleteIfExistsAsync();
+        }
+    }
+
+    [TestMethod]
     public async Task TransactionEffectsPreserveRollbackAndDeleteOnlyCommittedMessages()
     {
         await using var databaseServer = await RequirePostgresAsync();

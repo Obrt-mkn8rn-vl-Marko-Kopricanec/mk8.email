@@ -76,6 +76,52 @@ public sealed class ApplicationRequestWorkerTests
     }
 
     [TestMethod]
+    public async Task HandlerFailureJoinsLeaseRenewalBeforeReportingFailure()
+    {
+        var renewalEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var renewalStopped = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var requests = new StubRequestConsumer
+        {
+            RenewalHandler = async (_, cancellationToken) =>
+            {
+                renewalEntered.TrySetResult();
+                try
+                {
+                    await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                    return true;
+                }
+                finally
+                {
+                    renewalStopped.TrySetResult();
+                }
+            },
+        };
+        await using var services = new ServiceCollection()
+            .AddSingleton<IApplicationRequestDispatcher>(
+                _ => new ThrowAfterSignalDispatcher(renewalEntered.Task))
+            .BuildServiceProvider();
+        using var worker = new ApplicationRequestWorker(
+            requests,
+            services.GetRequiredService<IServiceScopeFactory>(),
+            new ApplicationWorkerIdentity("application@renewal-test", TimeSpan.FromMilliseconds(10)),
+            NullLogger<ApplicationRequestWorker>.Instance);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var request = NewRequest();
+
+        await worker.ProcessLeaseAsync(new ApplicationRequestLease(
+            request,
+            "application@renewal-test",
+            DateTimeOffset.UtcNow.AddMinutes(2),
+            1), timeout.Token);
+
+        Assert.IsTrue(renewalStopped.Task.IsCompleted);
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(
+            () => requests.Completed.Task.WaitAsync(timeout.Token));
+    }
+
+    [TestMethod]
     public async Task DrainModeProcessesPendingRequestsAndDueMailThenExits()
     {
         var requests = new StubRequestConsumer();
@@ -383,6 +429,17 @@ public sealed class ApplicationRequestWorkerTests
         }
     }
 
+    private sealed class ThrowAfterSignalDispatcher(Task signal) : IApplicationRequestDispatcher
+    {
+        public async Task<ApplicationResponse> DispatchAsync(
+            ApplicationRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            await signal.WaitAsync(cancellationToken);
+            throw new InvalidOperationException("The handler failed.");
+        }
+    }
+
     private sealed class StubRequestConsumer : IApplicationRequestConsumer
     {
         public Channel<ApplicationRequestLease> Queue { get; } = Channel.CreateUnbounded<ApplicationRequestLease>();
@@ -390,6 +447,7 @@ public sealed class ApplicationRequestWorkerTests
             TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource<ApplicationResponse> Completed { get; } = new(
             TaskCreationOptions.RunContinuationsAsynchronously);
+        public Func<ApplicationRequestLease, CancellationToken, Task<bool>>? RenewalHandler { get; init; }
 
         public async Task<ApplicationRequestLease> WaitForRequestAsync(
             string workerId,
@@ -410,7 +468,7 @@ public sealed class ApplicationRequestWorkerTests
         public Task<bool> RenewLeaseAsync(
             ApplicationRequestLease lease,
             CancellationToken cancellationToken = default) =>
-            Task.FromResult(true);
+            RenewalHandler?.Invoke(lease, cancellationToken) ?? Task.FromResult(true);
 
         public Task CompleteAsync(
             ApplicationRequestLease lease,

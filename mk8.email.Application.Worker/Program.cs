@@ -20,13 +20,17 @@ var drain = args.SequenceEqual(["--drain"]);
 var prepare = args.SequenceEqual(["--prepare"]);
 if (!drain && !prepare && !args.SequenceEqual(["--serve"]))
 {
-    Console.Error.WriteLine("The Application Worker requires --serve, --prepare, or --drain.");
+    await Console.Error.WriteLineAsync(
+        "The Application Worker requires --serve, --prepare, or --drain.").ConfigureAwait(false);
     return 2;
 }
 
 try
 {
-    var isDevelopment = Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") == "Development";
+    var isDevelopment = string.Equals(
+        Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT"),
+        "Development",
+        StringComparison.Ordinal);
     var environment = EnvironmentLoader.Load(
         isDevelopment,
         EnvironmentValidationRole.ApplicationWorker);
@@ -66,34 +70,37 @@ try
 
     using var host = builder.Build();
     await DistributedRestoreActivationGuard.RequireReadyAsync(
-        host.Services.GetRequiredService<NpgsqlDataSource>());
+        host.Services.GetRequiredService<NpgsqlDataSource>()).ConfigureAwait(false);
     if (!drain)
     {
         using var scope = host.Services.CreateScope();
         await scope.ServiceProvider.GetRequiredService<MailRuntimeSchemaService>()
-            .EnsureAsync();
+            .EnsureAsync().ConfigureAwait(false);
         await scope.ServiceProvider.GetRequiredService<MailQueueLargeObjectMigrationService>()
-            .MigrateAsync();
+            .MigrateAsync().ConfigureAwait(false);
         await scope.ServiceProvider.GetRequiredService<MailboxMessageLargeObjectMigrationService>()
-            .MigrateAsync();
+            .MigrateAsync().ConfigureAwait(false);
         await scope.ServiceProvider.GetRequiredService<SieveScriptLargeObjectMigrationService>()
-            .MigrateAsync();
+            .MigrateAsync().ConfigureAwait(false);
         if (environment.Dav.EnableDav || environment.Jmap.EnableJmap)
         {
             await scope.ServiceProvider.GetRequiredService<DavResourceLargeObjectMigrationService>()
-                .MigrateAsync();
+                .MigrateAsync().ConfigureAwait(false);
         }
         if (environment.Jmap.EnableJmap)
         {
             await scope.ServiceProvider.GetRequiredService<JmapBlobLargeObjectMigrationService>()
-                .MigrateAsync();
+                .MigrateAsync().ConfigureAwait(false);
         }
     }
     if (prepare)
     {
         await host.Services.GetRequiredService<MessagingSchemaInitializer>()
-            .StartAsync(CancellationToken.None);
+            .StartAsync(CancellationToken.None).ConfigureAwait(false);
+        // This is a stable machine-operator CLI status line, not localized UI text.
+#pragma warning disable CA1303
         Console.WriteLine("The Application Worker schemas and Azure Blob references are prepared.");
+#pragma warning restore CA1303
         return 0;
     }
     if (drain)
@@ -120,7 +127,7 @@ try
                 queue.ProcessNextAsync,
                 queue.CleanupCompletedAsync,
                 push is null ? null : push.ProcessDueAsync);
-            var result = await runner.RunAsync(shutdown.Token);
+            var result = await runner.RunAsync(shutdown.Token).ConfigureAwait(false);
             Console.WriteLine(
                 $"The Application Worker drained {result.ApplicationRequests} requests "
                 + $"and {result.MailMessages} queued messages.");
@@ -132,11 +139,15 @@ try
         }
     }
 
-    await host.RunAsync();
+    await host.RunAsync().ConfigureAwait(false);
     return 0;
 }
+// The process boundary must turn all startup/runtime faults into a nonzero exit code.
+#pragma warning disable CA1031
 catch (Exception exception)
+#pragma warning restore CA1031
 {
-    Console.Error.WriteLine($"The Application Worker failed: {exception.GetBaseException().Message}");
+    await Console.Error.WriteLineAsync(
+        $"The Application Worker failed: {exception.GetBaseException().Message}").ConfigureAwait(false);
     return 1;
 }

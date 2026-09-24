@@ -1,0 +1,7 @@
+// The Application Worker composes mail logic and transport; protocol presentation belongs to Gateway.
+T:Microsoft.AspNetCore.Http.HttpContext;Application Worker must not process ASP.NET requests
+T:Microsoft.AspNetCore.Builder.WebApplication;Application Worker must not host an ASP.NET API
+T:System.Net.Sockets.TcpListener;Application Worker must not accept protocol connections
+T:System.Net.Mail.SmtpClient;Application Worker must send outbound SMTP through Gateway presentation
+T:System.Net.Http.HttpClient;Application Worker must not make direct presentation HTTP calls
+T:Azure.Storage.Blobs.BlobServiceClient;Application Worker must use the storage adapter

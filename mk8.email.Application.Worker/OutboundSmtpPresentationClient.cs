@@ -7,7 +7,7 @@ using mk8.email.Messaging;
 
 namespace mk8.email.Application.Worker;
 
-public sealed class OutboundSmtpPresentationClient(
+internal sealed partial class OutboundSmtpPresentationClient(
     IPresentationRequestClient requests,
     EnvironmentConfig environment,
     ILogger<OutboundSmtpPresentationClient> logger) : IOutboundMailRelay
@@ -36,11 +36,11 @@ public sealed class OutboundSmtpPresentationClient(
                 JsonSerializer.SerializeToUtf8Bytes(
                     new SmtpRelayPresentationRequest(sender, recipient, rawMessage, options),
                     JsonOptions),
-                new Dictionary<string, string>(),
+                new Dictionary<string, string>(StringComparer.Ordinal),
                 now,
                 now.AddSeconds(5 * attemptSeconds + 30),
                 requestId.ToString("N"));
-            var response = await requests.SendAsync(request, cancellationToken);
+            var response = await requests.SendAsync(request, cancellationToken).ConfigureAwait(false);
             if (response.IsError)
                 return TemporaryFailure();
             return JsonSerializer.Deserialize<OutboundDeliveryResult>(response.Payload, JsonOptions)
@@ -50,9 +50,12 @@ public sealed class OutboundSmtpPresentationClient(
         {
             throw;
         }
+        // Gateway transport can fail through several backends; delivery must remain retryable.
+#pragma warning disable CA1031
         catch (Exception exception)
+#pragma warning restore CA1031
         {
-            logger.LogWarning(exception, "Gateway outbound SMTP delivery did not complete");
+            LogRelayFailure(logger, exception);
             return TemporaryFailure();
         }
     }
@@ -61,4 +64,10 @@ public sealed class OutboundSmtpPresentationClient(
         OutboundDeliveryStatus.TemporaryFailure,
         "The outbound SMTP presentation service is temporarily unavailable.",
         EnhancedStatusCode: "4.4.2");
+
+    [LoggerMessage(
+        EventId = 1201,
+        Level = LogLevel.Warning,
+        Message = "Gateway outbound SMTP delivery did not complete")]
+    private static partial void LogRelayFailure(ILogger logger, Exception exception);
 }

@@ -6,7 +6,7 @@ using mk8.email.Messaging;
 
 namespace mk8.email.Application.Worker;
 
-public sealed class JmapPushPresentationClient(
+internal sealed partial class JmapPushPresentationClient(
     IPresentationRequestClient requests,
     ILogger<JmapPushPresentationClient> logger) : IJmapPushPresentationClient
 {
@@ -18,7 +18,7 @@ public sealed class JmapPushPresentationClient(
             WebPushPresentationOperations.ValidateEndpoint,
             new WebPushEndpointCheck(url),
             DateTimeOffset.UtcNow.AddSeconds(20));
-        var response = await requests.SendAsync(request, cancellationToken);
+        var response = await requests.SendAsync(request, cancellationToken).ConfigureAwait(false);
         return Deserialize<WebPushEndpointResult>(response).IsSafe;
     }
 
@@ -36,12 +36,12 @@ public sealed class JmapPushPresentationClient(
                 WebPushPresentationOperations.Send,
                 target,
                 DateTimeOffset.UtcNow.AddSeconds(45));
-            var response = await requests.SendAsync(request, cancellationToken);
+            var response = await requests.SendAsync(request, cancellationToken).ConfigureAwait(false);
             return Deserialize<WebPushSendResult>(response).Outcome;
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            logger.LogWarning(exception, "JMAP Web Push presentation delivery did not complete");
+            LogDeliveryFailure(logger, exception);
             return WebPushSendOutcome.Failed;
         }
     }
@@ -61,7 +61,7 @@ public sealed class JmapPushPresentationClient(
             return;
         await requests.EnqueueAsync(
             CreateRequest(WebPushPresentationOperations.Send, target, deadline),
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
     }
 
     private static WebPushSendRequest BuildTarget(
@@ -107,7 +107,7 @@ public sealed class JmapPushPresentationClient(
             operation,
             "application/json",
             JsonSerializer.SerializeToUtf8Bytes(value, JsonOptions),
-            new Dictionary<string, string>(),
+            new Dictionary<string, string>(StringComparer.Ordinal),
             now,
             deadline,
             id.ToString("N"));
@@ -120,4 +120,10 @@ public sealed class JmapPushPresentationClient(
         return JsonSerializer.Deserialize<T>(response.Payload, JsonOptions)
             ?? throw new JsonException("The presentation response is empty.");
     }
+
+    [LoggerMessage(
+        EventId = 1101,
+        Level = LogLevel.Warning,
+        Message = "JMAP Web Push presentation delivery did not complete")]
+    private static partial void LogDeliveryFailure(ILogger logger, Exception exception);
 }

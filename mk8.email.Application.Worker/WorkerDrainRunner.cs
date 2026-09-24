@@ -18,19 +18,19 @@ internal sealed class WorkerDrainRunner(
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var lease = await requests.TryClaimAsync(identity.WorkerId, cancellationToken);
+            var lease = await requests.TryClaimAsync(identity.WorkerId, cancellationToken).ConfigureAwait(false);
             if (lease is not null)
             {
-                await application.ProcessLeaseAsync(lease, cancellationToken);
+                await application.ProcessLeaseAsync(lease, cancellationToken).ConfigureAwait(false);
                 requestCount++;
             }
 
-            var processedMail = await processMailQueue(cancellationToken);
+            var processedMail = await processMailQueue(cancellationToken).ConfigureAwait(false);
             if (processedMail)
                 mailCount++;
-            await cleanupMailQueue(cancellationToken);
+            await cleanupMailQueue(cancellationToken).ConfigureAwait(false);
             if (processJmapPush is not null)
-                await processJmapPush(cancellationToken);
+                await processJmapPush(cancellationToken).ConfigureAwait(false);
 
             if (lease is not null || processedMail)
             {
@@ -41,9 +41,7 @@ internal sealed class WorkerDrainRunner(
             idleScans++;
             if (idleScans == 2)
                 return new WorkerDrainResult(requestCount, mailCount);
-            await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
+            await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken).ConfigureAwait(false);
         }
     }
 }
-
-internal readonly record struct WorkerDrainResult(int ApplicationRequests, int MailMessages);

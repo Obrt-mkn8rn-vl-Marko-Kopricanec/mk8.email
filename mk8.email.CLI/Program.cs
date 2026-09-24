@@ -15,8 +15,11 @@ using Azure;
 using Azure.Storage.Blobs;
 using Npgsql;
 
-return await RunManagementCommandAsync(args);
+return await RunManagementCommandAsync(args).ConfigureAwait(false);
 
+// The deployed command router preserves established argument order, secret handling, and exit codes.
+// Extracting command families requires a separate process-level compatibility sweep.
+#pragma warning disable MA0051
 static async Task<int> RunManagementCommandAsync(string[] arguments)
 {
     if (!IsSupportedCommand(arguments))
@@ -25,37 +28,34 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
         return 2;
     }
 
-    if (arguments.Length == 4
-        && arguments[0] == "--create-account"
+    if (Matches(arguments, 4, "--create-account")
         && !Enum.TryParse<UserRole>(arguments[2], ignoreCase: true, out _))
     {
-        Console.Error.WriteLine("The account role is not valid.");
+        await Console.Error.WriteLineAsync("The account role is not valid.").ConfigureAwait(false);
         return 2;
     }
 
-    if (arguments.Length == 3
-        && arguments[0] == "--set-domain-active"
+    if (Matches(arguments, 3, "--set-domain-active")
         && !bool.TryParse(arguments[2], out _))
     {
-        Console.Error.WriteLine("The domain state must be true or false.");
+        await Console.Error.WriteLineAsync("The domain state must be true or false.").ConfigureAwait(false);
         return 2;
     }
 
-    if (arguments.Length == 3
-        && arguments[0] == "--revoke-app-password"
+    if (Matches(arguments, 3, "--revoke-app-password")
         && !Guid.TryParse(arguments[2], out _))
     {
-        Console.Error.WriteLine("The application password identifier is not valid.");
+        await Console.Error.WriteLineAsync(
+            "The application password identifier is not valid.").ConfigureAwait(false);
         return 2;
     }
 
-    if (arguments.Length == 3
-        && arguments[0] == "--purge-quarantined-smoke-message"
+    if (Matches(arguments, 3, "--purge-quarantined-smoke-message")
         && (arguments[2].Length != 32
             || arguments[2].Any(character => character is not
                 (>= '0' and <= '9' or >= 'a' and <= 'f'))))
     {
-        Console.Error.WriteLine("The smoke marker is not valid.");
+        await Console.Error.WriteLineAsync("The smoke marker is not valid.").ConfigureAwait(false);
         return 2;
     }
 
@@ -63,7 +63,10 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
     {
         var isDevelopment = arguments.Contains("--dev", StringComparer.Ordinal)
             || arguments.Contains("--development", StringComparer.Ordinal)
-            || Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") == "Development";
+            || string.Equals(
+                Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT"),
+                "Development",
+                StringComparison.Ordinal);
         if (arguments.Length == 2
             && arguments[0] is ("--validate-gateway-config" or "--validate-worker-config"
                 or "--healthcheck-gateway"
@@ -78,63 +81,69 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
                 arguments[1], isDevelopment, role);
             if (!validated.Messaging.Enabled)
                 throw new InvalidOperationException("Distributed messaging must be enabled.");
-            if (arguments[0] == "--healthcheck-gateway")
+            if (string.Equals(arguments[0], "--healthcheck-gateway", StringComparison.Ordinal))
             {
                 using var healthTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                return await GatewayListenerHealthCheck.IsHealthyAsync(validated, healthTimeout.Token)
+                return await GatewayListenerHealthCheck.IsHealthyAsync(validated, healthTimeout.Token).ConfigureAwait(false)
                     ? 0
                     : 1;
             }
-            if (arguments[0] == "--probe-worker-dispatch")
+            if (string.Equals(arguments[0], "--probe-worker-dispatch", StringComparison.Ordinal))
             {
-                await using var source = NpgsqlDataSource.Create(validated.BuildConnectionString());
-                await DistributedRestoreActivationGuard.RequireReadyAsync(source);
-                await using var probeServices = new ServiceCollection()
+                var source = NpgsqlDataSource.Create(validated.BuildConnectionString());
+                await using var sourceLifetime = source.ConfigureAwait(false);
+                await DistributedRestoreActivationGuard.RequireReadyAsync(source).ConfigureAwait(false);
+                var probeServices = new ServiceCollection()
                     .AddDistributedMessaging(validated)
                     .BuildServiceProvider();
+                await using var probeServicesLifetime = probeServices.ConfigureAwait(false);
                 await DistributedApplicationProbe.ProbeAsync(
                     probeServices.GetRequiredService<IApplicationRequestClient>(),
-                    TimeSpan.FromSeconds(10));
+                    TimeSpan.FromSeconds(10)).ConfigureAwait(false);
                 Console.WriteLine("The Application Worker completed a distributed request.");
                 return 0;
             }
             if (arguments[0].StartsWith("--probe-", StringComparison.Ordinal))
             {
                 using var probeTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-                await using var source = NpgsqlDataSource.Create(validated.BuildConnectionString());
+                var source = NpgsqlDataSource.Create(validated.BuildConnectionString());
+                await using var sourceLifetime = source.ConfigureAwait(false);
                 await DistributedRestoreActivationGuard.RequireReadyAsync(
-                    source, probeTimeout.Token);
+                    source, probeTimeout.Token).ConfigureAwait(false);
                 if (role == EnvironmentValidationRole.Gateway)
-                    await GatewayDatabasePrivilegeProbe.ProbeAsync(source, probeTimeout.Token);
-                await using var objects = new ServiceCollection()
+                    await GatewayDatabasePrivilegeProbe.ProbeAsync(source, probeTimeout.Token).ConfigureAwait(false);
+                var objects = new ServiceCollection()
                     .AddAzureBlobObjectStorage(validated)
                     .BuildServiceProvider();
+                await using var objectsLifetime = objects.ConfigureAwait(false);
                 await DistributedBackendProbe.ProbeAsync(
                     source,
                     objects.GetRequiredService<ILargeObjectStore>(),
-                    probeTimeout.Token);
+                    probeTimeout.Token).ConfigureAwait(false);
                 Console.WriteLine($"The {role} distributed backends are reachable.");
                 return 0;
             }
             Console.WriteLine($"The {role} configuration is valid.");
             return 0;
         }
-        if (arguments.Length == 2 && arguments[0] == "--audit-blob-references")
+        if (Matches(arguments, 2, "--audit-blob-references"))
         {
             var validated = EnvironmentLoader.LoadFromFile(
                 arguments[1], isDevelopment, EnvironmentValidationRole.ApplicationWorker);
             if (!validated.Messaging.Enabled)
                 throw new InvalidOperationException("Distributed messaging must be enabled.");
-            await using var dataSource = NpgsqlDataSource.Create(validated.BuildConnectionString());
-            await using var services = new ServiceCollection()
+            var dataSource = NpgsqlDataSource.Create(validated.BuildConnectionString());
+            await using var dataSourceLifetime = dataSource.ConfigureAwait(false);
+            var services = new ServiceCollection()
                 .AddAzureBlobObjectStorage(validated)
                 .BuildServiceProvider();
+            await using var servicesLifetime = services.ConfigureAwait(false);
             var count = await DistributedBlobReferenceAudit.AuditAsync(
-                dataSource, services.GetRequiredService<ILargeObjectStore>());
+                dataSource, services.GetRequiredService<ILargeObjectStore>()).ConfigureAwait(false);
             Console.WriteLine($"Verified {count} database-referenced Azure Blob object(s).");
             return 0;
         }
-        if (arguments.Length == 2 && arguments[0] == "--verify-distributed-snapshot")
+        if (Matches(arguments, 2, "--verify-distributed-snapshot"))
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromHours(2));
             ConsoleCancelEventHandler cancel = (_, eventArgs) =>
@@ -146,7 +155,7 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
             try
             {
                 var summary = await DistributedBackupRestorer.VerifyAsync(
-                    arguments[1], timeout.Token);
+                    arguments[1], timeout.Token).ConfigureAwait(false);
                 Console.WriteLine(
                     $"Verified distributed snapshot v{summary.SchemaVersion}: "
                     + $"{summary.ReferenceCount} references, "
@@ -174,26 +183,27 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
             Console.CancelKeyPress += cancel;
             try
             {
-                if (arguments[0] == "--publish-distributed-archive")
+                if (string.Equals(arguments[0], "--publish-distributed-archive", StringComparison.Ordinal))
                 {
                     await DistributedArchiveStore.PublishAsync(
                         service, arguments[2], arguments[3], arguments[4],
-                        arguments[5], timeout.Token);
+                        arguments[5], timeout.Token).ConfigureAwait(false);
                     Console.WriteLine($"Published encrypted archive {arguments[3]} to Azure Blob storage.");
                 }
                 else
                 {
                     await DistributedArchiveStore.FetchAsync(
                         service, arguments[2], arguments[3], arguments[4],
-                        arguments[5], timeout.Token);
+                        arguments[5], timeout.Token).ConfigureAwait(false);
                     Console.WriteLine($"Fetched and verified encrypted archive {arguments[3]}.");
                 }
                 return 0;
             }
             catch (RequestFailedException exception)
             {
-                Console.Error.WriteLine(
-                    $"Azure Blob archive transport failed: HTTP {exception.Status} ({exception.ErrorCode}).");
+                await Console.Error.WriteLineAsync(
+                    $"Azure Blob archive transport failed: HTTP {exception.Status} ({exception.ErrorCode}).")
+                    .ConfigureAwait(false);
                 return 1;
             }
             finally
@@ -201,16 +211,18 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
                 Console.CancelKeyPress -= cancel;
             }
         }
-        if (arguments.Length == 3 && arguments[0] == "--export-distributed-snapshot")
+        if (Matches(arguments, 3, "--export-distributed-snapshot"))
         {
             var validated = EnvironmentLoader.LoadFromFile(
                 arguments[1], isDevelopment, EnvironmentValidationRole.ApplicationWorker);
             if (!validated.Messaging.Enabled)
                 throw new InvalidOperationException("Distributed messaging must be enabled.");
-            await using var dataSource = NpgsqlDataSource.Create(validated.BuildConnectionString());
-            await using var services = new ServiceCollection()
+            var dataSource = NpgsqlDataSource.Create(validated.BuildConnectionString());
+            await using var dataSourceLifetime = dataSource.ConfigureAwait(false);
+            var services = new ServiceCollection()
                 .AddAzureBlobObjectStorage(validated)
                 .BuildServiceProvider();
+            await using var servicesLifetime = services.ConfigureAwait(false);
             using var timeout = new CancellationTokenSource(TimeSpan.FromHours(2));
             ConsoleCancelEventHandler cancel = (_, eventArgs) =>
             {
@@ -235,7 +247,7 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
                     validated.BuildConnectionString(),
                     arguments[2],
                     pgDumpExecutable: pgDumpExecutable ?? "pg_dump",
-                    cancellationToken: timeout.Token);
+                    cancellationToken: timeout.Token).ConfigureAwait(false);
                 Console.WriteLine(
                     $"Exported {result.ReferenceCount} references and "
                     + $"{result.UniqueContentCount} unique Blob contents. "
@@ -247,16 +259,18 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
                 Console.CancelKeyPress -= cancel;
             }
         }
-        if (arguments.Length == 3 && arguments[0] == "--restore-distributed-snapshot")
+        if (Matches(arguments, 3, "--restore-distributed-snapshot"))
         {
             var validated = EnvironmentLoader.LoadFromFile(
                 arguments[1], isDevelopment, EnvironmentValidationRole.ApplicationWorker);
             if (!validated.Messaging.Enabled)
                 throw new InvalidOperationException("Distributed messaging must be enabled.");
-            await using var dataSource = NpgsqlDataSource.Create(validated.BuildConnectionString());
-            await using var services = new ServiceCollection()
+            var dataSource = NpgsqlDataSource.Create(validated.BuildConnectionString());
+            await using var dataSourceLifetime = dataSource.ConfigureAwait(false);
+            var services = new ServiceCollection()
                 .AddAzureBlobObjectStorage(validated)
                 .BuildServiceProvider();
+            await using var servicesLifetime = services.ConfigureAwait(false);
             using var timeout = new CancellationTokenSource(TimeSpan.FromHours(2));
             ConsoleCancelEventHandler cancel = (_, eventArgs) =>
             {
@@ -271,7 +285,7 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
                     dataSource,
                     validated.BuildConnectionString(),
                     services.GetRequiredService<ILargeObjectStore>(),
-                    cancellationToken: timeout.Token);
+                    cancellationToken: timeout.Token).ConfigureAwait(false);
                 Console.WriteLine(
                     $"Restored {result.ReferenceCount} database references and "
                     + $"{result.ImportedObjectCount} unique Blob objects. "
@@ -283,7 +297,7 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
                 Console.CancelKeyPress -= cancel;
             }
         }
-        if (arguments.Length == 3 && arguments[0] == "--purge-quarantined-smoke-message")
+        if (Matches(arguments, 3, "--purge-quarantined-smoke-message"))
         {
             var validated = EnvironmentLoader.LoadFromFile(
                 arguments[1], isDevelopment, EnvironmentValidationRole.ApplicationWorker);
@@ -291,7 +305,7 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
             using var scope = host.Services.CreateScope();
             var removed = await scope.ServiceProvider
                 .GetRequiredService<MailQueueMaintenanceService>()
-                .PurgeQuarantinedSmokeMessageAsync(arguments[2]);
+                .PurgeQuarantinedSmokeMessageAsync(arguments[2]).ConfigureAwait(false);
             Console.WriteLine(removed
                 ? "The quarantined smoke message and Blob were removed."
                 : "No unique quarantined smoke message matched the marker.");
@@ -302,7 +316,7 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
         if (arguments.SequenceEqual(["--healthcheck"]))
         {
             using var healthTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            return await GatewayListenerHealthCheck.IsHealthyAsync(environmentConfig, healthTimeout.Token) ? 0 : 1;
+            return await GatewayListenerHealthCheck.IsHealthyAsync(environmentConfig, healthTimeout.Token).ConfigureAwait(false) ? 0 : 1;
         }
 
         if (arguments.SequenceEqual(["--initialize-empty-database"]))
@@ -311,7 +325,7 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
             using var scope = host.Services.CreateScope();
             var result = await scope.ServiceProvider
                 .GetRequiredService<IDatabaseInitializationService>()
-                .InitializeEmptyDatabaseAsync();
+                .InitializeEmptyDatabaseAsync().ConfigureAwait(false);
             Console.WriteLine(result.Message);
             return result.Succeeded ? 0 : 1;
         }
@@ -322,72 +336,73 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
             using var scope = host.Services.CreateScope();
             await scope.ServiceProvider
                 .GetRequiredService<MailRuntimeSchemaService>()
-                .EnsureAsync();
+                .EnsureAsync().ConfigureAwait(false);
             Console.WriteLine("The native mail runtime schema is ready.");
             return 0;
         }
 
-        if (arguments.Length == 3 && arguments[0] == "--ensure-domain")
+        if (Matches(arguments, 3, "--ensure-domain"))
         {
             using var host = BuildHost(arguments, environmentConfig);
             using var scope = host.Services.CreateScope();
             var result = await scope.ServiceProvider
                 .GetRequiredService<IMailAdministrationService>()
-                .EnsureDomainAsync(arguments[1], arguments[2]);
+                .EnsureDomainAsync(arguments[1], arguments[2]).ConfigureAwait(false);
             Console.WriteLine(result.Message);
             return result.Succeeded ? 0 : 1;
         }
 
-        if (arguments.Length == 4 && arguments[0] == "--create-account")
+        if (Matches(arguments, 4, "--create-account"))
         {
             var passwordPath = Path.GetFullPath(arguments[3]);
             if (!File.Exists(passwordPath))
             {
-                Console.Error.WriteLine("The password file does not exist.");
+                await Console.Error.WriteLineAsync("The password file does not exist.").ConfigureAwait(false);
                 return 2;
             }
 
-            var password = File.ReadAllText(passwordPath).TrimEnd('\r', '\n');
+            var password = (await File.ReadAllTextAsync(passwordPath).ConfigureAwait(false))
+                .TrimEnd('\r', '\n');
             _ = Enum.TryParse<UserRole>(arguments[2], ignoreCase: true, out var role);
             using var host = BuildHost(arguments, environmentConfig);
             using var scope = host.Services.CreateScope();
             var result = await scope.ServiceProvider
                 .GetRequiredService<IMailAdministrationService>()
-                .CreateAccountAsync(arguments[1], password, role);
+                .CreateAccountAsync(arguments[1], password, role).ConfigureAwait(false);
             Console.WriteLine(result.Message);
             return result.Succeeded ? 0 : 1;
         }
 
-        if (arguments.Length == 3 && arguments[0] == "--set-catchall")
+        if (Matches(arguments, 3, "--set-catchall"))
         {
             using var host = BuildHost(arguments, environmentConfig);
             using var scope = host.Services.CreateScope();
             var result = await scope.ServiceProvider
                 .GetRequiredService<IMailAdministrationService>()
-                .SetCatchAllAsync(arguments[1], arguments[2]);
+                .SetCatchAllAsync(arguments[1], arguments[2]).ConfigureAwait(false);
             Console.WriteLine(result.Message);
             return result.Succeeded ? 0 : 1;
         }
 
-        if (arguments.Length == 3 && arguments[0] == "--set-domain-active")
+        if (Matches(arguments, 3, "--set-domain-active"))
         {
             _ = bool.TryParse(arguments[2], out var isActive);
             using var host = BuildHost(arguments, environmentConfig);
             using var scope = host.Services.CreateScope();
             var result = await scope.ServiceProvider
                 .GetRequiredService<IMailAdministrationService>()
-                .SetDomainActiveAsync(arguments[1], isActive);
+                .SetDomainActiveAsync(arguments[1], isActive).ConfigureAwait(false);
             Console.WriteLine(result.Message);
             return result.Succeeded ? 0 : 1;
         }
 
-        if (arguments.Length == 3 && arguments[0] == "--create-app-password")
+        if (Matches(arguments, 3, "--create-app-password"))
         {
             using var host = BuildHost(arguments, environmentConfig);
             using var scope = host.Services.CreateScope();
             var result = await scope.ServiceProvider
                 .GetRequiredService<IApplicationPasswordService>()
-                .CreateAsync(arguments[1], arguments[2]);
+                .CreateAsync(arguments[1], arguments[2]).ConfigureAwait(false);
             Console.WriteLine(result.Message);
             if (!result.Succeeded)
                 return 1;
@@ -397,13 +412,13 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
             return 0;
         }
 
-        if (arguments.Length == 2 && arguments[0] == "--list-app-passwords")
+        if (Matches(arguments, 2, "--list-app-passwords"))
         {
             using var host = BuildHost(arguments, environmentConfig);
             using var scope = host.Services.CreateScope();
             var passwords = await scope.ServiceProvider
                 .GetRequiredService<IApplicationPasswordService>()
-                .ListAsync(arguments[1]);
+                .ListAsync(arguments[1]).ConfigureAwait(false);
             foreach (var password in passwords)
             {
                 Console.WriteLine(string.Join('\t',
@@ -416,26 +431,26 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
             return 0;
         }
 
-        if (arguments.Length == 3 && arguments[0] == "--revoke-app-password")
+        if (Matches(arguments, 3, "--revoke-app-password"))
         {
             _ = Guid.TryParse(arguments[2], out var applicationPasswordId);
             using var host = BuildHost(arguments, environmentConfig);
             using var scope = host.Services.CreateScope();
             var revoked = await scope.ServiceProvider
                 .GetRequiredService<IApplicationPasswordService>()
-                .RevokeAsync(arguments[1], applicationPasswordId);
+                .RevokeAsync(arguments[1], applicationPasswordId).ConfigureAwait(false);
             Console.WriteLine(revoked
                 ? "The application password is revoked."
                 : "The application password was not found.");
             return revoked ? 0 : 1;
         }
 
-        if (arguments.Length == 3 && arguments[0] == "--enroll-totp")
+        if (Matches(arguments, 3, "--enroll-totp"))
         {
             using var host = BuildHost(arguments, environmentConfig);
             using var scope = host.Services.CreateScope();
             var result = await scope.ServiceProvider.GetRequiredService<IMfaService>()
-                .BeginTotpEnrollmentAsync(arguments[1], arguments[2]);
+                .BeginTotpEnrollmentAsync(arguments[1], arguments[2]).ConfigureAwait(false);
             Console.WriteLine(result.Message);
             if (!result.Succeeded)
                 return 1;
@@ -444,12 +459,12 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
             return 0;
         }
 
-        if (arguments.Length == 3 && arguments[0] == "--confirm-totp")
+        if (Matches(arguments, 3, "--confirm-totp"))
         {
             using var host = BuildHost(arguments, environmentConfig);
             using var scope = host.Services.CreateScope();
             var result = await scope.ServiceProvider.GetRequiredService<IMfaService>()
-                .ConfirmTotpEnrollmentAsync(arguments[1], arguments[2]);
+                .ConfirmTotpEnrollmentAsync(arguments[1], arguments[2]).ConfigureAwait(false);
             Console.WriteLine(result.Message);
             if (!result.Succeeded)
                 return 1;
@@ -458,12 +473,12 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
             return 0;
         }
 
-        if (arguments.Length == 2 && arguments[0] == "--totp-status")
+        if (Matches(arguments, 2, "--totp-status"))
         {
             using var host = BuildHost(arguments, environmentConfig);
             using var scope = host.Services.CreateScope();
             var status = await scope.ServiceProvider.GetRequiredService<IMfaService>()
-                .GetStatusAsync(arguments[1]);
+                .GetStatusAsync(arguments[1]).ConfigureAwait(false);
             Console.WriteLine(status.IsEnrolled ? "TOTP MFA is enabled." : "TOTP MFA is not enabled.");
             if (status.Name is not null)
             {
@@ -476,12 +491,12 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
             return status.IsEnrolled ? 0 : 1;
         }
 
-        if (arguments.Length == 2 && arguments[0] == "--regenerate-recovery-codes")
+        if (Matches(arguments, 2, "--regenerate-recovery-codes"))
         {
             using var host = BuildHost(arguments, environmentConfig);
             using var scope = host.Services.CreateScope();
             var result = await scope.ServiceProvider.GetRequiredService<IMfaService>()
-                .RegenerateRecoveryCodesAsync(arguments[1]);
+                .RegenerateRecoveryCodesAsync(arguments[1]).ConfigureAwait(false);
             Console.WriteLine(result.Message);
             if (!result.Succeeded)
                 return 1;
@@ -490,12 +505,12 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
             return 0;
         }
 
-        if (arguments.Length == 2 && arguments[0] == "--disable-totp")
+        if (Matches(arguments, 2, "--disable-totp"))
         {
             using var host = BuildHost(arguments, environmentConfig);
             using var scope = host.Services.CreateScope();
             var disabled = await scope.ServiceProvider.GetRequiredService<IMfaService>()
-                .DisableTotpAsync(arguments[1]);
+                .DisableTotpAsync(arguments[1]).ConfigureAwait(false);
             Console.WriteLine(disabled
                 ? "TOTP MFA is disabled and OAuth device grants are revoked."
                 : "The account does not have a TOTP enrollment.");
@@ -504,40 +519,49 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
 
         throw new InvalidOperationException("The management command is not supported.");
     }
+    // A command process must return a nonzero status for every unhandled backend failure.
+#pragma warning disable CA1031
     catch (Exception exception)
+#pragma warning restore CA1031
     {
-        Console.Error.WriteLine($"The management command failed: {exception.GetBaseException().Message}");
+        await Console.Error.WriteLineAsync(
+            $"The management command failed: {exception.GetBaseException().Message}")
+            .ConfigureAwait(false);
         return 1;
     }
 }
+#pragma warning restore MA0051
 
 static bool IsSupportedCommand(string[] arguments) =>
     arguments.SequenceEqual(["--healthcheck"])
     || arguments.SequenceEqual(["--initialize-empty-database"])
     || arguments.SequenceEqual(["--ensure-runtime-schema"])
-    || arguments.Length == 3 && arguments[0] == "--ensure-domain"
-    || arguments.Length == 4 && arguments[0] == "--create-account"
-    || arguments.Length == 3 && arguments[0] == "--set-catchall"
-    || arguments.Length == 3 && arguments[0] == "--set-domain-active"
-    || arguments.Length == 3 && arguments[0] == "--create-app-password"
-    || arguments.Length == 2 && arguments[0] == "--list-app-passwords"
-    || arguments.Length == 3 && arguments[0] == "--revoke-app-password"
-    || arguments.Length == 3 && arguments[0] == "--purge-quarantined-smoke-message"
-    || arguments.Length == 3 && arguments[0] == "--export-distributed-snapshot"
-    || arguments.Length == 3 && arguments[0] == "--restore-distributed-snapshot"
-    || arguments.Length == 2 && arguments[0] == "--verify-distributed-snapshot"
+    || Matches(arguments, 3, "--ensure-domain")
+    || Matches(arguments, 4, "--create-account")
+    || Matches(arguments, 3, "--set-catchall")
+    || Matches(arguments, 3, "--set-domain-active")
+    || Matches(arguments, 3, "--create-app-password")
+    || Matches(arguments, 2, "--list-app-passwords")
+    || Matches(arguments, 3, "--revoke-app-password")
+    || Matches(arguments, 3, "--purge-quarantined-smoke-message")
+    || Matches(arguments, 3, "--export-distributed-snapshot")
+    || Matches(arguments, 3, "--restore-distributed-snapshot")
+    || Matches(arguments, 2, "--verify-distributed-snapshot")
     || arguments.Length == 6 && arguments[0] is
         ("--publish-distributed-archive" or "--fetch-distributed-archive")
-    || arguments.Length == 3 && arguments[0] == "--enroll-totp"
-    || arguments.Length == 3 && arguments[0] == "--confirm-totp"
-    || arguments.Length == 2 && arguments[0] == "--totp-status"
-    || arguments.Length == 2 && arguments[0] == "--regenerate-recovery-codes"
-    || arguments.Length == 2 && arguments[0] == "--disable-totp"
+    || Matches(arguments, 3, "--enroll-totp")
+    || Matches(arguments, 3, "--confirm-totp")
+    || Matches(arguments, 2, "--totp-status")
+    || Matches(arguments, 2, "--regenerate-recovery-codes")
+    || Matches(arguments, 2, "--disable-totp")
     || arguments.Length == 2 && arguments[0] is
         ("--validate-gateway-config" or "--validate-worker-config"
             or "--healthcheck-gateway"
             or "--probe-gateway-backends" or "--probe-worker-backends"
             or "--probe-worker-dispatch" or "--audit-blob-references");
+
+static bool Matches(string[] arguments, int length, string command) =>
+    arguments.Length == length && string.Equals(arguments[0], command, StringComparison.Ordinal);
 
 static void WriteUsage()
 {

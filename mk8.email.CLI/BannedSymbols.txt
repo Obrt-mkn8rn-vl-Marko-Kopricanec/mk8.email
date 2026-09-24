@@ -1,0 +1,5 @@
+// Management commands may use database and Azure Blob APIs but must never host mail or HTTP protocols.
+T:Microsoft.AspNetCore.Http.HttpContext;The management CLI must not process ASP.NET requests
+T:Microsoft.AspNetCore.Builder.WebApplication;The management CLI must not host an ASP.NET API
+T:System.Net.Sockets.TcpListener;Only Gateway may accept protocol connections
+T:System.Net.Mail.SmtpClient;Only Gateway may perform SMTP presentation

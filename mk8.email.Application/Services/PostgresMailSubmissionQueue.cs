@@ -10,6 +10,9 @@ using mk8.email.Infrastructure.Models;
 
 namespace mk8.email.Application.Services;
 
+// This public type implements the durable mail-submission queue; its shipped name
+// accurately identifies the implementation and is frozen in the public API baseline.
+#pragma warning disable CA1711
 public sealed class PostgresMailSubmissionQueue(
     EmailDbContext database,
     EnvironmentConfig environment,
@@ -17,6 +20,7 @@ public sealed class PostgresMailSubmissionQueue(
     LargeObjectTransactionEffects transactionEffects,
     ILogger<PostgresMailSubmissionQueue> logger) : IMailSubmissionQueue
 {
+#pragma warning restore CA1711
     public async Task<Guid> EnqueueAsync(
         MailSubmission submission,
         CancellationToken cancellationToken = default)

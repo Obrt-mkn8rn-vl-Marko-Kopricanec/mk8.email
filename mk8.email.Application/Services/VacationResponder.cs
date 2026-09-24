@@ -170,7 +170,7 @@ public sealed class VacationResponder(
             .Select(inbox => new VacationRoute(
                 inbox.Id,
                 inbox.Name + "@" + inbox.Address.Domain))
-            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+            .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static bool MustSuppress(MimeMessage message)

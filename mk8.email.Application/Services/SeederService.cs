@@ -16,7 +16,10 @@ public class SeederService(
 
     private async Task SyncGlobalConfigAsync(CancellationToken cancellationToken)
     {
+        // A duplicate global row is a schema/data-integrity error, not a row to pick arbitrarily.
+#pragma warning disable HLQ005
         var config = await db.GlobalConfig.SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+#pragma warning restore HLQ005
         if (config is null)
             throw new InvalidOperationException("The database schema is not initialized.");
 

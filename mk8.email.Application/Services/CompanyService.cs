@@ -45,7 +45,10 @@ public class CompanyService(EmailDbContext db) : ICompanyService
 
     public async Task<GlobalConfigDTO> GetGlobalConfigAsync()
     {
+        // The table has a seeded row but no constraint limiting its total row count.
+#pragma warning disable HLQ005
         var c = await db.GlobalConfig.SingleAsync().ConfigureAwait(false);
+#pragma warning restore HLQ005
         return ToConfigDTO(c);
     }
 
@@ -55,7 +58,10 @@ public class CompanyService(EmailDbContext db) : ICompanyService
         if (!await IsSuperAdminAsync(userId).ConfigureAwait(false))
             return null;
 
+        // Do not silently modify an arbitrary row if the singleton table is corrupt.
+#pragma warning disable HLQ005
         var e = await db.GlobalConfig.SingleAsync().ConfigureAwait(false);
+#pragma warning restore HLQ005
 
         e.AllowRegistration = config.AllowRegistration;
 
@@ -96,7 +102,9 @@ public class CompanyService(EmailDbContext db) : ICompanyService
 
     public async Task<GlobalLimitsDTO> GetGlobalLimitsAsync()
     {
+#pragma warning disable HLQ005 // The limits table has no one-row database constraint.
         var l = await db.GlobalLimits.SingleAsync().ConfigureAwait(false);
+#pragma warning restore HLQ005
         return new GlobalLimitsDTO(l.Id, l.DefaultMaxDomainsPerCompany, l.DefaultMaxInboxesPerCompany, l.DefaultMaxInboxesPerDomain);
     }
 
@@ -106,7 +114,9 @@ public class CompanyService(EmailDbContext db) : ICompanyService
         if (!await IsSuperAdminAsync(userId).ConfigureAwait(false))
             return null;
 
+#pragma warning disable HLQ005 // A duplicate limits row must fail before mutation.
         var entity = await db.GlobalLimits.SingleAsync().ConfigureAwait(false);
+#pragma warning restore HLQ005
         entity.DefaultMaxDomainsPerCompany = limits.DefaultMaxDomainsPerCompany;
         entity.DefaultMaxInboxesPerCompany = limits.DefaultMaxInboxesPerCompany;
         entity.DefaultMaxInboxesPerDomain = limits.DefaultMaxInboxesPerDomain;

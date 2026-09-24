@@ -125,10 +125,8 @@ public sealed class SieveScriptLargeObjectMigrationService(
                     }
                     catch (Exception rollbackException)
                     {
-                        logger.LogWarning(
-                            rollbackException,
-                            "Could not roll back Sieve script migration for {ScriptId}",
-                            script.Id);
+                        ApplicationServiceLog.SieveMigrationRollbackFailed(
+                            logger, rollbackException, script.Id);
                     }
                 }
                 if (commitAttempted)

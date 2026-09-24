@@ -39,8 +39,8 @@ internal sealed class SieveFilterService(
             await contentService.ReadAsync(script, cancellationToken).ConfigureAwait(false));
         if (!compilation.Succeeded)
         {
-            logger.LogError(
-                "Active Sieve script {ScriptId} is invalid at line {Line}, column {Column}: {Message}",
+            ApplicationServiceLog.ActiveSieveScriptInvalid(
+                logger,
                 script.Id,
                 compilation.Diagnostics[0].Line,
                 compilation.Diagnostics[0].Column,
@@ -63,9 +63,7 @@ internal sealed class SieveFilterService(
                     || !delivery.Create
                         && !mailboxes.Contains(MailboxName.Normalize(delivery.Folder))))
             {
-                logger.LogWarning(
-                    "Sieve script {ScriptId} attempted delivery to an unavailable mailbox; applying implicit keep",
-                    script.Id);
+                ApplicationServiceLog.SieveMailboxUnavailable(logger, script.Id);
                 return DefaultPlan(defaultFolder);
             }
             return new SieveDeliveryPlan(
@@ -80,7 +78,7 @@ internal sealed class SieveFilterService(
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            logger.LogError(exception, "Sieve evaluation failed for script {ScriptId}", script.Id);
+            ApplicationServiceLog.SieveEvaluationFailed(logger, exception, script.Id);
             return DefaultPlan(defaultFolder);
         }
     }

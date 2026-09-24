@@ -144,10 +144,8 @@ public sealed class MailboxMessageLargeObjectMigrationService(
                     }
                     catch (Exception rollbackException)
                     {
-                        logger.LogWarning(
-                            rollbackException,
-                            "Could not roll back mailbox message migration for {EmailId}",
-                            email.Id);
+                        ApplicationServiceLog.MailboxMigrationRollbackFailed(
+                            logger, rollbackException, email.Id);
                     }
                 }
                 if (written is { Created: true } && !commitAttempted)
@@ -158,10 +156,8 @@ public sealed class MailboxMessageLargeObjectMigrationService(
                     }
                     catch (Exception cleanupException)
                     {
-                        logger.LogWarning(
-                            cleanupException,
-                            "Could not clean up mailbox migration object {ObjectName}",
-                            written.Reference.ObjectName);
+                        ApplicationServiceLog.MailboxMigrationCleanupFailed(
+                            logger, cleanupException, written.Reference.ObjectName);
                     }
                 }
                 throw;

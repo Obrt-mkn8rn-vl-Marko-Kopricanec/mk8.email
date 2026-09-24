@@ -178,10 +178,8 @@ public sealed class PostgresMailSubmissionQueue(
                 }
                 catch (Exception rollbackException)
                 {
-                    logger.LogWarning(
-                        rollbackException,
-                        "Could not roll back queue submission {QueueId}",
-                        message.Id);
+                    ApplicationServiceLog.QueueSubmissionRollbackFailed(
+                        logger, rollbackException, message.Id);
                 }
             }
             if (commitAttempted)

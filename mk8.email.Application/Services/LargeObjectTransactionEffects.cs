@@ -41,10 +41,8 @@ public sealed class LargeObjectTransactionEffects(
             }
             catch (Exception exception)
             {
-                logger.LogWarning(
-                    exception,
-                    "Could not delete transactional large object {ObjectName}",
-                    effect.Reference.ObjectName);
+                ApplicationServiceLog.TransactionalObjectDeleteFailed(
+                    logger, exception, effect.Reference.ObjectName);
             }
         }
     }

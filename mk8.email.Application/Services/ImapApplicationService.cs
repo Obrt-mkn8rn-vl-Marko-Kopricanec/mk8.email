@@ -325,7 +325,7 @@ internal sealed class ImapApplicationService(
                 }
                 catch (Exception rollbackException)
                 {
-                    logger.LogWarning(rollbackException, "Could not roll back IMAP mailbox deletion");
+                    ApplicationServiceLog.ImapMailboxDeletionRollbackFailed(logger, rollbackException);
                 }
             }
             if (commitAttempted)
@@ -543,7 +543,7 @@ internal sealed class ImapApplicationService(
                 }
                 catch (Exception rollbackException)
                 {
-                    logger.LogWarning(rollbackException, "Could not roll back IMAP expunge");
+                    ApplicationServiceLog.ImapExpungeRollbackFailed(logger, rollbackException);
                 }
             }
             if (commitAttempted)
@@ -1018,7 +1018,7 @@ internal sealed class ImapApplicationService(
                 }
                 catch (Exception rollbackException)
                 {
-                    logger.LogWarning(rollbackException, "Could not roll back IMAP COPY");
+                    ApplicationServiceLog.ImapCopyRollbackFailed(logger, rollbackException);
                 }
             }
             if (commitAttempted)
@@ -1245,7 +1245,7 @@ internal sealed class ImapApplicationService(
                     }
                     catch (Exception rollbackException)
                     {
-                        logger.LogWarning(rollbackException, "Could not roll back IMAP APPEND");
+                        ApplicationServiceLog.ImapAppendRollbackFailed(logger, rollbackException);
                     }
                 }
                 if (commitAttempted)

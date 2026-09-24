@@ -142,10 +142,7 @@ public sealed class DavResourceContentService(
         }
         catch (Exception exception)
         {
-            logger.LogWarning(
-                exception,
-                "Could not delete unreferenced DAV object {ObjectName}",
-                reference.ObjectName);
+            ApplicationServiceLog.DavObjectDeleteFailed(logger, exception, reference.ObjectName);
         }
     }
 

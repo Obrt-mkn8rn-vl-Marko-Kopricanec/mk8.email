@@ -130,10 +130,7 @@ public sealed class MailQueueContentService(
         }
         catch (Exception exception)
         {
-            logger.LogWarning(
-                exception,
-                "Could not delete unreferenced mail queue object {ObjectName}",
-                reference.ObjectName);
+            ApplicationServiceLog.QueueObjectDeleteFailed(logger, exception, reference.ObjectName);
         }
     }
 

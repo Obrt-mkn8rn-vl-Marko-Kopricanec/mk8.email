@@ -158,7 +158,7 @@ internal sealed class Pop3ApplicationService(
                     }
                     catch (Exception rollbackException)
                     {
-                        logger.LogWarning(rollbackException, "Could not roll back POP3 deletion");
+                        ApplicationServiceLog.Pop3DeletionRollbackFailed(logger, rollbackException);
                     }
                 }
                 if (commitAttempted)

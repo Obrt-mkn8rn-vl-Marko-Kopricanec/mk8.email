@@ -64,7 +64,7 @@ public sealed class MailQueueWorker(
             }
             catch (Exception exception)
             {
-                logger.LogError(exception, "The mail queue worker failed.");
+                ApplicationServiceLog.QueueWorkerFailed(logger, exception);
                 await Task.Delay(TimeSpan.FromSeconds(5), timeProvider, stoppingToken).ConfigureAwait(false);
             }
         }
@@ -107,7 +107,7 @@ public sealed class MailQueueWorker(
             }
             catch (Exception exception)
             {
-                logger.LogError(exception, "The mail queue notification listener failed.");
+                ApplicationServiceLog.QueueNotificationListenerFailed(logger, exception);
                 await Task.Delay(TimeSpan.FromSeconds(5), timeProvider, stoppingToken).ConfigureAwait(false);
             }
         }
@@ -183,7 +183,7 @@ public sealed class MailQueueWorker(
             }
             catch (Exception exception)
             {
-                logger.LogError(exception, "Queue processing failed for {QueueId}", messageId);
+                ApplicationServiceLog.QueueProcessingFailed(logger, exception, messageId.Value);
                 await ReleaseAfterFailureAsync(
                     database,
                     messageId.Value,
@@ -238,9 +238,7 @@ public sealed class MailQueueWorker(
                         .SingleOrDefaultAsync(processingCancellation.Token).ConfigureAwait(false);
                     if (string.Equals(state, MailQueueStates.Processing, StringComparison.Ordinal))
                     {
-                        logger.LogError(
-                            "The queue processing lease was lost for {QueueId}",
-                            messageId);
+                        ApplicationServiceLog.QueueProcessingLeaseLost(logger, messageId);
                         await processingCancellation.CancelAsync().ConfigureAwait(false);
                     }
                     return;
@@ -252,7 +250,7 @@ public sealed class MailQueueWorker(
         }
         catch (Exception exception)
         {
-            logger.LogError(exception, "Could not renew the queue lease for {QueueId}", messageId);
+            ApplicationServiceLog.QueueLeaseRenewalFailed(logger, exception, messageId);
             await processingCancellation.CancelAsync().ConfigureAwait(false);
         }
     }
@@ -315,7 +313,7 @@ public sealed class MailQueueWorker(
             {
                 await QuarantineAsync(message, delivery, now, cancellationToken).ConfigureAwait(false);
                 await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-                logger.LogWarning("Queue message {QueueId} was quarantined", message.Id);
+                ApplicationServiceLog.QueueMessageQuarantined(logger, message.Id);
                 return;
             }
         }
@@ -390,9 +388,7 @@ public sealed class MailQueueWorker(
                     else if (IsExpired(message.AttemptCount, message.ReceivedAt, now))
                     {
                         recipient.SuccessNoticeCreated = true;
-                        logger.LogWarning(
-                            "Abandoned the success DSN for queue recipient {RecipientId} after queue expiry",
-                            recipient.Id);
+                        ApplicationServiceLog.SuccessDsnAbandoned(logger, recipient.Id);
                     }
                     else
                     {
@@ -424,9 +420,7 @@ public sealed class MailQueueWorker(
                     else if (IsExpired(message.AttemptCount, message.ReceivedAt, now))
                     {
                         recipient.FailureNoticeCreated = true;
-                        logger.LogWarning(
-                            "Abandoned the failure DSN for queue recipient {RecipientId} after queue expiry",
-                            recipient.Id);
+                        ApplicationServiceLog.FailureDsnAbandoned(logger, recipient.Id);
                     }
                     else
                     {
@@ -1184,7 +1178,7 @@ public sealed class MailQueueWorker(
                 await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             }
             await effects.CommitAsync(marker).ConfigureAwait(false);
-            logger.LogInformation("Removed {Count} completed queue records", expired.Count);
+            ApplicationServiceLog.CompletedQueueRecordsRemoved(logger, expired.Count);
             return expired.Count;
         }
         catch
@@ -1197,9 +1191,7 @@ public sealed class MailQueueWorker(
                 }
                 catch (Exception rollbackException)
                 {
-                    logger.LogWarning(
-                        rollbackException,
-                        "Could not roll back completed queue cleanup");
+                    ApplicationServiceLog.CompletedQueueCleanupRollbackFailed(logger, rollbackException);
                 }
             }
             if (commitAttempted)

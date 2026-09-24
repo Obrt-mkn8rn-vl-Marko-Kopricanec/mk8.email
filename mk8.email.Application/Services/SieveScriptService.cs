@@ -335,7 +335,7 @@ internal sealed class SieveScriptService(
         }
         catch (Exception exception)
         {
-            logger.LogWarning(exception, "Could not roll back a Sieve script content transaction");
+            ApplicationServiceLog.SieveContentTransactionRollbackFailed(logger, exception);
         }
     }
 

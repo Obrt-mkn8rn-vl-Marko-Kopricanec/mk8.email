@@ -147,10 +147,8 @@ public sealed class MailQueueLargeObjectMigrationService(
                     }
                     catch (Exception rollbackException)
                     {
-                        logger.LogWarning(
-                            rollbackException,
-                            "Could not roll back queue content migration for {QueueId}",
-                            message.Id);
+                        ApplicationServiceLog.QueueMigrationRollbackFailed(
+                            logger, rollbackException, message.Id);
                     }
                 }
                 if (written is { Created: true } && !commitAttempted)
@@ -161,10 +159,8 @@ public sealed class MailQueueLargeObjectMigrationService(
                     }
                     catch (Exception cleanupException)
                     {
-                        logger.LogWarning(
-                            cleanupException,
-                            "Could not clean up queue migration object {ObjectName}",
-                            written.Reference.ObjectName);
+                        ApplicationServiceLog.QueueMigrationCleanupFailed(
+                            logger, cleanupException, written.Reference.ObjectName);
                     }
                 }
                 throw;

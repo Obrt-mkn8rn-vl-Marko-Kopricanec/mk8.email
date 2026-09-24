@@ -141,10 +141,8 @@ public sealed class DavResourceLargeObjectMigrationService(
                     }
                     catch (Exception rollbackException)
                     {
-                        logger.LogWarning(
-                            rollbackException,
-                            "Could not roll back DAV resource migration for {ResourceId}",
-                            resource.Id);
+                        ApplicationServiceLog.DavMigrationRollbackFailed(
+                            logger, rollbackException, resource.Id);
                     }
                 }
                 if (written is { Created: true } && !commitAttempted)
@@ -155,10 +153,8 @@ public sealed class DavResourceLargeObjectMigrationService(
                     }
                     catch (Exception cleanupException)
                     {
-                        logger.LogWarning(
-                            cleanupException,
-                            "Could not clean up DAV migration object {ObjectName}",
-                            written.Reference.ObjectName);
+                        ApplicationServiceLog.DavMigrationCleanupFailed(
+                            logger, cleanupException, written.Reference.ObjectName);
                     }
                 }
                 throw;

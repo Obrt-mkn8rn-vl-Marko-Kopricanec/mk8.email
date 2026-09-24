@@ -74,8 +74,14 @@ jobs:
           docker build --quiet --target gateway --tag mk8email-gateway-ci:${{ github.sha }} .
           docker build --quiet --target worker --tag mk8email-worker-ci:${{ github.sha }} .
 
-      - name: Install backup archive test tool
-        run: sudo apt-get update && sudo apt-get install -y age
+      - name: Install backup test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y age postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
+          /usr/lib/postgresql/17/bin/pg_dump --version
 
       - name: Validate operations code
         run: |
@@ -194,6 +200,7 @@ jobs:
         env:
           MK8_EMAIL_TEST_POSTGRES: Host=127.0.0.1;Port=${{ job.services.postgres.ports['5432'] }};Database=postgres;Username=postgres;Password=mk8email-ci-only;Pooling=false
           MK8_EMAIL_TEST_AZURE_BLOB_CONNECTION: UseDevelopmentStorage=true
+          MK8_EMAIL_TEST_PG_DUMP: /usr/lib/postgresql/17/bin/pg_dump
         run: |
           set -euo pipefail
           azurite_container="mk8email-azurite-${{ github.run_id }}"

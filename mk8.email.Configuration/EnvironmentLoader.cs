@@ -50,6 +50,19 @@ public static class EnvironmentLoader
             throw new InvalidOperationException($"The configuration file is not valid JSON: {fullPath}", ex);
         }
 
+        ResolveSecrets(config, role);
+        var errors = config.Validate(isDevelopment, role);
+        if (errors.Count > 0)
+        {
+            var detail = string.Join(System.Environment.NewLine, errors.Select(error => $"- {error}"));
+            throw new InvalidOperationException($"The mk8.email configuration is not valid:{System.Environment.NewLine}{detail}");
+        }
+
+        return config;
+    }
+
+    private static void ResolveSecrets(EnvironmentConfig config, EnvironmentValidationRole role)
+    {
         config.Database.Password = ResolveSecret(
             config.Database.Password,
             config.Database.PasswordFile,
@@ -85,14 +98,6 @@ public static class EnvironmentLoader
             config.ObjectStorage.ConnectionString,
             config.ObjectStorage.ConnectionStringFile,
             "Azure Blob-compatible connection string");
-        var errors = config.Validate(isDevelopment, role);
-        if (errors.Count > 0)
-        {
-            var detail = string.Join(System.Environment.NewLine, errors.Select(error => $"- {error}"));
-            throw new InvalidOperationException($"The mk8.email configuration is not valid:{System.Environment.NewLine}{detail}");
-        }
-
-        return config;
     }
 
     private static string ResolveSecret(string directValue, string? filePath, string name)

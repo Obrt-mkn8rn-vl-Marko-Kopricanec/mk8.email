@@ -4,13 +4,6 @@ using System.Security.Cryptography;
 
 namespace mk8.email.Configuration;
 
-public enum EnvironmentValidationRole
-{
-    Combined,
-    Gateway,
-    ApplicationWorker,
-}
-
 public sealed class EnvironmentConfig
 {
     private const long JmapMaximumInteger = 9_007_199_254_740_991;
@@ -56,6 +49,24 @@ public sealed class EnvironmentConfig
         var validatesPresentation = role is not EnvironmentValidationRole.ApplicationWorker;
         var validatesApplication = role is not EnvironmentValidationRole.Gateway;
 
+        ValidateDatabaseAndSmtp(errors, isDevelopment);
+        ValidatePresentation(errors, isDevelopment, validatesPresentation);
+        ValidateSieveAndJmap(errors);
+        ValidateDav(errors);
+        ValidateOAuth(errors, validatesApplication);
+        ValidateMfa(errors, validatesApplication);
+        ValidateTlsDkimSecurityFiltering(errors, isDevelopment, validatesPresentation, validatesApplication);
+        ValidateQueueLimitsAdmin(errors, isDevelopment, validatesPresentation);
+        if (Messaging.Enabled)
+        {
+            ValidateMessagingCore(errors);
+            ValidateObjectStorage(errors, isDevelopment);
+        }
+        return errors;
+    }
+
+    private void ValidateDatabaseAndSmtp(List<string> errors, bool isDevelopment)
+    {
         RequireValue(errors, Database.Host, "Database.Host is required.");
         RequirePort(errors, Database.Port, "Database.Port");
         RequireValue(errors, Database.Name, "Database.Name is required.");
@@ -64,9 +75,12 @@ public sealed class EnvironmentConfig
 
         if (Uri.CheckHostName(Smtp.Hostname) != UriHostNameType.Dns)
             errors.Add("Smtp.Hostname must be a valid DNS name.");
-        if (!isDevelopment && !Smtp.Hostname.Contains('.'))
+        if (!isDevelopment && !Smtp.Hostname.Contains('.', StringComparison.Ordinal))
             errors.Add("Smtp.Hostname must be a fully qualified DNS name in production.");
+    }
 
+    private void ValidatePresentation(List<string> errors, bool isDevelopment, bool validatesPresentation)
+    {
         if (validatesPresentation)
         {
             var enabledPorts = new List<(string Name, int Port)>();
@@ -109,7 +123,10 @@ public sealed class EnvironmentConfig
             if (Sieve.EnableManageSieve && !Sieve.EnableStartTls)
                 errors.Add("The ManageSieve listener requires STARTTLS.");
         }
+    }
 
+    private void ValidateSieveAndJmap(List<string> errors)
+    {
         if (Sieve.MaxScriptsPerUser is < 1 or > 1000)
             errors.Add("Sieve.MaxScriptsPerUser must be from 1 through 1000.");
 
@@ -121,7 +138,7 @@ public sealed class EnvironmentConfig
                 ? $"https://{Smtp.Hostname}"
                 : Jmap.PublicBaseUrl;
             if (!Uri.TryCreate(publicBaseUrl, UriKind.Absolute, out var jmapBaseUri)
-                || jmapBaseUri.Scheme != Uri.UriSchemeHttps
+                || !string.Equals(jmapBaseUri.Scheme, Uri.UriSchemeHttps, StringComparison.Ordinal)
                 || !string.IsNullOrEmpty(jmapBaseUri.Query)
                 || !string.IsNullOrEmpty(jmapBaseUri.Fragment))
             {
@@ -154,7 +171,10 @@ public sealed class EnvironmentConfig
                     + "9007199254740991.");
             }
         }
+    }
 
+    private void ValidateDav(List<string> errors)
+    {
         if (Dav.EnableDav)
         {
             if (Dav.MaxResourceSizeBytes is < 65_536 or > 107_374_1824)
@@ -164,7 +184,10 @@ public sealed class EnvironmentConfig
             if (Dav.MaxResourcesPerCollection is < 1 or > 1_000_000)
                 errors.Add("Dav.MaxResourcesPerCollection must be from 1 through 1000000.");
         }
+    }
 
+    private void ValidateOAuth(List<string> errors, bool validatesApplication)
+    {
         if (OAuth.AccessTokenMinutes is < 1 or > 60)
             errors.Add("OAuth.AccessTokenMinutes must be from 1 through 60.");
         if (OAuth.RefreshTokenDays is < 1 or > 365)
@@ -185,7 +208,7 @@ public sealed class EnvironmentConfig
                 ? Jmap.PublicBaseUrl ?? $"https://{Smtp.Hostname}"
                 : OAuth.PublicBaseUrl;
             if (!Uri.TryCreate(publicBaseUrl, UriKind.Absolute, out var oauthBaseUri)
-                || oauthBaseUri.Scheme != Uri.UriSchemeHttps
+                || !string.Equals(oauthBaseUri.Scheme, Uri.UriSchemeHttps, StringComparison.Ordinal)
                 || !string.IsNullOrEmpty(oauthBaseUri.Query)
                 || !string.IsNullOrEmpty(oauthBaseUri.Fragment))
             {
@@ -200,7 +223,7 @@ public sealed class EnvironmentConfig
                 ? Jmap.PublicBaseUrl ?? $"https://{Smtp.Hostname}"
                 : OAuth.PublicBaseUrl;
             if (Uri.TryCreate(issuer, UriKind.Absolute, out var issuerUri)
-                && issuerUri.AbsolutePath != "/")
+                && !string.Equals(issuerUri.AbsolutePath, "/", StringComparison.Ordinal))
             {
                 errors.Add("OAuth.PublicBaseUrl must not contain a path when OpenID Connect is enabled.");
             }
@@ -223,7 +246,10 @@ public sealed class EnvironmentConfig
                 }
             }
         }
+    }
 
+    private void ValidateMfa(List<string> errors, bool validatesApplication)
+    {
         if (Mfa.EnableTotp)
         {
             if (!OAuth.EnableOAuth)
@@ -247,7 +273,10 @@ public sealed class EnvironmentConfig
             if (Mfa.RecoveryCodeCount is < 5 or > 20)
                 errors.Add("Mfa.RecoveryCodeCount must be from 5 through 20.");
         }
+    }
 
+    private void ValidateTlsDkimSecurityFiltering(List<string> errors, bool isDevelopment, bool validatesPresentation, bool validatesApplication)
+    {
         var needsCertificate = validatesPresentation && (Smtp.EnableStartTls
             || Smtp.EnableImplicitTls
             || Imap.EnableImplicitTls
@@ -272,8 +301,8 @@ public sealed class EnvironmentConfig
             errors.Add("The built-in SPF and DMARC checks are not approved for production.");
 
         if (!Uri.TryCreate(Filtering.RspamdEndpoint, UriKind.Absolute, out var rspamdEndpoint)
-            || rspamdEndpoint.Scheme != Uri.UriSchemeHttp
-            || rspamdEndpoint.AbsolutePath != "/checkv2")
+            || !string.Equals(rspamdEndpoint.Scheme, Uri.UriSchemeHttp, StringComparison.Ordinal)
+            || !string.Equals(rspamdEndpoint.AbsolutePath, "/checkv2", StringComparison.Ordinal))
         {
             errors.Add("Filtering.RspamdEndpoint must be an HTTP checkv2 URL.");
         }
@@ -283,7 +312,10 @@ public sealed class EnvironmentConfig
         }
         if (Filtering.TimeoutSeconds is < 5 or > 120)
             errors.Add("Filtering.TimeoutSeconds must be from 5 through 120.");
+    }
 
+    private void ValidateQueueLimitsAdmin(List<string> errors, bool isDevelopment, bool validatesPresentation)
+    {
         if (Queue.PollIntervalMilliseconds is < 100 or > 60_000)
             errors.Add("Queue.PollIntervalMilliseconds must be from 100 through 60000.");
         if (Queue.LeaseSeconds is < 30 or > 3600)
@@ -318,92 +350,93 @@ public sealed class EnvironmentConfig
             errors.Add("Admin.HealthStatusPath must be an absolute path in production.");
         if (validatesPresentation && Admin.SessionMinutes is < 5 or > 480)
             errors.Add("Admin.SessionMinutes must be from 5 through 480.");
+    }
 
-        if (Messaging.Enabled)
+    private void ValidateMessagingCore(List<string> errors)
+    {
+        if (!IsMessagingIdentifier(Messaging.EncryptionKeyId, 64, allowAtAndSlash: false))
         {
-            if (!IsMessagingIdentifier(Messaging.EncryptionKeyId, 64, allowAtAndSlash: false))
-            {
-                errors.Add("Messaging.EncryptionKeyId is invalid.");
-            }
-            ValidateEncryptionKey(errors, Messaging.EncryptionKey, "Messaging.EncryptionKey");
-            if (Messaging.DecryptionKeys
-                .Select(key => key.Id)
-                .Append(Messaging.EncryptionKeyId)
-                .Distinct(StringComparer.Ordinal)
-                .Count() != Messaging.DecryptionKeys.Count + 1)
-            {
-                errors.Add("Messaging encryption key identifiers must be unique.");
-            }
-            foreach (var key in Messaging.DecryptionKeys)
-            {
-                if (!IsMessagingIdentifier(key.Id, 64, allowAtAndSlash: false))
-                {
-                    errors.Add("A Messaging.DecryptionKeys identifier is invalid.");
-                }
-                ValidateEncryptionKey(errors, key.Key, $"Messaging.DecryptionKeys[{key.Id}].Key");
-            }
-            if (Messaging.MaxPayloadBytes is < 65_536 or > 1_073_741_824)
-                errors.Add("Messaging.MaxPayloadBytes must be from 65536 through 1073741824.");
-            // APPEND sends a typed JSON request containing base64-encoded message octets.
-            // Reserve one MiB for MULTIAPPEND flags, mailbox names, and request metadata.
-            var minimumAppendPayloadBytes =
-                (4L * Limits.MaxMessageSizeBytes + 2) / 3 + 1_048_576;
-            if (Messaging.MaxPayloadBytes < minimumAppendPayloadBytes)
-            {
-                errors.Add(
-                    "Messaging.MaxPayloadBytes must accommodate base64-encoded "
-                    + "Limits.MaxMessageSizeBytes plus IMAP APPEND request overhead.");
-            }
-            if (Messaging.InlinePayloadThresholdBytes is < 0 or > 1_048_576
-                || Messaging.InlinePayloadThresholdBytes > Messaging.MaxPayloadBytes)
-            {
-                errors.Add(
-                    "Messaging.InlinePayloadThresholdBytes must be from 0 through 1048576 "
-                    + "and no greater than Messaging.MaxPayloadBytes.");
-            }
-            if (Messaging.LeaseSeconds is < 5 or > 3600)
-                errors.Add("Messaging.LeaseSeconds must be from 5 through 3600.");
-            if (Messaging.NotificationFallbackSeconds is < 1 or > 300)
-                errors.Add("Messaging.NotificationFallbackSeconds must be from 1 through 300.");
-            if (Messaging.WorkerId is { } workerId
-                && !IsMessagingIdentifier(workerId, 128, allowAtAndSlash: true))
-            {
-                errors.Add("Messaging.WorkerId is invalid.");
-            }
-
-            if (!string.Equals(
-                    ObjectStorage.Provider,
-                    "azure-blob",
-                    StringComparison.Ordinal))
-            {
-                errors.Add("ObjectStorage.Provider must be azure-blob.");
-            }
-            RequireSecret(
-                errors,
-                ObjectStorage.ConnectionString,
-                "ObjectStorage.ConnectionString",
-                isDevelopment);
-            if (ObjectStorage.ContainerName.Length is < 3 or > 63
-                || ObjectStorage.ContainerName[0] == '-'
-                || ObjectStorage.ContainerName[^1] == '-'
-                || ObjectStorage.ContainerName.Contains("--", StringComparison.Ordinal)
-                || ObjectStorage.ContainerName.Any(character =>
-                    character is not (>= 'a' and <= 'z')
-                    && character is not (>= '0' and <= '9')
-                    && character != '-'))
-            {
-                errors.Add("ObjectStorage.ContainerName is not a valid Azure Blob container name.");
-            }
-            if (ObjectStorage.ObjectPrefix.Length > 512
-                || ObjectStorage.ObjectPrefix.StartsWith("/", StringComparison.Ordinal)
-                || ObjectStorage.ObjectPrefix.Contains("//", StringComparison.Ordinal)
-                || ObjectStorage.ObjectPrefix.Contains('\0'))
-            {
-                errors.Add("ObjectStorage.ObjectPrefix is invalid.");
-            }
+            errors.Add("Messaging.EncryptionKeyId is invalid.");
         }
+        ValidateEncryptionKey(errors, Messaging.EncryptionKey, "Messaging.EncryptionKey");
+        if (Messaging.DecryptionKeys
+            .Select(key => key.Id)
+            .Append(Messaging.EncryptionKeyId)
+            .Distinct(StringComparer.Ordinal)
+            .Count() != Messaging.DecryptionKeys.Count + 1)
+        {
+            errors.Add("Messaging encryption key identifiers must be unique.");
+        }
+        foreach (var key in Messaging.DecryptionKeys)
+        {
+            if (!IsMessagingIdentifier(key.Id, 64, allowAtAndSlash: false))
+            {
+                errors.Add("A Messaging.DecryptionKeys identifier is invalid.");
+            }
+            ValidateEncryptionKey(errors, key.Key, $"Messaging.DecryptionKeys[{key.Id}].Key");
+        }
+        if (Messaging.MaxPayloadBytes is < 65_536 or > 1_073_741_824)
+            errors.Add("Messaging.MaxPayloadBytes must be from 65536 through 1073741824.");
+        // APPEND sends a typed JSON request containing base64-encoded message octets.
+        // Reserve one MiB for MULTIAPPEND flags, mailbox names, and request metadata.
+        var minimumAppendPayloadBytes =
+            (4L * Limits.MaxMessageSizeBytes + 2) / 3 + 1_048_576;
+        if (Messaging.MaxPayloadBytes < minimumAppendPayloadBytes)
+        {
+            errors.Add(
+                "Messaging.MaxPayloadBytes must accommodate base64-encoded "
+                + "Limits.MaxMessageSizeBytes plus IMAP APPEND request overhead.");
+        }
+        if (Messaging.InlinePayloadThresholdBytes is < 0 or > 1_048_576
+            || Messaging.InlinePayloadThresholdBytes > Messaging.MaxPayloadBytes)
+        {
+            errors.Add(
+                "Messaging.InlinePayloadThresholdBytes must be from 0 through 1048576 "
+                + "and no greater than Messaging.MaxPayloadBytes.");
+        }
+        if (Messaging.LeaseSeconds is < 5 or > 3600)
+            errors.Add("Messaging.LeaseSeconds must be from 5 through 3600.");
+        if (Messaging.NotificationFallbackSeconds is < 1 or > 300)
+            errors.Add("Messaging.NotificationFallbackSeconds must be from 1 through 300.");
+        if (Messaging.WorkerId is { } workerId
+            && !IsMessagingIdentifier(workerId, 128, allowAtAndSlash: true))
+        {
+            errors.Add("Messaging.WorkerId is invalid.");
+        }
+    }
 
-        return errors;
+    private void ValidateObjectStorage(List<string> errors, bool isDevelopment)
+    {
+        if (!string.Equals(
+                ObjectStorage.Provider,
+                "azure-blob",
+                StringComparison.Ordinal))
+        {
+            errors.Add("ObjectStorage.Provider must be azure-blob.");
+        }
+        RequireSecret(
+            errors,
+            ObjectStorage.ConnectionString,
+            "ObjectStorage.ConnectionString",
+            isDevelopment);
+        if (ObjectStorage.ContainerName.Length is < 3 or > 63
+            || ObjectStorage.ContainerName[0] == '-'
+            || ObjectStorage.ContainerName[^1] == '-'
+            || ObjectStorage.ContainerName.Contains("--", StringComparison.Ordinal)
+            || ObjectStorage.ContainerName.Any(character =>
+                character is not (>= 'a' and <= 'z')
+                && character is not (>= '0' and <= '9')
+                && character != '-'))
+        {
+            errors.Add("ObjectStorage.ContainerName is not a valid Azure Blob container name.");
+        }
+        if (ObjectStorage.ObjectPrefix.Length > 512
+            || ObjectStorage.ObjectPrefix.StartsWith('/')
+            || ObjectStorage.ObjectPrefix.Contains("//", StringComparison.Ordinal)
+            || ObjectStorage.ObjectPrefix.Contains('\0', StringComparison.Ordinal))
+        {
+            errors.Add("ObjectStorage.ObjectPrefix is invalid.");
+        }
     }
 
     private static bool IsLoopbackHost(string host)
@@ -485,207 +518,4 @@ public sealed class EnvironmentConfig
             || character is '.' or '_' or '-' or ':'
             || allowAtAndSlash && character is '@' or '/');
     }
-
-}
-
-public sealed class DatabaseConfig
-{
-    public string Host { get; init; } = "localhost";
-    public int Port { get; init; } = 5432;
-    public string Name { get; init; } = "mk8email";
-    public string Username { get; init; } = "postgres";
-    public string Password { get; set; } = string.Empty;
-    public string? PasswordFile { get; init; }
-}
-
-public sealed class SmtpConfig
-{
-    public string Hostname { get; init; } = "localhost";
-    public int Port { get; init; } = 25;
-    public int SubmissionPort { get; init; } = 587;
-    public int ImplicitTlsPort { get; init; } = 465;
-    public bool EnableSmtp { get; init; } = true;
-    public bool EnableSubmission { get; init; }
-    public bool EnableImplicitTls { get; init; }
-    public bool EnableStartTls { get; init; }
-    public bool RequireTls { get; init; }
-    public bool RequireAuth { get; init; } = true;
-    public bool AllowRelay { get; init; }
-}
-
-public sealed class ImapConfig
-{
-    public int Port { get; init; } = 143;
-    public int ImplicitTlsPort { get; init; } = 993;
-    public bool EnableImap { get; init; } = true;
-    public bool EnableImplicitTls { get; init; }
-}
-
-public sealed class Pop3Config
-{
-    public int Port { get; init; } = 110;
-    public int ImplicitTlsPort { get; init; } = 995;
-    public bool EnablePop3 { get; init; }
-    public bool EnableImplicitTls { get; init; }
-    public bool EnableStartTls { get; init; }
-}
-
-public sealed class SieveConfig
-{
-    public int Port { get; init; } = 4190;
-    public bool EnableManageSieve { get; init; }
-    public bool EnableStartTls { get; init; } = true;
-    public int MaxScriptsPerUser { get; init; } = 64;
-}
-
-public sealed class JmapConfig
-{
-    public int Port { get; init; } = 8081;
-    public bool EnableJmap { get; init; } = true;
-    public bool IsDefault { get; init; } = true;
-    public string? PublicBaseUrl { get; init; }
-    public long MaxUploadSizeBytes { get; init; } = 50_000_000;
-    public long MaxRequestSizeBytes { get; init; } = 10_000_000;
-    public int MaxCallsInRequest { get; init; } = 64;
-    public int MaxObjectsInGet { get; init; } = 500;
-    public int MaxObjectsInSet { get; init; } = 500;
-    public int MaxConcurrentRequests { get; init; } = 8;
-    public int MaxConcurrentUploads { get; init; } = 4;
-    public int UploadRetentionHours { get; init; } = 24;
-    public long MaxUnreferencedBlobBytesPerAccount { get; init; } = 100_000_000;
-
-    public Uri GetPublicBaseUri(string smtpHostname)
-    {
-        var value = string.IsNullOrWhiteSpace(PublicBaseUrl)
-            ? $"https://{smtpHostname}"
-            : PublicBaseUrl;
-        return new Uri(value.TrimEnd('/') + "/", UriKind.Absolute);
-    }
-}
-
-public sealed class DavConfig
-{
-    public bool EnableDav { get; init; } = true;
-    public int MaxResourceSizeBytes { get; init; } = 10 * 1024 * 1024;
-    public int MaxCollectionsPerUser { get; init; } = 100;
-    public int MaxResourcesPerCollection { get; init; } = 100_000;
-}
-
-public sealed class OAuthConfig
-{
-    public bool EnableOAuth { get; init; }
-    public bool EnableOpenIdConnect { get; init; }
-    public string? PublicBaseUrl { get; init; }
-    public string ClientId { get; init; } = "thunderbird";
-    public int AccessTokenMinutes { get; init; } = 10;
-    public int RefreshTokenDays { get; init; } = 90;
-    public int AuthorizationCodeMinutes { get; init; } = 5;
-    public int IdTokenMinutes { get; init; } = 10;
-    public string SigningKey { get; set; } = string.Empty;
-    public string? SigningKeyFile { get; init; }
-
-    public Uri GetPublicBaseUri(string smtpHostname, string? jmapPublicBaseUrl)
-    {
-        var value = string.IsNullOrWhiteSpace(PublicBaseUrl)
-            ? jmapPublicBaseUrl ?? $"https://{smtpHostname}"
-            : PublicBaseUrl;
-        return new Uri(value.TrimEnd('/') + "/", UriKind.Absolute);
-    }
-}
-
-public sealed class MfaConfig
-{
-    public bool EnableTotp { get; init; }
-    public string Issuer { get; init; } = "mk8.email";
-    public string EncryptionKey { get; set; } = string.Empty;
-    public string? EncryptionKeyFile { get; init; }
-    public int RecoveryCodeCount { get; init; } = 10;
-}
-
-public sealed class TlsConfig
-{
-    public string? CertificatePath { get; init; }
-    public string? CertificateKeyPath { get; init; }
-}
-
-public sealed class DkimConfig
-{
-    public string? PrivateKeyPath { get; init; }
-    public string Selector { get; init; } = "default";
-    public bool EnableSigning { get; init; }
-}
-
-public sealed class SecurityConfig
-{
-    public bool EnableSpfCheck { get; init; }
-    public bool EnableDmarcCheck { get; init; }
-    public string PasswordHashScheme { get; init; } = "BLF-CRYPT";
-}
-
-public sealed class FilteringConfig
-{
-    public string RspamdEndpoint { get; init; } = "http://127.0.0.1:11333/checkv2";
-    public int TimeoutSeconds { get; init; } = 70;
-}
-
-public sealed class QueueConfig
-{
-    public int PollIntervalMilliseconds { get; init; } = 500;
-    public int LeaseSeconds { get; init; } = 300;
-    public int MaxAttempts { get; init; } = 20;
-    public int MaxAgeHours { get; init; } = 120;
-    public int CompletedRetentionDays { get; init; } = 14;
-}
-
-public sealed class LimitsConfig
-{
-    public int MaxMessageSizeBytes { get; init; } = 10 * 1024 * 1024;
-    public int MaxRecipientsPerMessage { get; init; } = 100;
-    public int ConnectionTimeoutSeconds { get; init; } = 300;
-    public int MaxConnectionsPerIp { get; init; } = 10;
-}
-
-public sealed class GeneralConfig
-{
-    public bool AllowRegistration { get; init; }
-}
-
-public sealed class AdminConfig
-{
-    public IReadOnlyList<string> AllowedNetworks { get; init; } = [];
-    public string DataProtectionKeyPath { get; init; } = "data-protection";
-    public string AuditLogPath { get; init; } = "audit/admin.jsonl";
-    public string HealthStatusPath { get; init; } = "health/status.json";
-    public int SessionMinutes { get; init; } = 30;
-}
-
-public sealed class MessagingConfig
-{
-    public bool Enabled { get; init; }
-    public string EncryptionKeyId { get; init; } = "primary";
-    public string EncryptionKey { get; set; } = string.Empty;
-    public string? EncryptionKeyFile { get; init; }
-    public IReadOnlyList<MessagingDecryptionKeyConfig> DecryptionKeys { get; init; } = [];
-    public int MaxPayloadBytes { get; init; } = 64 * 1024 * 1024;
-    public int InlinePayloadThresholdBytes { get; init; } = 256 * 1024;
-    public int LeaseSeconds { get; init; } = 120;
-    public int NotificationFallbackSeconds { get; init; } = 30;
-    public string? WorkerId { get; init; }
-}
-
-public sealed class MessagingDecryptionKeyConfig
-{
-    public string Id { get; init; } = string.Empty;
-    public string Key { get; set; } = string.Empty;
-    public string? KeyFile { get; init; }
-}
-
-public sealed class ObjectStorageConfig
-{
-    public string Provider { get; init; } = "azure-blob";
-    public string ConnectionString { get; set; } = string.Empty;
-    public string? ConnectionStringFile { get; init; }
-    public string ContainerName { get; init; } = "mk8-email-objects";
-    public string ObjectPrefix { get; init; } = string.Empty;
-    public bool CreateContainerIfMissing { get; init; }
 }

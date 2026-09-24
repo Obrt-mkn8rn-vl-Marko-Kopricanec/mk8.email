@@ -1,0 +1,5 @@
+// Shared configuration may read files and construct database settings, but is not a service host.
+T:Microsoft.AspNetCore.Http.HttpContext;Configuration must not depend on ASP.NET presentation
+T:Microsoft.EntityFrameworkCore.DbContext;Configuration must not perform EF persistence
+T:Azure.Storage.Blobs.BlobServiceClient;Configuration must not perform Blob operations
+T:System.Net.Http.HttpClient;Configuration must not initiate outbound HTTP

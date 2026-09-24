@@ -1,0 +1,308 @@
+#nullable enable
+const mk8.email.Configuration.EnvironmentLoader.ConfigPathVariable = "MK8EMAIL_CONFIG_FILE" -> string!
+mk8.email.Configuration.AdminConfig
+mk8.email.Configuration.AdminConfig.AdminConfig() -> void
+mk8.email.Configuration.AdminConfig.AllowedNetworks.get -> System.Collections.Generic.IReadOnlyList<string!>!
+mk8.email.Configuration.AdminConfig.AllowedNetworks.init -> void
+mk8.email.Configuration.AdminConfig.AuditLogPath.get -> string!
+mk8.email.Configuration.AdminConfig.AuditLogPath.init -> void
+mk8.email.Configuration.AdminConfig.DataProtectionKeyPath.get -> string!
+mk8.email.Configuration.AdminConfig.DataProtectionKeyPath.init -> void
+mk8.email.Configuration.AdminConfig.HealthStatusPath.get -> string!
+mk8.email.Configuration.AdminConfig.HealthStatusPath.init -> void
+mk8.email.Configuration.AdminConfig.SessionMinutes.get -> int
+mk8.email.Configuration.AdminConfig.SessionMinutes.init -> void
+mk8.email.Configuration.DatabaseConfig
+mk8.email.Configuration.DatabaseConfig.DatabaseConfig() -> void
+mk8.email.Configuration.DatabaseConfig.Host.get -> string!
+mk8.email.Configuration.DatabaseConfig.Host.init -> void
+mk8.email.Configuration.DatabaseConfig.Name.get -> string!
+mk8.email.Configuration.DatabaseConfig.Name.init -> void
+mk8.email.Configuration.DatabaseConfig.Password.get -> string!
+mk8.email.Configuration.DatabaseConfig.Password.set -> void
+mk8.email.Configuration.DatabaseConfig.PasswordFile.get -> string?
+mk8.email.Configuration.DatabaseConfig.PasswordFile.init -> void
+mk8.email.Configuration.DatabaseConfig.Port.get -> int
+mk8.email.Configuration.DatabaseConfig.Port.init -> void
+mk8.email.Configuration.DatabaseConfig.Username.get -> string!
+mk8.email.Configuration.DatabaseConfig.Username.init -> void
+mk8.email.Configuration.DavConfig
+mk8.email.Configuration.DavConfig.DavConfig() -> void
+mk8.email.Configuration.DavConfig.EnableDav.get -> bool
+mk8.email.Configuration.DavConfig.EnableDav.init -> void
+mk8.email.Configuration.DavConfig.MaxCollectionsPerUser.get -> int
+mk8.email.Configuration.DavConfig.MaxCollectionsPerUser.init -> void
+mk8.email.Configuration.DavConfig.MaxResourceSizeBytes.get -> int
+mk8.email.Configuration.DavConfig.MaxResourceSizeBytes.init -> void
+mk8.email.Configuration.DavConfig.MaxResourcesPerCollection.get -> int
+mk8.email.Configuration.DavConfig.MaxResourcesPerCollection.init -> void
+mk8.email.Configuration.DkimConfig
+mk8.email.Configuration.DkimConfig.DkimConfig() -> void
+mk8.email.Configuration.DkimConfig.EnableSigning.get -> bool
+mk8.email.Configuration.DkimConfig.EnableSigning.init -> void
+mk8.email.Configuration.DkimConfig.PrivateKeyPath.get -> string?
+mk8.email.Configuration.DkimConfig.PrivateKeyPath.init -> void
+mk8.email.Configuration.DkimConfig.Selector.get -> string!
+mk8.email.Configuration.DkimConfig.Selector.init -> void
+mk8.email.Configuration.DkimIdentityValidator
+mk8.email.Configuration.EnvironmentConfig
+mk8.email.Configuration.EnvironmentConfig.Admin.get -> mk8.email.Configuration.AdminConfig!
+mk8.email.Configuration.EnvironmentConfig.Admin.init -> void
+mk8.email.Configuration.EnvironmentConfig.BuildConnectionString() -> string!
+mk8.email.Configuration.EnvironmentConfig.Database.get -> mk8.email.Configuration.DatabaseConfig!
+mk8.email.Configuration.EnvironmentConfig.Database.init -> void
+mk8.email.Configuration.EnvironmentConfig.Dav.get -> mk8.email.Configuration.DavConfig!
+mk8.email.Configuration.EnvironmentConfig.Dav.init -> void
+mk8.email.Configuration.EnvironmentConfig.Dkim.get -> mk8.email.Configuration.DkimConfig!
+mk8.email.Configuration.EnvironmentConfig.Dkim.init -> void
+mk8.email.Configuration.EnvironmentConfig.EnvironmentConfig() -> void
+mk8.email.Configuration.EnvironmentConfig.Filtering.get -> mk8.email.Configuration.FilteringConfig!
+mk8.email.Configuration.EnvironmentConfig.Filtering.init -> void
+mk8.email.Configuration.EnvironmentConfig.General.get -> mk8.email.Configuration.GeneralConfig!
+mk8.email.Configuration.EnvironmentConfig.General.init -> void
+mk8.email.Configuration.EnvironmentConfig.Imap.get -> mk8.email.Configuration.ImapConfig!
+mk8.email.Configuration.EnvironmentConfig.Imap.init -> void
+mk8.email.Configuration.EnvironmentConfig.Jmap.get -> mk8.email.Configuration.JmapConfig!
+mk8.email.Configuration.EnvironmentConfig.Jmap.init -> void
+mk8.email.Configuration.EnvironmentConfig.Limits.get -> mk8.email.Configuration.LimitsConfig!
+mk8.email.Configuration.EnvironmentConfig.Limits.init -> void
+mk8.email.Configuration.EnvironmentConfig.Messaging.get -> mk8.email.Configuration.MessagingConfig!
+mk8.email.Configuration.EnvironmentConfig.Messaging.init -> void
+mk8.email.Configuration.EnvironmentConfig.Mfa.get -> mk8.email.Configuration.MfaConfig!
+mk8.email.Configuration.EnvironmentConfig.Mfa.init -> void
+mk8.email.Configuration.EnvironmentConfig.OAuth.get -> mk8.email.Configuration.OAuthConfig!
+mk8.email.Configuration.EnvironmentConfig.OAuth.init -> void
+mk8.email.Configuration.EnvironmentConfig.ObjectStorage.get -> mk8.email.Configuration.ObjectStorageConfig!
+mk8.email.Configuration.EnvironmentConfig.ObjectStorage.init -> void
+mk8.email.Configuration.EnvironmentConfig.Pop3.get -> mk8.email.Configuration.Pop3Config!
+mk8.email.Configuration.EnvironmentConfig.Pop3.init -> void
+mk8.email.Configuration.EnvironmentConfig.Queue.get -> mk8.email.Configuration.QueueConfig!
+mk8.email.Configuration.EnvironmentConfig.Queue.init -> void
+mk8.email.Configuration.EnvironmentConfig.Security.get -> mk8.email.Configuration.SecurityConfig!
+mk8.email.Configuration.EnvironmentConfig.Security.init -> void
+mk8.email.Configuration.EnvironmentConfig.Sieve.get -> mk8.email.Configuration.SieveConfig!
+mk8.email.Configuration.EnvironmentConfig.Sieve.init -> void
+mk8.email.Configuration.EnvironmentConfig.Smtp.get -> mk8.email.Configuration.SmtpConfig!
+mk8.email.Configuration.EnvironmentConfig.Smtp.init -> void
+mk8.email.Configuration.EnvironmentConfig.Tls.get -> mk8.email.Configuration.TlsConfig!
+mk8.email.Configuration.EnvironmentConfig.Tls.init -> void
+mk8.email.Configuration.EnvironmentConfig.Validate(bool isDevelopment = false, mk8.email.Configuration.EnvironmentValidationRole role = mk8.email.Configuration.EnvironmentValidationRole.Combined) -> System.Collections.Generic.IReadOnlyList<string!>!
+mk8.email.Configuration.EnvironmentLoader
+mk8.email.Configuration.EnvironmentValidationRole
+mk8.email.Configuration.EnvironmentValidationRole.ApplicationWorker = 2 -> mk8.email.Configuration.EnvironmentValidationRole
+mk8.email.Configuration.EnvironmentValidationRole.Combined = 0 -> mk8.email.Configuration.EnvironmentValidationRole
+mk8.email.Configuration.EnvironmentValidationRole.Gateway = 1 -> mk8.email.Configuration.EnvironmentValidationRole
+mk8.email.Configuration.FilteringConfig
+mk8.email.Configuration.FilteringConfig.FilteringConfig() -> void
+mk8.email.Configuration.FilteringConfig.RspamdEndpoint.get -> string!
+mk8.email.Configuration.FilteringConfig.RspamdEndpoint.init -> void
+mk8.email.Configuration.FilteringConfig.TimeoutSeconds.get -> int
+mk8.email.Configuration.FilteringConfig.TimeoutSeconds.init -> void
+mk8.email.Configuration.GeneralConfig
+mk8.email.Configuration.GeneralConfig.AllowRegistration.get -> bool
+mk8.email.Configuration.GeneralConfig.AllowRegistration.init -> void
+mk8.email.Configuration.GeneralConfig.GeneralConfig() -> void
+mk8.email.Configuration.ImapConfig
+mk8.email.Configuration.ImapConfig.EnableImap.get -> bool
+mk8.email.Configuration.ImapConfig.EnableImap.init -> void
+mk8.email.Configuration.ImapConfig.EnableImplicitTls.get -> bool
+mk8.email.Configuration.ImapConfig.EnableImplicitTls.init -> void
+mk8.email.Configuration.ImapConfig.ImapConfig() -> void
+mk8.email.Configuration.ImapConfig.ImplicitTlsPort.get -> int
+mk8.email.Configuration.ImapConfig.ImplicitTlsPort.init -> void
+mk8.email.Configuration.ImapConfig.Port.get -> int
+mk8.email.Configuration.ImapConfig.Port.init -> void
+mk8.email.Configuration.JmapConfig
+mk8.email.Configuration.JmapConfig.EnableJmap.get -> bool
+mk8.email.Configuration.JmapConfig.EnableJmap.init -> void
+mk8.email.Configuration.JmapConfig.GetPublicBaseUri(string! smtpHostname) -> System.Uri!
+mk8.email.Configuration.JmapConfig.IsDefault.get -> bool
+mk8.email.Configuration.JmapConfig.IsDefault.init -> void
+mk8.email.Configuration.JmapConfig.JmapConfig() -> void
+mk8.email.Configuration.JmapConfig.MaxCallsInRequest.get -> int
+mk8.email.Configuration.JmapConfig.MaxCallsInRequest.init -> void
+mk8.email.Configuration.JmapConfig.MaxConcurrentRequests.get -> int
+mk8.email.Configuration.JmapConfig.MaxConcurrentRequests.init -> void
+mk8.email.Configuration.JmapConfig.MaxConcurrentUploads.get -> int
+mk8.email.Configuration.JmapConfig.MaxConcurrentUploads.init -> void
+mk8.email.Configuration.JmapConfig.MaxObjectsInGet.get -> int
+mk8.email.Configuration.JmapConfig.MaxObjectsInGet.init -> void
+mk8.email.Configuration.JmapConfig.MaxObjectsInSet.get -> int
+mk8.email.Configuration.JmapConfig.MaxObjectsInSet.init -> void
+mk8.email.Configuration.JmapConfig.MaxRequestSizeBytes.get -> long
+mk8.email.Configuration.JmapConfig.MaxRequestSizeBytes.init -> void
+mk8.email.Configuration.JmapConfig.MaxUnreferencedBlobBytesPerAccount.get -> long
+mk8.email.Configuration.JmapConfig.MaxUnreferencedBlobBytesPerAccount.init -> void
+mk8.email.Configuration.JmapConfig.MaxUploadSizeBytes.get -> long
+mk8.email.Configuration.JmapConfig.MaxUploadSizeBytes.init -> void
+mk8.email.Configuration.JmapConfig.Port.get -> int
+mk8.email.Configuration.JmapConfig.Port.init -> void
+mk8.email.Configuration.JmapConfig.PublicBaseUrl.get -> string?
+mk8.email.Configuration.JmapConfig.PublicBaseUrl.init -> void
+mk8.email.Configuration.JmapConfig.UploadRetentionHours.get -> int
+mk8.email.Configuration.JmapConfig.UploadRetentionHours.init -> void
+mk8.email.Configuration.LimitsConfig
+mk8.email.Configuration.LimitsConfig.ConnectionTimeoutSeconds.get -> int
+mk8.email.Configuration.LimitsConfig.ConnectionTimeoutSeconds.init -> void
+mk8.email.Configuration.LimitsConfig.LimitsConfig() -> void
+mk8.email.Configuration.LimitsConfig.MaxConnectionsPerIp.get -> int
+mk8.email.Configuration.LimitsConfig.MaxConnectionsPerIp.init -> void
+mk8.email.Configuration.LimitsConfig.MaxMessageSizeBytes.get -> int
+mk8.email.Configuration.LimitsConfig.MaxMessageSizeBytes.init -> void
+mk8.email.Configuration.LimitsConfig.MaxRecipientsPerMessage.get -> int
+mk8.email.Configuration.LimitsConfig.MaxRecipientsPerMessage.init -> void
+mk8.email.Configuration.MessagingConfig
+mk8.email.Configuration.MessagingConfig.DecryptionKeys.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Configuration.MessagingDecryptionKeyConfig!>!
+mk8.email.Configuration.MessagingConfig.DecryptionKeys.init -> void
+mk8.email.Configuration.MessagingConfig.Enabled.get -> bool
+mk8.email.Configuration.MessagingConfig.Enabled.init -> void
+mk8.email.Configuration.MessagingConfig.EncryptionKey.get -> string!
+mk8.email.Configuration.MessagingConfig.EncryptionKey.set -> void
+mk8.email.Configuration.MessagingConfig.EncryptionKeyFile.get -> string?
+mk8.email.Configuration.MessagingConfig.EncryptionKeyFile.init -> void
+mk8.email.Configuration.MessagingConfig.EncryptionKeyId.get -> string!
+mk8.email.Configuration.MessagingConfig.EncryptionKeyId.init -> void
+mk8.email.Configuration.MessagingConfig.InlinePayloadThresholdBytes.get -> int
+mk8.email.Configuration.MessagingConfig.InlinePayloadThresholdBytes.init -> void
+mk8.email.Configuration.MessagingConfig.LeaseSeconds.get -> int
+mk8.email.Configuration.MessagingConfig.LeaseSeconds.init -> void
+mk8.email.Configuration.MessagingConfig.MaxPayloadBytes.get -> int
+mk8.email.Configuration.MessagingConfig.MaxPayloadBytes.init -> void
+mk8.email.Configuration.MessagingConfig.MessagingConfig() -> void
+mk8.email.Configuration.MessagingConfig.NotificationFallbackSeconds.get -> int
+mk8.email.Configuration.MessagingConfig.NotificationFallbackSeconds.init -> void
+mk8.email.Configuration.MessagingConfig.WorkerId.get -> string?
+mk8.email.Configuration.MessagingConfig.WorkerId.init -> void
+mk8.email.Configuration.MessagingDecryptionKeyConfig
+mk8.email.Configuration.MessagingDecryptionKeyConfig.Id.get -> string!
+mk8.email.Configuration.MessagingDecryptionKeyConfig.Id.init -> void
+mk8.email.Configuration.MessagingDecryptionKeyConfig.Key.get -> string!
+mk8.email.Configuration.MessagingDecryptionKeyConfig.Key.set -> void
+mk8.email.Configuration.MessagingDecryptionKeyConfig.KeyFile.get -> string?
+mk8.email.Configuration.MessagingDecryptionKeyConfig.KeyFile.init -> void
+mk8.email.Configuration.MessagingDecryptionKeyConfig.MessagingDecryptionKeyConfig() -> void
+mk8.email.Configuration.MfaConfig
+mk8.email.Configuration.MfaConfig.EnableTotp.get -> bool
+mk8.email.Configuration.MfaConfig.EnableTotp.init -> void
+mk8.email.Configuration.MfaConfig.EncryptionKey.get -> string!
+mk8.email.Configuration.MfaConfig.EncryptionKey.set -> void
+mk8.email.Configuration.MfaConfig.EncryptionKeyFile.get -> string?
+mk8.email.Configuration.MfaConfig.EncryptionKeyFile.init -> void
+mk8.email.Configuration.MfaConfig.Issuer.get -> string!
+mk8.email.Configuration.MfaConfig.Issuer.init -> void
+mk8.email.Configuration.MfaConfig.MfaConfig() -> void
+mk8.email.Configuration.MfaConfig.RecoveryCodeCount.get -> int
+mk8.email.Configuration.MfaConfig.RecoveryCodeCount.init -> void
+mk8.email.Configuration.OAuthConfig
+mk8.email.Configuration.OAuthConfig.AccessTokenMinutes.get -> int
+mk8.email.Configuration.OAuthConfig.AccessTokenMinutes.init -> void
+mk8.email.Configuration.OAuthConfig.AuthorizationCodeMinutes.get -> int
+mk8.email.Configuration.OAuthConfig.AuthorizationCodeMinutes.init -> void
+mk8.email.Configuration.OAuthConfig.ClientId.get -> string!
+mk8.email.Configuration.OAuthConfig.ClientId.init -> void
+mk8.email.Configuration.OAuthConfig.EnableOAuth.get -> bool
+mk8.email.Configuration.OAuthConfig.EnableOAuth.init -> void
+mk8.email.Configuration.OAuthConfig.EnableOpenIdConnect.get -> bool
+mk8.email.Configuration.OAuthConfig.EnableOpenIdConnect.init -> void
+mk8.email.Configuration.OAuthConfig.GetPublicBaseUri(string! smtpHostname, string? jmapPublicBaseUrl) -> System.Uri!
+mk8.email.Configuration.OAuthConfig.IdTokenMinutes.get -> int
+mk8.email.Configuration.OAuthConfig.IdTokenMinutes.init -> void
+mk8.email.Configuration.OAuthConfig.OAuthConfig() -> void
+mk8.email.Configuration.OAuthConfig.PublicBaseUrl.get -> string?
+mk8.email.Configuration.OAuthConfig.PublicBaseUrl.init -> void
+mk8.email.Configuration.OAuthConfig.RefreshTokenDays.get -> int
+mk8.email.Configuration.OAuthConfig.RefreshTokenDays.init -> void
+mk8.email.Configuration.OAuthConfig.SigningKey.get -> string!
+mk8.email.Configuration.OAuthConfig.SigningKey.set -> void
+mk8.email.Configuration.OAuthConfig.SigningKeyFile.get -> string?
+mk8.email.Configuration.OAuthConfig.SigningKeyFile.init -> void
+mk8.email.Configuration.ObjectStorageConfig
+mk8.email.Configuration.ObjectStorageConfig.ConnectionString.get -> string!
+mk8.email.Configuration.ObjectStorageConfig.ConnectionString.set -> void
+mk8.email.Configuration.ObjectStorageConfig.ConnectionStringFile.get -> string?
+mk8.email.Configuration.ObjectStorageConfig.ConnectionStringFile.init -> void
+mk8.email.Configuration.ObjectStorageConfig.ContainerName.get -> string!
+mk8.email.Configuration.ObjectStorageConfig.ContainerName.init -> void
+mk8.email.Configuration.ObjectStorageConfig.CreateContainerIfMissing.get -> bool
+mk8.email.Configuration.ObjectStorageConfig.CreateContainerIfMissing.init -> void
+mk8.email.Configuration.ObjectStorageConfig.ObjectPrefix.get -> string!
+mk8.email.Configuration.ObjectStorageConfig.ObjectPrefix.init -> void
+mk8.email.Configuration.ObjectStorageConfig.ObjectStorageConfig() -> void
+mk8.email.Configuration.ObjectStorageConfig.Provider.get -> string!
+mk8.email.Configuration.ObjectStorageConfig.Provider.init -> void
+mk8.email.Configuration.Pop3Config
+mk8.email.Configuration.Pop3Config.EnableImplicitTls.get -> bool
+mk8.email.Configuration.Pop3Config.EnableImplicitTls.init -> void
+mk8.email.Configuration.Pop3Config.EnablePop3.get -> bool
+mk8.email.Configuration.Pop3Config.EnablePop3.init -> void
+mk8.email.Configuration.Pop3Config.EnableStartTls.get -> bool
+mk8.email.Configuration.Pop3Config.EnableStartTls.init -> void
+mk8.email.Configuration.Pop3Config.ImplicitTlsPort.get -> int
+mk8.email.Configuration.Pop3Config.ImplicitTlsPort.init -> void
+mk8.email.Configuration.Pop3Config.Pop3Config() -> void
+mk8.email.Configuration.Pop3Config.Port.get -> int
+mk8.email.Configuration.Pop3Config.Port.init -> void
+mk8.email.Configuration.QueueConfig
+mk8.email.Configuration.QueueConfig.CompletedRetentionDays.get -> int
+mk8.email.Configuration.QueueConfig.CompletedRetentionDays.init -> void
+mk8.email.Configuration.QueueConfig.LeaseSeconds.get -> int
+mk8.email.Configuration.QueueConfig.LeaseSeconds.init -> void
+mk8.email.Configuration.QueueConfig.MaxAgeHours.get -> int
+mk8.email.Configuration.QueueConfig.MaxAgeHours.init -> void
+mk8.email.Configuration.QueueConfig.MaxAttempts.get -> int
+mk8.email.Configuration.QueueConfig.MaxAttempts.init -> void
+mk8.email.Configuration.QueueConfig.PollIntervalMilliseconds.get -> int
+mk8.email.Configuration.QueueConfig.PollIntervalMilliseconds.init -> void
+mk8.email.Configuration.QueueConfig.QueueConfig() -> void
+mk8.email.Configuration.SecurityConfig
+mk8.email.Configuration.SecurityConfig.EnableDmarcCheck.get -> bool
+mk8.email.Configuration.SecurityConfig.EnableDmarcCheck.init -> void
+mk8.email.Configuration.SecurityConfig.EnableSpfCheck.get -> bool
+mk8.email.Configuration.SecurityConfig.EnableSpfCheck.init -> void
+mk8.email.Configuration.SecurityConfig.PasswordHashScheme.get -> string!
+mk8.email.Configuration.SecurityConfig.PasswordHashScheme.init -> void
+mk8.email.Configuration.SecurityConfig.SecurityConfig() -> void
+mk8.email.Configuration.SieveConfig
+mk8.email.Configuration.SieveConfig.EnableManageSieve.get -> bool
+mk8.email.Configuration.SieveConfig.EnableManageSieve.init -> void
+mk8.email.Configuration.SieveConfig.EnableStartTls.get -> bool
+mk8.email.Configuration.SieveConfig.EnableStartTls.init -> void
+mk8.email.Configuration.SieveConfig.MaxScriptsPerUser.get -> int
+mk8.email.Configuration.SieveConfig.MaxScriptsPerUser.init -> void
+mk8.email.Configuration.SieveConfig.Port.get -> int
+mk8.email.Configuration.SieveConfig.Port.init -> void
+mk8.email.Configuration.SieveConfig.SieveConfig() -> void
+mk8.email.Configuration.SmtpConfig
+mk8.email.Configuration.SmtpConfig.AllowRelay.get -> bool
+mk8.email.Configuration.SmtpConfig.AllowRelay.init -> void
+mk8.email.Configuration.SmtpConfig.EnableImplicitTls.get -> bool
+mk8.email.Configuration.SmtpConfig.EnableImplicitTls.init -> void
+mk8.email.Configuration.SmtpConfig.EnableSmtp.get -> bool
+mk8.email.Configuration.SmtpConfig.EnableSmtp.init -> void
+mk8.email.Configuration.SmtpConfig.EnableStartTls.get -> bool
+mk8.email.Configuration.SmtpConfig.EnableStartTls.init -> void
+mk8.email.Configuration.SmtpConfig.EnableSubmission.get -> bool
+mk8.email.Configuration.SmtpConfig.EnableSubmission.init -> void
+mk8.email.Configuration.SmtpConfig.Hostname.get -> string!
+mk8.email.Configuration.SmtpConfig.Hostname.init -> void
+mk8.email.Configuration.SmtpConfig.ImplicitTlsPort.get -> int
+mk8.email.Configuration.SmtpConfig.ImplicitTlsPort.init -> void
+mk8.email.Configuration.SmtpConfig.Port.get -> int
+mk8.email.Configuration.SmtpConfig.Port.init -> void
+mk8.email.Configuration.SmtpConfig.RequireAuth.get -> bool
+mk8.email.Configuration.SmtpConfig.RequireAuth.init -> void
+mk8.email.Configuration.SmtpConfig.RequireTls.get -> bool
+mk8.email.Configuration.SmtpConfig.RequireTls.init -> void
+mk8.email.Configuration.SmtpConfig.SmtpConfig() -> void
+mk8.email.Configuration.SmtpConfig.SubmissionPort.get -> int
+mk8.email.Configuration.SmtpConfig.SubmissionPort.init -> void
+mk8.email.Configuration.TlsConfig
+mk8.email.Configuration.TlsConfig.CertificateKeyPath.get -> string?
+mk8.email.Configuration.TlsConfig.CertificateKeyPath.init -> void
+mk8.email.Configuration.TlsConfig.CertificatePath.get -> string?
+mk8.email.Configuration.TlsConfig.CertificatePath.init -> void
+mk8.email.Configuration.TlsConfig.TlsConfig() -> void
+static mk8.email.Configuration.DkimIdentityValidator.IsValidDomain(string! domain) -> bool
+static mk8.email.Configuration.DkimIdentityValidator.IsValidSelector(string! selector) -> bool
+static mk8.email.Configuration.EnvironmentLoader.Load(bool isDevelopment = false, mk8.email.Configuration.EnvironmentValidationRole role = mk8.email.Configuration.EnvironmentValidationRole.Combined) -> mk8.email.Configuration.EnvironmentConfig!
+static mk8.email.Configuration.EnvironmentLoader.LoadFromFile(string! filePath, bool isDevelopment = false, mk8.email.Configuration.EnvironmentValidationRole role = mk8.email.Configuration.EnvironmentValidationRole.Combined) -> mk8.email.Configuration.EnvironmentConfig!

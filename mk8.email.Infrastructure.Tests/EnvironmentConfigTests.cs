@@ -94,6 +94,13 @@ public sealed class EnvironmentConfigTests
     }
 
     [TestMethod]
+    public void DkimIdentityValidationRejectsNullInputs()
+    {
+        Assert.IsFalse(DkimIdentityValidator.IsValidDomain(null!));
+        Assert.IsFalse(DkimIdentityValidator.IsValidSelector(null!));
+    }
+
+    [TestMethod]
     public void ProductionRequiresLoopbackRspamdEndpoint()
     {
         var errors = CreateValidConfiguration(rspamdEndpoint: "http://scanner.example/checkv2").Validate();

@@ -88,6 +88,7 @@ public sealed class MailboxMessageContentService(
         }
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1822", Justification = "The shipped mailbox content-service API is instance-bound for existing consumers.")]
     public LargeObjectReference? TryGetReference(EmailDB email)
     {
         ArgumentNullException.ThrowIfNull(email);

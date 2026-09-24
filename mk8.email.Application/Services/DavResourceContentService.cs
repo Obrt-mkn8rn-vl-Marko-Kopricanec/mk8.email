@@ -81,6 +81,7 @@ public sealed class DavResourceContentService(
         return content;
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1822", Justification = "The shipped DAV content-service API is instance-bound for existing consumers.")]
     public LargeObjectReference? TryGetReference(DavResourceDB resource)
     {
         ArgumentNullException.ThrowIfNull(resource);

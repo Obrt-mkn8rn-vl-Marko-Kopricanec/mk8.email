@@ -11,7 +11,7 @@ namespace mk8.email.Application.Services;
 public sealed class RspamdMailScanner : IMailScanner, IDisposable
 {
     private const int MaximumResponseBytes = 1024 * 1024;
-    private static readonly IReadOnlySet<string> SupportedActions =
+    private static readonly HashSet<string> SupportedActions =
         new HashSet<string>(StringComparer.Ordinal)
         {
             "no action",
@@ -133,7 +133,7 @@ public sealed class RspamdMailScanner : IMailScanner, IDisposable
         string action,
         double score,
         double requiredScore,
-        IReadOnlySet<string> symbols)
+        HashSet<string> symbols)
     {
         var headers = new StringBuilder();
         if (isAuthenticated)
@@ -171,7 +171,7 @@ public sealed class RspamdMailScanner : IMailScanner, IDisposable
         return headers.ToString();
     }
 
-    private static IReadOnlySet<string> ReadSymbols(JsonElement root)
+    private static HashSet<string> ReadSymbols(JsonElement root)
     {
         if (!root.TryGetProperty("symbols", out var symbolsElement)
             || symbolsElement.ValueKind != JsonValueKind.Object)
@@ -189,7 +189,7 @@ public sealed class RspamdMailScanner : IMailScanner, IDisposable
         return symbols;
     }
 
-    private static string GetSpfResult(IReadOnlySet<string> symbols)
+    private static string GetSpfResult(HashSet<string> symbols)
     {
         if (symbols.Contains("R_SPF_ALLOW"))
             return "pass";
@@ -198,7 +198,7 @@ public sealed class RspamdMailScanner : IMailScanner, IDisposable
         return "none";
     }
 
-    private static string GetDkimResult(IReadOnlySet<string> symbols)
+    private static string GetDkimResult(HashSet<string> symbols)
     {
         if (symbols.Contains("R_DKIM_ALLOW"))
             return "pass";
@@ -207,7 +207,7 @@ public sealed class RspamdMailScanner : IMailScanner, IDisposable
         return "none";
     }
 
-    private static string GetDmarcResult(IReadOnlySet<string> symbols)
+    private static string GetDmarcResult(HashSet<string> symbols)
     {
         if (symbols.Contains("DMARC_POLICY_ALLOW"))
             return "pass";

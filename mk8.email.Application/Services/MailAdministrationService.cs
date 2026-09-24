@@ -290,10 +290,10 @@ public sealed partial class MailAdministrationService(EmailDbContext db) : IMail
     }
 
     private async Task RevokeOAuthGrantsAsync(
-        IReadOnlyCollection<Guid> userIds,
+        Guid[] userIds,
         CancellationToken cancellationToken)
     {
-        if (userIds.Count == 0)
+        if (userIds.Length == 0)
             return;
 
         var now = DateTime.UtcNow;
@@ -322,10 +322,10 @@ public sealed partial class MailAdministrationService(EmailDbContext db) : IMail
         await RevokePushSubscriptionsAsync([userId], cancellationToken).ConfigureAwait(false);
 
     private async Task RevokePushSubscriptionsAsync(
-        IReadOnlyCollection<Guid> userIds,
+        Guid[] userIds,
         CancellationToken cancellationToken)
     {
-        if (userIds.Count == 0)
+        if (userIds.Length == 0)
             return;
 
         var subscriptions = await db.JmapPushSubscriptions
@@ -431,8 +431,8 @@ public sealed partial class MailAdministrationService(EmailDbContext db) : IMail
         if (domain is null
             || localPart.Length > 64
             || !LocalPartPattern().IsMatch(localPart)
-            || localPart.StartsWith(".", StringComparison.Ordinal)
-            || localPart.EndsWith(".", StringComparison.Ordinal)
+            || localPart.StartsWith('.')
+            || localPart.EndsWith('.')
             || localPart.Contains("..", StringComparison.Ordinal))
         {
             return null;

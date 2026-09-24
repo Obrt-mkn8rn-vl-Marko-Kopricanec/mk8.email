@@ -95,6 +95,7 @@ public sealed class MailQueueContentService(
         }
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1822", Justification = "The shipped queue content-service API is instance-bound for existing consumers.")]
     public LargeObjectReference? TryGetReference(MailQueueMessageDB message)
     {
         ArgumentNullException.ThrowIfNull(message);

@@ -19,7 +19,7 @@ internal static class TotpMfa
         var buffer = 0;
         var bits = 0;
         var outputIndex = 0;
-        foreach (var value in secret)
+        foreach (ref readonly var value in secret)
         {
             buffer = (buffer << 8) | value;
             bits += 8;

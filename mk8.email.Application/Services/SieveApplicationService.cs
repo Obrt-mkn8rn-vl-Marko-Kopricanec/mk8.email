@@ -81,7 +81,7 @@ internal sealed class SieveApplicationService(
     {
         cancellationToken.ThrowIfCancellationRequested();
         var compilation = scripts.Validate(request.Content);
-        var first = compilation.Diagnostics.FirstOrDefault();
+        var first = compilation.Diagnostics.Count > 0 ? compilation.Diagnostics[0] : null;
         return Task.FromResult(new SieveValidationResult(
             compilation.Succeeded,
             first is null

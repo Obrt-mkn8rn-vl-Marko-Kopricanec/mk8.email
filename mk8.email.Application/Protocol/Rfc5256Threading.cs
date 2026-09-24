@@ -39,7 +39,7 @@ internal static class Rfc5256Threading
         IReadOnlyList<Rfc5256ThreadMessage> messages) =>
         Flatten(BuildReferenceGraph(messages));
 
-    private static IReadOnlyList<ThreadNode> BuildReferenceGraph(
+    private static List<ThreadNode> BuildReferenceGraph(
         IReadOnlyList<Rfc5256ThreadMessage> messages)
     {
         if (messages.Count == 0)
@@ -216,7 +216,7 @@ internal static class Rfc5256Threading
         var result = new StringBuilder(value.Length);
         var quoted = false;
         var escaped = false;
-        foreach (var character in value)
+        foreach (ref readonly var character in value)
         {
             if (!quoted)
             {

@@ -92,8 +92,8 @@ internal static class ImapThreadEngine
                     sentAt = parsedDate.UtcDateTime;
                 }
 
-                messageId = MessageIdsFromHeaders(message, "Message-ID")
-                    .FirstOrDefault();
+                var messageIds = MessageIdsFromHeaders(message, "Message-ID");
+                messageId = messageIds.Count > 0 ? messageIds[0] : null;
                 var headerReferences = MessageIdsFromHeaders(message, "References");
                 references = headerReferences.Count > 0
                     ? headerReferences
@@ -120,7 +120,7 @@ internal static class ImapThreadEngine
             references);
     }
 
-    private static IReadOnlyList<string> MessageIdsFromHeaders(
+    private static List<string> MessageIdsFromHeaders(
         MimeMessage message,
         string fieldName)
     {

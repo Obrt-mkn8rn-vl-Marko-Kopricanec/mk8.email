@@ -526,7 +526,7 @@ internal static class SieveScript
 
         public bool HasHeader(string name) => _headers.ContainsKey(name);
 
-        public IEnumerable<string> GetHeaderValues(string name) =>
+        public List<string> GetHeaderValues(string name) =>
             _headers.TryGetValue(name, out var values) ? values : [];
 
         public string? GetEnvelope(string field) => field.ToMailLowerInvariant() switch
@@ -586,7 +586,7 @@ internal static class SieveScript
         private int _line = 1;
         private int _column = 1;
 
-        public IReadOnlyList<Token> ReadAll()
+        public List<Token> ReadAll()
         {
             while (_position < source.Length)
             {
@@ -930,6 +930,7 @@ internal static class SieveScript
             return new SieveIf(branches, elseStatements);
         }
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1859", Justification = "Callers store blocks in IReadOnlyList AST fields, so a concrete private return does not avoid interface enumeration.")]
         private IReadOnlyList<SieveStatement> ParseBlock(int depth)
         {
             EnsureDepth(depth);
@@ -1006,7 +1007,7 @@ internal static class SieveScript
             }
         }
 
-        private IReadOnlyList<SieveTest> ParseTestList(int depth)
+        private List<SieveTest> ParseTestList(int depth)
         {
             Expect(TokenKind.LeftParenthesis, "Expected '('.");
             var tests = new List<SieveTest> { ParseTest(depth) };
@@ -1165,6 +1166,7 @@ internal static class SieveScript
                 && character is not '(' and not ')' and not '{' and not '%' and not '*' and not ']');
         }
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1859", Justification = "Callers store strings in IReadOnlyList AST fields, so a concrete private return does not avoid interface enumeration.")]
         private IReadOnlyList<string> ParseStringList()
         {
             if (!At(TokenKind.LeftBracket))

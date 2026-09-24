@@ -623,7 +623,7 @@ public sealed class MailQueueWorker(
         }
     }
 
-    private async Task<int> AddSieveRedirectsAsync(
+    private static async Task<int> AddSieveRedirectsAsync(
         EmailDbContext database,
         MailQueueMessageDB message,
         MailQueueRecipientDB source,
@@ -961,7 +961,7 @@ public sealed class MailQueueWorker(
         recipient.LastError = SanitizeError(detail);
     }
 
-    private void FinalizeMessageState(MailQueueMessageDB message, DateTime now)
+    private static void FinalizeMessageState(MailQueueMessageDB message, DateTime now)
     {
         var pendingNotices = message.Recipients.Where(item =>
                 (string.Equals(item.State, MailQueueRecipientStates.PermanentFailure, StringComparison.Ordinal)

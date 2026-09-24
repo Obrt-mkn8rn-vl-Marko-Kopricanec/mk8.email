@@ -90,6 +90,7 @@ public sealed class SieveScriptContentService(
         }
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1822", Justification = "The shipped Sieve content-service API is instance-bound for existing consumers.")]
     public LargeObjectReference? TryGetReference(SieveScriptDB script)
     {
         ArgumentNullException.ThrowIfNull(script);

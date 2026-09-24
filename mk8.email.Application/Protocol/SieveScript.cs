@@ -4,30 +4,6 @@ using MimeKit;
 
 namespace mk8.email.Application.Protocol;
 
-internal sealed record SieveDiagnostic(int Line, int Column, string Message);
-
-internal sealed record SieveCompilationResult(
-    SieveProgram? Program,
-    IReadOnlyList<SieveDiagnostic> Diagnostics)
-{
-    public bool Succeeded => Program is not null && Diagnostics.Count == 0;
-}
-
-internal sealed record SieveMessageContext(
-    string EnvelopeSender,
-    string EnvelopeRecipient,
-    string RawMessage,
-    string DefaultFolder,
-    IReadOnlySet<string> Mailboxes);
-
-internal sealed record SieveDelivery(string Folder, IReadOnlyList<string> Flags, bool Create);
-
-internal sealed record SieveEvaluationResult(
-    IReadOnlyList<SieveDelivery> Deliveries,
-    IReadOnlyList<string> Redirects,
-    string? RejectReason,
-    bool Discarded);
-
 internal static class SieveScript
 {
     public const int MaximumScriptBytes = SieveWireCapabilities.MaximumScriptBytes;
@@ -1288,35 +1264,3 @@ internal static class SieveScript
         public int Column { get; } = column;
     }
 }
-
-internal sealed record SieveProgram(IReadOnlyList<SieveStatement> Statements);
-internal abstract record SieveStatement;
-internal sealed record SieveBranch(SieveTest Test, IReadOnlyList<SieveStatement> Statements);
-internal sealed record SieveIf(IReadOnlyList<SieveBranch> Branches, IReadOnlyList<SieveStatement> ElseStatements) : SieveStatement;
-internal sealed record SieveKeep(IReadOnlyList<string>? Flags) : SieveStatement;
-internal sealed record SieveFileInto(string Folder, bool Copy, bool Create, IReadOnlyList<string>? Flags) : SieveStatement;
-internal sealed record SieveRedirect(string Address, bool Copy) : SieveStatement;
-internal sealed record SieveDiscard : SieveStatement;
-internal sealed record SieveStop : SieveStatement;
-internal sealed record SieveReject(string Reason) : SieveStatement;
-internal sealed record SieveSetFlags(IReadOnlyList<string> Flags) : SieveStatement;
-internal sealed record SieveAddFlags(IReadOnlyList<string> Flags) : SieveStatement;
-internal sealed record SieveRemoveFlags(IReadOnlyList<string> Flags) : SieveStatement;
-
-internal abstract record SieveTest;
-internal sealed record SieveTrue : SieveTest;
-internal sealed record SieveFalse : SieveTest;
-internal sealed record SieveNot(SieveTest Test) : SieveTest;
-internal sealed record SieveAllOf(IReadOnlyList<SieveTest> Tests) : SieveTest;
-internal sealed record SieveAnyOf(IReadOnlyList<SieveTest> Tests) : SieveTest;
-internal sealed record SieveExists(IReadOnlyList<string> HeaderNames) : SieveTest;
-internal sealed record SieveSize(long Bytes, bool Over) : SieveTest;
-internal sealed record SieveHeader(MatchOptions Options, IReadOnlyList<string> HeaderNames, IReadOnlyList<string> Keys) : SieveTest;
-internal sealed record SieveAddress(MatchOptions Options, SieveAddressPart AddressPart, IReadOnlyList<string> HeaderNames, IReadOnlyList<string> Keys) : SieveTest;
-internal sealed record SieveEnvelope(MatchOptions Options, SieveAddressPart AddressPart, IReadOnlyList<string> Fields, IReadOnlyList<string> Keys) : SieveTest;
-internal sealed record SieveBody(MatchOptions Options, SieveBodyTransform Transform, IReadOnlyList<string> ContentTypes, IReadOnlyList<string> Keys) : SieveTest;
-internal sealed record SieveMailboxExists(IReadOnlyList<string> Folders) : SieveTest;
-internal sealed record MatchOptions(SieveMatchType MatchType, string Comparator);
-internal enum SieveMatchType { Is, Contains, Matches }
-internal enum SieveAddressPart { All, LocalPart, Domain }
-internal enum SieveBodyTransform { Text, Raw, Content }

@@ -5,19 +5,6 @@ using mk8.email.Infrastructure.Models;
 
 namespace mk8.email.Application.Services;
 
-internal enum DeliveryStatusAction
-{
-    Failed,
-    Delayed,
-    Delivered,
-    Relayed,
-    Expanded,
-}
-
-internal sealed record BuiltDeliveryStatusNotification(
-    string RawMessage,
-    bool RequiresSmtpUtf8);
-
 internal static class DeliveryStatusNotificationBuilder
 {
     private const int MaximumFullReturnBytes = 1024 * 1024;

@@ -1,27 +1,5 @@
 namespace mk8.email.Application.Interfaces;
 
-public sealed record OAuthTokenPair(
-    Guid GrantId,
-    string AccessToken,
-    string RefreshToken,
-    int ExpiresInSeconds,
-    string Scope,
-    string? IdToken = null);
-
-public sealed record OAuthAccessTokenIdentity(
-    Guid UserId,
-    string Username,
-    IReadOnlyList<string> Scopes);
-
-public sealed record OAuthGrantSummary(
-    Guid Id,
-    string ClientId,
-    string DeviceName,
-    IReadOnlyList<string> Scopes,
-    DateTime CreatedAt,
-    DateTime? LastUsedAt,
-    DateTime? RevokedAt);
-
 public interface IOAuthTokenService
 {
     Task<OAuthTokenPair?> CreateGrantAsync(

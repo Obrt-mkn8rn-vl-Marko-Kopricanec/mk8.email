@@ -6,8 +6,6 @@ using mk8.email.Infrastructure.Models;
 
 namespace mk8.email.Application.Services;
 
-internal readonly record struct ImapMailboxLocation(Guid InboxId, string FolderName);
-
 internal static class ImapMailboxResolver
 {
     public static bool IsValidFolderName(string folderName)

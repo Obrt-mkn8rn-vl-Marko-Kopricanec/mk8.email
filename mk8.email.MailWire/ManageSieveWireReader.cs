@@ -4,28 +4,6 @@ using System.Text;
 
 namespace mk8.email.MailWire;
 
-internal enum ManageSieveTokenKind
-{
-    Atom,
-    Number,
-    String,
-}
-
-internal readonly record struct ManageSieveToken(ManageSieveTokenKind Kind, string Value);
-
-internal sealed record ManageSieveCommand(
-    string Name,
-    IReadOnlyList<ManageSieveToken> Arguments);
-
-internal sealed class ManageSieveProtocolException(
-    string message,
-    bool isFatal = false,
-    string? responseCode = null) : Exception(message)
-{
-    public bool IsFatal { get; } = isFatal;
-    public string? ResponseCode { get; } = responseCode;
-}
-
 internal sealed class ManageSieveWireReader(Stream stream)
 {
     private const int MaximumPhysicalLineBytes = 16 * 1024;
@@ -47,7 +25,7 @@ internal sealed class ManageSieveWireReader(Stream stream)
         var tokens = await ReadTokensAsync(
             requireCommandAtom: true,
             acknowledgeSynchronizingLiteral,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (tokens is null)
             return null;
 
@@ -64,7 +42,7 @@ internal sealed class ManageSieveWireReader(Stream stream)
         var tokens = await ReadTokensAsync(
             requireCommandAtom: false,
             acknowledgeSynchronizingLiteral,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (tokens is null)
             return null;
         if (tokens.Count != 1 || tokens[0].Kind != ManageSieveTokenKind.String)
@@ -77,7 +55,7 @@ internal sealed class ManageSieveWireReader(Stream stream)
         Func<CancellationToken, Task> acknowledgeSynchronizingLiteral,
         CancellationToken cancellationToken)
     {
-        var firstLine = await ReadPhysicalLineAsync(cancellationToken);
+        var firstLine = await ReadPhysicalLineAsync(cancellationToken).ConfigureAwait(false);
         if (firstLine is null)
             return null;
 
@@ -114,34 +92,14 @@ internal sealed class ManageSieveWireReader(Stream stream)
             }
 
             if (!parsed.Value.IsNonSynchronizing)
-                await acknowledgeSynchronizingLiteral(cancellationToken);
+                await acknowledgeSynchronizingLiteral(cancellationToken).ConfigureAwait(false);
 
-            var literalBytes = ArrayPool<byte>.Shared.Rent(parsed.Value.Length);
-            try
-            {
-                await ReadExactlyAsync(
-                    literalBytes.AsMemory(0, parsed.Value.Length),
-                    cancellationToken);
-                string literal;
-                try
-                {
-                    literal = StrictUtf8.GetString(literalBytes, 0, parsed.Value.Length);
-                }
-                catch (DecoderFallbackException)
-                {
-                    throw new ManageSieveProtocolException(
-                        "Literal strings must contain valid UTF-8.",
-                        isFatal: true);
-                }
-                tokens.Add(new ManageSieveToken(ManageSieveTokenKind.String, literal));
-                totalBytes += parsed.Value.Length;
-            }
-            finally
-            {
-                ArrayPool<byte>.Shared.Return(literalBytes);
-            }
+            var literal = await ReadLiteralAsync(parsed.Value.Length, cancellationToken)
+                .ConfigureAwait(false);
+            tokens.Add(new ManageSieveToken(ManageSieveTokenKind.String, literal));
+            totalBytes += parsed.Value.Length;
 
-            segment = await ReadPhysicalLineAsync(cancellationToken)
+            segment = await ReadPhysicalLineAsync(cancellationToken).ConfigureAwait(false)
                 ?? throw new ManageSieveProtocolException(
                     "The connection ended before the literal command was complete.",
                     isFatal: true);
@@ -153,6 +111,30 @@ internal sealed class ManageSieveWireReader(Stream stream)
         if (requireCommandAtom && tokens[0].Kind != ManageSieveTokenKind.Atom)
             throw new ManageSieveProtocolException("The command name must be an atom.");
         return tokens;
+    }
+
+    private async ValueTask<string> ReadLiteralAsync(int length, CancellationToken cancellationToken)
+    {
+        var literalBytes = ArrayPool<byte>.Shared.Rent(length);
+        try
+        {
+            await ReadExactlyAsync(literalBytes.AsMemory(0, length), cancellationToken)
+                .ConfigureAwait(false);
+            try
+            {
+                return StrictUtf8.GetString(literalBytes, 0, length);
+            }
+            catch (DecoderFallbackException)
+            {
+                throw new ManageSieveProtocolException(
+                    "Literal strings must contain valid UTF-8.",
+                    isFatal: true);
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(literalBytes);
+        }
     }
 
     private static LiteralMarker? ParseSegment(
@@ -206,23 +188,31 @@ internal sealed class ManageSieveWireReader(Stream stream)
             while (index < line.Length && line[index] != ' ')
                 index++;
             var value = line[start..index];
-            if (tokens.Count == 0 && requireCommandAtom)
-            {
-                if (!IsAtom(value))
-                    throw new ManageSieveProtocolException("The command name is not a valid atom.");
-                tokens.Add(new ManageSieveToken(ManageSieveTokenKind.Atom, value));
-            }
-            else if (value.All(character => character is >= '0' and <= '9'))
-            {
-                tokens.Add(new ManageSieveToken(ManageSieveTokenKind.Number, value));
-            }
-            else
-            {
-                throw new ManageSieveProtocolException("String arguments must be quoted or literal strings.");
-            }
+            AddAtomOrNumber(value, tokens, requireCommandAtom);
         }
 
         return null;
+    }
+
+    private static void AddAtomOrNumber(
+        string value,
+        List<ManageSieveToken> tokens,
+        bool requireCommandAtom)
+    {
+        if (tokens.Count == 0 && requireCommandAtom)
+        {
+            if (!IsAtom(value))
+                throw new ManageSieveProtocolException("The command name is not a valid atom.");
+            tokens.Add(new ManageSieveToken(ManageSieveTokenKind.Atom, value));
+        }
+        else if (value.All(character => character is >= '0' and <= '9'))
+        {
+            tokens.Add(new ManageSieveToken(ManageSieveTokenKind.Number, value));
+        }
+        else
+        {
+            throw new ManageSieveProtocolException("String arguments must be quoted or literal strings.");
+        }
     }
 
     private static string ParseQuotedString(string line, ref int index)
@@ -279,7 +269,7 @@ internal sealed class ManageSieveWireReader(Stream stream)
         var isTooLong = false;
         while (true)
         {
-            var value = await ReadByteAsync(cancellationToken);
+            var value = await ReadByteAsync(cancellationToken).ConfigureAwait(false);
             if (value < 0)
             {
                 if (bytes.Count == 0 && !isTooLong)
@@ -315,7 +305,7 @@ internal sealed class ManageSieveWireReader(Stream stream)
     {
         if (_position >= _count)
         {
-            _count = await stream.ReadAsync(_buffer, cancellationToken);
+            _count = await stream.ReadAsync(_buffer, cancellationToken).ConfigureAwait(false);
             _position = 0;
             if (_count == 0)
                 return -1;
@@ -336,7 +326,7 @@ internal sealed class ManageSieveWireReader(Stream stream)
         }
         while (copied < destination.Length)
         {
-            var read = await stream.ReadAsync(destination[copied..], cancellationToken);
+            var read = await stream.ReadAsync(destination[copied..], cancellationToken).ConfigureAwait(false);
             if (read == 0)
             {
                 throw new ManageSieveProtocolException(

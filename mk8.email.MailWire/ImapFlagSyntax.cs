@@ -7,6 +7,7 @@ public static class ImapFlagSyntax
 
     public static bool TryValidate(IReadOnlyList<string> flags, out string failure)
     {
+        ArgumentNullException.ThrowIfNull(flags);
         foreach (var flag in flags)
         {
             if (flag is null)

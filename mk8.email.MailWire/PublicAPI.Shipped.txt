@@ -1,0 +1,36 @@
+#nullable enable
+const mk8.email.MailWire.ImapFlagSyntax.MaximumKeywordLength = 255 -> int
+const mk8.email.MailWire.ImapFlagSyntax.MaximumKeywordsPerMessage = 128 -> int
+const mk8.email.MailWire.SieveWireCapabilities.MaximumRedirects = 100 -> int
+const mk8.email.MailWire.SieveWireCapabilities.MaximumScriptBytes = 1048576 -> int
+mk8.email.MailWire.ConnectionLimiter
+mk8.email.MailWire.ConnectionLimiter.ConnectionLimiter(int maximumConnections) -> void
+mk8.email.MailWire.ConnectionLimiter.TryAcquire(System.Net.IPAddress! address, int maximumConnectionsPerAddress) -> System.IDisposable?
+mk8.email.MailWire.ImapFlagSyntax
+mk8.email.MailWire.ImapUidSetParser
+mk8.email.MailWire.ImapUidSetRange
+mk8.email.MailWire.ImapUidSetRange.Deconstruct(out int? Start, out int? End) -> void
+mk8.email.MailWire.ImapUidSetRange.End.get -> int?
+mk8.email.MailWire.ImapUidSetRange.End.init -> void
+mk8.email.MailWire.ImapUidSetRange.Equals(mk8.email.MailWire.ImapUidSetRange other) -> bool
+mk8.email.MailWire.ImapUidSetRange.ImapUidSetRange() -> void
+mk8.email.MailWire.ImapUidSetRange.ImapUidSetRange(int? Start, int? End) -> void
+mk8.email.MailWire.ImapUidSetRange.Start.get -> int?
+mk8.email.MailWire.ImapUidSetRange.Start.init -> void
+mk8.email.MailWire.OAuthSasl
+mk8.email.MailWire.Pop3WireCodec
+mk8.email.MailWire.SieveWireCapabilities
+override mk8.email.MailWire.ImapUidSetRange.GetHashCode() -> int
+static mk8.email.MailWire.ImapFlagSyntax.IsValidKeyword(string? keyword) -> bool
+static mk8.email.MailWire.ImapFlagSyntax.TryValidate(System.Collections.Generic.IReadOnlyList<string!>! flags, out string! failure) -> bool
+static mk8.email.MailWire.ImapUidSetParser.TryParse(string! value, out System.Collections.Generic.List<mk8.email.MailWire.ImapUidSetRange>! ranges) -> bool
+static mk8.email.MailWire.ImapUidSetRange.operator !=(mk8.email.MailWire.ImapUidSetRange left, mk8.email.MailWire.ImapUidSetRange right) -> bool
+static mk8.email.MailWire.ImapUidSetRange.operator ==(mk8.email.MailWire.ImapUidSetRange left, mk8.email.MailWire.ImapUidSetRange right) -> bool
+static mk8.email.MailWire.OAuthSasl.TryParseXOAuth2(string! encodedResponse, out string! username, out string! accessToken) -> bool
+static mk8.email.MailWire.Pop3WireCodec.GetNormalizedCrlfLength(System.ReadOnlySpan<byte> source) -> int
+static mk8.email.MailWire.Pop3WireCodec.NormalizeCrlf(System.ReadOnlySpan<byte> source) -> byte[]!
+static mk8.email.MailWire.Pop3WireCodec.TakeTop(byte[]! message, int bodyLineCount) -> byte[]!
+static mk8.email.MailWire.Pop3WireCodec.WriteDotStuffedAsync(System.IO.Stream! stream, byte[]! message, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+static readonly mk8.email.MailWire.SieveWireCapabilities.Supported -> System.Collections.Generic.IReadOnlySet<string!>!
+~override mk8.email.MailWire.ImapUidSetRange.Equals(object obj) -> bool
+~override mk8.email.MailWire.ImapUidSetRange.ToString() -> string

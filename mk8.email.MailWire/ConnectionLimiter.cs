@@ -3,14 +3,21 @@ using System.Net;
 
 namespace mk8.email.MailWire;
 
-public sealed class ConnectionLimiter(int maximumConnections)
+public sealed class ConnectionLimiter
 {
     private readonly ConcurrentDictionary<IPAddress, int> _connectionsPerAddress = new();
-    private readonly SemaphoreSlim _slots = new(maximumConnections, maximumConnections);
+    private int _availableSlots;
+
+    public ConnectionLimiter(int maximumConnections)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(maximumConnections);
+        _availableSlots = maximumConnections;
+    }
 
     public IDisposable? TryAcquire(IPAddress address, int maximumConnectionsPerAddress)
     {
-        if (!_slots.Wait(0))
+        ArgumentNullException.ThrowIfNull(address);
+        if (!TryReserveSlot())
             return null;
 
         var addressCount = _connectionsPerAddress.AddOrUpdate(
@@ -22,6 +29,18 @@ public sealed class ConnectionLimiter(int maximumConnections)
 
         Release(address);
         return null;
+    }
+
+    private bool TryReserveSlot()
+    {
+        while (true)
+        {
+            var remaining = Volatile.Read(ref _availableSlots);
+            if (remaining == 0)
+                return false;
+            if (Interlocked.CompareExchange(ref _availableSlots, remaining - 1, remaining) == remaining)
+                return true;
+        }
     }
 
     private void Release(IPAddress address)
@@ -40,7 +59,7 @@ public sealed class ConnectionLimiter(int maximumConnections)
             }
         }
 
-        _slots.Release();
+        Interlocked.Increment(ref _availableSlots);
     }
 
     private sealed class ConnectionLease(

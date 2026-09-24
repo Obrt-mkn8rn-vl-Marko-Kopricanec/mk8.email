@@ -101,23 +101,23 @@ public static class Pop3WireCodec
             {
                 if (buffered == buffer.Length)
                 {
-                    await stream.WriteAsync(buffer, cancellationToken);
+                    await stream.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
                     buffered = 0;
                 }
                 buffer[buffered++] = (byte)'.';
             }
             if (buffered == buffer.Length)
             {
-                await stream.WriteAsync(buffer, cancellationToken);
+                await stream.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
                 buffered = 0;
             }
             buffer[buffered++] = value;
             atLineStart = value == '\n';
         }
         if (buffered > 0)
-            await stream.WriteAsync(buffer.AsMemory(0, buffered), cancellationToken);
-        await stream.WriteAsync(".\r\n"u8.ToArray(), cancellationToken);
-        await stream.FlushAsync(cancellationToken);
+            await stream.WriteAsync(buffer.AsMemory(0, buffered), cancellationToken).ConfigureAwait(false);
+        await stream.WriteAsync(".\r\n"u8.ToArray(), cancellationToken).ConfigureAwait(false);
+        await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static int FindHeaderBodySeparator(byte[] message)

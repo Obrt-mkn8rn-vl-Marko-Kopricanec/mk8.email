@@ -18,7 +18,7 @@ public static class OAuthSasl
     {
         username = string.Empty;
         accessToken = string.Empty;
-        if (encodedResponse.Length is 0 or > MaximumEncodedResponseLength)
+        if (encodedResponse is null || encodedResponse.Length is 0 or > MaximumEncodedResponseLength)
             return false;
 
         string response;

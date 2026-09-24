@@ -65,7 +65,7 @@ internal static class SmtpDsn
             return false;
         }
 
-        var separator = value.IndexOf(';');
+        var separator = value.IndexOf(';', StringComparison.Ordinal);
         if (separator <= 0 || separator == value.Length - 1)
             return false;
 

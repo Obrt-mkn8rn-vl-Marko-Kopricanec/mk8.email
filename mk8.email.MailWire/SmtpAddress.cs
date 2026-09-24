@@ -53,31 +53,38 @@ internal static class SmtpAddress
         if (!IsValidLocalPart(localPart))
             return false;
 
-        string domain;
-        try
-        {
-            domain = new IdnMapping()
-                .GetAscii(normalized[(separator + 1)..])
-                .ToLowerInvariant();
-        }
-        catch (ArgumentException)
-        {
+        if (!TryNormalizeDomain(normalized[(separator + 1)..], out var domain))
             return false;
-        }
 
-        if (domain.Length is 0 or > 255
-            || Uri.CheckHostName(domain) != UriHostNameType.Dns)
-        {
-            return false;
-        }
-
+        // Existing mailbox identity normalization uses lower-case local parts.
+#pragma warning disable CA1308
         var normalizedLocalPart = localPart.ToLowerInvariant();
+#pragma warning restore CA1308
         if (StrictUtf8.GetByteCount(localPart) > 64
             || StrictUtf8.GetByteCount(normalizedLocalPart) > 64)
             return false;
 
         address = $"{normalizedLocalPart}@{domain}";
         return StrictUtf8.GetByteCount(address) <= 254;
+    }
+
+    private static bool TryNormalizeDomain(string value, out string domain)
+    {
+        domain = string.Empty;
+        try
+        {
+            // DNS names are normalized to lower-case for SMTP wire representation.
+#pragma warning disable CA1308
+            domain = new IdnMapping().GetAscii(value).ToLowerInvariant();
+#pragma warning restore CA1308
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+
+        return domain.Length is > 0 and <= 255
+            && Uri.CheckHostName(domain) == UriHostNameType.Dns;
     }
 
     private static bool IsLocalPartCharacter(char value) =>
@@ -91,7 +98,7 @@ internal static class SmtpAddress
         if (value[0] != '"')
         {
             separator = value.LastIndexOf('@');
-            return separator == value.IndexOf('@');
+            return separator == value.IndexOf('@', StringComparison.Ordinal);
         }
 
         var escaped = false;

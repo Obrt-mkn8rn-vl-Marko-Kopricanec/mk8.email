@@ -1,9 +1,11 @@
-namespace mk8.email.MailWire;
+using System.Globalization;
 
-public readonly record struct ImapUidSetRange(int? Start, int? End);
+namespace mk8.email.MailWire;
 
 public static class ImapUidSetParser
 {
+    // Preserve the published mutable output list consumed by existing protocol callers.
+#pragma warning disable CA1002, MA0016
     public static bool TryParse(string value, out List<ImapUidSetRange> ranges)
     {
         ranges = [];
@@ -15,7 +17,7 @@ public static class ImapUidSetParser
             if (part.Length == 0)
                 return false;
 
-            var separator = part.IndexOf(':');
+            var separator = part.IndexOf(':', StringComparison.Ordinal);
             if (separator < 0)
             {
                 if (!TryParseEndpoint(part, out var endpoint))
@@ -36,10 +38,11 @@ public static class ImapUidSetParser
 
         return true;
     }
+#pragma warning restore CA1002, MA0016
 
     private static bool TryParseEndpoint(string value, out int? endpoint)
     {
-        if (value == "*")
+        if (string.Equals(value, "*", StringComparison.Ordinal))
         {
             endpoint = null;
             return true;
@@ -54,7 +57,8 @@ public static class ImapUidSetParser
             }
         }
 
-        if (int.TryParse(value, out var parsed) && parsed > 0)
+        if (int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var parsed)
+            && parsed > 0)
         {
             endpoint = parsed;
             return true;

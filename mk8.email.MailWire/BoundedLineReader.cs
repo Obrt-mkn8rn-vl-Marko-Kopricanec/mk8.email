@@ -2,8 +2,6 @@ using System.Text;
 
 namespace mk8.email.MailWire;
 
-internal readonly record struct BoundedLine(string? Value, bool IsTooLong);
-
 internal sealed class BoundedLineReader(TextReader reader)
 {
     private readonly char[] _buffer = new char[4096];
@@ -21,7 +19,7 @@ internal sealed class BoundedLineReader(TextReader reader)
         {
             if (_position >= _count)
             {
-                _count = await reader.ReadAsync(_buffer.AsMemory(), cancellationToken);
+                _count = await reader.ReadAsync(_buffer.AsMemory(), cancellationToken).ConfigureAwait(false);
                 _position = 0;
 
                 if (_count == 0)
@@ -79,7 +77,7 @@ internal sealed class BoundedLineReader(TextReader reader)
                 return copied;
         }
 
-        return copied + await reader.ReadAsync(destination[copied..], cancellationToken);
+        return copied + await reader.ReadAsync(destination[copied..], cancellationToken).ConfigureAwait(false);
     }
 
     private static string RemoveCarriageReturn(StringBuilder line)

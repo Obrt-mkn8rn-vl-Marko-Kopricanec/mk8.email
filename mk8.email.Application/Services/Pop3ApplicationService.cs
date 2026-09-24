@@ -92,7 +92,8 @@ internal sealed class Pop3ApplicationService(
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(request.MessageIds);
+        if (request.MessageIds is null)
+            throw new ArgumentNullException(nameof(request), "The POP3 message identifiers are required.");
         if (request.UserId == Guid.Empty || request.MessageIds.Any(id => id == Guid.Empty))
             throw new ArgumentException("The POP3 deletion identity is invalid.", nameof(request));
         var messageIds = request.MessageIds.Distinct().ToArray();

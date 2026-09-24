@@ -244,6 +244,35 @@ public sealed class ImapApplicationServiceTests
             new ImapIdleSnapshotRequest(Guid.Empty, primaryFolder.Id)));
     }
 
+    [TestMethod]
+    public async Task MissingNestedRequestCollectionsIdentifyThePublicRequestParameter()
+    {
+        var service = new ImapApplicationService(null!, null!, null!, null!, null!, null!);
+        var userId = Guid.CreateVersion7();
+        var folderId = Guid.CreateVersion7();
+        Func<Task>[] invalidRequests =
+        [
+            () => service.GetMailboxStatusesAsync(new ImapMailboxStatusRequest(
+                userId, null!, false, false, false)),
+            () => service.AppendMessagesAsync(new ImapAppendRequest(userId, "INBOX", false, null!)),
+            () => service.SearchMessagesAsync(new ImapSearchRequest(userId, folderId, "ALL", null!, false)),
+            () => service.SortMessagesAsync(new ImapSortRequest(
+                userId, folderId, "ALL", null!, false, "US-ASCII", [])),
+            () => service.SortMessagesAsync(new ImapSortRequest(
+                userId, folderId, "ALL", [], false, "US-ASCII", null!)),
+            () => service.ThreadMessagesAsync(new ImapThreadRequest(
+                userId, folderId, "ALL", null!, false, "US-ASCII",
+                ImapThreadAlgorithm.References, false)),
+            () => service.MarkMessagesSeenAsync(new ImapMarkSeenRequest(userId, folderId, null!)),
+        ];
+
+        foreach (var invoke in invalidRequests)
+        {
+            var exception = await Assert.ThrowsExactlyAsync<ArgumentNullException>(invoke);
+            Assert.AreEqual("request", exception.ParamName);
+        }
+    }
+
     private static InboxDB CreateInbox(
         UserDB owner,
         AddressDB address,

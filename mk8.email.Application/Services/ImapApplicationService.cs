@@ -95,7 +95,8 @@ internal sealed class ImapApplicationService(
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(request.MailboxNames);
+        if (request.MailboxNames is null)
+            throw new ArgumentNullException(nameof(request), "The IMAP mailbox names are required.");
         if (request.UserId == Guid.Empty || request.MailboxNames.Any(name => name is null))
             throw new ArgumentException("The IMAP mailbox status request is invalid.", nameof(request));
 
@@ -1075,7 +1076,8 @@ internal sealed class ImapApplicationService(
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(request.Messages);
+        if (request.Messages is null)
+            throw new ArgumentNullException(nameof(request), "The IMAP append messages are required.");
         var maximumMessageSize = environment?.Limits.MaxMessageSizeBytes ?? 10 * 1024 * 1024;
         if (request.UserId == Guid.Empty
             || string.IsNullOrEmpty(request.MailboxName)
@@ -1265,7 +1267,8 @@ internal sealed class ImapApplicationService(
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(request.SavedSearchUids);
+        if (request.SavedSearchUids is null)
+            throw new ArgumentNullException(nameof(request), "The IMAP saved-search UIDs are required.");
         if (request.UserId == Guid.Empty
             || request.FolderId == Guid.Empty
             || request.Criteria is null
@@ -1316,8 +1319,10 @@ internal sealed class ImapApplicationService(
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(request.SavedSearchUids);
-        ArgumentNullException.ThrowIfNull(request.SortCriteria);
+        if (request.SavedSearchUids is null)
+            throw new ArgumentNullException(nameof(request), "The IMAP saved-search UIDs are required.");
+        if (request.SortCriteria is null)
+            throw new ArgumentNullException(nameof(request), "The IMAP sort criteria are required.");
         if (request.UserId == Guid.Empty
             || request.FolderId == Guid.Empty
             || request.SearchCriteria is null
@@ -1396,7 +1401,8 @@ internal sealed class ImapApplicationService(
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(request.SavedSearchUids);
+        if (request.SavedSearchUids is null)
+            throw new ArgumentNullException(nameof(request), "The IMAP saved-search UIDs are required.");
         if (request.UserId == Guid.Empty
             || request.FolderId == Guid.Empty
             || request.SearchCriteria is null
@@ -1485,7 +1491,8 @@ internal sealed class ImapApplicationService(
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(request.MessageIds);
+        if (request.MessageIds is null)
+            throw new ArgumentNullException(nameof(request), "The IMAP message identifiers are required.");
         if (request.UserId == Guid.Empty
             || request.FolderId == Guid.Empty
             || request.MessageIds.Count is < 1 or > 256

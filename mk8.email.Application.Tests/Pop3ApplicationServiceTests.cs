@@ -78,6 +78,15 @@ public sealed class Pop3ApplicationServiceTests
         Assert.AreEqual(1, owner.Folder.HighestModSeq);
     }
 
+    [TestMethod]
+    public async Task MissingDeleteIdsIdentifyThePublicRequestParameter()
+    {
+        var service = new Pop3ApplicationService(null!, null!, null!, null!, null!, null!);
+        var exception = await Assert.ThrowsExactlyAsync<ArgumentNullException>(
+            () => service.CommitDeletesAsync(new Pop3DeleteRequest(Guid.CreateVersion7(), null!)));
+        Assert.AreEqual("request", exception.ParamName);
+    }
+
     private static (UserDB User, FolderDB Folder) SeedAccount(
         EmailDbContext database,
         string localPart,

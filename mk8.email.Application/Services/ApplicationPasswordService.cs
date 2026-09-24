@@ -113,7 +113,7 @@ public sealed class ApplicationPasswordService(EmailDbContext database) : IAppli
         var separator = username.LastIndexOf('@');
         var domain = username[(separator + 1)..];
         return await database.Users
-            .SingleOrDefaultAsync(user => user.Username == username
+            .FirstOrDefaultAsync(user => user.Username == username
                 && user.IsActive
                 && user.CompanyId != null
                 && user.Company != null

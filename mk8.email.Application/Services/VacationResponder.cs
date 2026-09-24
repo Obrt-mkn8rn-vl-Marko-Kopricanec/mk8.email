@@ -70,7 +70,7 @@ public sealed class VacationResponder(
             var now = timeProvider.GetUtcNow().UtcDateTime;
             var vacation = await database.JmapVacationResponses
                 .AsNoTracking()
-                .SingleOrDefaultAsync(response => response.AccountId == route.AccountId, cancellationToken).ConfigureAwait(false);
+                .FirstOrDefaultAsync(response => response.AccountId == route.AccountId, cancellationToken).ConfigureAwait(false);
             if (vacation is null
                 || !vacation.IsEnabled
                 || vacation.FromDate is not null && now < vacation.FromDate
@@ -85,7 +85,7 @@ public sealed class VacationResponder(
             await using (transaction)
             {
 #pragma warning restore CA2007, MA0004
-                var sent = await database.JmapVacationReplies.SingleOrDefaultAsync(
+                var sent = await database.JmapVacationReplies.FirstOrDefaultAsync(
                 reply => reply.AccountId == route.AccountId
                     && reply.SenderAddress == senderMailbox.Address.ToMailLowerInvariant(),
                 cancellationToken).ConfigureAwait(false);

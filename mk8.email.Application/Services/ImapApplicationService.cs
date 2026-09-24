@@ -456,7 +456,7 @@ internal sealed class ImapApplicationService(
 #pragma warning disable CA2007, MA0004
         await using var transactionLifetime = transaction;
 #pragma warning restore CA2007, MA0004
-        var folder = await database.Folders.SingleOrDefaultAsync(
+        var folder = await database.Folders.FirstOrDefaultAsync(
             candidate => candidate.Id == request.FolderId
                 && candidate.Inbox.OwnerId == request.UserId,
             cancellationToken).ConfigureAwait(false);
@@ -610,7 +610,7 @@ internal sealed class ImapApplicationService(
 #pragma warning disable CA2007, MA0004
         await using var transactionLifetime = transaction;
 #pragma warning restore CA2007, MA0004
-        var folder = await database.Folders.SingleOrDefaultAsync(
+        var folder = await database.Folders.FirstOrDefaultAsync(
             candidate => candidate.Id == request.FolderId
                 && candidate.Inbox.OwnerId == request.UserId,
             cancellationToken).ConfigureAwait(false);
@@ -748,7 +748,7 @@ internal sealed class ImapApplicationService(
 #pragma warning disable CA2007, MA0004
         await using var transactionLifetime = transaction;
 #pragma warning restore CA2007, MA0004
-        var source = await database.Folders.SingleOrDefaultAsync(
+        var source = await database.Folders.FirstOrDefaultAsync(
             folder => folder.Id == request.SourceFolderId
                 && folder.Inbox.OwnerId == request.UserId,
             cancellationToken).ConfigureAwait(false);
@@ -874,7 +874,7 @@ internal sealed class ImapApplicationService(
 #pragma warning disable CA2007, MA0004
         await using var transactionLifetime = transaction;
 #pragma warning restore CA2007, MA0004
-        var sourceFolder = await database.Folders.SingleOrDefaultAsync(
+        var sourceFolder = await database.Folders.FirstOrDefaultAsync(
             folder => folder.Id == request.SourceFolderId
                 && folder.Inbox.OwnerId == request.UserId,
             cancellationToken).ConfigureAwait(false);
@@ -1511,7 +1511,7 @@ internal sealed class ImapApplicationService(
         await using (transaction)
         {
 #pragma warning restore CA2007, MA0004
-            var folder = await database.Folders.SingleOrDefaultAsync(
+            var folder = await database.Folders.FirstOrDefaultAsync(
             candidate => candidate.Id == request.FolderId
                 && candidate.Inbox.OwnerId == request.UserId,
             cancellationToken).ConfigureAwait(false);

@@ -914,7 +914,7 @@ public sealed class MailQueueWorker(
         CancellationToken cancellationToken)
     {
         database.ChangeTracker.Clear();
-        var message = await database.MailQueueMessages.SingleOrDefaultAsync(
+        var message = await database.MailQueueMessages.FirstOrDefaultAsync(
             item => item.Id == messageId && item.LeaseToken == leaseToken,
             cancellationToken).ConfigureAwait(false);
         if (message is null)

@@ -79,7 +79,7 @@ public sealed class MailAuthenticator(EmailDbContext database) : IMailAuthentica
             return null;
 
         var applicationPassword = await database.ApplicationPasswords
-            .SingleOrDefaultAsync(
+            .FirstOrDefaultAsync(
                 credential => credential.Id == applicationPasswordId
                     && credential.UserId == candidate.Id
                     && credential.RevokedAt == null,

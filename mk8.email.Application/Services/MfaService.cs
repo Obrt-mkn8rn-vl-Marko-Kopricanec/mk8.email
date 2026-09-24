@@ -251,7 +251,7 @@ public sealed class MfaService(
         {
 #pragma warning restore CA2007, MA0004
             var credential = await database.MfaTotpCredentials
-            .SingleOrDefaultAsync(
+            .FirstOrDefaultAsync(
                 candidate => candidate.UserId == userId
                     && candidate.VerifiedAt != null
                     && candidate.RevokedAt == null,
@@ -285,7 +285,7 @@ public sealed class MfaService(
             else if (TryParseRecoveryCodeId(normalizedCode, out var recoveryCodeId))
             {
                 var recoveryCode = await database.MfaRecoveryCodes
-                    .SingleOrDefaultAsync(
+                    .FirstOrDefaultAsync(
                         candidate => candidate.Id == recoveryCodeId
                             && candidate.CredentialId == credential.Id
                             && candidate.UsedAt == null,
@@ -357,7 +357,7 @@ public sealed class MfaService(
     {
         var separator = username.LastIndexOf('@');
         var domain = username[(separator + 1)..];
-        return await database.Users.SingleOrDefaultAsync(user =>
+        return await database.Users.FirstOrDefaultAsync(user =>
             user.Username == username
             && user.IsActive
             && user.CompanyId != null

@@ -206,7 +206,7 @@ public sealed class OAuthTokenService(
         CancellationToken cancellationToken = default)
     {
         var grant = await database.OAuthGrants
-            .SingleOrDefaultAsync(
+            .FirstOrDefaultAsync(
                 candidate => candidate.Id == grantId && candidate.UserId == userId,
                 cancellationToken).ConfigureAwait(false);
         if (grant is null)

@@ -111,7 +111,7 @@ public sealed class OAuthAuthorizationService(
         {
 #pragma warning restore CA2007, MA0004
             var authorizationCode = await database.OAuthAuthorizationCodes
-            .SingleOrDefaultAsync(candidate => candidate.Id == codeId, cancellationToken).ConfigureAwait(false);
+            .FirstOrDefaultAsync(candidate => candidate.Id == codeId, cancellationToken).ConfigureAwait(false);
             var codeMatches = FixedTimeHashMatches(code, authorizationCode?.CodeHash);
             var verifierChallenge = OAuthProtocolValues.CreatePkceChallenge(codeVerifier);
             var challengeMatches = authorizationCode is not null

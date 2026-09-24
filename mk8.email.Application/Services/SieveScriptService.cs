@@ -122,7 +122,7 @@ internal sealed class SieveScriptService(
             try
             {
                 var now = DateTime.UtcNow;
-                var script = await database.SieveScripts.SingleOrDefaultAsync(
+                var script = await database.SieveScripts.FirstOrDefaultAsync(
                     item => item.UserId == userId && item.Name == normalized,
                     cancellationToken).ConfigureAwait(false);
                 if (script is null)
@@ -196,7 +196,7 @@ internal sealed class SieveScriptService(
             SieveScriptDB? target = null;
             if (normalized is not null)
             {
-                target = await database.SieveScripts.SingleOrDefaultAsync(
+                target = await database.SieveScripts.FirstOrDefaultAsync(
                     script => script.UserId == userId && script.Name == normalized,
                     cancellationToken).ConfigureAwait(false);
                 if (target is null)
@@ -250,7 +250,7 @@ internal sealed class SieveScriptService(
             var commitAttempted = false;
             try
             {
-                var script = await database.SieveScripts.SingleOrDefaultAsync(
+                var script = await database.SieveScripts.FirstOrDefaultAsync(
                     item => item.UserId == userId && item.Name == normalized,
                     cancellationToken).ConfigureAwait(false);
                 if (script is null)
@@ -293,7 +293,7 @@ internal sealed class SieveScriptService(
                 script => script.UserId == userId && script.Name == normalizedNew,
                 cancellationToken).ConfigureAwait(false))
             return Failure("The destination script already exists.", "ALREADYEXISTS");
-        var script = await database.SieveScripts.SingleOrDefaultAsync(
+        var script = await database.SieveScripts.FirstOrDefaultAsync(
             item => item.UserId == userId && item.Name == normalizedOld,
             cancellationToken).ConfigureAwait(false);
         if (script is null)

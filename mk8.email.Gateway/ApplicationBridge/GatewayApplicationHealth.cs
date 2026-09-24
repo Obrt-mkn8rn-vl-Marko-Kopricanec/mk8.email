@@ -12,7 +12,7 @@ public static class GatewayApplicationHealth
             "health",
             ApplicationOperations.SystemPing,
             new { },
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         return Results.Ok(new { status = "ready", respondedAt = response.RespondedAt });
     }
 }

@@ -32,20 +32,20 @@ internal sealed class GatewayPresentationWorker(
             {
                 try
                 {
-                    if (!await transport.IsAvailableAsync(stoppingToken))
+                    if (!await transport.IsAvailableAsync(stoppingToken).ConfigureAwait(false))
                     {
-                        await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+                        await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken).ConfigureAwait(false);
                         continue;
                     }
 
                     active.RemoveWhere(task => task.IsCompleted);
                     if (active.Count >= MaximumConcurrentOperations)
                     {
-                        await Task.WhenAny(active);
+                        await Task.WhenAny(active).ConfigureAwait(false);
                         active.RemoveWhere(task => task.IsCompleted);
                     }
 
-                    var lease = await requests.WaitForRequestAsync(WorkerId, stoppingToken);
+                    var lease = await requests.WaitForRequestAsync(WorkerId, stoppingToken).ConfigureAwait(false);
                     active.Add(ProcessSafelyAsync(lease, stoppingToken));
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -57,7 +57,7 @@ internal sealed class GatewayPresentationWorker(
                     logger.LogError(exception, "Gateway presentation request processing failed");
                     try
                     {
-                        await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+                        await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                     {
@@ -68,7 +68,7 @@ internal sealed class GatewayPresentationWorker(
         }
         finally
         {
-            await Task.WhenAll(active);
+            await Task.WhenAll(active).ConfigureAwait(false);
         }
     }
 
@@ -78,7 +78,7 @@ internal sealed class GatewayPresentationWorker(
     {
         try
         {
-            await ProcessAsync(lease, stoppingToken);
+            await ProcessAsync(lease, stoppingToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
@@ -109,31 +109,27 @@ internal sealed class GatewayPresentationWorker(
                 sequence: 0,
                 GatewayTrafficDirections.Inbound,
                 lease.Request.ContentType,
-                lease.Request.Payload);
+                lease.Request.Payload).ConfigureAwait(false);
             var response = await DispatchAsync(
                 lease.Request,
                 trafficSessionId,
-                operationCancellation.Token);
+                operationCancellation.Token).ConfigureAwait(false);
             await AppendInternalAsync(
                 lease.Request,
                 trafficSessionId,
                 sequence: 3,
                 GatewayTrafficDirections.Outbound,
                 response.ContentType,
-                response.Payload);
-            operationCancellation.Cancel();
-            await renewal;
-            await requests.CompleteAsync(lease, response, stoppingToken);
+                response.Payload).ConfigureAwait(false);
+            await operationCancellation.CancelAsync().ConfigureAwait(false);
+            await renewal.ConfigureAwait(false);
+            await requests.CompleteAsync(lease, response, stoppingToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
-            operationCancellation.Cancel();
-            await ObserveRenewalAsync(renewal);
         }
         catch (Exception exception)
         {
-            operationCancellation.Cancel();
-            await ObserveRenewalAsync(renewal);
             logger.LogError(
                 exception,
                 "Gateway presentation request {RequestId} failed",
@@ -148,7 +144,7 @@ internal sealed class GatewayPresentationWorker(
                     "application/problem+json",
                     JsonSerializer.SerializeToUtf8Bytes(
                         new { code = "presentation-failed" },
-                        JsonOptions));
+                        JsonOptions)).ConfigureAwait(false);
             }
             catch (Exception journalException)
             {
@@ -163,7 +159,7 @@ internal sealed class GatewayPresentationWorker(
                     lease,
                     "presentation-failed",
                     "The Gateway presentation operation failed.",
-                    stoppingToken);
+                    stoppingToken).ConfigureAwait(false);
             }
             catch (Exception completionException)
             {
@@ -171,6 +167,17 @@ internal sealed class GatewayPresentationWorker(
                     completionException,
                     "Could not fail presentation request {RequestId}",
                     lease.Request.Id);
+            }
+        }
+        finally
+        {
+            await operationCancellation.CancelAsync().ConfigureAwait(false);
+            try
+            {
+                await renewal.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (operationCancellation.IsCancellationRequested)
+            {
             }
         }
     }
@@ -187,13 +194,13 @@ internal sealed class GatewayPresentationWorker(
         {
             if (string.Equals(request.Protocol, SmtpPresentationOperations.Protocol, StringComparison.Ordinal))
             {
-                if (request.Operation != SmtpPresentationOperations.Relay)
+                if (!string.Equals(request.Operation, SmtpPresentationOperations.Relay, StringComparison.Ordinal))
                     return Error(request.Id, "unsupported-presentation-operation");
                 var relayRequest = Deserialize<SmtpRelayPresentationRequest>(request.Payload);
                 var result = await smtpRelay.RelayAsync(
                     relayRequest,
                     request.Id,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 return Success(request.Id, result);
             }
 
@@ -208,7 +215,7 @@ internal sealed class GatewayPresentationWorker(
                 case WebPushPresentationOperations.ValidateEndpoint:
                     {
                         var check = Deserialize<WebPushEndpointCheck>(request.Payload);
-                        var isSafe = await webPush.IsSafeUrlAsync(check.Url, cancellationToken);
+                        var isSafe = await webPush.IsSafeUrlAsync(check.Url, cancellationToken).ConfigureAwait(false);
                         return Success(request.Id, new WebPushEndpointResult(isSafe));
                     }
                 case WebPushPresentationOperations.Send:
@@ -218,7 +225,7 @@ internal sealed class GatewayPresentationWorker(
                             send,
                             trafficSessionId,
                             request.Id,
-                            cancellationToken);
+                            cancellationToken).ConfigureAwait(false);
                         return Success(request.Id, result);
                     }
                 default:
@@ -249,10 +256,10 @@ internal sealed class GatewayPresentationWorker(
                 request.Protocol,
                 contentType,
                 payload,
-                new Dictionary<string, string> { ["operation"] = request.Operation },
+                new Dictionary<string, string>(StringComparer.Ordinal) { ["operation"] = request.Operation },
                 DateTimeOffset.UtcNow,
                 request.Id),
-            timeout.Token);
+            timeout.Token).ConfigureAwait(false);
     }
 
     private async Task RenewLeaseAsync(
@@ -262,26 +269,15 @@ internal sealed class GatewayPresentationWorker(
         using var timer = new PeriodicTimer(_leaseRenewalInterval);
         try
         {
-            while (await timer.WaitForNextTickAsync(operationCancellation.Token))
+            while (await timer.WaitForNextTickAsync(operationCancellation.Token).ConfigureAwait(false))
             {
-                if (await requests.RenewLeaseAsync(lease, operationCancellation.Token))
+                if (await requests.RenewLeaseAsync(lease, operationCancellation.Token).ConfigureAwait(false))
                     continue;
-                operationCancellation.Cancel();
+                await operationCancellation.CancelAsync().ConfigureAwait(false);
                 return;
             }
         }
         catch (OperationCanceledException) when (operationCancellation.IsCancellationRequested)
-        {
-        }
-    }
-
-    private static async Task ObserveRenewalAsync(Task renewal)
-    {
-        try
-        {
-            await renewal;
-        }
-        catch (OperationCanceledException)
         {
         }
     }
@@ -295,14 +291,14 @@ internal sealed class GatewayPresentationWorker(
             requestId,
             "application/json",
             JsonSerializer.SerializeToUtf8Bytes(value, JsonOptions),
-            new Dictionary<string, string>());
+            new Dictionary<string, string>(StringComparer.Ordinal));
 
     private static ApplicationResponse Error(Guid requestId, string code) =>
         new(
             requestId,
             "application/problem+json",
             JsonSerializer.SerializeToUtf8Bytes(new { code }, JsonOptions),
-            new Dictionary<string, string>(),
+            new Dictionary<string, string>(StringComparer.Ordinal),
             IsError: true,
             ErrorCode: code,
             ErrorDetail: "The presentation request is invalid or unsupported.");

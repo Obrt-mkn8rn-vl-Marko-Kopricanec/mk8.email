@@ -39,7 +39,7 @@ public sealed class LoginModel(
 
         var result = await application.AuthenticateAsync(
             new LoginRequestDTO(Input.Username, Input.Password),
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         var isAdministrator = result.Success
             && result.User is not null
             && result.User.Role == UserRole.SuperAdmin;
@@ -50,7 +50,7 @@ public sealed class LoginModel(
             Input.Username,
             isAdministrator,
             HttpContext.Connection.RemoteIpAddress?.ToString(),
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
 
         if (!isAdministrator)
         {
@@ -76,7 +76,7 @@ public sealed class LoginModel(
         await HttpContext.SignInAsync(
             CookieAuthenticationDefaults.AuthenticationScheme,
             new ClaimsPrincipal(identity),
-            properties);
+            properties).ConfigureAwait(false);
 
         return Url.IsLocalUrl(ReturnUrl) ? LocalRedirect(ReturnUrl) : RedirectToPage("/Index");
     }

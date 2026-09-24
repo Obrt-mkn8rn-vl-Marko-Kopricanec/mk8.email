@@ -29,7 +29,7 @@ internal sealed class GatewayWebPushService : IDisposable
         IGatewayTrafficJournal journal,
         int maximumJournalPayloadBytes)
     {
-        _client = new HttpClient(handler)
+        _client = new HttpClient(handler, disposeHandler: true)
         {
             Timeout = TimeSpan.FromSeconds(10),
         };
@@ -61,7 +61,7 @@ internal sealed class GatewayWebPushService : IDisposable
             return false;
         try
         {
-            var addresses = await ResolvePublicAddressesAsync(uri.Host, cancellationToken);
+            var addresses = await ResolvePublicAddressesAsync(uri.Host, cancellationToken).ConfigureAwait(false);
             return addresses.Count > 0;
         }
         catch (Exception exception) when (exception is SocketException or ArgumentException)
@@ -119,7 +119,7 @@ internal sealed class GatewayWebPushService : IDisposable
             url = subscription.Url,
             headers = request.Headers
                 .Concat(request.Content.Headers)
-                .ToDictionary(header => header.Key, header => header.Value.ToArray()),
+                .ToDictionary(header => header.Key, header => header.Value.ToArray(), StringComparer.Ordinal),
             bodyBase64 = Convert.ToBase64String(body),
         });
         if (requestTrace.Length > _maximumJournalPayloadBytes)
@@ -129,7 +129,7 @@ internal sealed class GatewayWebPushService : IDisposable
             exchangeId,
             sequence: 1,
             GatewayTrafficDirections.Outbound,
-            requestTrace);
+            requestTrace).ConfigureAwait(false);
 
         HttpResponseMessage response;
         try
@@ -137,11 +137,11 @@ internal sealed class GatewayWebPushService : IDisposable
             response = await _client.SendAsync(
                 request,
                 HttpCompletionOption.ResponseHeadersRead,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
         {
-            return await RecordNetworkFailureAsync(sessionId, exchangeId);
+            return await RecordNetworkFailureAsync(sessionId, exchangeId).ConfigureAwait(false);
         }
 
         using (response)
@@ -152,11 +152,11 @@ internal sealed class GatewayWebPushService : IDisposable
             {
                 (responseBody, truncated) = await ReadResponseBodyAsync(
                     response,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
             }
             catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
             {
-                return await RecordNetworkFailureAsync(sessionId, exchangeId);
+                return await RecordNetworkFailureAsync(sessionId, exchangeId).ConfigureAwait(false);
             }
 
             var responseTrace = JsonSerializer.SerializeToUtf8Bytes(new
@@ -164,7 +164,7 @@ internal sealed class GatewayWebPushService : IDisposable
                 status = (int)response.StatusCode,
                 headers = response.Headers
                     .Concat(response.Content.Headers)
-                    .ToDictionary(header => header.Key, header => header.Value.ToArray()),
+                    .ToDictionary(header => header.Key, header => header.Value.ToArray(), StringComparer.Ordinal),
                 bodyBase64 = Convert.ToBase64String(responseBody),
                 truncated,
             });
@@ -173,7 +173,7 @@ internal sealed class GatewayWebPushService : IDisposable
                 exchangeId,
                 sequence: 2,
                 GatewayTrafficDirections.Inbound,
-                responseTrace);
+                responseTrace).ConfigureAwait(false);
             if (response.IsSuccessStatusCode)
                 return new WebPushSendResult(WebPushSendOutcome.Success);
             if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Gone)
@@ -193,7 +193,7 @@ internal sealed class GatewayWebPushService : IDisposable
             exchangeId,
             sequence: 2,
             GatewayTrafficDirections.Inbound,
-            JsonSerializer.SerializeToUtf8Bytes(new { error = "network-failure" }));
+            JsonSerializer.SerializeToUtf8Bytes(new { error = "network-failure" })).ConfigureAwait(false);
         return new WebPushSendResult(WebPushSendOutcome.Failed);
     }
 
@@ -202,22 +202,24 @@ internal sealed class GatewayWebPushService : IDisposable
         CancellationToken cancellationToken)
     {
         var maximumBodyBytes = Math.Max(0L, ((long)_maximumJournalPayloadBytes - 32_768) * 3 / 4);
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        await using var copy = new MemoryStream();
+        var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        await using var streamLifetime = stream.ConfigureAwait(false);
+        var copy = new MemoryStream();
+        await using var copyLifetime = copy.ConfigureAwait(false);
         var buffer = new byte[8192];
         while (true)
         {
-            var read = await stream.ReadAsync(buffer, cancellationToken);
+            var read = await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
             if (read == 0)
                 return (copy.ToArray(), false);
             var remaining = maximumBodyBytes - copy.Length;
             if (read > remaining)
             {
                 if (remaining > 0)
-                    await copy.WriteAsync(buffer.AsMemory(0, checked((int)remaining)), cancellationToken);
+                    await copy.WriteAsync(buffer.AsMemory(0, checked((int)remaining)), cancellationToken).ConfigureAwait(false);
                 return (copy.ToArray(), true);
             }
-            await copy.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+            await copy.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -238,10 +240,10 @@ internal sealed class GatewayWebPushService : IDisposable
                 WebPushPresentationOperations.Protocol,
                 "application/json",
                 payload,
-                new Dictionary<string, string>(),
+                new Dictionary<string, string>(StringComparer.Ordinal),
                 DateTimeOffset.UtcNow,
                 exchangeId),
-            timeout.Token);
+            timeout.Token).ConfigureAwait(false);
     }
 
     public void Dispose() => _client.Dispose();
@@ -249,8 +251,8 @@ internal sealed class GatewayWebPushService : IDisposable
     private static bool TryParseUrl(string value, out Uri uri)
     {
         return Uri.TryCreate(value, UriKind.Absolute, out uri!)
-            && uri.Scheme == Uri.UriSchemeHttps
-            && !string.IsNullOrEmpty(uri.Host)
+            && string.Equals(uri.Scheme, Uri.UriSchemeHttps
+, StringComparison.Ordinal) && !string.IsNullOrEmpty(uri.Host)
             && string.IsNullOrEmpty(uri.UserInfo)
             && string.IsNullOrEmpty(uri.Fragment)
             && uri.Port is > 0 and <= 65535;
@@ -262,11 +264,11 @@ internal sealed class GatewayWebPushService : IDisposable
     {
         var addresses = await ResolvePublicAddressesAsync(
             context.DnsEndPoint.Host,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         Exception? lastError = null;
         foreach (var address in addresses)
         {
-            var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp)
+            Socket? socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp)
             {
                 NoDelay = true,
             };
@@ -274,15 +276,20 @@ internal sealed class GatewayWebPushService : IDisposable
             {
                 await socket.ConnectAsync(
                     new IPEndPoint(address, context.DnsEndPoint.Port),
-                    cancellationToken);
-                return new NetworkStream(socket, ownsSocket: true);
+                    cancellationToken).ConfigureAwait(false);
+                var stream = new NetworkStream(socket, ownsSocket: true);
+                socket = null;
+                return stream;
             }
             catch (Exception exception) when (exception is SocketException or OperationCanceledException)
             {
-                socket.Dispose();
                 lastError = exception;
                 if (exception is OperationCanceledException)
                     throw;
+            }
+            finally
+            {
+                socket?.Dispose();
             }
         }
         throw new HttpRequestException("The public push endpoint could not be reached.", lastError);
@@ -296,7 +303,7 @@ internal sealed class GatewayWebPushService : IDisposable
         if (IPAddress.TryParse(host, out var literal))
             addresses = [literal];
         else
-            addresses = await Dns.GetHostAddressesAsync(host, cancellationToken);
+            addresses = await Dns.GetHostAddressesAsync(host, cancellationToken).ConfigureAwait(false);
         if (addresses.Length == 0 || addresses.Any(address => !IsPublicAddress(address)))
             throw new SocketException((int)SocketError.HostNotFound);
         return addresses

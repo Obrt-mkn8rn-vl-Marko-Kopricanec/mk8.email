@@ -27,14 +27,14 @@ public sealed class DomainsModel(
     public string? StatusMessage { get; set; }
 
     public async Task OnGetAsync(CancellationToken cancellationToken) =>
-        Domains = await application.GetDomainsAsync(cancellationToken);
+        Domains = await application.GetDomainsAsync(cancellationToken).ConfigureAwait(false);
 
     public async Task<IActionResult> OnPostCreateAsync(CancellationToken cancellationToken)
     {
         var result = await application.EnsureDomainAsync(
             new AdminEnsureDomainRequest(CreateInput.CompanyName, CreateInput.Domain),
-            cancellationToken);
-        await WriteAuditAsync("domain.create", CreateInput.Domain, result.Succeeded, cancellationToken);
+            cancellationToken).ConfigureAwait(false);
+        await WriteAuditAsync("domain.create", CreateInput.Domain, result.Succeeded, cancellationToken).ConfigureAwait(false);
         StatusMessage = result.Message;
         return RedirectToPage();
     }
@@ -43,8 +43,8 @@ public sealed class DomainsModel(
     {
         var result = await application.SetCatchAllAsync(
             new AdminSetCatchAllRequest(CatchAllInput.Domain, CatchAllInput.TargetAddress),
-            cancellationToken);
-        await WriteAuditAsync("domain.catchall.set", CatchAllInput.Domain, result.Succeeded, cancellationToken);
+            cancellationToken).ConfigureAwait(false);
+        await WriteAuditAsync("domain.catchall.set", CatchAllInput.Domain, result.Succeeded, cancellationToken).ConfigureAwait(false);
         StatusMessage = result.Message;
         return RedirectToPage();
     }

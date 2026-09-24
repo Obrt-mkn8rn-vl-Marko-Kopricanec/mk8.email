@@ -25,17 +25,18 @@ public sealed class GatewayMailSystemStatusReader(
             if (!information.Exists || information.Length is <= 0 or > MaximumStatusFileBytes)
                 return MailSystemStatusDTO.Unavailable;
 
-            await using var stream = new FileStream(
+            var stream = new FileStream(
                 path,
                 FileMode.Open,
                 FileAccess.Read,
                 FileShare.Read | FileShare.Delete,
                 bufferSize: 4096,
                 FileOptions.Asynchronous | FileOptions.SequentialScan);
+            await using var streamLifetime = stream.ConfigureAwait(false);
             var status = await JsonSerializer.DeserializeAsync<MailSystemStatusDTO>(
                 stream,
                 JsonOptions,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
 
             return IsValid(status) ? status! : MailSystemStatusDTO.Unavailable;
         }

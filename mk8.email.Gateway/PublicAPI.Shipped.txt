@@ -1,0 +1,262 @@
+#nullable enable
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationClient
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationClient.AuthenticateAsync(mk8.email.Contracts.DTOs.LoginRequestDTO! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.DTOs.LoginResultDTO!>!
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationClient.CreateAccountAsync(mk8.email.Contracts.Messaging.AdminCreateAccountRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.DTOs.AdministrationResult!>!
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationClient.EnsureDomainAsync(mk8.email.Contracts.Messaging.AdminEnsureDomainRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.DTOs.AdministrationResult!>!
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationClient.GatewayApplicationClient(mk8.email.Gateway.ApplicationBridge.IGatewayApplicationTransport! transport, mk8.email.Gateway.ApplicationBridge.GatewayMailSystemStatusReader! statusReader) -> void
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationClient.GetAccountsAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.DTOs.MailAccountSummaryDTO!>!>!
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationClient.GetDashboardAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.DTOs.AdminDashboardDTO!>!
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationClient.GetDomainsAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.DTOs.MailDomainSummaryDTO!>!>!
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationClient.ResetPasswordAsync(mk8.email.Contracts.Messaging.AdminResetPasswordRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.DTOs.AdministrationResult!>!
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationClient.SetAccountActiveAsync(mk8.email.Contracts.Messaging.AdminSetAccountActiveRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.DTOs.AdministrationResult!>!
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationClient.SetCatchAllAsync(mk8.email.Contracts.Messaging.AdminSetCatchAllRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.DTOs.AdministrationResult!>!
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationClient.SetDomainActiveAsync(mk8.email.Contracts.Messaging.AdminSetDomainActiveRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.DTOs.AdministrationResult!>!
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationException
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationException.Code.get -> string!
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationException.GatewayApplicationException(string! code, string! message, bool isUnavailable = false, System.Exception? innerException = null) -> void
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationException.IsUnavailable.get -> bool
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationFailureMiddleware
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationFailureMiddleware.GatewayApplicationFailureMiddleware(Microsoft.AspNetCore.Http.RequestDelegate! next, Microsoft.Extensions.Logging.ILogger<mk8.email.Gateway.ApplicationBridge.GatewayApplicationFailureMiddleware!>! logger) -> void
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationFailureMiddleware.InvokeAsync(Microsoft.AspNetCore.Http.HttpContext! context) -> System.Threading.Tasks.Task!
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationHealth
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationOptions
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationOptions.<Clone>$() -> mk8.email.Gateway.ApplicationBridge.GatewayApplicationOptions!
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationOptions.Deconstruct(out string! InstanceId, out System.TimeSpan RequestTimeout, out System.TimeSpan TrafficJournalTimeout) -> void
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationOptions.Equals(mk8.email.Gateway.ApplicationBridge.GatewayApplicationOptions? other) -> bool
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationOptions.GatewayApplicationOptions(string! InstanceId, System.TimeSpan RequestTimeout, System.TimeSpan TrafficJournalTimeout) -> void
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationOptions.InstanceId.get -> string!
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationOptions.InstanceId.init -> void
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationOptions.RequestTimeout.get -> System.TimeSpan
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationOptions.RequestTimeout.init -> void
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationOptions.TrafficJournalTimeout.get -> System.TimeSpan
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationOptions.TrafficJournalTimeout.init -> void
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationServiceExtensions
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationTransport
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationTransport.GatewayApplicationTransport(mk8.email.Messaging.IApplicationRequestClient! requests, mk8.email.Messaging.IGatewayTrafficJournal! traffic, mk8.email.Gateway.ApplicationBridge.GatewayApplicationOptions! options) -> void
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationTransport.SendAsync<TRequest, TResponse>(string! protocol, string! operation, TRequest value, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<TResponse>!
+mk8.email.Gateway.ApplicationBridge.GatewayMailSystemStatusReader
+mk8.email.Gateway.ApplicationBridge.GatewayMailSystemStatusReader.GatewayMailSystemStatusReader(mk8.email.Configuration.EnvironmentConfig! environment, Microsoft.Extensions.Logging.ILogger<mk8.email.Gateway.ApplicationBridge.GatewayMailSystemStatusReader!>! logger) -> void
+mk8.email.Gateway.ApplicationBridge.GatewayMailSystemStatusReader.GetStatusAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.DTOs.MailSystemStatusDTO!>!
+mk8.email.Gateway.ApplicationBridge.IGatewayApplicationClient
+mk8.email.Gateway.ApplicationBridge.IGatewayApplicationClient.AuthenticateAsync(mk8.email.Contracts.DTOs.LoginRequestDTO! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.DTOs.LoginResultDTO!>!
+mk8.email.Gateway.ApplicationBridge.IGatewayApplicationClient.CreateAccountAsync(mk8.email.Contracts.Messaging.AdminCreateAccountRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.DTOs.AdministrationResult!>!
+mk8.email.Gateway.ApplicationBridge.IGatewayApplicationClient.EnsureDomainAsync(mk8.email.Contracts.Messaging.AdminEnsureDomainRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.DTOs.AdministrationResult!>!
+mk8.email.Gateway.ApplicationBridge.IGatewayApplicationClient.GetAccountsAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.DTOs.MailAccountSummaryDTO!>!>!
+mk8.email.Gateway.ApplicationBridge.IGatewayApplicationClient.GetDashboardAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.DTOs.AdminDashboardDTO!>!
+mk8.email.Gateway.ApplicationBridge.IGatewayApplicationClient.GetDomainsAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.DTOs.MailDomainSummaryDTO!>!>!
+mk8.email.Gateway.ApplicationBridge.IGatewayApplicationClient.ResetPasswordAsync(mk8.email.Contracts.Messaging.AdminResetPasswordRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.DTOs.AdministrationResult!>!
+mk8.email.Gateway.ApplicationBridge.IGatewayApplicationClient.SetAccountActiveAsync(mk8.email.Contracts.Messaging.AdminSetAccountActiveRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.DTOs.AdministrationResult!>!
+mk8.email.Gateway.ApplicationBridge.IGatewayApplicationClient.SetCatchAllAsync(mk8.email.Contracts.Messaging.AdminSetCatchAllRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.DTOs.AdministrationResult!>!
+mk8.email.Gateway.ApplicationBridge.IGatewayApplicationClient.SetDomainActiveAsync(mk8.email.Contracts.Messaging.AdminSetDomainActiveRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.DTOs.AdministrationResult!>!
+mk8.email.Gateway.ApplicationBridge.IGatewayApplicationTransport
+mk8.email.Gateway.ApplicationBridge.IGatewayApplicationTransport.SendAsync<TRequest, TResponse>(string! protocol, string! operation, TRequest value, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<TResponse>!
+mk8.email.Gateway.Pages.Accounts.AccountsModel
+mk8.email.Gateway.Pages.Accounts.AccountsModel.Accounts.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.DTOs.MailAccountSummaryDTO!>!
+mk8.email.Gateway.Pages.Accounts.AccountsModel.AccountsModel(mk8.email.Gateway.ApplicationBridge.IGatewayApplicationClient! application, mk8.email.Gateway.Security.IAdminAuditLog! auditLog) -> void
+mk8.email.Gateway.Pages.Accounts.AccountsModel.OnGetAsync(System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+mk8.email.Gateway.Pages.Accounts.AccountsModel.OnPostSetActiveAsync(System.Guid userId, bool isActive, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<Microsoft.AspNetCore.Mvc.IActionResult!>!
+mk8.email.Gateway.Pages.Accounts.AccountsModel.StatusMessage.get -> string?
+mk8.email.Gateway.Pages.Accounts.AccountsModel.StatusMessage.set -> void
+mk8.email.Gateway.Pages.Accounts.CreateAccountModel
+mk8.email.Gateway.Pages.Accounts.CreateAccountModel.AccountInput
+mk8.email.Gateway.Pages.Accounts.CreateAccountModel.AccountInput.AccountInput() -> void
+mk8.email.Gateway.Pages.Accounts.CreateAccountModel.AccountInput.Address.get -> string!
+mk8.email.Gateway.Pages.Accounts.CreateAccountModel.AccountInput.Address.set -> void
+mk8.email.Gateway.Pages.Accounts.CreateAccountModel.AccountInput.Password.get -> string!
+mk8.email.Gateway.Pages.Accounts.CreateAccountModel.AccountInput.Password.set -> void
+mk8.email.Gateway.Pages.Accounts.CreateAccountModel.AccountInput.Role.get -> mk8.email.Contracts.Enums.UserRole
+mk8.email.Gateway.Pages.Accounts.CreateAccountModel.AccountInput.Role.set -> void
+mk8.email.Gateway.Pages.Accounts.CreateAccountModel.CreateAccountModel(mk8.email.Gateway.ApplicationBridge.IGatewayApplicationClient! application, mk8.email.Gateway.Security.IAdminAuditLog! auditLog) -> void
+mk8.email.Gateway.Pages.Accounts.CreateAccountModel.Input.get -> mk8.email.Gateway.Pages.Accounts.CreateAccountModel.AccountInput!
+mk8.email.Gateway.Pages.Accounts.CreateAccountModel.Input.set -> void
+mk8.email.Gateway.Pages.Accounts.CreateAccountModel.OnPostAsync(System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<Microsoft.AspNetCore.Mvc.IActionResult!>!
+mk8.email.Gateway.Pages.Accounts.ResetPasswordModel
+mk8.email.Gateway.Pages.Accounts.ResetPasswordModel.Address.get -> string!
+mk8.email.Gateway.Pages.Accounts.ResetPasswordModel.Input.get -> mk8.email.Gateway.Pages.Accounts.ResetPasswordModel.PasswordInput!
+mk8.email.Gateway.Pages.Accounts.ResetPasswordModel.Input.set -> void
+mk8.email.Gateway.Pages.Accounts.ResetPasswordModel.OnGetAsync(System.Guid userId, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<Microsoft.AspNetCore.Mvc.IActionResult!>!
+mk8.email.Gateway.Pages.Accounts.ResetPasswordModel.OnPostAsync(System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<Microsoft.AspNetCore.Mvc.IActionResult!>!
+mk8.email.Gateway.Pages.Accounts.ResetPasswordModel.PasswordInput
+mk8.email.Gateway.Pages.Accounts.ResetPasswordModel.PasswordInput.Password.get -> string!
+mk8.email.Gateway.Pages.Accounts.ResetPasswordModel.PasswordInput.Password.set -> void
+mk8.email.Gateway.Pages.Accounts.ResetPasswordModel.PasswordInput.PasswordInput() -> void
+mk8.email.Gateway.Pages.Accounts.ResetPasswordModel.PasswordInput.UserId.get -> System.Guid
+mk8.email.Gateway.Pages.Accounts.ResetPasswordModel.PasswordInput.UserId.set -> void
+mk8.email.Gateway.Pages.Accounts.ResetPasswordModel.ResetPasswordModel(mk8.email.Gateway.ApplicationBridge.IGatewayApplicationClient! application, mk8.email.Gateway.Security.IAdminAuditLog! auditLog) -> void
+mk8.email.Gateway.Pages.Domains.DomainsModel
+mk8.email.Gateway.Pages.Domains.DomainsModel.CatchAllInput.get -> mk8.email.Gateway.Pages.Domains.DomainsModel.CatchAllRouteInput!
+mk8.email.Gateway.Pages.Domains.DomainsModel.CatchAllInput.set -> void
+mk8.email.Gateway.Pages.Domains.DomainsModel.CatchAllRouteInput
+mk8.email.Gateway.Pages.Domains.DomainsModel.CatchAllRouteInput.CatchAllRouteInput() -> void
+mk8.email.Gateway.Pages.Domains.DomainsModel.CatchAllRouteInput.Domain.get -> string!
+mk8.email.Gateway.Pages.Domains.DomainsModel.CatchAllRouteInput.Domain.set -> void
+mk8.email.Gateway.Pages.Domains.DomainsModel.CatchAllRouteInput.TargetAddress.get -> string!
+mk8.email.Gateway.Pages.Domains.DomainsModel.CatchAllRouteInput.TargetAddress.set -> void
+mk8.email.Gateway.Pages.Domains.DomainsModel.CreateDomainInput
+mk8.email.Gateway.Pages.Domains.DomainsModel.CreateDomainInput.CompanyName.get -> string!
+mk8.email.Gateway.Pages.Domains.DomainsModel.CreateDomainInput.CompanyName.set -> void
+mk8.email.Gateway.Pages.Domains.DomainsModel.CreateDomainInput.CreateDomainInput() -> void
+mk8.email.Gateway.Pages.Domains.DomainsModel.CreateDomainInput.Domain.get -> string!
+mk8.email.Gateway.Pages.Domains.DomainsModel.CreateDomainInput.Domain.set -> void
+mk8.email.Gateway.Pages.Domains.DomainsModel.CreateInput.get -> mk8.email.Gateway.Pages.Domains.DomainsModel.CreateDomainInput!
+mk8.email.Gateway.Pages.Domains.DomainsModel.CreateInput.set -> void
+mk8.email.Gateway.Pages.Domains.DomainsModel.Domains.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.DTOs.MailDomainSummaryDTO!>!
+mk8.email.Gateway.Pages.Domains.DomainsModel.DomainsModel(mk8.email.Gateway.ApplicationBridge.IGatewayApplicationClient! application, mk8.email.Gateway.Security.IAdminAuditLog! auditLog) -> void
+mk8.email.Gateway.Pages.Domains.DomainsModel.OnGetAsync(System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+mk8.email.Gateway.Pages.Domains.DomainsModel.OnPostCatchAllAsync(System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<Microsoft.AspNetCore.Mvc.IActionResult!>!
+mk8.email.Gateway.Pages.Domains.DomainsModel.OnPostCreateAsync(System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<Microsoft.AspNetCore.Mvc.IActionResult!>!
+mk8.email.Gateway.Pages.Domains.DomainsModel.StatusMessage.get -> string?
+mk8.email.Gateway.Pages.Domains.DomainsModel.StatusMessage.set -> void
+mk8.email.Gateway.Pages.ErrorModel
+mk8.email.Gateway.Pages.ErrorModel.ErrorModel() -> void
+mk8.email.Gateway.Pages.IndexModel
+mk8.email.Gateway.Pages.IndexModel.ActiveAccountCount.get -> int
+mk8.email.Gateway.Pages.IndexModel.CatchAllCount.get -> int
+mk8.email.Gateway.Pages.IndexModel.DomainCount.get -> int
+mk8.email.Gateway.Pages.IndexModel.IndexModel(mk8.email.Gateway.ApplicationBridge.IGatewayApplicationClient! application) -> void
+mk8.email.Gateway.Pages.IndexModel.LastCheck.get -> string!
+mk8.email.Gateway.Pages.IndexModel.OnGetAsync(System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+mk8.email.Gateway.Pages.IndexModel.OperationalClass.get -> string!
+mk8.email.Gateway.Pages.IndexModel.OperationalState.get -> string!
+mk8.email.Gateway.Pages.IndexModel.SystemStatus.get -> mk8.email.Contracts.DTOs.MailSystemStatusDTO!
+mk8.email.Gateway.Pages.LoginModel
+mk8.email.Gateway.Pages.LoginModel.Input.get -> mk8.email.Gateway.Pages.LoginModel.LoginInput!
+mk8.email.Gateway.Pages.LoginModel.Input.set -> void
+mk8.email.Gateway.Pages.LoginModel.LoginInput
+mk8.email.Gateway.Pages.LoginModel.LoginInput.LoginInput() -> void
+mk8.email.Gateway.Pages.LoginModel.LoginInput.Password.get -> string!
+mk8.email.Gateway.Pages.LoginModel.LoginInput.Password.set -> void
+mk8.email.Gateway.Pages.LoginModel.LoginInput.Username.get -> string!
+mk8.email.Gateway.Pages.LoginModel.LoginInput.Username.set -> void
+mk8.email.Gateway.Pages.LoginModel.LoginModel(mk8.email.Gateway.ApplicationBridge.IGatewayApplicationClient! application, mk8.email.Gateway.Security.IAdminAuditLog! auditLog, mk8.email.Configuration.AdminConfig! config) -> void
+mk8.email.Gateway.Pages.LoginModel.OnGet() -> Microsoft.AspNetCore.Mvc.IActionResult!
+mk8.email.Gateway.Pages.LoginModel.OnPostAsync(System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<Microsoft.AspNetCore.Mvc.IActionResult!>!
+mk8.email.Gateway.Pages.LoginModel.ReturnUrl.get -> string?
+mk8.email.Gateway.Pages.LoginModel.ReturnUrl.set -> void
+mk8.email.Gateway.Pages.LogoutModel
+mk8.email.Gateway.Pages.LogoutModel.LogoutModel(mk8.email.Gateway.Security.IAdminAuditLog! auditLog) -> void
+mk8.email.Gateway.Pages.LogoutModel.OnPostAsync(System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<Microsoft.AspNetCore.Mvc.IActionResult!>!
+mk8.email.Gateway.Protocols.Dav.GatewayDavEndpointRouteBuilderExtensions
+mk8.email.Gateway.Protocols.GatewayProtocolPaths
+mk8.email.Gateway.Protocols.GatewayProtocolTrafficCaptureMiddleware
+mk8.email.Gateway.Protocols.GatewayProtocolTrafficCaptureMiddleware.GatewayProtocolTrafficCaptureMiddleware(Microsoft.AspNetCore.Http.RequestDelegate! next, Microsoft.Extensions.Logging.ILogger<mk8.email.Gateway.Protocols.GatewayProtocolTrafficCaptureMiddleware!>! logger) -> void
+mk8.email.Gateway.Protocols.GatewayProtocolTrafficCaptureMiddleware.InvokeAsync(Microsoft.AspNetCore.Http.HttpContext! context, mk8.email.Messaging.IGatewayTrafficJournal! journal, mk8.email.Gateway.ApplicationBridge.GatewayApplicationOptions! options, mk8.email.Configuration.EnvironmentConfig! environment) -> System.Threading.Tasks.Task!
+mk8.email.Gateway.Protocols.GatewaySmtpApplicationService
+mk8.email.Gateway.Protocols.GatewaySmtpApplicationService.AuthenticateOAuthAsync(mk8.email.Contracts.Mail.SmtpOAuthAuthentication! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Mail.SmtpIdentityResult!>!
+mk8.email.Gateway.Protocols.GatewaySmtpApplicationService.AuthenticatePasswordAsync(mk8.email.Contracts.Mail.SmtpPasswordAuthentication! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Mail.SmtpIdentityResult!>!
+mk8.email.Gateway.Protocols.GatewaySmtpApplicationService.CanReceiveAsync(mk8.email.Contracts.Mail.SmtpRecipientCheck! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
+mk8.email.Gateway.Protocols.GatewaySmtpApplicationService.CanSendAsAsync(mk8.email.Contracts.Mail.SmtpSenderAuthorization! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
+mk8.email.Gateway.Protocols.GatewaySmtpApplicationService.EnqueueAsync(mk8.email.Contracts.Mail.MailSubmission! submission, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Guid>!
+mk8.email.Gateway.Protocols.GatewaySmtpApplicationService.GatewaySmtpApplicationService(mk8.email.Gateway.ApplicationBridge.IGatewayApplicationTransport! transport) -> void
+mk8.email.Gateway.Protocols.GatewaySmtpApplicationService.HasMatchingFromAddressAsync(mk8.email.Contracts.Mail.SmtpFromAddressCheck! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
+mk8.email.Gateway.Protocols.Imap.GatewayImapApplicationService
+mk8.email.Gateway.Protocols.Imap.GatewayImapApplicationService.AppendMessagesAsync(mk8.email.Contracts.Imap.ImapAppendRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Imap.ImapAppendResult!>!
+mk8.email.Gateway.Protocols.Imap.GatewayImapApplicationService.AuthenticateOAuthAsync(mk8.email.Contracts.Imap.ImapOAuthAuthentication! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Imap.ImapIdentityResult!>!
+mk8.email.Gateway.Protocols.Imap.GatewayImapApplicationService.AuthenticatePasswordAsync(mk8.email.Contracts.Imap.ImapPasswordAuthentication! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Imap.ImapIdentityResult!>!
+mk8.email.Gateway.Protocols.Imap.GatewayImapApplicationService.CheckAppendCapacityAsync(mk8.email.Contracts.Imap.ImapAppendPreflightRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Imap.ImapAppendPreflightResult!>!
+mk8.email.Gateway.Protocols.Imap.GatewayImapApplicationService.CopyMessagesAsync(mk8.email.Contracts.Imap.ImapCopyRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Imap.ImapCopyResult!>!
+mk8.email.Gateway.Protocols.Imap.GatewayImapApplicationService.CreateMailboxAsync(mk8.email.Contracts.Imap.ImapMailboxCreateRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Imap.ImapMailboxCreateResult!>!
+mk8.email.Gateway.Protocols.Imap.GatewayImapApplicationService.DeleteMailboxAsync(mk8.email.Contracts.Imap.ImapMailboxDeleteRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Imap.ImapMailboxDeleteResult!>!
+mk8.email.Gateway.Protocols.Imap.GatewayImapApplicationService.ExpungeDeletedAsync(mk8.email.Contracts.Imap.ImapExpungeRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Imap.ImapExpungeResult!>!
+mk8.email.Gateway.Protocols.Imap.GatewayImapApplicationService.GatewayImapApplicationService(mk8.email.Gateway.ApplicationBridge.IGatewayApplicationTransport! transport) -> void
+mk8.email.Gateway.Protocols.Imap.GatewayImapApplicationService.GetFetchPageAsync(mk8.email.Contracts.Imap.ImapFetchPageRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Imap.ImapFetchPageResult!>!
+mk8.email.Gateway.Protocols.Imap.GatewayImapApplicationService.GetIdleSnapshotAsync(mk8.email.Contracts.Imap.ImapIdleSnapshotRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Imap.ImapIdleSnapshotResult!>!
+mk8.email.Gateway.Protocols.Imap.GatewayImapApplicationService.GetMailboxStatusesAsync(mk8.email.Contracts.Imap.ImapMailboxStatusRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Imap.ImapMailboxStatusResult!>!
+mk8.email.Gateway.Protocols.Imap.GatewayImapApplicationService.GetQuotaAsync(mk8.email.Contracts.Imap.ImapQuotaRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Imap.ImapQuotaResult!>!
+mk8.email.Gateway.Protocols.Imap.GatewayImapApplicationService.ListMailboxesAsync(mk8.email.Contracts.Imap.ImapMailboxListRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Imap.ImapMailboxListResult!>!
+mk8.email.Gateway.Protocols.Imap.GatewayImapApplicationService.MarkMessagesSeenAsync(mk8.email.Contracts.Imap.ImapMarkSeenRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Imap.ImapMarkSeenResult!>!
+mk8.email.Gateway.Protocols.Imap.GatewayImapApplicationService.MoveMessagesAsync(mk8.email.Contracts.Imap.ImapMoveRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Imap.ImapMoveResult!>!
+mk8.email.Gateway.Protocols.Imap.GatewayImapApplicationService.RenameMailboxAsync(mk8.email.Contracts.Imap.ImapMailboxRenameRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Imap.ImapMailboxRenameResult!>!
+mk8.email.Gateway.Protocols.Imap.GatewayImapApplicationService.SearchMessagesAsync(mk8.email.Contracts.Imap.ImapSearchRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Imap.ImapSearchResult!>!
+mk8.email.Gateway.Protocols.Imap.GatewayImapApplicationService.SelectMailboxAsync(mk8.email.Contracts.Imap.ImapMailboxSelectRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Imap.ImapMailboxSelectResult!>!
+mk8.email.Gateway.Protocols.Imap.GatewayImapApplicationService.SetMailboxSubscriptionAsync(mk8.email.Contracts.Imap.ImapMailboxSubscriptionRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Imap.ImapMailboxSubscriptionResult!>!
+mk8.email.Gateway.Protocols.Imap.GatewayImapApplicationService.SortMessagesAsync(mk8.email.Contracts.Imap.ImapSortRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Imap.ImapSortResult!>!
+mk8.email.Gateway.Protocols.Imap.GatewayImapApplicationService.StoreFlagsAsync(mk8.email.Contracts.Imap.ImapStoreRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Imap.ImapStoreResult!>!
+mk8.email.Gateway.Protocols.Imap.GatewayImapApplicationService.ThreadMessagesAsync(mk8.email.Contracts.Imap.ImapThreadRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Imap.ImapThreadResult!>!
+mk8.email.Gateway.Protocols.Jmap.GatewayJmapClient
+mk8.email.Gateway.Protocols.Jmap.GatewayJmapClient.DownloadAsync(mk8.email.Contracts.Messaging.JmapDownloadApplicationRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Messaging.JmapApplicationResult!>!
+mk8.email.Gateway.Protocols.Jmap.GatewayJmapClient.GatewayJmapClient(mk8.email.Gateway.ApplicationBridge.IGatewayApplicationTransport! transport) -> void
+mk8.email.Gateway.Protocols.Jmap.GatewayJmapClient.GetSessionAsync(mk8.email.Contracts.Messaging.JmapSessionApplicationRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Messaging.JmapApplicationResult!>!
+mk8.email.Gateway.Protocols.Jmap.GatewayJmapClient.PollEventAsync(mk8.email.Contracts.Messaging.JmapEventApplicationRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Messaging.JmapApplicationResult!>!
+mk8.email.Gateway.Protocols.Jmap.GatewayJmapClient.ProcessApiRequestAsync(mk8.email.Contracts.Messaging.JmapApiApplicationRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Messaging.JmapApplicationResult!>!
+mk8.email.Gateway.Protocols.Jmap.GatewayJmapClient.UploadAsync(mk8.email.Contracts.Messaging.JmapUploadApplicationRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Messaging.JmapApplicationResult!>!
+mk8.email.Gateway.Protocols.Jmap.IGatewayJmapClient
+mk8.email.Gateway.Protocols.Jmap.IGatewayJmapClient.DownloadAsync(mk8.email.Contracts.Messaging.JmapDownloadApplicationRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Messaging.JmapApplicationResult!>!
+mk8.email.Gateway.Protocols.Jmap.IGatewayJmapClient.GetSessionAsync(mk8.email.Contracts.Messaging.JmapSessionApplicationRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Messaging.JmapApplicationResult!>!
+mk8.email.Gateway.Protocols.Jmap.IGatewayJmapClient.PollEventAsync(mk8.email.Contracts.Messaging.JmapEventApplicationRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Messaging.JmapApplicationResult!>!
+mk8.email.Gateway.Protocols.Jmap.IGatewayJmapClient.ProcessApiRequestAsync(mk8.email.Contracts.Messaging.JmapApiApplicationRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Messaging.JmapApplicationResult!>!
+mk8.email.Gateway.Protocols.Jmap.IGatewayJmapClient.UploadAsync(mk8.email.Contracts.Messaging.JmapUploadApplicationRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Messaging.JmapApplicationResult!>!
+mk8.email.Gateway.Protocols.Jmap.JmapEndpointRouteBuilderExtensions
+mk8.email.Gateway.Protocols.OAuth.GatewayOAuthClient
+mk8.email.Gateway.Protocols.OAuth.GatewayOAuthClient.AuthenticateIdentityAsync(mk8.email.Contracts.Messaging.OAuthIdentityLookupRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Messaging.OAuthIdentityLookupResult!>!
+mk8.email.Gateway.Protocols.OAuth.GatewayOAuthClient.AuthorizeAsync(mk8.email.Contracts.Messaging.OAuthAuthorizeApplicationRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Messaging.OAuthAuthorizeApplicationResult!>!
+mk8.email.Gateway.Protocols.OAuth.GatewayOAuthClient.GatewayOAuthClient(mk8.email.Gateway.ApplicationBridge.IGatewayApplicationTransport! transport) -> void
+mk8.email.Gateway.Protocols.OAuth.GatewayOAuthClient.GetPublicKeyAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Messaging.OAuthPublicKeyValue!>!
+mk8.email.Gateway.Protocols.OAuth.GatewayOAuthClient.RedeemAuthorizationCodeAsync(mk8.email.Contracts.Messaging.OAuthAuthorizationCodeRedeemRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Messaging.OAuthTokenApplicationResult!>!
+mk8.email.Gateway.Protocols.OAuth.GatewayOAuthClient.RefreshTokenAsync(mk8.email.Contracts.Messaging.OAuthRefreshTokenRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Messaging.OAuthTokenApplicationResult!>!
+mk8.email.Gateway.Protocols.OAuth.GatewayOAuthClient.RevokeTokenAsync(mk8.email.Contracts.Messaging.OAuthRevokeTokenRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+mk8.email.Gateway.Protocols.OAuth.IGatewayOAuthClient
+mk8.email.Gateway.Protocols.OAuth.IGatewayOAuthClient.AuthenticateIdentityAsync(mk8.email.Contracts.Messaging.OAuthIdentityLookupRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Messaging.OAuthIdentityLookupResult!>!
+mk8.email.Gateway.Protocols.OAuth.IGatewayOAuthClient.AuthorizeAsync(mk8.email.Contracts.Messaging.OAuthAuthorizeApplicationRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Messaging.OAuthAuthorizeApplicationResult!>!
+mk8.email.Gateway.Protocols.OAuth.IGatewayOAuthClient.GetPublicKeyAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Messaging.OAuthPublicKeyValue!>!
+mk8.email.Gateway.Protocols.OAuth.IGatewayOAuthClient.RedeemAuthorizationCodeAsync(mk8.email.Contracts.Messaging.OAuthAuthorizationCodeRedeemRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Messaging.OAuthTokenApplicationResult!>!
+mk8.email.Gateway.Protocols.OAuth.IGatewayOAuthClient.RefreshTokenAsync(mk8.email.Contracts.Messaging.OAuthRefreshTokenRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Messaging.OAuthTokenApplicationResult!>!
+mk8.email.Gateway.Protocols.OAuth.IGatewayOAuthClient.RevokeTokenAsync(mk8.email.Contracts.Messaging.OAuthRevokeTokenRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+mk8.email.Gateway.Protocols.OAuth.OAuthEndpointRouteBuilderExtensions
+mk8.email.Gateway.Protocols.OAuth.OAuthServiceExtensions
+mk8.email.Gateway.Protocols.Pop3.GatewayPop3ApplicationService
+mk8.email.Gateway.Protocols.Pop3.GatewayPop3ApplicationService.AuthenticateOAuthAsync(mk8.email.Contracts.Pop3.Pop3OAuthAuthentication! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Pop3.Pop3IdentityResult!>!
+mk8.email.Gateway.Protocols.Pop3.GatewayPop3ApplicationService.AuthenticatePasswordAsync(mk8.email.Contracts.Pop3.Pop3PasswordAuthentication! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Pop3.Pop3IdentityResult!>!
+mk8.email.Gateway.Protocols.Pop3.GatewayPop3ApplicationService.CommitDeletesAsync(mk8.email.Contracts.Pop3.Pop3DeleteRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Pop3.Pop3DeleteResult!>!
+mk8.email.Gateway.Protocols.Pop3.GatewayPop3ApplicationService.GatewayPop3ApplicationService(mk8.email.Gateway.ApplicationBridge.IGatewayApplicationTransport! transport) -> void
+mk8.email.Gateway.Protocols.Pop3.GatewayPop3ApplicationService.GetMessageAsync(mk8.email.Contracts.Pop3.Pop3MessageRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Pop3.Pop3MessageResult!>!
+mk8.email.Gateway.Protocols.Pop3.GatewayPop3ApplicationService.ListMaildropAsync(mk8.email.Contracts.Pop3.Pop3UserRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Pop3.Pop3MaildropSnapshot!>!
+mk8.email.Gateway.Protocols.Pop3.Pop3ServerService
+mk8.email.Gateway.Protocols.Pop3.Pop3ServerService.Pop3ServerService(Microsoft.Extensions.DependencyInjection.IServiceScopeFactory! scopeFactory, mk8.email.Configuration.EnvironmentConfig! environment, Microsoft.Extensions.Logging.ILogger<mk8.email.Gateway.Protocols.Pop3.Pop3ServerService!>! logger, mk8.email.Messaging.IPop3MaildropLeaseStore! leaseStore, mk8.email.Messaging.IGatewayTrafficJournal? journal = null) -> void
+mk8.email.Gateway.Protocols.Sieve.GatewaySieveApplicationService
+mk8.email.Gateway.Protocols.Sieve.GatewaySieveApplicationService.AuthenticateOAuthAsync(mk8.email.Contracts.Sieve.SieveOAuthAuthentication! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Sieve.SieveIdentityResult!>!
+mk8.email.Gateway.Protocols.Sieve.GatewaySieveApplicationService.AuthenticatePasswordAsync(mk8.email.Contracts.Sieve.SievePasswordAuthentication! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Sieve.SieveIdentityResult!>!
+mk8.email.Gateway.Protocols.Sieve.GatewaySieveApplicationService.CheckSpaceAsync(mk8.email.Contracts.Sieve.SieveCheckSpaceRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Sieve.SieveScriptOperationResult!>!
+mk8.email.Gateway.Protocols.Sieve.GatewaySieveApplicationService.DeleteAsync(mk8.email.Contracts.Sieve.SieveNamedRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Sieve.SieveScriptOperationResult!>!
+mk8.email.Gateway.Protocols.Sieve.GatewaySieveApplicationService.GatewaySieveApplicationService(mk8.email.Gateway.ApplicationBridge.IGatewayApplicationTransport! transport) -> void
+mk8.email.Gateway.Protocols.Sieve.GatewaySieveApplicationService.GetAsync(mk8.email.Contracts.Sieve.SieveNamedRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Sieve.SieveStoredScriptResult!>!
+mk8.email.Gateway.Protocols.Sieve.GatewaySieveApplicationService.ListAsync(mk8.email.Contracts.Sieve.SieveUserRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Sieve.SieveScriptSummary!>!>!
+mk8.email.Gateway.Protocols.Sieve.GatewaySieveApplicationService.PutAsync(mk8.email.Contracts.Sieve.SievePutRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Sieve.SieveScriptOperationResult!>!
+mk8.email.Gateway.Protocols.Sieve.GatewaySieveApplicationService.RenameAsync(mk8.email.Contracts.Sieve.SieveRenameRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Sieve.SieveScriptOperationResult!>!
+mk8.email.Gateway.Protocols.Sieve.GatewaySieveApplicationService.SetActiveAsync(mk8.email.Contracts.Sieve.SieveSetActiveRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Sieve.SieveScriptOperationResult!>!
+mk8.email.Gateway.Protocols.Sieve.GatewaySieveApplicationService.ValidateAsync(mk8.email.Contracts.Sieve.SieveValidationRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Sieve.SieveValidationResult!>!
+mk8.email.Gateway.Protocols.Sieve.ManageSieveServerService
+mk8.email.Gateway.Protocols.Sieve.ManageSieveServerService.ManageSieveServerService(Microsoft.Extensions.DependencyInjection.IServiceScopeFactory! scopeFactory, mk8.email.Configuration.EnvironmentConfig! environment, Microsoft.Extensions.Logging.ILogger<mk8.email.Gateway.Protocols.Sieve.ManageSieveServerService!>! logger, mk8.email.Messaging.IGatewayTrafficJournal? journal = null) -> void
+mk8.email.Gateway.Security.AdminAuditLog
+mk8.email.Gateway.Security.AdminAuditLog.AdminAuditLog(mk8.email.Configuration.AdminConfig! config, Microsoft.Extensions.Logging.ILogger<mk8.email.Gateway.Security.AdminAuditLog!>! logger) -> void
+mk8.email.Gateway.Security.AdminAuditLog.Dispose() -> void
+mk8.email.Gateway.Security.AdminAuditLog.WriteAsync(string! actor, string! action, string! target, bool succeeded, string? remoteAddress, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+mk8.email.Gateway.Security.AdminNetworkMiddleware
+mk8.email.Gateway.Security.AdminNetworkMiddleware.AdminNetworkMiddleware(Microsoft.AspNetCore.Http.RequestDelegate! next, mk8.email.Gateway.Security.AdminNetworkPolicy! policy, Microsoft.Extensions.Logging.ILogger<mk8.email.Gateway.Security.AdminNetworkMiddleware!>! logger) -> void
+mk8.email.Gateway.Security.AdminNetworkMiddleware.InvokeAsync(Microsoft.AspNetCore.Http.HttpContext! context) -> System.Threading.Tasks.Task!
+mk8.email.Gateway.Security.AdminNetworkPolicy
+mk8.email.Gateway.Security.AdminNetworkPolicy.AdminNetworkPolicy(mk8.email.Configuration.AdminConfig! config) -> void
+mk8.email.Gateway.Security.AdminNetworkPolicy.Contains(System.Net.IPAddress! address) -> bool
+mk8.email.Gateway.Security.IAdminAuditLog
+mk8.email.Gateway.Security.IAdminAuditLog.WriteAsync(string! actor, string! action, string! target, bool succeeded, string? remoteAddress, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+override mk8.email.Gateway.ApplicationBridge.GatewayApplicationOptions.Equals(object? obj) -> bool
+override mk8.email.Gateway.ApplicationBridge.GatewayApplicationOptions.GetHashCode() -> int
+override mk8.email.Gateway.ApplicationBridge.GatewayApplicationOptions.ToString() -> string!
+Program
+Program.Program() -> void
+static mk8.email.Gateway.ApplicationBridge.GatewayApplicationHealth.CheckAsync(mk8.email.Gateway.ApplicationBridge.IGatewayApplicationTransport! transport, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<Microsoft.AspNetCore.Http.IResult!>!
+static mk8.email.Gateway.ApplicationBridge.GatewayApplicationOptions.operator !=(mk8.email.Gateway.ApplicationBridge.GatewayApplicationOptions? left, mk8.email.Gateway.ApplicationBridge.GatewayApplicationOptions? right) -> bool
+static mk8.email.Gateway.ApplicationBridge.GatewayApplicationOptions.operator ==(mk8.email.Gateway.ApplicationBridge.GatewayApplicationOptions? left, mk8.email.Gateway.ApplicationBridge.GatewayApplicationOptions? right) -> bool
+static mk8.email.Gateway.ApplicationBridge.GatewayApplicationServiceExtensions.AddGatewayApplicationClient(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
+static mk8.email.Gateway.Pages.IndexModel.FormatAge(long? seconds) -> string!
+static mk8.email.Gateway.Pages.IndexModel.FormatRemaining(long? seconds) -> string!
+static mk8.email.Gateway.Protocols.Dav.GatewayDavEndpointRouteBuilderExtensions.MapDavEndpoints(this Microsoft.AspNetCore.Routing.IEndpointRouteBuilder! endpoints) -> Microsoft.AspNetCore.Routing.IEndpointRouteBuilder!
+static mk8.email.Gateway.Protocols.GatewayProtocolPaths.GetProtocol(Microsoft.AspNetCore.Http.PathString path) -> string?
+static mk8.email.Gateway.Protocols.GatewayProtocolPaths.IsDav(Microsoft.AspNetCore.Http.PathString path) -> bool
+static mk8.email.Gateway.Protocols.GatewayProtocolPaths.IsJmap(Microsoft.AspNetCore.Http.PathString path) -> bool
+static mk8.email.Gateway.Protocols.GatewayProtocolPaths.IsOAuth(Microsoft.AspNetCore.Http.PathString path) -> bool
+static mk8.email.Gateway.Protocols.GatewayProtocolPaths.IsPublicProtocol(Microsoft.AspNetCore.Http.PathString path) -> bool
+static mk8.email.Gateway.Protocols.GatewayProtocolPaths.IsStreaming(Microsoft.AspNetCore.Http.PathString path) -> bool
+static mk8.email.Gateway.Protocols.Jmap.JmapEndpointRouteBuilderExtensions.MapJmapEndpoints(this Microsoft.AspNetCore.Routing.IEndpointRouteBuilder! endpoints) -> Microsoft.AspNetCore.Routing.IEndpointRouteBuilder!
+static mk8.email.Gateway.Protocols.OAuth.OAuthEndpointRouteBuilderExtensions.MapOAuthEndpoints(this Microsoft.AspNetCore.Routing.IEndpointRouteBuilder! endpoints) -> Microsoft.AspNetCore.Routing.IEndpointRouteBuilder!
+static mk8.email.Gateway.Protocols.OAuth.OAuthServiceExtensions.AddOAuthProtocol(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!

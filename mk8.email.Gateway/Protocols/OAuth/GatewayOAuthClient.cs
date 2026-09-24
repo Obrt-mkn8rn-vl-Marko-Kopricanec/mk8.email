@@ -57,5 +57,5 @@ public sealed class GatewayOAuthClient(IGatewayApplicationTransport transport)
             "oauth",
             ApplicationOperations.OAuthTokenRevoke,
             request,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
 }

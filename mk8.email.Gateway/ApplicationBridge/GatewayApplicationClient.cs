@@ -22,8 +22,8 @@ public sealed class GatewayApplicationClient(
         var data = await SendAsync<object, AdminDashboardDataDTO>(
             ApplicationOperations.AdminDashboardGet,
             new { },
-            cancellationToken);
-        var status = await statusReader.GetStatusAsync(cancellationToken);
+            cancellationToken).ConfigureAwait(false);
+        var status = await statusReader.GetStatusAsync(cancellationToken).ConfigureAwait(false);
         return new AdminDashboardDTO(data.Domains, data.Accounts, status);
     }
 
@@ -97,5 +97,5 @@ public sealed class GatewayApplicationClient(
             "admin",
             operation,
             value,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
 }

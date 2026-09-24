@@ -54,7 +54,7 @@ public sealed class GatewayApplicationTransport(
                 metadata,
                 now,
                 requestId),
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (
             exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
@@ -69,11 +69,11 @@ public sealed class GatewayApplicationTransport(
         ApplicationResponse response;
         try
         {
-            response = await requests.SendAsync(request, cancellationToken);
+            response = await requests.SendAsync(request, cancellationToken).ConfigureAwait(false);
         }
         catch (ApplicationRequestExpiredException exception)
         {
-            await AppendFailureAsync(protocol, sessionId, requestId, "application-timeout");
+            await AppendFailureAsync(protocol, sessionId, requestId, "application-timeout").ConfigureAwait(false);
             throw new GatewayApplicationException(
                 "application-timeout",
                 "The application worker did not respond before the request deadline.",
@@ -82,7 +82,7 @@ public sealed class GatewayApplicationTransport(
         }
         catch (ApplicationRequestFailedException exception)
         {
-            await AppendFailureAsync(protocol, sessionId, requestId, exception.ErrorCode);
+            await AppendFailureAsync(protocol, sessionId, requestId, exception.ErrorCode).ConfigureAwait(false);
             throw new GatewayApplicationException(
                 exception.ErrorCode,
                 "The application worker could not complete the request.",
@@ -90,12 +90,12 @@ public sealed class GatewayApplicationTransport(
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            await AppendFailureAsync(protocol, sessionId, requestId, "gateway-request-cancelled");
+            await AppendFailureAsync(protocol, sessionId, requestId, "gateway-request-cancelled").ConfigureAwait(false);
             throw;
         }
         catch (Exception exception)
         {
-            await AppendFailureAsync(protocol, sessionId, requestId, "application-transport-failure");
+            await AppendFailureAsync(protocol, sessionId, requestId, "application-transport-failure").ConfigureAwait(false);
             throw new GatewayApplicationException(
                 "application-transport-failure",
                 "The application transport is unavailable.",
@@ -114,7 +114,7 @@ public sealed class GatewayApplicationTransport(
                 response.Payload,
                 response.Metadata,
                 DateTimeOffset.UtcNow,
-                requestId));
+                requestId)).ConfigureAwait(false);
         if (response.IsError)
         {
             throw new GatewayApplicationException(
@@ -154,9 +154,9 @@ public sealed class GatewayApplicationTransport(
                 protocol,
                 "application/problem+json",
                 payload,
-                new Dictionary<string, string>(),
+                new Dictionary<string, string>(StringComparer.Ordinal),
                 DateTimeOffset.UtcNow,
-                requestId));
+                requestId)).ConfigureAwait(false);
     }
 
     private async Task AppendOutboundAsync(GatewayTrafficRecord record)
@@ -164,7 +164,7 @@ public sealed class GatewayApplicationTransport(
         using var timeout = new CancellationTokenSource(options.TrafficJournalTimeout);
         try
         {
-            await traffic.AppendAsync(record, timeout.Token);
+            await traffic.AppendAsync(record, timeout.Token).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not GatewayApplicationException)
         {

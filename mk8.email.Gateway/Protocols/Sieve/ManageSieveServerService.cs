@@ -55,7 +55,8 @@ public sealed class ManageSieveServerService(
             return;
         }
 
-        var listener = new TcpListener(IPAddress.Any, environment.Sieve.Port);
+        using var listener = new TcpListener(IPAddress.Any, environment.Sieve.Port);
+        var activeConnections = new List<Task>();
         listener.Start();
         logger.LogInformation(
             "ManageSieve listener started on port {Port}",
@@ -65,8 +66,9 @@ public sealed class ManageSieveServerService(
         {
             while (!stoppingToken.IsCancellationRequested)
             {
-                var client = await listener.AcceptTcpClientAsync(stoppingToken);
-                _ = HandleConnectionAsync(client, stoppingToken);
+                var client = await listener.AcceptTcpClientAsync(stoppingToken).ConfigureAwait(false);
+                activeConnections.RemoveAll(static task => task.IsCompletedSuccessfully);
+                activeConnections.Add(HandleConnectionAsync(client, stoppingToken));
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -75,6 +77,7 @@ public sealed class ManageSieveServerService(
         finally
         {
             listener.Stop();
+            await Task.WhenAll(activeConnections).ConfigureAwait(false);
             logger.LogInformation("ManageSieve listener on port {Port} stopped", environment.Sieve.Port);
         }
     }
@@ -97,25 +100,27 @@ public sealed class ManageSieveServerService(
         }
 
         var session = new ManageSieveSession { RemoteIp = remoteAddress.ToString() };
-        Stream? stream = null;
+        GatewayTrafficStream? recordedStream = null;
+        SslStream? tlsStream = null;
         try
         {
             using (client)
             using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken))
             {
-                stream = client.GetStream();
+                Stream stream = client.GetStream();
                 if (journal is not null)
                 {
                     var traffic = new GatewayTrafficSession(
                         journal,
                         "sieve",
-                        new Dictionary<string, string>
+                        new Dictionary<string, string>(StringComparer.Ordinal)
                         {
                             ["remoteEndpoint"] = remoteLabel,
                             ["listenerPort"] = ((client.Client.LocalEndPoint as IPEndPoint)?.Port ?? 0)
                                 .ToString(CultureInfo.InvariantCulture),
                         });
-                    stream = new GatewayTrafficStream(stream, traffic, leaveInnerOpen: false);
+                    recordedStream = new GatewayTrafficStream(stream, traffic, leaveInnerOpen: true);
+                    stream = recordedStream;
                 }
                 var sendCapabilities = true;
                 while (!timeout.IsCancellationRequested)
@@ -124,20 +129,19 @@ public sealed class ManageSieveServerService(
                         stream,
                         session,
                         timeout,
-                        sendCapabilities);
+                        sendCapabilities).ConfigureAwait(false);
                     sendCapabilities = false;
                     if (result != SessionResult.StartTls)
                         break;
 
                     using var certificate = LoadCertificate();
-                    var tlsStream = new SslStream(stream, leaveInnerStreamOpen: false);
+                    tlsStream = new SslStream(stream, leaveInnerStreamOpen: true);
                     if (!await TryAuthenticateAsServerAsync(
                             tlsStream,
                             certificate,
-                            timeout.Token,
-                            remoteLabel))
+                            remoteLabel,
+                            timeout.Token).ConfigureAwait(false))
                     {
-                        await tlsStream.DisposeAsync();
                         return;
                     }
                     stream = tlsStream;
@@ -162,8 +166,10 @@ public sealed class ManageSieveServerService(
         }
         finally
         {
-            if (stream is SslStream sslStream)
-                await sslStream.DisposeAsync();
+            if (tlsStream is not null)
+                await tlsStream.DisposeAsync().ConfigureAwait(false);
+            if (recordedStream is not null)
+                await recordedStream.DisposeAsync().ConfigureAwait(false);
         }
     }
 
@@ -175,7 +181,7 @@ public sealed class ManageSieveServerService(
     {
         var reader = new ManageSieveWireReader(stream);
         if (sendCapabilities)
-            await WriteCapabilitiesAsync(stream, session, timeout.Token);
+            await WriteCapabilitiesAsync(stream, session, timeout.Token).ConfigureAwait(false);
 
         while (!timeout.IsCancellationRequested)
         {
@@ -192,7 +198,7 @@ public sealed class ManageSieveServerService(
                         stream,
                         "Ready for literal data",
                         cancellationToken: cancellationToken),
-                    timeout.Token);
+                    timeout.Token).ConfigureAwait(false);
             }
             catch (ManageSieveProtocolException exception)
             {
@@ -201,7 +207,7 @@ public sealed class ManageSieveServerService(
                     exception.IsFatal ? "BYE" : "NO",
                     exception.Message,
                     exception.ResponseCode,
-                    timeout.Token);
+                    timeout.Token).ConfigureAwait(false);
                 if (exception.IsFatal)
                     return SessionResult.Closed;
                 continue;
@@ -212,7 +218,7 @@ public sealed class ManageSieveServerService(
 
             try
             {
-                var result = await HandleCommandAsync(stream, reader, command, session, timeout);
+                var result = await HandleCommandAsync(stream, reader, command, session, timeout).ConfigureAwait(false);
                 if (result is not null)
                     return result.Value;
             }
@@ -220,7 +226,7 @@ public sealed class ManageSieveServerService(
                 exception is not OperationCanceledException && !timeout.IsCancellationRequested)
             {
                 logger.LogWarning(exception, "ManageSieve application command failed for user {UserId}", session.UserId);
-                await WriteNoAsync(stream, "The script service is temporarily unavailable.", "TRYLATER", timeout.Token);
+                await WriteNoAsync(stream, "The script service is temporarily unavailable.", "TRYLATER", timeout.Token).ConfigureAwait(false);
             }
         }
 
@@ -240,33 +246,33 @@ public sealed class ManageSieveServerService(
             case "CAPABILITY":
                 if (!HasArgumentCount(command, 0))
                 {
-                    await WriteNoAsync(stream, "CAPABILITY does not accept arguments.", cancellationToken: cancellationToken);
+                    await WriteNoAsync(stream, "CAPABILITY does not accept arguments.", cancellationToken: cancellationToken).ConfigureAwait(false);
                     return null;
                 }
-                await WriteCapabilitiesAsync(stream, session, cancellationToken);
+                await WriteCapabilitiesAsync(stream, session, cancellationToken).ConfigureAwait(false);
                 return null;
 
             case "STARTTLS":
                 if (!HasArgumentCount(command, 0))
                 {
-                    await WriteNoAsync(stream, "STARTTLS does not accept arguments.", cancellationToken: cancellationToken);
+                    await WriteNoAsync(stream, "STARTTLS does not accept arguments.", cancellationToken: cancellationToken).ConfigureAwait(false);
                     return null;
                 }
                 if (session.IsAuthenticated)
                 {
-                    await WriteNoAsync(stream, "STARTTLS is only valid before authentication.", cancellationToken: cancellationToken);
+                    await WriteNoAsync(stream, "STARTTLS is only valid before authentication.", cancellationToken: cancellationToken).ConfigureAwait(false);
                     return null;
                 }
                 if (session.IsSecure || !environment.Sieve.EnableStartTls)
                 {
-                    await WriteNoAsync(stream, "STARTTLS is not available.", cancellationToken: cancellationToken);
+                    await WriteNoAsync(stream, "STARTTLS is not available.", cancellationToken: cancellationToken).ConfigureAwait(false);
                     return null;
                 }
-                await WriteOkAsync(stream, "Begin TLS negotiation", cancellationToken: cancellationToken);
+                await WriteOkAsync(stream, "Begin TLS negotiation", cancellationToken: cancellationToken).ConfigureAwait(false);
                 return SessionResult.StartTls;
 
             case "AUTHENTICATE":
-                await HandleAuthenticateAsync(stream, reader, command, session, timeout);
+                await HandleAuthenticateAsync(stream, reader, command, session, timeout).ConfigureAwait(false);
                 return session.AuthenticationFailures >= MaximumAuthenticationFailures
                     ? SessionResult.Closed
                     : null;
@@ -274,20 +280,20 @@ public sealed class ManageSieveServerService(
             case "LOGOUT":
                 if (!HasArgumentCount(command, 0))
                 {
-                    await WriteNoAsync(stream, "LOGOUT does not accept arguments.", cancellationToken: cancellationToken);
+                    await WriteNoAsync(stream, "LOGOUT does not accept arguments.", cancellationToken: cancellationToken).ConfigureAwait(false);
                     return null;
                 }
-                await WriteOkAsync(stream, "Logout completed", cancellationToken: cancellationToken);
+                await WriteOkAsync(stream, "Logout completed", cancellationToken: cancellationToken).ConfigureAwait(false);
                 return SessionResult.Closed;
 
             case "NOOP":
-                await HandleNoopAsync(stream, command, cancellationToken);
+                await HandleNoopAsync(stream, command, cancellationToken).ConfigureAwait(false);
                 return null;
         }
 
         if (!session.IsAuthenticated)
         {
-            await WriteNoAsync(stream, "Authenticate before using this command.", cancellationToken: cancellationToken);
+            await WriteNoAsync(stream, "Authenticate before using this command.", cancellationToken: cancellationToken).ConfigureAwait(false);
             return null;
         }
 
@@ -296,48 +302,48 @@ public sealed class ManageSieveServerService(
             case "UNAUTHENTICATE":
                 if (!HasArgumentCount(command, 0))
                 {
-                    await WriteNoAsync(stream, "UNAUTHENTICATE does not accept arguments.", cancellationToken: cancellationToken);
+                    await WriteNoAsync(stream, "UNAUTHENTICATE does not accept arguments.", cancellationToken: cancellationToken).ConfigureAwait(false);
                     return null;
                 }
                 session.UserId = null;
                 session.Username = null;
-                await WriteOkAsync(stream, "Unauthenticate completed", cancellationToken: cancellationToken);
+                await WriteOkAsync(stream, "Unauthenticate completed", cancellationToken: cancellationToken).ConfigureAwait(false);
                 return null;
 
             case "HAVESPACE":
-                await HandleHaveSpaceAsync(stream, command, session, cancellationToken);
+                await HandleHaveSpaceAsync(stream, command, session, cancellationToken).ConfigureAwait(false);
                 return null;
 
             case "PUTSCRIPT":
-                await HandlePutScriptAsync(stream, command, session, cancellationToken);
+                await HandlePutScriptAsync(stream, command, session, cancellationToken).ConfigureAwait(false);
                 return null;
 
             case "LISTSCRIPTS":
-                await HandleListScriptsAsync(stream, command, session, cancellationToken);
+                await HandleListScriptsAsync(stream, command, session, cancellationToken).ConfigureAwait(false);
                 return null;
 
             case "SETACTIVE":
-                await HandleSetActiveAsync(stream, command, session, cancellationToken);
+                await HandleSetActiveAsync(stream, command, session, cancellationToken).ConfigureAwait(false);
                 return null;
 
             case "GETSCRIPT":
-                await HandleGetScriptAsync(stream, command, session, cancellationToken);
+                await HandleGetScriptAsync(stream, command, session, cancellationToken).ConfigureAwait(false);
                 return null;
 
             case "DELETESCRIPT":
-                await HandleDeleteScriptAsync(stream, command, session, cancellationToken);
+                await HandleDeleteScriptAsync(stream, command, session, cancellationToken).ConfigureAwait(false);
                 return null;
 
             case "RENAMESCRIPT":
-                await HandleRenameScriptAsync(stream, command, session, cancellationToken);
+                await HandleRenameScriptAsync(stream, command, session, cancellationToken).ConfigureAwait(false);
                 return null;
 
             case "CHECKSCRIPT":
-                await HandleCheckScriptAsync(stream, command, cancellationToken);
+                await HandleCheckScriptAsync(stream, command, cancellationToken).ConfigureAwait(false);
                 return null;
 
             default:
-                await WriteNoAsync(stream, "Unknown command.", cancellationToken: cancellationToken);
+                await WriteNoAsync(stream, "Unknown command.", cancellationToken: cancellationToken).ConfigureAwait(false);
                 return null;
         }
     }
@@ -352,25 +358,25 @@ public sealed class ManageSieveServerService(
         var cancellationToken = timeout.Token;
         if (session.IsAuthenticated)
         {
-            await WriteNoAsync(stream, "The session is already authenticated.", cancellationToken: cancellationToken);
+            await WriteNoAsync(stream, "The session is already authenticated.", cancellationToken: cancellationToken).ConfigureAwait(false);
             return;
         }
         if (!session.IsSecure)
         {
-            await WriteNoAsync(stream, "Authentication requires TLS.", "ENCRYPT-NEEDED", cancellationToken);
+            await WriteNoAsync(stream, "Authentication requires TLS.", "ENCRYPT-NEEDED", cancellationToken).ConfigureAwait(false);
             return;
         }
         if (command.Arguments.Count is < 1 or > 2
             || command.Arguments.Any(argument => argument.Kind != ManageSieveTokenKind.String))
         {
-            await WriteNoAsync(stream, "AUTHENTICATE requires a mechanism and optional initial response.", cancellationToken: cancellationToken);
+            await WriteNoAsync(stream, "AUTHENTICATE requires a mechanism and optional initial response.", cancellationToken: cancellationToken).ConfigureAwait(false);
             return;
         }
         var mechanism = command.Arguments[0].Value.ToUpperInvariant();
-        if (mechanism != "PLAIN"
-            && (mechanism != "XOAUTH2" || !environment.OAuth.EnableOAuth))
+        if (!string.Equals(mechanism, "PLAIN"
+, StringComparison.Ordinal) && (!string.Equals(mechanism, "XOAUTH2", StringComparison.Ordinal) || !environment.OAuth.EnableOAuth))
         {
-            await WriteNoAsync(stream, "The requested SASL mechanism is not supported.", cancellationToken: cancellationToken);
+            await WriteNoAsync(stream, "The requested SASL mechanism is not supported.", cancellationToken: cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -381,7 +387,7 @@ public sealed class ManageSieveServerService(
         }
         else
         {
-            await WriteLineAsync(stream, "\"\"", cancellationToken);
+            await WriteLineAsync(stream, "\"\"", cancellationToken).ConfigureAwait(false);
             try
             {
                 payload = await reader.ReadSaslResponseAsync(
@@ -389,7 +395,7 @@ public sealed class ManageSieveServerService(
                         stream,
                         "Ready for literal data",
                         cancellationToken: continuationToken),
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
             }
             catch (ManageSieveProtocolException exception)
             {
@@ -401,22 +407,22 @@ public sealed class ManageSieveServerService(
                         "BYE",
                         exception.Message,
                         exception.ResponseCode,
-                        cancellationToken);
+                        cancellationToken).ConfigureAwait(false);
                     return;
                 }
-                await RecordAuthenticationFailureAsync(stream, session, exception.Message, cancellationToken);
+                await RecordAuthenticationFailureAsync(stream, session, exception.Message, cancellationToken).ConfigureAwait(false);
                 return;
             }
         }
 
-        if (payload is null || payload == "*")
+        if (payload is null || string.Equals(payload, "*", StringComparison.Ordinal))
         {
-            await WriteNoAsync(stream, "Authentication was cancelled.", cancellationToken: cancellationToken);
+            await WriteNoAsync(stream, "Authentication was cancelled.", cancellationToken: cancellationToken).ConfigureAwait(false);
             return;
         }
 
         SieveIdentityResult authenticated;
-        if (mechanism == "XOAUTH2")
+        if (string.Equals(mechanism, "XOAUTH2", StringComparison.Ordinal))
         {
             if (!OAuthSasl.TryParseXOAuth2(payload, out var username, out var accessToken))
             {
@@ -424,14 +430,14 @@ public sealed class ManageSieveServerService(
                     stream,
                     session,
                     "Authentication failed.",
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 return;
             }
 
             using var scope = scopeFactory.CreateScope();
             var application = scope.ServiceProvider.GetRequiredService<ISieveApplicationService>();
             authenticated = await application.AuthenticateOAuthAsync(
-                new SieveOAuthAuthentication(accessToken), cancellationToken);
+                new SieveOAuthAuthentication(accessToken), cancellationToken).ConfigureAwait(false);
             if (authenticated.UserId is not null
                 && !string.Equals(
                     username,
@@ -458,18 +464,18 @@ public sealed class ManageSieveServerService(
                     stream,
                     session,
                     "Authentication failed.",
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 return;
             }
 
             using var scope = scopeFactory.CreateScope();
             var application = scope.ServiceProvider.GetRequiredService<ISieveApplicationService>();
             authenticated = await application.AuthenticatePasswordAsync(
-                new SievePasswordAuthentication(username, password), cancellationToken);
+                new SievePasswordAuthentication(username, password), cancellationToken).ConfigureAwait(false);
         }
         if (authenticated.UserId is null || authenticated.Username is null)
         {
-            await RecordAuthenticationFailureAsync(stream, session, "Authentication failed.", cancellationToken);
+            await RecordAuthenticationFailureAsync(stream, session, "Authentication failed.", cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -477,7 +483,7 @@ public sealed class ManageSieveServerService(
         session.Username = authenticated.Username;
         timeout.CancelAfter(TimeSpan.FromSeconds(
             Math.Max(environment.Limits.ConnectionTimeoutSeconds, AuthenticatedTimeoutSeconds)));
-        await WriteOkAsync(stream, "Authentication successful", cancellationToken: cancellationToken);
+        await WriteOkAsync(stream, "Authentication successful", cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     private async Task RecordAuthenticationFailureAsync(
@@ -496,10 +502,10 @@ public sealed class ManageSieveServerService(
                 stream,
                 "BYE",
                 "Too many failed authentication attempts",
-                cancellationToken: cancellationToken);
+                cancellationToken: cancellationToken).ConfigureAwait(false);
             return;
         }
-        await WriteNoAsync(stream, message, cancellationToken: cancellationToken);
+        await WriteNoAsync(stream, message, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     private async Task HandleHaveSpaceAsync(
@@ -512,7 +518,7 @@ public sealed class ManageSieveServerService(
             || !long.TryParse(command.Arguments[1].Value, out var size)
             || size < 0)
         {
-            await WriteNoAsync(stream, "HAVESPACE requires a script name and non-negative size.", cancellationToken: cancellationToken);
+            await WriteNoAsync(stream, "HAVESPACE requires a script name and non-negative size.", cancellationToken: cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -524,8 +530,8 @@ public sealed class ManageSieveServerService(
                 command.Arguments[0].Value,
                 size,
                 environment.Sieve.MaxScriptsPerUser),
-            cancellationToken);
-        await WriteOperationResultAsync(stream, result, "Space is available", cancellationToken);
+            cancellationToken).ConfigureAwait(false);
+        await WriteOperationResultAsync(stream, result, "Space is available", cancellationToken).ConfigureAwait(false);
     }
 
     private async Task HandlePutScriptAsync(
@@ -536,7 +542,7 @@ public sealed class ManageSieveServerService(
     {
         if (!HasKinds(command, ManageSieveTokenKind.String, ManageSieveTokenKind.String))
         {
-            await WriteNoAsync(stream, "PUTSCRIPT requires a script name and content.", cancellationToken: cancellationToken);
+            await WriteNoAsync(stream, "PUTSCRIPT requires a script name and content.", cancellationToken: cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -548,8 +554,8 @@ public sealed class ManageSieveServerService(
                 command.Arguments[0].Value,
                 command.Arguments[1].Value,
                 environment.Sieve.MaxScriptsPerUser),
-            cancellationToken);
-        await WriteOperationResultAsync(stream, result, "Script stored", cancellationToken);
+            cancellationToken).ConfigureAwait(false);
+        await WriteOperationResultAsync(stream, result, "Script stored", cancellationToken).ConfigureAwait(false);
     }
 
     private async Task HandleListScriptsAsync(
@@ -560,21 +566,21 @@ public sealed class ManageSieveServerService(
     {
         if (!HasArgumentCount(command, 0))
         {
-            await WriteNoAsync(stream, "LISTSCRIPTS does not accept arguments.", cancellationToken: cancellationToken);
+            await WriteNoAsync(stream, "LISTSCRIPTS does not accept arguments.", cancellationToken: cancellationToken).ConfigureAwait(false);
             return;
         }
 
         using var scope = scopeFactory.CreateScope();
         var application = scope.ServiceProvider.GetRequiredService<ISieveApplicationService>();
         foreach (var script in await application.ListAsync(
-                     new SieveUserRequest(session.UserId!.Value), cancellationToken))
+                     new SieveUserRequest(session.UserId!.Value), cancellationToken).ConfigureAwait(false))
         {
             await WriteLineAsync(
                 stream,
                 Quote(script.Name) + (script.IsActive ? " ACTIVE" : string.Empty),
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         }
-        await WriteOkAsync(stream, "Scripts listed", cancellationToken: cancellationToken);
+        await WriteOkAsync(stream, "Scripts listed", cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     private async Task HandleSetActiveAsync(
@@ -585,7 +591,7 @@ public sealed class ManageSieveServerService(
     {
         if (!HasKinds(command, ManageSieveTokenKind.String))
         {
-            await WriteNoAsync(stream, "SETACTIVE requires a script name.", cancellationToken: cancellationToken);
+            await WriteNoAsync(stream, "SETACTIVE requires a script name.", cancellationToken: cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -594,8 +600,8 @@ public sealed class ManageSieveServerService(
         var name = command.Arguments[0].Value;
         var result = await application.SetActiveAsync(
             new SieveSetActiveRequest(session.UserId!.Value, name.Length == 0 ? null : name),
-            cancellationToken);
-        await WriteOperationResultAsync(stream, result, "Active script updated", cancellationToken);
+            cancellationToken).ConfigureAwait(false);
+        await WriteOperationResultAsync(stream, result, "Active script updated", cancellationToken).ConfigureAwait(false);
     }
 
     private async Task HandleGetScriptAsync(
@@ -606,7 +612,7 @@ public sealed class ManageSieveServerService(
     {
         if (!HasKinds(command, ManageSieveTokenKind.String))
         {
-            await WriteNoAsync(stream, "GETSCRIPT requires a script name.", cancellationToken: cancellationToken);
+            await WriteNoAsync(stream, "GETSCRIPT requires a script name.", cancellationToken: cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -614,19 +620,19 @@ public sealed class ManageSieveServerService(
         var application = scope.ServiceProvider.GetRequiredService<ISieveApplicationService>();
         var script = (await application.GetAsync(
             new SieveNamedRequest(session.UserId!.Value, command.Arguments[0].Value),
-            cancellationToken)).Script;
+            cancellationToken).ConfigureAwait(false)).Script;
         if (script is null)
         {
-            await WriteNoAsync(stream, "The script does not exist.", "NONEXISTENT", cancellationToken);
+            await WriteNoAsync(stream, "The script does not exist.", "NONEXISTENT", cancellationToken).ConfigureAwait(false);
             return;
         }
 
         var content = StrictUtf8.GetBytes(script.Content);
-        await WriteLineAsync(stream, $"{{{content.Length}}}", cancellationToken);
-        await stream.WriteAsync(content, cancellationToken);
-        await stream.WriteAsync("\r\n"u8.ToArray(), cancellationToken);
-        await stream.FlushAsync(cancellationToken);
-        await WriteOkAsync(stream, "Script returned", cancellationToken: cancellationToken);
+        await WriteLineAsync(stream, $"{{{content.Length}}}", cancellationToken).ConfigureAwait(false);
+        await stream.WriteAsync(content, cancellationToken).ConfigureAwait(false);
+        await stream.WriteAsync("\r\n"u8.ToArray(), cancellationToken).ConfigureAwait(false);
+        await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+        await WriteOkAsync(stream, "Script returned", cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     private async Task HandleDeleteScriptAsync(
@@ -637,7 +643,7 @@ public sealed class ManageSieveServerService(
     {
         if (!HasKinds(command, ManageSieveTokenKind.String))
         {
-            await WriteNoAsync(stream, "DELETESCRIPT requires a script name.", cancellationToken: cancellationToken);
+            await WriteNoAsync(stream, "DELETESCRIPT requires a script name.", cancellationToken: cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -645,8 +651,8 @@ public sealed class ManageSieveServerService(
         var application = scope.ServiceProvider.GetRequiredService<ISieveApplicationService>();
         var result = await application.DeleteAsync(
             new SieveNamedRequest(session.UserId!.Value, command.Arguments[0].Value),
-            cancellationToken);
-        await WriteOperationResultAsync(stream, result, "Script deleted", cancellationToken);
+            cancellationToken).ConfigureAwait(false);
+        await WriteOperationResultAsync(stream, result, "Script deleted", cancellationToken).ConfigureAwait(false);
     }
 
     private async Task HandleRenameScriptAsync(
@@ -657,7 +663,7 @@ public sealed class ManageSieveServerService(
     {
         if (!HasKinds(command, ManageSieveTokenKind.String, ManageSieveTokenKind.String))
         {
-            await WriteNoAsync(stream, "RENAMESCRIPT requires old and new script names.", cancellationToken: cancellationToken);
+            await WriteNoAsync(stream, "RENAMESCRIPT requires old and new script names.", cancellationToken: cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -668,8 +674,8 @@ public sealed class ManageSieveServerService(
                 session.UserId!.Value,
                 command.Arguments[0].Value,
                 command.Arguments[1].Value),
-            cancellationToken);
-        await WriteOperationResultAsync(stream, result, "Script renamed", cancellationToken);
+            cancellationToken).ConfigureAwait(false);
+        await WriteOperationResultAsync(stream, result, "Script renamed", cancellationToken).ConfigureAwait(false);
     }
 
     private async Task HandleCheckScriptAsync(
@@ -679,19 +685,19 @@ public sealed class ManageSieveServerService(
     {
         if (!HasKinds(command, ManageSieveTokenKind.String))
         {
-            await WriteNoAsync(stream, "CHECKSCRIPT requires script content.", cancellationToken: cancellationToken);
+            await WriteNoAsync(stream, "CHECKSCRIPT requires script content.", cancellationToken: cancellationToken).ConfigureAwait(false);
             return;
         }
         if (StrictUtf8.GetByteCount(command.Arguments[0].Value) > SieveWireCapabilities.MaximumScriptBytes)
         {
-            await WriteNoAsync(stream, "The script exceeds the one-megabyte limit.", "QUOTA/MAXSIZE", cancellationToken);
+            await WriteNoAsync(stream, "The script exceeds the one-megabyte limit.", "QUOTA/MAXSIZE", cancellationToken).ConfigureAwait(false);
             return;
         }
 
         using var scope = scopeFactory.CreateScope();
         var application = scope.ServiceProvider.GetRequiredService<ISieveApplicationService>();
         var validation = await application.ValidateAsync(
-            new SieveValidationRequest(command.Arguments[0].Value), cancellationToken);
+            new SieveValidationRequest(command.Arguments[0].Value), cancellationToken).ConfigureAwait(false);
         if (!validation.Succeeded)
         {
             var diagnostic = validation.Diagnostic
@@ -699,10 +705,10 @@ public sealed class ManageSieveServerService(
             await WriteNoAsync(
                 stream,
                 $"Line {diagnostic.Line}, column {diagnostic.Column}: {diagnostic.Message}",
-                cancellationToken: cancellationToken);
+                cancellationToken: cancellationToken).ConfigureAwait(false);
             return;
         }
-        await WriteOkAsync(stream, "Script is valid", cancellationToken: cancellationToken);
+        await WriteOkAsync(stream, "Script is valid", cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task HandleNoopAsync(
@@ -714,7 +720,7 @@ public sealed class ManageSieveServerService(
             || command.Arguments.Count == 1
                 && command.Arguments[0].Kind != ManageSieveTokenKind.String)
         {
-            await WriteNoAsync(stream, "NOOP accepts at most one string argument.", cancellationToken: cancellationToken);
+            await WriteNoAsync(stream, "NOOP accepts at most one string argument.", cancellationToken: cancellationToken).ConfigureAwait(false);
             return;
         }
         var responseCode = command.Arguments.Count == 1
@@ -726,14 +732,14 @@ public sealed class ManageSieveServerService(
                 stream,
                 "NOOP completed",
                 responseCode is null ? null : $"TAG {Quote(responseCode)}",
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             return;
         }
 
         var tagBytes = StrictUtf8.GetBytes(responseCode);
-        await WriteRawAsync(stream, StrictUtf8.GetBytes($"OK (TAG {{{tagBytes.Length}}}\r\n"), cancellationToken);
-        await WriteRawAsync(stream, tagBytes, cancellationToken);
-        await WriteRawAsync(stream, StrictUtf8.GetBytes(") \"NOOP completed\"\r\n"), cancellationToken);
+        await WriteRawAsync(stream, StrictUtf8.GetBytes($"OK (TAG {{{tagBytes.Length}}}\r\n"), cancellationToken).ConfigureAwait(false);
+        await WriteRawAsync(stream, tagBytes, cancellationToken).ConfigureAwait(false);
+        await WriteRawAsync(stream, StrictUtf8.GetBytes(") \"NOOP completed\"\r\n"), cancellationToken).ConfigureAwait(false);
     }
 
     private async Task WriteCapabilitiesAsync(
@@ -741,32 +747,32 @@ public sealed class ManageSieveServerService(
         ManageSieveSession session,
         CancellationToken cancellationToken)
     {
-        await WriteCapabilityAsync(stream, "IMPLEMENTATION", "mk8.email ManageSieve", cancellationToken);
-        await WriteCapabilityAsync(stream, "VERSION", "1.0", cancellationToken);
+        await WriteCapabilityAsync(stream, "IMPLEMENTATION", "mk8.email ManageSieve", cancellationToken).ConfigureAwait(false);
+        await WriteCapabilityAsync(stream, "VERSION", "1.0", cancellationToken).ConfigureAwait(false);
         await WriteCapabilityAsync(
             stream,
             "SASL",
             session.IsSecure
                 ? environment.OAuth.EnableOAuth ? "PLAIN XOAUTH2" : "PLAIN"
                 : string.Empty,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         await WriteCapabilityAsync(
             stream,
             "SIEVE",
             string.Join(' ', SieveWireCapabilities.Supported.Order(StringComparer.Ordinal)),
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (!session.IsSecure && !session.IsAuthenticated && environment.Sieve.EnableStartTls)
-            await WriteLineAsync(stream, Quote("STARTTLS"), cancellationToken);
+            await WriteLineAsync(stream, Quote("STARTTLS"), cancellationToken).ConfigureAwait(false);
         await WriteCapabilityAsync(
             stream,
             "MAXREDIRECTS",
             SieveWireCapabilities.MaximumRedirects.ToString(CultureInfo.InvariantCulture),
-            cancellationToken);
-        await WriteCapabilityAsync(stream, "LANGUAGE", "i-default", cancellationToken);
-        await WriteLineAsync(stream, Quote("UNAUTHENTICATE"), cancellationToken);
+            cancellationToken).ConfigureAwait(false);
+        await WriteCapabilityAsync(stream, "LANGUAGE", "i-default", cancellationToken).ConfigureAwait(false);
+        await WriteLineAsync(stream, Quote("UNAUTHENTICATE"), cancellationToken).ConfigureAwait(false);
         if (session.Username is not null)
-            await WriteCapabilityAsync(stream, "OWNER", session.Username, cancellationToken);
-        await WriteOkAsync(stream, "Capability completed", cancellationToken: cancellationToken);
+            await WriteCapabilityAsync(stream, "OWNER", session.Username, cancellationToken).ConfigureAwait(false);
+        await WriteOkAsync(stream, "Capability completed", cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     private static Task WriteCapabilityAsync(
@@ -827,7 +833,7 @@ public sealed class ManageSieveServerService(
             throw new InvalidOperationException("ManageSieve response lines cannot contain control delimiters.");
         }
         var bytes = StrictUtf8.GetBytes(line + "\r\n");
-        await WriteRawAsync(stream, bytes, cancellationToken);
+        await WriteRawAsync(stream, bytes, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task WriteRawAsync(
@@ -835,8 +841,8 @@ public sealed class ManageSieveServerService(
         ReadOnlyMemory<byte> bytes,
         CancellationToken cancellationToken)
     {
-        await stream.WriteAsync(bytes, cancellationToken);
-        await stream.FlushAsync(cancellationToken);
+        await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
+        await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static string Quote(string value) =>
@@ -938,8 +944,8 @@ public sealed class ManageSieveServerService(
     private async Task<bool> TryAuthenticateAsServerAsync(
         SslStream stream,
         X509Certificate2 certificate,
-        CancellationToken cancellationToken,
-        string remoteLabel)
+        string remoteLabel,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -948,10 +954,13 @@ public sealed class ManageSieveServerService(
                 {
                     ServerCertificate = certificate,
                     ClientCertificateRequired = false,
+                    // Mail listeners require TLS 1.2 or later even if the host enables legacy protocols.
+#pragma warning disable CA5398
                     EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
+#pragma warning restore CA5398
                     CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
                 },
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             return true;
         }
         catch (Exception exception) when (

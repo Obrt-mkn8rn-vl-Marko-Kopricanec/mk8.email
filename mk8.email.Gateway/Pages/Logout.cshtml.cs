@@ -18,8 +18,8 @@ public sealed class LogoutModel(IAdminAuditLog auditLog) : PageModel
             User.Identity?.Name ?? "unknown",
             true,
             HttpContext.Connection.RemoteIpAddress?.ToString(),
-            cancellationToken);
-        await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+            cancellationToken).ConfigureAwait(false);
+        await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme).ConfigureAwait(false);
         return RedirectToPage("/Login");
     }
 }

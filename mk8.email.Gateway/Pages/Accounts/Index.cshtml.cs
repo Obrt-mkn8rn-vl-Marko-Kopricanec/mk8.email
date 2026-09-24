@@ -21,7 +21,7 @@ public sealed class AccountsModel(
     public string? StatusMessage { get; set; }
 
     public async Task OnGetAsync(CancellationToken cancellationToken) =>
-        Accounts = await application.GetAccountsAsync(cancellationToken);
+        Accounts = await application.GetAccountsAsync(cancellationToken).ConfigureAwait(false);
 
     public async Task<IActionResult> OnPostSetActiveAsync(
         Guid userId,
@@ -37,14 +37,14 @@ public sealed class AccountsModel(
 
         var result = await application.SetAccountActiveAsync(
             new AdminSetAccountActiveRequest(userId, isActive),
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         await auditLog.WriteAsync(
             User.Identity?.Name ?? "unknown",
             isActive ? "account.enable" : "account.disable",
             userId.ToString(),
             result.Succeeded,
             HttpContext.Connection.RemoteIpAddress?.ToString(),
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         StatusMessage = result.Message;
         return RedirectToPage();
     }

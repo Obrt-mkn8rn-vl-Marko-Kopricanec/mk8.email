@@ -24,14 +24,14 @@ public sealed class CreateAccountModel(
 
         var result = await application.CreateAccountAsync(
             new AdminCreateAccountRequest(Input.Address, Input.Password, Input.Role),
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         await auditLog.WriteAsync(
             User.Identity?.Name ?? "unknown",
             "account.create",
             Input.Address,
             result.Succeeded,
             HttpContext.Connection.RemoteIpAddress?.ToString(),
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (!result.Succeeded)
         {
             ModelState.AddModelError(string.Empty, result.Message);

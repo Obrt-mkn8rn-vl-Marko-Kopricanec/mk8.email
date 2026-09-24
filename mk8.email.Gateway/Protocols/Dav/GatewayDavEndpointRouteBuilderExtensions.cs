@@ -48,7 +48,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
         SetDavHeaders(context.Response);
         if (context.Request.Path == "/dav")
         {
-            await RedirectToDavAsync(context);
+            await RedirectToDavAsync(context).ConfigureAwait(false);
             return;
         }
         if (HttpMethods.IsOptions(context.Request.Method))
@@ -61,13 +61,13 @@ public static class GatewayDavEndpointRouteBuilderExtensions
             context,
             store,
             environment,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (user is null)
         {
             await GatewayDavHttpAuthentication.WriteUnauthorizedAsync(
                 context,
                 environment,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -83,29 +83,29 @@ public static class GatewayDavEndpointRouteBuilderExtensions
         switch (context.Request.Method.ToUpperInvariant())
         {
             case "PROPFIND":
-                await HandlePropfindAsync(context, user, path, store, environment, cancellationToken);
+                await HandlePropfindAsync(context, user, path, store, environment, cancellationToken).ConfigureAwait(false);
                 break;
             case "PROPPATCH":
-                await HandleProppatchAsync(context, user, path, store, cancellationToken);
+                await HandleProppatchAsync(context, user, path, store, cancellationToken).ConfigureAwait(false);
                 break;
             case "REPORT":
-                await HandleReportAsync(context, user, path, store, cancellationToken);
+                await HandleReportAsync(context, user, path, store, cancellationToken).ConfigureAwait(false);
                 break;
             case "GET":
-                await HandleGetAsync(context, user, path, store, writeBody: true, cancellationToken);
+                await HandleGetAsync(context, user, path, store, writeBody: true, cancellationToken).ConfigureAwait(false);
                 break;
             case "HEAD":
-                await HandleGetAsync(context, user, path, store, writeBody: false, cancellationToken);
+                await HandleGetAsync(context, user, path, store, writeBody: false, cancellationToken).ConfigureAwait(false);
                 break;
             case "PUT":
-                await HandlePutAsync(context, user, path, store, environment, cancellationToken);
+                await HandlePutAsync(context, user, path, store, environment, cancellationToken).ConfigureAwait(false);
                 break;
             case "DELETE":
-                await HandleDeleteAsync(context, user, path, store, cancellationToken);
+                await HandleDeleteAsync(context, user, path, store, cancellationToken).ConfigureAwait(false);
                 break;
             case "MKCOL":
             case "MKCALENDAR":
-                await HandleMakeCollectionAsync(context, user, path, store, cancellationToken);
+                await HandleMakeCollectionAsync(context, user, path, store, cancellationToken).ConfigureAwait(false);
                 break;
             case "POST":
                 await HandleSchedulingPostAsync(
@@ -114,10 +114,10 @@ public static class GatewayDavEndpointRouteBuilderExtensions
                     path,
                     store,
                     environment,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 break;
             case "ACL":
-                await HandleAclAsync(context, user, path, store, cancellationToken);
+                await HandleAclAsync(context, user, path, store, cancellationToken).ConfigureAwait(false);
                 break;
             default:
                 context.Response.StatusCode = StatusCodes.Status405MethodNotAllowed;
@@ -142,18 +142,18 @@ public static class GatewayDavEndpointRouteBuilderExtensions
                 context,
                 StatusCodes.Status403Forbidden,
                 Dav + "propfind-finite-depth",
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             return;
         }
 
-        var document = await ReadXmlBodyAsync(context.Request, 1_048_576, cancellationToken);
+        var document = await ReadXmlBodyAsync(context.Request, 1_048_576, cancellationToken).ConfigureAwait(false);
         if (document.IsInvalid)
         {
             context.Response.StatusCode = StatusCodes.Status400BadRequest;
             return;
         }
         var requested = GetRequestedProperties(document.Value);
-        await store.EnsureDefaultCollectionsAsync(user, cancellationToken);
+        await store.EnsureDefaultCollectionsAsync(user, cancellationToken).ConfigureAwait(false);
         var responses = new List<XElement>();
 
         switch (path.Kind)
@@ -163,7 +163,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
                     RootHref,
                     RootProperties(user),
                     requested));
-                if (depth == "1")
+                if (string.Equals(depth, "1", StringComparison.Ordinal))
                 {
                     responses.Add(CreatePropertyResponse(
                         PrincipalHref(user.Id),
@@ -191,9 +191,9 @@ public static class GatewayDavEndpointRouteBuilderExtensions
                     PrincipalCollectionHref,
                     PrincipalCollectionProperties(user),
                     requested));
-                if (depth == "1")
+                if (string.Equals(depth, "1", StringComparison.Ordinal))
                 {
-                    foreach (var principal in await store.GetPrincipalsAsync(user, cancellationToken))
+                    foreach (var principal in await store.GetPrincipalsAsync(user, cancellationToken).ConfigureAwait(false))
                     {
                         responses.Add(CreatePropertyResponse(
                             PrincipalHref(principal.Id),
@@ -208,7 +208,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
                     var principal = await store.GetPrincipalAsync(
                         user,
                         path.UserId!.Value,
-                        cancellationToken);
+                        cancellationToken).ConfigureAwait(false);
                     if (principal is null)
                     {
                         context.Response.StatusCode = StatusCodes.Status404NotFound;
@@ -226,12 +226,12 @@ public static class GatewayDavEndpointRouteBuilderExtensions
                     HomeHref(path.CollectionKind!.Value, user.Id),
                     HomeProperties(user, path.CollectionKind.Value),
                     requested));
-                if (depth == "1")
+                if (string.Equals(depth, "1", StringComparison.Ordinal))
                 {
                     var collections = await store.GetCollectionsAsync(
                         user,
                         path.CollectionKind.Value,
-                        cancellationToken);
+                        cancellationToken).ConfigureAwait(false);
                     foreach (var collection in collections)
                     {
                         responses.Add(CreatePropertyResponse(
@@ -249,7 +249,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
                         path.CollectionKind!.Value,
                         path.UserId!.Value,
                         path.Slug!,
-                        cancellationToken);
+                        cancellationToken).ConfigureAwait(false);
                     if (collection is null)
                     {
                         context.Response.StatusCode = StatusCodes.Status404NotFound;
@@ -259,12 +259,12 @@ public static class GatewayDavEndpointRouteBuilderExtensions
                         CollectionHref(collection),
                         CollectionProperties(collection, environment),
                         requested));
-                    if (depth == "1")
+                    if (string.Equals(depth, "1", StringComparison.Ordinal))
                     {
                         var resources = await store.GetResourcesAsync(
                             user,
                             collection,
-                            cancellationToken);
+                            cancellationToken).ConfigureAwait(false);
                         foreach (var resource in resources)
                         {
                             responses.Add(CreatePropertyResponse(
@@ -278,7 +278,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
 
             case DavPathKind.Resource:
                 {
-                    var resolved = await ResolveResourceAsync(user, path, store, cancellationToken);
+                    var resolved = await ResolveResourceAsync(user, path, store, cancellationToken).ConfigureAwait(false);
                     if (resolved is null)
                     {
                         context.Response.StatusCode = StatusCodes.Status404NotFound;
@@ -292,7 +292,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
                 }
         }
 
-        await WriteMultiStatusAsync(context, responses, null, cancellationToken);
+        await WriteMultiStatusAsync(context, responses, null, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task HandleReportAsync(
@@ -302,7 +302,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
         GatewayDavStore store,
         CancellationToken cancellationToken)
     {
-        var parsed = await ReadXmlBodyAsync(context.Request, 1_048_576, cancellationToken);
+        var parsed = await ReadXmlBodyAsync(context.Request, 1_048_576, cancellationToken).ConfigureAwait(false);
         if (parsed.IsInvalid || parsed.Value?.Root is null)
         {
             context.Response.StatusCode = StatusCodes.Status400BadRequest;
@@ -315,7 +315,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
             {
                 await HandlePrincipalSearchPropertySetAsync(
                     context,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 return;
             }
             if (root.Name == Dav + "principal-property-search")
@@ -325,7 +325,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
                     user,
                     root,
                     store,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 return;
             }
         }
@@ -340,7 +340,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
             path.CollectionKind!.Value,
             path.UserId!.Value,
             path.Slug!,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (collection is null)
         {
             context.Response.StatusCode = StatusCodes.Status404NotFound;
@@ -355,7 +355,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
                 collection,
                 root,
                 store,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             return;
         }
         if (root.Name == CalDav + "calendar-multiget"
@@ -367,7 +367,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
                 collection,
                 root,
                 store,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             return;
         }
         if (root.Name == CalDav + "calendar-query"
@@ -379,7 +379,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
                 collection,
                 root,
                 store,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -387,7 +387,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
             context,
             StatusCodes.Status403Forbidden,
             Dav + "supported-report",
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task HandlePrincipalSearchPropertySetAsync(
@@ -395,7 +395,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
         CancellationToken cancellationToken)
     {
         var depth = context.Request.Headers["Depth"].ToString();
-        if (depth.Length > 0 && depth != "0")
+        if (depth.Length > 0 && !string.Equals(depth, "0", StringComparison.Ordinal))
         {
             context.Response.StatusCode = StatusCodes.Status400BadRequest;
             return;
@@ -415,7 +415,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
             context,
             StatusCodes.Status200OK,
             document,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task HandlePrincipalPropertySearchAsync(
@@ -426,7 +426,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
         CancellationToken cancellationToken)
     {
         var depth = context.Request.Headers["Depth"].ToString();
-        if (depth.Length > 0 && depth != "0")
+        if (depth.Length > 0 && !string.Equals(depth, "0", StringComparison.Ordinal))
         {
             context.Response.StatusCode = StatusCodes.Status400BadRequest;
             return;
@@ -457,7 +457,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
         var requested = root.Element(Dav + "prop")?.Elements()
             .Select(element => element.Name)
             .ToHashSet();
-        var principals = await store.GetPrincipalsAsync(user, cancellationToken);
+        var principals = await store.GetPrincipalsAsync(user, cancellationToken).ConfigureAwait(false);
         var responses = principals
             .Where(principal => matches.All(match =>
                 principal.Username.Contains(match, StringComparison.OrdinalIgnoreCase)))
@@ -466,7 +466,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
                 PrincipalProperties(principal, user.Id),
                 requested))
             .ToList();
-        await WriteMultiStatusAsync(context, responses, null, cancellationToken);
+        await WriteMultiStatusAsync(context, responses, null, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task HandleSyncCollectionReportAsync(
@@ -490,7 +490,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
                 context,
                 StatusCodes.Status403Forbidden,
                 Dav + "valid-sync-token",
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -500,7 +500,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
         var responses = new List<XElement>();
         if (since == 0)
         {
-            foreach (var resource in await store.GetResourcesAsync(user, collection, cancellationToken))
+            foreach (var resource in await store.GetResourcesAsync(user, collection, cancellationToken).ConfigureAwait(false))
             {
                 responses.Add(CreatePropertyResponse(
                     ResourceHref(collection, resource.ResourceName),
@@ -510,7 +510,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
         }
         else
         {
-            var changes = await store.GetChangesAsync(user, collection, since, cancellationToken);
+            var changes = await store.GetChangesAsync(user, collection, since, cancellationToken).ConfigureAwait(false);
             var latestChanges = changes
                 .GroupBy(change => change.ResourceName, StringComparer.Ordinal)
                 .Select(group => group.MaxBy(change => change.Sequence)!)
@@ -527,7 +527,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
                     user,
                     collection,
                     change.ResourceName,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 responses.Add(resource is null
                     ? CreateStatusResponse(href, StatusCodes.Status404NotFound)
                     : CreatePropertyResponse(
@@ -541,7 +541,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
             context,
             responses,
             SyncToken(collection),
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task HandleMultigetReportAsync(
@@ -563,7 +563,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
                 user,
                 collection,
                 resourceName,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             responses.Add(resource is null
                 ? CreateStatusResponse(href, StatusCodes.Status404NotFound)
                 : CreatePropertyResponse(
@@ -571,7 +571,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
                     ResourceProperties(resource, includeData: true),
                     requested));
         }
-        await WriteMultiStatusAsync(context, responses, null, cancellationToken);
+        await WriteMultiStatusAsync(context, responses, null, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task HandleQueryReportAsync(
@@ -583,7 +583,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
         CancellationToken cancellationToken)
     {
         var requested = GetRequestedProperties(new XDocument(root));
-        var resources = await store.GetResourcesAsync(user, collection, cancellationToken);
+        var resources = await store.GetResourcesAsync(user, collection, cancellationToken).ConfigureAwait(false);
         var responses = new List<XElement>();
         foreach (var resource in resources)
         {
@@ -594,7 +594,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
                 ResourceProperties(resource, includeData: true),
                 requested));
         }
-        await WriteMultiStatusAsync(context, responses, null, cancellationToken);
+        await WriteMultiStatusAsync(context, responses, null, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task HandleSchedulingPostAsync(
@@ -618,7 +618,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
         var body = await ReadBodyAsync(
             context.Request,
             environment.Dav.MaxResourceSizeBytes,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (body is null)
         {
             context.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
@@ -632,14 +632,14 @@ public static class GatewayDavEndpointRouteBuilderExtensions
             context.Request.ContentType,
             body,
             context.Connection.RemoteIpAddress?.ToString(),
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (result.Error is not null)
         {
             await WriteTextErrorAsync(
                 context,
                 result.StatusCode,
                 result.Error,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -660,7 +660,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
             context,
             result.StatusCode,
             document,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task HandleGetAsync(
@@ -676,7 +676,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
             context.Response.StatusCode = StatusCodes.Status405MethodNotAllowed;
             return;
         }
-        var resolved = await ResolveResourceAsync(user, path, store, cancellationToken);
+        var resolved = await ResolveResourceAsync(user, path, store, cancellationToken).ConfigureAwait(false);
         if (resolved is null)
         {
             context.Response.StatusCode = StatusCodes.Status404NotFound;
@@ -690,7 +690,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
         context.Response.Headers.LastModified = resource.UpdatedAt.ToUniversalTime().ToString("R", CultureInfo.InvariantCulture);
         context.Response.Headers.CacheControl = "private, no-cache";
         if (writeBody)
-            await context.Response.Body.WriteAsync(resource.Content, cancellationToken);
+            await context.Response.Body.WriteAsync(resource.Content, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task HandlePutAsync(
@@ -716,7 +716,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
         var body = await ReadBodyAsync(
             context.Request,
             environment.Dav.MaxResourceSizeBytes,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (body is null)
         {
             context.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
@@ -733,7 +733,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
                 context,
                 StatusCodes.Status415UnsupportedMediaType,
                 failure,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -742,7 +742,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
             path.CollectionKind.Value,
             path.UserId!.Value,
             path.Slug!,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (collection is null)
         {
             context.Response.StatusCode = StatusCodes.Status409Conflict;
@@ -754,14 +754,13 @@ public static class GatewayDavEndpointRouteBuilderExtensions
             return;
         }
         if (collection.Kind == DavCollectionKind.Calendar
-            && contentInfo!.Components.Any(component =>
-                component != "VFREEBUSY" && !collection.Components.Contains(component, StringComparer.Ordinal)))
+            && contentInfo!.Components.Any(component => !string.Equals(component, "VFREEBUSY", StringComparison.Ordinal) && !collection.Components.Contains(component, StringComparer.Ordinal)))
         {
             await WriteDavErrorAsync(
                 context,
                 StatusCodes.Status403Forbidden,
                 CalDav + "supported-calendar-component",
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -773,8 +772,8 @@ public static class GatewayDavEndpointRouteBuilderExtensions
             contentInfo.ContentType,
             body,
             context.Request.Headers.IfMatch.ToString(),
-            context.Request.Headers.IfNoneMatch.Any(value => value == "*"),
-            cancellationToken);
+            context.Request.Headers.IfNoneMatch.Any(value => string.Equals(value, "*", StringComparison.Ordinal)),
+            cancellationToken).ConfigureAwait(false);
         switch (result.Status)
         {
             case DavResourceWriteStatus.Created:
@@ -794,7 +793,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
                     path.CollectionKind == DavCollectionKind.Calendar
                         ? CalDav + "no-uid-conflict"
                         : CardDav + "no-uid-conflict",
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 return;
             case DavResourceWriteStatus.LimitExceeded:
                 context.Response.StatusCode = StatusCodes.Status507InsufficientStorage;
@@ -824,7 +823,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
                 path.CollectionKind!.Value,
                 path.UserId!.Value,
                 path.Slug!,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             if (collection is null)
             {
                 context.Response.StatusCode = StatusCodes.Status404NotFound;
@@ -835,7 +834,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
                 collection.Id,
                 path.ResourceName!,
                 context.Request.Headers.IfMatch.ToString(),
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             context.Response.StatusCode = result.Status switch
             {
                 DavResourceWriteStatus.Updated => StatusCodes.Status204NoContent,
@@ -852,7 +851,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
                 path.CollectionKind!.Value,
                 path.UserId!.Value,
                 path.Slug!,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             if (collection is null)
             {
                 context.Response.StatusCode = StatusCodes.Status404NotFound;
@@ -861,7 +860,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
             var result = await store.DeleteCollectionAsync(
                 user,
                 collection,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             context.Response.StatusCode = result.Status switch
             {
                 DavCollectionWriteStatus.Updated => StatusCodes.Status204NoContent,
@@ -890,14 +889,14 @@ public static class GatewayDavEndpointRouteBuilderExtensions
             context.Response.StatusCode = StatusCodes.Status403Forbidden;
             return;
         }
-        if (context.Request.Method == "MKCALENDAR"
-            && path.CollectionKind != DavCollectionKind.Calendar)
+        if (string.Equals(context.Request.Method, "MKCALENDAR"
+, StringComparison.Ordinal) && path.CollectionKind != DavCollectionKind.Calendar)
         {
             context.Response.StatusCode = StatusCodes.Status405MethodNotAllowed;
             return;
         }
 
-        var parsed = await ReadXmlBodyAsync(context.Request, 1_048_576, cancellationToken);
+        var parsed = await ReadXmlBodyAsync(context.Request, 1_048_576, cancellationToken).ConfigureAwait(false);
         if (parsed.IsInvalid)
         {
             context.Response.StatusCode = StatusCodes.Status400BadRequest;
@@ -912,7 +911,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
             path.CollectionKind.Value,
             path.Slug!,
             properties,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         context.Response.StatusCode = result.Status switch
         {
             DavCollectionWriteStatus.Created => StatusCodes.Status201Created,
@@ -942,13 +941,13 @@ public static class GatewayDavEndpointRouteBuilderExtensions
             path.CollectionKind!.Value,
             path.UserId!.Value,
             path.Slug!,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (collection is null)
         {
             context.Response.StatusCode = StatusCodes.Status404NotFound;
             return;
         }
-        var parsed = await ReadXmlBodyAsync(context.Request, 1_048_576, cancellationToken);
+        var parsed = await ReadXmlBodyAsync(context.Request, 1_048_576, cancellationToken).ConfigureAwait(false);
         if (parsed.IsInvalid || parsed.Value is null)
         {
             context.Response.StatusCode = StatusCodes.Status400BadRequest;
@@ -963,7 +962,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
             user,
             collection,
             properties,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (result.Status != DavCollectionWriteStatus.Updated)
         {
             context.Response.StatusCode = result.Status == DavCollectionWriteStatus.Protected
@@ -983,7 +982,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
             CollectionHref(result.Collection!),
             CollectionProperties(result.Collection!, null),
             changedNames);
-        await WriteMultiStatusAsync(context, [response], null, cancellationToken);
+        await WriteMultiStatusAsync(context, [response], null, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task HandleAclAsync(
@@ -1004,7 +1003,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
             path.CollectionKind!.Value,
             path.UserId!.Value,
             path.Slug!,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (collection is null)
         {
             context.Response.StatusCode = StatusCodes.Status404NotFound;
@@ -1016,11 +1015,11 @@ public static class GatewayDavEndpointRouteBuilderExtensions
                 context,
                 StatusCodes.Status403Forbidden,
                 Dav + "no-protected-ace-conflict",
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             return;
         }
 
-        var parsed = await ReadXmlBodyAsync(context.Request, 1_048_576, cancellationToken);
+        var parsed = await ReadXmlBodyAsync(context.Request, 1_048_576, cancellationToken).ConfigureAwait(false);
         if (parsed.IsInvalid || parsed.Value?.Root?.Name != Dav + "acl")
         {
             context.Response.StatusCode = StatusCodes.Status400BadRequest;
@@ -1037,7 +1036,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
                 context,
                 StatusCodes.Status403Forbidden,
                 precondition!,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -1045,7 +1044,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
             user,
             collection.Id,
             grants!,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (result.Status == DavAclWriteStatus.Updated)
         {
             context.Response.StatusCode = StatusCodes.Status200OK;
@@ -1066,7 +1065,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
                 ? StatusCodes.Status404NotFound
                 : StatusCodes.Status403Forbidden,
             error,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
     }
 
     private static bool TryParseAcl(
@@ -1199,9 +1198,9 @@ public static class GatewayDavEndpointRouteBuilderExtensions
 
         var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
         return segments.Length == 3
-            && segments[0] == "dav"
-            && segments[1] == "principals"
-            && Guid.TryParseExact(segments[2], "N", out principalId);
+            && string.Equals(segments[0], "dav"
+, StringComparison.Ordinal) && string.Equals(segments[1], "principals"
+, StringComparison.Ordinal) && Guid.TryParseExact(segments[2], "N", out principalId);
     }
 
     private static IReadOnlyDictionary<XName, XElement> RootProperties(DavUser user) =>
@@ -1331,8 +1330,8 @@ public static class GatewayDavEndpointRouteBuilderExtensions
         new XElement(Dav + "getlastmodified", resource.UpdatedAt.ToUniversalTime().ToString("R", CultureInfo.InvariantCulture)),
         includeData
             ? new XElement(
-                resource.ContentType == "text/calendar"
-                    ? CalDav + "calendar-data"
+string.Equals(resource.ContentType, "text/calendar"
+, StringComparison.Ordinal) ? CalDav + "calendar-data"
                     : CardDav + "address-data",
                 Encoding.UTF8.GetString(resource.Content))
             : null);
@@ -1521,7 +1520,10 @@ public static class GatewayDavEndpointRouteBuilderExtensions
             || document.Root.Element(Dav + "allprop") is not null
             || document.Root.Name == Dav + "allprop")
         {
+            // null is the DAV allprop sentinel, distinct from an empty requested set.
+#pragma warning disable HLQ002
             return null;
+#pragma warning restore HLQ002
         }
         return document.Root.Descendants(Dav + "prop")
             .Elements()
@@ -1611,7 +1613,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
                 value,
                 textMatch.Value,
                 textMatch.Attribute("match-type")?.Value));
-            if (textMatch.Attribute("negate-condition")?.Value == "yes")
+            if (string.Equals(textMatch.Attribute("negate-condition")?.Value, "yes", StringComparison.Ordinal))
                 match = !match;
             if (!match)
                 return false;
@@ -1639,14 +1641,14 @@ public static class GatewayDavEndpointRouteBuilderExtensions
             path.CollectionKind!.Value,
             path.UserId!.Value,
             path.Slug!,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (collection is null)
             return null;
         var resource = await store.GetResourceAsync(
             user,
             collection,
             path.ResourceName!,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         return resource is null ? null : (collection, resource);
     }
 
@@ -1666,7 +1668,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
             responses);
         if (syncToken is not null)
             root.Add(new XElement(Dav + "sync-token", syncToken));
-        await WriteXmlAsync(context, StatusCodes.Status207MultiStatus, new XDocument(root), cancellationToken);
+        await WriteXmlAsync(context, StatusCodes.Status207MultiStatus, new XDocument(root), cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task WriteDavErrorAsync(
@@ -1681,7 +1683,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
             new XAttribute(XNamespace.Xmlns + "C", CalDav),
             new XAttribute(XNamespace.Xmlns + "A", CardDav),
             new XElement(errorName)));
-        await WriteXmlAsync(context, status, document, cancellationToken);
+        await WriteXmlAsync(context, status, document, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task WriteXmlAsync(
@@ -1694,7 +1696,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
         context.Response.ContentType = "application/xml; charset=utf-8";
         await context.Response.WriteAsync(
             document.ToString(SaveOptions.DisableFormatting),
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task WriteTextErrorAsync(
@@ -1705,7 +1707,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
     {
         context.Response.StatusCode = status;
         context.Response.ContentType = "text/plain; charset=utf-8";
-        await context.Response.WriteAsync(message, cancellationToken);
+        await context.Response.WriteAsync(message, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task<(XDocument? Value, bool IsInvalid)> ReadXmlBodyAsync(
@@ -1713,7 +1715,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
         int maximumBytes,
         CancellationToken cancellationToken)
     {
-        var bytes = await ReadBodyAsync(request, maximumBytes, cancellationToken);
+        var bytes = await ReadBodyAsync(request, maximumBytes, cancellationToken).ConfigureAwait(false);
         if (bytes is null)
             return (null, true);
         if (bytes.Length == 0)
@@ -1743,16 +1745,17 @@ public static class GatewayDavEndpointRouteBuilderExtensions
     {
         if (request.ContentLength > maximumBytes)
             return null;
-        await using var buffer = new MemoryStream();
+        var buffer = new MemoryStream();
+        await using var bufferLifetime = buffer.ConfigureAwait(false);
         var block = new byte[16 * 1024];
         while (true)
         {
-            var read = await request.Body.ReadAsync(block, cancellationToken);
+            var read = await request.Body.ReadAsync(block, cancellationToken).ConfigureAwait(false);
             if (read == 0)
                 return buffer.ToArray();
             if (buffer.Length + read > maximumBytes)
                 return null;
-            await buffer.WriteAsync(block.AsMemory(0, read), cancellationToken);
+            await buffer.WriteAsync(block.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -1771,14 +1774,14 @@ public static class GatewayDavEndpointRouteBuilderExtensions
             path = new DavPath(DavPathKind.Root, null, null, null, null);
             return true;
         }
-        if (segments.Length == 1 && segments[0] == "principals")
+        if (segments.Length == 1 && string.Equals(segments[0], "principals", StringComparison.Ordinal))
         {
             path = new DavPath(DavPathKind.PrincipalCollection, null, null, null, null);
             return true;
         }
         if (segments.Length == 2
-            && segments[0] == "principals"
-            && Guid.TryParseExact(segments[1], "N", out var principalId))
+            && string.Equals(segments[0], "principals"
+, StringComparison.Ordinal) && Guid.TryParseExact(segments[1], "N", out var principalId))
         {
             path = new DavPath(DavPathKind.Principal, null, principalId, null, null);
             return true;

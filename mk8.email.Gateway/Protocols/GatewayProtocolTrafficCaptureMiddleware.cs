@@ -24,7 +24,7 @@ public sealed class GatewayProtocolTrafficCaptureMiddleware(
         var protocol = GatewayProtocolPaths.GetProtocol(context.Request.Path);
         if (protocol is null)
         {
-            await next(context);
+            await next(context).ConfigureAwait(false);
             return;
         }
 
@@ -33,7 +33,7 @@ public sealed class GatewayProtocolTrafficCaptureMiddleware(
             context,
             context.Request,
             GetCaptureLimit(protocol, environment),
-            context.RequestAborted);
+            context.RequestAborted).ConfigureAwait(false);
         if (!await TryAppendAsync(
                 journal,
                 options,
@@ -43,24 +43,25 @@ public sealed class GatewayProtocolTrafficCaptureMiddleware(
                     GatewayTrafficDirections.Inbound,
                     protocol,
                     EnvelopeContentType,
-                    requestPayload)))
+                    requestPayload)).ConfigureAwait(false))
         {
-            await WriteJournalUnavailableAsync(context, context.Response.Body, protocol);
+            await WriteJournalUnavailableAsync(context, context.Response.Body, protocol).ConfigureAwait(false);
             return;
         }
 
         if (GatewayProtocolPaths.IsStreaming(context.Request.Path))
         {
-            await CaptureStreamingResponseAsync(context, journal, options, sessionId, protocol);
+            await CaptureStreamingResponseAsync(context, journal, options, sessionId, protocol).ConfigureAwait(false);
             return;
         }
 
         var originalBody = context.Response.Body;
-        await using var capturedBody = new MemoryStream();
+        var capturedBody = new MemoryStream();
+        await using var capturedBodyLifetime = capturedBody.ConfigureAwait(false);
         context.Response.Body = capturedBody;
         try
         {
-            await next(context);
+            await next(context).ConfigureAwait(false);
             var responsePayload = CaptureResponse(context.Response, capturedBody.ToArray());
             if (!await TryAppendAsync(
                     journal,
@@ -71,14 +72,14 @@ public sealed class GatewayProtocolTrafficCaptureMiddleware(
                         GatewayTrafficDirections.Outbound,
                         protocol,
                         EnvelopeContentType,
-                        responsePayload)))
+                        responsePayload)).ConfigureAwait(false))
             {
-                await WriteJournalUnavailableAsync(context, originalBody, protocol);
+                await WriteJournalUnavailableAsync(context, originalBody, protocol).ConfigureAwait(false);
                 return;
             }
 
             capturedBody.Position = 0;
-            await capturedBody.CopyToAsync(originalBody, context.RequestAborted);
+            await capturedBody.CopyToAsync(originalBody, context.RequestAborted).ConfigureAwait(false);
         }
         finally
         {
@@ -110,7 +111,7 @@ public sealed class GatewayProtocolTrafficCaptureMiddleware(
         context.Response.Body = new JournaledResponseStream(originalBody, capture);
         try
         {
-            await next(context);
+            await next(context).ConfigureAwait(false);
         }
         finally
         {
@@ -118,13 +119,12 @@ public sealed class GatewayProtocolTrafficCaptureMiddleware(
         }
     }
 
-    private static long GetCaptureLimit(string protocol, EnvironmentConfig environment) =>
-        protocol == "jmap"
-            ? Math.Max(
+    private static long GetCaptureLimit(string protocol, EnvironmentConfig environment) => string.Equals(protocol, "jmap"
+, StringComparison.Ordinal) ? Math.Max(
                 environment.Jmap.MaxRequestSizeBytes,
                 environment.Jmap.MaxUploadSizeBytes)
-            : protocol == "dav"
-                ? Math.Max(1_048_576, environment.Dav.MaxResourceSizeBytes)
+            : string.Equals(protocol, "dav"
+, StringComparison.Ordinal) ? Math.Max(1_048_576, environment.Dav.MaxResourceSizeBytes)
             : BufferThresholdBytes;
 
     private static async Task<byte[]> CaptureRequestAsync(
@@ -136,27 +136,34 @@ public sealed class GatewayProtocolTrafficCaptureMiddleware(
         if (request.ContentLength > maximumBytes)
             throw new BadHttpRequestException("The request body is too large.", StatusCodes.Status413PayloadTooLarge);
         var body = new MemoryStream();
-        await request.Body.CopyToAsync(body, cancellationToken);
-        if (body.Length > maximumBytes)
+        try
         {
-            body.Dispose();
-            throw new BadHttpRequestException(
-                "The request body is too large.",
-                StatusCodes.Status413PayloadTooLarge);
+            await request.Body.CopyToAsync(body, cancellationToken).ConfigureAwait(false);
+            if (body.Length > maximumBytes)
+            {
+                throw new BadHttpRequestException(
+                    "The request body is too large.",
+                    StatusCodes.Status413PayloadTooLarge);
+            }
+            var content = body.ToArray();
+            body.Position = 0;
+            request.Body = body;
+            context.Response.RegisterForDisposeAsync(body);
+            return JsonSerializer.SerializeToUtf8Bytes(new HttpRequestEnvelope(
+                request.Method,
+                request.Path.Value ?? string.Empty,
+                request.QueryString.Value ?? string.Empty,
+                request.Protocol,
+                request.ContentType,
+                Headers(request.Headers),
+                Convert.ToBase64String(content)),
+                JsonOptions);
         }
-        var content = body.ToArray();
-        body.Position = 0;
-        request.Body = body;
-        context.Response.RegisterForDispose(body);
-        return JsonSerializer.SerializeToUtf8Bytes(new HttpRequestEnvelope(
-            request.Method,
-            request.Path.Value ?? string.Empty,
-            request.QueryString.Value ?? string.Empty,
-            request.Protocol,
-            request.ContentType,
-            Headers(request.Headers),
-            Convert.ToBase64String(content)),
-            JsonOptions);
+        catch
+        {
+            await body.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
     }
 
     private static byte[] CaptureResponse(HttpResponse response, byte[] body) =>
@@ -175,7 +182,7 @@ public sealed class GatewayProtocolTrafficCaptureMiddleware(
         using var timeout = new CancellationTokenSource(options.TrafficJournalTimeout);
         try
         {
-            await journal.AppendAsync(record, timeout.Token);
+            await journal.AppendAsync(record, timeout.Token).ConfigureAwait(false);
             return true;
         }
         catch (Exception exception)
@@ -198,30 +205,30 @@ public sealed class GatewayProtocolTrafficCaptureMiddleware(
         context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
         context.Response.Headers.CacheControl = "no-store";
         context.Response.Headers.RetryAfter = "5";
-        if (protocol == "oauth")
+        if (string.Equals(protocol, "oauth", StringComparison.Ordinal))
         {
             context.Response.ContentType = "application/json; charset=utf-8";
             await JsonSerializer.SerializeAsync(
                 output,
-                new Dictionary<string, object>
+                new Dictionary<string, object>(StringComparer.Ordinal)
                 {
                     ["error"] = "temporarily_unavailable",
                     ["error_description"] = "The gateway traffic journal is unavailable.",
                 },
-                cancellationToken: context.RequestAborted);
+                cancellationToken: context.RequestAborted).ConfigureAwait(false);
             return;
         }
 
         context.Response.ContentType = "application/problem+json; charset=utf-8";
         await JsonSerializer.SerializeAsync(
             output,
-            new Dictionary<string, object>
+            new Dictionary<string, object>(StringComparer.Ordinal)
             {
                 ["type"] = "about:blank",
                 ["title"] = "Gateway traffic journal unavailable",
                 ["status"] = StatusCodes.Status503ServiceUnavailable,
             },
-            cancellationToken: context.RequestAborted);
+            cancellationToken: context.RequestAborted).ConfigureAwait(false);
     }
 
     private static GatewayTrafficRecord CreateRecord(
@@ -239,7 +246,7 @@ public sealed class GatewayProtocolTrafficCaptureMiddleware(
             protocol,
             contentType,
             payload,
-            new Dictionary<string, string>
+            new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 ["layer"] = "presentation",
             },
@@ -273,13 +280,13 @@ public sealed class GatewayProtocolTrafficCaptureMiddleware(
 
         public async Task AppendChunkAsync(ReadOnlyMemory<byte> content)
         {
-            await AppendStartAsync();
+            await AppendStartAsync().ConfigureAwait(false);
             await AppendAsync(
                 StreamChunkContentType,
                 JsonSerializer.SerializeToUtf8Bytes(new HttpStreamChunkEnvelope(
                     response.ContentType,
                     Convert.ToBase64String(content.Span)),
-                    JsonOptions));
+                    JsonOptions)).ConfigureAwait(false);
         }
 
         private async Task AppendAsync(string contentType, byte[] payload)
@@ -294,7 +301,7 @@ public sealed class GatewayProtocolTrafficCaptureMiddleware(
                         GatewayTrafficDirections.Outbound,
                         protocol,
                         contentType,
-                        payload)))
+                        payload)).ConfigureAwait(false))
             {
                 throw new InvalidOperationException(
                     "The gateway could not durably record streaming presentation traffic.");
@@ -330,14 +337,14 @@ public sealed class GatewayProtocolTrafficCaptureMiddleware(
         public override void SetLength(long value) => throw new NotSupportedException();
 
         public override void Write(byte[] buffer, int offset, int count) =>
-            WriteAsync(buffer.AsMemory(offset, count)).AsTask().GetAwaiter().GetResult();
+            throw new NotSupportedException("Gateway traffic capture requires asynchronous writes.");
 
         public override async ValueTask WriteAsync(
             ReadOnlyMemory<byte> buffer,
             CancellationToken cancellationToken = default)
         {
-            await capture.AppendChunkAsync(buffer);
-            await inner.WriteAsync(buffer, cancellationToken);
+            await capture.AppendChunkAsync(buffer).ConfigureAwait(false);
+            await inner.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
         }
 
         public override async Task WriteAsync(
@@ -346,7 +353,7 @@ public sealed class GatewayProtocolTrafficCaptureMiddleware(
             int count,
             CancellationToken cancellationToken)
         {
-            await WriteAsync(buffer.AsMemory(offset, count), cancellationToken);
+            await WriteAsync(buffer.AsMemory(offset, count), cancellationToken).ConfigureAwait(false);
         }
     }
 

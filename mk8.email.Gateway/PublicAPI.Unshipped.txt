@@ -1,0 +1,4 @@
+#nullable enable
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationException.GatewayApplicationException() -> void
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationException.GatewayApplicationException(string! message) -> void
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationException.GatewayApplicationException(string! message, System.Exception! innerException) -> void

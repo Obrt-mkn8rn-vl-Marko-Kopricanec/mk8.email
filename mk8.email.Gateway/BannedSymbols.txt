@@ -1,0 +1,5 @@
+T:Microsoft.EntityFrameworkCore.DbContext; always-on Gateway must not own mail application persistence
+T:Npgsql.NpgsqlDataSource; always-on Gateway must use the durable messaging control plane
+T:Azure.Storage.Blobs.BlobServiceClient; always-on Gateway must use the storage abstraction
+T:System.Net.Mail.SmtpClient; always-on Gateway must use its SMTP presentation service
+T:System.IO.File; always-on Gateway must not read mail data from host files

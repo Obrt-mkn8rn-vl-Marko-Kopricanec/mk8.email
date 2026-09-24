@@ -47,7 +47,7 @@ public static class OAuthEndpointRouteBuilderExtensions
             environment.Smtp.Hostname,
             environment.Jmap.PublicBaseUrl);
         context.Response.Headers.CacheControl = "public, max-age=3600";
-        var metadata = new Dictionary<string, object>
+        var metadata = new Dictionary<string, object>(StringComparer.Ordinal)
         {
             ["issuer"] = baseUri.AbsoluteUri.TrimEnd('/'),
             ["authorization_endpoint"] = new Uri(baseUri, "oauth/authorize").AbsoluteUri,
@@ -78,7 +78,7 @@ public static class OAuthEndpointRouteBuilderExtensions
             environment.Smtp.Hostname,
             environment.Jmap.PublicBaseUrl);
         context.Response.Headers.CacheControl = "public, max-age=3600";
-        return Results.Json(new Dictionary<string, object>
+        return Results.Json(new Dictionary<string, object>(StringComparer.Ordinal)
         {
             ["issuer"] = baseUri.AbsoluteUri.TrimEnd('/'),
             ["authorization_endpoint"] = new Uri(baseUri, "oauth/authorize").AbsoluteUri,
@@ -113,13 +113,13 @@ public static class OAuthEndpointRouteBuilderExtensions
         if (!environment.OAuth.EnableOpenIdConnect)
             return Results.NotFound();
 
-        var key = await application.GetPublicKeyAsync(context.RequestAborted);
+        var key = await application.GetPublicKeyAsync(context.RequestAborted).ConfigureAwait(false);
         context.Response.Headers.CacheControl = "public, max-age=3600";
-        return Results.Json(new Dictionary<string, object>
+        return Results.Json(new Dictionary<string, object>(StringComparer.Ordinal)
         {
             ["keys"] = new[]
             {
-                new Dictionary<string, object>
+                new Dictionary<string, object>(StringComparer.Ordinal)
                 {
                     ["kty"] = key.KeyType,
                     ["use"] = key.Use,
@@ -146,11 +146,11 @@ public static class OAuthEndpointRouteBuilderExtensions
 
         var identity = (await application.AuthenticateIdentityAsync(
             new OAuthIdentityLookupRequest(accessToken, "openid"),
-            cancellationToken)).Identity;
+            cancellationToken).ConfigureAwait(false)).Identity;
         if (identity is null)
             return BearerError(context);
 
-        var claims = new Dictionary<string, object>
+        var claims = new Dictionary<string, object>(StringComparer.Ordinal)
         {
             ["sub"] = identity.UserId.ToString("D"),
         };
@@ -176,7 +176,7 @@ public static class OAuthEndpointRouteBuilderExtensions
             out var error);
         if (!parsed)
         {
-            await WriteAuthorizationErrorAsync(context, environment, error, cancellationToken);
+            await WriteAuthorizationErrorAsync(context, environment, error, cancellationToken).ConfigureAwait(false);
             return;
         }
         if (request!.PromptNone)
@@ -190,7 +190,7 @@ public static class OAuthEndpointRouteBuilderExtensions
                     request.ClientId,
                     request.RedirectUri,
                     request.State),
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -204,7 +204,7 @@ public static class OAuthEndpointRouteBuilderExtensions
             Path = "/",
             IsEssential = true,
         });
-        await WriteLoginPageAsync(context, request!, csrf, null, cancellationToken);
+        await WriteLoginPageAsync(context, request!, csrf, null, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task CompleteAuthorizationAsync(
@@ -217,11 +217,11 @@ public static class OAuthEndpointRouteBuilderExtensions
             || context.Request.ContentLength is > MaximumFormBytes)
         {
             await WritePlainErrorAsync(context, StatusCodes.Status400BadRequest,
-                "The authorization form is not valid.", cancellationToken);
+                "The authorization form is not valid.", cancellationToken).ConfigureAwait(false);
             return;
         }
 
-        var form = await context.Request.ReadFormAsync(cancellationToken);
+        var form = await context.Request.ReadFormAsync(cancellationToken).ConfigureAwait(false);
         var parsed = TryParseAuthorizationRequest(
             name => form[name].ToString(),
             environment,
@@ -229,7 +229,7 @@ public static class OAuthEndpointRouteBuilderExtensions
             out var error);
         if (!parsed)
         {
-            await WriteAuthorizationErrorAsync(context, environment, error, cancellationToken);
+            await WriteAuthorizationErrorAsync(context, environment, error, cancellationToken).ConfigureAwait(false);
             return;
         }
         if (request!.PromptNone)
@@ -243,7 +243,7 @@ public static class OAuthEndpointRouteBuilderExtensions
                     request.ClientId,
                     request.RedirectUri,
                     request.State),
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -252,7 +252,7 @@ public static class OAuthEndpointRouteBuilderExtensions
         if (!FixedTimeTextEquals(csrf, cookie) || csrf.Length < 32)
         {
             await WritePlainErrorAsync(context, StatusCodes.Status400BadRequest,
-                "The authorization form expired. Start the sign-in again.", cancellationToken);
+                "The authorization form expired. Start the sign-in again.", cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -270,7 +270,7 @@ public static class OAuthEndpointRouteBuilderExtensions
                 csrf,
                 "The email address, password, verification code, or device name is not valid.",
                 cancellationToken,
-                StatusCodes.Status400BadRequest);
+                StatusCodes.Status400BadRequest).ConfigureAwait(false);
             return;
         }
 
@@ -285,7 +285,7 @@ public static class OAuthEndpointRouteBuilderExtensions
                 request.Scopes,
                 request.CodeChallenge,
                 request.Nonce),
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (authorization.Outcome == OAuthAuthorizationOutcome.InvalidCredentials)
         {
             await WriteLoginPageAsync(
@@ -294,7 +294,7 @@ public static class OAuthEndpointRouteBuilderExtensions
                 csrf,
                 "The email address or password is not valid.",
                 cancellationToken,
-                StatusCodes.Status401Unauthorized);
+                StatusCodes.Status401Unauthorized).ConfigureAwait(false);
             return;
         }
 
@@ -306,7 +306,7 @@ public static class OAuthEndpointRouteBuilderExtensions
                 csrf,
                 "The email address, password, or verification code is not valid.",
                 cancellationToken,
-                StatusCodes.Status401Unauthorized);
+                StatusCodes.Status401Unauthorized).ConfigureAwait(false);
             return;
         }
 
@@ -314,7 +314,7 @@ public static class OAuthEndpointRouteBuilderExtensions
             || authorization.AuthorizationCode is null)
         {
             await WritePlainErrorAsync(context, StatusCodes.Status400BadRequest,
-                "The authorization could not be created.", cancellationToken);
+                "The authorization could not be created.", cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -342,7 +342,7 @@ public static class OAuthEndpointRouteBuilderExtensions
             return OAuthError("invalid_request", "Use a bounded form-encoded request.");
         }
 
-        var form = await context.Request.ReadFormAsync(cancellationToken);
+        var form = await context.Request.ReadFormAsync(cancellationToken).ConfigureAwait(false);
         var clientId = form["client_id"].ToString();
         if (!string.Equals(clientId, environment.OAuth.ClientId, StringComparison.Ordinal)
             || !string.IsNullOrEmpty(form["client_secret"].ToString()))
@@ -361,14 +361,14 @@ public static class OAuthEndpointRouteBuilderExtensions
                         clientId,
                         form["redirect_uri"].ToString(),
                         form["code_verifier"].ToString()),
-                    cancellationToken)).Token;
+                    cancellationToken).ConfigureAwait(false)).Token;
                 break;
             case "refresh_token":
                 pair = (await application.RefreshTokenAsync(
                     new OAuthRefreshTokenRequest(
                         form["refresh_token"].ToString(),
                         clientId),
-                    cancellationToken)).Token;
+                    cancellationToken).ConfigureAwait(false)).Token;
                 break;
             default:
                 return OAuthError("unsupported_grant_type", "The grant type is not supported.");
@@ -377,7 +377,7 @@ public static class OAuthEndpointRouteBuilderExtensions
         if (pair is null)
             return OAuthError("invalid_grant", "The authorization grant is invalid or expired.");
 
-        var response = new Dictionary<string, object>
+        var response = new Dictionary<string, object>(StringComparer.Ordinal)
         {
             ["access_token"] = pair.AccessToken,
             ["token_type"] = "Bearer",
@@ -403,7 +403,7 @@ public static class OAuthEndpointRouteBuilderExtensions
             return OAuthError("invalid_request", "Use a bounded form-encoded request.");
         }
 
-        var form = await context.Request.ReadFormAsync(cancellationToken);
+        var form = await context.Request.ReadFormAsync(cancellationToken).ConfigureAwait(false);
         var clientId = form["client_id"].ToString();
         if (!string.Equals(clientId, environment.OAuth.ClientId, StringComparison.Ordinal))
             return OAuthError("invalid_client", "The public client identifier is not valid.",
@@ -411,7 +411,7 @@ public static class OAuthEndpointRouteBuilderExtensions
 
         await application.RevokeTokenAsync(
             new OAuthRevokeTokenRequest(form["token"].ToString(), clientId),
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         return Results.Ok();
     }
 
@@ -441,7 +441,7 @@ public static class OAuthEndpointRouteBuilderExtensions
             error = error with { Description = "The redirect URI is not allowed." };
             return false;
         }
-        if (getValue("response_type") != "code")
+        if (!string.Equals(getValue("response_type"), "code", StringComparison.Ordinal))
         {
             error = error with { Code = "unsupported_response_type", Description = "Only authorization code responses are supported." };
             return false;
@@ -451,8 +451,8 @@ public static class OAuthEndpointRouteBuilderExtensions
             error = error with { Description = "A bounded state value is required." };
             return false;
         }
-        if (getValue("code_challenge_method") != "S256"
-            || !OAuthProtocolValues.IsValidPkceChallenge(getValue("code_challenge")))
+        if (!string.Equals(getValue("code_challenge_method"), "S256"
+, StringComparison.Ordinal) || !OAuthProtocolValues.IsValidPkceChallenge(getValue("code_challenge")))
         {
             error = error with { Description = "PKCE with the S256 method is required." };
             return false;
@@ -542,7 +542,7 @@ public static class OAuthEndpointRouteBuilderExtensions
             context,
             StatusCodes.Status400BadRequest,
             error.Description,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task WriteLoginPageAsync(
@@ -588,7 +588,7 @@ public static class OAuthEndpointRouteBuilderExtensions
             </form>
             </main></body></html>
             """;
-        await context.Response.WriteAsync(html, cancellationToken);
+        await context.Response.WriteAsync(html, cancellationToken).ConfigureAwait(false);
 
         string Hidden(string name, string value) =>
             $"<input type=\"hidden\" name=\"{name}\" value=\"{encode(value)}\">";
@@ -596,7 +596,7 @@ public static class OAuthEndpointRouteBuilderExtensions
 
     private static IResult OAuthError(string code, string description, int statusCode = 400) =>
         Results.Json(
-            new Dictionary<string, object>
+            new Dictionary<string, object>(StringComparer.Ordinal)
             {
                 ["error"] = code,
                 ["error_description"] = description,
@@ -632,7 +632,7 @@ public static class OAuthEndpointRouteBuilderExtensions
         SetSensitiveResponseHeaders(context.Response);
         context.Response.StatusCode = statusCode;
         context.Response.ContentType = "text/plain; charset=utf-8";
-        await context.Response.WriteAsync(message, cancellationToken);
+        await context.Response.WriteAsync(message, cancellationToken).ConfigureAwait(false);
     }
 
     private static void SetSensitiveResponseHeaders(HttpResponse response)

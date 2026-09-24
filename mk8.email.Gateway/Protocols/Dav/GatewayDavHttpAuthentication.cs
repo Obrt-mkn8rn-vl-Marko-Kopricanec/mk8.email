@@ -27,6 +27,6 @@ internal static class GatewayDavHttpAuthentication
             "WWW-Authenticate",
             "Basic realm=\"mk8.email DAV\", charset=\"UTF-8\"");
         context.Response.ContentType = "text/plain; charset=utf-8";
-        await context.Response.WriteAsync("Authentication required.", cancellationToken);
+        await context.Response.WriteAsync("Authentication required.", cancellationToken).ConfigureAwait(false);
     }
 }

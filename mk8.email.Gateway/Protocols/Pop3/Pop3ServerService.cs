@@ -50,7 +50,7 @@ public sealed class Pop3ServerService(
     }
 
     private readonly ConnectionLimiter _connectionLimiter = new(MaximumConcurrentConnections);
-    private readonly SemaphoreSlim _retrievalLimiter = new(4, 4);
+    private readonly Pop3RetrievalLimiter _retrievalLimiter = new(4);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -76,12 +76,13 @@ public sealed class Pop3ServerService(
             return;
         }
 
-        await Task.WhenAll(tasks);
+        await Task.WhenAll(tasks).ConfigureAwait(false);
     }
 
     private async Task ListenAsync(int port, ListenerMode mode, CancellationToken cancellationToken)
     {
-        var listener = new TcpListener(IPAddress.Any, port);
+        using var listener = new TcpListener(IPAddress.Any, port);
+        var activeConnections = new List<Task>();
         listener.Start();
         logger.LogInformation("POP3 {Mode} listener started on port {Port}", mode, port);
 
@@ -89,8 +90,9 @@ public sealed class Pop3ServerService(
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                var client = await listener.AcceptTcpClientAsync(cancellationToken);
-                _ = HandleConnectionAsync(client, mode, cancellationToken);
+                var client = await listener.AcceptTcpClientAsync(cancellationToken).ConfigureAwait(false);
+                activeConnections.RemoveAll(static task => task.IsCompletedSuccessfully);
+                activeConnections.Add(HandleConnectionAsync(client, mode, cancellationToken));
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -99,6 +101,7 @@ public sealed class Pop3ServerService(
         finally
         {
             listener.Stop();
+            await Task.WhenAll(activeConnections).ConfigureAwait(false);
             logger.LogInformation("POP3 {Mode} listener on port {Port} stopped", mode, port);
         }
     }
@@ -134,64 +137,71 @@ public sealed class Pop3ServerService(
             {
                 timeout.CancelAfter(TimeSpan.FromSeconds(environment.Limits.ConnectionTimeoutSeconds));
                 Stream stream = client.GetStream();
-                if (journal is not null)
+                GatewayTrafficStream? recordedStream = null;
+                SslStream? tlsStream = null;
+                try
                 {
-                    var traffic = new GatewayTrafficSession(
-                        journal,
-                        "pop3",
-                        new Dictionary<string, string>
-                        {
-                            ["remoteEndpoint"] = remoteLabel,
-                            ["listenerPort"] = ((client.Client.LocalEndPoint as IPEndPoint)?.Port ?? 0)
-                                .ToString(CultureInfo.InvariantCulture),
-                        });
-                    stream = new GatewayTrafficStream(stream, traffic, leaveInnerOpen: false);
-                }
-
-                if (mode == ListenerMode.ImplicitTls)
-                {
-                    if (environment.Tls.CertificatePath is null)
-                        throw new InvalidOperationException("Implicit POP3 TLS requires a certificate.");
-
-                    using var certificate = LoadCertificate();
-                    var tlsStream = new SslStream(stream, leaveInnerStreamOpen: false);
-                    if (!await TryAuthenticateAsServerAsync(
-                            tlsStream,
-                            certificate,
-                            timeout.Token,
-                            remoteLabel))
+                    if (journal is not null)
                     {
-                        await tlsStream.DisposeAsync();
-                        return;
+                        var traffic = new GatewayTrafficSession(
+                            journal,
+                            "pop3",
+                            new Dictionary<string, string>(StringComparer.Ordinal)
+                            {
+                                ["remoteEndpoint"] = remoteLabel,
+                                ["listenerPort"] = ((client.Client.LocalEndPoint as IPEndPoint)?.Port ?? 0)
+                                    .ToString(CultureInfo.InvariantCulture),
+                            });
+                        recordedStream = new GatewayTrafficStream(stream, traffic, leaveInnerOpen: true);
+                        stream = recordedStream;
                     }
-                    stream = tlsStream;
-                }
 
-                var sendGreeting = true;
-                SessionUpgrade upgrade;
-                do
-                {
-                    upgrade = await RunSessionAsync(stream, session, timeout, sendGreeting);
-                    sendGreeting = false;
-
-                    if (upgrade == SessionUpgrade.StartTls)
+                    if (mode == ListenerMode.ImplicitTls)
                     {
+                        if (environment.Tls.CertificatePath is null)
+                            throw new InvalidOperationException("Implicit POP3 TLS requires a certificate.");
+
                         using var certificate = LoadCertificate();
-                        var tlsStream = new SslStream(stream, leaveInnerStreamOpen: false);
+                        tlsStream = new SslStream(stream, leaveInnerStreamOpen: true);
                         if (!await TryAuthenticateAsServerAsync(
                                 tlsStream,
                                 certificate,
-                                timeout.Token,
-                                remoteLabel))
-                        {
-                            await tlsStream.DisposeAsync();
+                                remoteLabel,
+                                timeout.Token).ConfigureAwait(false))
                             return;
-                        }
                         stream = tlsStream;
-                        session.IsSecure = true;
-                        session.PendingUsername = null;
                     }
-                } while (upgrade != SessionUpgrade.None && session.State != Pop3State.Update);
+
+                    var sendGreeting = true;
+                    SessionUpgrade upgrade;
+                    do
+                    {
+                        upgrade = await RunSessionAsync(stream, session, timeout, sendGreeting).ConfigureAwait(false);
+                        sendGreeting = false;
+
+                        if (upgrade == SessionUpgrade.StartTls)
+                        {
+                            using var certificate = LoadCertificate();
+                            tlsStream = new SslStream(stream, leaveInnerStreamOpen: true);
+                            if (!await TryAuthenticateAsServerAsync(
+                                    tlsStream,
+                                    certificate,
+                                    remoteLabel,
+                                    timeout.Token).ConfigureAwait(false))
+                                return;
+                            stream = tlsStream;
+                            session.IsSecure = true;
+                            session.PendingUsername = null;
+                        }
+                    } while (upgrade != SessionUpgrade.None && session.State != Pop3State.Update);
+                }
+                finally
+                {
+                    if (tlsStream is not null)
+                        await tlsStream.DisposeAsync().ConfigureAwait(false);
+                    if (recordedStream is not null)
+                        await recordedStream.DisposeAsync().ConfigureAwait(false);
+                }
             }
         }
         catch (OperationCanceledException)
@@ -204,7 +214,7 @@ public sealed class Pop3ServerService(
         }
         finally
         {
-            await ReleaseMaildropAsync(session);
+            await ReleaseMaildropAsync(session).ConfigureAwait(false);
         }
     }
 
@@ -222,7 +232,7 @@ public sealed class Pop3ServerService(
             bufferSize: 4096,
             leaveOpen: true);
         var reader = new BoundedLineReader(streamReader);
-        await using var writer = new StreamWriter(
+        var writer = new StreamWriter(
             stream,
             MailWireEncoding.Instance,
             bufferSize: 4096,
@@ -231,19 +241,20 @@ public sealed class Pop3ServerService(
             AutoFlush = true,
             NewLine = "\r\n",
         };
+        await using var writerLifetime = writer.ConfigureAwait(false);
 
         if (sendGreeting)
-            await writer.WriteLineAsync($"+OK {environment.Smtp.Hostname} mk8.email POP3 ready");
+            await writer.WriteLineAsync($"+OK {environment.Smtp.Hostname} mk8.email POP3 ready").ConfigureAwait(false);
 
         while (!timeout.IsCancellationRequested && session.State != Pop3State.Update)
         {
             timeout.CancelAfter(TimeSpan.FromSeconds(environment.Limits.ConnectionTimeoutSeconds));
             var lineResult = await reader.ReadLineAsync(
                 MaximumCommandLineCharacters,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             if (lineResult.IsTooLong)
             {
-                await writer.WriteLineAsync("-ERR [SYS/PERM] command line is too long");
+                await writer.WriteLineAsync("-ERR [SYS/PERM] command line is too long").ConfigureAwait(false);
                 session.State = Pop3State.Update;
                 break;
             }
@@ -263,19 +274,19 @@ public sealed class Pop3ServerService(
                     renewed = await leaseStore.RenewAsync(
                         maildropLease,
                         MaildropLeaseLifetime,
-                        cancellationToken);
+                        cancellationToken).ConfigureAwait(false);
                 }
                 catch (Exception exception) when (
                     exception is not OperationCanceledException && !cancellationToken.IsCancellationRequested)
                 {
                     logger.LogWarning(exception, "POP3 maildrop lease renewal failed for {UserId}", session.UserId);
-                    await writer.WriteLineAsync("-ERR [SYS/TEMP] maildrop lock is unavailable");
+                    await writer.WriteLineAsync("-ERR [SYS/TEMP] maildrop lock is unavailable").ConfigureAwait(false);
                     session.State = Pop3State.Update;
                     break;
                 }
                 if (!renewed)
                 {
-                    await writer.WriteLineAsync("-ERR [SYS/TEMP] maildrop lock was lost");
+                    await writer.WriteLineAsync("-ERR [SYS/TEMP] maildrop lock was lost").ConfigureAwait(false);
                     session.State = Pop3State.Update;
                     break;
                 }
@@ -284,37 +295,37 @@ public sealed class Pop3ServerService(
             switch (command)
             {
                 case "CAPA":
-                    await WriteCapabilitiesAsync(writer, session);
+                    await WriteCapabilitiesAsync(writer, session).ConfigureAwait(false);
                     break;
 
                 case "STLS":
                     if (session.State != Pop3State.Authorization)
                     {
-                        await writer.WriteLineAsync("-ERR [SYS/PERM] STLS is only valid before authentication");
+                        await writer.WriteLineAsync("-ERR [SYS/PERM] STLS is only valid before authentication").ConfigureAwait(false);
                     }
                     else if (session.IsSecure)
                     {
-                        await writer.WriteLineAsync("-ERR [SYS/PERM] TLS is already active");
+                        await writer.WriteLineAsync("-ERR [SYS/PERM] TLS is already active").ConfigureAwait(false);
                     }
                     else if (!environment.Pop3.EnableStartTls
                         || environment.Tls.CertificatePath is null)
                     {
-                        await writer.WriteLineAsync("-ERR [SYS/PERM] STLS is not available");
+                        await writer.WriteLineAsync("-ERR [SYS/PERM] STLS is not available").ConfigureAwait(false);
                     }
                     else
                     {
-                        await writer.WriteLineAsync("+OK Begin TLS negotiation");
-                        await writer.FlushAsync(cancellationToken);
+                        await writer.WriteLineAsync("+OK Begin TLS negotiation").ConfigureAwait(false);
+                        await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
                         return SessionUpgrade.StartTls;
                     }
                     break;
 
                 case "USER":
-                    await HandleUserAsync(writer, argument, session);
+                    await HandleUserAsync(writer, argument, session).ConfigureAwait(false);
                     break;
 
                 case "PASS":
-                    await HandlePasswordAsync(writer, argument, session, cancellationToken);
+                    await HandlePasswordAsync(writer, argument, session, cancellationToken).ConfigureAwait(false);
                     break;
 
                 case "AUTH":
@@ -323,26 +334,26 @@ public sealed class Pop3ServerService(
                         writer,
                         argument,
                         session,
-                        cancellationToken);
+                        cancellationToken).ConfigureAwait(false);
                     break;
 
                 case "STAT":
-                    if (await RequireTransactionAsync(writer, session))
-                        await WriteStatAsync(writer, session);
+                    if (await RequireTransactionAsync(writer, session).ConfigureAwait(false))
+                        await WriteStatAsync(writer, session).ConfigureAwait(false);
                     break;
 
                 case "LIST":
-                    if (await RequireTransactionAsync(writer, session))
-                        await HandleListAsync(writer, argument, session);
+                    if (await RequireTransactionAsync(writer, session).ConfigureAwait(false))
+                        await HandleListAsync(writer, argument, session).ConfigureAwait(false);
                     break;
 
                 case "UIDL":
-                    if (await RequireTransactionAsync(writer, session))
-                        await HandleUidlAsync(writer, argument, session);
+                    if (await RequireTransactionAsync(writer, session).ConfigureAwait(false))
+                        await HandleUidlAsync(writer, argument, session).ConfigureAwait(false);
                     break;
 
                 case "RETR":
-                    if (await RequireTransactionAsync(writer, session))
+                    if (await RequireTransactionAsync(writer, session).ConfigureAwait(false))
                     {
                         await HandleRetrieveAsync(
                             stream,
@@ -350,53 +361,53 @@ public sealed class Pop3ServerService(
                             argument,
                             session,
                             bodyLineCount: null,
-                            cancellationToken);
+                            cancellationToken).ConfigureAwait(false);
                     }
                     break;
 
                 case "TOP":
-                    if (await RequireTransactionAsync(writer, session))
+                    if (await RequireTransactionAsync(writer, session).ConfigureAwait(false))
                     {
                         await HandleTopAsync(
                             stream,
                             writer,
                             argument,
                             session,
-                            cancellationToken);
+                            cancellationToken).ConfigureAwait(false);
                     }
                     break;
 
                 case "DELE":
-                    if (await RequireTransactionAsync(writer, session))
-                        await HandleDeleteAsync(writer, argument, session);
+                    if (await RequireTransactionAsync(writer, session).ConfigureAwait(false))
+                        await HandleDeleteAsync(writer, argument, session).ConfigureAwait(false);
                     break;
 
                 case "RSET":
-                    if (await RequireTransactionAsync(writer, session))
+                    if (await RequireTransactionAsync(writer, session).ConfigureAwait(false))
                     {
                         session.DeletedMessageIds.Clear();
-                        await WriteStatAsync(writer, session);
+                        await WriteStatAsync(writer, session).ConfigureAwait(false);
                     }
                     break;
 
                 case "NOOP":
-                    if (await RequireTransactionAsync(writer, session))
-                        await writer.WriteLineAsync("+OK");
+                    if (await RequireTransactionAsync(writer, session).ConfigureAwait(false))
+                        await writer.WriteLineAsync("+OK").ConfigureAwait(false);
                     break;
 
                 case "QUIT":
-                    await HandleQuitAsync(writer, session, cancellationToken);
+                    await HandleQuitAsync(writer, session, cancellationToken).ConfigureAwait(false);
                     break;
 
                 default:
-                    await writer.WriteLineAsync("-ERR [SYS/PERM] unknown command");
+                    await writer.WriteLineAsync("-ERR [SYS/PERM] unknown command").ConfigureAwait(false);
                     break;
             }
 
             if (session.AuthenticationFailures >= MaximumAuthenticationFailures
                 && session.State == Pop3State.Authorization)
             {
-                await writer.WriteLineAsync("-ERR [AUTH] too many authentication failures");
+                await writer.WriteLineAsync("-ERR [AUTH] too many authentication failures").ConfigureAwait(false);
                 session.State = Pop3State.Update;
             }
         }
@@ -409,26 +420,26 @@ public sealed class Pop3ServerService(
 
     private async Task WriteCapabilitiesAsync(StreamWriter writer, Pop3Session session)
     {
-        await writer.WriteLineAsync("+OK Capability list follows");
-        await writer.WriteLineAsync("TOP");
-        await writer.WriteLineAsync("RESP-CODES");
-        await writer.WriteLineAsync("PIPELINING");
-        await writer.WriteLineAsync("UIDL");
-        await writer.WriteLineAsync("EXPIRE NEVER");
+        await writer.WriteLineAsync("+OK Capability list follows").ConfigureAwait(false);
+        await writer.WriteLineAsync("TOP").ConfigureAwait(false);
+        await writer.WriteLineAsync("RESP-CODES").ConfigureAwait(false);
+        await writer.WriteLineAsync("PIPELINING").ConfigureAwait(false);
+        await writer.WriteLineAsync("UIDL").ConfigureAwait(false);
+        await writer.WriteLineAsync("EXPIRE NEVER").ConfigureAwait(false);
         if (session.State == Pop3State.Authorization)
         {
-            await writer.WriteLineAsync("USER");
+            await writer.WriteLineAsync("USER").ConfigureAwait(false);
             if (session.IsSecure)
             {
                 var mechanisms = environment.OAuth.EnableOAuth ? "PLAIN XOAUTH2" : "PLAIN";
-                await writer.WriteLineAsync($"SASL {mechanisms}");
+                await writer.WriteLineAsync($"SASL {mechanisms}").ConfigureAwait(false);
             }
             else if (environment.Pop3.EnableStartTls
                 && environment.Tls.CertificatePath is not null)
-                await writer.WriteLineAsync("STLS");
+                await writer.WriteLineAsync("STLS").ConfigureAwait(false);
         }
-        await writer.WriteLineAsync("IMPLEMENTATION mk8.email");
-        await writer.WriteLineAsync(".");
+        await writer.WriteLineAsync("IMPLEMENTATION mk8.email").ConfigureAwait(false);
+        await writer.WriteLineAsync(".").ConfigureAwait(false);
     }
 
     private static async Task HandleUserAsync(
@@ -438,22 +449,22 @@ public sealed class Pop3ServerService(
     {
         if (session.State != Pop3State.Authorization)
         {
-            await writer.WriteLineAsync("-ERR [SYS/PERM] already authenticated");
+            await writer.WriteLineAsync("-ERR [SYS/PERM] already authenticated").ConfigureAwait(false);
             return;
         }
         if (!session.IsSecure)
         {
-            await writer.WriteLineAsync("-ERR [AUTH] TLS is required before authentication");
+            await writer.WriteLineAsync("-ERR [AUTH] TLS is required before authentication").ConfigureAwait(false);
             return;
         }
         if (string.IsNullOrWhiteSpace(username) || username.Length > 320)
         {
-            await writer.WriteLineAsync("-ERR [AUTH] invalid username");
+            await writer.WriteLineAsync("-ERR [AUTH] invalid username").ConfigureAwait(false);
             return;
         }
 
         session.PendingUsername = username;
-        await writer.WriteLineAsync("+OK user accepted");
+        await writer.WriteLineAsync("+OK user accepted").ConfigureAwait(false);
     }
 
     private async Task HandlePasswordAsync(
@@ -464,17 +475,17 @@ public sealed class Pop3ServerService(
     {
         if (session.State != Pop3State.Authorization)
         {
-            await writer.WriteLineAsync("-ERR [SYS/PERM] already authenticated");
+            await writer.WriteLineAsync("-ERR [SYS/PERM] already authenticated").ConfigureAwait(false);
             return;
         }
         if (!session.IsSecure)
         {
-            await writer.WriteLineAsync("-ERR [AUTH] TLS is required before authentication");
+            await writer.WriteLineAsync("-ERR [AUTH] TLS is required before authentication").ConfigureAwait(false);
             return;
         }
         if (session.PendingUsername is null || password.Length == 0)
         {
-            await writer.WriteLineAsync("-ERR [AUTH] USER is required before PASS");
+            await writer.WriteLineAsync("-ERR [AUTH] USER is required before PASS").ConfigureAwait(false);
             return;
         }
 
@@ -483,7 +494,7 @@ public sealed class Pop3ServerService(
             session.PendingUsername,
             password,
             session,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
     }
 
     private async Task HandleAuthAsync(
@@ -495,59 +506,59 @@ public sealed class Pop3ServerService(
     {
         if (session.State != Pop3State.Authorization)
         {
-            await writer.WriteLineAsync("-ERR [SYS/PERM] already authenticated");
+            await writer.WriteLineAsync("-ERR [SYS/PERM] already authenticated").ConfigureAwait(false);
             return;
         }
         if (!session.IsSecure)
         {
-            await writer.WriteLineAsync("-ERR [AUTH] TLS is required before authentication");
+            await writer.WriteLineAsync("-ERR [AUTH] TLS is required before authentication").ConfigureAwait(false);
             return;
         }
         if (string.IsNullOrEmpty(argument))
         {
-            await writer.WriteLineAsync("+OK Supported SASL mechanisms");
-            await writer.WriteLineAsync("PLAIN");
+            await writer.WriteLineAsync("+OK Supported SASL mechanisms").ConfigureAwait(false);
+            await writer.WriteLineAsync("PLAIN").ConfigureAwait(false);
             if (environment.OAuth.EnableOAuth)
-                await writer.WriteLineAsync("XOAUTH2");
-            await writer.WriteLineAsync(".");
+                await writer.WriteLineAsync("XOAUTH2").ConfigureAwait(false);
+            await writer.WriteLineAsync(".").ConfigureAwait(false);
             return;
         }
 
         var separator = argument.IndexOf(' ');
         var mechanism = (separator < 0 ? argument : argument[..separator]).ToUpperInvariant();
         if (mechanism is not ("PLAIN" or "XOAUTH2")
-            || mechanism == "XOAUTH2" && !environment.OAuth.EnableOAuth)
+            || string.Equals(mechanism, "XOAUTH2", StringComparison.Ordinal) && !environment.OAuth.EnableOAuth)
         {
-            await writer.WriteLineAsync("-ERR [AUTH] unsupported SASL mechanism");
+            await writer.WriteLineAsync("-ERR [AUTH] unsupported SASL mechanism").ConfigureAwait(false);
             return;
         }
 
         var encoded = separator < 0 ? string.Empty : argument[(separator + 1)..].Trim();
         if (encoded.Length == 0)
         {
-            await writer.WriteLineAsync("+ ");
+            await writer.WriteLineAsync("+ ").ConfigureAwait(false);
             var response = await reader.ReadLineAsync(
                 MaximumAuthenticationLineCharacters,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             if (response.IsTooLong)
             {
-                await writer.WriteLineAsync("-ERR [AUTH] authentication response is too long");
+                await writer.WriteLineAsync("-ERR [AUTH] authentication response is too long").ConfigureAwait(false);
                 return;
             }
             encoded = response.Value ?? string.Empty;
         }
-        if (encoded == "*")
+        if (string.Equals(encoded, "*", StringComparison.Ordinal))
         {
-            await writer.WriteLineAsync("-ERR [AUTH] authentication cancelled");
+            await writer.WriteLineAsync("-ERR [AUTH] authentication cancelled").ConfigureAwait(false);
             return;
         }
 
-        if (mechanism == "XOAUTH2")
+        if (string.Equals(mechanism, "XOAUTH2", StringComparison.Ordinal))
         {
             if (!OAuthSasl.TryParseXOAuth2(encoded, out var oauthUsername, out var accessToken))
             {
                 RecordAuthenticationFailure(session);
-                await writer.WriteLineAsync("-ERR [AUTH] authentication failed");
+                await writer.WriteLineAsync("-ERR [AUTH] authentication failed").ConfigureAwait(false);
                 return;
             }
 
@@ -557,23 +568,23 @@ public sealed class Pop3ServerService(
             try
             {
                 oauthUser = await application.AuthenticateOAuthAsync(
-                    new Pop3OAuthAuthentication(oauthUsername, accessToken), cancellationToken);
+                    new Pop3OAuthAuthentication(oauthUsername, accessToken), cancellationToken).ConfigureAwait(false);
             }
             catch (Exception exception) when (
                 exception is not OperationCanceledException && !cancellationToken.IsCancellationRequested)
             {
                 logger.LogWarning(exception, "POP3 OAuth authentication service is unavailable");
-                await writer.WriteLineAsync("-ERR [SYS/TEMP] authentication service is unavailable");
+                await writer.WriteLineAsync("-ERR [SYS/TEMP] authentication service is unavailable").ConfigureAwait(false);
                 return;
             }
             if (oauthUser.UserId is null || oauthUser.Username is null)
             {
                 RecordAuthenticationFailure(session);
-                await writer.WriteLineAsync("-ERR [AUTH] authentication failed");
+                await writer.WriteLineAsync("-ERR [AUTH] authentication failed").ConfigureAwait(false);
                 return;
             }
 
-            await OpenMaildropAsync(writer, oauthUser, session, cancellationToken);
+            await OpenMaildropAsync(writer, oauthUser, session, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -593,7 +604,7 @@ public sealed class Pop3ServerService(
         catch (FormatException)
         {
             RecordAuthenticationFailure(session);
-            await writer.WriteLineAsync("-ERR [AUTH] invalid SASL response");
+            await writer.WriteLineAsync("-ERR [AUTH] invalid SASL response").ConfigureAwait(false);
             return;
         }
 
@@ -605,7 +616,7 @@ public sealed class Pop3ServerService(
                     StringComparison.OrdinalIgnoreCase)))
         {
             RecordAuthenticationFailure(session);
-            await writer.WriteLineAsync("-ERR [AUTH] authentication failed");
+            await writer.WriteLineAsync("-ERR [AUTH] authentication failed").ConfigureAwait(false);
             return;
         }
 
@@ -614,7 +625,7 @@ public sealed class Pop3ServerService(
             username,
             password,
             session,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
     }
 
     private async Task AuthenticateAndOpenAsync(
@@ -630,23 +641,23 @@ public sealed class Pop3ServerService(
         try
         {
             user = await application.AuthenticatePasswordAsync(
-                new Pop3PasswordAuthentication(username, password), cancellationToken);
+                new Pop3PasswordAuthentication(username, password), cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (
             exception is not OperationCanceledException && !cancellationToken.IsCancellationRequested)
         {
             logger.LogWarning(exception, "POP3 password authentication service is unavailable");
-            await writer.WriteLineAsync("-ERR [SYS/TEMP] authentication service is unavailable");
+            await writer.WriteLineAsync("-ERR [SYS/TEMP] authentication service is unavailable").ConfigureAwait(false);
             return;
         }
         if (user.UserId is null || user.Username is null)
         {
             RecordAuthenticationFailure(session);
-            await writer.WriteLineAsync("-ERR [AUTH] authentication failed");
+            await writer.WriteLineAsync("-ERR [AUTH] authentication failed").ConfigureAwait(false);
             return;
         }
 
-        await OpenMaildropAsync(writer, user, session, cancellationToken);
+        await OpenMaildropAsync(writer, user, session, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task OpenMaildropAsync(
@@ -663,18 +674,18 @@ public sealed class Pop3ServerService(
             maildropLease = await leaseStore.TryAcquireAsync(
                 userId,
                 MaildropLeaseLifetime,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (
             exception is not OperationCanceledException && !cancellationToken.IsCancellationRequested)
         {
             logger.LogWarning(exception, "POP3 maildrop lease service is unavailable for {UserId}", userId);
-            await writer.WriteLineAsync("-ERR [SYS/TEMP] maildrop is temporarily unavailable");
+            await writer.WriteLineAsync("-ERR [SYS/TEMP] maildrop is temporarily unavailable").ConfigureAwait(false);
             return;
         }
         if (maildropLease is null)
         {
-            await writer.WriteLineAsync("-ERR [IN-USE] maildrop is already locked");
+            await writer.WriteLineAsync("-ERR [IN-USE] maildrop is already locked").ConfigureAwait(false);
             return;
         }
 
@@ -684,7 +695,7 @@ public sealed class Pop3ServerService(
             using var scope = scopeFactory.CreateScope();
             var application = scope.ServiceProvider.GetRequiredService<IPop3ApplicationService>();
             var snapshot = await application.ListMaildropAsync(
-                new Pop3UserRequest(userId), cancellationToken);
+                new Pop3UserRequest(userId), cancellationToken).ConfigureAwait(false);
             session.Messages.Clear();
             foreach (var message in snapshot.Messages)
             {
@@ -698,14 +709,14 @@ public sealed class Pop3ServerService(
         catch (Exception exception) when (
             exception is not OperationCanceledException && !cancellationToken.IsCancellationRequested)
         {
-            await ReleaseMaildropAsync(session);
+            await ReleaseMaildropAsync(session).ConfigureAwait(false);
             logger.LogWarning(exception, "POP3 maildrop snapshot is unavailable for {UserId}", userId);
-            await writer.WriteLineAsync("-ERR [SYS/TEMP] maildrop is temporarily unavailable");
+            await writer.WriteLineAsync("-ERR [SYS/TEMP] maildrop is temporarily unavailable").ConfigureAwait(false);
             return;
         }
         catch
         {
-            await ReleaseMaildropAsync(session);
+            await ReleaseMaildropAsync(session).ConfigureAwait(false);
             throw;
         }
 
@@ -713,7 +724,7 @@ public sealed class Pop3ServerService(
         session.State = Pop3State.Transaction;
         session.PendingUsername = null;
         var (count, size) = GetMaildropStatistics(session);
-        await writer.WriteLineAsync($"+OK maildrop has {count} messages ({size} octets)");
+        await writer.WriteLineAsync($"+OK maildrop has {count} messages ({size} octets)").ConfigureAwait(false);
     }
 
     private static async Task<bool> RequireTransactionAsync(
@@ -723,7 +734,7 @@ public sealed class Pop3ServerService(
         if (session.State == Pop3State.Transaction)
             return true;
 
-        await writer.WriteLineAsync("-ERR [AUTH] authenticate first");
+        await writer.WriteLineAsync("-ERR [AUTH] authenticate first").ConfigureAwait(false);
         return false;
     }
 
@@ -743,20 +754,20 @@ public sealed class Pop3ServerService(
             var message = FindMessage(argument, session);
             if (message is null)
             {
-                await writer.WriteLineAsync("-ERR [SYS/PERM] no such message");
+                await writer.WriteLineAsync("-ERR [SYS/PERM] no such message").ConfigureAwait(false);
                 return;
             }
-            await writer.WriteLineAsync($"+OK {message.Number} {message.SizeBytes}");
+            await writer.WriteLineAsync($"+OK {message.Number} {message.SizeBytes}").ConfigureAwait(false);
             return;
         }
 
         var available = session.Messages
             .Where(message => !session.DeletedMessageIds.Contains(message.Id))
             .ToList();
-        await writer.WriteLineAsync($"+OK {available.Count} messages");
+        await writer.WriteLineAsync($"+OK {available.Count} messages").ConfigureAwait(false);
         foreach (var message in available)
-            await writer.WriteLineAsync($"{message.Number} {message.SizeBytes}");
-        await writer.WriteLineAsync(".");
+            await writer.WriteLineAsync($"{message.Number} {message.SizeBytes}").ConfigureAwait(false);
+        await writer.WriteLineAsync(".").ConfigureAwait(false);
     }
 
     private static async Task HandleUidlAsync(
@@ -769,20 +780,20 @@ public sealed class Pop3ServerService(
             var message = FindMessage(argument, session);
             if (message is null)
             {
-                await writer.WriteLineAsync("-ERR [SYS/PERM] no such message");
+                await writer.WriteLineAsync("-ERR [SYS/PERM] no such message").ConfigureAwait(false);
                 return;
             }
-            await writer.WriteLineAsync($"+OK {message.Number} {message.UniqueId}");
+            await writer.WriteLineAsync($"+OK {message.Number} {message.UniqueId}").ConfigureAwait(false);
             return;
         }
 
         var available = session.Messages
             .Where(message => !session.DeletedMessageIds.Contains(message.Id))
             .ToList();
-        await writer.WriteLineAsync($"+OK {available.Count} messages");
+        await writer.WriteLineAsync($"+OK {available.Count} messages").ConfigureAwait(false);
         foreach (var message in available)
-            await writer.WriteLineAsync($"{message.Number} {message.UniqueId}");
-        await writer.WriteLineAsync(".");
+            await writer.WriteLineAsync($"{message.Number} {message.UniqueId}").ConfigureAwait(false);
+        await writer.WriteLineAsync(".").ConfigureAwait(false);
     }
 
     private async Task HandleTopAsync(
@@ -797,7 +808,7 @@ public sealed class Pop3ServerService(
             || !int.TryParse(parts[1], out var bodyLineCount)
             || bodyLineCount < 0)
         {
-            await writer.WriteLineAsync("-ERR [SYS/PERM] syntax: TOP message lines");
+            await writer.WriteLineAsync("-ERR [SYS/PERM] syntax: TOP message lines").ConfigureAwait(false);
             return;
         }
 
@@ -807,7 +818,7 @@ public sealed class Pop3ServerService(
             parts[0],
             session,
             bodyLineCount,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
     }
 
     private async Task HandleRetrieveAsync(
@@ -821,44 +832,40 @@ public sealed class Pop3ServerService(
         var message = FindMessage(messageNumber, session);
         if (message is null)
         {
-            await writer.WriteLineAsync("-ERR [SYS/PERM] no such message");
+            await writer.WriteLineAsync("-ERR [SYS/PERM] no such message").ConfigureAwait(false);
             return;
         }
-        if (!_retrievalLimiter.Wait(0))
+        using var retrievalSlot = _retrievalLimiter.TryAcquire();
+        if (retrievalSlot is null)
         {
-            await writer.WriteLineAsync("-ERR [SYS/TEMP] too many concurrent retrievals");
+            await writer.WriteLineAsync("-ERR [SYS/TEMP] too many concurrent retrievals").ConfigureAwait(false);
             return;
         }
 
-        try
         {
             byte[]? wireMessage;
             try
             {
-                wireMessage = await GetWireMessageAsync(message.Id, session, cancellationToken);
+                wireMessage = await GetWireMessageAsync(message.Id, session, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception exception) when (
                 exception is not OperationCanceledException && !cancellationToken.IsCancellationRequested)
             {
                 logger.LogWarning(exception, "POP3 message read is unavailable for {MessageId}", message.Id);
-                await writer.WriteLineAsync("-ERR [SYS/TEMP] message is temporarily unavailable");
+                await writer.WriteLineAsync("-ERR [SYS/TEMP] message is temporarily unavailable").ConfigureAwait(false);
                 return;
             }
             if (wireMessage is null)
             {
-                await writer.WriteLineAsync("-ERR [SYS/TEMP] message is no longer available");
+                await writer.WriteLineAsync("-ERR [SYS/TEMP] message is no longer available").ConfigureAwait(false);
                 return;
             }
             if (bodyLineCount is not null)
                 wireMessage = Pop3WireCodec.TakeTop(wireMessage, bodyLineCount.Value);
 
-            await writer.WriteLineAsync($"+OK {wireMessage.Length} octets");
-            await writer.FlushAsync(cancellationToken);
-            await Pop3WireCodec.WriteDotStuffedAsync(stream, wireMessage, cancellationToken);
-        }
-        finally
-        {
-            _retrievalLimiter.Release();
+            await writer.WriteLineAsync($"+OK {wireMessage.Length} octets").ConfigureAwait(false);
+            await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+            await Pop3WireCodec.WriteDotStuffedAsync(stream, wireMessage, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -873,7 +880,7 @@ public sealed class Pop3ServerService(
             new Pop3MessageRequest(
                 session.UserId ?? throw new InvalidOperationException("The POP3 session is not authenticated."),
                 messageId),
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         return result.RawMessage is null
             ? null
             : Pop3WireCodec.NormalizeCrlf(result.RawMessage);
@@ -887,12 +894,12 @@ public sealed class Pop3ServerService(
         var message = FindMessage(argument, session);
         if (message is null)
         {
-            await writer.WriteLineAsync("-ERR [SYS/PERM] no such message");
+            await writer.WriteLineAsync("-ERR [SYS/PERM] no such message").ConfigureAwait(false);
             return;
         }
 
         session.DeletedMessageIds.Add(message.Id);
-        await writer.WriteLineAsync($"+OK message {message.Number} marked for deletion");
+        await writer.WriteLineAsync($"+OK message {message.Number} marked for deletion").ConfigureAwait(false);
     }
 
     private async Task HandleQuitAsync(
@@ -902,23 +909,23 @@ public sealed class Pop3ServerService(
     {
         if (session.State != Pop3State.Transaction)
         {
-            await writer.WriteLineAsync("+OK goodbye");
+            await writer.WriteLineAsync("+OK goodbye").ConfigureAwait(false);
             session.State = Pop3State.Update;
             return;
         }
 
         try
         {
-            var deletedCount = await CommitDeletesAsync(session, cancellationToken);
-            await ReleaseMaildropAsync(session);
-            await writer.WriteLineAsync($"+OK goodbye ({deletedCount} messages deleted)");
+            var deletedCount = await CommitDeletesAsync(session, cancellationToken).ConfigureAwait(false);
+            await ReleaseMaildropAsync(session).ConfigureAwait(false);
+            await writer.WriteLineAsync($"+OK goodbye ({deletedCount} messages deleted)").ConfigureAwait(false);
         }
         catch (Exception exception) when (
             exception is not OperationCanceledException && !cancellationToken.IsCancellationRequested)
         {
             logger.LogWarning(exception, "POP3 update failed for user {UserId}", session.UserId);
-            await ReleaseMaildropAsync(session);
-            await writer.WriteLineAsync("-ERR [SYS/TEMP] unable to update maildrop");
+            await ReleaseMaildropAsync(session).ConfigureAwait(false);
+            await writer.WriteLineAsync("-ERR [SYS/TEMP] unable to update maildrop").ConfigureAwait(false);
         }
         finally
         {
@@ -938,7 +945,7 @@ public sealed class Pop3ServerService(
             new Pop3DeleteRequest(
                 session.UserId ?? throw new InvalidOperationException("The POP3 session is not authenticated."),
                 session.DeletedMessageIds.ToArray()),
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         return result.DeletedCount;
     }
 
@@ -975,7 +982,7 @@ public sealed class Pop3ServerService(
         session.MaildropLease = null;
         try
         {
-            await leaseStore.ReleaseAsync(lease, CancellationToken.None);
+            await leaseStore.ReleaseAsync(lease, CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception exception)
         {
@@ -1002,8 +1009,8 @@ public sealed class Pop3ServerService(
     private async Task<bool> TryAuthenticateAsServerAsync(
         SslStream stream,
         X509Certificate2 certificate,
-        CancellationToken cancellationToken,
-        string remoteLabel)
+        string remoteLabel,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -1012,10 +1019,13 @@ public sealed class Pop3ServerService(
                 {
                     ServerCertificate = certificate,
                     ClientCertificateRequired = false,
+                    // Mail listeners require TLS 1.2 or later even if the host enables legacy protocols.
+#pragma warning disable CA5398
                     EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
+#pragma warning restore CA5398
                     CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
                 },
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             return true;
         }
         catch (Exception exception) when (

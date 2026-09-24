@@ -29,7 +29,7 @@ public sealed class GatewaySieveApplicationService(
         SieveUserRequest request,
         CancellationToken cancellationToken = default) =>
         await transport.SendAsync<SieveUserRequest, List<SieveScriptSummary>>(
-            "sieve", ApplicationOperations.SieveList, request, cancellationToken);
+            "sieve", ApplicationOperations.SieveList, request, cancellationToken).ConfigureAwait(false);
 
     public Task<SieveStoredScriptResult> GetAsync(
         SieveNamedRequest request,

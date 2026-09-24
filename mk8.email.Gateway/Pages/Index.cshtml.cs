@@ -20,7 +20,7 @@ public sealed class IndexModel(
 
     public async Task OnGetAsync(CancellationToken cancellationToken)
     {
-        var dashboard = await application.GetDashboardAsync(cancellationToken);
+        var dashboard = await application.GetDashboardAsync(cancellationToken).ConfigureAwait(false);
         var domains = dashboard.Domains;
         var accounts = dashboard.Accounts;
         SystemStatus = dashboard.SystemStatus;
@@ -36,7 +36,7 @@ public sealed class IndexModel(
             OperationalState = SystemStatus.CheckedAt is null ? "Unavailable" : "Stale";
             OperationalClass = "status-bad";
         }
-        else if (SystemStatus.State == "healthy")
+        else if (string.Equals(SystemStatus.State, "healthy", StringComparison.Ordinal))
         {
             OperationalState = "Healthy";
             OperationalClass = "status-good";

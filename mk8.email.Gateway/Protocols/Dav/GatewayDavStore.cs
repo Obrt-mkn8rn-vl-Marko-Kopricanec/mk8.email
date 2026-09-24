@@ -15,13 +15,13 @@ internal sealed class GatewayDavStore(IGatewayApplicationTransport transport)
         (await SendAsync<DavAuthenticationRequest, DavLookupResult<DavUser>>(
             ApplicationOperations.DavAuthenticate,
             new DavAuthenticationRequest(authentication),
-            cancellationToken)).Value;
+            cancellationToken).ConfigureAwait(false)).Value;
 
     public async Task EnsureDefaultCollectionsAsync(DavUser user, CancellationToken cancellationToken) =>
         _ = await SendAsync<DavEnsureCollectionsRequest, DavAcknowledgement>(
             ApplicationOperations.DavEnsureCollections,
             new DavEnsureCollectionsRequest(user),
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
 
     public Task<IReadOnlyList<DavCollection>> GetCollectionsAsync(
         DavUser user,
@@ -41,7 +41,7 @@ internal sealed class GatewayDavStore(IGatewayApplicationTransport transport)
         (await SendAsync<DavCollectionLookupRequest, DavLookupResult<DavCollection>>(
             ApplicationOperations.DavCollectionGet,
             new DavCollectionLookupRequest(user, kind, hrefUserId, hrefSlug),
-            cancellationToken)).Value;
+            cancellationToken).ConfigureAwait(false)).Value;
 
     public Task<DavCollectionWriteResult> CreateCollectionAsync(
         DavUser user,
@@ -88,7 +88,7 @@ internal sealed class GatewayDavStore(IGatewayApplicationTransport transport)
         (await SendAsync<DavPrincipalLookupRequest, DavLookupResult<DavPrincipal>>(
             ApplicationOperations.DavPrincipalGet,
             new DavPrincipalLookupRequest(user, principalId),
-            cancellationToken)).Value;
+            cancellationToken).ConfigureAwait(false)).Value;
 
     public Task<DavAclWriteResult> ReplaceSharesAsync(
         DavUser user,
@@ -118,7 +118,7 @@ internal sealed class GatewayDavStore(IGatewayApplicationTransport transport)
             ApplicationOperations.DavResourceGet,
             new DavResourceLookupRequest(
                 new DavCollectionReference(user, collection), resourceName),
-            cancellationToken)).Value;
+            cancellationToken).ConfigureAwait(false)).Value;
 
     public Task<IReadOnlyList<DavChange>> GetChangesAsync(
         DavUser user,

@@ -38,22 +38,23 @@ public sealed class AdminAuditLog(
             succeeded,
             remoteAddress);
 
-        await _writeLock.WaitAsync(cancellationToken);
+        await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             var directory = Path.GetDirectoryName(config.AuditLogPath)
                 ?? throw new InvalidOperationException("The audit log directory is not valid.");
             Directory.CreateDirectory(directory);
 
-            await using var stream = new FileStream(
+            var stream = new FileStream(
                 config.AuditLogPath,
                 FileMode.Append,
                 FileAccess.Write,
                 FileShare.Read,
                 bufferSize: 4096,
                 FileOptions.Asynchronous | FileOptions.WriteThrough);
-            await stream.WriteAsync(bytes, cancellationToken);
-            await stream.FlushAsync(cancellationToken);
+            await using var streamLifetime = stream.ConfigureAwait(false);
+            await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
+            await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
             stream.Flush(flushToDisk: true);
         }
         finally

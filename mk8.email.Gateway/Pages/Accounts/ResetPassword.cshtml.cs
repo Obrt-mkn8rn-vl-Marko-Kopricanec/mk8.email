@@ -21,7 +21,7 @@ public sealed class ResetPasswordModel(
 
     public async Task<IActionResult> OnGetAsync(Guid userId, CancellationToken cancellationToken)
     {
-        var account = (await application.GetAccountsAsync(cancellationToken))
+        var account = (await application.GetAccountsAsync(cancellationToken).ConfigureAwait(false))
             .FirstOrDefault(item => item.UserId == userId);
         if (account is null)
             return NotFound();
@@ -38,14 +38,14 @@ public sealed class ResetPasswordModel(
 
         var result = await application.ResetPasswordAsync(
             new AdminResetPasswordRequest(Input.UserId, Input.Password),
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         await auditLog.WriteAsync(
             User.Identity?.Name ?? "unknown",
             "account.password.change",
             Input.UserId.ToString(),
             result.Succeeded,
             HttpContext.Connection.RemoteIpAddress?.ToString(),
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (!result.Succeeded)
         {
             ModelState.AddModelError(string.Empty, result.Message);

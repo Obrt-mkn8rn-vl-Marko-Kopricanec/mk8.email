@@ -168,7 +168,7 @@ app.Use(async (context, next) =>
     context.Response.Headers["Content-Security-Policy"] =
         "default-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'";
     context.Response.Headers["Cache-Control"] = "no-store";
-    await next(context);
+    await next(context).ConfigureAwait(false);
 });
 app.UseHttpsRedirection();
 app.UseStaticFiles();
@@ -182,7 +182,7 @@ app.MapGet("/health/ready", async (
     IApplicationTransportControl transport,
     CancellationToken cancellationToken) =>
 {
-    var ready = await transport.IsAvailableAsync(cancellationToken);
+    var ready = await transport.IsAvailableAsync(cancellationToken).ConfigureAwait(false);
     return ready ? Results.Ok(new { status = "ready" }) : Results.StatusCode(503);
 }).AllowAnonymous();
 app.MapGet("/health/application", GatewayApplicationHealth.CheckAsync).AllowAnonymous();
@@ -194,6 +194,6 @@ if (environmentConfig.Dav.EnableDav)
     app.MapDavEndpoints();
 app.MapRazorPages();
 
-await app.RunAsync();
+await app.RunAsync().ConfigureAwait(false);
 
 public partial class Program;

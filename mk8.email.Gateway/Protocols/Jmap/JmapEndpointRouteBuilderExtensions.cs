@@ -47,8 +47,8 @@ public static class JmapEndpointRouteBuilderExtensions
 
         var result = await application.GetSessionAsync(
             new JmapSessionApplicationRequest(authentication),
-            cancellationToken);
-        if (result.Outcome == JmapApplicationOutcomes.Unauthorized)
+            cancellationToken).ConfigureAwait(false);
+        if (string.Equals(result.Outcome, JmapApplicationOutcomes.Unauthorized, StringComparison.Ordinal))
             return GatewayJmapAuthentication.Unauthorized(context, environment);
 
         SetJmapResponseHeaders(context.Response);
@@ -79,7 +79,7 @@ public static class JmapEndpointRouteBuilderExtensions
             document = await ReadBodyAsync(
                 context.Request,
                 environment.Jmap.MaxRequestSizeBytes,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         }
         catch (GatewayJmapBodyLimitException)
         {
@@ -92,8 +92,8 @@ public static class JmapEndpointRouteBuilderExtensions
 
         var result = await application.ProcessApiRequestAsync(
             new JmapApiApplicationRequest(authentication, document),
-            cancellationToken);
-        if (result.Outcome == JmapApplicationOutcomes.Unauthorized)
+            cancellationToken).ConfigureAwait(false);
+        if (string.Equals(result.Outcome, JmapApplicationOutcomes.Unauthorized, StringComparison.Ordinal))
             return GatewayJmapAuthentication.Unauthorized(context, environment);
         return Result(result);
     }
@@ -114,7 +114,7 @@ public static class JmapEndpointRouteBuilderExtensions
             content = await ReadBodyAsync(
                 context.Request,
                 environment.Jmap.MaxUploadSizeBytes,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         }
         catch (GatewayJmapBodyLimitException)
         {
@@ -130,10 +130,10 @@ public static class JmapEndpointRouteBuilderExtensions
                 accountId,
                 contentType,
                 content),
-            cancellationToken);
-        if (result.Outcome == JmapApplicationOutcomes.Unauthorized)
+            cancellationToken).ConfigureAwait(false);
+        if (string.Equals(result.Outcome, JmapApplicationOutcomes.Unauthorized, StringComparison.Ordinal))
             return GatewayJmapAuthentication.Unauthorized(context, environment);
-        if (result.Outcome == JmapApplicationOutcomes.NotFound)
+        if (string.Equals(result.Outcome, JmapApplicationOutcomes.NotFound, StringComparison.Ordinal))
             return ResourceNotFound("The account or upload resource was not found.");
         if (result.Problem is not null)
             return Problem(result.Problem);
@@ -164,10 +164,10 @@ public static class JmapEndpointRouteBuilderExtensions
 
         var result = await application.DownloadAsync(
             new JmapDownloadApplicationRequest(authentication, accountId, blobId),
-            cancellationToken);
-        if (result.Outcome == JmapApplicationOutcomes.Unauthorized)
+            cancellationToken).ConfigureAwait(false);
+        if (string.Equals(result.Outcome, JmapApplicationOutcomes.Unauthorized, StringComparison.Ordinal))
             return GatewayJmapAuthentication.Unauthorized(context, environment);
-        if (result.Outcome == JmapApplicationOutcomes.NotFound || result.Content is null)
+        if (string.Equals(result.Outcome, JmapApplicationOutcomes.NotFound, StringComparison.Ordinal) || result.Content is null)
             return ResourceNotFound("The account or blob was not found.");
 
         var requestedType = NormalizeMediaType(context.Request.Query["accept"].ToString());
@@ -186,7 +186,7 @@ public static class JmapEndpointRouteBuilderExtensions
     {
         if (!GatewayJmapAuthentication.TryParse(context.Request, environment, out var authentication))
         {
-            await GatewayJmapAuthentication.Unauthorized(context, environment).ExecuteAsync(context);
+            await GatewayJmapAuthentication.Unauthorized(context, environment).ExecuteAsync(context).ConfigureAwait(false);
             return;
         }
         if (!TryEventTypes(context.Request.Query["types"].ToString(), out var types)
@@ -200,7 +200,7 @@ public static class JmapEndpointRouteBuilderExtensions
                 ["type"] = "about:blank",
                 ["title"] = "Invalid event source parameters",
                 ["status"] = StatusCodes.Status400BadRequest,
-            }, JsonOptions, cancellationToken);
+            }, JsonOptions, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -222,17 +222,17 @@ public static class JmapEndpointRouteBuilderExtensions
 
         var initial = await application.PollEventAsync(
             new JmapEventApplicationRequest(authentication, cursor, types),
-            cancellationToken);
-        if (initial.Outcome == JmapApplicationOutcomes.Unauthorized)
+            cancellationToken).ConfigureAwait(false);
+        if (string.Equals(initial.Outcome, JmapApplicationOutcomes.Unauthorized, StringComparison.Ordinal))
         {
-            await GatewayJmapAuthentication.Unauthorized(context, environment).ExecuteAsync(context);
+            await GatewayJmapAuthentication.Unauthorized(context, environment).ExecuteAsync(context).ConfigureAwait(false);
             return;
         }
         if (initial.Problem is not null || initial.Cursor is null)
         {
             await Problem(initial.Problem ?? new JmapApplicationProblem(
                 "about:blank",
-                "Invalid event source state")).ExecuteAsync(context);
+                "Invalid event source state")).ExecuteAsync(context).ConfigureAwait(false);
             return;
         }
 
@@ -241,7 +241,7 @@ public static class JmapEndpointRouteBuilderExtensions
         context.Response.ContentType = "text/event-stream";
         context.Response.Headers.CacheControl = "no-cache, no-store, must-revalidate";
         context.Response.Headers["X-Accel-Buffering"] = "no";
-        await context.Response.StartAsync(cancellationToken);
+        await context.Response.StartAsync(cancellationToken).ConfigureAwait(false);
 
         var closeAfterState = context.Request.Query["closeafter"] == "state";
         var lastSent = DateTime.UtcNow;
@@ -249,7 +249,7 @@ public static class JmapEndpointRouteBuilderExtensions
         {
             if (initial.Content is not null)
             {
-                await WriteStateEventAsync(context.Response, cursor.Value, initial.Content, cancellationToken);
+                await WriteStateEventAsync(context.Response, cursor.Value, initial.Content, cancellationToken).ConfigureAwait(false);
                 if (closeAfterState)
                     return;
                 lastSent = DateTime.UtcNow;
@@ -259,13 +259,13 @@ public static class JmapEndpointRouteBuilderExtensions
             {
                 var poll = await application.PollEventAsync(
                     new JmapEventApplicationRequest(authentication, cursor, types),
-                    cancellationToken);
-                if (poll.Outcome != JmapApplicationOutcomes.Ok || poll.Cursor is null)
+                    cancellationToken).ConfigureAwait(false);
+                if (!string.Equals(poll.Outcome, JmapApplicationOutcomes.Ok, StringComparison.Ordinal) || poll.Cursor is null)
                     return;
                 cursor = poll.Cursor.Value;
                 if (poll.Content is not null)
                 {
-                    await WriteStateEventAsync(context.Response, cursor.Value, poll.Content, cancellationToken);
+                    await WriteStateEventAsync(context.Response, cursor.Value, poll.Content, cancellationToken).ConfigureAwait(false);
                     lastSent = DateTime.UtcNow;
                     if (closeAfterState)
                         return;
@@ -274,11 +274,11 @@ public static class JmapEndpointRouteBuilderExtensions
                 {
                     await context.Response.WriteAsync(
                         $"event: ping\ndata: {{\"interval\":{ping}}}\n\n",
-                        cancellationToken);
-                    await context.Response.Body.FlushAsync(cancellationToken);
+                        cancellationToken).ConfigureAwait(false);
+                    await context.Response.Body.FlushAsync(cancellationToken).ConfigureAwait(false);
                     lastSent = DateTime.UtcNow;
                 }
-                await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+                await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -295,14 +295,14 @@ public static class JmapEndpointRouteBuilderExtensions
         var data = Encoding.UTF8.GetString(content);
         await response.WriteAsync(
             $"id: c{cursor}\nevent: state\ndata: {data}\n\n",
-            cancellationToken);
-        await response.Body.FlushAsync(cancellationToken);
+            cancellationToken).ConfigureAwait(false);
+        await response.Body.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 
     internal static bool TryEventTypes(string value, out string[]? types)
     {
         types = null;
-        if (value == "*")
+        if (string.Equals(value, "*", StringComparison.Ordinal))
             return true;
         if (string.IsNullOrEmpty(value))
             return false;
@@ -397,17 +397,18 @@ public static class JmapEndpointRouteBuilderExtensions
         CancellationToken cancellationToken)
     {
         if (request.ContentLength > maximumBytes)
-            throw new GatewayJmapBodyLimitException();
-        await using var buffer = new MemoryStream();
+            throw new GatewayJmapBodyLimitException("The JMAP request body exceeds the configured limit.");
+        var buffer = new MemoryStream();
+        await using var bufferLifetime = buffer.ConfigureAwait(false);
         var block = new byte[16 * 1024];
         while (true)
         {
-            var read = await request.Body.ReadAsync(block, cancellationToken);
+            var read = await request.Body.ReadAsync(block, cancellationToken).ConfigureAwait(false);
             if (read == 0)
                 return buffer.ToArray();
             if (buffer.Length + read > maximumBytes)
-                throw new GatewayJmapBodyLimitException();
-            await buffer.WriteAsync(block.AsMemory(0, read), cancellationToken);
+                throw new GatewayJmapBodyLimitException("The JMAP request body exceeds the configured limit.");
+            await buffer.WriteAsync(block.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -483,5 +484,10 @@ public static class JmapEndpointRouteBuilderExtensions
         response.Headers.AppendCommaSeparatedValues(HeaderNames.Vary, HeaderNames.Authorization);
     }
 
-    private sealed class GatewayJmapBodyLimitException : Exception;
+    private sealed class GatewayJmapBodyLimitException : Exception
+    {
+        public GatewayJmapBodyLimitException(string message) : base(message)
+        {
+        }
+    }
 }

@@ -17,18 +17,18 @@ public static class GatewayProtocolPaths
         IsOAuth(path) || IsJmap(path) || IsDav(path);
 
     public static bool IsOAuth(PathString path) =>
-        path.StartsWithSegments("/oauth")
-        || path.Equals("/.well-known/oauth-authorization-server")
-        || path.Equals("/.well-known/openid-configuration");
+        path.StartsWithSegments("/oauth", StringComparison.Ordinal)
+        || path.Equals("/.well-known/oauth-authorization-server", StringComparison.Ordinal)
+        || path.Equals("/.well-known/openid-configuration", StringComparison.Ordinal);
 
     public static bool IsJmap(PathString path) =>
-        path.StartsWithSegments("/jmap")
-        || path.Equals("/.well-known/jmap");
+        path.StartsWithSegments("/jmap", StringComparison.Ordinal)
+        || path.Equals("/.well-known/jmap", StringComparison.Ordinal);
 
     public static bool IsDav(PathString path) =>
-        path.StartsWithSegments("/dav")
-        || path.Equals("/.well-known/caldav")
-        || path.Equals("/.well-known/carddav");
+        path.StartsWithSegments("/dav", StringComparison.Ordinal)
+        || path.Equals("/.well-known/caldav", StringComparison.Ordinal)
+        || path.Equals("/.well-known/carddav", StringComparison.Ordinal);
 
-    public static bool IsStreaming(PathString path) => path.Equals("/jmap/event");
+    public static bool IsStreaming(PathString path) => path.Equals("/jmap/event", StringComparison.Ordinal);
 }

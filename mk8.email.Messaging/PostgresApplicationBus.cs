@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using mk8.email.Contracts.Messaging;
@@ -9,6 +10,7 @@ namespace mk8.email.Messaging;
 
 public partial class PostgresApplicationBus : IApplicationRequestClient, IApplicationRequestConsumer
 {
+    private static readonly TimeSpan MaximumNotificationWaitSlice = TimeSpan.FromSeconds(1);
     private readonly string _tableName;
     private readonly string _requestChannel;
     private readonly string _responseChannel;
@@ -197,16 +199,7 @@ public partial class PostgresApplicationBus : IApplicationRequestClient, IApplic
             var wait = remaining < _options.NotificationFallbackInterval
                 ? remaining
                 : _options.NotificationFallbackInterval;
-            using var waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            waitCancellation.CancelAfter(wait);
-            try
-            {
-                await listener.WaitAsync(waitCancellation.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                // A bounded fallback recheck recovers safely from a missed PostgreSQL notification.
-            }
+            await WaitForNotificationOrScanAsync(listener, wait, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -233,16 +226,34 @@ public partial class PostgresApplicationBus : IApplicationRequestClient, IApplic
             if (claimed is not null)
                 return claimed;
 
-            using var waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            waitCancellation.CancelAfter(_options.NotificationFallbackInterval);
-            try
-            {
-                await listener.WaitAsync(waitCancellation.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                // The worker remains dormant between notifications, with a bounded lease-recovery scan.
-            }
+            await WaitForNotificationOrScanAsync(
+                listener,
+                _options.NotificationFallbackInterval,
+                cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static async Task WaitForNotificationOrScanAsync(
+        NpgsqlConnection listener,
+        TimeSpan scanInterval,
+        CancellationToken cancellationToken)
+    {
+        var elapsed = Stopwatch.StartNew();
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var remaining = scanInterval - elapsed.Elapsed;
+            if (remaining <= TimeSpan.Zero)
+                return;
+
+            // Npgsql's notification read can deadlock when its cancellation token fires.
+            // Short native timeouts retain prompt shutdown without cancelling that read.
+            var slice = remaining < MaximumNotificationWaitSlice
+                ? remaining
+                : MaximumNotificationWaitSlice;
+            var milliseconds = Math.Max(1, (int)Math.Ceiling(slice.TotalMilliseconds));
+            if (await listener.WaitAsync(milliseconds, CancellationToken.None).ConfigureAwait(false))
+                return;
         }
     }
 

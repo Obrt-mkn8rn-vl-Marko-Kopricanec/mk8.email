@@ -164,6 +164,48 @@ public sealed class PostgresMessagingTests
     }
 
     [TestMethod]
+    public async Task IdleRequestWaitCanBeCancelledAfterTimedFallbackScans()
+    {
+        await using var database = await RequirePostgresAsync();
+        await using var dataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await PostgresMessagingSchema.EnsureAsync(dataSource);
+        using var protector = AesGcmPayloadProtectorTests.CreateProtector("test", "idle-wait-key");
+        var options = new PostgresMessagingOptions
+        {
+            NotificationFallbackInterval = TimeSpan.FromMilliseconds(100),
+        };
+        var bus = new PostgresApplicationBus(dataSource, protector, options);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => bus.WaitForRequestAsync("worker@example-idle", cancellation.Token)
+                .WaitAsync(TimeSpan.FromSeconds(5)));
+    }
+
+    [TestMethod]
+    public async Task PendingResponseExpiresAfterTimedFallbackScans()
+    {
+        await using var database = await RequirePostgresAsync();
+        await using var dataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await PostgresMessagingSchema.EnsureAsync(dataSource);
+        using var protector = AesGcmPayloadProtectorTests.CreateProtector("test", "response-wait-key");
+        var options = new PostgresMessagingOptions
+        {
+            NotificationFallbackInterval = TimeSpan.FromMilliseconds(100),
+        };
+        var bus = new PostgresApplicationBus(dataSource, protector, options);
+        var request = NewRequest("expires without worker") with
+        {
+            Deadline = DateTimeOffset.UtcNow.AddMilliseconds(600),
+        };
+        await bus.EnqueueAsync(request);
+
+        await Assert.ThrowsExactlyAsync<ApplicationRequestExpiredException>(
+            () => bus.WaitForResponseAsync(request.Id, request.Deadline)
+                .WaitAsync(TimeSpan.FromSeconds(5)));
+    }
+
+    [TestMethod]
     public async Task ConcurrentWorkersClaimARequestOnlyOnceAndExpiredLeaseRecovers()
     {
         await using var database = await RequirePostgresAsync();

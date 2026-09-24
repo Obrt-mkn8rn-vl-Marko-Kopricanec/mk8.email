@@ -222,6 +222,7 @@ jobs:
           test "$azurite_ready" = true
           dotnet test mk8.email.Messaging.Tests/mk8.email.Messaging.Tests.csproj \
             --configuration Release --no-build \
+            --blame-hang-timeout 2m --blame-hang-dump-type none \
             --logger "trx;LogFileName=messaging.trx" \
             --results-directory artifacts/test-results
 

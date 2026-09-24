@@ -6,6 +6,9 @@ using Npgsql;
 namespace mk8.email.Infrastructure.Tests;
 
 [TestClass]
+[System.Diagnostics.CodeAnalysis.SuppressMessage(
+    "Maintainability", "CA1515",
+    Justification = "MSTest discovers this public test class by reflection.")]
 public sealed class JmapBlobSchemaTests
 {
     [TestMethod]
@@ -18,7 +21,7 @@ public sealed class JmapBlobSchemaTests
         var content = entity.FindProperty(nameof(JmapBlobDB.Content));
         Assert.IsNotNull(content);
         Assert.IsTrue(content.IsNullable);
-        Assert.AreEqual("bytea", content.GetColumnType());
+        Assert.AreEqual("bytea", content.GetColumnType(), StringComparer.Ordinal);
         Assert.AreEqual(32, entity.FindProperty(nameof(JmapBlobDB.ObjectProvider))?.GetMaxLength());
         Assert.AreEqual(1024, entity.FindProperty(nameof(JmapBlobDB.ObjectName))?.GetMaxLength());
         Assert.AreEqual(64, entity.FindProperty(nameof(JmapBlobDB.ObjectSha256))?.GetMaxLength());
@@ -27,9 +30,13 @@ public sealed class JmapBlobSchemaTests
 
     [TestMethod]
     [TestCategory("PostgreSQL")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "Maintainability", "MA0051",
+        Justification = "The schema migration test keeps setup and verification together.")]
     public async Task RuntimeSchemaPreservesLegacyBytesWhileAddingReferenceShape()
     {
-        await using var server = await RequirePostgresAsync();
+        var server = await RequirePostgresAsync().ConfigureAwait(false);
+        await using var serverLifetime = server.ConfigureAwait(false);
         var company = new CompanyDB
         {
             Id = Guid.CreateVersion7(),
@@ -60,11 +67,12 @@ public sealed class JmapBlobSchemaTests
         var blobId = Guid.CreateVersion7();
         var content = "legacy-jmap-database-bytes"u8.ToArray();
 
-        await using (var database = server.CreateContext())
         {
-            await database.Database.EnsureCreatedAsync();
-            database.Inboxes.Add(inbox);
-            await database.SaveChangesAsync();
+            var database = server.CreateContext();
+            await using var databaseLifetime = database.ConfigureAwait(false);
+            await database.Database.EnsureCreatedAsync().ConfigureAwait(false);
+            await database.Inboxes.AddAsync(inbox).ConfigureAwait(false);
+            await database.SaveChangesAsync().ConfigureAwait(false);
             await database.Database.ExecuteSqlRawAsync(
                 """
                 ALTER TABLE jmap_blobs
@@ -76,7 +84,7 @@ public sealed class JmapBlobSchemaTests
                     DROP COLUMN object_etag;
                 ALTER TABLE jmap_blobs
                     ALTER COLUMN content SET NOT NULL;
-                """);
+                """).ConfigureAwait(false);
             await database.Database.ExecuteSqlInterpolatedAsync(
                 $"""
                 INSERT INTO jmap_blobs (
@@ -86,13 +94,13 @@ public sealed class JmapBlobSchemaTests
                     {blobId}, {"B" + blobId.ToString("N")}, {inbox.Id},
                     {"application/octet-stream"}, {content}, {content.LongLength},
                     {DateTime.UtcNow}, {DateTime.UtcNow.AddHours(1)})
-                """);
+                """).ConfigureAwait(false);
 
-            await new MailRuntimeSchemaService(database).EnsureAsync();
+            await new MailRuntimeSchemaService(database).EnsureAsync().ConfigureAwait(false);
             database.ChangeTracker.Clear();
 
             var preserved = await database.JmapBlobs.AsNoTracking()
-                .SingleAsync(candidate => candidate.Id == blobId);
+                .SingleAsync(candidate => candidate.Id == blobId).ConfigureAwait(false);
             CollectionAssert.AreEqual(content, preserved.Content);
             Assert.IsNull(preserved.ObjectProvider);
             Assert.IsNull(preserved.ObjectName);
@@ -100,10 +108,12 @@ public sealed class JmapBlobSchemaTests
             Assert.IsNull(preserved.ObjectEntityTag);
         }
 
-        await using var connection = new NpgsqlConnection(server.ConnectionString);
-        await connection.OpenAsync();
-        await using (var column = connection.CreateCommand())
+        var connection = new NpgsqlConnection(server.ConnectionString);
+        await using var connectionLifetime = connection.ConfigureAwait(false);
+        await connection.OpenAsync().ConfigureAwait(false);
         {
+            var column = connection.CreateCommand();
+            await using var columnLifetime = column.ConfigureAwait(false);
             column.CommandText =
                 """
                 SELECT is_nullable
@@ -112,10 +122,11 @@ public sealed class JmapBlobSchemaTests
                   AND table_name = 'jmap_blobs'
                   AND column_name = 'content'
                 """;
-            Assert.AreEqual("YES", await column.ExecuteScalarAsync());
+            Assert.AreEqual("YES", await column.ExecuteScalarAsync().ConfigureAwait(false));
         }
-        await using (var constraint = connection.CreateCommand())
         {
+            var constraint = connection.CreateCommand();
+            await using var constraintLifetime = constraint.ConfigureAwait(false);
             constraint.CommandText =
                 """
                 SELECT convalidated
@@ -123,7 +134,7 @@ public sealed class JmapBlobSchemaTests
                 WHERE conrelid = 'jmap_blobs'::regclass
                   AND conname = 'ck_jmap_blobs_storage_shape'
                 """;
-            Assert.AreEqual(true, await constraint.ExecuteScalarAsync());
+            Assert.AreEqual(true, await constraint.ExecuteScalarAsync().ConfigureAwait(false));
         }
     }
 
@@ -134,7 +145,7 @@ public sealed class JmapBlobSchemaTests
 
     private static async Task<PostgresTestDatabase> RequirePostgresAsync()
     {
-        var database = await PostgresTestDatabase.TryCreateAsync();
+        var database = await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false);
         if (database is null)
         {
             Assert.Inconclusive(

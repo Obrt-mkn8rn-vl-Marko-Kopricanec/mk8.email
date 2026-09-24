@@ -4,6 +4,9 @@ using mk8.email.Configuration;
 namespace mk8.email.Infrastructure.Tests;
 
 [TestClass]
+[System.Diagnostics.CodeAnalysis.SuppressMessage(
+    "Maintainability", "CA1515",
+    Justification = "MSTest discovers this public test class by reflection.")]
 public sealed class EnvironmentConfigTests
 {
     private string _testDirectory = null!;
@@ -37,7 +40,7 @@ public sealed class EnvironmentConfigTests
     {
         var errors = CreateValidConfiguration(enableStartTls: false, enableImap: false).Validate();
 
-        StringAssert.Contains(string.Join('|', errors), "SMTP submission requires STARTTLS.");
+        StringAssert.Contains(string.Join('|', errors), "SMTP submission requires STARTTLS.", StringComparison.Ordinal);
     }
 
     [TestMethod]
@@ -47,7 +50,7 @@ public sealed class EnvironmentConfigTests
             enablePop3: true,
             enablePop3StartTls: false).Validate();
 
-        StringAssert.Contains(string.Join('|', errors), "The production POP3 listener requires STLS.");
+        StringAssert.Contains(string.Join('|', errors), "The production POP3 listener requires STLS.", StringComparison.Ordinal);
     }
 
     [TestMethod]
@@ -59,7 +62,7 @@ public sealed class EnvironmentConfigTests
 
         StringAssert.Contains(
             string.Join('|', errors),
-            "The ManageSieve listener requires STARTTLS.");
+            "The ManageSieve listener requires STARTTLS.", StringComparison.Ordinal);
     }
 
     [TestMethod]
@@ -71,8 +74,8 @@ public sealed class EnvironmentConfigTests
             sieveMaxScripts: 0).Validate();
 
         var joined = string.Join('|', errors);
-        StringAssert.Contains(joined, "Enabled listeners cannot share port 2525.");
-        StringAssert.Contains(joined, "Sieve.MaxScriptsPerUser must be from 1 through 1000.");
+        StringAssert.Contains(joined, "Enabled listeners cannot share port 2525.", StringComparison.Ordinal);
+        StringAssert.Contains(joined, "Sieve.MaxScriptsPerUser must be from 1 through 1000.", StringComparison.Ordinal);
     }
 
     [TestMethod]
@@ -82,7 +85,7 @@ public sealed class EnvironmentConfigTests
 
         StringAssert.Contains(
             string.Join('|', errors),
-            "The built-in SPF and DMARC checks are not approved for production.");
+            "The built-in SPF and DMARC checks are not approved for production.", StringComparison.Ordinal);
     }
 
     [TestMethod]
@@ -90,7 +93,7 @@ public sealed class EnvironmentConfigTests
     {
         var errors = CreateValidConfiguration(enableDkimSigning: true, dkimSelector: "-invalid").Validate();
 
-        StringAssert.Contains(string.Join('|', errors), "Dkim.Selector must be a DNS label.");
+        StringAssert.Contains(string.Join('|', errors), "Dkim.Selector must be a DNS label.", StringComparison.Ordinal);
     }
 
     [TestMethod]
@@ -107,7 +110,7 @@ public sealed class EnvironmentConfigTests
 
         StringAssert.Contains(
             string.Join('|', errors),
-            "Filtering.RspamdEndpoint must use a loopback address in production.");
+            "Filtering.RspamdEndpoint must use a loopback address in production.", StringComparison.Ordinal);
     }
 
     [TestMethod]
@@ -117,7 +120,7 @@ public sealed class EnvironmentConfigTests
 
         StringAssert.Contains(
             string.Join('|', errors),
-            "Queue.MaxAttempts must be from 1 through 100.");
+            "Queue.MaxAttempts must be from 1 through 100.", StringComparison.Ordinal);
     }
 
     [TestMethod]
@@ -131,13 +134,13 @@ public sealed class EnvironmentConfigTests
         var joined = string.Join('|', errors);
         StringAssert.Contains(
             joined,
-            "Dav.MaxResourceSizeBytes must be from 65536 through 1073741824.");
+            "Dav.MaxResourceSizeBytes must be from 65536 through 1073741824.", StringComparison.Ordinal);
         StringAssert.Contains(
             joined,
-            "Dav.MaxCollectionsPerUser must be from 1 through 1000.");
+            "Dav.MaxCollectionsPerUser must be from 1 through 1000.", StringComparison.Ordinal);
         StringAssert.Contains(
             joined,
-            "Dav.MaxResourcesPerCollection must be from 1 through 1000000.");
+            "Dav.MaxResourcesPerCollection must be from 1 through 1000000.", StringComparison.Ordinal);
     }
 
     [TestMethod]
@@ -148,8 +151,8 @@ public sealed class EnvironmentConfigTests
             oauthRefreshTokenDays: 366).Validate();
 
         var joined = string.Join('|', errors);
-        StringAssert.Contains(joined, "OAuth.AccessTokenMinutes must be from 1 through 60.");
-        StringAssert.Contains(joined, "OAuth.RefreshTokenDays must be from 1 through 365.");
+        StringAssert.Contains(joined, "OAuth.AccessTokenMinutes must be from 1 through 60.", StringComparison.Ordinal);
+        StringAssert.Contains(joined, "OAuth.RefreshTokenDays must be from 1 through 365.", StringComparison.Ordinal);
     }
 
     [TestMethod]
@@ -162,9 +165,9 @@ public sealed class EnvironmentConfigTests
             oauthAuthorizationCodeMinutes: 16);
 
         var joined = string.Join('|', configuration.Validate());
-        StringAssert.Contains(joined, "OAuth.AuthorizationCodeMinutes must be from 1 through 15.");
-        StringAssert.Contains(joined, "OAuth.ClientId must contain from 1 through 128 visible ASCII characters.");
-        StringAssert.Contains(joined, "OAuth.PublicBaseUrl must be an absolute HTTPS URL without a query or fragment.");
+        StringAssert.Contains(joined, "OAuth.AuthorizationCodeMinutes must be from 1 through 15.", StringComparison.Ordinal);
+        StringAssert.Contains(joined, "OAuth.ClientId must contain from 1 through 128 visible ASCII characters.", StringComparison.Ordinal);
+        StringAssert.Contains(joined, "OAuth.PublicBaseUrl must be an absolute HTTPS URL without a query or fragment.", StringComparison.Ordinal);
     }
 
     [TestMethod]
@@ -177,10 +180,10 @@ public sealed class EnvironmentConfigTests
             mfaRecoveryCodeCount: 4).Validate();
 
         var joined = string.Join('|', errors);
-        StringAssert.Contains(joined, "Mfa.EnableTotp requires OAuth.EnableOAuth.");
-        StringAssert.Contains(joined, "Mfa.Issuer must contain from 1 through 128 non-control characters.");
-        StringAssert.Contains(joined, "Mfa.EncryptionKey must be a base64-encoded 256-bit key.");
-        StringAssert.Contains(joined, "Mfa.RecoveryCodeCount must be from 5 through 20.");
+        StringAssert.Contains(joined, "Mfa.EnableTotp requires OAuth.EnableOAuth.", StringComparison.Ordinal);
+        StringAssert.Contains(joined, "Mfa.Issuer must contain from 1 through 128 non-control characters.", StringComparison.Ordinal);
+        StringAssert.Contains(joined, "Mfa.EncryptionKey must be a base64-encoded 256-bit key.", StringComparison.Ordinal);
+        StringAssert.Contains(joined, "Mfa.RecoveryCodeCount must be from 5 through 20.", StringComparison.Ordinal);
     }
 
     [TestMethod]
@@ -193,10 +196,10 @@ public sealed class EnvironmentConfigTests
             oidcIdTokenMinutes: 0).Validate();
 
         var joined = string.Join('|', errors);
-        StringAssert.Contains(joined, "OAuth.EnableOpenIdConnect requires OAuth.EnableOAuth.");
-        StringAssert.Contains(joined, "OAuth.SigningKey must be an RSA private key of at least 2048 bits.");
-        StringAssert.Contains(joined, "OAuth.IdTokenMinutes must be from 1 through 60.");
-        StringAssert.Contains(joined, "OAuth.PublicBaseUrl must not contain a path when OpenID Connect is enabled.");
+        StringAssert.Contains(joined, "OAuth.EnableOpenIdConnect requires OAuth.EnableOAuth.", StringComparison.Ordinal);
+        StringAssert.Contains(joined, "OAuth.SigningKey must be an RSA private key of at least 2048 bits.", StringComparison.Ordinal);
+        StringAssert.Contains(joined, "OAuth.IdTokenMinutes must be from 1 through 60.", StringComparison.Ordinal);
+        StringAssert.Contains(joined, "OAuth.PublicBaseUrl must not contain a path when OpenID Connect is enabled.", StringComparison.Ordinal);
     }
 
     [TestMethod]
@@ -210,7 +213,7 @@ public sealed class EnvironmentConfigTests
 
         var loaded = EnvironmentLoader.LoadFromFile(configurationPath);
 
-        Assert.AreEqual("database-secret-value", loaded.Database.Password);
+        Assert.AreEqual("database-secret-value", loaded.Database.Password, StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -228,7 +231,7 @@ public sealed class EnvironmentConfigTests
 
         var loaded = EnvironmentLoader.LoadFromFile(configurationPath);
 
-        Assert.AreEqual(encodedKey, loaded.Mfa.EncryptionKey);
+        Assert.AreEqual(encodedKey, loaded.Mfa.EncryptionKey, StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -247,7 +250,7 @@ public sealed class EnvironmentConfigTests
 
         var loaded = EnvironmentLoader.LoadFromFile(configurationPath);
 
-        Assert.AreEqual(signingKey.TrimEnd('\r', '\n'), loaded.OAuth.SigningKey);
+        Assert.AreEqual(signingKey.TrimEnd('\r', '\n'), loaded.OAuth.SigningKey, StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -268,8 +271,8 @@ public sealed class EnvironmentConfigTests
             configurationPath,
             role: EnvironmentValidationRole.Gateway);
 
-        Assert.AreEqual(string.Empty, loaded.OAuth.SigningKey);
-        Assert.AreEqual(string.Empty, loaded.Mfa.EncryptionKey);
+        Assert.AreEqual(string.Empty, loaded.OAuth.SigningKey, StringComparer.Ordinal);
+        Assert.AreEqual(string.Empty, loaded.Mfa.EncryptionKey, StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -292,7 +295,7 @@ public sealed class EnvironmentConfigTests
             EnvironmentLoader.LoadFromFile(
                 configurationPath,
                 role: EnvironmentValidationRole.ApplicationWorker));
-        StringAssert.Contains(exception.Message, "Dkim.PrivateKeyPath");
+        StringAssert.Contains(exception.Message, "Dkim.PrivateKeyPath", StringComparison.Ordinal);
     }
 
     [TestMethod]
@@ -306,10 +309,10 @@ public sealed class EnvironmentConfigTests
             objectStorageContainerName: "Invalid--Container");
 
         var joined = string.Join('|', configuration.Validate());
-        StringAssert.Contains(joined, "Messaging.EncryptionKey must be a base64-encoded 256-bit key.");
-        StringAssert.Contains(joined, "ObjectStorage.Provider must be azure-blob.");
-        StringAssert.Contains(joined, "ObjectStorage.ConnectionString must contain at least 16 characters");
-        StringAssert.Contains(joined, "ObjectStorage.ContainerName is not a valid Azure Blob container name.");
+        StringAssert.Contains(joined, "Messaging.EncryptionKey must be a base64-encoded 256-bit key.", StringComparison.Ordinal);
+        StringAssert.Contains(joined, "ObjectStorage.Provider must be azure-blob.", StringComparison.Ordinal);
+        StringAssert.Contains(joined, "ObjectStorage.ConnectionString must contain at least 16 characters", StringComparison.Ordinal);
+        StringAssert.Contains(joined, "ObjectStorage.ContainerName is not a valid Azure Blob container name.", StringComparison.Ordinal);
     }
 
     [TestMethod]
@@ -328,7 +331,7 @@ public sealed class EnvironmentConfigTests
         StringAssert.Contains(
             string.Join('|', insufficient.Validate()),
             "Messaging.MaxPayloadBytes must accommodate base64-encoded "
-            + "Limits.MaxMessageSizeBytes plus IMAP APPEND request overhead.");
+            + "Limits.MaxMessageSizeBytes plus IMAP APPEND request overhead.", StringComparison.Ordinal);
 
         var sufficient = CreateValidConfiguration(
             messagingEnabled: true,
@@ -369,15 +372,15 @@ public sealed class EnvironmentConfigTests
         var worker = EnvironmentLoader.LoadFromFile(
             configurationPath, role: EnvironmentValidationRole.ApplicationWorker);
 
-        Assert.AreEqual(activeKey, loaded.Messaging.EncryptionKey);
-        Assert.AreEqual(oldKey, loaded.Messaging.DecryptionKeys.Single().Key);
-        Assert.AreEqual(connectionString, loaded.ObjectStorage.ConnectionString);
+        Assert.AreEqual(activeKey, loaded.Messaging.EncryptionKey, StringComparer.Ordinal);
+        Assert.AreEqual(oldKey, loaded.Messaging.DecryptionKeys.Single().Key, StringComparer.Ordinal);
+        Assert.AreEqual(connectionString, loaded.ObjectStorage.ConnectionString, StringComparer.Ordinal);
         Assert.AreEqual(0, loaded.Validate().Count);
-        Assert.AreEqual(activeKey, gateway.Messaging.EncryptionKey);
-        Assert.AreEqual(connectionString, gateway.ObjectStorage.ConnectionString);
+        Assert.AreEqual(activeKey, gateway.Messaging.EncryptionKey, StringComparer.Ordinal);
+        Assert.AreEqual(connectionString, gateway.ObjectStorage.ConnectionString, StringComparer.Ordinal);
         Assert.AreEqual(0, gateway.Validate(role: EnvironmentValidationRole.Gateway).Count);
-        Assert.AreEqual(activeKey, worker.Messaging.EncryptionKey);
-        Assert.AreEqual(connectionString, worker.ObjectStorage.ConnectionString);
+        Assert.AreEqual(activeKey, worker.Messaging.EncryptionKey, StringComparer.Ordinal);
+        Assert.AreEqual(connectionString, worker.ObjectStorage.ConnectionString, StringComparer.Ordinal);
         Assert.AreEqual(0, worker.Validate(role: EnvironmentValidationRole.ApplicationWorker).Count);
     }
 
@@ -428,7 +431,7 @@ public sealed class EnvironmentConfigTests
         Assert.AreEqual(0, workerErrors.Count, string.Join('|', workerErrors));
         StringAssert.Contains(
             string.Join('|', combinedErrors),
-            "Enable at least one SMTP, IMAP, POP3, ManageSieve, JMAP, DAV, or OAuth listener.");
+            "Enable at least one SMTP, IMAP, POP3, ManageSieve, JMAP, DAV, or OAuth listener.", StringComparison.Ordinal);
     }
 
     [TestMethod]
@@ -439,9 +442,12 @@ public sealed class EnvironmentConfigTests
         var exception = Assert.ThrowsExactly<InvalidOperationException>(
             () => EnvironmentLoader.LoadFromFile(configurationPath));
 
-        StringAssert.Contains(exception.Message, "The configuration file is not valid JSON");
+        StringAssert.Contains(exception.Message, "The configuration file is not valid JSON", StringComparison.Ordinal);
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "Maintainability", "MA0051",
+        Justification = "The complete valid configuration is a single test fixture initializer.")]
     private EnvironmentConfig CreateValidConfiguration(
         string? databasePasswordFile = null,
         bool enableStartTls = true,

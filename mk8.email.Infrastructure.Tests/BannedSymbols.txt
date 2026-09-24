@@ -1,0 +1,4 @@
+T:Microsoft.AspNetCore.Http.HttpContext; persistence tests must not depend on ASP.NET request hosting
+T:Azure.Storage.Blobs.BlobServiceClient; persistence tests verify metadata rather than bypassing the Blob abstraction
+T:System.Net.Sockets.TcpListener; persistence tests must not host public mail protocols
+T:System.Net.Mail.SmtpClient; persistence tests must not send mail directly

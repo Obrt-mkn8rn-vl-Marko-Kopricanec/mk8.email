@@ -6,6 +6,9 @@ using Npgsql;
 namespace mk8.email.Infrastructure.Tests;
 
 [TestClass]
+[System.Diagnostics.CodeAnalysis.SuppressMessage(
+    "Maintainability", "CA1515",
+    Justification = "MSTest discovers this public test class by reflection.")]
 public sealed class MailQueueBlobSchemaTests
 {
     [TestMethod]
@@ -30,16 +33,21 @@ public sealed class MailQueueBlobSchemaTests
 
     [TestMethod]
     [TestCategory("PostgreSQL")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "Maintainability", "MA0051",
+        Justification = "The schema migration test keeps setup and verification together.")]
     public async Task RuntimeSchemaPreservesLegacyQueueContentWhileAddingReferenceShape()
     {
-        await using var server = await RequirePostgresAsync();
+        var server = await RequirePostgresAsync().ConfigureAwait(false);
+        await using var serverLifetime = server.ConfigureAwait(false);
         var queueId = Guid.CreateVersion7();
         const string rawMessage =
             "From: sender@example.test\r\nTo: recipient@example.test\r\n\r\nlegacy\r\n";
 
-        await using (var database = server.CreateContext())
         {
-            await database.Database.EnsureCreatedAsync();
+            var database = server.CreateContext();
+            await using var databaseLifetime = database.ConfigureAwait(false);
+            await database.Database.EnsureCreatedAsync().ConfigureAwait(false);
             await database.Database.ExecuteSqlRawAsync(
                 """
                 ALTER TABLE mail_queue_messages
@@ -52,7 +60,7 @@ public sealed class MailQueueBlobSchemaTests
                     DROP COLUMN raw_message_object_etag;
                 ALTER TABLE mail_queue_messages
                     ALTER COLUMN raw_message SET NOT NULL;
-                """);
+                """).ConfigureAwait(false);
             await database.Database.ExecuteSqlInterpolatedAsync(
                 $"""
                 INSERT INTO mail_queue_messages (
@@ -63,14 +71,14 @@ public sealed class MailQueueBlobSchemaTests
                     {queueId}, {"sender@example.test"}, {rawMessage}, {false},
                     {"inbound"}, {"pending"}, {"pending"}, {0},
                     {DateTime.UtcNow}, {DateTime.UtcNow}, {false})
-                """);
+                """).ConfigureAwait(false);
 
-            await new MailRuntimeSchemaService(database).EnsureAsync();
+            await new MailRuntimeSchemaService(database).EnsureAsync().ConfigureAwait(false);
             database.ChangeTracker.Clear();
 
             var preserved = await database.MailQueueMessages.AsNoTracking()
-                .SingleAsync(candidate => candidate.Id == queueId);
-            Assert.AreEqual(rawMessage, preserved.RawMessage);
+                .SingleAsync(candidate => candidate.Id == queueId).ConfigureAwait(false);
+            Assert.AreEqual(rawMessage, preserved.RawMessage, StringComparer.Ordinal);
             Assert.AreEqual(rawMessage.Length, preserved.RawMessageSizeBytes);
             Assert.IsNull(preserved.RawMessageObjectProvider);
             Assert.IsNull(preserved.RawMessageObjectName);
@@ -78,10 +86,12 @@ public sealed class MailQueueBlobSchemaTests
             Assert.IsNull(preserved.RawMessageObjectEntityTag);
         }
 
-        await using var connection = new NpgsqlConnection(server.ConnectionString);
-        await connection.OpenAsync();
-        await using (var column = connection.CreateCommand())
+        var connection = new NpgsqlConnection(server.ConnectionString);
+        await using var connectionLifetime = connection.ConfigureAwait(false);
+        await connection.OpenAsync().ConfigureAwait(false);
         {
+            var column = connection.CreateCommand();
+            await using var columnLifetime = column.ConfigureAwait(false);
             column.CommandText =
                 """
                 SELECT is_nullable
@@ -90,10 +100,11 @@ public sealed class MailQueueBlobSchemaTests
                   AND table_name = 'mail_queue_messages'
                   AND column_name = 'raw_message'
                 """;
-            Assert.AreEqual("YES", await column.ExecuteScalarAsync());
+            Assert.AreEqual("YES", await column.ExecuteScalarAsync().ConfigureAwait(false));
         }
-        await using (var constraint = connection.CreateCommand())
         {
+            var constraint = connection.CreateCommand();
+            await using var constraintLifetime = constraint.ConfigureAwait(false);
             constraint.CommandText =
                 """
                 SELECT convalidated
@@ -101,18 +112,21 @@ public sealed class MailQueueBlobSchemaTests
                 WHERE conrelid = 'mail_queue_messages'::regclass
                   AND conname = 'ck_mail_queue_messages_raw_storage_shape'
                 """;
-            Assert.AreEqual(true, await constraint.ExecuteScalarAsync());
+            Assert.AreEqual(true, await constraint.ExecuteScalarAsync().ConfigureAwait(false));
         }
 
-        await using (var listen = connection.CreateCommand())
         {
+            var listen = connection.CreateCommand();
+            await using var listenLifetime = listen.ConfigureAwait(false);
             listen.CommandText = "LISTEN mk8_mail_queue_ready";
-            await listen.ExecuteNonQueryAsync();
+            await listen.ExecuteNonQueryAsync().ConfigureAwait(false);
         }
-        await using (var writer = new NpgsqlConnection(server.ConnectionString))
         {
-            await writer.OpenAsync();
-            await using var insert = writer.CreateCommand();
+            var writer = new NpgsqlConnection(server.ConnectionString);
+            await using var writerLifetime = writer.ConfigureAwait(false);
+            await writer.OpenAsync().ConfigureAwait(false);
+            var insert = writer.CreateCommand();
+            await using var insertLifetime = insert.ConfigureAwait(false);
             insert.CommandText =
                 """
                 INSERT INTO mail_queue_messages (
@@ -127,9 +141,9 @@ public sealed class MailQueueBlobSchemaTests
             insert.Parameters.AddWithValue("id", Guid.CreateVersion7());
             insert.Parameters.AddWithValue("received_at", DateTime.UtcNow);
             insert.Parameters.AddWithValue("next_attempt_at", DateTime.UtcNow);
-            await insert.ExecuteNonQueryAsync();
+            await insert.ExecuteNonQueryAsync().ConfigureAwait(false);
         }
-        Assert.IsTrue(await connection.WaitAsync(5_000));
+        Assert.IsTrue(await connection.WaitAsync(5_000).ConfigureAwait(false));
     }
 
     private static EmailDbContext CreateModelContext() => new(
@@ -139,7 +153,7 @@ public sealed class MailQueueBlobSchemaTests
 
     private static async Task<PostgresTestDatabase> RequirePostgresAsync()
     {
-        var database = await PostgresTestDatabase.TryCreateAsync();
+        var database = await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false);
         if (database is null)
         {
             Assert.Inconclusive(

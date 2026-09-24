@@ -5,6 +5,9 @@ using mk8.email.Infrastructure.Models;
 namespace mk8.email.Infrastructure.Tests;
 
 [TestClass]
+[System.Diagnostics.CodeAnalysis.SuppressMessage(
+    "Maintainability", "CA1515",
+    Justification = "MSTest discovers this public test class by reflection.")]
 public sealed class MailQueueSchemaTests
 {
     [TestMethod]
@@ -18,7 +21,7 @@ public sealed class MailQueueSchemaTests
         Assert.IsNotNull(recipient);
         Assert.AreEqual(
             "dsn_return_content",
-            message.FindProperty(nameof(MailQueueMessageDB.DsnReturnContent))?.GetColumnName());
+            message.FindProperty(nameof(MailQueueMessageDB.DsnReturnContent))?.GetColumnName(), StringComparer.Ordinal);
         Assert.AreEqual(
             100,
             message.FindProperty(nameof(MailQueueMessageDB.DsnEnvelopeId))?.GetMaxLength());

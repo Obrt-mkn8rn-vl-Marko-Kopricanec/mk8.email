@@ -6,6 +6,9 @@ using Npgsql;
 namespace mk8.email.Infrastructure.Tests;
 
 [TestClass]
+[System.Diagnostics.CodeAnalysis.SuppressMessage(
+    "Maintainability", "CA1515",
+    Justification = "MSTest discovers this public test class by reflection.")]
 public sealed class MailboxMessageBlobSchemaTests
 {
     [TestMethod]
@@ -18,7 +21,7 @@ public sealed class MailboxMessageBlobSchemaTests
         var rawMessage = entity.FindProperty(nameof(EmailDB.RawMessage));
         Assert.IsNotNull(rawMessage);
         Assert.IsTrue(rawMessage.IsNullable);
-        Assert.AreEqual("bytea", rawMessage.GetColumnType());
+        Assert.AreEqual("bytea", rawMessage.GetColumnType(), StringComparer.Ordinal);
         Assert.AreEqual(32, entity.FindProperty(nameof(EmailDB.RawMessageObjectProvider))?.GetMaxLength());
         Assert.AreEqual(1024, entity.FindProperty(nameof(EmailDB.RawMessageObjectName))?.GetMaxLength());
         Assert.AreEqual(64, entity.FindProperty(nameof(EmailDB.RawMessageObjectSha256))?.GetMaxLength());
@@ -27,9 +30,13 @@ public sealed class MailboxMessageBlobSchemaTests
 
     [TestMethod]
     [TestCategory("PostgreSQL")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "Maintainability", "MA0051",
+        Justification = "The schema migration test keeps setup and verification together.")]
     public async Task RuntimeSchemaPreservesLegacyMessageWhileAddingReferenceShape()
     {
-        await using var server = await RequirePostgresAsync();
+        var server = await RequirePostgresAsync().ConfigureAwait(false);
+        await using var serverLifetime = server.ConfigureAwait(false);
         var company = new CompanyDB
         {
             Id = Guid.CreateVersion7(),
@@ -80,11 +87,12 @@ public sealed class MailboxMessageBlobSchemaTests
             Folder = folder,
         };
 
-        await using (var database = server.CreateContext())
         {
-            await database.Database.EnsureCreatedAsync();
-            database.Emails.Add(message);
-            await database.SaveChangesAsync();
+            var database = server.CreateContext();
+            await using var databaseLifetime = database.ConfigureAwait(false);
+            await database.Database.EnsureCreatedAsync().ConfigureAwait(false);
+            await database.Emails.AddAsync(message).ConfigureAwait(false);
+            await database.SaveChangesAsync().ConfigureAwait(false);
             await database.Database.ExecuteSqlRawAsync(
                 """
                 ALTER TABLE emails
@@ -94,13 +102,13 @@ public sealed class MailboxMessageBlobSchemaTests
                     DROP COLUMN raw_message_object_name,
                     DROP COLUMN raw_message_object_sha256,
                     DROP COLUMN raw_message_object_etag;
-                """);
+                """).ConfigureAwait(false);
 
-            await new MailRuntimeSchemaService(database).EnsureAsync();
+            await new MailRuntimeSchemaService(database).EnsureAsync().ConfigureAwait(false);
             database.ChangeTracker.Clear();
 
             var preserved = await database.Emails.AsNoTracking()
-                .SingleAsync(candidate => candidate.Id == messageId);
+                .SingleAsync(candidate => candidate.Id == messageId).ConfigureAwait(false);
             CollectionAssert.AreEqual(raw, preserved.RawMessage);
             Assert.IsNull(preserved.RawMessageObjectProvider);
             Assert.IsNull(preserved.RawMessageObjectName);
@@ -108,9 +116,11 @@ public sealed class MailboxMessageBlobSchemaTests
             Assert.IsNull(preserved.RawMessageObjectEntityTag);
         }
 
-        await using var connection = new NpgsqlConnection(server.ConnectionString);
-        await connection.OpenAsync();
-        await using var constraint = connection.CreateCommand();
+        var connection = new NpgsqlConnection(server.ConnectionString);
+        await using var connectionLifetime = connection.ConfigureAwait(false);
+        await connection.OpenAsync().ConfigureAwait(false);
+        var constraint = connection.CreateCommand();
+        await using var constraintLifetime = constraint.ConfigureAwait(false);
         constraint.CommandText =
             """
             SELECT convalidated
@@ -118,7 +128,7 @@ public sealed class MailboxMessageBlobSchemaTests
             WHERE conrelid = 'emails'::regclass
               AND conname = 'ck_emails_raw_storage_shape'
             """;
-        Assert.AreEqual(true, await constraint.ExecuteScalarAsync());
+        Assert.AreEqual(true, await constraint.ExecuteScalarAsync().ConfigureAwait(false));
     }
 
     private static EmailDbContext CreateModelContext() => new(
@@ -128,7 +138,7 @@ public sealed class MailboxMessageBlobSchemaTests
 
     private static async Task<PostgresTestDatabase> RequirePostgresAsync()
     {
-        var database = await PostgresTestDatabase.TryCreateAsync();
+        var database = await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false);
         if (database is null)
         {
             Assert.Inconclusive(

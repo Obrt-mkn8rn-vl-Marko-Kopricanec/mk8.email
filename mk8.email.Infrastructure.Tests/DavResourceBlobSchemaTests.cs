@@ -7,13 +7,20 @@ using Npgsql;
 namespace mk8.email.Infrastructure.Tests;
 
 [TestClass]
+[System.Diagnostics.CodeAnalysis.SuppressMessage(
+    "Maintainability", "CA1515",
+    Justification = "MSTest discovers this public test class by reflection.")]
 public sealed class DavResourceBlobSchemaTests
 {
     [TestMethod]
     [TestCategory("PostgreSQL")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "Maintainability", "MA0051",
+        Justification = "The schema migration test keeps setup and verification together.")]
     public async Task RuntimeSchemaPreservesLegacyDavContentWhileAddingReferenceShape()
     {
-        await using var server = await RequirePostgresAsync();
+        var server = await RequirePostgresAsync().ConfigureAwait(false);
+        await using var serverLifetime = server.ConfigureAwait(false);
         var company = new CompanyDB
         {
             Id = Guid.CreateVersion7(),
@@ -54,11 +61,12 @@ public sealed class DavResourceBlobSchemaTests
             ChangeSequence = 1,
         };
 
-        await using (var database = server.CreateContext())
         {
-            await database.Database.EnsureCreatedAsync();
-            database.DavResources.Add(resource);
-            await database.SaveChangesAsync();
+            var database = server.CreateContext();
+            await using var databaseLifetime = database.ConfigureAwait(false);
+            await database.Database.EnsureCreatedAsync().ConfigureAwait(false);
+            await database.DavResources.AddAsync(resource).ConfigureAwait(false);
+            await database.SaveChangesAsync().ConfigureAwait(false);
             await database.Database.ExecuteSqlRawAsync(
                 """
                 ALTER TABLE dav_resources
@@ -70,13 +78,13 @@ public sealed class DavResourceBlobSchemaTests
                     DROP COLUMN object_etag;
                 ALTER TABLE dav_resources
                     ALTER COLUMN content SET NOT NULL;
-                """);
+                """).ConfigureAwait(false);
 
-            await new MailRuntimeSchemaService(database).EnsureAsync();
+            await new MailRuntimeSchemaService(database).EnsureAsync().ConfigureAwait(false);
             database.ChangeTracker.Clear();
 
             var preserved = await database.DavResources.AsNoTracking()
-                .SingleAsync(candidate => candidate.Id == resourceId);
+                .SingleAsync(candidate => candidate.Id == resourceId).ConfigureAwait(false);
             CollectionAssert.AreEqual(content, preserved.Content);
             Assert.IsNull(preserved.ObjectProvider);
             Assert.IsNull(preserved.ObjectName);
@@ -84,10 +92,12 @@ public sealed class DavResourceBlobSchemaTests
             Assert.IsNull(preserved.ObjectEntityTag);
         }
 
-        await using var connection = new NpgsqlConnection(server.ConnectionString);
-        await connection.OpenAsync();
-        await using (var column = connection.CreateCommand())
+        var connection = new NpgsqlConnection(server.ConnectionString);
+        await using var connectionLifetime = connection.ConfigureAwait(false);
+        await connection.OpenAsync().ConfigureAwait(false);
         {
+            var column = connection.CreateCommand();
+            await using var columnLifetime = column.ConfigureAwait(false);
             column.CommandText =
                 """
                 SELECT is_nullable
@@ -96,10 +106,11 @@ public sealed class DavResourceBlobSchemaTests
                   AND table_name = 'dav_resources'
                   AND column_name = 'content'
                 """;
-            Assert.AreEqual("YES", await column.ExecuteScalarAsync());
+            Assert.AreEqual("YES", await column.ExecuteScalarAsync().ConfigureAwait(false));
         }
-        await using (var constraint = connection.CreateCommand())
         {
+            var constraint = connection.CreateCommand();
+            await using var constraintLifetime = constraint.ConfigureAwait(false);
             constraint.CommandText =
                 """
                 SELECT convalidated
@@ -107,13 +118,13 @@ public sealed class DavResourceBlobSchemaTests
                 WHERE conrelid = 'dav_resources'::regclass
                   AND conname = 'ck_dav_resources_storage_shape'
                 """;
-            Assert.AreEqual(true, await constraint.ExecuteScalarAsync());
+            Assert.AreEqual(true, await constraint.ExecuteScalarAsync().ConfigureAwait(false));
         }
     }
 
     private static async Task<PostgresTestDatabase> RequirePostgresAsync()
     {
-        var database = await PostgresTestDatabase.TryCreateAsync();
+        var database = await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false);
         if (database is null)
         {
             Assert.Inconclusive(

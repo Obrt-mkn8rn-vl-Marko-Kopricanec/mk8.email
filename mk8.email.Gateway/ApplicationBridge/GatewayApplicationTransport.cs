@@ -12,6 +12,7 @@ public sealed class GatewayApplicationTransport(
     private const string JsonContentType = "application/json";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The durable presentation boundary keeps its ordered validation, journaling and failure handling together.")]
     public async Task<TResponse> SendAsync<TRequest, TResponse>(
         string protocol,
         string operation,

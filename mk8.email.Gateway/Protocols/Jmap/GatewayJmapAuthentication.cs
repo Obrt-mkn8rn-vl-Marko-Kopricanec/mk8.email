@@ -48,7 +48,7 @@ internal static class GatewayJmapAuthentication
             return false;
         }
 
-        var separator = credentials.IndexOf(':');
+        var separator = credentials.IndexOf(':', StringComparison.Ordinal);
         if (separator <= 0
             || separator == credentials.Length - 1
             || credentials.ContainsAny(['\r', '\n', '\0']))

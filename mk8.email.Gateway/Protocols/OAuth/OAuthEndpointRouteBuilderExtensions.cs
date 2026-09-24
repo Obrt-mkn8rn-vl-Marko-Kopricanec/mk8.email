@@ -20,14 +20,24 @@ public static class OAuthEndpointRouteBuilderExtensions
         ["offline_access", "imap", "smtp", "pop", "jmap", "dav", "sieve"];
     private static readonly string[] OpenIdConnectScopes =
         ["openid", "profile", "email", .. OAuthScopes];
+    private static readonly string[] AuthorizationCodeResponseTypes = ["code"];
+    private static readonly string[] QueryResponseModes = ["query"];
+    private static readonly string[] AuthorizationGrantTypes = ["authorization_code", "refresh_token"];
+    private static readonly string[] PublicSubjectTypes = ["public"];
+    private static readonly string[] RsaSigningAlgorithms = ["RS256"];
+    private static readonly string[] NoClientAuthentication = ["none"];
+    private static readonly string[] S256CodeChallenges = ["S256"];
+    private static readonly string[] OpenIdClaims =
+        ["iss", "sub", "aud", "exp", "iat", "auth_time", "nonce", "at_hash",
+            "preferred_username", "email", "email_verified"];
 
     private static string[] AdvertisedScopes(EnvironmentConfig environment) =>
         environment.OAuth.EnableOpenIdConnect ? OpenIdConnectScopes : OAuthScopes;
 
     public static IEndpointRouteBuilder MapOAuthEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapGet("/.well-known/oauth-authorization-server", MetadataAsync);
-        endpoints.MapGet("/.well-known/openid-configuration", OpenIdMetadataAsync);
+        endpoints.MapGet("/.well-known/oauth-authorization-server", Metadata);
+        endpoints.MapGet("/.well-known/openid-configuration", OpenIdMetadata);
         endpoints.MapGet("/oauth/jwks", JwksAsync);
         endpoints.MapMethods("/oauth/userinfo", [HttpMethods.Get, HttpMethods.Post], UserInfoAsync)
             .RequireRateLimiting("oauth-token");
@@ -41,7 +51,7 @@ public static class OAuthEndpointRouteBuilderExtensions
         return endpoints;
     }
 
-    private static IResult MetadataAsync(HttpContext context, EnvironmentConfig environment)
+    private static IResult Metadata(HttpContext context, EnvironmentConfig environment)
     {
         var baseUri = environment.OAuth.GetPublicBaseUri(
             environment.Smtp.Hostname,
@@ -53,10 +63,10 @@ public static class OAuthEndpointRouteBuilderExtensions
             ["authorization_endpoint"] = new Uri(baseUri, "oauth/authorize").AbsoluteUri,
             ["token_endpoint"] = new Uri(baseUri, "oauth/token").AbsoluteUri,
             ["revocation_endpoint"] = new Uri(baseUri, "oauth/revoke").AbsoluteUri,
-            ["response_types_supported"] = new[] { "code" },
-            ["grant_types_supported"] = new[] { "authorization_code", "refresh_token" },
-            ["token_endpoint_auth_methods_supported"] = new[] { "none" },
-            ["code_challenge_methods_supported"] = new[] { "S256" },
+            ["response_types_supported"] = AuthorizationCodeResponseTypes,
+            ["grant_types_supported"] = AuthorizationGrantTypes,
+            ["token_endpoint_auth_methods_supported"] = NoClientAuthentication,
+            ["code_challenge_methods_supported"] = S256CodeChallenges,
             ["scopes_supported"] = AdvertisedScopes(environment),
         };
         if (environment.OAuth.EnableOpenIdConnect)
@@ -67,7 +77,7 @@ public static class OAuthEndpointRouteBuilderExtensions
         return Results.Json(metadata);
     }
 
-    private static IResult OpenIdMetadataAsync(
+    private static IResult OpenIdMetadata(
         HttpContext context,
         EnvironmentConfig environment)
     {
@@ -86,19 +96,15 @@ public static class OAuthEndpointRouteBuilderExtensions
             ["userinfo_endpoint"] = new Uri(baseUri, "oauth/userinfo").AbsoluteUri,
             ["jwks_uri"] = new Uri(baseUri, "oauth/jwks").AbsoluteUri,
             ["revocation_endpoint"] = new Uri(baseUri, "oauth/revoke").AbsoluteUri,
-            ["response_types_supported"] = new[] { "code" },
-            ["response_modes_supported"] = new[] { "query" },
-            ["grant_types_supported"] = new[] { "authorization_code", "refresh_token" },
-            ["subject_types_supported"] = new[] { "public" },
-            ["id_token_signing_alg_values_supported"] = new[] { "RS256" },
-            ["token_endpoint_auth_methods_supported"] = new[] { "none" },
-            ["code_challenge_methods_supported"] = new[] { "S256" },
+            ["response_types_supported"] = AuthorizationCodeResponseTypes,
+            ["response_modes_supported"] = QueryResponseModes,
+            ["grant_types_supported"] = AuthorizationGrantTypes,
+            ["subject_types_supported"] = PublicSubjectTypes,
+            ["id_token_signing_alg_values_supported"] = RsaSigningAlgorithms,
+            ["token_endpoint_auth_methods_supported"] = NoClientAuthentication,
+            ["code_challenge_methods_supported"] = S256CodeChallenges,
             ["scopes_supported"] = OpenIdConnectScopes,
-            ["claims_supported"] = new[]
-            {
-                "iss", "sub", "aud", "exp", "iat", "auth_time", "nonce", "at_hash",
-                "preferred_username", "email", "email_verified",
-            },
+            ["claims_supported"] = OpenIdClaims,
             ["claims_parameter_supported"] = false,
             ["request_parameter_supported"] = false,
             ["request_uri_parameter_supported"] = false,
@@ -207,6 +213,7 @@ public static class OAuthEndpointRouteBuilderExtensions
         await WriteLoginPageAsync(context, request!, csrf, null, cancellationToken).ConfigureAwait(false);
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The OAuth validation and response sequence is kept together to preserve security ordering.")]
     private static async Task CompleteAuthorizationAsync(
         HttpContext context,
         IGatewayOAuthClient application,
@@ -415,6 +422,7 @@ public static class OAuthEndpointRouteBuilderExtensions
         return Results.Ok();
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The OAuth validation and response sequence is kept together to preserve security ordering.")]
     internal static bool TryParseAuthorizationRequest(
         Func<string, string> getValue,
         EnvironmentConfig environment,

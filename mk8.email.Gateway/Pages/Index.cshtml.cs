@@ -47,7 +47,9 @@ public sealed class IndexModel(
             OperationalClass = "status-bad";
         }
 
-        LastCheck = SystemStatus.CheckedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz")
+        LastCheck = SystemStatus.CheckedAt?.ToLocalTime().ToString(
+            "yyyy-MM-dd HH:mm:ss zzz",
+            System.Globalization.CultureInfo.InvariantCulture)
             ?? "Unavailable";
     }
 

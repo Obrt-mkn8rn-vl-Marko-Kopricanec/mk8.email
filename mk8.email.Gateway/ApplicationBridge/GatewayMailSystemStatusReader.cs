@@ -44,7 +44,7 @@ public sealed class GatewayMailSystemStatusReader(
             or UnauthorizedAccessException
             or JsonException)
         {
-            logger.LogWarning(exception, "The mail health snapshot could not be read from {StatusPath}", path);
+            GatewayApplicationLog.MailHealthUnavailable(logger, exception, path);
             return MailSystemStatusDTO.Unavailable;
         }
     }

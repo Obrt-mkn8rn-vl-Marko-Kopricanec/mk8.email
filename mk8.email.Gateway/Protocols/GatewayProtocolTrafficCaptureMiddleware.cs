@@ -15,12 +15,17 @@ public sealed class GatewayProtocolTrafficCaptureMiddleware(
     private const string StreamChunkContentType = "application/vnd.mk8.gateway-http-chunk+json";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The durable presentation boundary keeps its ordered validation, journaling and failure handling together.")]
     public async Task InvokeAsync(
         HttpContext context,
         IGatewayTrafficJournal journal,
         GatewayApplicationOptions options,
         EnvironmentConfig environment)
     {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(journal);
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(environment);
         var protocol = GatewayProtocolPaths.GetProtocol(context.Request.Path);
         if (protocol is null)
         {
@@ -185,13 +190,12 @@ public sealed class GatewayProtocolTrafficCaptureMiddleware(
             await journal.AppendAsync(record, timeout.Token).ConfigureAwait(false);
             return true;
         }
+        // Fail closed for every journal implementation failure, including timeouts.
+#pragma warning disable CA1031
         catch (Exception exception)
         {
-            logger.LogError(
-                exception,
-                "Could not persist {Direction} {Protocol} presentation traffic",
-                record.Direction,
-                record.Protocol);
+#pragma warning restore CA1031
+            GatewayProtocolLog.TrafficJournalFailure(logger, exception, record.Direction, record.Protocol);
             return false;
         }
     }
@@ -252,7 +256,7 @@ public sealed class GatewayProtocolTrafficCaptureMiddleware(
             },
             DateTimeOffset.UtcNow);
 
-    private static IReadOnlyDictionary<string, string> Headers(IHeaderDictionary headers) =>
+    private static Dictionary<string, string> Headers(IHeaderDictionary headers) =>
         headers.ToDictionary(
             header => header.Key,
             header => header.Value.ToString(),

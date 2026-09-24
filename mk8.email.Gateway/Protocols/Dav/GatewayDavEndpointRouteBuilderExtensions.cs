@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Xml;
 using System.Xml.Linq;
@@ -39,6 +40,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
         return Task.CompletedTask;
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ordered DAV status and validation state machine is kept together to preserve HTTP behavior.")]
     private static async Task HandleDavAsync(
         HttpContext context,
         GatewayDavStore store,
@@ -125,6 +127,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
         }
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ordered DAV status and validation state machine is kept together to preserve HTTP behavior.")]
     private static async Task HandlePropfindAsync(
         HttpContext context,
         DavUser user,
@@ -295,6 +298,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
         await WriteMultiStatusAsync(context, responses, null, cancellationToken).ConfigureAwait(false);
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ordered DAV status and validation state machine is kept together to preserve HTTP behavior.")]
     private static async Task HandleReportAsync(
         HttpContext context,
         DavUser user,
@@ -439,7 +443,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
             return;
         }
         var matches = new List<string>(searches.Count);
-        foreach (var search in searches)
+        foreach (ref readonly var search in CollectionsMarshal.AsSpan(searches))
         {
             var properties = search.Element(Dav + "prop")?.Elements().ToList() ?? [];
             var match = search.Element(Dav + "match")?.Value;
@@ -469,6 +473,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
         await WriteMultiStatusAsync(context, responses, null, cancellationToken).ConfigureAwait(false);
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ordered DAV status and validation state machine is kept together to preserve HTTP behavior.")]
     private static async Task HandleSyncCollectionReportAsync(
         HttpContext context,
         DavUser user,
@@ -693,6 +698,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
             await context.Response.Body.WriteAsync(resource.Content, cancellationToken).ConfigureAwait(false);
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ordered DAV status and validation state machine is kept together to preserve HTTP behavior.")]
     private static async Task HandlePutAsync(
         HttpContext context,
         DavUser user,
@@ -985,6 +991,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
         await WriteMultiStatusAsync(context, [response], null, cancellationToken).ConfigureAwait(false);
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ordered DAV status and validation state machine is kept together to preserve HTTP behavior.")]
     private static async Task HandleAclAsync(
         HttpContext context,
         DavUser user,
@@ -1068,11 +1075,12 @@ public static class GatewayDavEndpointRouteBuilderExtensions
             cancellationToken).ConfigureAwait(false);
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ordered DAV status and validation state machine is kept together to preserve HTTP behavior.")]
     private static bool TryParseAcl(
         HttpRequest request,
         XElement root,
         Guid ownerId,
-        out IReadOnlyList<DavShareGrant>? grants,
+        out List<DavShareGrant>? grants,
         out XName? precondition)
     {
         grants = null;
@@ -1203,7 +1211,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
 , StringComparison.Ordinal) && Guid.TryParseExact(segments[2], "N", out principalId);
     }
 
-    private static IReadOnlyDictionary<XName, XElement> RootProperties(DavUser user) =>
+    private static Dictionary<XName, XElement> RootProperties(DavUser user) =>
         BuildProperties(
             new XElement(Dav + "resourcetype", new XElement(Dav + "collection")),
             new XElement(Dav + "displayname", "mk8.email DAV"),
@@ -1213,7 +1221,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
             HrefProperty(CalDav + "calendar-home-set", HomeHref(DavCollectionKind.Calendar, user.Id)),
             HrefProperty(CardDav + "addressbook-home-set", HomeHref(DavCollectionKind.AddressBook, user.Id)));
 
-    private static IReadOnlyDictionary<XName, XElement> PrincipalCollectionProperties(
+    private static Dictionary<XName, XElement> PrincipalCollectionProperties(
         DavUser user) => BuildProperties(
         new XElement(Dav + "resourcetype", new XElement(Dav + "collection")),
         new XElement(Dav + "displayname", "Principals"),
@@ -1223,7 +1231,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
         CurrentUserPrivilegeSet(DavCollectionAccess.Owner),
         SupportedPrivilegeSet());
 
-    private static IReadOnlyDictionary<XName, XElement> PrincipalProperties(
+    private static Dictionary<XName, XElement> PrincipalProperties(
         DavPrincipal principal,
         Guid currentUserId) =>
         BuildProperties(
@@ -1247,7 +1255,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
                     : DavCollectionAccess.ReadOnly),
             SupportedPrivilegeSet());
 
-    private static IReadOnlyDictionary<XName, XElement> HomeProperties(
+    private static Dictionary<XName, XElement> HomeProperties(
         DavUser user,
         DavCollectionKind kind) => BuildProperties(
         new XElement(Dav + "resourcetype", new XElement(Dav + "collection")),
@@ -1258,7 +1266,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
         CurrentUserPrivilegeSet(DavCollectionAccess.Owner),
         SupportedPrivilegeSet());
 
-    private static IReadOnlyDictionary<XName, XElement> CollectionProperties(
+    private static Dictionary<XName, XElement> CollectionProperties(
         DavCollection collection,
         EnvironmentConfig? environment)
     {
@@ -1320,7 +1328,7 @@ public static class GatewayDavEndpointRouteBuilderExtensions
             (environment?.Dav.MaxResourceSizeBytes ?? 0).ToString(CultureInfo.InvariantCulture)));
     }
 
-    private static IReadOnlyDictionary<XName, XElement> ResourceProperties(
+    private static Dictionary<XName, XElement> ResourceProperties(
         DavResource resource,
         bool includeData) => BuildProperties(
         new XElement(Dav + "resourcetype"),
@@ -1511,10 +1519,10 @@ string.Equals(resource.ContentType, "text/calendar"
     private static XElement HrefProperty(XName name, string href) =>
         new(name, new XElement(Dav + "href", href));
 
-    private static IReadOnlyDictionary<XName, XElement> BuildProperties(params XElement?[] values) =>
+    private static Dictionary<XName, XElement> BuildProperties(params XElement?[] values) =>
         values.Where(value => value is not null).ToDictionary(value => value!.Name, value => value!);
 
-    private static IReadOnlySet<XName>? GetRequestedProperties(XDocument? document)
+    private static HashSet<XName>? GetRequestedProperties(XDocument? document)
     {
         if (document?.Root is null
             || document.Root.Element(Dav + "allprop") is not null
@@ -1622,7 +1630,10 @@ string.Equals(resource.ContentType, "text/calendar"
     }
 
     private static bool TextMatches(string value, string pattern, string? matchType) =>
+        // DAV match-type tokens are defined in lower case; preserve the wire spelling.
+#pragma warning disable CA1308
         matchType?.ToLowerInvariant() switch
+#pragma warning restore CA1308
         {
             "equals" => value.Equals(pattern, StringComparison.OrdinalIgnoreCase),
             "starts-with" => value.StartsWith(pattern, StringComparison.OrdinalIgnoreCase),
@@ -1725,12 +1736,12 @@ string.Equals(resource.ContentType, "text/calendar"
             using var stream = new MemoryStream(bytes, writable: false);
             using var reader = XmlReader.Create(stream, new XmlReaderSettings
             {
-                Async = false,
+                Async = true,
                 DtdProcessing = DtdProcessing.Prohibit,
                 MaxCharactersInDocument = maximumBytes,
                 XmlResolver = null,
             });
-            return (XDocument.Load(reader, LoadOptions.None), false);
+            return (await XDocument.LoadAsync(reader, LoadOptions.None, cancellationToken).ConfigureAwait(false), false);
         }
         catch (XmlException)
         {

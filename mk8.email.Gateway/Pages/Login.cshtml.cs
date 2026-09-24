@@ -81,6 +81,7 @@ public sealed class LoginModel(
         return Url.IsLocalUrl(ReturnUrl) ? LocalRedirect(ReturnUrl) : RedirectToPage("/Index");
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1034", Justification = "The existing nested input type is bound by Razor forms.")]
     public sealed class LoginInput
     {
         [Required]

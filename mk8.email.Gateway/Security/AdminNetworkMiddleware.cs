@@ -7,10 +7,11 @@ public sealed class AdminNetworkMiddleware(
 {
     public async Task InvokeAsync(HttpContext context)
     {
+        ArgumentNullException.ThrowIfNull(context);
         var address = context.Connection.RemoteIpAddress;
         if (address is null || !policy.Contains(address))
         {
-            logger.LogWarning("Rejected an administrator request from {RemoteAddress}", address);
+            GatewaySecurityLog.RejectedAdminRequest(logger, address);
             context.Response.StatusCode = StatusCodes.Status404NotFound;
             return;
         }

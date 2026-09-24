@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
@@ -15,7 +16,7 @@ using mk8.email.Messaging;
 
 namespace mk8.email.Gateway.Protocols.Pop3;
 
-public sealed class Pop3ServerService(
+public sealed partial class Pop3ServerService(
     IServiceScopeFactory scopeFactory,
     EnvironmentConfig environment,
     ILogger<Pop3ServerService> logger,
@@ -52,6 +53,64 @@ public sealed class Pop3ServerService(
     private readonly ConnectionLimiter _connectionLimiter = new(MaximumConcurrentConnections);
     private readonly Pop3RetrievalLimiter _retrievalLimiter = new(4);
 
+    [LoggerMessage(EventId = 1, Level = LogLevel.Warning, Message = "No POP3 listeners are enabled.")]
+    private static partial void LogNoListeners(ILogger logger);
+
+    [LoggerMessage(EventId = 2, Level = LogLevel.Information, Message = "POP3 {Mode} listener started on port {Port}")]
+    private static partial void LogListenerStarted(ILogger logger, ListenerMode mode, int port);
+
+    [LoggerMessage(EventId = 3, Level = LogLevel.Information, Message = "POP3 {Mode} listener on port {Port} stopped")]
+    private static partial void LogListenerStopped(ILogger logger, ListenerMode mode, int port);
+
+    [LoggerMessage(EventId = 4, Level = LogLevel.Warning,
+        Message = "Rejected POP3 connection from {Endpoint}: connection limit")]
+    private static partial void LogConnectionRejected(ILogger logger, string endpoint);
+
+    [LoggerMessage(EventId = 5, Level = LogLevel.Debug, Message = "POP3 connection from {Endpoint} timed out")]
+    private static partial void LogConnectionTimedOut(ILogger logger, string endpoint);
+
+    [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "Error handling POP3 connection from {Endpoint}")]
+    private static partial void LogConnectionFailed(ILogger logger, Exception exception, string endpoint);
+
+    [LoggerMessage(EventId = 7, Level = LogLevel.Warning,
+        Message = "POP3 maildrop lease renewal failed for {UserId}")]
+    private static partial void LogLeaseRenewalFailed(ILogger logger, Exception exception, Guid? userId);
+
+    [LoggerMessage(EventId = 8, Level = LogLevel.Warning,
+        Message = "POP3 OAuth authentication service is unavailable")]
+    private static partial void LogOAuthUnavailable(ILogger logger, Exception exception);
+
+    [LoggerMessage(EventId = 9, Level = LogLevel.Warning,
+        Message = "POP3 password authentication service is unavailable")]
+    private static partial void LogPasswordUnavailable(ILogger logger, Exception exception);
+
+    [LoggerMessage(EventId = 10, Level = LogLevel.Warning,
+        Message = "POP3 maildrop lease service is unavailable for {UserId}")]
+    private static partial void LogLeaseServiceUnavailable(ILogger logger, Exception exception, Guid userId);
+
+    [LoggerMessage(EventId = 11, Level = LogLevel.Warning,
+        Message = "POP3 maildrop snapshot is unavailable for {UserId}")]
+    private static partial void LogSnapshotUnavailable(ILogger logger, Exception exception, Guid userId);
+
+    [LoggerMessage(EventId = 12, Level = LogLevel.Warning,
+        Message = "POP3 message read is unavailable for {MessageId}")]
+    private static partial void LogMessageUnavailable(ILogger logger, Exception exception, Guid messageId);
+
+    [LoggerMessage(EventId = 13, Level = LogLevel.Warning, Message = "POP3 update failed for user {UserId}")]
+    private static partial void LogUpdateFailed(ILogger logger, Exception exception, Guid? userId);
+
+    [LoggerMessage(EventId = 14, Level = LogLevel.Warning,
+        Message = "Mail authentication failed for protocol POP3 from {RemoteIp}")]
+    private static partial void LogAuthenticationFailed(ILogger logger, string remoteIp);
+
+    [LoggerMessage(EventId = 15, Level = LogLevel.Warning,
+        Message = "Could not release POP3 maildrop lease for user {UserId}; it will expire")]
+    private static partial void LogReleaseFailed(ILogger logger, Exception exception, Guid userId);
+
+    [LoggerMessage(EventId = 16, Level = LogLevel.Debug,
+        Message = "POP3 TLS handshake from {Endpoint} ended before authentication: {ExceptionType}")]
+    private static partial void LogTlsHandshakeEnded(ILogger logger, string endpoint, string exceptionType);
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var tasks = new List<Task>();
@@ -72,7 +131,7 @@ public sealed class Pop3ServerService(
 
         if (tasks.Count == 0)
         {
-            logger.LogWarning("No POP3 listeners are enabled.");
+            LogNoListeners(logger);
             return;
         }
 
@@ -84,7 +143,7 @@ public sealed class Pop3ServerService(
         using var listener = new TcpListener(IPAddress.Any, port);
         var activeConnections = new List<Task>();
         listener.Start();
-        logger.LogInformation("POP3 {Mode} listener started on port {Port}", mode, port);
+        LogListenerStarted(logger, mode, port);
 
         try
         {
@@ -92,7 +151,10 @@ public sealed class Pop3ServerService(
             {
                 var client = await listener.AcceptTcpClientAsync(cancellationToken).ConfigureAwait(false);
                 activeConnections.RemoveAll(static task => task.IsCompletedSuccessfully);
+                // The listener joins all retained accepted-handler tasks in its finally block.
+#pragma warning disable CA2025
                 activeConnections.Add(HandleConnectionAsync(client, mode, cancellationToken));
+#pragma warning restore CA2025
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -102,10 +164,11 @@ public sealed class Pop3ServerService(
         {
             listener.Stop();
             await Task.WhenAll(activeConnections).ConfigureAwait(false);
-            logger.LogInformation("POP3 {Mode} listener on port {Port} stopped", mode, port);
+            LogListenerStopped(logger, mode, port);
         }
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ordered wire-protocol state machine is kept together to preserve command and response sequencing.")]
     private async Task HandleConnectionAsync(
         TcpClient client,
         ListenerMode mode,
@@ -119,7 +182,7 @@ public sealed class Pop3ServerService(
             environment.Limits.MaxConnectionsPerIp);
         if (connectionLease is null)
         {
-            logger.LogWarning("Rejected POP3 connection from {Endpoint}: connection limit", remoteLabel);
+            LogConnectionRejected(logger, remoteLabel);
             client.Dispose();
             return;
         }
@@ -152,7 +215,10 @@ public sealed class Pop3ServerService(
                                 ["listenerPort"] = ((client.Client.LocalEndPoint as IPEndPoint)?.Port ?? 0)
                                     .ToString(CultureInfo.InvariantCulture),
                             });
+                        // Both wrappers are disposed in reverse order in this scope's finally block.
+#pragma warning disable CA2000
                         recordedStream = new GatewayTrafficStream(stream, traffic, leaveInnerOpen: true);
+#pragma warning restore CA2000
                         stream = recordedStream;
                     }
 
@@ -162,7 +228,10 @@ public sealed class Pop3ServerService(
                             throw new InvalidOperationException("Implicit POP3 TLS requires a certificate.");
 
                         using var certificate = LoadCertificate();
+                        // tlsStream is disposed in the enclosing finally block on every exit.
+#pragma warning disable CA2000
                         tlsStream = new SslStream(stream, leaveInnerStreamOpen: true);
+#pragma warning restore CA2000
                         if (!await TryAuthenticateAsServerAsync(
                                 tlsStream,
                                 certificate,
@@ -181,7 +250,10 @@ public sealed class Pop3ServerService(
 
                         if (upgrade == SessionUpgrade.StartTls)
                         {
+                            // The certificate has a using lifetime across the handshake only.
+#pragma warning disable CA2000
                             using var certificate = LoadCertificate();
+#pragma warning restore CA2000
                             tlsStream = new SslStream(stream, leaveInnerStreamOpen: true);
                             if (!await TryAuthenticateAsServerAsync(
                                     tlsStream,
@@ -206,11 +278,14 @@ public sealed class Pop3ServerService(
         }
         catch (OperationCanceledException)
         {
-            logger.LogDebug("POP3 connection from {Endpoint} timed out", remoteLabel);
+            LogConnectionTimedOut(logger, remoteLabel);
         }
+        // The accepted connection task owns its client and must absorb backend failures.
+#pragma warning disable CA1031
         catch (Exception exception)
         {
-            logger.LogWarning(exception, "Error handling POP3 connection from {Endpoint}", remoteLabel);
+#pragma warning restore CA1031
+            LogConnectionFailed(logger, exception, remoteLabel);
         }
         finally
         {
@@ -218,6 +293,7 @@ public sealed class Pop3ServerService(
         }
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ordered wire-protocol state machine is kept together to preserve command and response sequencing.")]
     private async Task<SessionUpgrade> RunSessionAsync(
         Stream stream,
         Pop3Session session,
@@ -262,7 +338,7 @@ public sealed class Pop3ServerService(
                 break;
 
             var line = lineResult.Value;
-            var separator = line.IndexOf(' ');
+            var separator = line.IndexOf(' ', StringComparison.Ordinal);
             var command = (separator < 0 ? line : line[..separator]).ToUpperInvariant();
             var argument = separator < 0 ? string.Empty : line[(separator + 1)..].TrimStart();
 
@@ -279,7 +355,7 @@ public sealed class Pop3ServerService(
                 catch (Exception exception) when (
                     exception is not OperationCanceledException && !cancellationToken.IsCancellationRequested)
                 {
-                    logger.LogWarning(exception, "POP3 maildrop lease renewal failed for {UserId}", session.UserId);
+                    LogLeaseRenewalFailed(logger, exception, session.UserId);
                     await writer.WriteLineAsync("-ERR [SYS/TEMP] maildrop lock is unavailable").ConfigureAwait(false);
                     session.State = Pop3State.Update;
                     break;
@@ -497,6 +573,7 @@ public sealed class Pop3ServerService(
             cancellationToken).ConfigureAwait(false);
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ordered wire-protocol state machine is kept together to preserve command and response sequencing.")]
     private async Task HandleAuthAsync(
         BoundedLineReader reader,
         StreamWriter writer,
@@ -524,7 +601,7 @@ public sealed class Pop3ServerService(
             return;
         }
 
-        var separator = argument.IndexOf(' ');
+        var separator = argument.IndexOf(' ', StringComparison.Ordinal);
         var mechanism = (separator < 0 ? argument : argument[..separator]).ToUpperInvariant();
         if (mechanism is not ("PLAIN" or "XOAUTH2")
             || string.Equals(mechanism, "XOAUTH2", StringComparison.Ordinal) && !environment.OAuth.EnableOAuth)
@@ -573,7 +650,7 @@ public sealed class Pop3ServerService(
             catch (Exception exception) when (
                 exception is not OperationCanceledException && !cancellationToken.IsCancellationRequested)
             {
-                logger.LogWarning(exception, "POP3 OAuth authentication service is unavailable");
+                LogOAuthUnavailable(logger, exception);
                 await writer.WriteLineAsync("-ERR [SYS/TEMP] authentication service is unavailable").ConfigureAwait(false);
                 return;
             }
@@ -646,7 +723,7 @@ public sealed class Pop3ServerService(
         catch (Exception exception) when (
             exception is not OperationCanceledException && !cancellationToken.IsCancellationRequested)
         {
-            logger.LogWarning(exception, "POP3 password authentication service is unavailable");
+            LogPasswordUnavailable(logger, exception);
             await writer.WriteLineAsync("-ERR [SYS/TEMP] authentication service is unavailable").ConfigureAwait(false);
             return;
         }
@@ -679,7 +756,7 @@ public sealed class Pop3ServerService(
         catch (Exception exception) when (
             exception is not OperationCanceledException && !cancellationToken.IsCancellationRequested)
         {
-            logger.LogWarning(exception, "POP3 maildrop lease service is unavailable for {UserId}", userId);
+            LogLeaseServiceUnavailable(logger, exception, userId);
             await writer.WriteLineAsync("-ERR [SYS/TEMP] maildrop is temporarily unavailable").ConfigureAwait(false);
             return;
         }
@@ -697,7 +774,7 @@ public sealed class Pop3ServerService(
             var snapshot = await application.ListMaildropAsync(
                 new Pop3UserRequest(userId), cancellationToken).ConfigureAwait(false);
             session.Messages.Clear();
-            foreach (var message in snapshot.Messages)
+            foreach (ref readonly var message in CollectionsMarshal.AsSpan(snapshot.Messages))
             {
                 session.Messages.Add(new Pop3Message(
                     session.Messages.Count + 1,
@@ -710,7 +787,7 @@ public sealed class Pop3ServerService(
             exception is not OperationCanceledException && !cancellationToken.IsCancellationRequested)
         {
             await ReleaseMaildropAsync(session).ConfigureAwait(false);
-            logger.LogWarning(exception, "POP3 maildrop snapshot is unavailable for {UserId}", userId);
+            LogSnapshotUnavailable(logger, exception, userId);
             await writer.WriteLineAsync("-ERR [SYS/TEMP] maildrop is temporarily unavailable").ConfigureAwait(false);
             return;
         }
@@ -765,8 +842,11 @@ public sealed class Pop3ServerService(
             .Where(message => !session.DeletedMessageIds.Contains(message.Id))
             .ToList();
         await writer.WriteLineAsync($"+OK {available.Count} messages").ConfigureAwait(false);
+        // Each awaited protocol write can suspend; a Span enumerator cannot cross that boundary.
+#pragma warning disable HLQ012
         foreach (var message in available)
             await writer.WriteLineAsync($"{message.Number} {message.SizeBytes}").ConfigureAwait(false);
+#pragma warning restore HLQ012
         await writer.WriteLineAsync(".").ConfigureAwait(false);
     }
 
@@ -791,8 +871,11 @@ public sealed class Pop3ServerService(
             .Where(message => !session.DeletedMessageIds.Contains(message.Id))
             .ToList();
         await writer.WriteLineAsync($"+OK {available.Count} messages").ConfigureAwait(false);
+        // Each awaited protocol write can suspend; a Span enumerator cannot cross that boundary.
+#pragma warning disable HLQ012
         foreach (var message in available)
             await writer.WriteLineAsync($"{message.Number} {message.UniqueId}").ConfigureAwait(false);
+#pragma warning restore HLQ012
         await writer.WriteLineAsync(".").ConfigureAwait(false);
     }
 
@@ -805,7 +888,7 @@ public sealed class Pop3ServerService(
     {
         var parts = argument.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         if (parts.Length != 2
-            || !int.TryParse(parts[1], out var bodyLineCount)
+            || !int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var bodyLineCount)
             || bodyLineCount < 0)
         {
             await writer.WriteLineAsync("-ERR [SYS/PERM] syntax: TOP message lines").ConfigureAwait(false);
@@ -851,7 +934,7 @@ public sealed class Pop3ServerService(
             catch (Exception exception) when (
                 exception is not OperationCanceledException && !cancellationToken.IsCancellationRequested)
             {
-                logger.LogWarning(exception, "POP3 message read is unavailable for {MessageId}", message.Id);
+                LogMessageUnavailable(logger, exception, message.Id);
                 await writer.WriteLineAsync("-ERR [SYS/TEMP] message is temporarily unavailable").ConfigureAwait(false);
                 return;
             }
@@ -923,7 +1006,7 @@ public sealed class Pop3ServerService(
         catch (Exception exception) when (
             exception is not OperationCanceledException && !cancellationToken.IsCancellationRequested)
         {
-            logger.LogWarning(exception, "POP3 update failed for user {UserId}", session.UserId);
+            LogUpdateFailed(logger, exception, session.UserId);
             await ReleaseMaildropAsync(session).ConfigureAwait(false);
             await writer.WriteLineAsync("-ERR [SYS/TEMP] unable to update maildrop").ConfigureAwait(false);
         }
@@ -951,7 +1034,8 @@ public sealed class Pop3ServerService(
 
     private static Pop3Message? FindMessage(string argument, Pop3Session session)
     {
-        if (!int.TryParse(argument, out var number) || number <= 0)
+        if (!int.TryParse(argument, NumberStyles.Integer, CultureInfo.InvariantCulture, out var number)
+            || number <= 0)
             return null;
 
         var message = session.Messages.FirstOrDefault(candidate => candidate.Number == number);
@@ -962,17 +1046,22 @@ public sealed class Pop3ServerService(
 
     private static (int Count, long Size) GetMaildropStatistics(Pop3Session session)
     {
-        var available = session.Messages
-            .Where(message => !session.DeletedMessageIds.Contains(message.Id));
-        return (available.Count(), available.Sum(message => (long)message.SizeBytes));
+        var count = 0;
+        long size = 0;
+        foreach (ref readonly var message in CollectionsMarshal.AsSpan(session.Messages))
+        {
+            if (session.DeletedMessageIds.Contains(message.Id))
+                continue;
+            count++;
+            size += message.SizeBytes;
+        }
+        return (count, size);
     }
 
     private void RecordAuthenticationFailure(Pop3Session session)
     {
         session.AuthenticationFailures++;
-        logger.LogWarning(
-            "Mail authentication failed for protocol POP3 from {RemoteIp}",
-            session.RemoteIp);
+        LogAuthenticationFailed(logger, session.RemoteIp);
     }
 
     private async Task ReleaseMaildropAsync(Pop3Session session)
@@ -984,12 +1073,12 @@ public sealed class Pop3ServerService(
         {
             await leaseStore.ReleaseAsync(lease, CancellationToken.None).ConfigureAwait(false);
         }
+        // The lease expires independently; release failure cannot conceal the session result.
+#pragma warning disable CA1031
         catch (Exception exception)
         {
-            logger.LogWarning(
-                exception,
-                "Could not release POP3 maildrop lease for user {UserId}; it will expire",
-                lease.UserId);
+#pragma warning restore CA1031
+            LogReleaseFailed(logger, exception, lease.UserId);
         }
     }
 
@@ -1031,10 +1120,13 @@ public sealed class Pop3ServerService(
         catch (Exception exception) when (
             exception is IOException or AuthenticationException or SocketException)
         {
-            logger.LogDebug(
-                "POP3 TLS handshake from {Endpoint} ended before authentication: {ExceptionType}",
-                remoteLabel,
-                exception.GetType().Name);
+            if (logger.IsEnabled(LogLevel.Debug))
+            {
+                // The expensive exception type name is evaluated only after the level check.
+#pragma warning disable CA1873
+                LogTlsHandshakeEnded(logger, remoteLabel, exception.GetType().Name);
+#pragma warning restore CA1873
+            }
             return false;
         }
     }

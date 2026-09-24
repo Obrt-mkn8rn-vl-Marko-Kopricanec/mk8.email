@@ -8,16 +8,14 @@ public sealed class GatewayApplicationFailureMiddleware(
 {
     public async Task InvokeAsync(HttpContext context)
     {
+        ArgumentNullException.ThrowIfNull(context);
         try
         {
             await next(context).ConfigureAwait(false);
         }
         catch (GatewayApplicationException exception) when (!context.Response.HasStarted)
         {
-            logger.LogWarning(
-                exception,
-                "Application operation failed at the Gateway boundary with code {Code}",
-                exception.Code);
+            GatewayApplicationLog.OperationFailed(logger, exception, exception.Code);
             context.Response.Clear();
             context.Response.StatusCode = exception.IsUnavailable
                 ? StatusCodes.Status503ServiceUnavailable

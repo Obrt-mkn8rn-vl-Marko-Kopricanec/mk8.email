@@ -56,6 +56,7 @@ public sealed class ResetPasswordModel(
         return RedirectToPage("Index");
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1034", Justification = "The existing nested input type is bound by Razor forms.")]
     public sealed class PasswordInput
     {
         [Required]

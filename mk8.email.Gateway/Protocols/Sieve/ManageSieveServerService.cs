@@ -15,7 +15,7 @@ using mk8.email.Messaging;
 
 namespace mk8.email.Gateway.Protocols.Sieve;
 
-public sealed class ManageSieveServerService(
+public sealed partial class ManageSieveServerService(
     IServiceScopeFactory scopeFactory,
     EnvironmentConfig environment,
     ILogger<ManageSieveServerService> logger,
@@ -47,20 +47,53 @@ public sealed class ManageSieveServerService(
 
     private readonly ConnectionLimiter _connectionLimiter = new(MaximumConcurrentConnections);
 
+    [LoggerMessage(EventId = 1, Level = LogLevel.Warning, Message = "The ManageSieve listener is disabled.")]
+    private static partial void LogListenerDisabled(ILogger logger);
+
+    [LoggerMessage(EventId = 2, Level = LogLevel.Information,
+        Message = "ManageSieve listener started on port {Port}")]
+    private static partial void LogListenerStarted(ILogger logger, int port);
+
+    [LoggerMessage(EventId = 3, Level = LogLevel.Information,
+        Message = "ManageSieve listener on port {Port} stopped")]
+    private static partial void LogListenerStopped(ILogger logger, int port);
+
+    [LoggerMessage(EventId = 4, Level = LogLevel.Warning,
+        Message = "Rejected ManageSieve connection from {Endpoint}: connection limit")]
+    private static partial void LogConnectionRejected(ILogger logger, string endpoint);
+
+    [LoggerMessage(EventId = 5, Level = LogLevel.Debug,
+        Message = "ManageSieve connection from {Endpoint} timed out")]
+    private static partial void LogConnectionTimedOut(ILogger logger, string endpoint);
+
+    [LoggerMessage(EventId = 6, Level = LogLevel.Warning,
+        Message = "Error handling ManageSieve connection from {Endpoint}")]
+    private static partial void LogConnectionFailed(ILogger logger, Exception exception, string endpoint);
+
+    [LoggerMessage(EventId = 7, Level = LogLevel.Warning,
+        Message = "ManageSieve application command failed for user {UserId}")]
+    private static partial void LogApplicationCommandFailed(ILogger logger, Exception exception, Guid? userId);
+
+    [LoggerMessage(EventId = 8, Level = LogLevel.Warning,
+        Message = "Mail authentication failed for protocol ManageSieve from {RemoteIp}")]
+    private static partial void LogAuthenticationFailed(ILogger logger, string remoteIp);
+
+    [LoggerMessage(EventId = 9, Level = LogLevel.Debug,
+        Message = "ManageSieve TLS handshake from {Endpoint} ended before authentication: {ExceptionType}")]
+    private static partial void LogTlsHandshakeEnded(ILogger logger, string endpoint, string exceptionType);
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (!environment.Sieve.EnableManageSieve)
         {
-            logger.LogWarning("The ManageSieve listener is disabled.");
+            LogListenerDisabled(logger);
             return;
         }
 
         using var listener = new TcpListener(IPAddress.Any, environment.Sieve.Port);
         var activeConnections = new List<Task>();
         listener.Start();
-        logger.LogInformation(
-            "ManageSieve listener started on port {Port}",
-            environment.Sieve.Port);
+        LogListenerStarted(logger, environment.Sieve.Port);
 
         try
         {
@@ -68,7 +101,10 @@ public sealed class ManageSieveServerService(
             {
                 var client = await listener.AcceptTcpClientAsync(stoppingToken).ConfigureAwait(false);
                 activeConnections.RemoveAll(static task => task.IsCompletedSuccessfully);
+                // The listener joins all retained accepted-handler tasks in its finally block.
+#pragma warning disable CA2025
                 activeConnections.Add(HandleConnectionAsync(client, stoppingToken));
+#pragma warning restore CA2025
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -78,10 +114,11 @@ public sealed class ManageSieveServerService(
         {
             listener.Stop();
             await Task.WhenAll(activeConnections).ConfigureAwait(false);
-            logger.LogInformation("ManageSieve listener on port {Port} stopped", environment.Sieve.Port);
+            LogListenerStopped(logger, environment.Sieve.Port);
         }
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ordered wire-protocol state machine is kept together to preserve command and response sequencing.")]
     private async Task HandleConnectionAsync(TcpClient client, CancellationToken stoppingToken)
     {
         var remoteEndpoint = client.Client.RemoteEndPoint;
@@ -92,9 +129,7 @@ public sealed class ManageSieveServerService(
             environment.Limits.MaxConnectionsPerIp);
         if (connectionLease is null)
         {
-            logger.LogWarning(
-                "Rejected ManageSieve connection from {Endpoint}: connection limit",
-                remoteLabel);
+            LogConnectionRejected(logger, remoteLabel);
             client.Dispose();
             return;
         }
@@ -119,7 +154,10 @@ public sealed class ManageSieveServerService(
                             ["listenerPort"] = ((client.Client.LocalEndPoint as IPEndPoint)?.Port ?? 0)
                                 .ToString(CultureInfo.InvariantCulture),
                         });
+                    // The traffic wrapper is disposed in the accepted connection's finally block.
+#pragma warning disable CA2000
                     recordedStream = new GatewayTrafficStream(stream, traffic, leaveInnerOpen: true);
+#pragma warning restore CA2000
                     stream = recordedStream;
                 }
                 var sendCapabilities = true;
@@ -134,7 +172,10 @@ public sealed class ManageSieveServerService(
                     if (result != SessionResult.StartTls)
                         break;
 
+                    // The certificate has a using lifetime across the handshake only.
+#pragma warning disable CA2000
                     using var certificate = LoadCertificate();
+#pragma warning restore CA2000
                     tlsStream = new SslStream(stream, leaveInnerStreamOpen: true);
                     if (!await TryAuthenticateAsServerAsync(
                             tlsStream,
@@ -154,7 +195,7 @@ public sealed class ManageSieveServerService(
         }
         catch (OperationCanceledException)
         {
-            logger.LogDebug("ManageSieve connection from {Endpoint} timed out", remoteLabel);
+            LogConnectionTimedOut(logger, remoteLabel);
         }
         catch (Exception exception) when (
             exception is IOException
@@ -162,7 +203,7 @@ public sealed class ManageSieveServerService(
                 or AuthenticationException
                 or InvalidOperationException)
         {
-            logger.LogWarning(exception, "Error handling ManageSieve connection from {Endpoint}", remoteLabel);
+            LogConnectionFailed(logger, exception, remoteLabel);
         }
         finally
         {
@@ -225,7 +266,7 @@ public sealed class ManageSieveServerService(
             catch (Exception exception) when (
                 exception is not OperationCanceledException && !timeout.IsCancellationRequested)
             {
-                logger.LogWarning(exception, "ManageSieve application command failed for user {UserId}", session.UserId);
+                LogApplicationCommandFailed(logger, exception, session.UserId);
                 await WriteNoAsync(stream, "The script service is temporarily unavailable.", "TRYLATER", timeout.Token).ConfigureAwait(false);
             }
         }
@@ -233,6 +274,7 @@ public sealed class ManageSieveServerService(
         return SessionResult.Closed;
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ordered wire-protocol state machine is kept together to preserve command and response sequencing.")]
     private async Task<SessionResult?> HandleCommandAsync(
         Stream stream,
         ManageSieveWireReader reader,
@@ -348,6 +390,7 @@ public sealed class ManageSieveServerService(
         }
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ordered wire-protocol state machine is kept together to preserve command and response sequencing.")]
     private async Task HandleAuthenticateAsync(
         Stream stream,
         ManageSieveWireReader reader,
@@ -493,9 +536,7 @@ public sealed class ManageSieveServerService(
         CancellationToken cancellationToken)
     {
         session.AuthenticationFailures++;
-        logger.LogWarning(
-            "Mail authentication failed for protocol ManageSieve from {RemoteIp}",
-            session.RemoteIp);
+        LogAuthenticationFailed(logger, session.RemoteIp);
         if (session.AuthenticationFailures >= MaximumAuthenticationFailures)
         {
             await WriteStatusAsync(
@@ -515,7 +556,11 @@ public sealed class ManageSieveServerService(
         CancellationToken cancellationToken)
     {
         if (!HasKinds(command, ManageSieveTokenKind.String, ManageSieveTokenKind.Number)
-            || !long.TryParse(command.Arguments[1].Value, out var size)
+            || !long.TryParse(
+                command.Arguments[1].Value,
+                NumberStyles.Integer,
+                CultureInfo.InvariantCulture,
+                out var size)
             || size < 0)
         {
             await WriteNoAsync(stream, "HAVESPACE requires a script name and non-negative size.", cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -828,7 +873,9 @@ public sealed class ManageSieveServerService(
         string line,
         CancellationToken cancellationToken)
     {
-        if (line.Contains('\r') || line.Contains('\n') || line.Contains('\0'))
+        if (line.Contains('\r', StringComparison.Ordinal)
+            || line.Contains('\n', StringComparison.Ordinal)
+            || line.Contains('\0', StringComparison.Ordinal))
         {
             throw new InvalidOperationException("ManageSieve response lines cannot contain control delimiters.");
         }
@@ -966,10 +1013,13 @@ public sealed class ManageSieveServerService(
         catch (Exception exception) when (
             exception is IOException or AuthenticationException or SocketException)
         {
-            logger.LogDebug(
-                "ManageSieve TLS handshake from {Endpoint} ended before authentication: {ExceptionType}",
-                remoteLabel,
-                exception.GetType().Name);
+            if (logger.IsEnabled(LogLevel.Debug))
+            {
+                // The expensive exception type name is evaluated only after the level check.
+#pragma warning disable CA1873
+                LogTlsHandshakeEnded(logger, remoteLabel, exception.GetType().Name);
+#pragma warning restore CA1873
+            }
             return false;
         }
     }

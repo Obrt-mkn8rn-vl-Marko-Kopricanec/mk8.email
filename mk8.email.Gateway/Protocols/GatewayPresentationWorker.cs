@@ -52,9 +52,12 @@ internal sealed class GatewayPresentationWorker(
                 {
                     break;
                 }
+                // A leased presentation request must not terminate the always-on Gateway worker.
+#pragma warning disable CA1031
                 catch (Exception exception)
                 {
-                    logger.LogError(exception, "Gateway presentation request processing failed");
+#pragma warning restore CA1031
+                    GatewayProtocolLog.PresentationProcessingFailed(logger, exception);
                     try
                     {
                         await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken).ConfigureAwait(false);
@@ -83,15 +86,16 @@ internal sealed class GatewayPresentationWorker(
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
         }
+        // The outer task boundary observes every failure before another lease is accepted.
+#pragma warning disable CA1031
         catch (Exception exception)
         {
-            logger.LogError(
-                exception,
-                "Gateway presentation request {RequestId} failed unexpectedly",
-                lease.Request.Id);
+#pragma warning restore CA1031
+            GatewayProtocolLog.PresentationUnexpectedFailure(logger, exception, lease.Request.Id);
         }
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The durable presentation boundary keeps its ordered validation, journaling and failure handling together.")]
     private async Task ProcessAsync(
         ApplicationRequestLease lease,
         CancellationToken stoppingToken)
@@ -100,7 +104,10 @@ internal sealed class GatewayPresentationWorker(
         using var operationCancellation = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
         var remaining = lease.Request.Deadline - DateTimeOffset.UtcNow;
         operationCancellation.CancelAfter(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero);
+        // The renewal task is cancelled and directly awaited in this method's finally block.
+#pragma warning disable CA2025
         var renewal = RenewLeaseAsync(lease, operationCancellation);
+#pragma warning restore CA2025
         try
         {
             await AppendInternalAsync(
@@ -128,12 +135,12 @@ internal sealed class GatewayPresentationWorker(
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
         }
+        // Any operation failure must be reported through the durable fail path.
+#pragma warning disable CA1031
         catch (Exception exception)
         {
-            logger.LogError(
-                exception,
-                "Gateway presentation request {RequestId} failed",
-                lease.Request.Id);
+#pragma warning restore CA1031
+            GatewayProtocolLog.PresentationFailed(logger, exception, lease.Request.Id);
             try
             {
                 await AppendInternalAsync(
@@ -146,12 +153,12 @@ internal sealed class GatewayPresentationWorker(
                         new { code = "presentation-failed" },
                         JsonOptions)).ConfigureAwait(false);
             }
+            // Keep the original operation failure even if its failure trace cannot be journaled.
+#pragma warning disable CA1031
             catch (Exception journalException)
             {
-                logger.LogError(
-                    journalException,
-                    "Could not journal the presentation failure for {RequestId}",
-                    lease.Request.Id);
+#pragma warning restore CA1031
+                GatewayProtocolLog.PresentationJournalFailure(logger, journalException, lease.Request.Id);
             }
             try
             {
@@ -161,12 +168,12 @@ internal sealed class GatewayPresentationWorker(
                     "The Gateway presentation operation failed.",
                     stoppingToken).ConfigureAwait(false);
             }
+            // The completion failure is secondary to the original presentation failure.
+#pragma warning disable CA1031
             catch (Exception completionException)
             {
-                logger.LogWarning(
-                    completionException,
-                    "Could not fail presentation request {RequestId}",
-                    lease.Request.Id);
+#pragma warning restore CA1031
+                GatewayProtocolLog.PresentationCompletionFailure(logger, completionException, lease.Request.Id);
             }
         }
         finally

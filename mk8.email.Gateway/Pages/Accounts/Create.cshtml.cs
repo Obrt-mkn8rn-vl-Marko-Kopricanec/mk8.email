@@ -42,6 +42,7 @@ public sealed class CreateAccountModel(
         return RedirectToPage("Index");
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1034", Justification = "The existing nested input type is bound by Razor forms.")]
     public sealed class AccountInput
     {
         [Required]

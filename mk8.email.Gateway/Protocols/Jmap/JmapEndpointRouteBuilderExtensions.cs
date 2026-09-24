@@ -11,7 +11,7 @@ namespace mk8.email.Gateway.Protocols.Jmap;
 public static class JmapEndpointRouteBuilderExtensions
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-    private static readonly IReadOnlySet<string> SupportedEventTypes = new HashSet<string>(
+    private static readonly HashSet<string> SupportedEventTypes = new(
         [
             "Mailbox",
             "Thread",
@@ -178,6 +178,7 @@ public static class JmapEndpointRouteBuilderExtensions
             name);
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The durable presentation boundary keeps its ordered validation, journaling and failure handling together.")]
     private static async Task EventSourceAsync(
         HttpContext context,
         IGatewayJmapClient application,
@@ -359,7 +360,7 @@ public static class JmapEndpointRouteBuilderExtensions
         normalized = string.Empty;
         if (value is null)
             return false;
-        var separator = value.IndexOf('/');
+        var separator = value.IndexOf('/', StringComparison.Ordinal);
         if (separator <= 0
             || separator != value.LastIndexOf('/')
             || !IsRestrictedName(value.AsSpan(0, separator))
@@ -367,7 +368,10 @@ public static class JmapEndpointRouteBuilderExtensions
         {
             return false;
         }
+        // MIME media types are conventionally normalized to lower-case ASCII on the wire.
+#pragma warning disable CA1308
         normalized = value.ToLowerInvariant();
+#pragma warning restore CA1308
         return true;
     }
 
@@ -375,7 +379,7 @@ public static class JmapEndpointRouteBuilderExtensions
     {
         if (value.Length is < 1 or > 127 || !IsAsciiLetterOrDigit(value[0]))
             return false;
-        foreach (var character in value[1..])
+        foreach (ref readonly var character in value[1..])
         {
             if (!IsAsciiLetterOrDigit(character)
                 && character is not ('!' or '#' or '$' or '&' or '-' or '^' or '_' or '.' or '+'))
@@ -486,7 +490,15 @@ public static class JmapEndpointRouteBuilderExtensions
 
     private sealed class GatewayJmapBodyLimitException : Exception
     {
+        public GatewayJmapBodyLimitException()
+        {
+        }
+
         public GatewayJmapBodyLimitException(string message) : base(message)
+        {
+        }
+
+        public GatewayJmapBodyLimitException(string message, Exception innerException) : base(message, innerException)
         {
         }
     }

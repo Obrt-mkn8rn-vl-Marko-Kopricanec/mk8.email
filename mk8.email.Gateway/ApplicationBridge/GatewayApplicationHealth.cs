@@ -8,6 +8,7 @@ public static class GatewayApplicationHealth
         IGatewayApplicationTransport transport,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(transport);
         var response = await transport.SendAsync<object, SystemPingResult>(
             "health",
             ApplicationOperations.SystemPing,

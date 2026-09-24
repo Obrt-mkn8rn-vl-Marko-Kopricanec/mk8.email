@@ -1,4 +1,5 @@
 using System.Data;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -267,7 +268,7 @@ internal sealed class ImapApplicationService(
             if (existingNames.Any(renamedNames.Contains))
                 return new ImapMailboxRenameResult(ImapMailboxRenameDisposition.AlreadyExists);
 
-            foreach (var candidate in affected)
+            foreach (ref readonly var candidate in CollectionsMarshal.AsSpan(affected))
                 candidate.Name = renamed[candidate.Id];
             await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             if (transaction is not null)
@@ -305,7 +306,7 @@ internal sealed class ImapApplicationService(
             var messages = await database.Emails
                 .Where(email => email.FolderId == folder.Id)
                 .ToListAsync(cancellationToken).ConfigureAwait(false);
-            foreach (var message in messages)
+            foreach (ref readonly var message in CollectionsMarshal.AsSpan(messages))
                 content.DeleteOnCommit(message);
             database.Folders.Remove(folder);
             await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
@@ -571,7 +572,7 @@ internal sealed class ImapApplicationService(
             .ThenBy(range => range.End)
             .ToList();
         var merged = new List<(int Start, int End)>();
-        foreach (var range in sorted)
+        foreach (ref readonly var range in CollectionsMarshal.AsSpan(sorted))
         {
             if (merged.Count == 0 || range.Start > (long)merged[^1].End + 1)
             {
@@ -680,7 +681,7 @@ internal sealed class ImapApplicationService(
         {
             var newModSeq = ++folder.HighestModSeq;
             var trackedUpdates = new List<EmailDB>();
-            foreach (var item in applicable)
+            foreach (ref readonly var item in CollectionsMarshal.AsSpan(applicable))
             {
                 trackedUpdates.Add(AttachFlagUpdate(database, item.Email, newModSeq));
                 updated.Add(new ImapChangedMessage(
@@ -695,7 +696,7 @@ internal sealed class ImapApplicationService(
                     item.Email.Keywords ?? []));
             }
             await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-            foreach (var update in trackedUpdates)
+            foreach (ref readonly var update in CollectionsMarshal.AsSpan(trackedUpdates))
                 database.Entry(update).State = EntityState.Detached;
         }
 
@@ -932,7 +933,7 @@ internal sealed class ImapApplicationService(
                 destination.UidValidity, [], []);
 
         long addedBytes = 0;
-        foreach (var message in selected)
+        foreach (ref readonly var message in CollectionsMarshal.AsSpan(selected))
         {
             if (message.SizeBytes < 0 || addedBytes > long.MaxValue - message.SizeBytes)
                 return new ImapCopyResult(ImapCopyDisposition.InvalidSourceSize, 0, [], []);
@@ -961,8 +962,9 @@ internal sealed class ImapApplicationService(
         var destinationUids = new List<int>(selected.Count);
         try
         {
-            foreach (var metadata in selected)
+            for (var index = 0; index < selected.Count; index++)
             {
+                var metadata = selected[index];
                 var source = await database.Emails
                     .AsNoTracking()
                     .SingleAsync(email => email.Id == metadata.Id
@@ -1094,7 +1096,7 @@ internal sealed class ImapApplicationService(
         }
 
         long addedBytes = 0;
-        foreach (var message in request.Messages)
+        foreach (ref readonly var message in CollectionsMarshal.AsSpan(request.Messages))
         {
             if (message.RawMessage.Length > maximumMessageSize - addedBytes)
                 throw new ArgumentException("The IMAP APPEND request exceeds the size limit.",
@@ -1147,7 +1149,7 @@ internal sealed class ImapApplicationService(
                 if (existing.Count != request.Messages.Count)
                     throw new InvalidOperationException("The IMAP APPEND message identities conflict.");
                 var byId = existing.ToDictionary(email => email.Id);
-                foreach (var message in request.Messages)
+                foreach (ref readonly var message in CollectionsMarshal.AsSpan(request.Messages))
                 {
                     var stored = byId[message.MessageId];
                     var hash = Convert.ToHexStringLower(SHA256.HashData(message.RawMessage));
@@ -1188,8 +1190,9 @@ internal sealed class ImapApplicationService(
             var uids = new List<int>(request.Messages.Count);
             try
             {
-                foreach (var message in request.Messages)
+                for (var index = 0; index < request.Messages.Count; index++)
                 {
+                    var message = request.Messages[index];
                     var rawText = MailWireEncoding.Instance.GetString(message.RawMessage);
                     if (!ImapAppendContent.TryPrepareForParsing(
                         rawText, request.Utf8Enabled, out var parsingText))
@@ -1376,8 +1379,9 @@ internal sealed class ImapApplicationService(
                 .Where(email => matchedIds.Contains(email.Id))
                 .ToListAsync(cancellationToken).ConfigureAwait(false);
             var messages = new List<ImapSortEngine.SortMessage>(stored.Count);
-            foreach (var email in stored)
+            for (var index = 0; index < stored.Count; index++)
             {
+                var email = stored[index];
                 var raw = await content.ReadAsync(email, cancellationToken).ConfigureAwait(false);
                 var metadata = ImapSortEngine.CreateStoredMessage(
                     email, sequenceById[email.Id], raw);
@@ -1457,8 +1461,9 @@ internal sealed class ImapApplicationService(
             if (request.Algorithm == ImapThreadAlgorithm.OrderedSubject)
             {
                 var messages = new List<ImapSortEngine.SortMessage>(stored.Count);
-                foreach (var email in stored)
+                for (var index = 0; index < stored.Count; index++)
                 {
+                    var email = stored[index];
                     var raw = await content.ReadAsync(email, cancellationToken).ConfigureAwait(false);
                     var metadata = ImapSortEngine.CreateStoredMessage(
                         email, sequenceById[email.Id], raw);
@@ -1469,8 +1474,9 @@ internal sealed class ImapApplicationService(
             else
             {
                 var messages = new List<Rfc5256ThreadMessage>(stored.Count);
-                foreach (var email in stored)
+                for (var index = 0; index < stored.Count; index++)
                 {
+                    var email = stored[index];
                     var raw = await content.ReadAsync(email, cancellationToken).ConfigureAwait(false);
                     var metadata = ImapSortEngine.CreateStoredMessage(
                         email, sequenceById[email.Id], raw);
@@ -1527,7 +1533,7 @@ internal sealed class ImapApplicationService(
             var byId = metadata.ToDictionary(email => email.Id);
             var results = new List<ImapSeenMessage>(request.MessageIds.Count);
             var changed = false;
-            foreach (var id in request.MessageIds)
+            foreach (ref readonly var id in CollectionsMarshal.AsSpan(request.MessageIds))
             {
                 if (!byId.TryGetValue(id, out var email))
                 {

@@ -343,7 +343,7 @@ public sealed class OAuthTokenService(
         if (scopes.Count is < 1 or > 16)
             return null;
         var normalized = scopes
-            .Select(scope => scope.Trim().ToLowerInvariant())
+            .Select(scope => scope.Trim().ToMailLowerInvariant())
             .Where(scope => scope.Length > 0)
             .Distinct(StringComparer.Ordinal)
             .Order(StringComparer.Ordinal)

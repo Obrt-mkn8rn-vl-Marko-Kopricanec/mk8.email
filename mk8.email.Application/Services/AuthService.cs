@@ -14,7 +14,7 @@ public class AuthService(EmailDbContext db) : IAuthService
 
     public async Task<LoginResultDTO> LoginAsync(LoginRequestDTO request)
     {
-        var username = request.Username.Trim().ToLowerInvariant();
+        var username = request.Username.Trim().ToMailLowerInvariant();
         var user = await db.Users.AsNoTracking()
             .FirstOrDefaultAsync(u => u.Username == username && u.IsActive).ConfigureAwait(false);
 

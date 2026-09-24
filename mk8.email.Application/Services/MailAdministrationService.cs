@@ -425,7 +425,7 @@ public sealed partial class MailAdministrationService(EmailDbContext db) : IMail
         if (separator <= 0 || separator == address.Length - 1)
             return null;
 
-        var localPart = address[..separator].Trim().ToLowerInvariant();
+        var localPart = address[..separator].Trim().ToMailLowerInvariant();
         var domain = NormalizeDomain(address[(separator + 1)..]);
         if (domain is null
             || localPart.Length > 64
@@ -448,7 +448,7 @@ public sealed partial class MailAdministrationService(EmailDbContext db) : IMail
         string asciiDomain;
         try
         {
-            asciiDomain = new IdnMapping().GetAscii(domain.Trim().TrimEnd('.')).ToLowerInvariant();
+            asciiDomain = new IdnMapping().GetAscii(domain.Trim().TrimEnd('.')).ToMailLowerInvariant();
         }
         catch (ArgumentException)
         {

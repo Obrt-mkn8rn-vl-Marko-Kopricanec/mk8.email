@@ -266,7 +266,7 @@ public class EmailService(
     {
         var parts = address.Split('@', 2);
         return parts.Length == 2
-            ? (parts[0].ToLowerInvariant(), parts[1].ToLowerInvariant())
+            ? (parts[0].ToMailLowerInvariant(), parts[1].ToMailLowerInvariant())
             : (null, null);
     }
 

@@ -1106,7 +1106,7 @@ internal sealed class ImapApplicationService(
                 return new ImapAppendResult(ImapAppendDisposition.InvalidFlags, 0, []);
             }
             var rawText = MailWireEncoding.Instance.GetString(message.RawMessage);
-            if (rawText.Contains('\0')
+            if (rawText.Contains('\0', StringComparison.Ordinal)
                 || !ImapAppendContent.TryPrepareForParsing(
                     rawText, request.Utf8Enabled, out _))
             {

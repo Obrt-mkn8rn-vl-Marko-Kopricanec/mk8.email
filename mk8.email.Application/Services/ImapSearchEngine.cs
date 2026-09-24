@@ -996,7 +996,7 @@ internal static class ImapSearchEngine
 
             currentName = null;
             currentValue.Clear();
-            var separator = line.IndexOf(':');
+            var separator = line.IndexOf(':', StringComparison.Ordinal);
             if (separator <= 0)
                 continue;
 
@@ -1067,7 +1067,7 @@ internal static class ImapSearchEngine
 
             currentName = null;
             currentValue.Clear();
-            var separator = line.IndexOf(':');
+            var separator = line.IndexOf(':', StringComparison.Ordinal);
             if (separator <= 0)
                 continue;
 
@@ -1173,7 +1173,7 @@ internal static class ImapSearchEngine
         {
             if (part.Length == 0)
                 return false;
-            var separator = part.IndexOf(':');
+            var separator = part.IndexOf(':', StringComparison.Ordinal);
             int start;
             int end;
             if (separator >= 0)

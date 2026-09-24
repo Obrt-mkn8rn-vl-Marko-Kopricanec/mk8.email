@@ -33,7 +33,7 @@ internal static class DeliveryStatusNotificationBuilder
         string? enhancedStatusCode = null,
         string? remoteMta = null)
     {
-        var actionName = action.ToString().ToLowerInvariant();
+        var actionName = action.ToString().ToMailLowerInvariant();
         var status = NormalizeStatus(enhancedStatusCode, action);
         var safeDiagnostic = SanitizeFieldText(
             diagnostic ?? DefaultDiagnostic(action),

@@ -92,8 +92,8 @@ internal sealed class SieveFilterService(
         var separator = address.LastIndexOf('@');
         if (separator <= 0 || separator == address.Length - 1)
             return null;
-        var localPart = address[..separator].ToLowerInvariant();
-        var domain = address[(separator + 1)..].ToLowerInvariant();
+        var localPart = address[..separator].ToMailLowerInvariant();
+        var domain = address[(separator + 1)..].ToMailLowerInvariant();
         var route = await database.Inboxes
             .AsNoTracking()
             .Where(inbox => (inbox.Name == localPart || inbox.Name == "*")

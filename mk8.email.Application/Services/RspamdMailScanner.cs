@@ -91,7 +91,7 @@ public sealed class RspamdMailScanner : IMailScanner, IDisposable
                 new JsonDocumentOptions { MaxDepth = 32 },
                 timeout.Token).ConfigureAwait(false);
             var root = document.RootElement;
-            var action = GetRequiredString(root, "action").ToLowerInvariant();
+            var action = GetRequiredString(root, "action").ToMailLowerInvariant();
             if (!SupportedActions.Contains(action))
                 throw new InvalidDataException("Rspamd returned an unsupported action.");
 
@@ -219,7 +219,7 @@ public sealed class RspamdMailScanner : IMailScanner, IDisposable
     {
         if (string.IsNullOrWhiteSpace(value)
             || value.Length > 16 * 1024
-            || value.Contains('\r'))
+            || value.Contains('\r', StringComparison.Ordinal))
         {
             throw new InvalidDataException("Rspamd returned an invalid DKIM signature.");
         }
@@ -227,7 +227,7 @@ public sealed class RspamdMailScanner : IMailScanner, IDisposable
         var lines = value.Split('\n');
         if (!lines[0].StartsWith("v=1;", StringComparison.Ordinal))
             throw new InvalidDataException("Rspamd returned an invalid DKIM signature.");
-        if (lines.Any(line => line.Length > 998 || line.Contains('\0')))
+        if (lines.Any(line => line.Length > 998 || line.Contains('\0', StringComparison.Ordinal)))
             throw new InvalidDataException("Rspamd returned an invalid DKIM signature.");
         if (lines.Skip(1).Any(line => line.Length == 0 || line[0] is not (' ' or '\t')))
             throw new InvalidDataException("Rspamd returned an invalid folded DKIM signature.");

@@ -84,7 +84,7 @@ public sealed class VacationResponder(
 #pragma warning restore CA2007, MA0004
                 var sent = await database.JmapVacationReplies.SingleOrDefaultAsync(
                 reply => reply.AccountId == route.AccountId
-                    && reply.SenderAddress == senderMailbox.Address.ToLowerInvariant(),
+                    && reply.SenderAddress == senderMailbox.Address.ToMailLowerInvariant(),
                 cancellationToken).ConfigureAwait(false);
                 if (sent?.LastDeliveryId == deliveryId
                     || sent is not null && now - sent.LastSentAt < RepeatInterval)
@@ -115,7 +115,7 @@ public sealed class VacationResponder(
                     {
                         Id = Guid.CreateVersion7(),
                         AccountId = route.AccountId,
-                        SenderAddress = senderMailbox.Address.ToLowerInvariant(),
+                        SenderAddress = senderMailbox.Address.ToMailLowerInvariant(),
                     };
                     database.JmapVacationReplies.Add(sent);
                 }
@@ -142,8 +142,8 @@ public sealed class VacationResponder(
         var separator = address.LastIndexOf('@');
         if (separator <= 0 || separator == address.Length - 1)
             return null;
-        var localPart = address[..separator].ToLowerInvariant();
-        var domain = address[(separator + 1)..].ToLowerInvariant();
+        var localPart = address[..separator].ToMailLowerInvariant();
+        var domain = address[(separator + 1)..].ToMailLowerInvariant();
         var route = await database.Inboxes
             .AsNoTracking()
             .Where(inbox => (inbox.Name == localPart || inbox.Name == "*")

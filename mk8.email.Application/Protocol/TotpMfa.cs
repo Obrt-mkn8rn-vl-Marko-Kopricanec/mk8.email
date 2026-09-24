@@ -46,7 +46,7 @@ internal static class TotpMfa
         var outputIndex = 0;
         foreach (var character in value)
         {
-            var digit = Base32Alphabet.IndexOf(char.ToUpperInvariant(character));
+            var digit = Base32Alphabet.IndexOf(char.ToUpperInvariant(character), StringComparison.Ordinal);
             if (digit < 0)
                 return false;
             buffer = (buffer << 5) | digit;

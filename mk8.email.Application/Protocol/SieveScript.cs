@@ -523,7 +523,7 @@ internal static class SieveScript
                 var parsed = MailMessageParser.Parse(context.RawMessage);
                 foreach (var line in UnfoldHeaders(parsed.Headers))
                 {
-                    var separator = line.IndexOf(':');
+                    var separator = line.IndexOf(':', StringComparison.Ordinal);
                     if (separator <= 0)
                         continue;
                     var name = line[..separator];
@@ -553,7 +553,7 @@ internal static class SieveScript
         public IEnumerable<string> GetHeaderValues(string name) =>
             _headers.TryGetValue(name, out var values) ? values : [];
 
-        public string? GetEnvelope(string field) => field.ToLowerInvariant() switch
+        public string? GetEnvelope(string field) => field.ToMailLowerInvariant() switch
         {
             "from" => EnvelopeSender,
             "to" => EnvelopeRecipient,
@@ -848,7 +848,7 @@ internal static class SieveScript
         {
             EnsureDepth(depth);
             var command = Expect(TokenKind.Identifier, "Expected a Sieve command.");
-            switch (command.Value.ToLowerInvariant())
+            switch (command.Value.ToMailLowerInvariant())
             {
                 case "if": return ParseIf(depth + 1);
                 case "keep":
@@ -869,7 +869,7 @@ internal static class SieveScript
                             var tag = Consume();
                             if (!seenTags.Add(tag.Value))
                                 Throw(tag, $"Duplicate fileinto tag ':{tag.Value}'.");
-                            switch (tag.Value.ToLowerInvariant())
+                            switch (tag.Value.ToMailLowerInvariant())
                             {
                                 case "copy": Require("copy", tag); copy = true; break;
                                 case "create": Require("mailbox", tag); create = true; break;
@@ -907,7 +907,7 @@ internal static class SieveScript
                     {
                         Require("reject", command);
                         var reason = Expect(TokenKind.String, "Expected a rejection reason.").Value;
-                        if (reason.Length is < 1 or > 1024 || reason.Contains('\0'))
+                        if (reason.Length is < 1 or > 1024 || reason.Contains('\0', StringComparison.Ordinal))
                             Throw(command, "The rejection reason must contain from 1 through 1024 characters.");
                         ExpectSemicolon(command);
                         return new SieveReject(reason);
@@ -920,7 +920,7 @@ internal static class SieveScript
                         var flags = ParseStringList();
                         ValidateFlags(command, flags);
                         ExpectSemicolon(command);
-                        return command.Value.ToLowerInvariant() switch
+                        return command.Value.ToMailLowerInvariant() switch
                         {
                             "setflag" => new SieveSetFlags(flags),
                             "addflag" => new SieveAddFlags(flags),
@@ -975,7 +975,7 @@ internal static class SieveScript
         {
             EnsureDepth(depth);
             var token = Expect(TokenKind.Identifier, "Expected a Sieve test.");
-            switch (token.Value.ToLowerInvariant())
+            switch (token.Value.ToMailLowerInvariant())
             {
                 case "true": return new SieveTrue();
                 case "false": return new SieveFalse();
@@ -1063,7 +1063,7 @@ internal static class SieveScript
             while (At(TokenKind.Tag))
             {
                 var tag = Consume();
-                switch (tag.Value.ToLowerInvariant())
+                switch (tag.Value.ToMailLowerInvariant())
                 {
                     case "is":
                         RejectDuplicateTag(ref hasMatchType, tag);
@@ -1137,7 +1137,7 @@ internal static class SieveScript
 
         private static bool IsValidContentType(string value)
         {
-            var separator = value.IndexOf('/');
+            var separator = value.IndexOf('/', StringComparison.Ordinal);
             return separator > 0
                 && separator == value.LastIndexOf('/')
                 && separator < value.Length - 1

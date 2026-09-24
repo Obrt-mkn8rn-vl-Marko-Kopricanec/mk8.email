@@ -29,7 +29,8 @@ internal static partial class MessagingValues
             {
                 throw new ArgumentException("A messaging metadata key is invalid.", nameof(metadata));
             }
-            if (item.Value is null || item.Value.Length > 4096 || item.Value.Contains('\0'))
+            if (item.Value is null || item.Value.Length > 4096
+                || item.Value.Contains('\0', StringComparison.Ordinal))
                 throw new ArgumentException("A messaging metadata value is invalid.", nameof(metadata));
         }
 
@@ -85,7 +86,8 @@ internal static partial class MessagingValues
         }
         if (!response.IsError && response.ErrorCode is not null)
             throw new ArgumentException("A successful response cannot contain an error code.", nameof(response));
-        if (response.ErrorDetail is { Length: > 2048 } || response.ErrorDetail?.Contains('\0') == true)
+        if (response.ErrorDetail is { Length: > 2048 }
+            || response.ErrorDetail?.Contains('\0', StringComparison.Ordinal) == true)
             throw new ArgumentException("The application response error detail is invalid.", nameof(response));
     }
 
@@ -128,7 +130,7 @@ internal static partial class MessagingValues
         }
         if (string.IsNullOrWhiteSpace(errorDetail)
             || errorDetail.Length > 2048
-            || errorDetail.Contains('\0'))
+            || errorDetail.Contains('\0', StringComparison.Ordinal))
         {
             throw new ArgumentException("The application failure detail is invalid.", nameof(errorDetail));
         }
@@ -209,8 +211,12 @@ internal static partial class MessagingValues
 
     private static void ValidateIdentity(Guid id, Guid sessionId, long sequence)
     {
-        if (id == Guid.Empty || sessionId == Guid.Empty || sequence < 0)
-            throw new ArgumentException("The messaging identity is invalid.");
+        if (id == Guid.Empty)
+            throw new ArgumentException("The messaging request identifier is invalid.", nameof(id));
+        if (sessionId == Guid.Empty)
+            throw new ArgumentException("The messaging session identifier is invalid.", nameof(sessionId));
+        if (sequence < 0)
+            throw new ArgumentException("The messaging sequence is invalid.", nameof(sequence));
     }
 
     private static void ValidateProtocol(string protocol)
@@ -261,15 +267,15 @@ internal static partial class MessagingValues
         return stream.ToArray();
     }
 
-    [GeneratedRegex("^[a-z][a-z0-9-]{0,31}$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex("^[a-z][a-z0-9-]{0,31}$", RegexOptions.CultureInvariant, 100)]
     private static partial Regex ProtocolPattern();
 
-    [GeneratedRegex("^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex("^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$", RegexOptions.CultureInvariant, 100)]
     private static partial Regex OperationPattern();
 
-    [GeneratedRegex("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$", RegexOptions.CultureInvariant, 100)]
     private static partial Regex MetadataKeyPattern();
 
-    [GeneratedRegex("^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex("^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$", RegexOptions.CultureInvariant, 100)]
     private static partial Regex WorkerIdPattern();
 }

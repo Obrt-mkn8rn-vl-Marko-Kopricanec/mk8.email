@@ -3,21 +3,6 @@ using System.Text.RegularExpressions;
 
 namespace mk8.email.Messaging;
 
-public sealed record MessagingEncryptionKey(string Id, byte[] Key);
-
-public sealed record ProtectedPayload(
-    string KeyId,
-    byte[] Ciphertext,
-    byte[] Nonce,
-    byte[] Tag);
-
-public interface IMessagingPayloadProtector
-{
-    ProtectedPayload Protect(ReadOnlySpan<byte> plaintext, ReadOnlySpan<byte> associatedData);
-
-    byte[] Unprotect(ProtectedPayload payload, ReadOnlySpan<byte> associatedData);
-}
-
 public sealed partial class AesGcmPayloadProtector : IMessagingPayloadProtector, IDisposable
 {
     private const int KeySize = 32;
@@ -97,6 +82,6 @@ public sealed partial class AesGcmPayloadProtector : IMessagingPayloadProtector,
         return new MessagingEncryptionKey(key.Id, (byte[])key.Key.Clone());
     }
 
-    [GeneratedRegex("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$", RegexOptions.CultureInvariant, 100)]
     private static partial Regex KeyIdPattern();
 }

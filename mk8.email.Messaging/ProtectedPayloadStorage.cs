@@ -3,19 +3,6 @@ using mk8.email.Contracts.Storage;
 
 namespace mk8.email.Messaging;
 
-internal sealed record StoredProtectedPayload(
-    string KeyId,
-    byte[]? InlineCiphertext,
-    LargeObjectReference? LargeObject,
-    byte[] Nonce,
-    byte[] Tag,
-    string Sha256,
-    long Length,
-    bool LargeObjectCreated = false)
-{
-    public bool IsLargeObject => LargeObject is not null;
-}
-
 internal sealed class ProtectedPayloadStorage(
     PostgresMessagingOptions options,
     ILargeObjectStore? largeObjectStore)
@@ -51,14 +38,15 @@ internal sealed class ProtectedPayloadStorage(
         }
 
         var objectName = $"{objectNamePrefix}/{hash}";
-        await using var content = new MemoryStream(payload.Ciphertext, writable: false);
+        var content = new MemoryStream(payload.Ciphertext, writable: false);
+        await using var contentLifetime = content.ConfigureAwait(false);
         var result = await store.PutIfAbsentAsync(
             objectName,
             content,
             payload.Ciphertext.LongLength,
             hash,
             EncryptedContentType,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         VerifyReference(result.Reference, objectName, payload.Ciphertext.LongLength, hash);
         return new StoredProtectedPayload(
             payload.KeyId,
@@ -100,8 +88,9 @@ internal sealed class ProtectedPayloadStorage(
                     $"The large-object store for {description} does not use Azure Blob protocol.");
             }
             VerifyReference(reference, reference.ObjectName, payload.Length, payload.Sha256);
-            await using var destination = new MemoryStream(checked((int)payload.Length));
-            await store.CopyToAsync(reference, destination, cancellationToken);
+            var destination = new MemoryStream(checked((int)payload.Length));
+            await using var destinationLifetime = destination.ConfigureAwait(false);
+            await store.CopyToAsync(reference, destination, cancellationToken).ConfigureAwait(false);
             ciphertext = destination.ToArray();
             if (ciphertext.LongLength != payload.Length)
                 throw new InvalidOperationException($"The stored {description} length changed.");
@@ -123,7 +112,7 @@ internal sealed class ProtectedPayloadStorage(
     {
         if (!payload.LargeObjectCreated || payload.LargeObject is null || largeObjectStore is null)
             return;
-        _ = await largeObjectStore.DeleteIfMatchAsync(payload.LargeObject, cancellationToken);
+        _ = await largeObjectStore.DeleteIfMatchAsync(payload.LargeObject, cancellationToken).ConfigureAwait(false);
     }
 
     private static void VerifyReference(

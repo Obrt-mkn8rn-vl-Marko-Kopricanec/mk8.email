@@ -2,25 +2,6 @@ using Npgsql;
 
 namespace mk8.email.Messaging;
 
-public sealed record Pop3MaildropLease(Guid UserId, Guid OwnerToken);
-
-public interface IPop3MaildropLeaseStore
-{
-    Task<Pop3MaildropLease?> TryAcquireAsync(
-        Guid userId,
-        TimeSpan lifetime,
-        CancellationToken cancellationToken = default);
-
-    Task<bool> RenewAsync(
-        Pop3MaildropLease lease,
-        TimeSpan lifetime,
-        CancellationToken cancellationToken = default);
-
-    Task ReleaseAsync(
-        Pop3MaildropLease lease,
-        CancellationToken cancellationToken = default);
-}
-
 public sealed class PostgresPop3MaildropLeaseStore(NpgsqlDataSource dataSource)
     : IPop3MaildropLeaseStore
 {
@@ -31,8 +12,10 @@ public sealed class PostgresPop3MaildropLeaseStore(NpgsqlDataSource dataSource)
     {
         ValidateUserAndLifetime(userId, lifetime);
         var token = Guid.CreateVersion7();
-        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
+        var connection = (await dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false));
+        await using var connectionLifetime = connection.ConfigureAwait(false);
+        var command = connection.CreateCommand();
+        await using var commandLifetime = command.ConfigureAwait(false);
         command.CommandText =
             """
             INSERT INTO pop3_maildrop_leases (user_id, owner_token, expires_at)
@@ -46,7 +29,7 @@ public sealed class PostgresPop3MaildropLeaseStore(NpgsqlDataSource dataSource)
         command.Parameters.AddWithValue("user_id", userId);
         command.Parameters.AddWithValue("owner_token", token);
         command.Parameters.AddWithValue("lifetime", lifetime);
-        var acquired = await command.ExecuteScalarAsync(cancellationToken);
+        var acquired = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
         return acquired is Guid ownerToken
             ? new Pop3MaildropLease(userId, ownerToken)
             : null;
@@ -61,8 +44,10 @@ public sealed class PostgresPop3MaildropLeaseStore(NpgsqlDataSource dataSource)
         ValidateUserAndLifetime(lease.UserId, lifetime);
         if (lease.OwnerToken == Guid.Empty)
             throw new ArgumentException("The POP3 maildrop owner token is invalid.", nameof(lease));
-        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
+        var connection = (await dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false));
+        await using var connectionLifetime = connection.ConfigureAwait(false);
+        var command = connection.CreateCommand();
+        await using var commandLifetime = command.ConfigureAwait(false);
         command.CommandText =
             """
             UPDATE pop3_maildrop_leases
@@ -74,7 +59,7 @@ public sealed class PostgresPop3MaildropLeaseStore(NpgsqlDataSource dataSource)
         command.Parameters.AddWithValue("user_id", lease.UserId);
         command.Parameters.AddWithValue("owner_token", lease.OwnerToken);
         command.Parameters.AddWithValue("lifetime", lifetime);
-        return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
+        return await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) == 1;
     }
 
     public async Task ReleaseAsync(
@@ -84,8 +69,10 @@ public sealed class PostgresPop3MaildropLeaseStore(NpgsqlDataSource dataSource)
         ArgumentNullException.ThrowIfNull(lease);
         if (lease.UserId == Guid.Empty || lease.OwnerToken == Guid.Empty)
             throw new ArgumentException("The POP3 maildrop lease is invalid.", nameof(lease));
-        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
+        var connection = (await dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false));
+        await using var connectionLifetime = connection.ConfigureAwait(false);
+        var command = connection.CreateCommand();
+        await using var commandLifetime = command.ConfigureAwait(false);
         command.CommandText =
             """
             DELETE FROM pop3_maildrop_leases
@@ -94,7 +81,7 @@ public sealed class PostgresPop3MaildropLeaseStore(NpgsqlDataSource dataSource)
             """;
         command.Parameters.AddWithValue("user_id", lease.UserId);
         command.Parameters.AddWithValue("owner_token", lease.OwnerToken);
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static void ValidateUserAndLifetime(Guid userId, TimeSpan lifetime)

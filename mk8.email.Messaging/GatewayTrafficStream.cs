@@ -27,10 +27,13 @@ public sealed class GatewayTrafficStream(
         var count = inner.Read(buffer);
         if (count > 0)
         {
+            // Stream's synchronous contract must not return before the read is durably journaled.
+#pragma warning disable VSTHRD002
             traffic.RecordAsync(
                 GatewayTrafficDirections.Inbound,
                 buffer[..count].ToArray(),
                 CancellationToken.None).GetAwaiter().GetResult();
+#pragma warning restore VSTHRD002
         }
         return count;
     }
@@ -39,13 +42,13 @@ public sealed class GatewayTrafficStream(
         Memory<byte> buffer,
         CancellationToken cancellationToken = default)
     {
-        var count = await inner.ReadAsync(buffer, cancellationToken);
+        var count = await inner.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
         if (count > 0)
         {
             await traffic.RecordAsync(
                 GatewayTrafficDirections.Inbound,
                 buffer[..count],
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         }
         return count;
     }
@@ -62,10 +65,13 @@ public sealed class GatewayTrafficStream(
 
     public override void Write(ReadOnlySpan<byte> buffer)
     {
+        // Stream's synchronous contract must fail closed before writing unjournaled bytes.
+#pragma warning disable VSTHRD002
         traffic.RecordAsync(
             GatewayTrafficDirections.Outbound,
             buffer.ToArray(),
             CancellationToken.None).GetAwaiter().GetResult();
+#pragma warning restore VSTHRD002
         inner.Write(buffer);
     }
 
@@ -76,8 +82,8 @@ public sealed class GatewayTrafficStream(
         await traffic.RecordAsync(
             GatewayTrafficDirections.Outbound,
             buffer,
-            cancellationToken);
-        await inner.WriteAsync(buffer, cancellationToken);
+            cancellationToken).ConfigureAwait(false);
+        await inner.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
     }
 
     public override Task WriteAsync(
@@ -105,7 +111,7 @@ public sealed class GatewayTrafficStream(
     public override async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) == 0 && !leaveInnerOpen)
-            await inner.DisposeAsync();
-        await base.DisposeAsync();
+            await inner.DisposeAsync().ConfigureAwait(false);
+        await base.DisposeAsync().ConfigureAwait(false);
     }
 }

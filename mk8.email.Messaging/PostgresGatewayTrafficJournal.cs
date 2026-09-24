@@ -7,7 +7,7 @@ using NpgsqlTypes;
 
 namespace mk8.email.Messaging;
 
-public sealed class PostgresGatewayTrafficJournal : IGatewayTrafficJournal
+public sealed partial class PostgresGatewayTrafficJournal : IGatewayTrafficJournal
 {
     private readonly NpgsqlDataSource _dataSource;
     private readonly IMessagingPayloadProtector _protector;
@@ -51,9 +51,9 @@ public sealed class PostgresGatewayTrafficJournal : IGatewayTrafficJournal
         var storedPayload = await _payloadStorage.StoreAsync(
             protectedPayload,
             $"messaging/v1/gateway-traffic/{record.Id:D}/payload",
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
 
-        await using var command = _dataSource.CreateCommand(
+        var command = _dataSource.CreateCommand(
             """
             INSERT INTO gateway_traffic_records (
                 id, session_id, sequence, direction, protocol, content_type,
@@ -69,25 +69,24 @@ public sealed class PostgresGatewayTrafficJournal : IGatewayTrafficJournal
                 @metadata, @recorded_at)
             ON CONFLICT DO NOTHING
             """);
+        await using var commandLifetime = command.ConfigureAwait(false);
         AddTrafficParameters(command, record, recordedAt, metadata, storedPayload);
-        var inserted = await command.ExecuteNonQueryAsync(cancellationToken);
+        var inserted = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         if (inserted == 1)
             return;
 
-        await TryDeleteUnreferencedAsync(storedPayload);
+        await TryDeleteUnreferencedAsync(storedPayload).ConfigureAwait(false);
 
         var existing = await ReadByIdentityAsync(
             record.Id,
             record.SessionId,
             record.Sequence,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         var normalized = record with { RecordedAt = recordedAt };
         if (existing is null || !Equivalent(existing, normalized))
             throw new InvalidOperationException("The gateway traffic identity is already in use.");
 
-        _logger.LogDebug(
-            "Accepted an idempotent gateway traffic append for {TrafficId}",
-            record.Id);
+        LogIdempotentAppend(_logger, record.Id);
     }
 
     public async Task<IReadOnlyList<GatewayTrafficRecord>> ReadSessionAsync(
@@ -97,14 +96,16 @@ public sealed class PostgresGatewayTrafficJournal : IGatewayTrafficJournal
         if (sessionId == Guid.Empty)
             throw new ArgumentException("The gateway session identifier is required.", nameof(sessionId));
 
-        await using var command = _dataSource.CreateCommand(
+        var command = _dataSource.CreateCommand(
             SelectColumns
             + " WHERE session_id = @session_id ORDER BY sequence, recorded_at, id");
+        await using var commandLifetime = command.ConfigureAwait(false);
         command.Parameters.AddWithValue("session_id", NpgsqlDbType.Uuid, sessionId);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var reader = (await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false));
+        await using var readerLifetime = reader.ConfigureAwait(false);
         var records = new List<GatewayTrafficRecord>();
-        while (await reader.ReadAsync(cancellationToken))
-            records.Add(await ReadRecordAsync(reader, cancellationToken));
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            records.Add(await ReadRecordAsync(reader, cancellationToken).ConfigureAwait(false));
         return records;
     }
 
@@ -114,15 +115,17 @@ public sealed class PostgresGatewayTrafficJournal : IGatewayTrafficJournal
         long sequence,
         CancellationToken cancellationToken)
     {
-        await using var command = _dataSource.CreateCommand(
+        var command = _dataSource.CreateCommand(
             SelectColumns
             + " WHERE id = @id OR (session_id = @session_id AND sequence = @sequence) LIMIT 1");
+        await using var commandLifetime = command.ConfigureAwait(false);
         command.Parameters.AddWithValue("id", NpgsqlDbType.Uuid, id);
         command.Parameters.AddWithValue("session_id", NpgsqlDbType.Uuid, sessionId);
         command.Parameters.AddWithValue("sequence", NpgsqlDbType.Bigint, sequence);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        return await reader.ReadAsync(cancellationToken)
-            ? await ReadRecordAsync(reader, cancellationToken)
+        var reader = (await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false));
+        await using var readerLifetime = reader.ConfigureAwait(false);
+        return await reader.ReadAsync(cancellationToken).ConfigureAwait(false)
+            ? await ReadRecordAsync(reader, cancellationToken).ConfigureAwait(false)
             : null;
     }
 
@@ -136,16 +139,19 @@ public sealed class PostgresGatewayTrafficJournal : IGatewayTrafficJournal
         var direction = reader.GetString(3);
         var protocol = reader.GetString(4);
         var contentType = reader.GetString(5);
-        Guid? requestId = reader.IsDBNull(6) ? null : reader.GetGuid(6);
+        Guid? requestId = await reader.IsDBNullAsync(6, cancellationToken).ConfigureAwait(false)
+            ? null : reader.GetGuid(6);
         var metadata = MessagingValues.DeserializeMetadata(reader.GetString(16));
         var canonicalMetadata = MessagingValues.ValidateAndSerializeMetadata(metadata, _options);
         var recordedAt = ToDateTimeOffset(reader.GetDateTime(17));
         var storedPayload = new StoredProtectedPayload(
             reader.GetString(7),
-            reader.IsDBNull(8) ? null : reader.GetFieldValue<byte[]>(8),
+            await reader.IsDBNullAsync(8, cancellationToken).ConfigureAwait(false)
+                ? null
+                : await reader.GetFieldValueAsync<byte[]>(8, cancellationToken).ConfigureAwait(false),
             ReadLargeObjectReference(reader, 9, 10, 11, 12, 15),
-            reader.GetFieldValue<byte[]>(13),
-            reader.GetFieldValue<byte[]>(14),
+            await reader.GetFieldValueAsync<byte[]>(13, cancellationToken).ConfigureAwait(false),
+            await reader.GetFieldValueAsync<byte[]>(14, cancellationToken).ConfigureAwait(false),
             reader.GetString(15),
             reader.GetInt64(12));
         var associatedData = MessagingValues.TrafficAssociatedData(
@@ -161,7 +167,7 @@ public sealed class PostgresGatewayTrafficJournal : IGatewayTrafficJournal
         var protectedPayload = await _payloadStorage.LoadAsync(
             storedPayload,
             "gateway traffic",
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         var payload = _protector.Unprotect(protectedPayload, associatedData);
 
         return new GatewayTrafficRecord(
@@ -193,7 +199,7 @@ public sealed class PostgresGatewayTrafficJournal : IGatewayTrafficJournal
         command.Parameters.AddWithValue(
             "application_request_id",
             NpgsqlDbType.Uuid,
-            (object?)record.ApplicationRequestId ?? DBNull.Value);
+            record.ApplicationRequestId is { } requestId ? requestId : DBNull.Value);
         command.Parameters.AddWithValue(
             "encryption_key_id",
             NpgsqlDbType.Varchar,
@@ -250,13 +256,14 @@ public sealed class PostgresGatewayTrafficJournal : IGatewayTrafficJournal
     {
         try
         {
-            await _payloadStorage.DeleteIfCreatedAsync(payload, CancellationToken.None);
+            await _payloadStorage.DeleteIfCreatedAsync(payload, CancellationToken.None).ConfigureAwait(false);
         }
+        // The journal row is authoritative; failed orphan cleanup is logged for retention repair.
+#pragma warning disable CA1031
         catch (Exception exception)
+#pragma warning restore CA1031
         {
-            _logger.LogWarning(
-                exception,
-                "Could not remove an unreferenced gateway traffic large object");
+            LogOrphanCleanupFailure(_logger, exception);
         }
     }
 
@@ -267,12 +274,13 @@ public sealed class PostgresGatewayTrafficJournal : IGatewayTrafficJournal
         left.Id == right.Id
         && left.SessionId == right.SessionId
         && left.Sequence == right.Sequence
-        && left.Direction == right.Direction
-        && left.Protocol == right.Protocol
-        && left.ContentType == right.ContentType
+        && string.Equals(left.Direction, right.Direction, StringComparison.Ordinal)
+        && string.Equals(left.Protocol, right.Protocol, StringComparison.Ordinal)
+        && string.Equals(left.ContentType, right.ContentType, StringComparison.Ordinal)
         && left.Payload.AsSpan().SequenceEqual(right.Payload)
         && left.Metadata.Count == right.Metadata.Count
-        && left.Metadata.All(item => right.Metadata.TryGetValue(item.Key, out var value) && value == item.Value)
+        && left.Metadata.All(item => right.Metadata.TryGetValue(item.Key, out var value)
+            && string.Equals(value, item.Value, StringComparison.Ordinal))
         && left.RecordedAt == right.RecordedAt
         && left.ApplicationRequestId == right.ApplicationRequestId;
 
@@ -284,4 +292,16 @@ public sealed class PostgresGatewayTrafficJournal : IGatewayTrafficJournal
             metadata::text, recorded_at
         FROM gateway_traffic_records
         """;
+
+    [LoggerMessage(
+        EventId = 2101,
+        Level = LogLevel.Debug,
+        Message = "Accepted an idempotent gateway traffic append for {TrafficId}")]
+    private static partial void LogIdempotentAppend(ILogger logger, Guid trafficId);
+
+    [LoggerMessage(
+        EventId = 2102,
+        Level = LogLevel.Warning,
+        Message = "Could not remove an unreferenced gateway traffic large object")]
+    private static partial void LogOrphanCleanupFailure(ILogger logger, Exception exception);
 }

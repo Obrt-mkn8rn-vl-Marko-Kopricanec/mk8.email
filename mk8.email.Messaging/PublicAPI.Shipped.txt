@@ -1,0 +1,204 @@
+#nullable enable
+const mk8.email.Messaging.ApplicationExchangeStates.Completed = "completed" -> string!
+const mk8.email.Messaging.ApplicationExchangeStates.Expired = "expired" -> string!
+const mk8.email.Messaging.ApplicationExchangeStates.Failed = "failed" -> string!
+const mk8.email.Messaging.ApplicationExchangeStates.Pending = "pending" -> string!
+const mk8.email.Messaging.ApplicationExchangeStates.Processing = "processing" -> string!
+mk8.email.Messaging.AesGcmPayloadProtector
+mk8.email.Messaging.AesGcmPayloadProtector.AesGcmPayloadProtector(mk8.email.Messaging.MessagingEncryptionKey! activeKey, System.Collections.Generic.IEnumerable<mk8.email.Messaging.MessagingEncryptionKey!>? decryptionKeys = null) -> void
+mk8.email.Messaging.AesGcmPayloadProtector.Dispose() -> void
+mk8.email.Messaging.AesGcmPayloadProtector.Protect(System.ReadOnlySpan<byte> plaintext, System.ReadOnlySpan<byte> associatedData) -> mk8.email.Messaging.ProtectedPayload!
+mk8.email.Messaging.AesGcmPayloadProtector.Unprotect(mk8.email.Messaging.ProtectedPayload! payload, System.ReadOnlySpan<byte> associatedData) -> byte[]!
+mk8.email.Messaging.ApplicationExchangeSnapshot
+mk8.email.Messaging.ApplicationExchangeSnapshot.<Clone>$() -> mk8.email.Messaging.ApplicationExchangeSnapshot!
+mk8.email.Messaging.ApplicationExchangeSnapshot.ApplicationExchangeSnapshot(mk8.email.Contracts.Messaging.ApplicationRequest! Request, string! State, int AttemptCount, string? LeaseOwner, System.DateTimeOffset? LeaseExpiresAt, mk8.email.Contracts.Messaging.ApplicationResponse? Response, System.DateTimeOffset? CompletedAt, string? FailureCode, string? FailureDetail) -> void
+mk8.email.Messaging.ApplicationExchangeSnapshot.AttemptCount.get -> int
+mk8.email.Messaging.ApplicationExchangeSnapshot.AttemptCount.init -> void
+mk8.email.Messaging.ApplicationExchangeSnapshot.CompletedAt.get -> System.DateTimeOffset?
+mk8.email.Messaging.ApplicationExchangeSnapshot.CompletedAt.init -> void
+mk8.email.Messaging.ApplicationExchangeSnapshot.Deconstruct(out mk8.email.Contracts.Messaging.ApplicationRequest! Request, out string! State, out int AttemptCount, out string? LeaseOwner, out System.DateTimeOffset? LeaseExpiresAt, out mk8.email.Contracts.Messaging.ApplicationResponse? Response, out System.DateTimeOffset? CompletedAt, out string? FailureCode, out string? FailureDetail) -> void
+mk8.email.Messaging.ApplicationExchangeSnapshot.Equals(mk8.email.Messaging.ApplicationExchangeSnapshot? other) -> bool
+mk8.email.Messaging.ApplicationExchangeSnapshot.FailureCode.get -> string?
+mk8.email.Messaging.ApplicationExchangeSnapshot.FailureCode.init -> void
+mk8.email.Messaging.ApplicationExchangeSnapshot.FailureDetail.get -> string?
+mk8.email.Messaging.ApplicationExchangeSnapshot.FailureDetail.init -> void
+mk8.email.Messaging.ApplicationExchangeSnapshot.LeaseExpiresAt.get -> System.DateTimeOffset?
+mk8.email.Messaging.ApplicationExchangeSnapshot.LeaseExpiresAt.init -> void
+mk8.email.Messaging.ApplicationExchangeSnapshot.LeaseOwner.get -> string?
+mk8.email.Messaging.ApplicationExchangeSnapshot.LeaseOwner.init -> void
+mk8.email.Messaging.ApplicationExchangeSnapshot.Request.get -> mk8.email.Contracts.Messaging.ApplicationRequest!
+mk8.email.Messaging.ApplicationExchangeSnapshot.Request.init -> void
+mk8.email.Messaging.ApplicationExchangeSnapshot.Response.get -> mk8.email.Contracts.Messaging.ApplicationResponse?
+mk8.email.Messaging.ApplicationExchangeSnapshot.Response.init -> void
+mk8.email.Messaging.ApplicationExchangeSnapshot.State.get -> string!
+mk8.email.Messaging.ApplicationExchangeSnapshot.State.init -> void
+mk8.email.Messaging.ApplicationExchangeStates
+mk8.email.Messaging.ApplicationRequestExpiredException
+mk8.email.Messaging.ApplicationRequestExpiredException.ApplicationRequestExpiredException(System.Guid requestId) -> void
+mk8.email.Messaging.ApplicationRequestExpiredException.RequestId.get -> System.Guid
+mk8.email.Messaging.ApplicationRequestFailedException
+mk8.email.Messaging.ApplicationRequestFailedException.ApplicationRequestFailedException(System.Guid requestId, string! errorCode, string? errorDetail) -> void
+mk8.email.Messaging.ApplicationRequestFailedException.ErrorCode.get -> string!
+mk8.email.Messaging.ApplicationRequestFailedException.RequestId.get -> System.Guid
+mk8.email.Messaging.ApplicationRequestLease
+mk8.email.Messaging.ApplicationRequestLease.<Clone>$() -> mk8.email.Messaging.ApplicationRequestLease!
+mk8.email.Messaging.ApplicationRequestLease.ApplicationRequestLease(mk8.email.Contracts.Messaging.ApplicationRequest! Request, string! WorkerId, System.DateTimeOffset LeaseExpiresAt, int AttemptCount) -> void
+mk8.email.Messaging.ApplicationRequestLease.AttemptCount.get -> int
+mk8.email.Messaging.ApplicationRequestLease.AttemptCount.init -> void
+mk8.email.Messaging.ApplicationRequestLease.Deconstruct(out mk8.email.Contracts.Messaging.ApplicationRequest! Request, out string! WorkerId, out System.DateTimeOffset LeaseExpiresAt, out int AttemptCount) -> void
+mk8.email.Messaging.ApplicationRequestLease.Equals(mk8.email.Messaging.ApplicationRequestLease? other) -> bool
+mk8.email.Messaging.ApplicationRequestLease.LeaseExpiresAt.get -> System.DateTimeOffset
+mk8.email.Messaging.ApplicationRequestLease.LeaseExpiresAt.init -> void
+mk8.email.Messaging.ApplicationRequestLease.Request.get -> mk8.email.Contracts.Messaging.ApplicationRequest!
+mk8.email.Messaging.ApplicationRequestLease.Request.init -> void
+mk8.email.Messaging.ApplicationRequestLease.WorkerId.get -> string!
+mk8.email.Messaging.ApplicationRequestLease.WorkerId.init -> void
+mk8.email.Messaging.ApplicationRequestLeaseLostException
+mk8.email.Messaging.ApplicationRequestLeaseLostException.ApplicationRequestLeaseLostException(System.Guid requestId) -> void
+mk8.email.Messaging.ApplicationRequestLeaseLostException.RequestId.get -> System.Guid
+mk8.email.Messaging.GatewayDatabasePrivilegeProbe
+mk8.email.Messaging.GatewayTrafficSession
+mk8.email.Messaging.GatewayTrafficSession.GatewayTrafficSession(mk8.email.Messaging.IGatewayTrafficJournal! journal, string! protocol, System.Collections.Generic.IReadOnlyDictionary<string!, string!>! metadata, System.Guid? applicationRequestId = null) -> void
+mk8.email.Messaging.GatewayTrafficSession.RecordAsync(string! direction, System.ReadOnlyMemory<byte> payload, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+mk8.email.Messaging.GatewayTrafficStream
+mk8.email.Messaging.GatewayTrafficStream.GatewayTrafficStream(System.IO.Stream! inner, mk8.email.Messaging.GatewayTrafficSession! traffic, bool leaveInnerOpen) -> void
+mk8.email.Messaging.IApplicationRequestClient
+mk8.email.Messaging.IApplicationRequestClient.EnqueueAsync(mk8.email.Contracts.Messaging.ApplicationRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+mk8.email.Messaging.IApplicationRequestClient.GetAsync(System.Guid requestId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Messaging.ApplicationExchangeSnapshot?>!
+mk8.email.Messaging.IApplicationRequestClient.SendAsync(mk8.email.Contracts.Messaging.ApplicationRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Messaging.ApplicationResponse!>!
+mk8.email.Messaging.IApplicationRequestClient.WaitForResponseAsync(System.Guid requestId, System.DateTimeOffset deadline, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Messaging.ApplicationResponse!>!
+mk8.email.Messaging.IApplicationRequestConsumer
+mk8.email.Messaging.IApplicationRequestConsumer.CompleteAsync(mk8.email.Messaging.ApplicationRequestLease! lease, mk8.email.Contracts.Messaging.ApplicationResponse! response, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+mk8.email.Messaging.IApplicationRequestConsumer.FailAsync(mk8.email.Messaging.ApplicationRequestLease! lease, string! errorCode, string! errorDetail, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+mk8.email.Messaging.IApplicationRequestConsumer.RenewLeaseAsync(mk8.email.Messaging.ApplicationRequestLease! lease, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
+mk8.email.Messaging.IApplicationRequestConsumer.TryClaimAsync(string! workerId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Messaging.ApplicationRequestLease?>!
+mk8.email.Messaging.IApplicationRequestConsumer.WaitForRequestAsync(string! workerId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Messaging.ApplicationRequestLease!>!
+mk8.email.Messaging.IApplicationTransportControl
+mk8.email.Messaging.IApplicationTransportControl.IsAvailableAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
+mk8.email.Messaging.IGatewayTrafficJournal
+mk8.email.Messaging.IGatewayTrafficJournal.AppendAsync(mk8.email.Contracts.Messaging.GatewayTrafficRecord! record, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+mk8.email.Messaging.IGatewayTrafficJournal.ReadSessionAsync(System.Guid sessionId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.GatewayTrafficRecord!>!>!
+mk8.email.Messaging.IMessagingPayloadProtector
+mk8.email.Messaging.IMessagingPayloadProtector.Protect(System.ReadOnlySpan<byte> plaintext, System.ReadOnlySpan<byte> associatedData) -> mk8.email.Messaging.ProtectedPayload!
+mk8.email.Messaging.IMessagingPayloadProtector.Unprotect(mk8.email.Messaging.ProtectedPayload! payload, System.ReadOnlySpan<byte> associatedData) -> byte[]!
+mk8.email.Messaging.IPop3MaildropLeaseStore
+mk8.email.Messaging.IPop3MaildropLeaseStore.ReleaseAsync(mk8.email.Messaging.Pop3MaildropLease! lease, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+mk8.email.Messaging.IPop3MaildropLeaseStore.RenewAsync(mk8.email.Messaging.Pop3MaildropLease! lease, System.TimeSpan lifetime, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
+mk8.email.Messaging.IPop3MaildropLeaseStore.TryAcquireAsync(System.Guid userId, System.TimeSpan lifetime, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Messaging.Pop3MaildropLease?>!
+mk8.email.Messaging.IPresentationRequestClient
+mk8.email.Messaging.IPresentationRequestConsumer
+mk8.email.Messaging.MessagingEncryptionKey
+mk8.email.Messaging.MessagingEncryptionKey.<Clone>$() -> mk8.email.Messaging.MessagingEncryptionKey!
+mk8.email.Messaging.MessagingEncryptionKey.Deconstruct(out string! Id, out byte[]! Key) -> void
+mk8.email.Messaging.MessagingEncryptionKey.Equals(mk8.email.Messaging.MessagingEncryptionKey? other) -> bool
+mk8.email.Messaging.MessagingEncryptionKey.Id.get -> string!
+mk8.email.Messaging.MessagingEncryptionKey.Id.init -> void
+mk8.email.Messaging.MessagingEncryptionKey.Key.get -> byte[]!
+mk8.email.Messaging.MessagingEncryptionKey.Key.init -> void
+mk8.email.Messaging.MessagingEncryptionKey.MessagingEncryptionKey(string! Id, byte[]! Key) -> void
+mk8.email.Messaging.Pop3MaildropLease
+mk8.email.Messaging.Pop3MaildropLease.<Clone>$() -> mk8.email.Messaging.Pop3MaildropLease!
+mk8.email.Messaging.Pop3MaildropLease.Deconstruct(out System.Guid UserId, out System.Guid OwnerToken) -> void
+mk8.email.Messaging.Pop3MaildropLease.Equals(mk8.email.Messaging.Pop3MaildropLease? other) -> bool
+mk8.email.Messaging.Pop3MaildropLease.OwnerToken.get -> System.Guid
+mk8.email.Messaging.Pop3MaildropLease.OwnerToken.init -> void
+mk8.email.Messaging.Pop3MaildropLease.Pop3MaildropLease(System.Guid UserId, System.Guid OwnerToken) -> void
+mk8.email.Messaging.Pop3MaildropLease.UserId.get -> System.Guid
+mk8.email.Messaging.Pop3MaildropLease.UserId.init -> void
+mk8.email.Messaging.PostgresApplicationBus
+mk8.email.Messaging.PostgresApplicationBus.CompleteAsync(mk8.email.Messaging.ApplicationRequestLease! lease, mk8.email.Contracts.Messaging.ApplicationResponse! response, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+mk8.email.Messaging.PostgresApplicationBus.EnqueueAsync(mk8.email.Contracts.Messaging.ApplicationRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+mk8.email.Messaging.PostgresApplicationBus.FailAsync(mk8.email.Messaging.ApplicationRequestLease! lease, string! errorCode, string! errorDetail, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+mk8.email.Messaging.PostgresApplicationBus.GetAsync(System.Guid requestId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Messaging.ApplicationExchangeSnapshot?>!
+mk8.email.Messaging.PostgresApplicationBus.PostgresApplicationBus(Npgsql.NpgsqlDataSource! dataSource, mk8.email.Messaging.IMessagingPayloadProtector! protector, mk8.email.Messaging.PostgresMessagingOptions? options = null, System.TimeProvider? timeProvider = null, mk8.email.Contracts.Storage.ILargeObjectStore? largeObjectStore = null, Microsoft.Extensions.Logging.ILogger<mk8.email.Messaging.PostgresApplicationBus!>? logger = null) -> void
+mk8.email.Messaging.PostgresApplicationBus.RenewLeaseAsync(mk8.email.Messaging.ApplicationRequestLease! lease, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
+mk8.email.Messaging.PostgresApplicationBus.SendAsync(mk8.email.Contracts.Messaging.ApplicationRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Messaging.ApplicationResponse!>!
+mk8.email.Messaging.PostgresApplicationBus.TryClaimAsync(string! workerId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Messaging.ApplicationRequestLease?>!
+mk8.email.Messaging.PostgresApplicationBus.WaitForRequestAsync(string! workerId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Messaging.ApplicationRequestLease!>!
+mk8.email.Messaging.PostgresApplicationBus.WaitForResponseAsync(System.Guid requestId, System.DateTimeOffset deadline, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Messaging.ApplicationResponse!>!
+mk8.email.Messaging.PostgresApplicationTransportControl
+mk8.email.Messaging.PostgresApplicationTransportControl.IsAvailableAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
+mk8.email.Messaging.PostgresApplicationTransportControl.PostgresApplicationTransportControl(Npgsql.NpgsqlDataSource! dataSource) -> void
+mk8.email.Messaging.PostgresGatewayTrafficJournal
+mk8.email.Messaging.PostgresGatewayTrafficJournal.AppendAsync(mk8.email.Contracts.Messaging.GatewayTrafficRecord! record, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+mk8.email.Messaging.PostgresGatewayTrafficJournal.PostgresGatewayTrafficJournal(Npgsql.NpgsqlDataSource! dataSource, mk8.email.Messaging.IMessagingPayloadProtector! protector, mk8.email.Messaging.PostgresMessagingOptions? options = null, mk8.email.Contracts.Storage.ILargeObjectStore? largeObjectStore = null, Microsoft.Extensions.Logging.ILogger<mk8.email.Messaging.PostgresGatewayTrafficJournal!>? logger = null) -> void
+mk8.email.Messaging.PostgresGatewayTrafficJournal.ReadSessionAsync(System.Guid sessionId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.GatewayTrafficRecord!>!>!
+mk8.email.Messaging.PostgresMessagingOptions
+mk8.email.Messaging.PostgresMessagingOptions.InlinePayloadThresholdBytes.get -> int
+mk8.email.Messaging.PostgresMessagingOptions.InlinePayloadThresholdBytes.init -> void
+mk8.email.Messaging.PostgresMessagingOptions.LeaseDuration.get -> System.TimeSpan
+mk8.email.Messaging.PostgresMessagingOptions.LeaseDuration.init -> void
+mk8.email.Messaging.PostgresMessagingOptions.MaxMetadataBytes.get -> int
+mk8.email.Messaging.PostgresMessagingOptions.MaxMetadataBytes.init -> void
+mk8.email.Messaging.PostgresMessagingOptions.MaxPayloadBytes.get -> int
+mk8.email.Messaging.PostgresMessagingOptions.MaxPayloadBytes.init -> void
+mk8.email.Messaging.PostgresMessagingOptions.NotificationFallbackInterval.get -> System.TimeSpan
+mk8.email.Messaging.PostgresMessagingOptions.NotificationFallbackInterval.init -> void
+mk8.email.Messaging.PostgresMessagingOptions.PostgresMessagingOptions() -> void
+mk8.email.Messaging.PostgresMessagingSchema
+mk8.email.Messaging.PostgresPop3MaildropLeaseStore
+mk8.email.Messaging.PostgresPop3MaildropLeaseStore.PostgresPop3MaildropLeaseStore(Npgsql.NpgsqlDataSource! dataSource) -> void
+mk8.email.Messaging.PostgresPop3MaildropLeaseStore.ReleaseAsync(mk8.email.Messaging.Pop3MaildropLease! lease, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+mk8.email.Messaging.PostgresPop3MaildropLeaseStore.RenewAsync(mk8.email.Messaging.Pop3MaildropLease! lease, System.TimeSpan lifetime, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
+mk8.email.Messaging.PostgresPop3MaildropLeaseStore.TryAcquireAsync(System.Guid userId, System.TimeSpan lifetime, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Messaging.Pop3MaildropLease?>!
+mk8.email.Messaging.PostgresPresentationBus
+mk8.email.Messaging.PostgresPresentationBus.PostgresPresentationBus(Npgsql.NpgsqlDataSource! dataSource, mk8.email.Messaging.IMessagingPayloadProtector! protector, mk8.email.Messaging.PostgresMessagingOptions? options = null, System.TimeProvider? timeProvider = null, mk8.email.Contracts.Storage.ILargeObjectStore? largeObjectStore = null, Microsoft.Extensions.Logging.ILogger<mk8.email.Messaging.PostgresApplicationBus!>? logger = null) -> void
+mk8.email.Messaging.ProtectedPayload
+mk8.email.Messaging.ProtectedPayload.<Clone>$() -> mk8.email.Messaging.ProtectedPayload!
+mk8.email.Messaging.ProtectedPayload.Ciphertext.get -> byte[]!
+mk8.email.Messaging.ProtectedPayload.Ciphertext.init -> void
+mk8.email.Messaging.ProtectedPayload.Deconstruct(out string! KeyId, out byte[]! Ciphertext, out byte[]! Nonce, out byte[]! Tag) -> void
+mk8.email.Messaging.ProtectedPayload.Equals(mk8.email.Messaging.ProtectedPayload? other) -> bool
+mk8.email.Messaging.ProtectedPayload.KeyId.get -> string!
+mk8.email.Messaging.ProtectedPayload.KeyId.init -> void
+mk8.email.Messaging.ProtectedPayload.Nonce.get -> byte[]!
+mk8.email.Messaging.ProtectedPayload.Nonce.init -> void
+mk8.email.Messaging.ProtectedPayload.ProtectedPayload(string! KeyId, byte[]! Ciphertext, byte[]! Nonce, byte[]! Tag) -> void
+mk8.email.Messaging.ProtectedPayload.Tag.get -> byte[]!
+mk8.email.Messaging.ProtectedPayload.Tag.init -> void
+override mk8.email.Messaging.ApplicationExchangeSnapshot.Equals(object? obj) -> bool
+override mk8.email.Messaging.ApplicationExchangeSnapshot.GetHashCode() -> int
+override mk8.email.Messaging.ApplicationExchangeSnapshot.ToString() -> string!
+override mk8.email.Messaging.ApplicationRequestLease.Equals(object? obj) -> bool
+override mk8.email.Messaging.ApplicationRequestLease.GetHashCode() -> int
+override mk8.email.Messaging.ApplicationRequestLease.ToString() -> string!
+override mk8.email.Messaging.GatewayTrafficStream.CanRead.get -> bool
+override mk8.email.Messaging.GatewayTrafficStream.CanSeek.get -> bool
+override mk8.email.Messaging.GatewayTrafficStream.CanWrite.get -> bool
+override mk8.email.Messaging.GatewayTrafficStream.DisposeAsync() -> System.Threading.Tasks.ValueTask
+override mk8.email.Messaging.GatewayTrafficStream.Flush() -> void
+override mk8.email.Messaging.GatewayTrafficStream.FlushAsync(System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+override mk8.email.Messaging.GatewayTrafficStream.Length.get -> long
+override mk8.email.Messaging.GatewayTrafficStream.Position.get -> long
+override mk8.email.Messaging.GatewayTrafficStream.Position.set -> void
+override mk8.email.Messaging.GatewayTrafficStream.Read(byte[]! buffer, int offset, int count) -> int
+override mk8.email.Messaging.GatewayTrafficStream.Read(System.Span<byte> buffer) -> int
+override mk8.email.Messaging.GatewayTrafficStream.ReadAsync(byte[]! buffer, int offset, int count, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<int>!
+override mk8.email.Messaging.GatewayTrafficStream.ReadAsync(System.Memory<byte> buffer, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<int>
+override mk8.email.Messaging.GatewayTrafficStream.Seek(long offset, System.IO.SeekOrigin origin) -> long
+override mk8.email.Messaging.GatewayTrafficStream.SetLength(long value) -> void
+override mk8.email.Messaging.GatewayTrafficStream.Write(byte[]! buffer, int offset, int count) -> void
+override mk8.email.Messaging.GatewayTrafficStream.Write(System.ReadOnlySpan<byte> buffer) -> void
+override mk8.email.Messaging.GatewayTrafficStream.WriteAsync(byte[]! buffer, int offset, int count, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+override mk8.email.Messaging.GatewayTrafficStream.WriteAsync(System.ReadOnlyMemory<byte> buffer, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+override mk8.email.Messaging.MessagingEncryptionKey.Equals(object? obj) -> bool
+override mk8.email.Messaging.MessagingEncryptionKey.GetHashCode() -> int
+override mk8.email.Messaging.MessagingEncryptionKey.ToString() -> string!
+override mk8.email.Messaging.Pop3MaildropLease.Equals(object? obj) -> bool
+override mk8.email.Messaging.Pop3MaildropLease.GetHashCode() -> int
+override mk8.email.Messaging.Pop3MaildropLease.ToString() -> string!
+override mk8.email.Messaging.ProtectedPayload.Equals(object? obj) -> bool
+override mk8.email.Messaging.ProtectedPayload.GetHashCode() -> int
+override mk8.email.Messaging.ProtectedPayload.ToString() -> string!
+static mk8.email.Messaging.ApplicationExchangeSnapshot.operator !=(mk8.email.Messaging.ApplicationExchangeSnapshot? left, mk8.email.Messaging.ApplicationExchangeSnapshot? right) -> bool
+static mk8.email.Messaging.ApplicationExchangeSnapshot.operator ==(mk8.email.Messaging.ApplicationExchangeSnapshot? left, mk8.email.Messaging.ApplicationExchangeSnapshot? right) -> bool
+static mk8.email.Messaging.ApplicationRequestLease.operator !=(mk8.email.Messaging.ApplicationRequestLease? left, mk8.email.Messaging.ApplicationRequestLease? right) -> bool
+static mk8.email.Messaging.ApplicationRequestLease.operator ==(mk8.email.Messaging.ApplicationRequestLease? left, mk8.email.Messaging.ApplicationRequestLease? right) -> bool
+static mk8.email.Messaging.GatewayDatabasePrivilegeProbe.ProbeAsync(Npgsql.NpgsqlDataSource! dataSource, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+static mk8.email.Messaging.MessagingEncryptionKey.operator !=(mk8.email.Messaging.MessagingEncryptionKey? left, mk8.email.Messaging.MessagingEncryptionKey? right) -> bool
+static mk8.email.Messaging.MessagingEncryptionKey.operator ==(mk8.email.Messaging.MessagingEncryptionKey? left, mk8.email.Messaging.MessagingEncryptionKey? right) -> bool
+static mk8.email.Messaging.Pop3MaildropLease.operator !=(mk8.email.Messaging.Pop3MaildropLease? left, mk8.email.Messaging.Pop3MaildropLease? right) -> bool
+static mk8.email.Messaging.Pop3MaildropLease.operator ==(mk8.email.Messaging.Pop3MaildropLease? left, mk8.email.Messaging.Pop3MaildropLease? right) -> bool
+static mk8.email.Messaging.PostgresMessagingSchema.EnsureAsync(Npgsql.NpgsqlDataSource! dataSource, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+static mk8.email.Messaging.ProtectedPayload.operator !=(mk8.email.Messaging.ProtectedPayload? left, mk8.email.Messaging.ProtectedPayload? right) -> bool
+static mk8.email.Messaging.ProtectedPayload.operator ==(mk8.email.Messaging.ProtectedPayload? left, mk8.email.Messaging.ProtectedPayload? right) -> bool

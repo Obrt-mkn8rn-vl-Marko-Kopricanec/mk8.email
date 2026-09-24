@@ -1,0 +1,7 @@
+// The durable control plane uses PostgreSQL and storage abstractions, not presentation or local payload files.
+T:Microsoft.AspNetCore.Http.HttpContext;Messaging must not depend on ASP.NET presentation
+T:Microsoft.EntityFrameworkCore.DbContext;Messaging must not use Application persistence
+T:Azure.Storage.Blobs.BlobServiceClient;Messaging must use the large-object storage abstraction
+T:System.Net.Http.HttpClient;Messaging must not call presentation HTTP endpoints
+T:System.Net.Sockets.TcpListener;Messaging must not accept protocol connections
+T:System.IO.File;Messaging must not store payloads in host-local files

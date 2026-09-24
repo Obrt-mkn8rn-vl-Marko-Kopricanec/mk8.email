@@ -7,7 +7,7 @@ using NpgsqlTypes;
 
 namespace mk8.email.Messaging;
 
-public class PostgresApplicationBus : IApplicationRequestClient, IApplicationRequestConsumer
+public partial class PostgresApplicationBus : IApplicationRequestClient, IApplicationRequestConsumer
 {
     private readonly string _tableName;
     private readonly string _requestChannel;
@@ -101,29 +101,19 @@ public class PostgresApplicationBus : IApplicationRequestClient, IApplicationReq
         var storedPayload = await _payloadStorage.StoreAsync(
             protectedPayload,
             $"messaging/v1/{_objectPrefix}/{request.Id:D}/request",
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
 
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
-        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
+        var connection = (await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false));
+        await using var connectionLifetime = connection.ConfigureAwait(false);
+        var transaction = (await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false));
+        await using var transactionLifetime = transaction.ConfigureAwait(false);
+        var command = connection.CreateCommand();
+        await using var commandLifetime = command.ConfigureAwait(false);
         command.Transaction = transaction;
-        command.CommandText = $"""
-            INSERT INTO {_tableName} (
-                id, session_id, sequence, protocol, operation, request_content_type,
-                request_encryption_key_id, request_payload_inline,
-                request_payload_blob_provider, request_payload_blob_name,
-                request_payload_blob_etag, request_payload_length,
-                request_payload_nonce, request_payload_tag, request_payload_sha256,
-                request_metadata,
-                idempotency_key, created_at, deadline_at)
-            VALUES (
-                @id, @session_id, @sequence, @protocol, @operation, @content_type,
-                @encryption_key_id, @payload_inline, @payload_blob_provider,
-                @payload_blob_name, @payload_blob_etag, @payload_length,
-                @payload_nonce, @payload_tag, @payload_sha256, @metadata,
-                @idempotency_key, @created_at, @deadline_at)
-            ON CONFLICT DO NOTHING
-            """;
+        // The table identifier comes only from the closed PostgresRequestLane enum.
+#pragma warning disable CA2100
+        command.CommandText = InsertSql;
+#pragma warning restore CA2100
         AddRequestParameters(
             command,
             request,
@@ -131,32 +121,31 @@ public class PostgresApplicationBus : IApplicationRequestClient, IApplicationReq
             deadline,
             metadata,
             storedPayload);
-        var inserted = await command.ExecuteNonQueryAsync(cancellationToken);
+        var inserted = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         if (inserted == 1)
-            await NotifyAsync(connection, transaction, _requestChannel, request.Id, cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+            await NotifyAsync(connection, transaction, _requestChannel, request.Id, cancellationToken).ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
 
         if (inserted == 1)
             return;
 
-        await TryDeleteUnreferencedAsync(storedPayload, "application request");
+        await TryDeleteUnreferencedAsync(storedPayload, "application request").ConfigureAwait(false);
 
-        var existing = await ReadByIdentityAsync(request, cancellationToken);
+        var existing = await ReadByIdentityAsync(request, cancellationToken).ConfigureAwait(false);
         var normalized = request with { CreatedAt = createdAt, Deadline = deadline };
         if (existing is null || !Equivalent(existing.Request, normalized))
             throw new InvalidOperationException("The application request identity is already in use.");
 
-        _logger.LogDebug(
-            "Accepted an idempotent application request enqueue for {RequestId}",
-            request.Id);
+        LogIdempotentEnqueue(_logger, request.Id);
     }
 
     public async Task<ApplicationResponse> SendAsync(
         ApplicationRequest request,
         CancellationToken cancellationToken = default)
     {
-        await EnqueueAsync(request, cancellationToken);
-        return await WaitForResponseAsync(request.Id, request.Deadline, cancellationToken);
+        ArgumentNullException.ThrowIfNull(request);
+        await EnqueueAsync(request, cancellationToken).ConfigureAwait(false);
+        return await WaitForResponseAsync(request.Id, request.Deadline, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<ApplicationResponse> WaitForResponseAsync(
@@ -169,34 +158,39 @@ public class PostgresApplicationBus : IApplicationRequestClient, IApplicationReq
         if (deadline == default)
             throw new ArgumentException("The application request deadline is required.", nameof(deadline));
 
-        await using var listener = await _dataSource.OpenConnectionAsync(cancellationToken);
-        await using (var listen = listener.CreateCommand())
+        var listener = (await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false));
+        await using var listenerLifetime = listener.ConfigureAwait(false);
+        var listen = listener.CreateCommand();
+        await using (listen.ConfigureAwait(false))
         {
+            // The channel identifier is fixed by the closed PostgresRequestLane enum.
+#pragma warning disable CA2100
             listen.CommandText = $"LISTEN {_responseChannel}";
-            await listen.ExecuteNonQueryAsync(cancellationToken);
+#pragma warning restore CA2100
+            await listen.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
         while (true)
         {
-            var snapshot = await GetAsync(requestId, cancellationToken)
+            var snapshot = await GetAsync(requestId, cancellationToken).ConfigureAwait(false)
                 ?? throw new InvalidOperationException("The application request does not exist.");
-            if (snapshot.State == ApplicationExchangeStates.Completed)
+            if (string.Equals(snapshot.State, ApplicationExchangeStates.Completed, StringComparison.Ordinal))
                 return snapshot.Response
                     ?? throw new InvalidOperationException("The completed application response is missing.");
-            if (snapshot.State == ApplicationExchangeStates.Failed)
+            if (string.Equals(snapshot.State, ApplicationExchangeStates.Failed, StringComparison.Ordinal))
             {
                 throw new ApplicationRequestFailedException(
                     requestId,
                     snapshot.FailureCode ?? "application-failed",
                     snapshot.FailureDetail);
             }
-            if (snapshot.State == ApplicationExchangeStates.Expired)
+            if (string.Equals(snapshot.State, ApplicationExchangeStates.Expired, StringComparison.Ordinal))
                 throw new ApplicationRequestExpiredException(requestId);
 
             var remaining = deadline - _timeProvider.GetUtcNow();
             if (remaining <= TimeSpan.Zero)
             {
-                await ExpireDueRequestsAsync(cancellationToken);
+                await ExpireDueRequestsAsync(cancellationToken).ConfigureAwait(false);
                 throw new ApplicationRequestExpiredException(requestId);
             }
 
@@ -207,7 +201,7 @@ public class PostgresApplicationBus : IApplicationRequestClient, IApplicationReq
             waitCancellation.CancelAfter(wait);
             try
             {
-                await listener.WaitAsync(waitCancellation.Token);
+                await listener.WaitAsync(waitCancellation.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
@@ -221,16 +215,21 @@ public class PostgresApplicationBus : IApplicationRequestClient, IApplicationReq
         CancellationToken cancellationToken = default)
     {
         MessagingValues.ValidateWorkerId(workerId);
-        await using var listener = await _dataSource.OpenConnectionAsync(cancellationToken);
-        await using (var listen = listener.CreateCommand())
+        var listener = (await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false));
+        await using var listenerLifetime = listener.ConfigureAwait(false);
+        var listen = listener.CreateCommand();
+        await using (listen.ConfigureAwait(false))
         {
+            // The channel identifier is fixed by the closed PostgresRequestLane enum.
+#pragma warning disable CA2100
             listen.CommandText = $"LISTEN {_requestChannel}";
-            await listen.ExecuteNonQueryAsync(cancellationToken);
+#pragma warning restore CA2100
+            await listen.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
         while (true)
         {
-            var claimed = await TryClaimAsync(workerId, cancellationToken);
+            var claimed = await TryClaimAsync(workerId, cancellationToken).ConfigureAwait(false);
             if (claimed is not null)
                 return claimed;
 
@@ -238,7 +237,7 @@ public class PostgresApplicationBus : IApplicationRequestClient, IApplicationReq
             waitCancellation.CancelAfter(_options.NotificationFallbackInterval);
             try
             {
-                await listener.WaitAsync(waitCancellation.Token);
+                await listener.WaitAsync(waitCancellation.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
@@ -252,9 +251,9 @@ public class PostgresApplicationBus : IApplicationRequestClient, IApplicationReq
         CancellationToken cancellationToken = default)
     {
         MessagingValues.ValidateWorkerId(workerId);
-        await ExpireDueRequestsAsync(cancellationToken);
+        await ExpireDueRequestsAsync(cancellationToken).ConfigureAwait(false);
 
-        await using var command = _dataSource.CreateCommand(
+        var command = _dataSource.CreateCommand(
             $"""
             WITH candidate AS (
                 SELECT id
@@ -278,15 +277,17 @@ public class PostgresApplicationBus : IApplicationRequestClient, IApplicationReq
             """
             + "\n"
             + ReturningColumns);
+        await using var commandLifetime = command.ConfigureAwait(false);
         command.Parameters.AddWithValue("worker_id", NpgsqlDbType.Varchar, workerId);
         command.Parameters.AddWithValue(
             "lease_milliseconds",
             NpgsqlDbType.Integer,
             checked((int)_options.LeaseDuration.TotalMilliseconds));
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken))
+        var reader = (await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false));
+        await using var readerLifetime = reader.ConfigureAwait(false);
+        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             return null;
-        var snapshot = await ReadSnapshotAsync(reader, cancellationToken);
+        var snapshot = await ReadSnapshotAsync(reader, cancellationToken).ConfigureAwait(false);
         return new ApplicationRequestLease(
             snapshot.Request,
             snapshot.LeaseOwner
@@ -302,7 +303,7 @@ public class PostgresApplicationBus : IApplicationRequestClient, IApplicationReq
     {
         ArgumentNullException.ThrowIfNull(lease);
         MessagingValues.ValidateWorkerId(lease.WorkerId);
-        await using var command = _dataSource.CreateCommand(
+        var command = _dataSource.CreateCommand(
             $"""
             UPDATE {_tableName}
             SET lease_expires_at = clock_timestamp() + @lease_milliseconds * interval '1 millisecond'
@@ -312,13 +313,14 @@ public class PostgresApplicationBus : IApplicationRequestClient, IApplicationReq
                 AND lease_expires_at > clock_timestamp()
                 AND deadline_at > clock_timestamp()
             """);
+        await using var commandLifetime = command.ConfigureAwait(false);
         command.Parameters.AddWithValue("id", NpgsqlDbType.Uuid, lease.Request.Id);
         command.Parameters.AddWithValue("worker_id", NpgsqlDbType.Varchar, lease.WorkerId);
         command.Parameters.AddWithValue(
             "lease_milliseconds",
             NpgsqlDbType.Integer,
             checked((int)_options.LeaseDuration.TotalMilliseconds));
-        return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
+        return await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) == 1;
     }
 
     public async Task CompleteAsync(
@@ -345,45 +347,26 @@ public class PostgresApplicationBus : IApplicationRequestClient, IApplicationReq
         var storedPayload = await _payloadStorage.StoreAsync(
             protectedPayload,
             $"messaging/v1/{_objectPrefix}/{response.RequestId:D}/response",
-            cancellationToken);
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
-        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
+            cancellationToken).ConfigureAwait(false);
+        var connection = (await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false));
+        await using var connectionLifetime = connection.ConfigureAwait(false);
+        var transaction = (await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false));
+        await using var transactionLifetime = transaction.ConfigureAwait(false);
+        var command = connection.CreateCommand();
+        await using var commandLifetime = command.ConfigureAwait(false);
         command.Transaction = transaction;
-        command.CommandText = $"""
-            UPDATE {_tableName}
-            SET state = 'completed',
-                lease_owner = NULL,
-                lease_expires_at = NULL,
-                response_content_type = @content_type,
-                response_encryption_key_id = @encryption_key_id,
-                response_payload_inline = @payload_inline,
-                response_payload_blob_provider = @payload_blob_provider,
-                response_payload_blob_name = @payload_blob_name,
-                response_payload_blob_etag = @payload_blob_etag,
-                response_payload_length = @payload_length,
-                response_payload_nonce = @payload_nonce,
-                response_payload_tag = @payload_tag,
-                response_payload_sha256 = @payload_sha256,
-                response_metadata = @metadata,
-                response_is_error = @is_error,
-                error_code = @error_code,
-                error_detail = @error_detail,
-                completed_at = clock_timestamp()
-            WHERE id = @id
-                AND state = 'processing'
-                AND lease_owner = @worker_id
-                AND lease_expires_at > clock_timestamp()
-                AND deadline_at > clock_timestamp()
-            """;
+        // The table identifier comes only from the closed PostgresRequestLane enum.
+#pragma warning disable CA2100
+        command.CommandText = CompleteSql;
+#pragma warning restore CA2100
         AddResponseParameters(command, lease, response, metadata, storedPayload);
-        if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
+        if (await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) != 1)
         {
-            await TryDeleteUnreferencedAsync(storedPayload, "application response");
+            await TryDeleteUnreferencedAsync(storedPayload, "application response").ConfigureAwait(false);
             throw new ApplicationRequestLeaseLostException(lease.Request.Id);
         }
-        await NotifyAsync(connection, transaction, _responseChannel, lease.Request.Id, cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        await NotifyAsync(connection, transaction, _responseChannel, lease.Request.Id, cancellationToken).ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task FailAsync(
@@ -395,10 +378,15 @@ public class PostgresApplicationBus : IApplicationRequestClient, IApplicationReq
         ArgumentNullException.ThrowIfNull(lease);
         MessagingValues.ValidateWorkerId(lease.WorkerId);
         MessagingValues.ValidateFailure(errorCode, errorDetail);
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
-        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
+        var connection = (await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false));
+        await using var connectionLifetime = connection.ConfigureAwait(false);
+        var transaction = (await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false));
+        await using var transactionLifetime = transaction.ConfigureAwait(false);
+        var command = connection.CreateCommand();
+        await using var commandLifetime = command.ConfigureAwait(false);
         command.Transaction = transaction;
+        // The table identifier is fixed by the closed PostgresRequestLane enum.
+#pragma warning disable CA2100
         command.CommandText = $"""
             UPDATE {_tableName}
             SET state = 'failed',
@@ -412,14 +400,15 @@ public class PostgresApplicationBus : IApplicationRequestClient, IApplicationReq
                 AND lease_owner = @worker_id
                 AND lease_expires_at > clock_timestamp()
             """;
+#pragma warning restore CA2100
         command.Parameters.AddWithValue("id", NpgsqlDbType.Uuid, lease.Request.Id);
         command.Parameters.AddWithValue("worker_id", NpgsqlDbType.Varchar, lease.WorkerId);
         command.Parameters.AddWithValue("error_code", NpgsqlDbType.Varchar, errorCode);
         command.Parameters.AddWithValue("error_detail", NpgsqlDbType.Varchar, errorDetail);
-        if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
+        if (await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) != 1)
             throw new ApplicationRequestLeaseLostException(lease.Request.Id);
-        await NotifyAsync(connection, transaction, _responseChannel, lease.Request.Id, cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        await NotifyAsync(connection, transaction, _responseChannel, lease.Request.Id, cancellationToken).ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<ApplicationExchangeSnapshot?> GetAsync(
@@ -428,12 +417,14 @@ public class PostgresApplicationBus : IApplicationRequestClient, IApplicationReq
     {
         if (requestId == Guid.Empty)
             throw new ArgumentException("The application request identifier is required.", nameof(requestId));
-        await using var command = _dataSource.CreateCommand(
+        var command = _dataSource.CreateCommand(
             SelectColumns + " WHERE id = @id LIMIT 1");
+        await using var commandLifetime = command.ConfigureAwait(false);
         command.Parameters.AddWithValue("id", NpgsqlDbType.Uuid, requestId);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        return await reader.ReadAsync(cancellationToken)
-            ? await ReadSnapshotAsync(reader, cancellationToken)
+        var reader = (await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false));
+        await using var readerLifetime = reader.ConfigureAwait(false);
+        return await reader.ReadAsync(cancellationToken).ConfigureAwait(false)
+            ? await ReadSnapshotAsync(reader, cancellationToken).ConfigureAwait(false)
             : null;
     }
 
@@ -441,7 +432,7 @@ public class PostgresApplicationBus : IApplicationRequestClient, IApplicationReq
         ApplicationRequest request,
         CancellationToken cancellationToken)
     {
-        await using var command = _dataSource.CreateCommand(
+        var command = _dataSource.CreateCommand(
             SelectColumns
             + """
              WHERE id = @id
@@ -451,6 +442,7 @@ public class PostgresApplicationBus : IApplicationRequestClient, IApplicationReq
                     AND idempotency_key = @idempotency_key)
              LIMIT 1
             """);
+        await using var commandLifetime = command.ConfigureAwait(false);
         command.Parameters.AddWithValue("id", NpgsqlDbType.Uuid, request.Id);
         command.Parameters.AddWithValue("session_id", NpgsqlDbType.Uuid, request.SessionId);
         command.Parameters.AddWithValue("sequence", NpgsqlDbType.Bigint, request.Sequence);
@@ -459,15 +451,16 @@ public class PostgresApplicationBus : IApplicationRequestClient, IApplicationReq
             "idempotency_key",
             NpgsqlDbType.Varchar,
             (object?)request.IdempotencyKey ?? DBNull.Value);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        return await reader.ReadAsync(cancellationToken)
-            ? await ReadSnapshotAsync(reader, cancellationToken)
+        var reader = (await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false));
+        await using var readerLifetime = reader.ConfigureAwait(false);
+        return await reader.ReadAsync(cancellationToken).ConfigureAwait(false)
+            ? await ReadSnapshotAsync(reader, cancellationToken).ConfigureAwait(false)
             : null;
     }
 
     private async Task ExpireDueRequestsAsync(CancellationToken cancellationToken)
     {
-        await using var command = _dataSource.CreateCommand(
+        var command = _dataSource.CreateCommand(
             $"""
             WITH expired AS (
                 UPDATE {_tableName}
@@ -483,10 +476,39 @@ public class PostgresApplicationBus : IApplicationRequestClient, IApplicationReq
             )
             SELECT pg_notify('{_responseChannel}', id::text) FROM expired
             """);
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        await using var commandLifetime = command.ConfigureAwait(false);
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<ApplicationExchangeSnapshot> ReadSnapshotAsync(
+        NpgsqlDataReader reader,
+        CancellationToken cancellationToken)
+    {
+        var request = await ReadRequestAsync(reader, cancellationToken).ConfigureAwait(false);
+        var state = reader.GetString(19);
+        var response = string.Equals(state, ApplicationExchangeStates.Completed, StringComparison.Ordinal)
+            ? await ReadResponseAsync(reader, request.Id, cancellationToken).ConfigureAwait(false)
+            : null;
+        return new ApplicationExchangeSnapshot(
+            request,
+            state,
+            reader.GetInt32(20),
+            await reader.IsDBNullAsync(21, cancellationToken).ConfigureAwait(false)
+                ? null : reader.GetString(21),
+            await reader.IsDBNullAsync(22, cancellationToken).ConfigureAwait(false)
+                ? null : ToDateTimeOffset(reader.GetDateTime(22)),
+            response,
+            await reader.IsDBNullAsync(37, cancellationToken).ConfigureAwait(false)
+                ? null : ToDateTimeOffset(reader.GetDateTime(37)),
+            state is ApplicationExchangeStates.Failed or ApplicationExchangeStates.Expired
+                ? reader.GetString(35)
+                : null,
+            state is ApplicationExchangeStates.Failed or ApplicationExchangeStates.Expired
+                ? reader.GetString(36)
+                : null);
+    }
+
+    private async Task<ApplicationRequest> ReadRequestAsync(
         NpgsqlDataReader reader,
         CancellationToken cancellationToken)
     {
@@ -500,15 +522,19 @@ public class PostgresApplicationBus : IApplicationRequestClient, IApplicationReq
         var canonicalRequestMetadata = MessagingValues.ValidateAndSerializeMetadata(
             requestMetadata,
             _options);
-        var idempotencyKey = reader.IsDBNull(16) ? null : reader.GetString(16);
+        var idempotencyKey = await reader.IsDBNullAsync(16, cancellationToken).ConfigureAwait(false)
+            ? null
+            : reader.GetString(16);
         var createdAt = ToDateTimeOffset(reader.GetDateTime(17));
         var deadline = ToDateTimeOffset(reader.GetDateTime(18));
         var storedRequestPayload = new StoredProtectedPayload(
             reader.GetString(6),
-            reader.IsDBNull(7) ? null : reader.GetFieldValue<byte[]>(7),
+            await reader.IsDBNullAsync(7, cancellationToken).ConfigureAwait(false)
+                ? null
+                : await reader.GetFieldValueAsync<byte[]>(7, cancellationToken).ConfigureAwait(false),
             ReadLargeObjectReference(reader, 8, 9, 10, 11, 14),
-            reader.GetFieldValue<byte[]>(12),
-            reader.GetFieldValue<byte[]>(13),
+            await reader.GetFieldValueAsync<byte[]>(12, cancellationToken).ConfigureAwait(false),
+            await reader.GetFieldValueAsync<byte[]>(13, cancellationToken).ConfigureAwait(false),
             reader.GetString(14),
             reader.GetInt64(11));
         var requestAssociatedData = MessagingValues.RequestAssociatedData(
@@ -526,11 +552,11 @@ public class PostgresApplicationBus : IApplicationRequestClient, IApplicationReq
         var protectedRequestPayload = await _payloadStorage.LoadAsync(
             storedRequestPayload,
             "application request",
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         var requestPayload = _protector.Unprotect(
             protectedRequestPayload,
             requestAssociatedData);
-        var request = new ApplicationRequest(
+        return new ApplicationRequest(
             id,
             sessionId,
             sequence,
@@ -542,65 +568,57 @@ public class PostgresApplicationBus : IApplicationRequestClient, IApplicationReq
             createdAt,
             deadline,
             idempotencyKey);
+    }
 
-        var state = reader.GetString(19);
-        ApplicationResponse? response = null;
-        if (state == ApplicationExchangeStates.Completed)
-        {
-            var responseContentType = reader.GetString(23);
-            var responseMetadata = MessagingValues.DeserializeMetadata(reader.GetString(33));
-            var canonicalResponseMetadata = MessagingValues.ValidateAndSerializeMetadata(
-                responseMetadata,
-                _options);
-            var responseIsError = reader.GetBoolean(34);
-            var responseErrorCode = reader.IsDBNull(35) ? null : reader.GetString(35);
-            var responseErrorDetail = reader.IsDBNull(36) ? null : reader.GetString(36);
-            var storedResponsePayload = new StoredProtectedPayload(
-                reader.GetString(24),
-                reader.IsDBNull(25) ? null : reader.GetFieldValue<byte[]>(25),
-                ReadLargeObjectReference(reader, 26, 27, 28, 29, 32),
-                reader.GetFieldValue<byte[]>(30),
-                reader.GetFieldValue<byte[]>(31),
-                reader.GetString(32),
-                reader.GetInt64(29));
-            var protectedResponsePayload = await _payloadStorage.LoadAsync(
-                storedResponsePayload,
-                "application response",
-                cancellationToken);
-            var responsePayload = _protector.Unprotect(
-                protectedResponsePayload,
-                MessagingValues.ResponseAssociatedData(
-                    id,
-                    responseContentType,
-                    canonicalResponseMetadata,
-                    responseIsError,
-                    responseErrorCode,
-                    responseErrorDetail,
-                    _responseDomain));
-            response = new ApplicationResponse(
-                id,
+    private async Task<ApplicationResponse> ReadResponseAsync(
+        NpgsqlDataReader reader,
+        Guid requestId,
+        CancellationToken cancellationToken)
+    {
+        var responseContentType = reader.GetString(23);
+        var responseMetadata = MessagingValues.DeserializeMetadata(reader.GetString(33));
+        var canonicalResponseMetadata = MessagingValues.ValidateAndSerializeMetadata(
+            responseMetadata,
+            _options);
+        var responseIsError = reader.GetBoolean(34);
+        var responseErrorCode = await reader.IsDBNullAsync(35, cancellationToken).ConfigureAwait(false)
+            ? null
+            : reader.GetString(35);
+        var responseErrorDetail = await reader.IsDBNullAsync(36, cancellationToken).ConfigureAwait(false)
+            ? null
+            : reader.GetString(36);
+        var storedResponsePayload = new StoredProtectedPayload(
+            reader.GetString(24),
+            await reader.IsDBNullAsync(25, cancellationToken).ConfigureAwait(false)
+                ? null
+                : await reader.GetFieldValueAsync<byte[]>(25, cancellationToken).ConfigureAwait(false),
+            ReadLargeObjectReference(reader, 26, 27, 28, 29, 32),
+            await reader.GetFieldValueAsync<byte[]>(30, cancellationToken).ConfigureAwait(false),
+            await reader.GetFieldValueAsync<byte[]>(31, cancellationToken).ConfigureAwait(false),
+            reader.GetString(32),
+            reader.GetInt64(29));
+        var protectedResponsePayload = await _payloadStorage.LoadAsync(
+            storedResponsePayload,
+            "application response",
+            cancellationToken).ConfigureAwait(false);
+        var responsePayload = _protector.Unprotect(
+            protectedResponsePayload,
+            MessagingValues.ResponseAssociatedData(
+                requestId,
                 responseContentType,
-                responsePayload,
-                responseMetadata,
+                canonicalResponseMetadata,
                 responseIsError,
                 responseErrorCode,
-                responseErrorDetail);
-        }
-
-        return new ApplicationExchangeSnapshot(
-            request,
-            state,
-            reader.GetInt32(20),
-            reader.IsDBNull(21) ? null : reader.GetString(21),
-            reader.IsDBNull(22) ? null : ToDateTimeOffset(reader.GetDateTime(22)),
-            response,
-            reader.IsDBNull(37) ? null : ToDateTimeOffset(reader.GetDateTime(37)),
-            state is ApplicationExchangeStates.Failed or ApplicationExchangeStates.Expired
-                ? reader.GetString(35)
-                : null,
-            state is ApplicationExchangeStates.Failed or ApplicationExchangeStates.Expired
-                ? reader.GetString(36)
-                : null);
+                responseErrorDetail,
+                _responseDomain));
+        return new ApplicationResponse(
+            requestId,
+            responseContentType,
+            responsePayload,
+            responseMetadata,
+            responseIsError,
+            responseErrorCode,
+            responseErrorDetail);
     }
 
     private static void AddRequestParameters(
@@ -705,12 +723,13 @@ public class PostgresApplicationBus : IApplicationRequestClient, IApplicationReq
         Guid requestId,
         CancellationToken cancellationToken)
     {
-        await using var notify = connection.CreateCommand();
+        var notify = connection.CreateCommand();
+        await using var notifyLifetime = notify.ConfigureAwait(false);
         notify.Transaction = transaction;
         notify.CommandText = "SELECT pg_notify(@channel, @payload)";
         notify.Parameters.AddWithValue("channel", NpgsqlDbType.Text, channel);
         notify.Parameters.AddWithValue("payload", NpgsqlDbType.Text, requestId.ToString("D"));
-        await notify.ExecuteNonQueryAsync(cancellationToken);
+        await notify.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async Task TryDeleteUnreferencedAsync(
@@ -719,14 +738,14 @@ public class PostgresApplicationBus : IApplicationRequestClient, IApplicationReq
     {
         try
         {
-            await _payloadStorage.DeleteIfCreatedAsync(payload, CancellationToken.None);
+            await _payloadStorage.DeleteIfCreatedAsync(payload, CancellationToken.None).ConfigureAwait(false);
         }
+        // The database state is already authoritative; orphan cleanup is best-effort and logged.
+#pragma warning disable CA1031
         catch (Exception exception)
+#pragma warning restore CA1031
         {
-            _logger.LogWarning(
-                exception,
-                "Could not remove an unreferenced {PayloadDescription} large object",
-                description);
+            LogOrphanCleanupFailure(_logger, exception, description);
         }
     }
 
@@ -737,15 +756,61 @@ public class PostgresApplicationBus : IApplicationRequestClient, IApplicationReq
         left.Id == right.Id
         && left.SessionId == right.SessionId
         && left.Sequence == right.Sequence
-        && left.Protocol == right.Protocol
-        && left.Operation == right.Operation
-        && left.ContentType == right.ContentType
+        && string.Equals(left.Protocol, right.Protocol, StringComparison.Ordinal)
+        && string.Equals(left.Operation, right.Operation, StringComparison.Ordinal)
+        && string.Equals(left.ContentType, right.ContentType, StringComparison.Ordinal)
         && left.Payload.AsSpan().SequenceEqual(right.Payload)
         && left.Metadata.Count == right.Metadata.Count
-        && left.Metadata.All(item => right.Metadata.TryGetValue(item.Key, out var value) && value == item.Value)
+        && left.Metadata.All(item => right.Metadata.TryGetValue(item.Key, out var value)
+            && string.Equals(value, item.Value, StringComparison.Ordinal))
         && left.CreatedAt == right.CreatedAt
         && left.Deadline == right.Deadline
-        && left.IdempotencyKey == right.IdempotencyKey;
+        && string.Equals(left.IdempotencyKey, right.IdempotencyKey, StringComparison.Ordinal);
+
+    private string InsertSql => $"""
+            INSERT INTO {_tableName} (
+                id, session_id, sequence, protocol, operation, request_content_type,
+                request_encryption_key_id, request_payload_inline,
+                request_payload_blob_provider, request_payload_blob_name,
+                request_payload_blob_etag, request_payload_length,
+                request_payload_nonce, request_payload_tag, request_payload_sha256,
+                request_metadata,
+                idempotency_key, created_at, deadline_at)
+            VALUES (
+                @id, @session_id, @sequence, @protocol, @operation, @content_type,
+                @encryption_key_id, @payload_inline, @payload_blob_provider,
+                @payload_blob_name, @payload_blob_etag, @payload_length,
+                @payload_nonce, @payload_tag, @payload_sha256, @metadata,
+                @idempotency_key, @created_at, @deadline_at)
+            ON CONFLICT DO NOTHING
+            """;
+
+    private string CompleteSql => $"""
+            UPDATE {_tableName}
+            SET state = 'completed',
+                lease_owner = NULL,
+                lease_expires_at = NULL,
+                response_content_type = @content_type,
+                response_encryption_key_id = @encryption_key_id,
+                response_payload_inline = @payload_inline,
+                response_payload_blob_provider = @payload_blob_provider,
+                response_payload_blob_name = @payload_blob_name,
+                response_payload_blob_etag = @payload_blob_etag,
+                response_payload_length = @payload_length,
+                response_payload_nonce = @payload_nonce,
+                response_payload_tag = @payload_tag,
+                response_payload_sha256 = @payload_sha256,
+                response_metadata = @metadata,
+                response_is_error = @is_error,
+                error_code = @error_code,
+                error_detail = @error_detail,
+                completed_at = clock_timestamp()
+            WHERE id = @id
+                AND state = 'processing'
+                AND lease_owner = @worker_id
+                AND lease_expires_at > clock_timestamp()
+                AND deadline_at > clock_timestamp()
+            """;
 
     private string SelectColumns => $"""
         SELECT id, session_id, sequence, protocol, operation, request_content_type,
@@ -783,4 +848,19 @@ public class PostgresApplicationBus : IApplicationRequestClient, IApplicationReq
         request.response_is_error, request.error_code, request.error_detail,
         request.completed_at
         """;
+
+    [LoggerMessage(
+        EventId = 2001,
+        Level = LogLevel.Debug,
+        Message = "Accepted an idempotent application request enqueue for {RequestId}")]
+    private static partial void LogIdempotentEnqueue(ILogger logger, Guid requestId);
+
+    [LoggerMessage(
+        EventId = 2002,
+        Level = LogLevel.Warning,
+        Message = "Could not remove an unreferenced {PayloadDescription} large object")]
+    private static partial void LogOrphanCleanupFailure(
+        ILogger logger,
+        Exception exception,
+        string payloadDescription);
 }

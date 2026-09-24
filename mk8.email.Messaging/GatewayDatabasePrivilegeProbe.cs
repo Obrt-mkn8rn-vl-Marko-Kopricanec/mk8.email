@@ -10,13 +10,22 @@ public static class GatewayDatabasePrivilegeProbe
     {
         ArgumentNullException.ThrowIfNull(dataSource);
         if (!await new PostgresApplicationTransportControl(dataSource)
-                .IsAvailableAsync(cancellationToken))
+                .IsAvailableAsync(cancellationToken).ConfigureAwait(false))
         {
             throw new InvalidOperationException(
                 "The Gateway database role lacks a required messaging-table permission.");
         }
 
-        await using var command = dataSource.CreateCommand(
+        var command = dataSource.CreateCommand(PrivilegeQuery);
+        await using var commandLifetime = command.ConfigureAwait(false);
+        if (await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not true)
+        {
+            throw new InvalidOperationException(
+                "The Gateway database role has privileges outside the presentation control plane.");
+        }
+    }
+
+    private const string PrivilegeQuery =
             """
             SELECT NOT EXISTS (
                     SELECT 1 FROM pg_roles
@@ -105,11 +114,5 @@ public static class GatewayDatabasePrivilegeProbe
                         AND (has_sequence_privilege(current_user, relation.oid, 'USAGE')
                             OR has_sequence_privilege(current_user, relation.oid, 'SELECT')
                             OR has_sequence_privilege(current_user, relation.oid, 'UPDATE')))
-            """);
-        if (await command.ExecuteScalarAsync(cancellationToken) is not true)
-        {
-            throw new InvalidOperationException(
-                "The Gateway database role has privileges outside the presentation control plane.");
-        }
-    }
+            """;
 }

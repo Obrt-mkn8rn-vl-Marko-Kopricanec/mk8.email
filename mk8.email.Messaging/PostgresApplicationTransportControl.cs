@@ -9,7 +9,7 @@ public sealed class PostgresApplicationTransportControl(NpgsqlDataSource dataSou
     {
         try
         {
-            await using var command = dataSource.CreateCommand(
+            var command = dataSource.CreateCommand(
                 """
                 SELECT has_schema_privilege(current_user, 'public', 'USAGE')
                     AND has_table_privilege(current_user,
@@ -37,7 +37,8 @@ public sealed class PostgresApplicationTransportControl(NpgsqlDataSource dataSou
                     AND has_table_privilege(current_user,
                         to_regclass('pop3_maildrop_leases'), 'DELETE')
                 """);
-            return await command.ExecuteScalarAsync(cancellationToken) is true;
+            await using var commandLifetime = command.ConfigureAwait(false);
+            return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is true;
         }
         catch (Exception exception) when (exception is NpgsqlException or TimeoutException)
         {

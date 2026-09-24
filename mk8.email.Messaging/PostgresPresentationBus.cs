@@ -4,12 +4,6 @@ using Npgsql;
 
 namespace mk8.email.Messaging;
 
-internal enum PostgresRequestLane
-{
-    Application,
-    Presentation,
-}
-
 public sealed class PostgresPresentationBus : PostgresApplicationBus,
     IPresentationRequestClient,
     IPresentationRequestConsumer

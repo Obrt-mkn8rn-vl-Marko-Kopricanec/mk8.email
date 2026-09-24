@@ -11,23 +11,27 @@ public static class PostgresMessagingSchema
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(dataSource);
-        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
-        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        await using (var schemaLock = connection.CreateCommand())
+        var connection = (await dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false));
+        await using var connectionLifetime = connection.ConfigureAwait(false);
+        var transaction = (await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false));
+        await using var transactionLifetime = transaction.ConfigureAwait(false);
+        var schemaLock = connection.CreateCommand();
+        await using (schemaLock.ConfigureAwait(false))
         {
             schemaLock.Transaction = transaction;
             schemaLock.CommandText = "SELECT pg_advisory_xact_lock(@lock_id)";
             schemaLock.Parameters.AddWithValue("lock_id", SchemaLockId);
-            await schemaLock.ExecuteNonQueryAsync(cancellationToken);
+            await schemaLock.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        await using (var command = connection.CreateCommand())
+        var command = connection.CreateCommand();
+        await using (command.ConfigureAwait(false))
         {
             command.Transaction = transaction;
             command.CommandText = SchemaSql;
-            await command.ExecuteNonQueryAsync(cancellationToken);
+            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
-        await transaction.CommitAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private const string SchemaSql = """

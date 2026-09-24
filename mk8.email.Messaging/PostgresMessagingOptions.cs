@@ -8,6 +8,8 @@ public sealed class PostgresMessagingOptions
     public TimeSpan LeaseDuration { get; init; } = TimeSpan.FromMinutes(2);
     public TimeSpan NotificationFallbackInterval { get; init; } = TimeSpan.FromSeconds(30);
 
+    // These names identify invalid configuration properties, not method parameters.
+#pragma warning disable MA0015
     internal void Validate()
     {
         if (MaxPayloadBytes is < 65_536 or > 1_073_741_824)
@@ -27,4 +29,5 @@ public sealed class PostgresMessagingOptions
             throw new ArgumentOutOfRangeException(nameof(NotificationFallbackInterval));
         }
     }
+#pragma warning restore MA0015
 }

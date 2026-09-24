@@ -23,19 +23,22 @@ public sealed class DavResourceContentService(
 
         var hash = Convert.ToHexStringLower(SHA256.HashData(content));
         var previous = TryGetReference(resource);
-        await using var source = new MemoryStream(content, writable: false);
-        var written = await objects.PutIfAbsentAsync(
+        var source = new MemoryStream(content, writable: false);
+        await using (source.ConfigureAwait(false))
+        {
+            var written = await objects.PutIfAbsentAsync(
             BuildObjectName(resource.Id, hash),
             source,
             content.LongLength,
             hash,
             resource.ContentType,
-            cancellationToken);
-        ApplyReference(resource, written.Reference);
-        if (written.Created)
-            transactionEffects.DeleteOnRollback(written.Reference);
-        if (previous is not null && previous != written.Reference)
-            transactionEffects.DeleteOnCommit(previous);
+            cancellationToken).ConfigureAwait(false);
+            ApplyReference(resource, written.Reference);
+            if (written.Created)
+                transactionEffects.DeleteOnRollback(written.Reference);
+            if (previous is not null && previous != written.Reference)
+                transactionEffects.DeleteOnCommit(previous);
+        }
     }
 
     public async Task<byte[]> ReadAsync(
@@ -54,9 +57,12 @@ public sealed class DavResourceContentService(
             var reference = TryGetReference(resource)
                 ?? throw new InvalidOperationException(
                     $"DAV resource {resource.Id:D} has no valid storage reference.");
-            await using var destination = new MemoryStream();
-            await objects.CopyToAsync(reference, destination, cancellationToken);
-            content = destination.ToArray();
+            var destination = new MemoryStream();
+            await using (destination.ConfigureAwait(false))
+            {
+                await objects.CopyToAsync(reference, destination, cancellationToken).ConfigureAwait(false);
+                content = destination.ToArray();
+            }
         }
 
         if (content.LongLength != resource.SizeBytes)
@@ -129,7 +135,7 @@ public sealed class DavResourceContentService(
     {
         try
         {
-            await objects.DeleteIfMatchAsync(reference, CancellationToken.None);
+            await objects.DeleteIfMatchAsync(reference, CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception exception)
         {

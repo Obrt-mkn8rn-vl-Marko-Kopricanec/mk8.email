@@ -32,7 +32,7 @@ public sealed class MailQueueLargeObjectMigrationService(
 
         if (!IsPostgreSql())
         {
-            await MigrateRowsAsync(cancellationToken);
+            await MigrateRowsAsync(cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -42,13 +42,13 @@ public sealed class MailQueueLargeObjectMigrationService(
         try
         {
             if (closeConnection)
-                await database.Database.OpenConnectionAsync(cancellationToken);
+                await database.Database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
             await database.Database.ExecuteSqlInterpolatedAsync(
                 $"SELECT pg_advisory_lock({MigrationLockKey})",
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             lockTaken = true;
-            await MigrateRowsAsync(cancellationToken);
-            await EnforceExternalStorageAsync(cancellationToken);
+            await MigrateRowsAsync(cancellationToken).ConfigureAwait(false);
+            await EnforceExternalStorageAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -58,13 +58,13 @@ public sealed class MailQueueLargeObjectMigrationService(
                 {
                     await database.Database.ExecuteSqlInterpolatedAsync(
                         $"SELECT pg_advisory_unlock({MigrationLockKey})",
-                        CancellationToken.None);
+                        CancellationToken.None).ConfigureAwait(false);
                 }
             }
             finally
             {
                 if (closeConnection)
-                    await database.Database.CloseConnectionAsync();
+                    await database.Database.CloseConnectionAsync().ConfigureAwait(false);
             }
         }
     }
@@ -78,12 +78,12 @@ public sealed class MailQueueLargeObjectMigrationService(
                 .OrderBy(message => message.ReceivedAt)
                 .ThenBy(message => message.Id)
                 .Take(BatchSize)
-                .ToListAsync(cancellationToken);
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
             if (legacy.Count == 0)
                 break;
 
             foreach (var message in legacy)
-                await MigrateAsync(message, cancellationToken);
+                await MigrateAsync(message, cancellationToken).ConfigureAwait(false);
             database.ChangeTracker.Clear();
         }
     }
@@ -108,70 +108,82 @@ public sealed class MailQueueLargeObjectMigrationService(
 
         var hash = Convert.ToHexStringLower(SHA256.HashData(content));
         var ownsTransaction = database.Database.IsRelational();
-        await using var transaction = ownsTransaction
+        var transaction = ownsTransaction
             ? await database.Database.BeginTransactionAsync(cancellationToken)
-            : null;
-        LargeObjectWriteResult? written = null;
-        var commitAttempted = false;
-        try
+.ConfigureAwait(false) : null;
+        // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+        await using (transaction)
         {
-            await using var source = new MemoryStream(content, writable: false);
-            written = await objects.PutIfAbsentAsync(
-                MailQueueContentService.BuildObjectName(message.Id),
-                source,
-                content.LongLength,
-                hash,
-                "message/rfc822",
-                cancellationToken);
-            MailQueueContentService.ApplyReference(message, written.Reference);
-            await database.SaveChangesAsync(cancellationToken);
-            if (transaction is not null)
+#pragma warning restore CA2007, MA0004
+            LargeObjectWriteResult? written = null;
+            var commitAttempted = false;
+            try
             {
-                commitAttempted = true;
-                await transaction.CommitAsync(cancellationToken);
-            }
-        }
-        catch
-        {
-            if (transaction is not null)
-            {
-                try
+                var source = new MemoryStream(content, writable: false);
+                await using var sourceLifetime = source.ConfigureAwait(false);
+                written = await objects.PutIfAbsentAsync(
+                    MailQueueContentService.BuildObjectName(message.Id),
+                    source,
+                    content.LongLength,
+                    hash,
+                    "message/rfc822",
+                    cancellationToken).ConfigureAwait(false);
+                MailQueueContentService.ApplyReference(message, written.Reference);
+                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+                if (transaction is not null)
                 {
-                    await transaction.RollbackAsync(CancellationToken.None);
-                }
-                catch (Exception rollbackException)
-                {
-                    logger.LogWarning(
-                        rollbackException,
-                        "Could not roll back queue content migration for {QueueId}",
-                        message.Id);
+                    commitAttempted = true;
+                    await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
                 }
             }
-            if (written is { Created: true } && !commitAttempted)
+            catch
             {
-                try
+                if (transaction is not null)
                 {
-                    await objects.DeleteIfMatchAsync(written.Reference, CancellationToken.None);
+                    try
+                    {
+                        await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (Exception rollbackException)
+                    {
+                        logger.LogWarning(
+                            rollbackException,
+                            "Could not roll back queue content migration for {QueueId}",
+                            message.Id);
+                    }
                 }
-                catch (Exception cleanupException)
+                if (written is { Created: true } && !commitAttempted)
                 {
-                    logger.LogWarning(
-                        cleanupException,
-                        "Could not clean up queue migration object {ObjectName}",
-                        written.Reference.ObjectName);
+                    try
+                    {
+                        await objects.DeleteIfMatchAsync(written.Reference, CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (Exception cleanupException)
+                    {
+                        logger.LogWarning(
+                            cleanupException,
+                            "Could not clean up queue migration object {ObjectName}",
+                            written.Reference.ObjectName);
+                    }
                 }
+                throw;
             }
-            throw;
         }
     }
 
     private async Task EnforceExternalStorageAsync(CancellationToken cancellationToken)
     {
-        await using var transaction = await database.Database.BeginTransactionAsync(cancellationToken);
-        try
+        var transaction = await database.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+        await using (transaction)
         {
-            await database.Database.ExecuteSqlRawAsync(
-                """
+#pragma warning restore CA2007, MA0004
+            try
+            {
+                await database.Database.ExecuteSqlRawAsync(
+                    """
                 DO $migration$
                 BEGIN
                     IF NOT EXISTS (
@@ -193,13 +205,14 @@ public sealed class MailQueueLargeObjectMigrationService(
                 ALTER TABLE mail_queue_messages
                     VALIDATE CONSTRAINT ck_mail_queue_messages_external_storage;
                 """,
-                cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-        }
-        catch
-        {
-            await transaction.RollbackAsync(CancellationToken.None);
-            throw;
+                    cancellationToken).ConfigureAwait(false);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                throw;
+            }
         }
     }
 

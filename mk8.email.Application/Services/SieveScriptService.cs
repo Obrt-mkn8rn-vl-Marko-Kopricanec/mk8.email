@@ -37,12 +37,12 @@ internal sealed class SieveScriptService(
 
         var exists = await database.SieveScripts.AsNoTracking().AnyAsync(
             script => script.UserId == userId && script.Name == normalized,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (exists)
             return Success();
         var count = await database.SieveScripts.AsNoTracking().CountAsync(
             script => script.UserId == userId,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         return count < maximumScripts
             ? Success()
             : Failure("The maximum number of scripts has been reached.", "QUOTA/MAXSCRIPTS");
@@ -60,7 +60,7 @@ internal sealed class SieveScriptService(
                 script.IsActive,
                 script.CreatedAt,
                 script.UpdatedAt))
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
 
     public async Task<StoredSieveScript?> GetAsync(
         Guid userId,
@@ -72,12 +72,12 @@ internal sealed class SieveScriptService(
         var script = await database.SieveScripts
             .AsNoTracking()
             .Where(script => script.UserId == userId && script.Name == normalized)
-            .SingleOrDefaultAsync(cancellationToken);
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
         if (script is null)
             return null;
         return new StoredSieveScript(
             script.Name,
-            await contentService.ReadAsync(script, cancellationToken),
+            await contentService.ReadAsync(script, cancellationToken).ConfigureAwait(false),
             script.IsActive,
             script.CreatedAt,
             script.UpdatedAt);
@@ -106,65 +106,71 @@ internal sealed class SieveScriptService(
         var compilation = Validate(content);
         if (!compilation.Succeeded)
             return Failure(FormatDiagnostic(compilation.Diagnostics[0]));
-        if (!await database.Users.AsNoTracking().AnyAsync(user => user.Id == userId, cancellationToken))
+        if (!await database.Users.AsNoTracking().AnyAsync(user => user.Id == userId, cancellationToken).ConfigureAwait(false))
             return Failure("The user does not exist.");
 
-        await using var transaction = database.Database.IsRelational()
+        var transaction = database.Database.IsRelational()
             ? await database.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken)
-            : null;
-        var marker = transactionEffects.Mark();
-        var commitAttempted = false;
-        try
+.ConfigureAwait(false) : null;
+        // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+        await using (transaction)
         {
-            var now = DateTime.UtcNow;
-            var script = await database.SieveScripts.SingleOrDefaultAsync(
-                item => item.UserId == userId && item.Name == normalized,
-                cancellationToken);
-            if (script is null)
+#pragma warning restore CA2007, MA0004
+            var marker = transactionEffects.Mark();
+            var commitAttempted = false;
+            try
             {
-                var scriptCount = await database.SieveScripts.CountAsync(
-                    item => item.UserId == userId,
-                    cancellationToken);
-                if (scriptCount >= maximumScripts)
+                var now = DateTime.UtcNow;
+                var script = await database.SieveScripts.SingleOrDefaultAsync(
+                    item => item.UserId == userId && item.Name == normalized,
+                    cancellationToken).ConfigureAwait(false);
+                if (script is null)
                 {
-                    if (transaction is not null)
-                        await transaction.RollbackAsync(cancellationToken);
-                    transactionEffects.Discard(marker);
-                    return Failure("The maximum number of scripts has been reached.", "QUOTA/MAXSCRIPTS");
+                    var scriptCount = await database.SieveScripts.CountAsync(
+                        item => item.UserId == userId,
+                        cancellationToken).ConfigureAwait(false);
+                    if (scriptCount >= maximumScripts)
+                    {
+                        if (transaction is not null)
+                            await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
+                        transactionEffects.Discard(marker);
+                        return Failure("The maximum number of scripts has been reached.", "QUOTA/MAXSCRIPTS");
+                    }
+                    script = new SieveScriptDB
+                    {
+                        Id = Guid.CreateVersion7(),
+                        UserId = userId,
+                        Name = normalized,
+                        CreatedAt = now,
+                        UpdatedAt = now,
+                    };
+                    database.SieveScripts.Add(script);
                 }
-                script = new SieveScriptDB
+                else
                 {
-                    Id = Guid.CreateVersion7(),
-                    UserId = userId,
-                    Name = normalized,
-                    CreatedAt = now,
-                    UpdatedAt = now,
-                };
-                database.SieveScripts.Add(script);
-            }
-            else
-            {
-                script.UpdatedAt = now;
-            }
+                    script.UpdatedAt = now;
+                }
 
-            await contentService.SetAsync(script, content, cancellationToken);
-            await database.SaveChangesAsync(cancellationToken);
-            if (transaction is not null)
-            {
-                commitAttempted = true;
-                await transaction.CommitAsync(cancellationToken);
+                await contentService.SetAsync(script, content, cancellationToken).ConfigureAwait(false);
+                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+                if (transaction is not null)
+                {
+                    commitAttempted = true;
+                    await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                }
+                await transactionEffects.CommitAsync(marker).ConfigureAwait(false);
+                return Success();
             }
-            await transactionEffects.CommitAsync(marker);
-            return Success();
-        }
-        catch
-        {
-            await TryRollbackAsync(transaction);
-            if (commitAttempted)
-                transactionEffects.Discard(marker);
-            else
-                await transactionEffects.RollbackAsync(marker);
-            throw;
+            catch
+            {
+                await TryRollbackAsync(transaction).ConfigureAwait(false);
+                if (commitAttempted)
+                    transactionEffects.Discard(marker);
+                else
+                    await transactionEffects.RollbackAsync(marker).ConfigureAwait(false);
+                throw;
+            }
         }
     }
 
@@ -177,46 +183,52 @@ internal sealed class SieveScriptService(
         if (!string.IsNullOrEmpty(name) && !TryNormalizeName(name, out normalized))
             return Failure("The script name is invalid.");
 
-        await using var transaction = database.Database.IsRelational()
+        var transaction = database.Database.IsRelational()
             ? await database.Database.BeginTransactionAsync(
                 IsolationLevel.Serializable,
                 cancellationToken)
-            : null;
-        SieveScriptDB? target = null;
-        if (normalized is not null)
+.ConfigureAwait(false) : null;
+        // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+        await using (transaction)
         {
-            target = await database.SieveScripts.SingleOrDefaultAsync(
-                script => script.UserId == userId && script.Name == normalized,
-                cancellationToken);
-            if (target is null)
+#pragma warning restore CA2007, MA0004
+            SieveScriptDB? target = null;
+            if (normalized is not null)
             {
-                if (transaction is not null)
-                    await transaction.RollbackAsync(cancellationToken);
-                return Failure("The script does not exist.", "NONEXISTENT");
+                target = await database.SieveScripts.SingleOrDefaultAsync(
+                    script => script.UserId == userId && script.Name == normalized,
+                    cancellationToken).ConfigureAwait(false);
+                if (target is null)
+                {
+                    if (transaction is not null)
+                        await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
+                    return Failure("The script does not exist.", "NONEXISTENT");
+                }
             }
-        }
 
-        var current = await database.SieveScripts
-            .Where(script => script.UserId == userId && script.IsActive)
-            .SingleOrDefaultAsync(cancellationToken);
-        if (current is not null
-            && (normalized is null || !string.Equals(current.Name, normalized, StringComparison.Ordinal)))
-        {
-            current.IsActive = false;
-            current.UpdatedAt = DateTime.UtcNow;
-            await database.SaveChangesAsync(cancellationToken);
-        }
+            var current = await database.SieveScripts
+                .Where(script => script.UserId == userId && script.IsActive)
+                .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+            if (current is not null
+                && (normalized is null || !string.Equals(current.Name, normalized, StringComparison.Ordinal)))
+            {
+                current.IsActive = false;
+                current.UpdatedAt = DateTime.UtcNow;
+                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            }
 
-        if (target is not null)
-        {
-            target.IsActive = true;
-            target.UpdatedAt = DateTime.UtcNow;
-            await database.SaveChangesAsync(cancellationToken);
-        }
+            if (target is not null)
+            {
+                target.IsActive = true;
+                target.UpdatedAt = DateTime.UtcNow;
+                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            }
 
-        if (transaction is not null)
-            await transaction.CommitAsync(cancellationToken);
-        return Success();
+            if (transaction is not null)
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return Success();
+        }
     }
 
     public async Task<SieveScriptOperationResult> DeleteAsync(
@@ -226,39 +238,45 @@ internal sealed class SieveScriptService(
     {
         if (!TryNormalizeName(name, out var normalized))
             return Failure("The script name is invalid.");
-        await using var transaction = database.Database.IsRelational()
+        var transaction = database.Database.IsRelational()
             ? await database.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken)
-            : null;
-        var marker = transactionEffects.Mark();
-        var commitAttempted = false;
-        try
+.ConfigureAwait(false) : null;
+        // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+        await using (transaction)
         {
-            var script = await database.SieveScripts.SingleOrDefaultAsync(
-                item => item.UserId == userId && item.Name == normalized,
-                cancellationToken);
-            if (script is null)
-                return Failure("The script does not exist.", "NONEXISTENT");
-            if (script.IsActive)
-                return Failure("The active script cannot be deleted.", "ACTIVE");
-            contentService.DeleteOnCommit(script);
-            database.SieveScripts.Remove(script);
-            await database.SaveChangesAsync(cancellationToken);
-            if (transaction is not null)
+#pragma warning restore CA2007, MA0004
+            var marker = transactionEffects.Mark();
+            var commitAttempted = false;
+            try
             {
-                commitAttempted = true;
-                await transaction.CommitAsync(cancellationToken);
+                var script = await database.SieveScripts.SingleOrDefaultAsync(
+                    item => item.UserId == userId && item.Name == normalized,
+                    cancellationToken).ConfigureAwait(false);
+                if (script is null)
+                    return Failure("The script does not exist.", "NONEXISTENT");
+                if (script.IsActive)
+                    return Failure("The active script cannot be deleted.", "ACTIVE");
+                contentService.DeleteOnCommit(script);
+                database.SieveScripts.Remove(script);
+                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+                if (transaction is not null)
+                {
+                    commitAttempted = true;
+                    await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                }
+                await transactionEffects.CommitAsync(marker).ConfigureAwait(false);
+                return Success();
             }
-            await transactionEffects.CommitAsync(marker);
-            return Success();
-        }
-        catch
-        {
-            await TryRollbackAsync(transaction);
-            if (commitAttempted)
-                transactionEffects.Discard(marker);
-            else
-                await transactionEffects.RollbackAsync(marker);
-            throw;
+            catch
+            {
+                await TryRollbackAsync(transaction).ConfigureAwait(false);
+                if (commitAttempted)
+                    transactionEffects.Discard(marker);
+                else
+                    await transactionEffects.RollbackAsync(marker).ConfigureAwait(false);
+                throw;
+            }
         }
     }
 
@@ -273,16 +291,16 @@ internal sealed class SieveScriptService(
             return Failure("A script name is invalid.");
         if (await database.SieveScripts.AnyAsync(
                 script => script.UserId == userId && script.Name == normalizedNew,
-                cancellationToken))
+                cancellationToken).ConfigureAwait(false))
             return Failure("The destination script already exists.", "ALREADYEXISTS");
         var script = await database.SieveScripts.SingleOrDefaultAsync(
             item => item.UserId == userId && item.Name == normalizedOld,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (script is null)
             return Failure("The script does not exist.", "NONEXISTENT");
         script.Name = normalizedNew;
         script.UpdatedAt = DateTime.UtcNow;
-        await database.SaveChangesAsync(cancellationToken);
+        await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return Success();
     }
 
@@ -313,7 +331,7 @@ internal sealed class SieveScriptService(
             return;
         try
         {
-            await transaction.RollbackAsync(CancellationToken.None);
+            await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception exception)
         {

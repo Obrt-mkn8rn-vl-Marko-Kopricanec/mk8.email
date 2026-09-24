@@ -1155,7 +1155,12 @@ internal static class SieveScript
         private IReadOnlyList<string>? ParseOptionalFlags(Token command)
         {
             if (!AtTag("flags"))
+            {
+                // Absence is distinct from an explicitly supplied empty :flags list.
+#pragma warning disable HLQ002
                 return null;
+#pragma warning restore HLQ002
+            }
             Require("imap4flags", Consume());
             var flags = ParseStringList();
             ValidateFlags(command, flags);

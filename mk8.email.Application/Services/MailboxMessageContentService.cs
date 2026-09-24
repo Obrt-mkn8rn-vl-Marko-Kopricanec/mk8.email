@@ -26,20 +26,23 @@ public sealed class MailboxMessageContentService(
 
         var hash = Convert.ToHexStringLower(SHA256.HashData(rawMessage));
         var previous = TryGetReference(email);
-        await using var source = new MemoryStream(rawMessage, writable: false);
-        var written = await objects.PutIfAbsentAsync(
+        var source = new MemoryStream(rawMessage, writable: false);
+        await using (source.ConfigureAwait(false))
+        {
+            var written = await objects.PutIfAbsentAsync(
             BuildObjectName(email.Id, hash),
             source,
             rawMessage.LongLength,
             hash,
             "message/rfc822",
-            cancellationToken);
-        ApplyReference(email, written.Reference);
-        ApplySearchProjection(email, rawMessage);
-        if (written.Created)
-            transactionEffects.DeleteOnRollback(written.Reference);
-        if (previous is not null && previous != written.Reference)
-            transactionEffects.DeleteOnCommit(previous);
+            cancellationToken).ConfigureAwait(false);
+            ApplyReference(email, written.Reference);
+            ApplySearchProjection(email, rawMessage);
+            if (written.Created)
+                transactionEffects.DeleteOnRollback(written.Reference);
+            if (previous is not null && previous != written.Reference)
+                transactionEffects.DeleteOnCommit(previous);
+        }
     }
 
     public async Task<byte[]> ReadAsync(
@@ -63,23 +66,26 @@ public sealed class MailboxMessageContentService(
             return BuildLegacyRawMessage(email);
 
         EnsureAzureBlobProvider();
-        await using var destination = new MemoryStream();
-        await objects.CopyToAsync(reference, destination, cancellationToken);
-        var content = destination.ToArray();
-        if (content.LongLength != email.SizeBytes)
+        var destination = new MemoryStream();
+        await using (destination.ConfigureAwait(false))
         {
-            throw new InvalidOperationException(
-                $"Mailbox message {email.Id:D} failed its length check.");
+            await objects.CopyToAsync(reference, destination, cancellationToken).ConfigureAwait(false);
+            var content = destination.ToArray();
+            if (content.LongLength != email.SizeBytes)
+            {
+                throw new InvalidOperationException(
+                    $"Mailbox message {email.Id:D} failed its length check.");
+            }
+            var hash = SHA256.HashData(content);
+            if (!CryptographicOperations.FixedTimeEquals(
+                    hash,
+                    Convert.FromHexString(reference.Sha256)))
+            {
+                throw new InvalidOperationException(
+                    $"Mailbox message {email.Id:D} failed its content hash check.");
+            }
+            return content;
         }
-        var hash = SHA256.HashData(content);
-        if (!CryptographicOperations.FixedTimeEquals(
-                hash,
-                Convert.FromHexString(reference.Sha256)))
-        {
-            throw new InvalidOperationException(
-                $"Mailbox message {email.Id:D} failed its content hash check.");
-        }
-        return content;
     }
 
     public LargeObjectReference? TryGetReference(EmailDB email)

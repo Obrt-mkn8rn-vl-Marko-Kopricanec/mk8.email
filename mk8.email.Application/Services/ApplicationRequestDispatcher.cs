@@ -36,353 +36,353 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
                     request.Id,
                     await services.GetRequiredService<ISmtpApplicationService>()
                         .AuthenticatePasswordAsync(
-                            Deserialize<SmtpPasswordAuthentication>(request), cancellationToken)),
+                            Deserialize<SmtpPasswordAuthentication>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.SmtpAuthenticateOAuth => Success(
                     request.Id,
                     await services.GetRequiredService<ISmtpApplicationService>()
                         .AuthenticateOAuthAsync(
-                            Deserialize<SmtpOAuthAuthentication>(request), cancellationToken)),
+                            Deserialize<SmtpOAuthAuthentication>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.SmtpCanSendAs => Success(
                     request.Id,
                     await services.GetRequiredService<ISmtpApplicationService>()
                         .CanSendAsAsync(
-                            Deserialize<SmtpSenderAuthorization>(request), cancellationToken)),
+                            Deserialize<SmtpSenderAuthorization>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.SmtpHasMatchingFromAddress => Success(
                     request.Id,
                     await services.GetRequiredService<ISmtpApplicationService>()
                         .HasMatchingFromAddressAsync(
-                            Deserialize<SmtpFromAddressCheck>(request), cancellationToken)),
+                            Deserialize<SmtpFromAddressCheck>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.SmtpCanReceive => Success(
                     request.Id,
                     await services.GetRequiredService<ISmtpApplicationService>()
                         .CanReceiveAsync(
-                            Deserialize<SmtpRecipientCheck>(request), cancellationToken)),
+                            Deserialize<SmtpRecipientCheck>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.SmtpEnqueue => Success(
                     request.Id,
                     await services.GetRequiredService<ISmtpApplicationService>()
-                        .EnqueueAsync(Deserialize<MailSubmission>(request), cancellationToken)),
+                        .EnqueueAsync(Deserialize<MailSubmission>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.SieveAuthenticatePassword => Success(
                     request.Id,
                     await services.GetRequiredService<ISieveApplicationService>()
                         .AuthenticatePasswordAsync(
-                            Deserialize<SievePasswordAuthentication>(request), cancellationToken)),
+                            Deserialize<SievePasswordAuthentication>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.SieveAuthenticateOAuth => Success(
                     request.Id,
                     await services.GetRequiredService<ISieveApplicationService>()
                         .AuthenticateOAuthAsync(
-                            Deserialize<SieveOAuthAuthentication>(request), cancellationToken)),
+                            Deserialize<SieveOAuthAuthentication>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.SieveCheckSpace => Success(
                     request.Id,
                     await services.GetRequiredService<ISieveApplicationService>()
                         .CheckSpaceAsync(
-                            Deserialize<SieveCheckSpaceRequest>(request), cancellationToken)),
+                            Deserialize<SieveCheckSpaceRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.SieveList => Success(
                     request.Id,
                     await services.GetRequiredService<ISieveApplicationService>()
-                        .ListAsync(Deserialize<SieveUserRequest>(request), cancellationToken)),
+                        .ListAsync(Deserialize<SieveUserRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.SieveGet => Success(
                     request.Id,
                     await services.GetRequiredService<ISieveApplicationService>()
-                        .GetAsync(Deserialize<SieveNamedRequest>(request), cancellationToken)),
+                        .GetAsync(Deserialize<SieveNamedRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.SievePut => Success(
                     request.Id,
                     await services.GetRequiredService<ISieveApplicationService>()
-                        .PutAsync(Deserialize<SievePutRequest>(request), cancellationToken)),
+                        .PutAsync(Deserialize<SievePutRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.SieveSetActive => Success(
                     request.Id,
                     await services.GetRequiredService<ISieveApplicationService>()
                         .SetActiveAsync(
-                            Deserialize<SieveSetActiveRequest>(request), cancellationToken)),
+                            Deserialize<SieveSetActiveRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.SieveDelete => Success(
                     request.Id,
                     await services.GetRequiredService<ISieveApplicationService>()
-                        .DeleteAsync(Deserialize<SieveNamedRequest>(request), cancellationToken)),
+                        .DeleteAsync(Deserialize<SieveNamedRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.SieveRename => Success(
                     request.Id,
                     await services.GetRequiredService<ISieveApplicationService>()
-                        .RenameAsync(Deserialize<SieveRenameRequest>(request), cancellationToken)),
+                        .RenameAsync(Deserialize<SieveRenameRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.SieveValidate => Success(
                     request.Id,
                     await services.GetRequiredService<ISieveApplicationService>()
                         .ValidateAsync(
-                            Deserialize<SieveValidationRequest>(request), cancellationToken)),
+                            Deserialize<SieveValidationRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.Pop3AuthenticatePassword => Success(
                     request.Id,
                     await services.GetRequiredService<IPop3ApplicationService>()
                         .AuthenticatePasswordAsync(
-                            Deserialize<Pop3PasswordAuthentication>(request), cancellationToken)),
+                            Deserialize<Pop3PasswordAuthentication>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.Pop3AuthenticateOAuth => Success(
                     request.Id,
                     await services.GetRequiredService<IPop3ApplicationService>()
                         .AuthenticateOAuthAsync(
-                            Deserialize<Pop3OAuthAuthentication>(request), cancellationToken)),
+                            Deserialize<Pop3OAuthAuthentication>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.Pop3ListMaildrop => Success(
                     request.Id,
                     await services.GetRequiredService<IPop3ApplicationService>()
                         .ListMaildropAsync(
-                            Deserialize<Pop3UserRequest>(request), cancellationToken)),
+                            Deserialize<Pop3UserRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.Pop3GetMessage => Success(
                     request.Id,
                     await services.GetRequiredService<IPop3ApplicationService>()
                         .GetMessageAsync(
-                            Deserialize<Pop3MessageRequest>(request), cancellationToken)),
+                            Deserialize<Pop3MessageRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.Pop3CommitDeletes => Success(
                     request.Id,
                     await services.GetRequiredService<IPop3ApplicationService>()
                         .CommitDeletesAsync(
-                            Deserialize<Pop3DeleteRequest>(request), cancellationToken)),
+                            Deserialize<Pop3DeleteRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.ImapAuthenticatePassword => Success(
                     request.Id,
                     await services.GetRequiredService<IImapApplicationService>()
                         .AuthenticatePasswordAsync(
-                            Deserialize<ImapPasswordAuthentication>(request), cancellationToken)),
+                            Deserialize<ImapPasswordAuthentication>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.ImapAuthenticateOAuth => Success(
                     request.Id,
                     await services.GetRequiredService<IImapApplicationService>()
                         .AuthenticateOAuthAsync(
-                            Deserialize<ImapOAuthAuthentication>(request), cancellationToken)),
+                            Deserialize<ImapOAuthAuthentication>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.ImapListMailboxes => Success(
                     request.Id,
                     await services.GetRequiredService<IImapApplicationService>()
                         .ListMailboxesAsync(
-                            Deserialize<ImapMailboxListRequest>(request), cancellationToken)),
+                            Deserialize<ImapMailboxListRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.ImapGetMailboxStatuses => Success(
                     request.Id,
                     await services.GetRequiredService<IImapApplicationService>()
                         .GetMailboxStatusesAsync(
-                            Deserialize<ImapMailboxStatusRequest>(request), cancellationToken)),
+                            Deserialize<ImapMailboxStatusRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.ImapSetMailboxSubscription => Success(
                     request.Id,
                     await services.GetRequiredService<IImapApplicationService>()
                         .SetMailboxSubscriptionAsync(
-                            Deserialize<ImapMailboxSubscriptionRequest>(request), cancellationToken)),
+                            Deserialize<ImapMailboxSubscriptionRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.ImapCreateMailbox => Success(
                     request.Id,
                     await services.GetRequiredService<IImapApplicationService>()
                         .CreateMailboxAsync(
-                            Deserialize<ImapMailboxCreateRequest>(request), cancellationToken)),
+                            Deserialize<ImapMailboxCreateRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.ImapRenameMailbox => Success(
                     request.Id,
                     await services.GetRequiredService<IImapApplicationService>()
                         .RenameMailboxAsync(
-                            Deserialize<ImapMailboxRenameRequest>(request), cancellationToken)),
+                            Deserialize<ImapMailboxRenameRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.ImapDeleteMailbox => Success(
                     request.Id,
                     await services.GetRequiredService<IImapApplicationService>()
                         .DeleteMailboxAsync(
-                            Deserialize<ImapMailboxDeleteRequest>(request), cancellationToken)),
+                            Deserialize<ImapMailboxDeleteRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.ImapSelectMailbox => Success(
                     request.Id,
                     await services.GetRequiredService<IImapApplicationService>()
                         .SelectMailboxAsync(
-                            Deserialize<ImapMailboxSelectRequest>(request), cancellationToken)),
+                            Deserialize<ImapMailboxSelectRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.ImapGetQuota => Success(
                     request.Id,
                     await services.GetRequiredService<IImapApplicationService>()
                         .GetQuotaAsync(
-                            Deserialize<ImapQuotaRequest>(request), cancellationToken)),
+                            Deserialize<ImapQuotaRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.ImapGetIdleSnapshot => Success(
                     request.Id,
                     await services.GetRequiredService<IImapApplicationService>()
                         .GetIdleSnapshotAsync(
-                            Deserialize<ImapIdleSnapshotRequest>(request), cancellationToken)),
+                            Deserialize<ImapIdleSnapshotRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.ImapExpungeDeleted => Success(
                     request.Id,
                     await services.GetRequiredService<IImapApplicationService>()
                         .ExpungeDeletedAsync(
-                            Deserialize<ImapExpungeRequest>(request), cancellationToken)),
+                            Deserialize<ImapExpungeRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.ImapStoreFlags => Success(
                     request.Id,
                     await services.GetRequiredService<IImapApplicationService>()
                         .StoreFlagsAsync(
-                            Deserialize<ImapStoreRequest>(request), cancellationToken)),
+                            Deserialize<ImapStoreRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.ImapMoveMessages => Success(
                     request.Id,
                     await services.GetRequiredService<IImapApplicationService>()
                         .MoveMessagesAsync(
-                            Deserialize<ImapMoveRequest>(request), cancellationToken)),
+                            Deserialize<ImapMoveRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.ImapCopyMessages => Success(
                     request.Id,
                     await services.GetRequiredService<IImapApplicationService>()
                         .CopyMessagesAsync(
-                            Deserialize<ImapCopyRequest>(request), cancellationToken)),
+                            Deserialize<ImapCopyRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.ImapCheckAppendCapacity => Success(
                     request.Id,
                     await services.GetRequiredService<IImapApplicationService>()
                         .CheckAppendCapacityAsync(
-                            Deserialize<ImapAppendPreflightRequest>(request), cancellationToken)),
+                            Deserialize<ImapAppendPreflightRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.ImapAppendMessages => Success(
                     request.Id,
                     await services.GetRequiredService<IImapApplicationService>()
                         .AppendMessagesAsync(
-                            Deserialize<ImapAppendRequest>(request), cancellationToken)),
+                            Deserialize<ImapAppendRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.ImapSearchMessages => Success(
                     request.Id,
                     await services.GetRequiredService<IImapApplicationService>()
                         .SearchMessagesAsync(
-                            Deserialize<ImapSearchRequest>(request), cancellationToken)),
+                            Deserialize<ImapSearchRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.ImapSortMessages => Success(
                     request.Id,
                     await services.GetRequiredService<IImapApplicationService>()
                         .SortMessagesAsync(
-                            Deserialize<ImapSortRequest>(request), cancellationToken)),
+                            Deserialize<ImapSortRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.ImapThreadMessages => Success(
                     request.Id,
                     await services.GetRequiredService<IImapApplicationService>()
                         .ThreadMessagesAsync(
-                            Deserialize<ImapThreadRequest>(request), cancellationToken)),
+                            Deserialize<ImapThreadRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.ImapMarkMessagesSeen => Success(
                     request.Id,
                     await services.GetRequiredService<IImapApplicationService>()
                         .MarkMessagesSeenAsync(
-                            Deserialize<ImapMarkSeenRequest>(request), cancellationToken)),
+                            Deserialize<ImapMarkSeenRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.ImapFetchPage => Success(
                     request.Id,
                     await services.GetRequiredService<IImapApplicationService>()
                         .GetFetchPageAsync(
-                            Deserialize<ImapFetchPageRequest>(request), cancellationToken)),
+                            Deserialize<ImapFetchPageRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.AdminAuthenticate => Success(
                     request.Id,
                     await services.GetRequiredService<IAuthService>().LoginAsync(
-                        Deserialize<LoginRequestDTO>(request))),
+                        Deserialize<LoginRequestDTO>(request)).ConfigureAwait(false)),
                 ApplicationOperations.AdminDashboardGet => await GetDashboardAsync(
                     request.Id,
-                    cancellationToken),
+                    cancellationToken).ConfigureAwait(false),
                 ApplicationOperations.AdminDomainsGet => Success(
                     request.Id,
                     await services.GetRequiredService<IMailAdministrationService>()
-                        .GetDomainsAsync(cancellationToken)),
+                        .GetDomainsAsync(cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.AdminDomainsEnsure => await EnsureDomainAsync(
                     request,
-                    cancellationToken),
+                    cancellationToken).ConfigureAwait(false),
                 ApplicationOperations.AdminDomainsSetCatchAll => await SetCatchAllAsync(
                     request,
-                    cancellationToken),
+                    cancellationToken).ConfigureAwait(false),
                 ApplicationOperations.AdminDomainsSetActive => await SetDomainActiveAsync(
                     request,
-                    cancellationToken),
+                    cancellationToken).ConfigureAwait(false),
                 ApplicationOperations.AdminAccountsGet => Success(
                     request.Id,
                     await services.GetRequiredService<IMailAdministrationService>()
-                        .GetAccountsAsync(cancellationToken)),
+                        .GetAccountsAsync(cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.AdminAccountsCreate => await CreateAccountAsync(
                     request,
-                    cancellationToken),
+                    cancellationToken).ConfigureAwait(false),
                 ApplicationOperations.AdminAccountsSetActive => await SetAccountActiveAsync(
                     request,
-                    cancellationToken),
+                    cancellationToken).ConfigureAwait(false),
                 ApplicationOperations.AdminAccountsResetPassword => await ResetPasswordAsync(
                     request,
-                    cancellationToken),
+                    cancellationToken).ConfigureAwait(false),
                 ApplicationOperations.OAuthPublicKeyGet => Success(
                     request.Id,
                     await services.GetRequiredService<IOAuthApplicationService>()
-                        .GetPublicKeyAsync(cancellationToken)),
+                        .GetPublicKeyAsync(cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.OAuthIdentityAuthenticate => Success(
                     request.Id,
                     await services.GetRequiredService<IOAuthApplicationService>()
                         .AuthenticateIdentityAsync(
                             Deserialize<OAuthIdentityLookupRequest>(request),
-                            cancellationToken)),
+                            cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.OAuthAuthorize => Success(
                     request.Id,
                     await services.GetRequiredService<IOAuthApplicationService>()
                         .AuthorizeAsync(
                             Deserialize<OAuthAuthorizeApplicationRequest>(request),
-                            cancellationToken)),
+                            cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.OAuthAuthorizationCodeRedeem => Success(
                     request.Id,
                     await services.GetRequiredService<IOAuthApplicationService>()
                         .RedeemAuthorizationCodeAsync(
                             Deserialize<OAuthAuthorizationCodeRedeemRequest>(request),
-                            cancellationToken)),
+                            cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.OAuthTokenRefresh => Success(
                     request.Id,
                     await services.GetRequiredService<IOAuthApplicationService>()
                         .RefreshTokenAsync(
                             Deserialize<OAuthRefreshTokenRequest>(request),
-                            cancellationToken)),
+                            cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.OAuthTokenRevoke => await RevokeOAuthTokenAsync(
                     request,
-                    cancellationToken),
+                    cancellationToken).ConfigureAwait(false),
                 ApplicationOperations.JmapSessionGet => Success(
                     request.Id,
                     await services.GetRequiredService<IJmapApplicationService>()
                         .GetSessionAsync(
                             Deserialize<JmapSessionApplicationRequest>(request),
-                            cancellationToken)),
+                            cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.JmapApiProcess => Success(
                     request.Id,
                     await services.GetRequiredService<IJmapApplicationService>()
                         .ProcessApiRequestAsync(
                             Deserialize<JmapApiApplicationRequest>(request),
-                            cancellationToken)),
+                            cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.JmapUpload => Success(
                     request.Id,
                     await services.GetRequiredService<IJmapApplicationService>()
                         .UploadAsync(
                             Deserialize<JmapUploadApplicationRequest>(request),
-                            cancellationToken)),
+                            cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.JmapDownload => Success(
                     request.Id,
                     await services.GetRequiredService<IJmapApplicationService>()
                         .DownloadAsync(
                             Deserialize<JmapDownloadApplicationRequest>(request),
-                            cancellationToken)),
+                            cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.JmapEventPoll => Success(
                     request.Id,
                     await services.GetRequiredService<IJmapApplicationService>()
                         .PollEventAsync(
                             Deserialize<JmapEventApplicationRequest>(request),
-                            cancellationToken)),
+                            cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.DavAuthenticate => Success(request.Id,
                     await Dav.AuthenticateAsync(
-                        Deserialize<DavAuthenticationRequest>(request), cancellationToken)),
+                        Deserialize<DavAuthenticationRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.DavEnsureCollections => Success(request.Id,
                     await Dav.EnsureCollectionsAsync(
-                        Deserialize<DavEnsureCollectionsRequest>(request), cancellationToken)),
+                        Deserialize<DavEnsureCollectionsRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.DavCollectionsGet => Success(request.Id,
                     await Dav.GetCollectionsAsync(
-                        Deserialize<DavCollectionListRequest>(request), cancellationToken)),
+                        Deserialize<DavCollectionListRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.DavCollectionGet => Success(request.Id,
                     await Dav.GetCollectionAsync(
-                        Deserialize<DavCollectionLookupRequest>(request), cancellationToken)),
+                        Deserialize<DavCollectionLookupRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.DavCollectionCreate => Success(request.Id,
                     await Dav.CreateCollectionAsync(
-                        Deserialize<DavCollectionCreateRequest>(request), cancellationToken)),
+                        Deserialize<DavCollectionCreateRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.DavCollectionUpdate => Success(request.Id,
                     await Dav.UpdateCollectionAsync(
-                        Deserialize<DavCollectionUpdateRequest>(request), cancellationToken)),
+                        Deserialize<DavCollectionUpdateRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.DavCollectionDelete => Success(request.Id,
                     await Dav.DeleteCollectionAsync(
-                        Deserialize<DavCollectionDeleteRequest>(request), cancellationToken)),
+                        Deserialize<DavCollectionDeleteRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.DavPrincipalsGet => Success(request.Id,
                     await Dav.GetPrincipalsAsync(
-                        Deserialize<DavPrincipalListRequest>(request), cancellationToken)),
+                        Deserialize<DavPrincipalListRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.DavPrincipalGet => Success(request.Id,
                     await Dav.GetPrincipalAsync(
-                        Deserialize<DavPrincipalLookupRequest>(request), cancellationToken)),
+                        Deserialize<DavPrincipalLookupRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.DavSharesReplace => Success(request.Id,
                     await Dav.ReplaceSharesAsync(
-                        Deserialize<DavShareReplaceRequest>(request), cancellationToken)),
+                        Deserialize<DavShareReplaceRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.DavResourcesGet => Success(request.Id,
                     await Dav.GetResourcesAsync(
-                        Deserialize<DavCollectionReference>(request), cancellationToken)),
+                        Deserialize<DavCollectionReference>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.DavResourceGet => Success(request.Id,
                     await Dav.GetResourceAsync(
-                        Deserialize<DavResourceLookupRequest>(request), cancellationToken)),
+                        Deserialize<DavResourceLookupRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.DavChangesGet => Success(request.Id,
                     await Dav.GetChangesAsync(
-                        Deserialize<DavChangesRequest>(request), cancellationToken)),
+                        Deserialize<DavChangesRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.DavResourcePut => Success(request.Id,
                     await Dav.PutResourceAsync(
-                        Deserialize<DavResourcePutRequest>(request), cancellationToken)),
+                        Deserialize<DavResourcePutRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.DavResourceDelete => Success(request.Id,
                     await Dav.DeleteResourceAsync(
-                        Deserialize<DavResourceDeleteRequest>(request), cancellationToken)),
+                        Deserialize<DavResourceDeleteRequest>(request), cancellationToken).ConfigureAwait(false)),
                 ApplicationOperations.DavScheduleSubmit => Success(request.Id,
                     await Dav.SubmitScheduleAsync(
-                        Deserialize<DavScheduleSubmitRequest>(request), cancellationToken)),
+                        Deserialize<DavScheduleSubmitRequest>(request), cancellationToken).ConfigureAwait(false)),
                 _ => Error(request.Id, "unknown-operation", "The application operation is not supported."),
             };
         }
@@ -397,8 +397,8 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
         CancellationToken cancellationToken)
     {
         var administration = services.GetRequiredService<IMailAdministrationService>();
-        var domains = await administration.GetDomainsAsync(cancellationToken);
-        var accounts = await administration.GetAccountsAsync(cancellationToken);
+        var domains = await administration.GetDomainsAsync(cancellationToken).ConfigureAwait(false);
+        var accounts = await administration.GetAccountsAsync(cancellationToken).ConfigureAwait(false);
         return Success(
             requestId,
             // Preserve the prior wire shape while Gateway owns the local status read.
@@ -414,7 +414,7 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
     {
         var value = Deserialize<AdminEnsureDomainRequest>(request);
         var result = await services.GetRequiredService<IMailAdministrationService>()
-            .EnsureDomainAsync(value.CompanyName, value.Domain, cancellationToken);
+            .EnsureDomainAsync(value.CompanyName, value.Domain, cancellationToken).ConfigureAwait(false);
         return Success(request.Id, result);
     }
 
@@ -424,7 +424,7 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
     {
         var value = Deserialize<AdminSetCatchAllRequest>(request);
         var result = await services.GetRequiredService<IMailAdministrationService>()
-            .SetCatchAllAsync(value.Domain, value.TargetAddress, cancellationToken);
+            .SetCatchAllAsync(value.Domain, value.TargetAddress, cancellationToken).ConfigureAwait(false);
         return Success(request.Id, result);
     }
 
@@ -434,7 +434,7 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
     {
         var value = Deserialize<AdminSetDomainActiveRequest>(request);
         var result = await services.GetRequiredService<IMailAdministrationService>()
-            .SetDomainActiveAsync(value.Domain, value.IsActive, cancellationToken);
+            .SetDomainActiveAsync(value.Domain, value.IsActive, cancellationToken).ConfigureAwait(false);
         return Success(request.Id, result);
     }
 
@@ -444,7 +444,7 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
     {
         var value = Deserialize<AdminCreateAccountRequest>(request);
         var result = await services.GetRequiredService<IMailAdministrationService>()
-            .CreateAccountAsync(value.Address, value.Password, value.Role, cancellationToken);
+            .CreateAccountAsync(value.Address, value.Password, value.Role, cancellationToken).ConfigureAwait(false);
         return Success(request.Id, result);
     }
 
@@ -454,7 +454,7 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
     {
         var value = Deserialize<AdminSetAccountActiveRequest>(request);
         var result = await services.GetRequiredService<IMailAdministrationService>()
-            .SetAccountActiveAsync(value.UserId, value.IsActive, cancellationToken);
+            .SetAccountActiveAsync(value.UserId, value.IsActive, cancellationToken).ConfigureAwait(false);
         return Success(request.Id, result);
     }
 
@@ -464,7 +464,7 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
     {
         var value = Deserialize<AdminResetPasswordRequest>(request);
         var result = await services.GetRequiredService<IMailAdministrationService>()
-            .ResetPasswordAsync(value.UserId, value.Password, cancellationToken);
+            .ResetPasswordAsync(value.UserId, value.Password, cancellationToken).ConfigureAwait(false);
         return Success(request.Id, result);
     }
 
@@ -475,7 +475,7 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
         await services.GetRequiredService<IOAuthApplicationService>()
             .RevokeTokenAsync(
                 Deserialize<OAuthRevokeTokenRequest>(request),
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         return Success(request.Id, new OAuthTokenRevocationResult(true));
     }
 

@@ -33,7 +33,7 @@ internal sealed class ImapApplicationService(
     {
         ArgumentNullException.ThrowIfNull(request);
         var user = await authenticator.AuthenticateAsync(
-            request.Username, request.Password, cancellationToken);
+            request.Username, request.Password, cancellationToken).ConfigureAwait(false);
         return new ImapIdentityResult(user?.Id, user?.Username);
     }
 
@@ -43,7 +43,7 @@ internal sealed class ImapApplicationService(
     {
         ArgumentNullException.ThrowIfNull(request);
         var user = await oauthTokens.AuthenticateAccessTokenAsync(
-            request.AccessToken, "imap", cancellationToken);
+            request.AccessToken, "imap", cancellationToken).ConfigureAwait(false);
         return user is null
             || !string.Equals(request.Username, user.Username, StringComparison.OrdinalIgnoreCase)
             ? new ImapIdentityResult(null, null)
@@ -76,7 +76,7 @@ internal sealed class ImapApplicationService(
             .OrderBy(folder => folder.Domain)
             .ThenBy(folder => folder.InboxName)
             .ThenBy(folder => folder.FolderName)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         return new ImapMailboxListResult(folders
             .Select(folder => new ImapMailboxInfo(
                 folder.InboxName,
@@ -103,23 +103,23 @@ internal sealed class ImapApplicationService(
         foreach (var mailboxName in request.MailboxNames.Distinct(StringComparer.Ordinal))
         {
             var folder = await ImapMailboxResolver.ResolveFolderAsync(
-                database, request.UserId, mailboxName, cancellationToken);
+                database, request.UserId, mailboxName, cancellationToken).ConfigureAwait(false);
             if (folder is null)
                 continue;
 
             var messageCount = request.IncludeMessageCount
                 ? await database.Emails.CountAsync(
                     email => email.FolderId == folder.Id, cancellationToken)
-                : (int?)null;
+.ConfigureAwait(false) : (int?)null;
             var unseenCount = request.IncludeUnseenCount
                 ? await database.Emails.CountAsync(
                     email => email.FolderId == folder.Id && !email.IsRead,
                     cancellationToken)
-                : (int?)null;
+.ConfigureAwait(false) : (int?)null;
             var sizeBytes = request.IncludeSize
                 ? await database.Emails
                     .Where(email => email.FolderId == folder.Id)
-                    .SumAsync(email => (long?)email.SizeBytes, cancellationToken) ?? 0
+                    .SumAsync(email => (long?)email.SizeBytes, cancellationToken).ConfigureAwait(false) ?? 0
                 : (long?)null;
             statuses.Add(mailboxName, new ImapMailboxStatus(
                 folder.Id,
@@ -144,14 +144,14 @@ internal sealed class ImapApplicationService(
             throw new ArgumentException("The IMAP mailbox subscription request is invalid.", nameof(request));
 
         var folder = await ImapMailboxResolver.ResolveFolderAsync(
-            database, request.UserId, request.MailboxName, cancellationToken);
+            database, request.UserId, request.MailboxName, cancellationToken).ConfigureAwait(false);
         if (folder is null)
             return new ImapMailboxSubscriptionResult(false);
 
         if (folder.IsSubscribed != request.IsSubscribed)
         {
             folder.IsSubscribed = request.IsSubscribed;
-            await database.SaveChangesAsync(cancellationToken);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         }
 
         return new ImapMailboxSubscriptionResult(true);
@@ -166,14 +166,14 @@ internal sealed class ImapApplicationService(
             throw new ArgumentException("The IMAP mailbox creation request is invalid.", nameof(request));
 
         var location = await ImapMailboxResolver.ResolveLocationAsync(
-            database, request.UserId, request.MailboxName, cancellationToken);
+            database, request.UserId, request.MailboxName, cancellationToken).ConfigureAwait(false);
         if (location is null || !ImapMailboxResolver.IsValidFolderName(location.Value.FolderName))
             return new ImapMailboxCreateResult(ImapMailboxCreateDisposition.InvalidName, Guid.Empty, null);
 
         var exists = await database.Folders.AnyAsync(
             folder => folder.InboxId == location.Value.InboxId
                 && folder.Name == location.Value.FolderName,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (exists)
             return new ImapMailboxCreateResult(ImapMailboxCreateDisposition.AlreadyExists, Guid.Empty, null);
 
@@ -186,7 +186,7 @@ internal sealed class ImapApplicationService(
         database.Folders.Add(folder);
         try
         {
-            await database.SaveChangesAsync(cancellationToken);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (DbUpdateException)
         {
@@ -194,7 +194,7 @@ internal sealed class ImapApplicationService(
             if (await database.Folders.AsNoTracking().AnyAsync(
                     candidate => candidate.InboxId == location.Value.InboxId
                         && candidate.Name == location.Value.FolderName,
-                    cancellationToken))
+                    cancellationToken).ConfigureAwait(false))
             {
                 return new ImapMailboxCreateResult(
                     ImapMailboxCreateDisposition.AlreadyExists, Guid.Empty, null);
@@ -219,54 +219,60 @@ internal sealed class ImapApplicationService(
             throw new ArgumentException("The IMAP mailbox rename request is invalid.", nameof(request));
         }
 
-        await using var transaction = database.Database.IsRelational()
+        var transaction = database.Database.IsRelational()
             ? await database.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken)
-            : null;
-        var folder = await ImapMailboxResolver.ResolveFolderAsync(
-            database, request.UserId, request.OldName, cancellationToken);
-        if (folder is null)
-            return new ImapMailboxRenameResult(ImapMailboxRenameDisposition.NotFound);
-        if (ImapMailboxResolver.IsSystemFolder(folder.Name))
-            return new ImapMailboxRenameResult(ImapMailboxRenameDisposition.SystemFolder);
-
-        var destination = await ImapMailboxResolver.ResolveLocationAsync(
-            database, request.UserId, request.NewName, cancellationToken);
-        if (destination is null
-            || destination.Value.InboxId != folder.InboxId
-            || !ImapMailboxResolver.IsValidFolderName(destination.Value.FolderName))
+.ConfigureAwait(false) : null;
+        // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+        await using (transaction)
         {
-            return new ImapMailboxRenameResult(ImapMailboxRenameDisposition.InvalidDestination);
+#pragma warning restore CA2007, MA0004
+            var folder = await ImapMailboxResolver.ResolveFolderAsync(
+            database, request.UserId, request.OldName, cancellationToken).ConfigureAwait(false);
+            if (folder is null)
+                return new ImapMailboxRenameResult(ImapMailboxRenameDisposition.NotFound);
+            if (ImapMailboxResolver.IsSystemFolder(folder.Name))
+                return new ImapMailboxRenameResult(ImapMailboxRenameDisposition.SystemFolder);
+
+            var destination = await ImapMailboxResolver.ResolveLocationAsync(
+                database, request.UserId, request.NewName, cancellationToken).ConfigureAwait(false);
+            if (destination is null
+                || destination.Value.InboxId != folder.InboxId
+                || !ImapMailboxResolver.IsValidFolderName(destination.Value.FolderName))
+            {
+                return new ImapMailboxRenameResult(ImapMailboxRenameDisposition.InvalidDestination);
+            }
+
+            var oldFolderName = folder.Name;
+            var affected = await database.Folders
+                .Where(candidate => candidate.InboxId == folder.InboxId
+                    && (candidate.Name == oldFolderName
+                        || candidate.Name.StartsWith(oldFolderName + "/")))
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
+            var renamed = affected.ToDictionary(
+                candidate => candidate.Id,
+                candidate => destination.Value.FolderName + candidate.Name[oldFolderName.Length..]);
+            if (renamed.Values.Any(name => !ImapMailboxResolver.IsValidFolderName(name)))
+                return new ImapMailboxRenameResult(ImapMailboxRenameDisposition.InvalidDestination);
+
+            var renamedNames = renamed.Values.ToHashSet(StringComparer.Ordinal);
+            var affectedIds = affected.Select(candidate => candidate.Id).ToHashSet();
+            var existingNames = await database.Folders
+                .AsNoTracking()
+                .Where(candidate => candidate.InboxId == folder.InboxId
+                    && !affectedIds.Contains(candidate.Id))
+                .Select(candidate => candidate.Name)
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
+            if (existingNames.Any(renamedNames.Contains))
+                return new ImapMailboxRenameResult(ImapMailboxRenameDisposition.AlreadyExists);
+
+            foreach (var candidate in affected)
+                candidate.Name = renamed[candidate.Id];
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            if (transaction is not null)
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return new ImapMailboxRenameResult(ImapMailboxRenameDisposition.Renamed);
         }
-
-        var oldFolderName = folder.Name;
-        var affected = await database.Folders
-            .Where(candidate => candidate.InboxId == folder.InboxId
-                && (candidate.Name == oldFolderName
-                    || candidate.Name.StartsWith(oldFolderName + "/")))
-            .ToListAsync(cancellationToken);
-        var renamed = affected.ToDictionary(
-            candidate => candidate.Id,
-            candidate => destination.Value.FolderName + candidate.Name[oldFolderName.Length..]);
-        if (renamed.Values.Any(name => !ImapMailboxResolver.IsValidFolderName(name)))
-            return new ImapMailboxRenameResult(ImapMailboxRenameDisposition.InvalidDestination);
-
-        var renamedNames = renamed.Values.ToHashSet(StringComparer.Ordinal);
-        var affectedIds = affected.Select(candidate => candidate.Id).ToHashSet();
-        var existingNames = await database.Folders
-            .AsNoTracking()
-            .Where(candidate => candidate.InboxId == folder.InboxId
-                && !affectedIds.Contains(candidate.Id))
-            .Select(candidate => candidate.Name)
-            .ToListAsync(cancellationToken);
-        if (existingNames.Any(renamedNames.Contains))
-            return new ImapMailboxRenameResult(ImapMailboxRenameDisposition.AlreadyExists);
-
-        foreach (var candidate in affected)
-            candidate.Name = renamed[candidate.Id];
-        await database.SaveChangesAsync(cancellationToken);
-        if (transaction is not null)
-            await transaction.CommitAsync(cancellationToken);
-        return new ImapMailboxRenameResult(ImapMailboxRenameDisposition.Renamed);
     }
 
     public async Task<ImapMailboxDeleteResult> DeleteMailboxAsync(
@@ -277,11 +283,15 @@ internal sealed class ImapApplicationService(
         if (request.UserId == Guid.Empty || string.IsNullOrEmpty(request.MailboxName))
             throw new ArgumentException("The IMAP mailbox deletion request is invalid.", nameof(request));
 
-        await using var transaction = database.Database.IsRelational()
-            ? await database.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken)
+        var transaction = database.Database.IsRelational()
+            ? await database.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken).ConfigureAwait(false)
             : null;
+        // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+        await using var transactionLifetime = transaction;
+#pragma warning restore CA2007, MA0004
         var folder = await ImapMailboxResolver.ResolveFolderAsync(
-            database, request.UserId, request.MailboxName, cancellationToken);
+            database, request.UserId, request.MailboxName, cancellationToken).ConfigureAwait(false);
         if (folder is null)
             return new ImapMailboxDeleteResult(ImapMailboxDeleteDisposition.NotFound, Guid.Empty);
         if (ImapMailboxResolver.IsSystemFolder(folder.Name))
@@ -293,17 +303,17 @@ internal sealed class ImapApplicationService(
         {
             var messages = await database.Emails
                 .Where(email => email.FolderId == folder.Id)
-                .ToListAsync(cancellationToken);
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
             foreach (var message in messages)
                 content.DeleteOnCommit(message);
             database.Folders.Remove(folder);
-            await database.SaveChangesAsync(cancellationToken);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             if (transaction is not null)
             {
                 commitAttempted = true;
-                await transaction.CommitAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             }
-            await effects.CommitAsync(marker);
+            await effects.CommitAsync(marker).ConfigureAwait(false);
         }
         catch
         {
@@ -311,7 +321,7 @@ internal sealed class ImapApplicationService(
             {
                 try
                 {
-                    await transaction.RollbackAsync(CancellationToken.None);
+                    await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
                 }
                 catch (Exception rollbackException)
                 {
@@ -321,7 +331,7 @@ internal sealed class ImapApplicationService(
             if (commitAttempted)
                 effects.Discard(marker);
             else
-                await effects.RollbackAsync(marker);
+                await effects.RollbackAsync(marker).ConfigureAwait(false);
             throw;
         }
 
@@ -336,11 +346,15 @@ internal sealed class ImapApplicationService(
         if (request.UserId == Guid.Empty || string.IsNullOrEmpty(request.MailboxName))
             throw new ArgumentException("The IMAP mailbox selection request is invalid.", nameof(request));
 
-        await using var transaction = database.Database.IsRelational()
-            ? await database.Database.BeginTransactionAsync(IsolationLevel.RepeatableRead, cancellationToken)
+        var transaction = database.Database.IsRelational()
+            ? await database.Database.BeginTransactionAsync(IsolationLevel.RepeatableRead, cancellationToken).ConfigureAwait(false)
             : null;
+        // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+        await using var transactionLifetime = transaction;
+#pragma warning restore CA2007, MA0004
         var folder = await ImapMailboxResolver.ResolveFolderAsync(
-            database, request.UserId, request.MailboxName, cancellationToken);
+            database, request.UserId, request.MailboxName, cancellationToken).ConfigureAwait(false);
         if (folder is null)
             return new ImapMailboxSelectResult(null);
 
@@ -359,7 +373,7 @@ internal sealed class ImapApplicationService(
                 email.IsAnswered,
                 email.Keywords,
             })
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         var firstUnseenIndex = messages.FindIndex(message => !message.IsRead);
         var keywords = messages
             .SelectMany(message => message.Keywords ?? [])
@@ -377,7 +391,7 @@ internal sealed class ImapApplicationService(
                     && expunged.ModSeq > request.QresyncModSeq.Value)
                 .OrderBy(expunged => expunged.Uid)
                 .Select(expunged => expunged.Uid)
-                .ToListAsync(cancellationToken);
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
             for (var index = 0; index < messages.Count; index++)
             {
                 var message = messages[index];
@@ -397,7 +411,7 @@ internal sealed class ImapApplicationService(
         }
 
         if (transaction is not null)
-            await transaction.CommitAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         return new ImapMailboxSelectResult(new ImapSelectedMailbox(
             folder.Id,
             folder.UidValidity,
@@ -434,13 +448,17 @@ internal sealed class ImapApplicationService(
             throw new ArgumentException("The IMAP UID selection is invalid.", nameof(request));
         }
 
-        await using var transaction = database.Database.IsRelational()
-            ? await database.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken)
+        var transaction = database.Database.IsRelational()
+            ? await database.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken).ConfigureAwait(false)
             : null;
+        // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+        await using var transactionLifetime = transaction;
+#pragma warning restore CA2007, MA0004
         var folder = await database.Folders.SingleOrDefaultAsync(
             candidate => candidate.Id == request.FolderId
                 && candidate.Inbox.OwnerId == request.UserId,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (folder is null)
             return new ImapExpungeResult(false, []);
 
@@ -459,7 +477,7 @@ internal sealed class ImapApplicationService(
                 RawMessageObjectSha256 = email.RawMessageObjectSha256,
                 RawMessageObjectEntityTag = email.RawMessageObjectEntityTag,
             })
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         var maximumUid = messages.Count > 0 ? messages[^1].Uid : 0;
         var resolvedRanges = selection?.Ranges is { } ranges
             ? ResolveMessageRanges(ranges.Select(range => (range.Start, range.End)), maximumUid)
@@ -507,13 +525,13 @@ internal sealed class ImapApplicationService(
             }
 
             if (expunged.Count > 0)
-                await database.SaveChangesAsync(cancellationToken);
+                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             if (transaction is not null)
             {
                 commitAttempted = true;
-                await transaction.CommitAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             }
-            await effects.CommitAsync(marker);
+            await effects.CommitAsync(marker).ConfigureAwait(false);
         }
         catch
         {
@@ -521,7 +539,7 @@ internal sealed class ImapApplicationService(
             {
                 try
                 {
-                    await transaction.RollbackAsync(CancellationToken.None);
+                    await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
                 }
                 catch (Exception rollbackException)
                 {
@@ -531,7 +549,7 @@ internal sealed class ImapApplicationService(
             if (commitAttempted)
                 effects.Discard(marker);
             else
-                await effects.RollbackAsync(marker);
+                await effects.RollbackAsync(marker).ConfigureAwait(false);
             throw;
         }
 
@@ -584,13 +602,17 @@ internal sealed class ImapApplicationService(
             throw new ArgumentException("The IMAP STORE request is invalid.", nameof(request));
         }
 
-        await using var transaction = database.Database.IsRelational()
-            ? await database.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken)
+        var transaction = database.Database.IsRelational()
+            ? await database.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken).ConfigureAwait(false)
             : null;
+        // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+        await using var transactionLifetime = transaction;
+#pragma warning restore CA2007, MA0004
         var folder = await database.Folders.SingleOrDefaultAsync(
             candidate => candidate.Id == request.FolderId
                 && candidate.Inbox.OwnerId == request.UserId,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (folder is null)
             return new ImapStoreResult(ImapStoreDisposition.FolderNotFound, [], []);
 
@@ -610,7 +632,7 @@ internal sealed class ImapApplicationService(
                 IsAnswered = email.IsAnswered,
                 Keywords = email.Keywords,
             })
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         var maximumIdentifier = request.UseUid
             ? messages.Count > 0 ? messages[^1].Uid : 0
             : messages.Count;
@@ -671,13 +693,13 @@ internal sealed class ImapApplicationService(
                     item.Email.IsAnswered,
                     item.Email.Keywords ?? []));
             }
-            await database.SaveChangesAsync(cancellationToken);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             foreach (var update in trackedUpdates)
                 database.Entry(update).State = EntityState.Detached;
         }
 
         if (transaction is not null)
-            await transaction.CommitAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         return new ImapStoreResult(ImapStoreDisposition.Stored, modified, updated);
     }
 
@@ -718,17 +740,21 @@ internal sealed class ImapApplicationService(
             throw new ArgumentException("The IMAP MOVE request is invalid.", nameof(request));
         }
 
-        await using var transaction = database.Database.IsRelational()
-            ? await database.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken)
+        var transaction = database.Database.IsRelational()
+            ? await database.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken).ConfigureAwait(false)
             : null;
+        // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+        await using var transactionLifetime = transaction;
+#pragma warning restore CA2007, MA0004
         var source = await database.Folders.SingleOrDefaultAsync(
             folder => folder.Id == request.SourceFolderId
                 && folder.Inbox.OwnerId == request.UserId,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (source is null)
             return new ImapMoveResult(ImapMoveDisposition.SourceNotFound, 0, [], [], []);
         var destination = await ImapMailboxResolver.ResolveFolderAsync(
-            database, request.UserId, request.DestinationMailboxName, cancellationToken);
+            database, request.UserId, request.DestinationMailboxName, cancellationToken).ConfigureAwait(false);
         if (destination is null)
             return new ImapMoveResult(ImapMoveDisposition.DestinationNotFound, 0, [], [], []);
 
@@ -743,7 +769,7 @@ internal sealed class ImapApplicationService(
                 Uid = email.Uid,
                 ModSeq = email.ModSeq,
             })
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         var maximumIdentifier = request.UseUid
             ? messages.Count > 0 ? messages[^1].Uid : 0
             : messages.Count;
@@ -792,9 +818,9 @@ internal sealed class ImapApplicationService(
         }
 
         if (sourceUids.Count > 0)
-            await database.SaveChangesAsync(cancellationToken);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         if (transaction is not null)
-            await transaction.CommitAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         return new ImapMoveResult(ImapMoveDisposition.Moved,
             destination.UidValidity, sourceUids, destinationUids, expungeSequenceNumbers);
     }
@@ -840,17 +866,21 @@ internal sealed class ImapApplicationService(
             throw new ArgumentException("The IMAP COPY request is invalid.", nameof(request));
         }
 
-        await using var transaction = database.Database.IsRelational()
-            ? await database.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken)
+        var transaction = database.Database.IsRelational()
+            ? await database.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken).ConfigureAwait(false)
             : null;
+        // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+        await using var transactionLifetime = transaction;
+#pragma warning restore CA2007, MA0004
         var sourceFolder = await database.Folders.SingleOrDefaultAsync(
             folder => folder.Id == request.SourceFolderId
                 && folder.Inbox.OwnerId == request.UserId,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (sourceFolder is null)
             return new ImapCopyResult(ImapCopyDisposition.SourceNotFound, 0, [], []);
         var destination = await ImapMailboxResolver.ResolveFolderAsync(
-            database, request.UserId, request.DestinationMailboxName, cancellationToken);
+            database, request.UserId, request.DestinationMailboxName, cancellationToken).ConfigureAwait(false);
         if (destination is null)
             return new ImapCopyResult(ImapCopyDisposition.DestinationNotFound, 0, [], []);
 
@@ -865,7 +895,7 @@ internal sealed class ImapApplicationService(
                 Uid = email.Uid,
                 SizeBytes = email.SizeBytes,
             })
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         var maximumIdentifier = request.UseUid
             ? messages.Count > 0 ? messages[^1].Uid : 0
             : messages.Count;
@@ -911,7 +941,7 @@ internal sealed class ImapApplicationService(
             .AsNoTracking()
             .Where(user => user.Id == request.UserId)
             .Select(user => (long?)user.QuotaBytes)
-            .SingleOrDefaultAsync(cancellationToken);
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
         if (quotaBytes is null)
             return new ImapCopyResult(ImapCopyDisposition.SourceNotFound, 0, [], []);
         if (quotaBytes > 0)
@@ -919,7 +949,7 @@ internal sealed class ImapApplicationService(
             var usedBytes = await database.Emails
                 .AsNoTracking()
                 .Where(email => email.Folder.Inbox.OwnerId == request.UserId)
-                .SumAsync(email => (long?)email.SizeBytes, cancellationToken) ?? 0;
+                .SumAsync(email => (long?)email.SizeBytes, cancellationToken).ConfigureAwait(false) ?? 0;
             if (usedBytes >= quotaBytes || addedBytes > quotaBytes - usedBytes)
                 return new ImapCopyResult(ImapCopyDisposition.OverQuota, 0, [], []);
         }
@@ -935,8 +965,8 @@ internal sealed class ImapApplicationService(
                 var source = await database.Emails
                     .AsNoTracking()
                     .SingleAsync(email => email.Id == metadata.Id
-                        && email.FolderId == sourceFolder.Id, cancellationToken);
-                var rawMessage = await content.ReadAsync(source, cancellationToken);
+                        && email.FolderId == sourceFolder.Id, cancellationToken).ConfigureAwait(false);
+                var rawMessage = await content.ReadAsync(source, cancellationToken).ConfigureAwait(false);
                 var destinationUid = destination.NextUid++;
                 var destinationModSeq = ++destination.HighestModSeq;
                 var copy = new EmailDB
@@ -964,19 +994,19 @@ internal sealed class ImapApplicationService(
                     ModSeq = destinationModSeq,
                     FolderId = destination.Id,
                 };
-                await content.SetAsync(copy, rawMessage, cancellationToken);
+                await content.SetAsync(copy, rawMessage, cancellationToken).ConfigureAwait(false);
                 database.Emails.Add(copy);
                 sourceUids.Add(source.Uid);
                 destinationUids.Add(destinationUid);
             }
 
-            await database.SaveChangesAsync(cancellationToken);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             if (transaction is not null)
             {
                 commitAttempted = true;
-                await transaction.CommitAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             }
-            await effects.CommitAsync(marker);
+            await effects.CommitAsync(marker).ConfigureAwait(false);
         }
         catch
         {
@@ -984,7 +1014,7 @@ internal sealed class ImapApplicationService(
             {
                 try
                 {
-                    await transaction.RollbackAsync(CancellationToken.None);
+                    await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
                 }
                 catch (Exception rollbackException)
                 {
@@ -994,7 +1024,7 @@ internal sealed class ImapApplicationService(
             if (commitAttempted)
                 effects.Discard(marker);
             else
-                await effects.RollbackAsync(marker);
+                await effects.RollbackAsync(marker).ConfigureAwait(false);
             throw;
         }
 
@@ -1016,7 +1046,7 @@ internal sealed class ImapApplicationService(
         }
 
         var folder = await ImapMailboxResolver.ResolveFolderAsync(
-            database, request.UserId, request.MailboxName, cancellationToken);
+            database, request.UserId, request.MailboxName, cancellationToken).ConfigureAwait(false);
         if (folder is null)
             return new ImapAppendPreflightResult(ImapAppendPreflightDisposition.MailboxNotFound);
 
@@ -1024,7 +1054,7 @@ internal sealed class ImapApplicationService(
             .AsNoTracking()
             .Where(user => user.Id == request.UserId)
             .Select(user => (long?)user.QuotaBytes)
-            .SingleOrDefaultAsync(cancellationToken);
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
         if (quotaBytes is null)
             return new ImapAppendPreflightResult(ImapAppendPreflightDisposition.MailboxNotFound);
         if (quotaBytes <= 0)
@@ -1033,7 +1063,7 @@ internal sealed class ImapApplicationService(
         var usedBytes = await database.Emails
             .AsNoTracking()
             .Where(email => email.Folder.Inbox.OwnerId == request.UserId)
-            .SumAsync(email => (long?)email.SizeBytes, cancellationToken) ?? 0;
+            .SumAsync(email => (long?)email.SizeBytes, cancellationToken).ConfigureAwait(false) ?? 0;
         return new ImapAppendPreflightResult(
             usedBytes < quotaBytes && request.AddedBytes <= quotaBytes - usedBytes
                 ? ImapAppendPreflightDisposition.Ready
@@ -1084,144 +1114,150 @@ internal sealed class ImapApplicationService(
             }
         }
 
-        await using var transaction = database.Database.IsRelational()
+        var transaction = database.Database.IsRelational()
             ? await database.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken)
-            : null;
-        var folder = await ImapMailboxResolver.ResolveFolderAsync(
-            database, request.UserId, request.MailboxName, cancellationToken);
-        if (folder is null)
-            return new ImapAppendResult(ImapAppendDisposition.MailboxNotFound, 0, []);
-
-        var ids = request.Messages.Select(message => message.MessageId).ToArray();
-        var existing = await database.Emails
-            .AsNoTracking()
-            .Where(email => ids.Contains(email.Id))
-            .Select(email => new
-            {
-                email.Id,
-                email.FolderId,
-                email.Uid,
-                email.SizeBytes,
-                email.RawMessageObjectSha256,
-            })
-            .ToListAsync(cancellationToken);
-        if (existing.Count > 0)
+.ConfigureAwait(false) : null;
+        // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+        await using (transaction)
         {
-            if (existing.Count != request.Messages.Count)
-                throw new InvalidOperationException("The IMAP APPEND message identities conflict.");
-            var byId = existing.ToDictionary(email => email.Id);
-            foreach (var message in request.Messages)
-            {
-                var stored = byId[message.MessageId];
-                var hash = Convert.ToHexStringLower(SHA256.HashData(message.RawMessage));
-                if (stored.FolderId != folder.Id
-                    || stored.Uid < 1
-                    || stored.SizeBytes != message.RawMessage.Length
-                    || !string.Equals(stored.RawMessageObjectSha256, hash,
-                        StringComparison.Ordinal))
+#pragma warning restore CA2007, MA0004
+            var folder = await ImapMailboxResolver.ResolveFolderAsync(
+            database, request.UserId, request.MailboxName, cancellationToken).ConfigureAwait(false);
+            if (folder is null)
+                return new ImapAppendResult(ImapAppendDisposition.MailboxNotFound, 0, []);
+
+            var ids = request.Messages.Select(message => message.MessageId).ToArray();
+            var existing = await database.Emails
+                .AsNoTracking()
+                .Where(email => ids.Contains(email.Id))
+                .Select(email => new
                 {
+                    email.Id,
+                    email.FolderId,
+                    email.Uid,
+                    email.SizeBytes,
+                    email.RawMessageObjectSha256,
+                })
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
+            if (existing.Count > 0)
+            {
+                if (existing.Count != request.Messages.Count)
                     throw new InvalidOperationException("The IMAP APPEND message identities conflict.");
+                var byId = existing.ToDictionary(email => email.Id);
+                foreach (var message in request.Messages)
+                {
+                    var stored = byId[message.MessageId];
+                    var hash = Convert.ToHexStringLower(SHA256.HashData(message.RawMessage));
+                    if (stored.FolderId != folder.Id
+                        || stored.Uid < 1
+                        || stored.SizeBytes != message.RawMessage.Length
+                        || !string.Equals(stored.RawMessageObjectSha256, hash,
+                            StringComparison.Ordinal))
+                    {
+                        throw new InvalidOperationException("The IMAP APPEND message identities conflict.");
+                    }
                 }
+
+                return new ImapAppendResult(ImapAppendDisposition.Appended,
+                    folder.UidValidity,
+                    request.Messages.Select(message => byId[message.MessageId].Uid).ToList());
+            }
+
+            var quotaBytes = await database.Users
+                .AsNoTracking()
+                .Where(user => user.Id == request.UserId)
+                .Select(user => (long?)user.QuotaBytes)
+                .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+            if (quotaBytes is null)
+                return new ImapAppendResult(ImapAppendDisposition.MailboxNotFound, 0, []);
+            if (quotaBytes > 0)
+            {
+                var usedBytes = await database.Emails
+                    .AsNoTracking()
+                    .Where(email => email.Folder.Inbox.OwnerId == request.UserId)
+                    .SumAsync(email => (long?)email.SizeBytes, cancellationToken).ConfigureAwait(false) ?? 0;
+                if (usedBytes >= quotaBytes || addedBytes > quotaBytes - usedBytes)
+                    return new ImapAppendResult(ImapAppendDisposition.OverQuota, 0, []);
+            }
+
+            var marker = effects.Mark();
+            var commitAttempted = false;
+            var uids = new List<int>(request.Messages.Count);
+            try
+            {
+                foreach (var message in request.Messages)
+                {
+                    var rawText = MailWireEncoding.Instance.GetString(message.RawMessage);
+                    if (!ImapAppendContent.TryPrepareForParsing(
+                        rawText, request.Utf8Enabled, out var parsingText))
+                    {
+                        throw new InvalidOperationException("The IMAP APPEND content changed after validation.");
+                    }
+                    var (subject, body, headers) = MailMessageParser.Parse(parsingText);
+                    var messageId = MailMessageParser.ExtractHeaderValue(headers, "Message-ID");
+                    var inReplyTo = MailMessageParser.ExtractHeaderValue(headers, "In-Reply-To");
+                    var email = new EmailDB
+                    {
+                        Id = message.MessageId,
+                        Sender = MailMessageParser.ExtractHeaderValue(headers, "From"),
+                        Recipient = MailMessageParser.ExtractHeaderValue(headers, "To"),
+                        Subject = subject.Length > 998 ? subject[..998] : subject,
+                        Body = body,
+                        RawHeaders = headers,
+                        SizeBytes = message.RawMessage.Length,
+                        MessageId = messageId,
+                        InReplyTo = inReplyTo,
+                        Cc = MailMessageParser.ExtractHeaderValue(headers, "Cc"),
+                        EmailObjectId = Guid.CreateVersion7().ToString("N"),
+                        ThreadObjectId = ImapAppendContent.GenerateThreadObjectId(
+                            inReplyTo, messageId),
+                        ReceivedAt = message.InternalDate ?? DateTime.UtcNow,
+                        Uid = folder.NextUid++,
+                        ModSeq = ++folder.HighestModSeq,
+                        FolderId = folder.Id,
+                    };
+                    if (!ImapFlagMutation.TryApply(email, ImapFlagMutationMode.Add,
+                        message.Flags, out _))
+                    {
+                        throw new InvalidOperationException("The IMAP APPEND flags changed after validation.");
+                    }
+                    uids.Add(email.Uid);
+                    await content.SetAsync(email, message.RawMessage, cancellationToken).ConfigureAwait(false);
+                    database.Emails.Add(email);
+                }
+
+                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+                if (transaction is not null)
+                {
+                    commitAttempted = true;
+                    await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                }
+                await effects.CommitAsync(marker).ConfigureAwait(false);
+            }
+            catch
+            {
+                if (transaction is not null)
+                {
+                    try
+                    {
+                        await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (Exception rollbackException)
+                    {
+                        logger.LogWarning(rollbackException, "Could not roll back IMAP APPEND");
+                    }
+                }
+                if (commitAttempted)
+                    effects.Discard(marker);
+                else
+                    await effects.RollbackAsync(marker).ConfigureAwait(false);
+                throw;
             }
 
             return new ImapAppendResult(ImapAppendDisposition.Appended,
-                folder.UidValidity,
-                request.Messages.Select(message => byId[message.MessageId].Uid).ToList());
+                folder.UidValidity, uids);
         }
-
-        var quotaBytes = await database.Users
-            .AsNoTracking()
-            .Where(user => user.Id == request.UserId)
-            .Select(user => (long?)user.QuotaBytes)
-            .SingleOrDefaultAsync(cancellationToken);
-        if (quotaBytes is null)
-            return new ImapAppendResult(ImapAppendDisposition.MailboxNotFound, 0, []);
-        if (quotaBytes > 0)
-        {
-            var usedBytes = await database.Emails
-                .AsNoTracking()
-                .Where(email => email.Folder.Inbox.OwnerId == request.UserId)
-                .SumAsync(email => (long?)email.SizeBytes, cancellationToken) ?? 0;
-            if (usedBytes >= quotaBytes || addedBytes > quotaBytes - usedBytes)
-                return new ImapAppendResult(ImapAppendDisposition.OverQuota, 0, []);
-        }
-
-        var marker = effects.Mark();
-        var commitAttempted = false;
-        var uids = new List<int>(request.Messages.Count);
-        try
-        {
-            foreach (var message in request.Messages)
-            {
-                var rawText = MailWireEncoding.Instance.GetString(message.RawMessage);
-                if (!ImapAppendContent.TryPrepareForParsing(
-                    rawText, request.Utf8Enabled, out var parsingText))
-                {
-                    throw new InvalidOperationException("The IMAP APPEND content changed after validation.");
-                }
-                var (subject, body, headers) = MailMessageParser.Parse(parsingText);
-                var messageId = MailMessageParser.ExtractHeaderValue(headers, "Message-ID");
-                var inReplyTo = MailMessageParser.ExtractHeaderValue(headers, "In-Reply-To");
-                var email = new EmailDB
-                {
-                    Id = message.MessageId,
-                    Sender = MailMessageParser.ExtractHeaderValue(headers, "From"),
-                    Recipient = MailMessageParser.ExtractHeaderValue(headers, "To"),
-                    Subject = subject.Length > 998 ? subject[..998] : subject,
-                    Body = body,
-                    RawHeaders = headers,
-                    SizeBytes = message.RawMessage.Length,
-                    MessageId = messageId,
-                    InReplyTo = inReplyTo,
-                    Cc = MailMessageParser.ExtractHeaderValue(headers, "Cc"),
-                    EmailObjectId = Guid.CreateVersion7().ToString("N"),
-                    ThreadObjectId = ImapAppendContent.GenerateThreadObjectId(
-                        inReplyTo, messageId),
-                    ReceivedAt = message.InternalDate ?? DateTime.UtcNow,
-                    Uid = folder.NextUid++,
-                    ModSeq = ++folder.HighestModSeq,
-                    FolderId = folder.Id,
-                };
-                if (!ImapFlagMutation.TryApply(email, ImapFlagMutationMode.Add,
-                    message.Flags, out _))
-                {
-                    throw new InvalidOperationException("The IMAP APPEND flags changed after validation.");
-                }
-                uids.Add(email.Uid);
-                await content.SetAsync(email, message.RawMessage, cancellationToken);
-                database.Emails.Add(email);
-            }
-
-            await database.SaveChangesAsync(cancellationToken);
-            if (transaction is not null)
-            {
-                commitAttempted = true;
-                await transaction.CommitAsync(cancellationToken);
-            }
-            await effects.CommitAsync(marker);
-        }
-        catch
-        {
-            if (transaction is not null)
-            {
-                try
-                {
-                    await transaction.RollbackAsync(CancellationToken.None);
-                }
-                catch (Exception rollbackException)
-                {
-                    logger.LogWarning(rollbackException, "Could not roll back IMAP APPEND");
-                }
-            }
-            if (commitAttempted)
-                effects.Discard(marker);
-            else
-                await effects.RollbackAsync(marker);
-            throw;
-        }
-
-        return new ImapAppendResult(ImapAppendDisposition.Appended,
-            folder.UidValidity, uids);
     }
 
     public async Task<ImapSearchResult> SearchMessagesAsync(
@@ -1239,34 +1275,40 @@ internal sealed class ImapApplicationService(
             throw new ArgumentException("The IMAP SEARCH request is invalid.", nameof(request));
         }
 
-        await using var transaction = database.Database.IsRelational()
+        var transaction = database.Database.IsRelational()
             ? await database.Database.BeginTransactionAsync(
                 IsolationLevel.RepeatableRead, cancellationToken)
-            : null;
-        var folderExists = await database.Folders
+.ConfigureAwait(false) : null;
+        // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+        await using (transaction)
+        {
+#pragma warning restore CA2007, MA0004
+            var folderExists = await database.Folders
             .AsNoTracking()
             .AnyAsync(folder => folder.Id == request.FolderId
                 && folder.Inbox.OwnerId == request.UserId,
-                cancellationToken);
-        if (!folderExists)
-            return new ImapSearchResult(false, null, [], null);
+                cancellationToken).ConfigureAwait(false);
+            if (!folderExists)
+                return new ImapSearchResult(false, null, [], null);
 
-        var search = await ImapSearchEngine.FindSearchCandidatesAsync(
-            database.Emails.AsNoTracking().Where(email => email.FolderId == request.FolderId),
-            content,
-            request.Criteria.Trim(),
-            request.SavedSearchUids.ToHashSet(),
-            request.Utf8Enabled,
-            cancellationToken);
-        if (transaction is not null)
-            await transaction.CommitAsync(cancellationToken);
-        return new ImapSearchResult(
-            true,
-            search.FailureResponse,
-            search.Matches
-                .Select(match => new ImapSearchMatch(match.Uid, match.SequenceNumber))
-                .ToList(),
-            search.HighestModSequence);
+            var search = await ImapSearchEngine.FindSearchCandidatesAsync(
+                database.Emails.AsNoTracking().Where(email => email.FolderId == request.FolderId),
+                content,
+                request.Criteria.Trim(),
+                request.SavedSearchUids.ToHashSet(),
+                request.Utf8Enabled,
+                cancellationToken).ConfigureAwait(false);
+            if (transaction is not null)
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return new ImapSearchResult(
+                true,
+                search.FailureResponse,
+                search.Matches
+                    .Select(match => new ImapSearchMatch(match.Uid, match.SequenceNumber))
+                    .ToList(),
+                search.HighestModSequence);
+        }
     }
 
     public async Task<ImapSortResult> SortMessagesAsync(
@@ -1291,56 +1333,62 @@ internal sealed class ImapApplicationService(
             throw new ArgumentException("The IMAP SORT request is invalid.", nameof(request));
         }
 
-        await using var transaction = database.Database.IsRelational()
+        var transaction = database.Database.IsRelational()
             ? await database.Database.BeginTransactionAsync(
                 IsolationLevel.RepeatableRead, cancellationToken)
-            : null;
-        var folderExists = await database.Folders
+.ConfigureAwait(false) : null;
+        // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+        await using (transaction)
+        {
+#pragma warning restore CA2007, MA0004
+            var folderExists = await database.Folders
             .AsNoTracking()
             .AnyAsync(folder => folder.Id == request.FolderId
                 && folder.Inbox.OwnerId == request.UserId,
-                cancellationToken);
-        if (!folderExists)
-            return new ImapSortResult(false, null, [], null);
+                cancellationToken).ConfigureAwait(false);
+            if (!folderExists)
+                return new ImapSortResult(false, null, [], null);
 
-        var query = database.Emails
-            .AsNoTracking()
-            .Where(email => email.FolderId == request.FolderId);
-        var search = await ImapSearchEngine.FindSearchCandidatesAsync(
-            query,
-            content,
-            request.SearchCriteria,
-            request.SavedSearchUids.ToHashSet(),
-            request.Utf8Enabled,
-            cancellationToken,
-            request.Charset);
-        if (search.FailureResponse is not null)
-            return new ImapSortResult(true, search.FailureResponse, [], null);
+            var query = database.Emails
+                .AsNoTracking()
+                .Where(email => email.FolderId == request.FolderId);
+            var search = await ImapSearchEngine.FindSearchCandidatesAsync(
+                query,
+                content,
+                request.SearchCriteria,
+                request.SavedSearchUids.ToHashSet(),
+                request.Utf8Enabled,
+                cancellationToken,
+                request.Charset).ConfigureAwait(false);
+            if (search.FailureResponse is not null)
+                return new ImapSortResult(true, search.FailureResponse, [], null);
 
-        var matchedIds = search.Matches.Select(match => match.Id).ToArray();
-        var sequenceById = search.Matches.ToDictionary(
-            match => match.Id, match => match.SequenceNumber);
-        var stored = await query
-            .Where(email => matchedIds.Contains(email.Id))
-            .ToListAsync(cancellationToken);
-        var messages = new List<ImapSortEngine.SortMessage>(stored.Count);
-        foreach (var email in stored)
-        {
-            var raw = await content.ReadAsync(email, cancellationToken);
-            var metadata = ImapSortEngine.CreateStoredMessage(
-                email, sequenceById[email.Id], raw);
-            messages.Add(ImapSortEngine.CreateSortMessage(metadata));
+            var matchedIds = search.Matches.Select(match => match.Id).ToArray();
+            var sequenceById = search.Matches.ToDictionary(
+                match => match.Id, match => match.SequenceNumber);
+            var stored = await query
+                .Where(email => matchedIds.Contains(email.Id))
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
+            var messages = new List<ImapSortEngine.SortMessage>(stored.Count);
+            foreach (var email in stored)
+            {
+                var raw = await content.ReadAsync(email, cancellationToken).ConfigureAwait(false);
+                var metadata = ImapSortEngine.CreateStoredMessage(
+                    email, sequenceById[email.Id], raw);
+                messages.Add(ImapSortEngine.CreateSortMessage(metadata));
+            }
+            messages.Sort((left, right) => ImapSortEngine.CompareSortMessages(
+                left, right, request.SortCriteria));
+            if (transaction is not null)
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return new ImapSortResult(
+                true,
+                null,
+                messages.Select(message => new ImapSearchMatch(
+                    message.Uid, message.SequenceNumber)).ToList(),
+                search.HighestModSequence);
         }
-        messages.Sort((left, right) => ImapSortEngine.CompareSortMessages(
-            left, right, request.SortCriteria));
-        if (transaction is not null)
-            await transaction.CommitAsync(cancellationToken);
-        return new ImapSortResult(
-            true,
-            null,
-            messages.Select(message => new ImapSearchMatch(
-                message.Uid, message.SequenceNumber)).ToList(),
-            search.HighestModSequence);
     }
 
     public async Task<ImapThreadResult> ThreadMessagesAsync(
@@ -1362,68 +1410,74 @@ internal sealed class ImapApplicationService(
             throw new ArgumentException("The IMAP THREAD request is invalid.", nameof(request));
         }
 
-        await using var transaction = database.Database.IsRelational()
+        var transaction = database.Database.IsRelational()
             ? await database.Database.BeginTransactionAsync(
                 IsolationLevel.RepeatableRead, cancellationToken)
-            : null;
-        var folderExists = await database.Folders
+.ConfigureAwait(false) : null;
+        // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+        await using (transaction)
+        {
+#pragma warning restore CA2007, MA0004
+            var folderExists = await database.Folders
             .AsNoTracking()
             .AnyAsync(folder => folder.Id == request.FolderId
                 && folder.Inbox.OwnerId == request.UserId,
-                cancellationToken);
-        if (!folderExists)
-            return new ImapThreadResult(false, null, []);
+                cancellationToken).ConfigureAwait(false);
+            if (!folderExists)
+                return new ImapThreadResult(false, null, []);
 
-        var query = database.Emails
-            .AsNoTracking()
-            .Where(email => email.FolderId == request.FolderId);
-        var search = await ImapSearchEngine.FindSearchCandidatesAsync(
-            query,
-            content,
-            request.SearchCriteria,
-            request.SavedSearchUids.ToHashSet(),
-            request.Utf8Enabled,
-            cancellationToken,
-            request.Charset);
-        if (search.FailureResponse is not null)
-            return new ImapThreadResult(true, search.FailureResponse, []);
+            var query = database.Emails
+                .AsNoTracking()
+                .Where(email => email.FolderId == request.FolderId);
+            var search = await ImapSearchEngine.FindSearchCandidatesAsync(
+                query,
+                content,
+                request.SearchCriteria,
+                request.SavedSearchUids.ToHashSet(),
+                request.Utf8Enabled,
+                cancellationToken,
+                request.Charset).ConfigureAwait(false);
+            if (search.FailureResponse is not null)
+                return new ImapThreadResult(true, search.FailureResponse, []);
 
-        var matchedIds = search.Matches.Select(match => match.Id).ToArray();
-        var sequenceById = search.Matches.ToDictionary(
-            match => match.Id, match => match.SequenceNumber);
-        var stored = await query
-            .Where(email => matchedIds.Contains(email.Id))
-            .ToListAsync(cancellationToken);
-        List<ImapThreadNode> nodes;
-        if (request.Algorithm == ImapThreadAlgorithm.OrderedSubject)
-        {
-            var messages = new List<ImapSortEngine.SortMessage>(stored.Count);
-            foreach (var email in stored)
+            var matchedIds = search.Matches.Select(match => match.Id).ToArray();
+            var sequenceById = search.Matches.ToDictionary(
+                match => match.Id, match => match.SequenceNumber);
+            var stored = await query
+                .Where(email => matchedIds.Contains(email.Id))
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
+            List<ImapThreadNode> nodes;
+            if (request.Algorithm == ImapThreadAlgorithm.OrderedSubject)
             {
-                var raw = await content.ReadAsync(email, cancellationToken);
-                var metadata = ImapSortEngine.CreateStoredMessage(
-                    email, sequenceById[email.Id], raw);
-                messages.Add(ImapSortEngine.CreateSortMessage(metadata));
+                var messages = new List<ImapSortEngine.SortMessage>(stored.Count);
+                foreach (var email in stored)
+                {
+                    var raw = await content.ReadAsync(email, cancellationToken).ConfigureAwait(false);
+                    var metadata = ImapSortEngine.CreateStoredMessage(
+                        email, sequenceById[email.Id], raw);
+                    messages.Add(ImapSortEngine.CreateSortMessage(metadata));
+                }
+                nodes = ImapThreadEngine.BuildOrderedSubject(messages, request.UseUid);
             }
-            nodes = ImapThreadEngine.BuildOrderedSubject(messages, request.UseUid);
-        }
-        else
-        {
-            var messages = new List<Rfc5256ThreadMessage>(stored.Count);
-            foreach (var email in stored)
+            else
             {
-                var raw = await content.ReadAsync(email, cancellationToken);
-                var metadata = ImapSortEngine.CreateStoredMessage(
-                    email, sequenceById[email.Id], raw);
-                messages.Add(ImapThreadEngine.CreateReferenceMessage(
-                    metadata, email.MessageId, email.InReplyTo, request.UseUid));
+                var messages = new List<Rfc5256ThreadMessage>(stored.Count);
+                foreach (var email in stored)
+                {
+                    var raw = await content.ReadAsync(email, cancellationToken).ConfigureAwait(false);
+                    var metadata = ImapSortEngine.CreateStoredMessage(
+                        email, sequenceById[email.Id], raw);
+                    messages.Add(ImapThreadEngine.CreateReferenceMessage(
+                        metadata, email.MessageId, email.InReplyTo, request.UseUid));
+                }
+                nodes = Rfc5256Threading.BuildReferencesTree(messages);
             }
-            nodes = Rfc5256Threading.BuildReferencesTree(messages);
-        }
 
-        if (transaction is not null)
-            await transaction.CommitAsync(cancellationToken);
-        return new ImapThreadResult(true, null, nodes);
+            if (transaction is not null)
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return new ImapThreadResult(true, null, nodes);
+        }
     }
 
     public async Task<ImapMarkSeenResult> MarkMessagesSeenAsync(
@@ -1441,52 +1495,58 @@ internal sealed class ImapApplicationService(
             throw new ArgumentException("The IMAP seen update is invalid.", nameof(request));
         }
 
-        await using var transaction = database.Database.IsRelational()
+        var transaction = database.Database.IsRelational()
             ? await database.Database.BeginTransactionAsync(
                 IsolationLevel.Serializable, cancellationToken)
-            : null;
-        var folder = await database.Folders.SingleOrDefaultAsync(
+.ConfigureAwait(false) : null;
+        // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+        await using (transaction)
+        {
+#pragma warning restore CA2007, MA0004
+            var folder = await database.Folders.SingleOrDefaultAsync(
             candidate => candidate.Id == request.FolderId
                 && candidate.Inbox.OwnerId == request.UserId,
-            cancellationToken);
-        if (folder is null)
-            return new ImapMarkSeenResult(false, []);
+            cancellationToken).ConfigureAwait(false);
+            if (folder is null)
+                return new ImapMarkSeenResult(false, []);
 
-        var metadata = await database.Emails
-            .AsNoTracking()
-            .Where(email => email.FolderId == folder.Id
-                && request.MessageIds.Contains(email.Id))
-            .Select(email => new { email.Id, email.IsRead, email.ModSeq })
-            .ToListAsync(cancellationToken);
-        var byId = metadata.ToDictionary(email => email.Id);
-        var results = new List<ImapSeenMessage>(request.MessageIds.Count);
-        var changed = false;
-        foreach (var id in request.MessageIds)
-        {
-            if (!byId.TryGetValue(id, out var email))
+            var metadata = await database.Emails
+                .AsNoTracking()
+                .Where(email => email.FolderId == folder.Id
+                    && request.MessageIds.Contains(email.Id))
+                .Select(email => new { email.Id, email.IsRead, email.ModSeq })
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
+            var byId = metadata.ToDictionary(email => email.Id);
+            var results = new List<ImapSeenMessage>(request.MessageIds.Count);
+            var changed = false;
+            foreach (var id in request.MessageIds)
             {
-                results.Add(new ImapSeenMessage(id, false, 0));
-                continue;
+                if (!byId.TryGetValue(id, out var email))
+                {
+                    results.Add(new ImapSeenMessage(id, false, 0));
+                    continue;
+                }
+
+                var modSeq = email.ModSeq;
+                if (!email.IsRead)
+                {
+                    modSeq = ++folder.HighestModSeq;
+                    var update = new EmailDB { Id = id, IsRead = true, ModSeq = modSeq };
+                    database.Emails.Attach(update);
+                    database.Entry(update).Property(message => message.IsRead).IsModified = true;
+                    database.Entry(update).Property(message => message.ModSeq).IsModified = true;
+                    changed = true;
+                }
+                results.Add(new ImapSeenMessage(id, true, modSeq));
             }
 
-            var modSeq = email.ModSeq;
-            if (!email.IsRead)
-            {
-                modSeq = ++folder.HighestModSeq;
-                var update = new EmailDB { Id = id, IsRead = true, ModSeq = modSeq };
-                database.Emails.Attach(update);
-                database.Entry(update).Property(message => message.IsRead).IsModified = true;
-                database.Entry(update).Property(message => message.ModSeq).IsModified = true;
-                changed = true;
-            }
-            results.Add(new ImapSeenMessage(id, true, modSeq));
+            if (changed)
+                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            if (transaction is not null)
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return new ImapMarkSeenResult(true, results);
         }
-
-        if (changed)
-            await database.SaveChangesAsync(cancellationToken);
-        if (transaction is not null)
-            await transaction.CommitAsync(cancellationToken);
-        return new ImapMarkSeenResult(true, results);
     }
 
     public async Task<ImapFetchPageResult> GetFetchPageAsync(
@@ -1515,172 +1575,178 @@ internal sealed class ImapApplicationService(
             throw new ArgumentException("The IMAP FETCH page request is invalid.", nameof(request));
         }
 
-        await using var transaction = database.Database.IsRelational()
+        var transaction = database.Database.IsRelational()
             ? await database.Database.BeginTransactionAsync(
                 IsolationLevel.RepeatableRead, cancellationToken)
-            : null;
-        var folderExists = await database.Folders
+.ConfigureAwait(false) : null;
+        // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+        await using (transaction)
+        {
+#pragma warning restore CA2007, MA0004
+            var folderExists = await database.Folders
             .AsNoTracking()
             .AnyAsync(folder => folder.Id == request.FolderId
                 && folder.Inbox.OwnerId == request.UserId,
-                cancellationToken);
-        if (!folderExists)
-            return new ImapFetchPageResult(false, 0, 0, 0, request.AfterUid, false, []);
+                cancellationToken).ConfigureAwait(false);
+            if (!folderExists)
+                return new ImapFetchPageResult(false, 0, 0, 0, request.AfterUid, false, []);
 
-        var query = database.Emails
-            .AsNoTracking()
-            .Where(email => email.FolderId == request.FolderId);
-        var maxUid = request.SnapshotMaxUid
-            ?? await query.MaxAsync(email => (int?)email.Uid, cancellationToken)
-            ?? 0;
-        var messageCount = await query.CountAsync(
-            email => email.Uid <= maxUid, cancellationToken);
-        if (request.SnapshotMessageCount is { } snapshotCount
-            && messageCount != snapshotCount)
-        {
-            throw new InvalidOperationException(
-                "The IMAP FETCH mailbox changed during paged enumeration.");
-        }
-        var maximumIdentifier = request.SnapshotMaximumIdentifier
-            ?? (request.UseUid ? maxUid : messageCount);
-        var sequenceBefore = request.AfterUid == 0
-            ? 0
-            : await query.CountAsync(email => email.Uid <= request.AfterUid,
-                cancellationToken);
-        var candidates = await query
-            .Where(email => email.Uid > request.AfterUid && email.Uid <= maxUid)
-            .OrderBy(email => email.Uid)
-            .Select(email => new { email.Id, email.Uid })
-            .Take(FetchScanPageSize + 1)
-            .ToListAsync(cancellationToken);
-        var resolvedRanges = request.Selection.Ranges is { } ranges
-            ? ResolveMessageRanges(ranges.Select(range => (range.Start, range.End)),
-                maximumIdentifier)
-            : null;
-        var savedSearchUids = request.Selection.SavedSearchUids?.ToHashSet();
-        var selected = new List<ImapFetchMessage>();
-        var selectedLimit = request.IncludeStoredContent
-            ? FetchContentPageSize
-            : FetchMetadataPageSize;
-        var messageQuery = request.IncludeStoredContent
-            ? query
-            : query.Select(email => new EmailDB
+            var query = database.Emails
+                .AsNoTracking()
+                .Where(email => email.FolderId == request.FolderId);
+            var maxUid = request.SnapshotMaxUid
+                ?? await query.MaxAsync(email => (int?)email.Uid, cancellationToken).ConfigureAwait(false)
+                ?? 0;
+            var messageCount = await query.CountAsync(
+                email => email.Uid <= maxUid, cancellationToken).ConfigureAwait(false);
+            if (request.SnapshotMessageCount is { } snapshotCount
+                && messageCount != snapshotCount)
             {
-                Id = email.Id,
-                Sender = email.Sender,
-                Recipient = email.Recipient,
-                Subject = email.Subject,
-                Body = email.SizeBytes > 0 ? string.Empty : email.Body,
-                IsRead = email.IsRead,
-                IsDeleted = email.IsDeleted,
-                IsFlagged = email.IsFlagged,
-                IsDraft = email.IsDraft,
-                IsAnswered = email.IsAnswered,
-                Keywords = email.Keywords,
-                ModSeq = email.ModSeq,
-                Uid = email.Uid,
-                EmailObjectId = email.EmailObjectId,
-                ThreadObjectId = email.ThreadObjectId,
-                SizeBytes = email.SizeBytes,
-                RawHeaders = email.SizeBytes > 0 ? null : email.RawHeaders,
-                MessageId = email.MessageId,
-                InReplyTo = email.InReplyTo,
-                Cc = email.Cc,
-                ReceivedAt = email.ReceivedAt,
-            });
-        var candidateIds = candidates.Select(candidate => candidate.Id).ToArray();
-        var metadataById = request.IncludeStoredContent
-            ? null
-            : await messageQuery
-                .Where(email => candidateIds.Contains(email.Id))
-                .ToDictionaryAsync(email => email.Id, cancellationToken);
-        var contentBytes = 0L;
-        var nextAfterUid = request.AfterUid;
-        var processed = 0;
-        var rangeIndex = 0;
-        for (var index = 0; index < candidates.Count && index < FetchScanPageSize; index++)
-        {
-            if (selected.Count >= selectedLimit)
-                break;
-
-            var candidate = candidates[index];
-            var identifier = request.UseUid
-                ? candidate.Uid
-                : sequenceBefore + index + 1;
-            var matches = savedSearchUids is null
-                || savedSearchUids.Contains(candidate.Uid);
-            if (resolvedRanges is not null)
-            {
-                while (rangeIndex < resolvedRanges.Count
-                    && resolvedRanges[rangeIndex].End < identifier)
-                {
-                    rangeIndex++;
-                }
-                matches = matches && rangeIndex < resolvedRanges.Count
-                    && resolvedRanges[rangeIndex].Start <= identifier;
+                throw new InvalidOperationException(
+                    "The IMAP FETCH mailbox changed during paged enumeration.");
             }
-
-            if (matches)
-            {
-                var email = metadataById is not null
-                    ? metadataById[candidate.Id]
-                    : await messageQuery.SingleAsync(
-                        message => message.Id == candidate.Id, cancellationToken);
-                var raw = request.IncludeStoredContent
-                    ? await content.ReadAsync(email, cancellationToken)
-                    : null;
-                if (raw is not null
-                    && selected.Count > 0
-                    && contentBytes + raw.LongLength > FetchContentPageBytes)
+            var maximumIdentifier = request.SnapshotMaximumIdentifier
+                ?? (request.UseUid ? maxUid : messageCount);
+            var sequenceBefore = request.AfterUid == 0
+                ? 0
+                : await query.CountAsync(email => email.Uid <= request.AfterUid,
+                    cancellationToken).ConfigureAwait(false);
+            var candidates = await query
+                .Where(email => email.Uid > request.AfterUid && email.Uid <= maxUid)
+                .OrderBy(email => email.Uid)
+                .Select(email => new { email.Id, email.Uid })
+                .Take(FetchScanPageSize + 1)
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
+            var resolvedRanges = request.Selection.Ranges is { } ranges
+                ? ResolveMessageRanges(ranges.Select(range => (range.Start, range.End)),
+                    maximumIdentifier)
+                : null;
+            var savedSearchUids = request.Selection.SavedSearchUids?.ToHashSet();
+            var selected = new List<ImapFetchMessage>();
+            var selectedLimit = request.IncludeStoredContent
+                ? FetchContentPageSize
+                : FetchMetadataPageSize;
+            var messageQuery = request.IncludeStoredContent
+                ? query
+                : query.Select(email => new EmailDB
                 {
+                    Id = email.Id,
+                    Sender = email.Sender,
+                    Recipient = email.Recipient,
+                    Subject = email.Subject,
+                    Body = email.SizeBytes > 0 ? string.Empty : email.Body,
+                    IsRead = email.IsRead,
+                    IsDeleted = email.IsDeleted,
+                    IsFlagged = email.IsFlagged,
+                    IsDraft = email.IsDraft,
+                    IsAnswered = email.IsAnswered,
+                    Keywords = email.Keywords,
+                    ModSeq = email.ModSeq,
+                    Uid = email.Uid,
+                    EmailObjectId = email.EmailObjectId,
+                    ThreadObjectId = email.ThreadObjectId,
+                    SizeBytes = email.SizeBytes,
+                    RawHeaders = email.SizeBytes > 0 ? null : email.RawHeaders,
+                    MessageId = email.MessageId,
+                    InReplyTo = email.InReplyTo,
+                    Cc = email.Cc,
+                    ReceivedAt = email.ReceivedAt,
+                });
+            var candidateIds = candidates.Select(candidate => candidate.Id).ToArray();
+            var metadataById = request.IncludeStoredContent
+                ? null
+                : await messageQuery
+                    .Where(email => candidateIds.Contains(email.Id))
+                    .ToDictionaryAsync(email => email.Id, cancellationToken).ConfigureAwait(false);
+            var contentBytes = 0L;
+            var nextAfterUid = request.AfterUid;
+            var processed = 0;
+            var rangeIndex = 0;
+            for (var index = 0; index < candidates.Count && index < FetchScanPageSize; index++)
+            {
+                if (selected.Count >= selectedLimit)
                     break;
+
+                var candidate = candidates[index];
+                var identifier = request.UseUid
+                    ? candidate.Uid
+                    : sequenceBefore + index + 1;
+                var matches = savedSearchUids is null
+                    || savedSearchUids.Contains(candidate.Uid);
+                if (resolvedRanges is not null)
+                {
+                    while (rangeIndex < resolvedRanges.Count
+                        && resolvedRanges[rangeIndex].End < identifier)
+                    {
+                        rangeIndex++;
+                    }
+                    matches = matches && rangeIndex < resolvedRanges.Count
+                        && resolvedRanges[rangeIndex].Start <= identifier;
                 }
-                if (raw is not null)
-                    contentBytes += raw.LongLength;
-                selected.Add(new ImapFetchMessage(
-                    email.Id,
-                    sequenceBefore + index + 1,
-                    email.Uid,
-                    email.ModSeq,
-                    email.IsRead,
-                    email.IsDeleted,
-                    email.IsFlagged,
-                    email.IsDraft,
-                    email.IsAnswered,
-                    email.Keywords ?? [],
-                    email.ReceivedAt,
-                    email.SizeBytes,
-                    email.Sender,
-                    email.Recipient,
-                    email.Cc,
-                    email.Subject,
-                    request.IncludeStoredContent || email.SizeBytes == 0
-                        ? email.Body
-                        : string.Empty,
-                    request.IncludeStoredContent || email.SizeBytes == 0
-                        ? email.RawHeaders
-                        : null,
-                    email.MessageId,
-                    email.InReplyTo,
-                    email.EmailObjectId,
-                    email.ThreadObjectId,
-                    raw));
+
+                if (matches)
+                {
+                    var email = metadataById is not null
+                        ? metadataById[candidate.Id]
+                        : await messageQuery.SingleAsync(
+                            message => message.Id == candidate.Id, cancellationToken).ConfigureAwait(false);
+                    var raw = request.IncludeStoredContent
+                        ? await content.ReadAsync(email, cancellationToken).ConfigureAwait(false)
+                        : null;
+                    if (raw is not null
+                        && selected.Count > 0
+                        && contentBytes + raw.LongLength > FetchContentPageBytes)
+                    {
+                        break;
+                    }
+                    if (raw is not null)
+                        contentBytes += raw.LongLength;
+                    selected.Add(new ImapFetchMessage(
+                        email.Id,
+                        sequenceBefore + index + 1,
+                        email.Uid,
+                        email.ModSeq,
+                        email.IsRead,
+                        email.IsDeleted,
+                        email.IsFlagged,
+                        email.IsDraft,
+                        email.IsAnswered,
+                        email.Keywords ?? [],
+                        email.ReceivedAt,
+                        email.SizeBytes,
+                        email.Sender,
+                        email.Recipient,
+                        email.Cc,
+                        email.Subject,
+                        request.IncludeStoredContent || email.SizeBytes == 0
+                            ? email.Body
+                            : string.Empty,
+                        request.IncludeStoredContent || email.SizeBytes == 0
+                            ? email.RawHeaders
+                            : null,
+                        email.MessageId,
+                        email.InReplyTo,
+                        email.EmailObjectId,
+                        email.ThreadObjectId,
+                        raw));
+                }
+
+                nextAfterUid = candidate.Uid;
+                processed++;
             }
 
-            nextAfterUid = candidate.Uid;
-            processed++;
+            if (transaction is not null)
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return new ImapFetchPageResult(
+                true,
+                maxUid,
+                maximumIdentifier,
+                messageCount,
+                nextAfterUid,
+                processed < candidates.Count,
+                selected);
         }
-
-        if (transaction is not null)
-            await transaction.CommitAsync(cancellationToken);
-        return new ImapFetchPageResult(
-            true,
-            maxUid,
-            maximumIdentifier,
-            messageCount,
-            nextAfterUid,
-            processed < candidates.Count,
-            selected);
     }
 
     public async Task<ImapQuotaResult> GetQuotaAsync(
@@ -1693,7 +1759,7 @@ internal sealed class ImapApplicationService(
 
         if (request.MailboxName is not null
             && await ImapMailboxResolver.ResolveFolderAsync(
-                database, request.UserId, request.MailboxName, cancellationToken) is null)
+                database, request.UserId, request.MailboxName, cancellationToken).ConfigureAwait(false) is null)
         {
             return new ImapQuotaResult(false, 0, 0);
         }
@@ -1702,11 +1768,11 @@ internal sealed class ImapApplicationService(
             .AsNoTracking()
             .Where(user => user.Id == request.UserId)
             .Select(user => (long?)user.QuotaBytes)
-            .SingleOrDefaultAsync(cancellationToken) ?? 0;
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false) ?? 0;
         var usedBytes = await database.Emails
             .AsNoTracking()
             .Where(email => email.Folder.Inbox.OwnerId == request.UserId)
-            .SumAsync(email => (long?)email.SizeBytes, cancellationToken) ?? 0;
+            .SumAsync(email => (long?)email.SizeBytes, cancellationToken).ConfigureAwait(false) ?? 0;
         return new ImapQuotaResult(true, usedBytes, quotaBytes);
     }
 
@@ -1718,49 +1784,55 @@ internal sealed class ImapApplicationService(
         if (request.UserId == Guid.Empty || request.FolderId == Guid.Empty)
             throw new ArgumentException("The IMAP IDLE snapshot request is invalid.", nameof(request));
 
-        await using var transaction = database.Database.IsRelational()
+        var transaction = database.Database.IsRelational()
             ? await database.Database.BeginTransactionAsync(IsolationLevel.RepeatableRead, cancellationToken)
-            : null;
-        var highestModSeq = await database.Folders
+.ConfigureAwait(false) : null;
+        // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+        await using (transaction)
+        {
+#pragma warning restore CA2007, MA0004
+            var highestModSeq = await database.Folders
             .AsNoTracking()
             .Where(folder => folder.Id == request.FolderId
                 && folder.Inbox.OwnerId == request.UserId)
             .Select(folder => (long?)folder.HighestModSeq)
-            .SingleOrDefaultAsync(cancellationToken);
-        if (highestModSeq is null)
-            return new ImapIdleSnapshotResult(false, 0, []);
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+            if (highestModSeq is null)
+                return new ImapIdleSnapshotResult(false, 0, []);
 
-        var messages = await database.Emails
-            .AsNoTracking()
-            .Where(email => email.FolderId == request.FolderId)
-            .OrderBy(email => email.Uid)
-            .Select(email => new
-            {
-                email.Id,
-                email.Uid,
-                email.ModSeq,
-                email.IsRead,
-                email.IsDeleted,
-                email.IsFlagged,
-                email.IsDraft,
-                email.IsAnswered,
-                email.Keywords,
-            })
-            .ToListAsync(cancellationToken);
-        if (transaction is not null)
-            await transaction.CommitAsync(cancellationToken);
-        return new ImapIdleSnapshotResult(
-            true,
-            highestModSeq.Value,
-            messages.Select(message => new ImapIdleMessage(
-                message.Id,
-                message.Uid,
-                message.ModSeq,
-                message.IsRead,
-                message.IsDeleted,
-                message.IsFlagged,
-                message.IsDraft,
-                message.IsAnswered,
-                message.Keywords ?? [])).ToList());
+            var messages = await database.Emails
+                .AsNoTracking()
+                .Where(email => email.FolderId == request.FolderId)
+                .OrderBy(email => email.Uid)
+                .Select(email => new
+                {
+                    email.Id,
+                    email.Uid,
+                    email.ModSeq,
+                    email.IsRead,
+                    email.IsDeleted,
+                    email.IsFlagged,
+                    email.IsDraft,
+                    email.IsAnswered,
+                    email.Keywords,
+                })
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
+            if (transaction is not null)
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return new ImapIdleSnapshotResult(
+                true,
+                highestModSeq.Value,
+                messages.Select(message => new ImapIdleMessage(
+                    message.Id,
+                    message.Uid,
+                    message.ModSeq,
+                    message.IsRead,
+                    message.IsDeleted,
+                    message.IsFlagged,
+                    message.IsDraft,
+                    message.IsAnswered,
+                    message.Keywords ?? [])).ToList());
+        }
     }
 }

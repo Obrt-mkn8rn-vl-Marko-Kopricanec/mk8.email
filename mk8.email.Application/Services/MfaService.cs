@@ -33,13 +33,13 @@ public sealed class MfaService(
         if (normalizedName.Length is < 1 or > 128)
             return EnrollmentFailure("The authenticator name must contain from 1 through 128 characters.");
 
-        var user = await FindActiveUserAsync(normalized, cancellationToken);
+        var user = await FindActiveUserAsync(normalized, cancellationToken).ConfigureAwait(false);
         if (user is null)
             return EnrollmentFailure("The account does not exist or is not active.");
 
         var credential = await database.MfaTotpCredentials
             .Include(candidate => candidate.RecoveryCodes)
-            .SingleOrDefaultAsync(candidate => candidate.UserId == user.Id, cancellationToken);
+            .SingleOrDefaultAsync(candidate => candidate.UserId == user.Id, cancellationToken).ConfigureAwait(false);
         if (credential is { VerifiedAt: not null, RevokedAt: null })
             return EnrollmentFailure("The account already has an active authenticator.");
 
@@ -69,7 +69,7 @@ public sealed class MfaService(
         credential.LastUsedAt = null;
         credential.LastAcceptedTimeStep = null;
         credential.RevokedAt = null;
-        await database.SaveChangesAsync(cancellationToken);
+        await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
 
         var encodedSecret = TotpMfa.EncodeSecret(secret);
         var issuer = environment.Mfa.Issuer ?? string.Empty;
@@ -95,52 +95,58 @@ public sealed class MfaService(
         if (normalized.Length == 0)
             return RecoveryFailure("The account address is not valid.");
 
-        await using var transaction = await database.Database.BeginTransactionAsync(
+        var transaction = await database.Database.BeginTransactionAsync(
             IsolationLevel.Serializable,
-            cancellationToken);
-        var credential = await database.MfaTotpCredentials
+            cancellationToken).ConfigureAwait(false);
+        // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+        await using (transaction)
+        {
+#pragma warning restore CA2007, MA0004
+            var credential = await database.MfaTotpCredentials
             .Include(candidate => candidate.User)
             .Include(candidate => candidate.RecoveryCodes)
             .SingleOrDefaultAsync(
                 candidate => candidate.User.Username == normalized
                     && candidate.VerifiedAt == null
                     && candidate.RevokedAt == null,
-                cancellationToken);
-        if (credential is null)
-            return RecoveryFailure("No pending authenticator enrollment exists.");
+                cancellationToken).ConfigureAwait(false);
+            if (credential is null)
+                return RecoveryFailure("No pending authenticator enrollment exists.");
 
-        byte[] secret;
-        try
-        {
-            secret = DecryptSecret(credential, encryptionKey);
-        }
-        catch (CryptographicException)
-        {
-            return RecoveryFailure("The authenticator enrollment cannot be decrypted.");
-        }
-        if (!TotpMfa.TryVerify(
-                secret,
-                code?.Trim() ?? string.Empty,
-                DateTime.UtcNow,
-                lastAcceptedTimeStep: null,
-                out var acceptedTimeStep))
-        {
-            return RecoveryFailure("The authenticator code is not valid.");
-        }
+            byte[] secret;
+            try
+            {
+                secret = DecryptSecret(credential, encryptionKey);
+            }
+            catch (CryptographicException)
+            {
+                return RecoveryFailure("The authenticator enrollment cannot be decrypted.");
+            }
+            if (!TotpMfa.TryVerify(
+                    secret,
+                    code?.Trim() ?? string.Empty,
+                    DateTime.UtcNow,
+                    lastAcceptedTimeStep: null,
+                    out var acceptedTimeStep))
+            {
+                return RecoveryFailure("The authenticator code is not valid.");
+            }
 
-        var now = DateTime.UtcNow;
-        credential.VerifiedAt = now;
-        credential.LastUsedAt = now;
-        credential.LastAcceptedTimeStep = acceptedTimeStep;
-        database.MfaRecoveryCodes.RemoveRange(credential.RecoveryCodes);
-        var recoveryCodes = CreateRecoveryCodes(credential, now);
-        await RevokeOAuthCredentialsAsync(credential.UserId, now, cancellationToken);
-        await database.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
-        return new(
-            true,
-            "TOTP MFA is enabled. Store the recovery codes securely; they will not be shown again.",
-            recoveryCodes);
+            var now = DateTime.UtcNow;
+            credential.VerifiedAt = now;
+            credential.LastUsedAt = now;
+            credential.LastAcceptedTimeStep = acceptedTimeStep;
+            database.MfaRecoveryCodes.RemoveRange(credential.RecoveryCodes);
+            var recoveryCodes = CreateRecoveryCodes(credential, now);
+            await RevokeOAuthCredentialsAsync(credential.UserId, now, cancellationToken).ConfigureAwait(false);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return new(
+                true,
+                "TOTP MFA is enabled. Store the recovery codes securely; they will not be shown again.",
+                recoveryCodes);
+        }
     }
 
     public async Task<MfaRecoveryCodesResult> RegenerateRecoveryCodesAsync(
@@ -157,13 +163,13 @@ public sealed class MfaService(
                 candidate => candidate.User.Username == normalized
                     && candidate.VerifiedAt != null
                     && candidate.RevokedAt == null,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         if (credential is null)
             return RecoveryFailure("The account does not have an active authenticator.");
 
         database.MfaRecoveryCodes.RemoveRange(credential.RecoveryCodes);
         var recoveryCodes = CreateRecoveryCodes(credential, DateTime.UtcNow);
-        await database.SaveChangesAsync(cancellationToken);
+        await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return new(
             true,
             "New recovery codes were created. Every prior recovery code is invalid.",
@@ -181,15 +187,15 @@ public sealed class MfaService(
             .Include(candidate => candidate.User)
             .SingleOrDefaultAsync(
                 candidate => candidate.User.Username == normalized,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         if (credential is null)
             return false;
         if (credential.RevokedAt is null)
         {
             var now = DateTime.UtcNow;
             credential.RevokedAt = now;
-            await RevokeOAuthCredentialsAsync(credential.UserId, now, cancellationToken);
-            await database.SaveChangesAsync(cancellationToken);
+            await RevokeOAuthCredentialsAsync(credential.UserId, now, cancellationToken).ConfigureAwait(false);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         }
         return true;
     }
@@ -213,7 +219,7 @@ public sealed class MfaService(
                 candidate.RevokedAt,
                 Remaining = candidate.RecoveryCodes.Count(code => code.UsedAt == null),
             })
-            .SingleOrDefaultAsync(cancellationToken);
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
         var enrolled = credential is { VerifiedAt: not null, RevokedAt: null };
         return credential is null
             ? new(false, null, null, null, null, 0)
@@ -236,61 +242,67 @@ public sealed class MfaService(
         if (!TryGetEncryptionKey(out var encryptionKey))
             return MfaVerificationResult.Failed;
 
-        await using var transaction = await database.Database.BeginTransactionAsync(
+        var transaction = await database.Database.BeginTransactionAsync(
             IsolationLevel.Serializable,
-            cancellationToken);
-        var credential = await database.MfaTotpCredentials
+            cancellationToken).ConfigureAwait(false);
+        // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+        await using (transaction)
+        {
+#pragma warning restore CA2007, MA0004
+            var credential = await database.MfaTotpCredentials
             .SingleOrDefaultAsync(
                 candidate => candidate.UserId == userId
                     && candidate.VerifiedAt != null
                     && candidate.RevokedAt == null,
-                cancellationToken);
-        if (credential is null)
-            return MfaVerificationResult.NotRequired;
+                cancellationToken).ConfigureAwait(false);
+            if (credential is null)
+                return MfaVerificationResult.NotRequired;
 
-        var normalizedCode = code?.Trim() ?? string.Empty;
-        var now = DateTime.UtcNow;
-        var verified = false;
-        if (normalizedCode.Length == 6
-            && normalizedCode.All(character => character is >= '0' and <= '9'))
-        {
-            try
+            var normalizedCode = code?.Trim() ?? string.Empty;
+            var now = DateTime.UtcNow;
+            var verified = false;
+            if (normalizedCode.Length == 6
+                && normalizedCode.All(character => character is >= '0' and <= '9'))
             {
-                var secret = DecryptSecret(credential, encryptionKey);
-                verified = TotpMfa.TryVerify(
-                    secret,
-                    normalizedCode,
-                    now,
-                    credential.LastAcceptedTimeStep,
-                    out var acceptedTimeStep);
+                try
+                {
+                    var secret = DecryptSecret(credential, encryptionKey);
+                    verified = TotpMfa.TryVerify(
+                        secret,
+                        normalizedCode,
+                        now,
+                        credential.LastAcceptedTimeStep,
+                        out var acceptedTimeStep);
+                    if (verified)
+                        credential.LastAcceptedTimeStep = acceptedTimeStep;
+                }
+                catch (CryptographicException)
+                {
+                    verified = false;
+                }
+            }
+            else if (TryParseRecoveryCodeId(normalizedCode, out var recoveryCodeId))
+            {
+                var recoveryCode = await database.MfaRecoveryCodes
+                    .SingleOrDefaultAsync(
+                        candidate => candidate.Id == recoveryCodeId
+                            && candidate.CredentialId == credential.Id
+                            && candidate.UsedAt == null,
+                        cancellationToken).ConfigureAwait(false);
+                verified = RecoveryCodeHashMatches(normalizedCode, recoveryCode?.CodeHash);
                 if (verified)
-                    credential.LastAcceptedTimeStep = acceptedTimeStep;
+                    recoveryCode!.UsedAt = now;
             }
-            catch (CryptographicException)
-            {
-                verified = false;
-            }
-        }
-        else if (TryParseRecoveryCodeId(normalizedCode, out var recoveryCodeId))
-        {
-            var recoveryCode = await database.MfaRecoveryCodes
-                .SingleOrDefaultAsync(
-                    candidate => candidate.Id == recoveryCodeId
-                        && candidate.CredentialId == credential.Id
-                        && candidate.UsedAt == null,
-                    cancellationToken);
-            verified = RecoveryCodeHashMatches(normalizedCode, recoveryCode?.CodeHash);
-            if (verified)
-                recoveryCode!.UsedAt = now;
-        }
 
-        if (!verified)
-            return MfaVerificationResult.Failed;
+            if (!verified)
+                return MfaVerificationResult.Failed;
 
-        credential.LastUsedAt = now;
-        await database.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
-        return MfaVerificationResult.Succeeded;
+            credential.LastUsedAt = now;
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return MfaVerificationResult.Succeeded;
+        }
     }
 
     private List<string> CreateRecoveryCodes(MfaTotpCredentialDB credential, DateTime createdAt)
@@ -324,17 +336,17 @@ public sealed class MfaService(
     {
         var grants = await database.OAuthGrants
             .Where(grant => grant.UserId == userId && grant.RevokedAt == null)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         foreach (var grant in grants)
             grant.RevokedAt = revokedAt;
         var tokens = await database.OAuthTokens
             .Where(token => token.Grant.UserId == userId && token.RevokedAt == null)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         foreach (var token in tokens)
             token.RevokedAt = revokedAt;
         var authorizationCodes = await database.OAuthAuthorizationCodes
             .Where(code => code.UserId == userId && code.ConsumedAt == null)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         foreach (var authorizationCode in authorizationCodes)
             authorizationCode.ConsumedAt = revokedAt;
     }
@@ -355,7 +367,7 @@ public sealed class MfaService(
                 address.CompanyId == user.CompanyId
                 && address.Domain == domain
                 && address.IsActive),
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
     }
 
     private bool TryGetEncryptionKey(out byte[] key)

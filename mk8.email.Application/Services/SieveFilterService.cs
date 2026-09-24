@@ -18,13 +18,13 @@ internal sealed class SieveFilterService(
         string defaultFolder,
         CancellationToken cancellationToken = default)
     {
-        var route = await ResolveRouteAsync(recipient, cancellationToken);
+        var route = await ResolveRouteAsync(recipient, cancellationToken).ConfigureAwait(false);
         if (route is null)
             return DefaultPlan(defaultFolder);
         var script = await database.SieveScripts
             .AsNoTracking()
             .Where(item => item.UserId == route.UserId && item.IsActive)
-            .SingleOrDefaultAsync(cancellationToken);
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
         if (script is null)
             return DefaultPlan(defaultFolder);
 
@@ -32,11 +32,11 @@ internal sealed class SieveFilterService(
                 .AsNoTracking()
                 .Where(folder => folder.InboxId == route.InboxId)
                 .Select(folder => folder.Name)
-                .ToListAsync(cancellationToken))
+                .ToListAsync(cancellationToken).ConfigureAwait(false))
             .ToHashSet(StringComparer.Ordinal);
 
         var compilation = SieveScript.Compile(
-            await contentService.ReadAsync(script, cancellationToken));
+            await contentService.ReadAsync(script, cancellationToken).ConfigureAwait(false));
         if (!compilation.Succeeded)
         {
             logger.LogError(
@@ -103,7 +103,7 @@ internal sealed class SieveFilterService(
                 && (inbox.Name != "*" || inbox.AliasForInboxId != null))
             .OrderBy(inbox => inbox.Name == localPart ? 0 : 1)
             .Select(inbox => new { inbox.Id, inbox.AliasForInboxId })
-            .FirstOrDefaultAsync(cancellationToken);
+            .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
         if (route is null)
             return null;
         var targetId = route.AliasForInboxId ?? route.Id;
@@ -115,7 +115,7 @@ internal sealed class SieveFilterService(
                 && inbox.Address.IsActive
                 && inbox.Address.Company.IsActive)
             .Select(inbox => new SieveRoute(inbox.Id, inbox.OwnerId))
-            .SingleOrDefaultAsync(cancellationToken);
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static SieveDeliveryPlan DefaultPlan(string folder) => new(

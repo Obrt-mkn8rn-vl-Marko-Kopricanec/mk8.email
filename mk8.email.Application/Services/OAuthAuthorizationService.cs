@@ -57,7 +57,7 @@ public sealed class OAuthAuthorizationService(
 
         var userExists = await database.Users.AnyAsync(
             user => user.Id == userId && user.IsActive,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (!userExists)
             return null;
 
@@ -66,7 +66,7 @@ public sealed class OAuthAuthorizationService(
             .Where(code => code.ExpiresAt < now.AddDays(-1))
             .OrderBy(code => code.ExpiresAt)
             .Take(1000)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         database.OAuthAuthorizationCodes.RemoveRange(staleCodes);
 
         var id = Guid.CreateVersion7();
@@ -85,7 +85,7 @@ public sealed class OAuthAuthorizationService(
             CreatedAt = now,
             ExpiresAt = now.AddMinutes(environment.OAuth.AuthorizationCodeMinutes),
         });
-        await database.SaveChangesAsync(cancellationToken);
+        await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return codeValue;
     }
 
@@ -102,58 +102,64 @@ public sealed class OAuthAuthorizationService(
             return null;
         }
 
-        await using var transaction = await database.Database.BeginTransactionAsync(
+        var transaction = await database.Database.BeginTransactionAsync(
             IsolationLevel.Serializable,
-            cancellationToken);
-        var authorizationCode = await database.OAuthAuthorizationCodes
-            .SingleOrDefaultAsync(candidate => candidate.Id == codeId, cancellationToken);
-        var codeMatches = FixedTimeHashMatches(code, authorizationCode?.CodeHash);
-        var verifierChallenge = OAuthProtocolValues.CreatePkceChallenge(codeVerifier);
-        var challengeMatches = authorizationCode is not null
-            && CryptographicOperations.FixedTimeEquals(
-                Encoding.ASCII.GetBytes(verifierChallenge),
-                Encoding.ASCII.GetBytes(authorizationCode.CodeChallenge));
-        var now = DateTime.UtcNow;
-        if (authorizationCode is null
-            || !codeMatches
-            || !challengeMatches
-            || authorizationCode.ConsumedAt is not null
-            || authorizationCode.ExpiresAt <= now
-            || !string.Equals(authorizationCode.ClientId, clientId, StringComparison.Ordinal)
-            || !string.Equals(authorizationCode.RedirectUri, redirectUri, StringComparison.Ordinal))
+            cancellationToken).ConfigureAwait(false);
+        // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+        await using (transaction)
         {
-            return null;
-        }
-
-        authorizationCode.ConsumedAt = now;
-        var pair = await tokenService.CreateGrantAsync(
-            authorizationCode.UserId,
-            authorizationCode.ClientId,
-            authorizationCode.DeviceName,
-            authorizationCode.Scopes,
-            cancellationToken);
-        if (pair?.IdToken is not null)
-        {
-            var grant = await database.OAuthGrants
-                .Include(candidate => candidate.User)
-                .SingleAsync(candidate => candidate.Id == pair.GrantId, cancellationToken);
-            grant.CreatedAt = authorizationCode.CreatedAt;
-            pair = pair with
+#pragma warning restore CA2007, MA0004
+            var authorizationCode = await database.OAuthAuthorizationCodes
+            .SingleOrDefaultAsync(candidate => candidate.Id == codeId, cancellationToken).ConfigureAwait(false);
+            var codeMatches = FixedTimeHashMatches(code, authorizationCode?.CodeHash);
+            var verifierChallenge = OAuthProtocolValues.CreatePkceChallenge(codeVerifier);
+            var challengeMatches = authorizationCode is not null
+                && CryptographicOperations.FixedTimeEquals(
+                    Encoding.ASCII.GetBytes(verifierChallenge),
+                    Encoding.ASCII.GetBytes(authorizationCode.CodeChallenge));
+            var now = DateTime.UtcNow;
+            if (authorizationCode is null
+                || !codeMatches
+                || !challengeMatches
+                || authorizationCode.ConsumedAt is not null
+                || authorizationCode.ExpiresAt <= now
+                || !string.Equals(authorizationCode.ClientId, clientId, StringComparison.Ordinal)
+                || !string.Equals(authorizationCode.RedirectUri, redirectUri, StringComparison.Ordinal))
             {
-                IdToken = openIdConnect.CreateIdToken(
-                    grant.UserId,
-                    grant.User.Username,
-                    grant.ClientId,
-                    pair.AccessToken,
-                    authorizationCode.CreatedAt,
-                    now,
-                    authorizationCode.Nonce,
-                    grant.Scopes),
-            };
+                return null;
+            }
+
+            authorizationCode.ConsumedAt = now;
+            var pair = await tokenService.CreateGrantAsync(
+                authorizationCode.UserId,
+                authorizationCode.ClientId,
+                authorizationCode.DeviceName,
+                authorizationCode.Scopes,
+                cancellationToken).ConfigureAwait(false);
+            if (pair?.IdToken is not null)
+            {
+                var grant = await database.OAuthGrants
+                    .Include(candidate => candidate.User)
+                    .SingleAsync(candidate => candidate.Id == pair.GrantId, cancellationToken).ConfigureAwait(false);
+                grant.CreatedAt = authorizationCode.CreatedAt;
+                pair = pair with
+                {
+                    IdToken = openIdConnect.CreateIdToken(
+                        grant.UserId,
+                        grant.User.Username,
+                        grant.ClientId,
+                        pair.AccessToken,
+                        authorizationCode.CreatedAt,
+                        now,
+                        authorizationCode.Nonce,
+                        grant.Scopes),
+                };
+            }
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return pair;
         }
-        await database.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
-        return pair;
     }
 
     private static string CreateOpaqueValue(string prefix, Guid id)

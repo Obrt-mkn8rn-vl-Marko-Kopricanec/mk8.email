@@ -31,7 +31,7 @@ public sealed class DavResourceLargeObjectMigrationService(
 
         if (!IsPostgreSql())
         {
-            await MigrateRowsAsync(cancellationToken);
+            await MigrateRowsAsync(cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -41,13 +41,13 @@ public sealed class DavResourceLargeObjectMigrationService(
         try
         {
             if (closeConnection)
-                await database.Database.OpenConnectionAsync(cancellationToken);
+                await database.Database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
             await database.Database.ExecuteSqlInterpolatedAsync(
                 $"SELECT pg_advisory_lock({MigrationLockKey})",
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             lockTaken = true;
-            await MigrateRowsAsync(cancellationToken);
-            await EnforceExternalStorageAsync(cancellationToken);
+            await MigrateRowsAsync(cancellationToken).ConfigureAwait(false);
+            await EnforceExternalStorageAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -57,13 +57,13 @@ public sealed class DavResourceLargeObjectMigrationService(
                 {
                     await database.Database.ExecuteSqlInterpolatedAsync(
                         $"SELECT pg_advisory_unlock({MigrationLockKey})",
-                        CancellationToken.None);
+                        CancellationToken.None).ConfigureAwait(false);
                 }
             }
             finally
             {
                 if (closeConnection)
-                    await database.Database.CloseConnectionAsync();
+                    await database.Database.CloseConnectionAsync().ConfigureAwait(false);
             }
         }
     }
@@ -77,12 +77,12 @@ public sealed class DavResourceLargeObjectMigrationService(
                 .OrderBy(resource => resource.CreatedAt)
                 .ThenBy(resource => resource.Id)
                 .Take(BatchSize)
-                .ToListAsync(cancellationToken);
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
             if (legacy.Count == 0)
                 break;
 
             foreach (var resource in legacy)
-                await MigrateAsync(resource, cancellationToken);
+                await MigrateAsync(resource, cancellationToken).ConfigureAwait(false);
             database.ChangeTracker.Clear();
         }
     }
@@ -102,70 +102,82 @@ public sealed class DavResourceLargeObjectMigrationService(
         }
 
         var ownsTransaction = database.Database.IsRelational();
-        await using var transaction = ownsTransaction
+        var transaction = ownsTransaction
             ? await database.Database.BeginTransactionAsync(cancellationToken)
-            : null;
-        LargeObjectWriteResult? written = null;
-        var commitAttempted = false;
-        try
+.ConfigureAwait(false) : null;
+        // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+        await using (transaction)
         {
-            await using var source = new MemoryStream(content, writable: false);
-            written = await objects.PutIfAbsentAsync(
-                DavResourceContentService.BuildObjectName(resource.Id, hash),
-                source,
-                content.LongLength,
-                hash,
-                resource.ContentType,
-                cancellationToken);
-            DavResourceContentService.ApplyReference(resource, written.Reference);
-            await database.SaveChangesAsync(cancellationToken);
-            if (transaction is not null)
+#pragma warning restore CA2007, MA0004
+            LargeObjectWriteResult? written = null;
+            var commitAttempted = false;
+            try
             {
-                commitAttempted = true;
-                await transaction.CommitAsync(cancellationToken);
-            }
-        }
-        catch
-        {
-            if (transaction is not null)
-            {
-                try
+                var source = new MemoryStream(content, writable: false);
+                await using var sourceLifetime = source.ConfigureAwait(false);
+                written = await objects.PutIfAbsentAsync(
+                    DavResourceContentService.BuildObjectName(resource.Id, hash),
+                    source,
+                    content.LongLength,
+                    hash,
+                    resource.ContentType,
+                    cancellationToken).ConfigureAwait(false);
+                DavResourceContentService.ApplyReference(resource, written.Reference);
+                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+                if (transaction is not null)
                 {
-                    await transaction.RollbackAsync(CancellationToken.None);
-                }
-                catch (Exception rollbackException)
-                {
-                    logger.LogWarning(
-                        rollbackException,
-                        "Could not roll back DAV resource migration for {ResourceId}",
-                        resource.Id);
+                    commitAttempted = true;
+                    await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
                 }
             }
-            if (written is { Created: true } && !commitAttempted)
+            catch
             {
-                try
+                if (transaction is not null)
                 {
-                    await objects.DeleteIfMatchAsync(written.Reference, CancellationToken.None);
+                    try
+                    {
+                        await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (Exception rollbackException)
+                    {
+                        logger.LogWarning(
+                            rollbackException,
+                            "Could not roll back DAV resource migration for {ResourceId}",
+                            resource.Id);
+                    }
                 }
-                catch (Exception cleanupException)
+                if (written is { Created: true } && !commitAttempted)
                 {
-                    logger.LogWarning(
-                        cleanupException,
-                        "Could not clean up DAV migration object {ObjectName}",
-                        written.Reference.ObjectName);
+                    try
+                    {
+                        await objects.DeleteIfMatchAsync(written.Reference, CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (Exception cleanupException)
+                    {
+                        logger.LogWarning(
+                            cleanupException,
+                            "Could not clean up DAV migration object {ObjectName}",
+                            written.Reference.ObjectName);
+                    }
                 }
+                throw;
             }
-            throw;
         }
     }
 
     private async Task EnforceExternalStorageAsync(CancellationToken cancellationToken)
     {
-        await using var transaction = await database.Database.BeginTransactionAsync(cancellationToken);
-        try
+        var transaction = await database.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+        await using (transaction)
         {
-            await database.Database.ExecuteSqlRawAsync(
-                """
+#pragma warning restore CA2007, MA0004
+            try
+            {
+                await database.Database.ExecuteSqlRawAsync(
+                    """
                 DO $migration$
                 BEGIN
                     IF NOT EXISTS (
@@ -187,13 +199,14 @@ public sealed class DavResourceLargeObjectMigrationService(
                 ALTER TABLE dav_resources
                     VALIDATE CONSTRAINT ck_dav_resources_external_storage;
                 """,
-                cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-        }
-        catch
-        {
-            await transaction.RollbackAsync(CancellationToken.None);
-            throw;
+                    cancellationToken).ConfigureAwait(false);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                throw;
+            }
         }
     }
 

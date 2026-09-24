@@ -155,16 +155,16 @@ public sealed class PostgresMailSubmissionQueue(
         try
         {
             if (database.Database.IsRelational())
-                transaction = await database.Database.BeginTransactionAsync(cancellationToken);
-            await content.SetAsync(message, submission.RawMessage, cancellationToken);
+                transaction = await database.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+            await content.SetAsync(message, submission.RawMessage, cancellationToken).ConfigureAwait(false);
             database.MailQueueMessages.Add(message);
-            await database.SaveChangesAsync(cancellationToken);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             if (transaction is not null)
             {
                 commitAttempted = true;
-                await transaction.CommitAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             }
-            await transactionEffects.CommitAsync(effectMarker);
+            await transactionEffects.CommitAsync(effectMarker).ConfigureAwait(false);
             return message.Id;
         }
         catch
@@ -173,7 +173,7 @@ public sealed class PostgresMailSubmissionQueue(
             {
                 try
                 {
-                    await transaction.RollbackAsync(CancellationToken.None);
+                    await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
                 }
                 catch (Exception rollbackException)
                 {
@@ -186,13 +186,13 @@ public sealed class PostgresMailSubmissionQueue(
             if (commitAttempted)
                 transactionEffects.Discard(effectMarker);
             else
-                await transactionEffects.RollbackAsync(effectMarker);
+                await transactionEffects.RollbackAsync(effectMarker).ConfigureAwait(false);
             throw;
         }
         finally
         {
             if (transaction is not null)
-                await transaction.DisposeAsync();
+                await transaction.DisposeAsync().ConfigureAwait(false);
         }
     }
 

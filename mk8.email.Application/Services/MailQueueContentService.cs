@@ -30,20 +30,23 @@ public sealed class MailQueueContentService(
         var content = MailWireEncoding.Instance.GetBytes(rawMessage);
         var hash = Convert.ToHexStringLower(SHA256.HashData(content));
         var previous = TryGetReference(message);
-        await using var source = new MemoryStream(content, writable: false);
-        var written = await objects.PutIfAbsentAsync(
+        var source = new MemoryStream(content, writable: false);
+        await using (source.ConfigureAwait(false))
+        {
+            var written = await objects.PutIfAbsentAsync(
             BuildObjectName(message.Id),
             source,
             content.LongLength,
             hash,
             "message/rfc822",
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
 
-        ApplyReference(message, written.Reference);
-        if (written.Created)
-            transactionEffects.DeleteOnRollback(written.Reference);
-        if (previous is not null && previous != written.Reference)
-            transactionEffects.DeleteOnCommit(previous);
+            ApplyReference(message, written.Reference);
+            if (written.Created)
+                transactionEffects.DeleteOnRollback(written.Reference);
+            if (previous is not null && previous != written.Reference)
+                transactionEffects.DeleteOnCommit(previous);
+        }
     }
 
     public async Task<string> ReadAsync(
@@ -71,22 +74,25 @@ public sealed class MailQueueContentService(
         var reference = TryGetReference(message)
             ?? throw new InvalidOperationException(
                 $"Queue message {message.Id:D} has no valid storage reference.");
-        await using var destination = new MemoryStream();
-        await objects.CopyToAsync(reference, destination, cancellationToken);
-        var content = destination.ToArray();
-        if (content.LongLength != message.RawMessageSizeBytes)
+        var destination = new MemoryStream();
+        await using (destination.ConfigureAwait(false))
         {
-            throw new InvalidOperationException(
-                $"Queue message {message.Id:D} failed its length check.");
+            await objects.CopyToAsync(reference, destination, cancellationToken).ConfigureAwait(false);
+            var content = destination.ToArray();
+            if (content.LongLength != message.RawMessageSizeBytes)
+            {
+                throw new InvalidOperationException(
+                    $"Queue message {message.Id:D} failed its length check.");
+            }
+            if (!CryptographicOperations.FixedTimeEquals(
+                    SHA256.HashData(content),
+                    Convert.FromHexString(reference.Sha256)))
+            {
+                throw new InvalidOperationException(
+                    $"Queue message {message.Id:D} failed its content hash check.");
+            }
+            return MailWireEncoding.Instance.GetString(content);
         }
-        if (!CryptographicOperations.FixedTimeEquals(
-                SHA256.HashData(content),
-                Convert.FromHexString(reference.Sha256)))
-        {
-            throw new InvalidOperationException(
-                $"Queue message {message.Id:D} failed its content hash check.");
-        }
-        return MailWireEncoding.Instance.GetString(content);
     }
 
     public LargeObjectReference? TryGetReference(MailQueueMessageDB message)
@@ -119,7 +125,7 @@ public sealed class MailQueueContentService(
     {
         try
         {
-            await objects.DeleteIfMatchAsync(reference, CancellationToken.None);
+            await objects.DeleteIfMatchAsync(reference, CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception exception)
         {

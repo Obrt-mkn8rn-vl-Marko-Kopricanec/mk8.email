@@ -28,21 +28,24 @@ public sealed class SieveScriptContentService(
             throw new InvalidOperationException("The Sieve script size is invalid.");
         var hash = Convert.ToHexStringLower(SHA256.HashData(bytes));
         var previous = TryGetReference(script);
-        await using var source = new MemoryStream(bytes, writable: false);
-        // A unique write key keeps a failed concurrent update from deleting a
-        // committed update's object, even when both scripts contain identical bytes.
-        var written = await objects.PutIfAbsentAsync(
+        var source = new MemoryStream(bytes, writable: false);
+        await using (source.ConfigureAwait(false))
+        {
+            // A unique write key keeps a failed concurrent update from deleting a
+            // committed update's object, even when both scripts contain identical bytes.
+            var written = await objects.PutIfAbsentAsync(
             BuildObjectName(script.Id, hash, Guid.CreateVersion7()),
             source,
             bytes.LongLength,
             hash,
             "application/sieve",
-            cancellationToken);
-        ApplyReference(script, written.Reference);
-        if (written.Created)
-            transactionEffects.DeleteOnRollback(written.Reference);
-        if (previous is not null && previous != written.Reference)
-            transactionEffects.DeleteOnCommit(previous);
+            cancellationToken).ConfigureAwait(false);
+            ApplyReference(script, written.Reference);
+            if (written.Created)
+                transactionEffects.DeleteOnRollback(written.Reference);
+            if (previous is not null && previous != written.Reference)
+                transactionEffects.DeleteOnCommit(previous);
+        }
     }
 
     public async Task<string> ReadAsync(
@@ -70,18 +73,21 @@ public sealed class SieveScriptContentService(
                 $"Sieve script {script.Id:D} has no valid storage reference.");
         if (script.SizeBytes is <= 0 or > SieveScript.MaximumScriptBytes)
             throw new InvalidOperationException($"Sieve script {script.Id:D} has an invalid size.");
-        await using var destination = new MemoryStream();
-        await objects.CopyToAsync(reference, destination, cancellationToken);
-        var bytes = destination.ToArray();
-        if (bytes.Length != script.SizeBytes
-            || !CryptographicOperations.FixedTimeEquals(
-                SHA256.HashData(bytes),
-                Convert.FromHexString(reference.Sha256)))
+        var destination = new MemoryStream();
+        await using (destination.ConfigureAwait(false))
         {
-            throw new InvalidOperationException(
-                $"Sieve script {script.Id:D} failed its content integrity check.");
+            await objects.CopyToAsync(reference, destination, cancellationToken).ConfigureAwait(false);
+            var bytes = destination.ToArray();
+            if (bytes.Length != script.SizeBytes
+                || !CryptographicOperations.FixedTimeEquals(
+                    SHA256.HashData(bytes),
+                    Convert.FromHexString(reference.Sha256)))
+            {
+                throw new InvalidOperationException(
+                    $"Sieve script {script.Id:D} failed its content integrity check.");
+            }
+            return StrictUtf8.GetString(bytes);
         }
-        return StrictUtf8.GetString(bytes);
     }
 
     public LargeObjectReference? TryGetReference(SieveScriptDB script)

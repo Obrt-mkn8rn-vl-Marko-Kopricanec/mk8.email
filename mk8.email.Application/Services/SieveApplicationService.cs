@@ -13,7 +13,7 @@ internal sealed class SieveApplicationService(
         CancellationToken cancellationToken = default)
     {
         var user = await authenticator.AuthenticateAsync(
-            request.Username, request.Password, cancellationToken);
+            request.Username, request.Password, cancellationToken).ConfigureAwait(false);
         return new SieveIdentityResult(user?.Id, user?.Username);
     }
 
@@ -22,7 +22,7 @@ internal sealed class SieveApplicationService(
         CancellationToken cancellationToken = default)
     {
         var user = await oauthTokens.AuthenticateAccessTokenAsync(
-            request.AccessToken, "sieve", cancellationToken);
+            request.AccessToken, "sieve", cancellationToken).ConfigureAwait(false);
         return new SieveIdentityResult(user?.Id, user?.Username);
     }
 
@@ -44,7 +44,7 @@ internal sealed class SieveApplicationService(
     public async Task<SieveStoredScriptResult> GetAsync(
         SieveNamedRequest request,
         CancellationToken cancellationToken = default) =>
-        new(await scripts.GetAsync(request.UserId, request.Name, cancellationToken));
+        new(await scripts.GetAsync(request.UserId, request.Name, cancellationToken).ConfigureAwait(false));
 
     public Task<SieveScriptOperationResult> PutAsync(
         SievePutRequest request,

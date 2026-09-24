@@ -25,13 +25,13 @@ public sealed class ApplicationPasswordService(EmailDbContext database) : IAppli
         if (normalizedName.Length is < 1 or > MaximumNameLength)
             return Failure($"The application password name must contain from 1 through {MaximumNameLength} characters.");
 
-        var user = await FindActiveUserAsync(normalized, cancellationToken);
+        var user = await FindActiveUserAsync(normalized, cancellationToken).ConfigureAwait(false);
         if (user is null)
             return Failure("The account does not exist or is not active.");
 
         var activeCount = await database.ApplicationPasswords.CountAsync(
             password => password.UserId == user.Id && password.RevokedAt == null,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (activeCount >= MaximumActivePasswordsPerUser)
             return Failure($"The account already has {MaximumActivePasswordsPerUser} active application passwords.");
 
@@ -51,7 +51,7 @@ public sealed class ApplicationPasswordService(EmailDbContext database) : IAppli
             PasswordHash = PasswordHasher.Hash(passwordValue),
             CreatedAt = now,
         });
-        await database.SaveChangesAsync(cancellationToken);
+        await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
 
         return new(
             true,
@@ -78,7 +78,7 @@ public sealed class ApplicationPasswordService(EmailDbContext database) : IAppli
                 password.CreatedAt,
                 password.LastUsedAt,
                 password.RevokedAt))
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<bool> RevokeAsync(
@@ -95,13 +95,13 @@ public sealed class ApplicationPasswordService(EmailDbContext database) : IAppli
             .SingleOrDefaultAsync(
                 candidate => candidate.Id == applicationPasswordId
                     && candidate.User.Username == normalized,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         if (password is null)
             return false;
         if (password.RevokedAt is null)
         {
             password.RevokedAt = DateTime.UtcNow;
-            await database.SaveChangesAsync(cancellationToken);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         }
         return true;
     }
@@ -122,7 +122,7 @@ public sealed class ApplicationPasswordService(EmailDbContext database) : IAppli
                     address.CompanyId == user.CompanyId
                     && address.Domain == domain
                     && address.IsActive),
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
     }
 
     private static string NormalizeUsername(string username) =>

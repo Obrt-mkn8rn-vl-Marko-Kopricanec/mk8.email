@@ -49,7 +49,7 @@ public interface IOAuthTokenService
         var user = await AuthenticateAccessTokenAsync(
             accessToken,
             requiredScope,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         return user is null
             ? null
             : new(user.Id, user.Username, [requiredScope]);

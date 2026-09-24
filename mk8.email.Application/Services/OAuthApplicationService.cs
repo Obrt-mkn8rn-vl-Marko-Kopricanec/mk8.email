@@ -31,7 +31,7 @@ public sealed class OAuthApplicationService(
         var identity = await tokens.AuthenticateIdentityAsync(
             request.AccessToken,
             request.RequiredScope,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         return new OAuthIdentityLookupResult(identity is null
             ? null
             : new OAuthIdentityValue(identity.UserId, identity.Username, identity.Scopes));
@@ -44,7 +44,7 @@ public sealed class OAuthApplicationService(
         var user = await authenticator.AuthenticatePrimaryAsync(
             request.Username,
             request.Password,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (user is null)
         {
             return new OAuthAuthorizeApplicationResult(
@@ -54,7 +54,7 @@ public sealed class OAuthApplicationService(
         var verification = await mfa.VerifyForAuthenticationAsync(
             user.Id,
             request.VerificationCode,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (verification == MfaVerificationResult.Failed)
         {
             return new OAuthAuthorizeApplicationResult(
@@ -69,7 +69,7 @@ public sealed class OAuthApplicationService(
             request.Scopes,
             request.CodeChallenge,
             request.Nonce,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         return code is null
             ? new OAuthAuthorizeApplicationResult(OAuthAuthorizationOutcome.Rejected)
             : new OAuthAuthorizeApplicationResult(
@@ -85,7 +85,7 @@ public sealed class OAuthApplicationService(
             request.ClientId,
             request.RedirectUri,
             request.CodeVerifier,
-            cancellationToken));
+            cancellationToken).ConfigureAwait(false));
 
     public async Task<OAuthTokenApplicationResult> RefreshTokenAsync(
         OAuthRefreshTokenRequest request,
@@ -93,7 +93,7 @@ public sealed class OAuthApplicationService(
         Map(await tokens.RefreshAsync(
             request.RefreshToken,
             request.ClientId,
-            cancellationToken));
+            cancellationToken).ConfigureAwait(false));
 
     public Task RevokeTokenAsync(
         OAuthRevokeTokenRequest request,

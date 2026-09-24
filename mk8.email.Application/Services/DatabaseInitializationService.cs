@@ -15,27 +15,30 @@ public sealed class DatabaseInitializationService(
     {
         var connection = db.Database.GetDbConnection();
         if (connection.State != ConnectionState.Open)
-            await connection.OpenAsync(cancellationToken);
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
+        var command = connection.CreateCommand();
+        await using (command.ConfigureAwait(false))
+        {
+            command.CommandText = """
             SELECT count(*)
             FROM information_schema.tables
             WHERE table_schema = 'public'
               AND table_type = 'BASE TABLE'
             """;
-        var tableCount = Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken));
-        if (tableCount != 0)
-        {
-            return new AdministrationResult(
-                false,
-                "The database contains tables. Initialization stopped without changes.");
+            var tableCount = Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false));
+            if (tableCount != 0)
+            {
+                return new AdministrationResult(
+                    false,
+                    "The database contains tables. Initialization stopped without changes.");
+            }
+
+            if (!await db.Database.EnsureCreatedAsync(cancellationToken).ConfigureAwait(false))
+                return new AdministrationResult(false, "The database schema was not created.");
+
+            await seeder.SeedAsync(cancellationToken).ConfigureAwait(false);
+            return new AdministrationResult(true, "The empty database was initialized.");
         }
-
-        if (!await db.Database.EnsureCreatedAsync(cancellationToken))
-            return new AdministrationResult(false, "The database schema was not created.");
-
-        await seeder.SeedAsync(cancellationToken);
-        return new AdministrationResult(true, "The empty database was initialized.");
     }
 }

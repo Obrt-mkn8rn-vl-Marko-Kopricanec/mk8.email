@@ -70,7 +70,7 @@ public sealed class RspamdMailScanner : IMailScanner, IDisposable
         using var response = await _client.SendAsync(
             message,
             HttpCompletionOption.ResponseHeadersRead,
-            timeout.Token);
+            timeout.Token).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
             throw new HttpRequestException(
@@ -79,42 +79,45 @@ public sealed class RspamdMailScanner : IMailScanner, IDisposable
                 response.StatusCode);
         }
 
-        await using var responseStream = await response.Content.ReadAsStreamAsync(timeout.Token);
-        using var buffer = new MemoryStream();
-        await CopyBoundedAsync(responseStream, buffer, MaximumResponseBytes, timeout.Token);
-        buffer.Position = 0;
+        var responseStream = await response.Content.ReadAsStreamAsync(timeout.Token).ConfigureAwait(false);
+        await using (responseStream.ConfigureAwait(false))
+        {
+            using var buffer = new MemoryStream();
+            await CopyBoundedAsync(responseStream, buffer, MaximumResponseBytes, timeout.Token).ConfigureAwait(false);
+            buffer.Position = 0;
 
-        using var document = await JsonDocument.ParseAsync(
-            buffer,
-            new JsonDocumentOptions { MaxDepth = 32 },
-            timeout.Token);
-        var root = document.RootElement;
-        var action = GetRequiredString(root, "action").ToLowerInvariant();
-        if (!SupportedActions.Contains(action))
-            throw new InvalidDataException("Rspamd returned an unsupported action.");
+            using var document = await JsonDocument.ParseAsync(
+                buffer,
+                new JsonDocumentOptions { MaxDepth = 32 },
+                timeout.Token).ConfigureAwait(false);
+            var root = document.RootElement;
+            var action = GetRequiredString(root, "action").ToLowerInvariant();
+            if (!SupportedActions.Contains(action))
+                throw new InvalidDataException("Rspamd returned an unsupported action.");
 
-        var score = GetRequiredNumber(root, "score");
-        var requiredScore = GetRequiredNumber(root, "required_score");
-        var symbols = ReadSymbols(root);
-        var scannerFailed = symbols.Contains("CLAM_VIRUS_FAIL");
-        var isTemporaryFailure = scannerFailed
-            || action is "soft reject" or "greylist";
-        var isMalware = symbols.Any(symbol =>
-            symbol.StartsWith("CLAM_VIRUS", StringComparison.Ordinal)
-            && symbol != "CLAM_VIRUS_FAIL");
+            var score = GetRequiredNumber(root, "score");
+            var requiredScore = GetRequiredNumber(root, "required_score");
+            var symbols = ReadSymbols(root);
+            var scannerFailed = symbols.Contains("CLAM_VIRUS_FAIL");
+            var isTemporaryFailure = scannerFailed
+                || action is "soft reject" or "greylist";
+            var isMalware = symbols.Any(symbol =>
+                symbol.StartsWith("CLAM_VIRUS", StringComparison.Ordinal)
+                && symbol != "CLAM_VIRUS_FAIL");
 
-        var headers = isTemporaryFailure
-            ? string.Empty
-            : BuildAddedHeaders(root, request.AuthenticatedUser is not null, action, score, requiredScore, symbols);
+            var headers = isTemporaryFailure
+                ? string.Empty
+                : BuildAddedHeaders(root, request.AuthenticatedUser is not null, action, score, requiredScore, symbols);
 
-        return new MailScanResult(
-            action,
-            score,
-            requiredScore,
-            symbols,
-            headers,
-            isMalware,
-            isTemporaryFailure);
+            return new MailScanResult(
+                action,
+                score,
+                requiredScore,
+                symbols,
+                headers,
+                isMalware,
+                isTemporaryFailure);
+        }
     }
 
     public void Dispose()
@@ -275,13 +278,13 @@ public sealed class RspamdMailScanner : IMailScanner, IDisposable
         var total = 0;
         while (true)
         {
-            var read = await source.ReadAsync(block, cancellationToken);
+            var read = await source.ReadAsync(block, cancellationToken).ConfigureAwait(false);
             if (read == 0)
                 return;
             total += read;
             if (total > maximumBytes)
                 throw new InvalidDataException("Rspamd returned too much data.");
-            await destination.WriteAsync(block.AsMemory(0, read), cancellationToken);
+            await destination.WriteAsync(block.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
         }
     }
 

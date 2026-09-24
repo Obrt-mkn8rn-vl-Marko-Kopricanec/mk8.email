@@ -11,7 +11,7 @@ public class AddressService(EmailDbContext db) : IAddressService
 {
     public async Task<AddressDTO?> CreateAddressAsync(Guid userId, CreateAddressRequestDTO request)
     {
-        var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId);
+        var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId).ConfigureAwait(false);
         if (user is null)
             return null;
 
@@ -30,16 +30,16 @@ public class AddressService(EmailDbContext db) : IAddressService
                 return null;
         }
 
-        if (await db.Addresses.AnyAsync(a => a.Domain == request.Domain))
+        if (await db.Addresses.AnyAsync(a => a.Domain == request.Domain).ConfigureAwait(false))
             return null;
 
         var companyLimits = await db.CompanyLimits.AsNoTracking()
-            .FirstOrDefaultAsync(l => l.CompanyId == request.CompanyId);
-        var globalLimits = await db.GlobalLimits.AsNoTracking().SingleAsync();
+            .FirstOrDefaultAsync(l => l.CompanyId == request.CompanyId).ConfigureAwait(false);
+        var globalLimits = await db.GlobalLimits.AsNoTracking().SingleAsync().ConfigureAwait(false);
 
         var maxDomains = companyLimits?.MaxDomains ?? globalLimits.DefaultMaxDomainsPerCompany;
         if (maxDomains > 0 &&
-            await db.Addresses.CountAsync(a => a.CompanyId == request.CompanyId) >= maxDomains)
+            await db.Addresses.CountAsync(a => a.CompanyId == request.CompanyId).ConfigureAwait(false) >= maxDomains)
             return null;
 
         var address = new AddressDB
@@ -51,7 +51,7 @@ public class AddressService(EmailDbContext db) : IAddressService
         };
 
         db.Addresses.Add(address);
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync().ConfigureAwait(false);
 
         return new AddressDTO(address.Id, address.Domain, address.CompanyId, address.IsActive, address.CreatedAt);
     }
@@ -61,6 +61,6 @@ public class AddressService(EmailDbContext db) : IAddressService
         return await db.Addresses
             .AsNoTracking()
             .Select(a => new AddressDTO(a.Id, a.Domain, a.CompanyId, a.IsActive, a.CreatedAt))
-            .ToListAsync();
+            .ToListAsync().ConfigureAwait(false);
     }
 }

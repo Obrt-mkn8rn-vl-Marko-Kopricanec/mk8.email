@@ -59,7 +59,7 @@ public sealed class VacationResponder(
             if (MustSuppress(original))
                 return true;
 
-            var route = await ResolveVacationRouteAsync(deliveredRecipient, cancellationToken);
+            var route = await ResolveVacationRouteAsync(deliveredRecipient, cancellationToken).ConfigureAwait(false);
             if (route is null
                 || string.Equals(route.Address, senderMailbox.Address, StringComparison.OrdinalIgnoreCase)
                 || !NamesRecipient(original, deliveredRecipient, route.Address))
@@ -67,64 +67,71 @@ public sealed class VacationResponder(
             var now = timeProvider.GetUtcNow().UtcDateTime;
             var vacation = await database.JmapVacationResponses
                 .AsNoTracking()
-                .SingleOrDefaultAsync(response => response.AccountId == route.AccountId, cancellationToken);
+                .SingleOrDefaultAsync(response => response.AccountId == route.AccountId, cancellationToken).ConfigureAwait(false);
             if (vacation is null
                 || !vacation.IsEnabled
                 || vacation.FromDate is not null && now < vacation.FromDate
                 || vacation.ToDate is not null && now >= vacation.ToDate)
                 return true;
 
-            await using var transaction = await database.Database.BeginTransactionAsync(
+            var transaction = await database.Database.BeginTransactionAsync(
                 IsolationLevel.Serializable,
-                cancellationToken);
-            var sent = await database.JmapVacationReplies.SingleOrDefaultAsync(
+                cancellationToken).ConfigureAwait(false);
+            // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+            await using (transaction)
+            {
+#pragma warning restore CA2007, MA0004
+                var sent = await database.JmapVacationReplies.SingleOrDefaultAsync(
                 reply => reply.AccountId == route.AccountId
                     && reply.SenderAddress == senderMailbox.Address.ToLowerInvariant(),
-                cancellationToken);
-            if (sent?.LastDeliveryId == deliveryId
-                || sent is not null && now - sent.LastSentAt < RepeatInterval)
-            {
-                await transaction.CommitAsync(cancellationToken);
-                return true;
-            }
-
-            var response = BuildResponse(route.Address, senderMailbox, original, vacation, now);
-            var format = FormatOptions.Default.Clone();
-            format.NewLineFormat = NewLineFormat.Dos;
-            await using var stream = new MemoryStream();
-            await response.WriteToAsync(format, stream, cancellationToken);
-            var responseBytes = stream.ToArray();
-            if (responseBytes.Length > environment.Limits.MaxMessageSizeBytes)
-            {
-                await transaction.RollbackAsync(cancellationToken);
-                return true;
-            }
-            var recipientIsLocal = await emailService.CanReceiveAsync(
-                senderMailbox.Address,
-                cancellationToken);
-
-            if (sent is null)
-            {
-                sent = new JmapVacationReplyDB
+                cancellationToken).ConfigureAwait(false);
+                if (sent?.LastDeliveryId == deliveryId
+                    || sent is not null && now - sent.LastSentAt < RepeatInterval)
                 {
-                    Id = Guid.CreateVersion7(),
-                    AccountId = route.AccountId,
-                    SenderAddress = senderMailbox.Address.ToLowerInvariant(),
-                };
-                database.JmapVacationReplies.Add(sent);
+                    await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                    return true;
+                }
+
+                var response = BuildResponse(route.Address, senderMailbox, original, vacation, now);
+                var format = FormatOptions.Default.Clone();
+                format.NewLineFormat = NewLineFormat.Dos;
+                var stream = new MemoryStream();
+                await using var streamLifetime = stream.ConfigureAwait(false);
+                await response.WriteToAsync(format, stream, cancellationToken).ConfigureAwait(false);
+                var responseBytes = stream.ToArray();
+                if (responseBytes.Length > environment.Limits.MaxMessageSizeBytes)
+                {
+                    await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
+                    return true;
+                }
+                var recipientIsLocal = await emailService.CanReceiveAsync(
+                    senderMailbox.Address,
+                    cancellationToken).ConfigureAwait(false);
+
+                if (sent is null)
+                {
+                    sent = new JmapVacationReplyDB
+                    {
+                        Id = Guid.CreateVersion7(),
+                        AccountId = route.AccountId,
+                        SenderAddress = senderMailbox.Address.ToLowerInvariant(),
+                    };
+                    database.JmapVacationReplies.Add(sent);
+                }
+                sent.LastDeliveryId = deliveryId;
+                sent.LastSentAt = now;
+                _ = await queue.EnqueueAsync(new MailSubmission(
+                    Guid.CreateVersion7(),
+                    string.Empty,
+                    [new MailEnvelopeRecipient(senderMailbox.Address, recipientIsLocal)],
+                    Encoding.Latin1.GetString(responseBytes),
+                    null,
+                    environment.Smtp.Hostname,
+                    null), cancellationToken).ConfigureAwait(false);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                return true;
             }
-            sent.LastDeliveryId = deliveryId;
-            sent.LastSentAt = now;
-            _ = await queue.EnqueueAsync(new MailSubmission(
-                Guid.CreateVersion7(),
-                string.Empty,
-                [new MailEnvelopeRecipient(senderMailbox.Address, recipientIsLocal)],
-                Encoding.Latin1.GetString(responseBytes),
-                null,
-                environment.Smtp.Hostname,
-                null), cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-            return true;
         }
     }
 
@@ -146,7 +153,7 @@ public sealed class VacationResponder(
                 && (inbox.Name != "*" || inbox.AliasForInboxId != null))
             .OrderBy(inbox => inbox.Name == localPart ? 0 : 1)
             .Select(inbox => new { inbox.Id, inbox.AliasForInboxId })
-            .FirstOrDefaultAsync(cancellationToken);
+            .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
         if (route is null)
             return null;
         var targetId = route.AliasForInboxId ?? route.Id;
@@ -159,7 +166,7 @@ public sealed class VacationResponder(
             .Select(inbox => new VacationRoute(
                 inbox.Id,
                 inbox.Name + "@" + inbox.Address.Domain))
-            .SingleOrDefaultAsync(cancellationToken);
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static bool MustSuppress(MimeMessage message)

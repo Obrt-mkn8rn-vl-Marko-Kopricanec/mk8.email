@@ -582,7 +582,7 @@ internal static class ImapSearchEngine
                 Count = group.Count(),
                 MaximumUid = group.Max(message => message.Uid),
             })
-            .SingleOrDefaultAsync(cancellationToken);
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
         var maximumSequenceNumber = bounds?.Count ?? 0;
         var maximumUid = bounds?.MaximumUid ?? 0;
 
@@ -612,11 +612,11 @@ internal static class ImapSearchEngine
         {
             var stored = await query
                 .OrderBy(message => message.Uid)
-                .ToListAsync(cancellationToken);
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
             messages = new List<SearchStoredMessage>(stored.Count);
             foreach (var email in stored)
             {
-                var rawMessage = await content.ReadAsync(email, cancellationToken);
+                var rawMessage = await content.ReadAsync(email, cancellationToken).ConfigureAwait(false);
                 ApplyTransientRawMessage(email, rawMessage);
                 messages.Add(CreateSearchStoredMessage(email, includeBody, includeRawHeaders));
             }
@@ -624,7 +624,7 @@ internal static class ImapSearchEngine
         else
         {
             messages = await BuildSearchMessageQuery(query, false, false)
-                .ToListAsync(cancellationToken);
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
         }
         var matches = new List<SearchCandidate>();
         long? highestModSequence = null;

@@ -31,7 +31,7 @@ public sealed class MailboxMessageLargeObjectMigrationService(
 
         if (!IsPostgreSql())
         {
-            await MigrateRowsAsync(cancellationToken);
+            await MigrateRowsAsync(cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -41,13 +41,13 @@ public sealed class MailboxMessageLargeObjectMigrationService(
         try
         {
             if (closeConnection)
-                await database.Database.OpenConnectionAsync(cancellationToken);
+                await database.Database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
             await database.Database.ExecuteSqlInterpolatedAsync(
                 $"SELECT pg_advisory_lock({MigrationLockKey})",
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             lockTaken = true;
-            await MigrateRowsAsync(cancellationToken);
-            await EnforceExternalStorageAsync(cancellationToken);
+            await MigrateRowsAsync(cancellationToken).ConfigureAwait(false);
+            await EnforceExternalStorageAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -57,13 +57,13 @@ public sealed class MailboxMessageLargeObjectMigrationService(
                 {
                     await database.Database.ExecuteSqlInterpolatedAsync(
                         $"SELECT pg_advisory_unlock({MigrationLockKey})",
-                        CancellationToken.None);
+                        CancellationToken.None).ConfigureAwait(false);
                 }
             }
             finally
             {
                 if (closeConnection)
-                    await database.Database.CloseConnectionAsync();
+                    await database.Database.CloseConnectionAsync().ConfigureAwait(false);
             }
         }
     }
@@ -86,12 +86,12 @@ public sealed class MailboxMessageLargeObjectMigrationService(
                 .OrderBy(email => email.ReceivedAt)
                 .ThenBy(email => email.Id)
                 .Take(BatchSize)
-                .ToListAsync(cancellationToken);
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
             if (legacy.Count == 0)
                 break;
 
             foreach (var email in legacy)
-                await MigrateAsync(email, cancellationToken);
+                await MigrateAsync(email, cancellationToken).ConfigureAwait(false);
             database.ChangeTracker.Clear();
         }
     }
@@ -101,74 +101,86 @@ public sealed class MailboxMessageLargeObjectMigrationService(
         var rawMessage = email.RawMessage?.ToArray();
         rawMessage ??= HasCompleteAzureReference(email)
             ? await content.ReadAsync(email, cancellationToken)
-            : MailboxMessageContentService.BuildLegacyRawMessage(email);
+.ConfigureAwait(false) : MailboxMessageContentService.BuildLegacyRawMessage(email);
         var hash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(rawMessage));
         var ownsTransaction = database.Database.IsRelational();
-        await using var transaction = ownsTransaction
+        var transaction = ownsTransaction
             ? await database.Database.BeginTransactionAsync(cancellationToken)
-            : null;
-        LargeObjectWriteResult? written = null;
-        var commitAttempted = false;
-        try
+.ConfigureAwait(false) : null;
+        // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+        await using (transaction)
         {
-            await using var source = new MemoryStream(rawMessage, writable: false);
-            written = await objects.PutIfAbsentAsync(
-                MailboxMessageContentService.BuildObjectName(email.Id, hash),
-                source,
-                rawMessage.LongLength,
-                hash,
-                "message/rfc822",
-                cancellationToken);
-            MailboxMessageContentService.ApplyReference(email, written.Reference);
-            MailboxMessageContentService.ApplySearchProjection(email, rawMessage);
-            await database.SaveChangesAsync(cancellationToken);
-            if (transaction is not null)
+#pragma warning restore CA2007, MA0004
+            LargeObjectWriteResult? written = null;
+            var commitAttempted = false;
+            try
             {
-                commitAttempted = true;
-                await transaction.CommitAsync(cancellationToken);
-            }
-        }
-        catch
-        {
-            if (transaction is not null)
-            {
-                try
+                var source = new MemoryStream(rawMessage, writable: false);
+                await using var sourceLifetime = source.ConfigureAwait(false);
+                written = await objects.PutIfAbsentAsync(
+                    MailboxMessageContentService.BuildObjectName(email.Id, hash),
+                    source,
+                    rawMessage.LongLength,
+                    hash,
+                    "message/rfc822",
+                    cancellationToken).ConfigureAwait(false);
+                MailboxMessageContentService.ApplyReference(email, written.Reference);
+                MailboxMessageContentService.ApplySearchProjection(email, rawMessage);
+                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+                if (transaction is not null)
                 {
-                    await transaction.RollbackAsync(CancellationToken.None);
-                }
-                catch (Exception rollbackException)
-                {
-                    logger.LogWarning(
-                        rollbackException,
-                        "Could not roll back mailbox message migration for {EmailId}",
-                        email.Id);
+                    commitAttempted = true;
+                    await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
                 }
             }
-            if (written is { Created: true } && !commitAttempted)
+            catch
             {
-                try
+                if (transaction is not null)
                 {
-                    await objects.DeleteIfMatchAsync(written.Reference, CancellationToken.None);
+                    try
+                    {
+                        await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (Exception rollbackException)
+                    {
+                        logger.LogWarning(
+                            rollbackException,
+                            "Could not roll back mailbox message migration for {EmailId}",
+                            email.Id);
+                    }
                 }
-                catch (Exception cleanupException)
+                if (written is { Created: true } && !commitAttempted)
                 {
-                    logger.LogWarning(
-                        cleanupException,
-                        "Could not clean up mailbox migration object {ObjectName}",
-                        written.Reference.ObjectName);
+                    try
+                    {
+                        await objects.DeleteIfMatchAsync(written.Reference, CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (Exception cleanupException)
+                    {
+                        logger.LogWarning(
+                            cleanupException,
+                            "Could not clean up mailbox migration object {ObjectName}",
+                            written.Reference.ObjectName);
+                    }
                 }
+                throw;
             }
-            throw;
         }
     }
 
     private async Task EnforceExternalStorageAsync(CancellationToken cancellationToken)
     {
-        await using var transaction = await database.Database.BeginTransactionAsync(cancellationToken);
-        try
+        var transaction = await database.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+        await using (transaction)
         {
-            await database.Database.ExecuteSqlRawAsync(
-                """
+#pragma warning restore CA2007, MA0004
+            try
+            {
+                await database.Database.ExecuteSqlRawAsync(
+                    """
                 DO $migration$
                 BEGIN
                     IF NOT EXISTS (
@@ -192,13 +204,14 @@ public sealed class MailboxMessageLargeObjectMigrationService(
                 ALTER TABLE emails
                     VALIDATE CONSTRAINT ck_emails_external_storage;
                 """,
-                cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-        }
-        catch
-        {
-            await transaction.RollbackAsync(CancellationToken.None);
-            throw;
+                    cancellationToken).ConfigureAwait(false);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                throw;
+            }
         }
     }
 

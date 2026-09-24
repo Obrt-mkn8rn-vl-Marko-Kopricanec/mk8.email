@@ -11,11 +11,11 @@ public class InboxService(EmailDbContext db) : IInboxService
 {
     public async Task<InboxDTO?> CreateInboxAsync(Guid userId, CreateInboxRequestDTO request)
     {
-        var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId);
+        var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId).ConfigureAwait(false);
         if (user is null)
             return null;
 
-        var address = await db.Addresses.AsNoTracking().FirstOrDefaultAsync(a => a.Id == request.AddressId);
+        var address = await db.Addresses.AsNoTracking().FirstOrDefaultAsync(a => a.Id == request.AddressId).ConfigureAwait(false);
         if (address is null)
             return null;
 
@@ -37,7 +37,7 @@ public class InboxService(EmailDbContext db) : IInboxService
                     return null;
                 if (user.CompanyId is null || address.CompanyId != user.CompanyId)
                     return null;
-                if (await db.Inboxes.CountAsync(i => i.OwnerId == userId) >= 1)
+                if (await db.Inboxes.CountAsync(i => i.OwnerId == userId).ConfigureAwait(false) >= 1)
                     return null;
                 break;
 
@@ -46,17 +46,17 @@ public class InboxService(EmailDbContext db) : IInboxService
         }
 
         var companyLimits = await db.CompanyLimits.AsNoTracking()
-            .FirstOrDefaultAsync(l => l.CompanyId == address.CompanyId);
-        var globalLimits = await db.GlobalLimits.AsNoTracking().SingleAsync();
+            .FirstOrDefaultAsync(l => l.CompanyId == address.CompanyId).ConfigureAwait(false);
+        var globalLimits = await db.GlobalLimits.AsNoTracking().SingleAsync().ConfigureAwait(false);
 
         var maxPerCompany = companyLimits?.MaxInboxes ?? globalLimits.DefaultMaxInboxesPerCompany;
         if (maxPerCompany > 0 &&
-            await db.Inboxes.CountAsync(i => i.Address.CompanyId == address.CompanyId) >= maxPerCompany)
+            await db.Inboxes.CountAsync(i => i.Address.CompanyId == address.CompanyId).ConfigureAwait(false) >= maxPerCompany)
             return null;
 
         var maxPerDomain = companyLimits?.MaxInboxesPerDomain ?? globalLimits.DefaultMaxInboxesPerDomain;
         if (maxPerDomain > 0 &&
-            await db.Inboxes.CountAsync(i => i.AddressId == request.AddressId) >= maxPerDomain)
+            await db.Inboxes.CountAsync(i => i.AddressId == request.AddressId).ConfigureAwait(false) >= maxPerDomain)
             return null;
 
         var inbox = new InboxDB
@@ -69,7 +69,7 @@ public class InboxService(EmailDbContext db) : IInboxService
         };
 
         db.Inboxes.Add(inbox);
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync().ConfigureAwait(false);
 
         if (request.AliasForInboxId is null)
         {
@@ -82,7 +82,7 @@ public class InboxService(EmailDbContext db) : IInboxService
                     InboxId = inbox.Id,
                 });
             }
-            await db.SaveChangesAsync();
+            await db.SaveChangesAsync().ConfigureAwait(false);
         }
 
         return new InboxDTO(
@@ -99,6 +99,6 @@ public class InboxService(EmailDbContext db) : IInboxService
             .Select(i => new InboxDTO(
                 i.Id, i.Name, i.AddressId, i.Address.Domain,
                 i.OwnerId, i.AliasForInboxId, i.CreatedAt))
-            .ToListAsync();
+            .ToListAsync().ConfigureAwait(false);
     }
 }

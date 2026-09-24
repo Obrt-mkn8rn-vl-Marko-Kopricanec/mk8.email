@@ -45,7 +45,7 @@ public sealed class OAuthTokenService(
             return null;
         }
 
-        var user = await FindActiveUserAsync(userId, cancellationToken);
+        var user = await FindActiveUserAsync(userId, cancellationToken).ConfigureAwait(false);
         if (user is null)
             return null;
 
@@ -62,7 +62,7 @@ public sealed class OAuthTokenService(
         };
         database.OAuthGrants.Add(grant);
         var issued = IssueTokenPair(grant, now);
-        await database.SaveChangesAsync(cancellationToken);
+        await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return issued.Pair;
     }
 
@@ -74,53 +74,59 @@ public sealed class OAuthTokenService(
         if (!TryParseTokenId(refreshToken, "mk8_rt_", out var tokenId))
             return null;
 
-        await using var transaction = await database.Database.BeginTransactionAsync(
+        var transaction = await database.Database.BeginTransactionAsync(
             IsolationLevel.Serializable,
-            cancellationToken);
-        var token = await database.OAuthTokens
+            cancellationToken).ConfigureAwait(false);
+        // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+        await using (transaction)
+        {
+#pragma warning restore CA2007, MA0004
+            var token = await database.OAuthTokens
             .Include(candidate => candidate.Grant)
             .ThenInclude(grant => grant.User)
             .ThenInclude(user => user.Company)
-            .SingleOrDefaultAsync(candidate => candidate.Id == tokenId, cancellationToken);
-        var hashMatches = TokenHashMatches(refreshToken, token?.TokenHash);
-        if (token is null || !hashMatches || token.TokenType != RefreshTokenType)
-            return null;
+            .SingleOrDefaultAsync(candidate => candidate.Id == tokenId, cancellationToken).ConfigureAwait(false);
+            var hashMatches = TokenHashMatches(refreshToken, token?.TokenHash);
+            if (token is null || !hashMatches || token.TokenType != RefreshTokenType)
+                return null;
 
-        var now = DateTime.UtcNow;
-        if (token.RevokedAt is not null)
-        {
-            await RevokeGrantEntityAsync(token.Grant, now, cancellationToken);
-            await database.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-            return null;
+            var now = DateTime.UtcNow;
+            if (token.RevokedAt is not null)
+            {
+                await RevokeGrantEntityAsync(token.Grant, now, cancellationToken).ConfigureAwait(false);
+                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                return null;
+            }
+            if (token.ExpiresAt <= now
+                || token.Grant.RevokedAt is not null
+                || !string.Equals(token.Grant.ClientId, clientId, StringComparison.Ordinal)
+                || !await IsUserActiveAsync(token.Grant.User, cancellationToken).ConfigureAwait(false))
+            {
+                token.RevokedAt ??= now;
+                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                return null;
+            }
+
+            var activeAccessTokens = await database.OAuthTokens
+                .Where(candidate => candidate.GrantId == token.GrantId
+                    && candidate.TokenType == AccessTokenType
+                    && candidate.RevokedAt == null)
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
+            foreach (var activeAccessToken in activeAccessTokens)
+                activeAccessToken.RevokedAt = now;
+
+            token.RevokedAt = now;
+            token.LastUsedAt = now;
+            token.Grant.LastUsedAt = now;
+            var issued = IssueTokenPair(token.Grant, now);
+            token.ReplacedByTokenId = issued.RefreshTokenId;
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return issued.Pair;
         }
-        if (token.ExpiresAt <= now
-            || token.Grant.RevokedAt is not null
-            || !string.Equals(token.Grant.ClientId, clientId, StringComparison.Ordinal)
-            || !await IsUserActiveAsync(token.Grant.User, cancellationToken))
-        {
-            token.RevokedAt ??= now;
-            await database.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-            return null;
-        }
-
-        var activeAccessTokens = await database.OAuthTokens
-            .Where(candidate => candidate.GrantId == token.GrantId
-                && candidate.TokenType == AccessTokenType
-                && candidate.RevokedAt == null)
-            .ToListAsync(cancellationToken);
-        foreach (var activeAccessToken in activeAccessTokens)
-            activeAccessToken.RevokedAt = now;
-
-        token.RevokedAt = now;
-        token.LastUsedAt = now;
-        token.Grant.LastUsedAt = now;
-        var issued = IssueTokenPair(token.Grant, now);
-        token.ReplacedByTokenId = issued.RefreshTokenId;
-        await database.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
-        return issued.Pair;
     }
 
     public async Task<AuthenticatedMailUser?> AuthenticateAccessTokenAsync(
@@ -131,7 +137,7 @@ public sealed class OAuthTokenService(
         var identity = await AuthenticateIdentityAsync(
             accessToken,
             requiredScope,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         return identity is null
             ? null
             : new(identity.UserId, identity.Username);
@@ -152,7 +158,7 @@ public sealed class OAuthTokenService(
             .Include(candidate => candidate.Grant)
             .ThenInclude(grant => grant.User)
             .ThenInclude(user => user.Company)
-            .SingleOrDefaultAsync(candidate => candidate.Id == tokenId, cancellationToken);
+            .SingleOrDefaultAsync(candidate => candidate.Id == tokenId, cancellationToken).ConfigureAwait(false);
         var hashMatches = TokenHashMatches(accessToken, token?.TokenHash);
         var now = DateTime.UtcNow;
         if (token is null
@@ -162,14 +168,14 @@ public sealed class OAuthTokenService(
             || token.ExpiresAt <= now
             || token.Grant.RevokedAt is not null
             || !token.Grant.Scopes.Contains(requiredScope, StringComparer.Ordinal)
-            || !await IsUserActiveAsync(token.Grant.User, cancellationToken))
+            || !await IsUserActiveAsync(token.Grant.User, cancellationToken).ConfigureAwait(false))
         {
             return null;
         }
 
         token.LastUsedAt = now;
         token.Grant.LastUsedAt = now;
-        await database.SaveChangesAsync(cancellationToken);
+        await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return new(
             token.Grant.User.Id,
             token.Grant.User.Username,
@@ -191,7 +197,7 @@ public sealed class OAuthTokenService(
                 grant.CreatedAt,
                 grant.LastUsedAt,
                 grant.RevokedAt))
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
 
     public async Task<bool> RevokeGrantAsync(
         Guid userId,
@@ -201,12 +207,12 @@ public sealed class OAuthTokenService(
         var grant = await database.OAuthGrants
             .SingleOrDefaultAsync(
                 candidate => candidate.Id == grantId && candidate.UserId == userId,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         if (grant is null)
             return false;
 
-        await RevokeGrantEntityAsync(grant, DateTime.UtcNow, cancellationToken);
-        await database.SaveChangesAsync(cancellationToken);
+        await RevokeGrantEntityAsync(grant, DateTime.UtcNow, cancellationToken).ConfigureAwait(false);
+        await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return true;
     }
 
@@ -222,7 +228,7 @@ public sealed class OAuthTokenService(
 
         var stored = await database.OAuthTokens
             .Include(candidate => candidate.Grant)
-            .SingleOrDefaultAsync(candidate => candidate.Id == tokenId, cancellationToken);
+            .SingleOrDefaultAsync(candidate => candidate.Id == tokenId, cancellationToken).ConfigureAwait(false);
         if (stored is null
             || !TokenHashMatches(token, stored.TokenHash)
             || !string.Equals(stored.Grant.ClientId, clientId, StringComparison.Ordinal))
@@ -230,8 +236,8 @@ public sealed class OAuthTokenService(
             return;
         }
 
-        await RevokeGrantEntityAsync(stored.Grant, DateTime.UtcNow, cancellationToken);
-        await database.SaveChangesAsync(cancellationToken);
+        await RevokeGrantEntityAsync(stored.Grant, DateTime.UtcNow, cancellationToken).ConfigureAwait(false);
+        await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private IssuedPair IssueTokenPair(OAuthGrantDB grant, DateTime now)
@@ -297,7 +303,7 @@ public sealed class OAuthTokenService(
         grant.RevokedAt ??= revokedAt;
         var tokens = await database.OAuthTokens
             .Where(token => token.GrantId == grant.Id && token.RevokedAt == null)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         foreach (var token in tokens)
             token.RevokedAt = revokedAt;
     }
@@ -308,9 +314,9 @@ public sealed class OAuthTokenService(
     {
         var user = await database.Users
             .Include(candidate => candidate.Company)
-            .SingleOrDefaultAsync(candidate => candidate.Id == userId, cancellationToken);
+            .SingleOrDefaultAsync(candidate => candidate.Id == userId, cancellationToken).ConfigureAwait(false);
         return user is not null && await IsUserActiveAsync(user, cancellationToken)
-            ? user
+.ConfigureAwait(false) ? user
             : null;
     }
 
@@ -329,7 +335,7 @@ public sealed class OAuthTokenService(
             address.CompanyId == user.CompanyId
             && address.Domain == domain
             && address.IsActive,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
     }
 
     private static string[]? NormalizeScopes(IReadOnlyCollection<string> scopes)

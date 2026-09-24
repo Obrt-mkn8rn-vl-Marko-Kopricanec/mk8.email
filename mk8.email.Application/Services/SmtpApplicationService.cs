@@ -15,7 +15,7 @@ public sealed class SmtpApplicationService(
         CancellationToken cancellationToken = default)
     {
         var user = await authenticator.AuthenticateAsync(
-            request.Username, request.Password, cancellationToken);
+            request.Username, request.Password, cancellationToken).ConfigureAwait(false);
         return new SmtpIdentityResult(user?.Username);
     }
 
@@ -24,7 +24,7 @@ public sealed class SmtpApplicationService(
         CancellationToken cancellationToken = default)
     {
         var user = await oauthTokens.AuthenticateAccessTokenAsync(
-            request.AccessToken, "smtp", cancellationToken);
+            request.AccessToken, "smtp", cancellationToken).ConfigureAwait(false);
         return new SmtpIdentityResult(user?.Username);
     }
 

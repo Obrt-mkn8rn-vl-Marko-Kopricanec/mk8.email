@@ -24,7 +24,7 @@ internal sealed class Pop3ApplicationService(
     {
         ArgumentNullException.ThrowIfNull(request);
         var user = await authenticator.AuthenticateAsync(
-            request.Username, request.Password, cancellationToken);
+            request.Username, request.Password, cancellationToken).ConfigureAwait(false);
         return user is null
             ? new Pop3IdentityResult(null, null)
             : new Pop3IdentityResult(user.Id, user.Username);
@@ -36,7 +36,7 @@ internal sealed class Pop3ApplicationService(
     {
         ArgumentNullException.ThrowIfNull(request);
         var user = await oauthTokens.AuthenticateAccessTokenAsync(
-            request.AccessToken, "pop", cancellationToken);
+            request.AccessToken, "pop", cancellationToken).ConfigureAwait(false);
         return user is null
             || !string.Equals(request.Username, user.Username, StringComparison.OrdinalIgnoreCase)
             ? new Pop3IdentityResult(null, null)
@@ -50,16 +50,16 @@ internal sealed class Pop3ApplicationService(
         ArgumentNullException.ThrowIfNull(request);
         if (request.UserId == Guid.Empty)
             throw new ArgumentException("The POP3 user identifier is invalid.", nameof(request));
-        var folderId = await GetPrimaryInboxFolderIdAsync(request.UserId, cancellationToken);
+        var folderId = await GetPrimaryInboxFolderIdAsync(request.UserId, cancellationToken).ConfigureAwait(false);
 
         var messages = new List<Pop3MessageSummary>();
         var query = database.Emails
             .AsNoTracking()
             .Where(email => email.FolderId == folderId && !email.IsDeleted)
             .OrderBy(email => email.Uid);
-        await foreach (var email in query.AsAsyncEnumerable().WithCancellation(cancellationToken))
+        await foreach (var email in query.AsAsyncEnumerable().WithCancellation(cancellationToken).ConfigureAwait(false))
         {
-            var raw = await content.ReadAsync(email, cancellationToken);
+            var raw = await content.ReadAsync(email, cancellationToken).ConfigureAwait(false);
             messages.Add(new Pop3MessageSummary(
                 email.Id,
                 email.Uid,
@@ -75,16 +75,16 @@ internal sealed class Pop3ApplicationService(
         ArgumentNullException.ThrowIfNull(request);
         if (request.UserId == Guid.Empty || request.MessageId == Guid.Empty)
             throw new ArgumentException("The POP3 message identity is invalid.", nameof(request));
-        var folderId = await GetPrimaryInboxFolderIdAsync(request.UserId, cancellationToken);
+        var folderId = await GetPrimaryInboxFolderIdAsync(request.UserId, cancellationToken).ConfigureAwait(false);
         var email = await database.Emails
             .AsNoTracking()
             .Where(candidate => candidate.Id == request.MessageId
                 && candidate.FolderId == folderId
                 && !candidate.IsDeleted)
-            .SingleOrDefaultAsync(cancellationToken);
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
         return new Pop3MessageResult(email is null
             ? null
-            : await content.ReadAsync(email, cancellationToken));
+            : await content.ReadAsync(email, cancellationToken).ConfigureAwait(false));
     }
 
     public async Task<Pop3DeleteResult> CommitDeletesAsync(
@@ -98,69 +98,75 @@ internal sealed class Pop3ApplicationService(
         var messageIds = request.MessageIds.Distinct().ToArray();
         if (messageIds.Length == 0)
             return new Pop3DeleteResult(0);
-        var folderId = await GetPrimaryInboxFolderIdAsync(request.UserId, cancellationToken);
+        var folderId = await GetPrimaryInboxFolderIdAsync(request.UserId, cancellationToken).ConfigureAwait(false);
 
         var marker = transactionEffects.Mark();
         var commitAttempted = false;
-        await using var transaction = database.Database.IsRelational()
+        var transaction = database.Database.IsRelational()
             ? await database.Database.BeginTransactionAsync(
                 IsolationLevel.Serializable,
                 cancellationToken)
-            : null;
-        try
+.ConfigureAwait(false) : null;
+        // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+        await using (transaction)
         {
-            var emails = await database.Emails
-                .Where(email => messageIds.Contains(email.Id)
-                    && email.FolderId == folderId)
-                .OrderBy(email => email.FolderId)
-                .ThenBy(email => email.Uid)
-                .ToListAsync(cancellationToken);
-            var folderIds = emails.Select(email => email.FolderId).Distinct().ToArray();
-            var folders = await database.Folders
-                .Where(folder => folderIds.Contains(folder.Id))
-                .ToDictionaryAsync(folder => folder.Id, cancellationToken);
+#pragma warning restore CA2007, MA0004
+            try
+            {
+                var emails = await database.Emails
+                    .Where(email => messageIds.Contains(email.Id)
+                        && email.FolderId == folderId)
+                    .OrderBy(email => email.FolderId)
+                    .ThenBy(email => email.Uid)
+                    .ToListAsync(cancellationToken).ConfigureAwait(false);
+                var folderIds = emails.Select(email => email.FolderId).Distinct().ToArray();
+                var folders = await database.Folders
+                    .Where(folder => folderIds.Contains(folder.Id))
+                    .ToDictionaryAsync(folder => folder.Id, cancellationToken).ConfigureAwait(false);
 
-            foreach (var email in emails)
-            {
-                var folder = folders[email.FolderId];
-                database.ExpungedUids.Add(new ExpungedUidDB
+                foreach (var email in emails)
                 {
-                    Id = Guid.CreateVersion7(),
-                    Uid = email.Uid,
-                    ModSeq = ++folder.HighestModSeq,
-                    FolderId = folder.Id,
-                });
-                content.DeleteOnCommit(email);
-                database.Emails.Remove(email);
-            }
+                    var folder = folders[email.FolderId];
+                    database.ExpungedUids.Add(new ExpungedUidDB
+                    {
+                        Id = Guid.CreateVersion7(),
+                        Uid = email.Uid,
+                        ModSeq = ++folder.HighestModSeq,
+                        FolderId = folder.Id,
+                    });
+                    content.DeleteOnCommit(email);
+                    database.Emails.Remove(email);
+                }
 
-            await database.SaveChangesAsync(cancellationToken);
-            if (transaction is not null)
-            {
-                commitAttempted = true;
-                await transaction.CommitAsync(cancellationToken);
-            }
-            await transactionEffects.CommitAsync(marker);
-            return new Pop3DeleteResult(emails.Count);
-        }
-        catch
-        {
-            if (transaction is not null)
-            {
-                try
+                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+                if (transaction is not null)
                 {
-                    await transaction.RollbackAsync(CancellationToken.None);
+                    commitAttempted = true;
+                    await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
                 }
-                catch (Exception rollbackException)
-                {
-                    logger.LogWarning(rollbackException, "Could not roll back POP3 deletion");
-                }
+                await transactionEffects.CommitAsync(marker).ConfigureAwait(false);
+                return new Pop3DeleteResult(emails.Count);
             }
-            if (commitAttempted)
-                transactionEffects.Discard(marker);
-            else
-                await transactionEffects.RollbackAsync(marker);
-            throw;
+            catch
+            {
+                if (transaction is not null)
+                {
+                    try
+                    {
+                        await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (Exception rollbackException)
+                    {
+                        logger.LogWarning(rollbackException, "Could not roll back POP3 deletion");
+                    }
+                }
+                if (commitAttempted)
+                    transactionEffects.Discard(marker);
+                else
+                    await transactionEffects.RollbackAsync(marker).ConfigureAwait(false);
+                throw;
+            }
         }
     }
 
@@ -173,7 +179,7 @@ internal sealed class Pop3ApplicationService(
             .Where(user => user.Id == userId && user.IsActive)
             .Select(user => user.Username)
             .SingleOrDefaultAsync(cancellationToken)
-            ?? throw new InvalidOperationException("The POP3 account is unavailable.");
+.ConfigureAwait(false) ?? throw new InvalidOperationException("The POP3 account is unavailable.");
         var separator = username.LastIndexOf('@');
         if (separator <= 0 || separator == username.Length - 1)
             throw new InvalidOperationException("The POP3 account has no primary mailbox.");
@@ -190,6 +196,6 @@ internal sealed class Pop3ApplicationService(
                 && folder.Name == DefaultFolders.Inbox)
             .Select(folder => (Guid?)folder.Id)
             .SingleOrDefaultAsync(cancellationToken)
-            ?? throw new InvalidOperationException("The POP3 account has no INBOX.");
+.ConfigureAwait(false) ?? throw new InvalidOperationException("The POP3 account has no INBOX.");
     }
 }

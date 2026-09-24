@@ -24,7 +24,7 @@ public sealed class SenderAuthorizationService(EmailDbContext db) : ISenderAutho
                 && inbox.Address.IsActive
                 && inbox.Address.Company.IsActive)
             .Select(inbox => new { inbox.Name, inbox.Address.Domain })
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
 
         return identities.Any(identity =>
             string.Equals(identity.Name, senderLocalPart, StringComparison.OrdinalIgnoreCase)

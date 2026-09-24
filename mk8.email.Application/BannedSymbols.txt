@@ -1,0 +1,6 @@
+T:Microsoft.AspNetCore.Http.HttpContext; Application Core must not depend on ASP.NET request hosting
+T:Microsoft.AspNetCore.Builder.WebApplication; Application Core must not construct presentation endpoints
+T:System.Net.Sockets.TcpListener; Application Core must not accept public protocol connections
+T:System.Net.Mail.SmtpClient; Application Core must not send via presentation client APIs
+T:Azure.Storage.Blobs.BlobServiceClient; Application Core must use the large-object storage abstraction
+T:System.IO.File; Application Core must not depend on host-local files

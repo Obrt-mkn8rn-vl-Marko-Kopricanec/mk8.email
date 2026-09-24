@@ -16,7 +16,7 @@ public class AuthService(EmailDbContext db) : IAuthService
     {
         var username = request.Username.Trim().ToLowerInvariant();
         var user = await db.Users.AsNoTracking()
-            .FirstOrDefaultAsync(u => u.Username == username && u.IsActive);
+            .FirstOrDefaultAsync(u => u.Username == username && u.IsActive).ConfigureAwait(false);
 
         var passwordMatches = PasswordHasher.Verify(request.Password, user?.PasswordHash ?? DummyPasswordHash);
         if (user is null || !passwordMatches)
@@ -29,7 +29,7 @@ public class AuthService(EmailDbContext db) : IAuthService
     {
         var registrationAllowed = await db.GlobalConfig.AsNoTracking()
             .Select(config => config.AllowRegistration)
-            .SingleOrDefaultAsync();
+            .SingleOrDefaultAsync().ConfigureAwait(false);
         if (!registrationAllowed)
             return new LoginResultDTO(false, null, "Registration is disabled.");
 
@@ -38,7 +38,7 @@ public class AuthService(EmailDbContext db) : IAuthService
         if (request.Password.Length < 12)
             return new LoginResultDTO(false, null, "The password must contain at least 12 characters.");
 
-        if (await db.Users.AnyAsync(u => u.Username == request.Username))
+        if (await db.Users.AnyAsync(u => u.Username == request.Username).ConfigureAwait(false))
             return new LoginResultDTO(false, null, "An account with this username already exists.");
 
         var user = new UserDB
@@ -50,7 +50,7 @@ public class AuthService(EmailDbContext db) : IAuthService
         };
 
         db.Users.Add(user);
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync().ConfigureAwait(false);
 
         return new LoginResultDTO(true, ToDTO(user), null);
     }

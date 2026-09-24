@@ -19,7 +19,7 @@ public sealed class MailAuthenticator(EmailDbContext database) : IMailAuthentica
             username,
             password,
             allowApplicationPassword: true,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
 
     public async Task<AuthenticatedMailUser?> AuthenticatePrimaryAsync(
         string username,
@@ -29,7 +29,7 @@ public sealed class MailAuthenticator(EmailDbContext database) : IMailAuthentica
             username,
             password,
             allowApplicationPassword: false,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
 
     private async Task<AuthenticatedMailUser?> AuthenticateInternalAsync(
         string username,
@@ -64,7 +64,7 @@ public sealed class MailAuthenticator(EmailDbContext database) : IMailAuthentica
                     && credential.VerifiedAt != null
                     && credential.RevokedAt == null),
             })
-            .SingleOrDefaultAsync(cancellationToken);
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
 
         var accountPasswordMatches = PasswordHasher.Verify(
             password,
@@ -83,7 +83,7 @@ public sealed class MailAuthenticator(EmailDbContext database) : IMailAuthentica
                 credential => credential.Id == applicationPasswordId
                     && credential.UserId == candidate.Id
                     && credential.RevokedAt == null,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         var applicationPasswordMatches = PasswordHasher.Verify(
             password,
             applicationPassword?.PasswordHash ?? DummyPasswordHash);
@@ -91,7 +91,7 @@ public sealed class MailAuthenticator(EmailDbContext database) : IMailAuthentica
             return null;
 
         applicationPassword.LastUsedAt = DateTime.UtcNow;
-        await database.SaveChangesAsync(cancellationToken);
+        await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
 
         return new AuthenticatedMailUser(candidate.Id, candidate.Username);
     }

@@ -38,14 +38,14 @@ internal static class ImapMailboxResolver
         string mailboxName,
         CancellationToken cancellationToken)
     {
-        var location = await ResolveLocationAsync(database, userId, mailboxName, cancellationToken);
+        var location = await ResolveLocationAsync(database, userId, mailboxName, cancellationToken).ConfigureAwait(false);
         if (location is null)
             return null;
 
         return await database.Folders.FirstOrDefaultAsync(
             folder => folder.InboxId == location.Value.InboxId
                 && folder.Name == location.Value.FolderName,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
     }
 
     public static async Task<ImapMailboxLocation?> ResolveLocationAsync(
@@ -61,7 +61,7 @@ internal static class ImapMailboxResolver
             .AsNoTracking()
             .Where(user => user.Id == userId)
             .Select(user => user.Username)
-            .SingleOrDefaultAsync(cancellationToken);
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
         if (username is null)
             return null;
 
@@ -74,7 +74,7 @@ internal static class ImapMailboxResolver
                     && inbox.Name == qualifiedParts[0]
                     && inbox.Address.Domain == qualifiedParts[1])
                 .Select(inbox => (Guid?)inbox.Id)
-                .SingleOrDefaultAsync(cancellationToken);
+                .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
             if (qualifiedInboxId is not null)
                 return new ImapMailboxLocation(qualifiedInboxId.Value, qualifiedParts[2]);
         }
@@ -91,7 +91,7 @@ internal static class ImapMailboxResolver
                 && inbox.Name == primaryLocalPart
                 && inbox.Address.Domain == primaryDomain)
             .Select(inbox => (Guid?)inbox.Id)
-            .SingleOrDefaultAsync(cancellationToken);
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
         return primaryInboxId is null
             ? null
             : new ImapMailboxLocation(

@@ -32,7 +32,7 @@ public sealed class SieveScriptLargeObjectMigrationService(
 
         if (!IsPostgreSql())
         {
-            await MigrateRowsAsync(cancellationToken);
+            await MigrateRowsAsync(cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -42,13 +42,13 @@ public sealed class SieveScriptLargeObjectMigrationService(
         try
         {
             if (closeConnection)
-                await database.Database.OpenConnectionAsync(cancellationToken);
+                await database.Database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
             await database.Database.ExecuteSqlInterpolatedAsync(
                 $"SELECT pg_advisory_lock({MigrationLockKey})",
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             lockTaken = true;
-            await MigrateRowsAsync(cancellationToken);
-            await EnforceExternalStorageAsync(cancellationToken);
+            await MigrateRowsAsync(cancellationToken).ConfigureAwait(false);
+            await EnforceExternalStorageAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -58,13 +58,13 @@ public sealed class SieveScriptLargeObjectMigrationService(
                 {
                     await database.Database.ExecuteSqlInterpolatedAsync(
                         $"SELECT pg_advisory_unlock({MigrationLockKey})",
-                        CancellationToken.None);
+                        CancellationToken.None).ConfigureAwait(false);
                 }
             }
             finally
             {
                 if (closeConnection)
-                    await database.Database.CloseConnectionAsync();
+                    await database.Database.CloseConnectionAsync().ConfigureAwait(false);
             }
         }
     }
@@ -78,12 +78,12 @@ public sealed class SieveScriptLargeObjectMigrationService(
                 .OrderBy(script => script.CreatedAt)
                 .ThenBy(script => script.Id)
                 .Take(BatchSize)
-                .ToListAsync(cancellationToken);
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
             if (legacy.Count == 0)
                 break;
 
             foreach (var script in legacy)
-                await MigrateScriptAsync(script, cancellationToken);
+                await MigrateScriptAsync(script, cancellationToken).ConfigureAwait(false);
             database.ChangeTracker.Clear();
         }
     }
@@ -94,53 +94,64 @@ public sealed class SieveScriptLargeObjectMigrationService(
     {
         var legacyContent = script.Content
             ?? throw new InvalidOperationException("The legacy Sieve script content is missing.");
-        await using var transaction = database.Database.IsRelational()
+        var transaction = database.Database.IsRelational()
             ? await database.Database.BeginTransactionAsync(cancellationToken)
-            : null;
-        var marker = transactionEffects.Mark();
-        var commitAttempted = false;
-        try
+.ConfigureAwait(false) : null;
+        // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+        await using (transaction)
         {
-            await content.SetAsync(script, legacyContent, cancellationToken);
-            await database.SaveChangesAsync(cancellationToken);
-            if (transaction is not null)
+#pragma warning restore CA2007, MA0004
+            var marker = transactionEffects.Mark();
+            var commitAttempted = false;
+            try
             {
-                commitAttempted = true;
-                await transaction.CommitAsync(cancellationToken);
+                await content.SetAsync(script, legacyContent, cancellationToken).ConfigureAwait(false);
+                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+                if (transaction is not null)
+                {
+                    commitAttempted = true;
+                    await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                }
+                await transactionEffects.CommitAsync(marker).ConfigureAwait(false);
             }
-            await transactionEffects.CommitAsync(marker);
-        }
-        catch
-        {
-            if (transaction is not null)
+            catch
             {
-                try
+                if (transaction is not null)
                 {
-                    await transaction.RollbackAsync(CancellationToken.None);
+                    try
+                    {
+                        await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (Exception rollbackException)
+                    {
+                        logger.LogWarning(
+                            rollbackException,
+                            "Could not roll back Sieve script migration for {ScriptId}",
+                            script.Id);
+                    }
                 }
-                catch (Exception rollbackException)
-                {
-                    logger.LogWarning(
-                        rollbackException,
-                        "Could not roll back Sieve script migration for {ScriptId}",
-                        script.Id);
-                }
+                if (commitAttempted)
+                    transactionEffects.Discard(marker);
+                else
+                    await transactionEffects.RollbackAsync(marker).ConfigureAwait(false);
+                throw;
             }
-            if (commitAttempted)
-                transactionEffects.Discard(marker);
-            else
-                await transactionEffects.RollbackAsync(marker);
-            throw;
         }
     }
 
     private async Task EnforceExternalStorageAsync(CancellationToken cancellationToken)
     {
-        await using var transaction = await database.Database.BeginTransactionAsync(cancellationToken);
-        try
+        var transaction = await database.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+        await using (transaction)
         {
-            await database.Database.ExecuteSqlRawAsync(
-                """
+#pragma warning restore CA2007, MA0004
+            try
+            {
+                await database.Database.ExecuteSqlRawAsync(
+                    """
                 DO $migration$
                 BEGIN
                     IF NOT EXISTS (
@@ -163,13 +174,14 @@ public sealed class SieveScriptLargeObjectMigrationService(
                 ALTER TABLE sieve_scripts
                     VALIDATE CONSTRAINT ck_sieve_scripts_external_storage;
                 """,
-                cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-        }
-        catch
-        {
-            await transaction.RollbackAsync(CancellationToken.None);
-            throw;
+                    cancellationToken).ConfigureAwait(false);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                throw;
+            }
         }
     }
 

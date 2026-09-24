@@ -11,10 +11,10 @@ public class CompanyService(EmailDbContext db) : ICompanyService
 {
     public async Task<CompanyDTO?> CreateCompanyAsync(Guid userId, CreateCompanyRequestDTO request)
     {
-        if (!await IsSuperAdminAsync(userId))
+        if (!await IsSuperAdminAsync(userId).ConfigureAwait(false))
             return null;
 
-        if (await db.Companies.AnyAsync(c => c.Name == request.Name))
+        if (await db.Companies.AnyAsync(c => c.Name == request.Name).ConfigureAwait(false))
             return null;
 
         var company = new CompanyDB
@@ -24,7 +24,7 @@ public class CompanyService(EmailDbContext db) : ICompanyService
         };
 
         db.Companies.Add(company);
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync().ConfigureAwait(false);
 
         return ToDTO(company);
     }
@@ -33,27 +33,27 @@ public class CompanyService(EmailDbContext db) : ICompanyService
     {
         return await db.Companies.AsNoTracking()
             .Select(c => new CompanyDTO(c.Id, c.Name, c.IsActive, c.CreatedAt))
-            .ToListAsync();
+            .ToListAsync().ConfigureAwait(false);
     }
 
     public async Task<CompanyDTO?> GetCompanyAsync(Guid companyId)
     {
-        var company = await db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == companyId);
+        var company = await db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == companyId).ConfigureAwait(false);
         return company is null ? null : ToDTO(company);
     }
 
     public async Task<GlobalConfigDTO> GetGlobalConfigAsync()
     {
-        var c = await db.GlobalConfig.SingleAsync();
+        var c = await db.GlobalConfig.SingleAsync().ConfigureAwait(false);
         return ToConfigDTO(c);
     }
 
     public async Task<GlobalConfigDTO?> UpdateGlobalConfigAsync(Guid userId, GlobalConfigDTO config)
     {
-        if (!await IsSuperAdminAsync(userId))
+        if (!await IsSuperAdminAsync(userId).ConfigureAwait(false))
             return null;
 
-        var e = await db.GlobalConfig.SingleAsync();
+        var e = await db.GlobalConfig.SingleAsync().ConfigureAwait(false);
 
         e.AllowRegistration = config.AllowRegistration;
 
@@ -87,49 +87,49 @@ public class CompanyService(EmailDbContext db) : ICompanyService
         e.ImapImplicitTlsPort = config.ImapImplicitTlsPort;
 
         e.UpdatedAt = DateTime.UtcNow;
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync().ConfigureAwait(false);
 
         return ToConfigDTO(e);
     }
 
     public async Task<GlobalLimitsDTO> GetGlobalLimitsAsync()
     {
-        var l = await db.GlobalLimits.SingleAsync();
+        var l = await db.GlobalLimits.SingleAsync().ConfigureAwait(false);
         return new GlobalLimitsDTO(l.Id, l.DefaultMaxDomainsPerCompany, l.DefaultMaxInboxesPerCompany, l.DefaultMaxInboxesPerDomain);
     }
 
     public async Task<GlobalLimitsDTO?> UpdateGlobalLimitsAsync(Guid userId, GlobalLimitsDTO limits)
     {
-        if (!await IsSuperAdminAsync(userId))
+        if (!await IsSuperAdminAsync(userId).ConfigureAwait(false))
             return null;
 
-        var entity = await db.GlobalLimits.SingleAsync();
+        var entity = await db.GlobalLimits.SingleAsync().ConfigureAwait(false);
         entity.DefaultMaxDomainsPerCompany = limits.DefaultMaxDomainsPerCompany;
         entity.DefaultMaxInboxesPerCompany = limits.DefaultMaxInboxesPerCompany;
         entity.DefaultMaxInboxesPerDomain = limits.DefaultMaxInboxesPerDomain;
         entity.UpdatedAt = DateTime.UtcNow;
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync().ConfigureAwait(false);
 
         return new GlobalLimitsDTO(entity.Id, entity.DefaultMaxDomainsPerCompany, entity.DefaultMaxInboxesPerCompany, entity.DefaultMaxInboxesPerDomain);
     }
 
     public async Task<CompanyConfigDTO?> GetCompanyConfigAsync(Guid userId, Guid companyId)
     {
-        if (!await HasCompanyAccessAsync(userId, companyId))
+        if (!await HasCompanyAccessAsync(userId, companyId).ConfigureAwait(false))
             return null;
 
         var config = await db.CompanyConfigs.AsNoTracking()
-            .FirstOrDefaultAsync(c => c.CompanyId == companyId);
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId).ConfigureAwait(false);
 
         return config is null ? null : new CompanyConfigDTO(config.Id, config.CompanyId, config.AllowUserRegistration);
     }
 
     public async Task<CompanyConfigDTO?> UpdateCompanyConfigAsync(Guid userId, Guid companyId, bool allowUserRegistration)
     {
-        if (!await HasCompanyAccessAsync(userId, companyId))
+        if (!await HasCompanyAccessAsync(userId, companyId).ConfigureAwait(false))
             return null;
 
-        var config = await db.CompanyConfigs.FirstOrDefaultAsync(c => c.CompanyId == companyId);
+        var config = await db.CompanyConfigs.FirstOrDefaultAsync(c => c.CompanyId == companyId).ConfigureAwait(false);
 
         if (config is null)
         {
@@ -147,27 +147,27 @@ public class CompanyService(EmailDbContext db) : ICompanyService
             config.UpdatedAt = DateTime.UtcNow;
         }
 
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync().ConfigureAwait(false);
         return new CompanyConfigDTO(config.Id, config.CompanyId, config.AllowUserRegistration);
     }
 
     public async Task<CompanyLimitsDTO?> GetCompanyLimitsAsync(Guid userId, Guid companyId)
     {
-        if (!await HasCompanyAccessAsync(userId, companyId))
+        if (!await HasCompanyAccessAsync(userId, companyId).ConfigureAwait(false))
             return null;
 
         var limits = await db.CompanyLimits.AsNoTracking()
-            .FirstOrDefaultAsync(l => l.CompanyId == companyId);
+            .FirstOrDefaultAsync(l => l.CompanyId == companyId).ConfigureAwait(false);
 
         return limits is null ? null : new CompanyLimitsDTO(limits.Id, limits.CompanyId, limits.MaxDomains, limits.MaxInboxes, limits.MaxInboxesPerDomain);
     }
 
     public async Task<CompanyLimitsDTO?> UpdateCompanyLimitsAsync(Guid userId, Guid companyId, int? maxDomains, int? maxInboxes, int? maxInboxesPerDomain)
     {
-        if (!await IsSuperAdminAsync(userId))
+        if (!await IsSuperAdminAsync(userId).ConfigureAwait(false))
             return null;
 
-        var limits = await db.CompanyLimits.FirstOrDefaultAsync(l => l.CompanyId == companyId);
+        var limits = await db.CompanyLimits.FirstOrDefaultAsync(l => l.CompanyId == companyId).ConfigureAwait(false);
 
         if (limits is null)
         {
@@ -189,18 +189,18 @@ public class CompanyService(EmailDbContext db) : ICompanyService
             limits.UpdatedAt = DateTime.UtcNow;
         }
 
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync().ConfigureAwait(false);
         return new CompanyLimitsDTO(limits.Id, limits.CompanyId, limits.MaxDomains, limits.MaxInboxes, limits.MaxInboxesPerDomain);
     }
 
     private async Task<bool> IsSuperAdminAsync(Guid userId)
     {
-        return await db.Users.AnyAsync(u => u.Id == userId && u.Role == nameof(UserRole.SuperAdmin));
+        return await db.Users.AnyAsync(u => u.Id == userId && u.Role == nameof(UserRole.SuperAdmin)).ConfigureAwait(false);
     }
 
     private async Task<bool> HasCompanyAccessAsync(Guid userId, Guid companyId)
     {
-        var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId);
+        var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId).ConfigureAwait(false);
         if (user is null)
             return false;
 

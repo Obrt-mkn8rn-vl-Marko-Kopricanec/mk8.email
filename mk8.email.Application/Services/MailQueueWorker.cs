@@ -29,16 +29,16 @@ public sealed class MailQueueWorker(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await EnsureSchemaAsync(stoppingToken);
-        await MigrateQueueContentAsync(stoppingToken);
+        await EnsureSchemaAsync(stoppingToken).ConfigureAwait(false);
+        await MigrateQueueContentAsync(stoppingToken).ConfigureAwait(false);
 
         if (IsPostgreSql())
         {
-            await RunNotificationLoopAsync(stoppingToken);
+            await RunNotificationLoopAsync(stoppingToken).ConfigureAwait(false);
             return;
         }
 
-        await RunPollingLoopAsync(stoppingToken);
+        await RunPollingLoopAsync(stoppingToken).ConfigureAwait(false);
     }
 
     private async Task RunPollingLoopAsync(CancellationToken stoppingToken)
@@ -47,16 +47,16 @@ public sealed class MailQueueWorker(
         {
             try
             {
-                var processed = await ProcessNextAsync(stoppingToken);
+                var processed = await ProcessNextAsync(stoppingToken).ConfigureAwait(false);
                 if (!processed)
                 {
                     await Task.Delay(
                         TimeSpan.FromMilliseconds(environment.Queue.PollIntervalMilliseconds),
                         timeProvider,
-                        stoppingToken);
+                        stoppingToken).ConfigureAwait(false);
                 }
 
-                await CleanupCompletedAsync(stoppingToken);
+                await CleanupCompletedAsync(stoppingToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -65,7 +65,7 @@ public sealed class MailQueueWorker(
             catch (Exception exception)
             {
                 logger.LogError(exception, "The mail queue worker failed.");
-                await Task.Delay(TimeSpan.FromSeconds(5), timeProvider, stoppingToken);
+                await Task.Delay(TimeSpan.FromSeconds(5), timeProvider, stoppingToken).ConfigureAwait(false);
             }
         }
     }
@@ -76,24 +76,28 @@ public sealed class MailQueueWorker(
         {
             try
             {
-                await using var listener = new NpgsqlConnection(environment.BuildConnectionString());
-                await listener.OpenAsync(stoppingToken);
-                await using (var command = listener.CreateCommand())
+                var listener = new NpgsqlConnection(environment.BuildConnectionString());
+                await using (listener.ConfigureAwait(false))
                 {
-                    command.CommandText = "LISTEN mk8_mail_queue_ready";
-                    await command.ExecuteNonQueryAsync(stoppingToken);
-                }
-
-                while (!stoppingToken.IsCancellationRequested)
-                {
-                    var processed = await ProcessNextAsync(stoppingToken);
-                    await CleanupCompletedAsync(stoppingToken);
-                    if (!processed)
+                    await listener.OpenAsync(stoppingToken).ConfigureAwait(false);
                     {
-                        var delay = await GetNextWakeDelayAsync(stoppingToken);
-                        await listener.WaitAsync(
-                            Math.Max(1, checked((int)delay.TotalMilliseconds)),
-                            stoppingToken);
+                        var command = listener.CreateCommand();
+                        await using var commandLifetime = command.ConfigureAwait(false);
+                        command.CommandText = "LISTEN mk8_mail_queue_ready";
+                        await command.ExecuteNonQueryAsync(stoppingToken).ConfigureAwait(false);
+                    }
+
+                    while (!stoppingToken.IsCancellationRequested)
+                    {
+                        var processed = await ProcessNextAsync(stoppingToken).ConfigureAwait(false);
+                        await CleanupCompletedAsync(stoppingToken).ConfigureAwait(false);
+                        if (!processed)
+                        {
+                            var delay = await GetNextWakeDelayAsync(stoppingToken).ConfigureAwait(false);
+                            await listener.WaitAsync(
+                                Math.Max(1, checked((int)delay.TotalMilliseconds)),
+                                stoppingToken).ConfigureAwait(false);
+                        }
                     }
                 }
             }
@@ -104,7 +108,7 @@ public sealed class MailQueueWorker(
             catch (Exception exception)
             {
                 logger.LogError(exception, "The mail queue notification listener failed.");
-                await Task.Delay(TimeSpan.FromSeconds(5), timeProvider, stoppingToken);
+                await Task.Delay(TimeSpan.FromSeconds(5), timeProvider, stoppingToken).ConfigureAwait(false);
             }
         }
     }
@@ -116,11 +120,11 @@ public sealed class MailQueueWorker(
         var nextPending = await database.MailQueueMessages
             .Where(message => message.State == MailQueueStates.Pending)
             .Select(message => (DateTime?)message.NextAttemptAt)
-            .MinAsync(cancellationToken);
+            .MinAsync(cancellationToken).ConfigureAwait(false);
         var nextLease = await database.MailQueueMessages
             .Where(message => message.State == MailQueueStates.Processing)
             .Select(message => message.LeaseExpiresAt)
-            .MinAsync(cancellationToken);
+            .MinAsync(cancellationToken).ConfigureAwait(false);
         var next = new[] { nextPending, nextLease }
             .Where(candidate => candidate is not null)
             .Min();
@@ -153,7 +157,7 @@ public sealed class MailQueueWorker(
         var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
         var leaseToken = Guid.CreateVersion7();
         var now = timeProvider.GetUtcNow().UtcDateTime;
-        var messageId = await ClaimNextAsync(database, leaseToken, now, cancellationToken);
+        var messageId = await ClaimNextAsync(database, leaseToken, now, cancellationToken).ConfigureAwait(false);
         if (messageId is null)
             return false;
 
@@ -171,7 +175,7 @@ public sealed class MailQueueWorker(
                     messageId.Value,
                     leaseToken,
                     now,
-                    processingCancellation.Token);
+                    processingCancellation.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -186,13 +190,13 @@ public sealed class MailQueueWorker(
                     leaseToken,
                     exception,
                     timeProvider.GetUtcNow().UtcDateTime,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
             }
         }
         finally
         {
             processingCancellation.Cancel();
-            await renewal;
+            await renewal.ConfigureAwait(false);
         }
 
         return true;
@@ -207,37 +211,40 @@ public sealed class MailQueueWorker(
         using var timer = new PeriodicTimer(interval, timeProvider);
         try
         {
-            while (await timer.WaitForNextTickAsync(processingCancellation.Token))
+            while (await timer.WaitForNextTickAsync(processingCancellation.Token).ConfigureAwait(false))
             {
-                await using var scope = scopeFactory.CreateAsyncScope();
-                var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-                var now = timeProvider.GetUtcNow().UtcDateTime;
-                var renewed = await database.MailQueueMessages
-                    .Where(message => message.Id == messageId
-                        && message.State == MailQueueStates.Processing
-                        && message.LeaseToken == leaseToken
-                        && message.LeaseExpiresAt > now)
-                    .ExecuteUpdateAsync(
-                        updates => updates.SetProperty(
-                            message => message.LeaseExpiresAt,
-                            now.AddSeconds(environment.Queue.LeaseSeconds)),
-                        processingCancellation.Token);
-                if (renewed == 1)
-                    continue;
-
-                var state = await database.MailQueueMessages
-                    .AsNoTracking()
-                    .Where(message => message.Id == messageId)
-                    .Select(message => message.State)
-                    .SingleOrDefaultAsync(processingCancellation.Token);
-                if (state == MailQueueStates.Processing)
+                var scope = scopeFactory.CreateAsyncScope();
+                await using (scope.ConfigureAwait(false))
                 {
-                    logger.LogError(
-                        "The queue processing lease was lost for {QueueId}",
-                        messageId);
-                    processingCancellation.Cancel();
+                    var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+                    var now = timeProvider.GetUtcNow().UtcDateTime;
+                    var renewed = await database.MailQueueMessages
+                        .Where(message => message.Id == messageId
+                            && message.State == MailQueueStates.Processing
+                            && message.LeaseToken == leaseToken
+                            && message.LeaseExpiresAt > now)
+                        .ExecuteUpdateAsync(
+                            updates => updates.SetProperty(
+                                message => message.LeaseExpiresAt,
+                                now.AddSeconds(environment.Queue.LeaseSeconds)),
+                            processingCancellation.Token).ConfigureAwait(false);
+                    if (renewed == 1)
+                        continue;
+
+                    var state = await database.MailQueueMessages
+                        .AsNoTracking()
+                        .Where(message => message.Id == messageId)
+                        .Select(message => message.State)
+                        .SingleOrDefaultAsync(processingCancellation.Token).ConfigureAwait(false);
+                    if (state == MailQueueStates.Processing)
+                    {
+                        logger.LogError(
+                            "The queue processing lease was lost for {QueueId}",
+                            messageId);
+                        processingCancellation.Cancel();
+                    }
+                    return;
                 }
-                return;
             }
         }
         catch (OperationCanceledException) when (processingCancellation.IsCancellationRequested)
@@ -265,7 +272,7 @@ public sealed class MailQueueWorker(
                     && item.State == MailQueueStates.Processing
                     && item.LeaseToken == leaseToken,
                 cancellationToken)
-            ?? throw new InvalidOperationException("The claimed queue message is unavailable.");
+.ConfigureAwait(false) ?? throw new InvalidOperationException("The claimed queue message is unavailable.");
 
         var scanner = services.GetRequiredService<IMailScanner>();
         var delivery = services.GetRequiredService<IEmailService>();
@@ -273,7 +280,7 @@ public sealed class MailQueueWorker(
         var vacationResponder = services.GetService<IVacationResponder>();
         var sieveFilter = services.GetService<ISieveFilterService>();
         var relay = services.GetRequiredService<IOutboundMailRelay>();
-        var rawMessage = await content.ReadAsync(message, cancellationToken);
+        var rawMessage = await content.ReadAsync(message, cancellationToken).ConfigureAwait(false);
 
         if (message.ScanState == MailQueueScanStates.Pending)
         {
@@ -286,12 +293,12 @@ public sealed class MailQueueWorker(
                     message.ClientIp,
                     message.Helo,
                     message.AuthenticatedUser),
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
 
             if (scan.IsTemporaryFailure)
             {
                 ScheduleMessageRetry(message, "The mail scanner requested a temporary retry.", now);
-                await database.SaveChangesAsync(cancellationToken);
+                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
                 return;
             }
 
@@ -306,8 +313,8 @@ public sealed class MailQueueWorker(
             if (scan.IsMalware
                 || (message.Direction == MailQueueDirections.Submission && IsSpamAction(scan.Action)))
             {
-                await QuarantineAsync(message, delivery, now, cancellationToken);
-                await database.SaveChangesAsync(cancellationToken);
+                await QuarantineAsync(message, delivery, now, cancellationToken).ConfigureAwait(false);
+                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
                 logger.LogWarning("Queue message {QueueId} was quarantined", message.Id);
                 return;
             }
@@ -321,10 +328,10 @@ public sealed class MailQueueWorker(
                     message.EnvelopeSender,
                     deliveryMessage,
                     message.Id,
-                    cancellationToken))
+                    cancellationToken).ConfigureAwait(false))
             {
                 ScheduleMessageRetry(message, "The sent copy could not be stored.", now);
-                await database.SaveChangesAsync(cancellationToken);
+                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
                 return;
             }
 
@@ -347,7 +354,7 @@ public sealed class MailQueueWorker(
                 sieveFilter,
                 relay,
                 now,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         }
 
         foreach (var recipient in message.Recipients.OrderBy(item => item.Id))
@@ -375,7 +382,7 @@ public sealed class MailQueueWorker(
                             delivery,
                             relay,
                             now,
-                            cancellationToken))
+                            cancellationToken).ConfigureAwait(false))
                     {
                         recipient.SuccessNoticeCreated = true;
                     }
@@ -409,7 +416,7 @@ public sealed class MailQueueWorker(
                             delivery,
                             relay,
                             now,
-                            cancellationToken))
+                            cancellationToken).ConfigureAwait(false))
                     {
                         recipient.FailureNoticeCreated = true;
                     }
@@ -439,14 +446,14 @@ public sealed class MailQueueWorker(
                     delivery,
                     relay,
                     now,
-                    cancellationToken))
+                    cancellationToken).ConfigureAwait(false))
             {
                 recipient.DelayNoticeCreated = true;
             }
         }
 
         FinalizeMessageState(message, now);
-        await database.SaveChangesAsync(cancellationToken);
+        await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async Task DeliverRecipientAsync(
@@ -481,7 +488,7 @@ public sealed class MailQueueWorker(
                         recipient.Recipient,
                         rawMessage,
                         defaultFolder,
-                        cancellationToken);
+                        cancellationToken).ConfigureAwait(false);
 
                 if (plan.RejectReason is not null)
                 {
@@ -491,7 +498,7 @@ public sealed class MailQueueWorker(
                             plan.RejectReason,
                             delivery,
                             relay,
-                            cancellationToken))
+                            cancellationToken).ConfigureAwait(false))
                     {
                         ScheduleRecipientRetry(
                             message,
@@ -512,7 +519,7 @@ public sealed class MailQueueWorker(
                     plan.Redirects,
                     delivery,
                     now,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 var deliveries = plan.Deliveries;
                 if (deliveries.Count == 0
                     && plan.Redirects.Count > 0
@@ -536,7 +543,7 @@ public sealed class MailQueueWorker(
                         deliveryId,
                         cancellationToken,
                         instruction.Flags,
-                        instruction.Create);
+                        instruction.Create).ConfigureAwait(false);
                     if (!delivered)
                     {
                         ScheduleRecipientRetry(
@@ -554,7 +561,7 @@ public sealed class MailQueueWorker(
                             rawMessage,
                             instruction.Folder,
                             deliveryId,
-                            cancellationToken))
+                            cancellationToken).ConfigureAwait(false))
                     {
                         ScheduleRecipientRetry(
                             message,
@@ -581,7 +588,7 @@ public sealed class MailQueueWorker(
                     new MailDsnRecipient(
                         recipient.DsnNotify,
                         recipient.DsnOriginalRecipient)),
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             if (result.Status == OutboundDeliveryStatus.Delivered)
             {
                 recipient.DsnForwarded = result.DsnParametersForwarded;
@@ -666,7 +673,7 @@ public sealed class MailQueueWorker(
                 MessageId = message.Id,
                 Message = message,
                 Recipient = redirect,
-                IsLocal = await delivery.CanReceiveAsync(redirect, cancellationToken),
+                IsLocal = await delivery.CanReceiveAsync(redirect, cancellationToken).ConfigureAwait(false),
                 State = MailQueueRecipientStates.Pending,
                 NextAttemptAt = now,
                 RedirectDepth = source.RedirectDepth + 1,
@@ -706,7 +713,7 @@ public sealed class MailQueueWorker(
             $"{safeReason}\r\n";
         var rawNotice = Encoding.Latin1.GetString(Encoding.UTF8.GetBytes(noticeText));
 
-        if (await delivery.CanReceiveAsync(message.EnvelopeSender, cancellationToken))
+        if (await delivery.CanReceiveAsync(message.EnvelopeSender, cancellationToken).ConfigureAwait(false))
         {
             return await delivery.DeliverAsync(
                 sender,
@@ -714,7 +721,7 @@ public sealed class MailQueueWorker(
                 rawNotice,
                 DefaultFolders.Inbox,
                 DeriveQueueDeliveryId(recipient.Id, "sieve-reject"),
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         }
 
         var result = await relay.RelayAsync(
@@ -725,7 +732,7 @@ public sealed class MailQueueWorker(
                 message.RequiresSmtpUtf8
                 || message.EnvelopeSender.Any(character => !char.IsAscii(character)),
                 RecipientDsn: new MailDsnRecipient("NEVER")),
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         return result.Status is OutboundDeliveryStatus.Delivered
             or OutboundDeliveryStatus.PermanentFailure;
     }
@@ -765,7 +772,7 @@ public sealed class MailQueueWorker(
             recipient.LastEnhancedStatusCode,
             recipient.LastRemoteMta);
 
-        if (await delivery.CanReceiveAsync(message.EnvelopeSender, cancellationToken))
+        if (await delivery.CanReceiveAsync(message.EnvelopeSender, cancellationToken).ConfigureAwait(false))
         {
             return await delivery.DeliverAsync(
                 string.Empty,
@@ -773,7 +780,7 @@ public sealed class MailQueueWorker(
                 report.RawMessage,
                 DefaultFolders.Inbox,
                 DeriveQueueDeliveryId(recipient.Id, $"dsn-{action}"),
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         }
 
         var result = await relay.RelayAsync(
@@ -783,7 +790,7 @@ public sealed class MailQueueWorker(
             new OutboundMailOptions(
                 report.RequiresSmtpUtf8,
                 RecipientDsn: new MailDsnRecipient("NEVER")),
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         return result.Status is OutboundDeliveryStatus.Delivered
             or OutboundDeliveryStatus.PermanentFailure;
     }
@@ -830,7 +837,7 @@ public sealed class MailQueueWorker(
             rawNotice,
             DefaultFolders.Inbox,
             message.Id,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<Guid?> ClaimNextAsync(
@@ -839,18 +846,22 @@ public sealed class MailQueueWorker(
         DateTime now,
         CancellationToken cancellationToken)
     {
-        await using var transaction = await database.Database.BeginTransactionAsync(
+        var transaction = await database.Database.BeginTransactionAsync(
             IsolationLevel.ReadCommitted,
-            cancellationToken);
-
-        MailQueueMessageDB? message;
-        if (string.Equals(
-                database.Database.ProviderName,
-                "Npgsql.EntityFrameworkCore.PostgreSQL",
-                StringComparison.Ordinal))
+            cancellationToken).ConfigureAwait(false);
+        // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+        await using (transaction)
         {
-            var candidates = await database.MailQueueMessages
-                .FromSqlInterpolated($"""
+#pragma warning restore CA2007, MA0004
+            MailQueueMessageDB? message;
+            if (string.Equals(
+                    database.Database.ProviderName,
+                    "Npgsql.EntityFrameworkCore.PostgreSQL",
+                    StringComparison.Ordinal))
+            {
+                var candidates = await database.MailQueueMessages
+                    .FromSqlInterpolated($"""
                     SELECT *
                     FROM mail_queue_messages
                     WHERE next_attempt_at <= {now}
@@ -862,36 +873,37 @@ public sealed class MailQueueWorker(
                     FOR UPDATE SKIP LOCKED
                     LIMIT 1
                     """)
-                .ToListAsync(cancellationToken);
-            message = candidates.SingleOrDefault();
-        }
-        else
-        {
-            message = await database.MailQueueMessages
-                .Where(item => item.NextAttemptAt <= now
-                    && (item.State == MailQueueStates.Pending
-                        || (item.State == MailQueueStates.Processing
-                            && item.LeaseExpiresAt <= now)))
-                .OrderBy(item => item.NextAttemptAt)
-                .ThenBy(item => item.ReceivedAt)
-                .ThenBy(item => item.Id)
-                .FirstOrDefaultAsync(cancellationToken);
-        }
+                    .ToListAsync(cancellationToken).ConfigureAwait(false);
+                message = candidates.SingleOrDefault();
+            }
+            else
+            {
+                message = await database.MailQueueMessages
+                    .Where(item => item.NextAttemptAt <= now
+                        && (item.State == MailQueueStates.Pending
+                            || (item.State == MailQueueStates.Processing
+                                && item.LeaseExpiresAt <= now)))
+                    .OrderBy(item => item.NextAttemptAt)
+                    .ThenBy(item => item.ReceivedAt)
+                    .ThenBy(item => item.Id)
+                    .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+            }
 
-        if (message is null)
-        {
-            await transaction.CommitAsync(cancellationToken);
-            return null;
-        }
+            if (message is null)
+            {
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                return null;
+            }
 
-        message.State = MailQueueStates.Processing;
-        message.LeaseToken = leaseToken;
-        message.LeaseExpiresAt = now.AddSeconds(environment.Queue.LeaseSeconds);
-        message.AttemptCount++;
-        await database.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
-        database.ChangeTracker.Clear();
-        return message.Id;
+            message.State = MailQueueStates.Processing;
+            message.LeaseToken = leaseToken;
+            message.LeaseExpiresAt = now.AddSeconds(environment.Queue.LeaseSeconds);
+            message.AttemptCount++;
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            database.ChangeTracker.Clear();
+            return message.Id;
+        }
     }
 
     private async Task ReleaseAfterFailureAsync(
@@ -905,12 +917,12 @@ public sealed class MailQueueWorker(
         database.ChangeTracker.Clear();
         var message = await database.MailQueueMessages.SingleOrDefaultAsync(
             item => item.Id == messageId && item.LeaseToken == leaseToken,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (message is null)
             return;
 
         ScheduleMessageRetry(message, GetSafeError(exception), now);
-        await database.SaveChangesAsync(cancellationToken);
+        await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private void ScheduleMessageRetry(MailQueueMessageDB message, string detail, DateTime now)
@@ -1100,7 +1112,7 @@ public sealed class MailQueueWorker(
         using var scope = scopeFactory.CreateScope();
         await scope.ServiceProvider
             .GetRequiredService<MailRuntimeSchemaService>()
-            .EnsureAsync(cancellationToken);
+            .EnsureAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async Task MigrateQueueContentAsync(CancellationToken cancellationToken)
@@ -1108,7 +1120,7 @@ public sealed class MailQueueWorker(
         using var scope = scopeFactory.CreateScope();
         await scope.ServiceProvider
             .GetRequiredService<MailQueueLargeObjectMigrationService>()
-            .MigrateAsync(cancellationToken);
+            .MigrateAsync(cancellationToken).ConfigureAwait(false);
     }
 
     internal async Task CleanupCompletedAsync(CancellationToken cancellationToken)
@@ -1118,7 +1130,7 @@ public sealed class MailQueueWorker(
             return;
 
         var cutoff = now.UtcDateTime.AddDays(-environment.Queue.CompletedRetentionDays);
-        while (await CleanupCompletedBatchAsync(cutoff, cancellationToken) == 1000)
+        while (await CleanupCompletedBatchAsync(cutoff, cancellationToken).ConfigureAwait(false) == 1000)
         {
         }
         _nextCleanup = now.AddHours(1);
@@ -1138,19 +1150,19 @@ public sealed class MailQueueWorker(
         try
         {
             if (database.Database.IsRelational())
-                transaction = await database.Database.BeginTransactionAsync(cancellationToken);
+                transaction = await database.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
             var expired = await database.MailQueueMessages
                 .Where(message => message.State == MailQueueStates.Completed
                     && message.CompletedAt < cutoff)
                 .OrderBy(message => message.CompletedAt)
                 .Take(1000)
-                .ToListAsync(cancellationToken);
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
             if (expired.Count == 0)
             {
                 if (transaction is not null)
                 {
                     commitAttempted = true;
-                    await transaction.CommitAsync(cancellationToken);
+                    await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
                 }
                 effects.Discard(marker);
                 return 0;
@@ -1163,13 +1175,13 @@ public sealed class MailQueueWorker(
                     effects.DeleteOnCommit(reference);
             }
             database.MailQueueMessages.RemoveRange(expired);
-            await database.SaveChangesAsync(cancellationToken);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             if (transaction is not null)
             {
                 commitAttempted = true;
-                await transaction.CommitAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             }
-            await effects.CommitAsync(marker);
+            await effects.CommitAsync(marker).ConfigureAwait(false);
             logger.LogInformation("Removed {Count} completed queue records", expired.Count);
             return expired.Count;
         }
@@ -1179,7 +1191,7 @@ public sealed class MailQueueWorker(
             {
                 try
                 {
-                    await transaction.RollbackAsync(CancellationToken.None);
+                    await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
                 }
                 catch (Exception rollbackException)
                 {
@@ -1191,13 +1203,13 @@ public sealed class MailQueueWorker(
             if (commitAttempted)
                 effects.Discard(marker);
             else
-                await effects.RollbackAsync(marker);
+                await effects.RollbackAsync(marker).ConfigureAwait(false);
             throw;
         }
         finally
         {
             if (transaction is not null)
-                await transaction.DisposeAsync();
+                await transaction.DisposeAsync().ConfigureAwait(false);
         }
     }
 }

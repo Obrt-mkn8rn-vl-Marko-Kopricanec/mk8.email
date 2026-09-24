@@ -37,7 +37,7 @@ public sealed class LargeObjectTransactionEffects(
         {
             try
             {
-                await objects.DeleteIfMatchAsync(effect.Reference, CancellationToken.None);
+                await objects.DeleteIfMatchAsync(effect.Reference, CancellationToken.None).ConfigureAwait(false);
             }
             catch (Exception exception)
             {

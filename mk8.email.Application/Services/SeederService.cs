@@ -11,12 +11,12 @@ public class SeederService(
 {
     public async Task SeedAsync(CancellationToken cancellationToken = default)
     {
-        await SyncGlobalConfigAsync(cancellationToken);
+        await SyncGlobalConfigAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async Task SyncGlobalConfigAsync(CancellationToken cancellationToken)
     {
-        var config = await db.GlobalConfig.SingleOrDefaultAsync(cancellationToken);
+        var config = await db.GlobalConfig.SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
         if (config is null)
             throw new InvalidOperationException("The database schema is not initialized.");
 
@@ -57,6 +57,6 @@ public class SeederService(
 
         config.UpdatedAt = DateTime.UtcNow;
 
-        await db.SaveChangesAsync(cancellationToken);
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 }

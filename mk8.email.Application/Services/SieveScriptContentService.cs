@@ -127,6 +127,8 @@ public sealed class SieveScriptContentService(
         SieveScriptDB script,
         LargeObjectReference reference)
     {
+        ArgumentNullException.ThrowIfNull(script);
+        ArgumentNullException.ThrowIfNull(reference);
         if (!string.Equals(reference.Provider, LargeObjectProviders.AzureBlob, StringComparison.Ordinal))
         {
             throw new InvalidOperationException(

@@ -11,6 +11,7 @@ public class CompanyService(EmailDbContext db) : ICompanyService
 {
     public async Task<CompanyDTO?> CreateCompanyAsync(Guid userId, CreateCompanyRequestDTO request)
     {
+        ArgumentNullException.ThrowIfNull(request);
         if (!await IsSuperAdminAsync(userId).ConfigureAwait(false))
             return null;
 
@@ -50,6 +51,7 @@ public class CompanyService(EmailDbContext db) : ICompanyService
 
     public async Task<GlobalConfigDTO?> UpdateGlobalConfigAsync(Guid userId, GlobalConfigDTO config)
     {
+        ArgumentNullException.ThrowIfNull(config);
         if (!await IsSuperAdminAsync(userId).ConfigureAwait(false))
             return null;
 
@@ -100,6 +102,7 @@ public class CompanyService(EmailDbContext db) : ICompanyService
 
     public async Task<GlobalLimitsDTO?> UpdateGlobalLimitsAsync(Guid userId, GlobalLimitsDTO limits)
     {
+        ArgumentNullException.ThrowIfNull(limits);
         if (!await IsSuperAdminAsync(userId).ConfigureAwait(false))
             return null;
 

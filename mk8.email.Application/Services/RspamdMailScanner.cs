@@ -46,6 +46,7 @@ public sealed class RspamdMailScanner : IMailScanner, IDisposable
         MailScanRequest request,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(request);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(_environment.Filtering.TimeoutSeconds));
 

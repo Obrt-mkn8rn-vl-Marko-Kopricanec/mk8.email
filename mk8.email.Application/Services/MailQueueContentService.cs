@@ -123,6 +123,7 @@ public sealed class MailQueueContentService(
 
     public async Task DeleteBestEffortAsync(LargeObjectReference reference)
     {
+        ArgumentNullException.ThrowIfNull(reference);
         try
         {
             await objects.DeleteIfMatchAsync(reference, CancellationToken.None).ConfigureAwait(false);
@@ -143,6 +144,8 @@ public sealed class MailQueueContentService(
         MailQueueMessageDB message,
         LargeObjectReference reference)
     {
+        ArgumentNullException.ThrowIfNull(message);
+        ArgumentNullException.ThrowIfNull(reference);
         if (!string.Equals(reference.Provider, LargeObjectProviders.AzureBlob, StringComparison.Ordinal))
         {
             throw new InvalidOperationException(

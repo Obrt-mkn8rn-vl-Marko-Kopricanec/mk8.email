@@ -31,6 +31,7 @@ public sealed class OAuthTokenService(
         IReadOnlyCollection<string> scopes,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(scopes);
         var normalizedClientId = clientId?.Trim() ?? string.Empty;
         var normalizedDeviceName = deviceName?.Trim() ?? string.Empty;
         var normalizedScopes = NormalizeScopes(scopes);

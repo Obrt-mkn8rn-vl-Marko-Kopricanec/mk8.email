@@ -54,6 +54,7 @@ public static class Rfc5256
 
     public static byte[] UnicodeCasemapSortKey(string value)
     {
+        ArgumentNullException.ThrowIfNull(value);
         var prepared = new StringBuilder(value.Length);
         foreach (var codePoint in value.EnumerateRunes())
         {

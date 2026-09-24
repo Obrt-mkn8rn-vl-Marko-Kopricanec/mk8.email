@@ -20,6 +20,7 @@ public sealed class PostgresMailSubmissionQueue(
         MailSubmission submission,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(submission);
         if (submission.QueueId == Guid.Empty)
             throw new ArgumentException("The queue identifier is not valid.", nameof(submission));
 

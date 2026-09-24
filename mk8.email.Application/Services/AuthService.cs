@@ -14,6 +14,7 @@ public class AuthService(EmailDbContext db) : IAuthService
 
     public async Task<LoginResultDTO> LoginAsync(LoginRequestDTO request)
     {
+        ArgumentNullException.ThrowIfNull(request);
         var username = request.Username.Trim().ToMailLowerInvariant();
         var user = await db.Users.AsNoTracking()
             .FirstOrDefaultAsync(u => u.Username == username && u.IsActive).ConfigureAwait(false);
@@ -27,6 +28,7 @@ public class AuthService(EmailDbContext db) : IAuthService
 
     public async Task<LoginResultDTO> RegisterAsync(RegisterRequestDTO request)
     {
+        ArgumentNullException.ThrowIfNull(request);
         var registrationAllowed = await db.GlobalConfig.AsNoTracking()
             .Select(config => config.AllowRegistration)
             .SingleOrDefaultAsync().ConfigureAwait(false);

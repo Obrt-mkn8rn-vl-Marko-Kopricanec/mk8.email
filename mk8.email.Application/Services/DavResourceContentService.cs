@@ -118,6 +118,8 @@ public sealed class DavResourceContentService(
         DavResourceDB resource,
         LargeObjectReference reference)
     {
+        ArgumentNullException.ThrowIfNull(resource);
+        ArgumentNullException.ThrowIfNull(reference);
         if (!string.Equals(reference.Provider, LargeObjectProviders.AzureBlob, StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
@@ -133,6 +135,7 @@ public sealed class DavResourceContentService(
 
     public async Task DeleteBestEffortAsync(LargeObjectReference reference)
     {
+        ArgumentNullException.ThrowIfNull(reference);
         try
         {
             await objects.DeleteIfMatchAsync(reference, CancellationToken.None).ConfigureAwait(false);

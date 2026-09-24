@@ -15,6 +15,7 @@ public sealed class MailQueueMaintenanceService(
         string marker,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(marker);
         if (marker.Length != 32 || marker.Any(character => character is not
                 (>= '0' and <= '9' or >= 'a' and <= 'f')))
         {

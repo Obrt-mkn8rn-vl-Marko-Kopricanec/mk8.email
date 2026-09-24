@@ -34,6 +34,7 @@ public class EmailService(
         IReadOnlyCollection<string>? flags = null,
         bool createFolder = false)
     {
+        ArgumentNullException.ThrowIfNull(folderName);
         folderName = MailboxName.Normalize(folderName);
         if (!MailboxName.IsValid(folderName))
             throw new ArgumentException("The delivery folder is not valid.", nameof(folderName));

@@ -19,6 +19,7 @@ public sealed partial class MailAdministrationService(EmailDbContext db) : IMail
         string domain,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(companyName);
         var normalizedCompany = companyName.Trim();
         var normalizedDomain = NormalizeDomain(domain);
         if (normalizedCompany.Length is < 1 or > 255)

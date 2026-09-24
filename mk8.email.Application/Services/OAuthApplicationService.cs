@@ -28,6 +28,7 @@ public sealed class OAuthApplicationService(
         OAuthIdentityLookupRequest request,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(request);
         var identity = await tokens.AuthenticateIdentityAsync(
             request.AccessToken,
             request.RequiredScope,
@@ -41,6 +42,7 @@ public sealed class OAuthApplicationService(
         OAuthAuthorizeApplicationRequest request,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(request);
         var user = await authenticator.AuthenticatePrimaryAsync(
             request.Username,
             request.Password,
@@ -79,26 +81,35 @@ public sealed class OAuthApplicationService(
 
     public async Task<OAuthTokenApplicationResult> RedeemAuthorizationCodeAsync(
         OAuthAuthorizationCodeRedeemRequest request,
-        CancellationToken cancellationToken = default) =>
-        Map(await authorization.RedeemAuthorizationCodeAsync(
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return Map(await authorization.RedeemAuthorizationCodeAsync(
             request.Code,
             request.ClientId,
             request.RedirectUri,
             request.CodeVerifier,
             cancellationToken).ConfigureAwait(false));
+    }
 
     public async Task<OAuthTokenApplicationResult> RefreshTokenAsync(
         OAuthRefreshTokenRequest request,
-        CancellationToken cancellationToken = default) =>
-        Map(await tokens.RefreshAsync(
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return Map(await tokens.RefreshAsync(
             request.RefreshToken,
             request.ClientId,
             cancellationToken).ConfigureAwait(false));
+    }
 
     public Task RevokeTokenAsync(
         OAuthRevokeTokenRequest request,
-        CancellationToken cancellationToken = default) =>
-        tokens.RevokeTokenAsync(request.Token, request.ClientId, cancellationToken);
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return tokens.RevokeTokenAsync(request.Token, request.ClientId, cancellationToken);
+    }
 
     private static OAuthTokenApplicationResult Map(OAuthTokenPair? pair) =>
         new(pair is null

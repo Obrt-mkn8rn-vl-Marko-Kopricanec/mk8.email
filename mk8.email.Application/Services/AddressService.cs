@@ -11,6 +11,7 @@ public class AddressService(EmailDbContext db) : IAddressService
 {
     public async Task<AddressDTO?> CreateAddressAsync(Guid userId, CreateAddressRequestDTO request)
     {
+        ArgumentNullException.ThrowIfNull(request);
         var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId).ConfigureAwait(false);
         if (user is null)
             return null;

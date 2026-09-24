@@ -14,6 +14,7 @@ public sealed class OpenIdConnectService : IOpenIdConnectService
 
     public OpenIdConnectService(EnvironmentConfig environment)
     {
+        ArgumentNullException.ThrowIfNull(environment);
         this.environment = environment;
         if (!environment.OAuth.EnableOpenIdConnect)
             return;

@@ -38,6 +38,7 @@ public sealed class VacationResponder(
         Guid deliveryId,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(deliveredRecipient);
         if (!string.Equals(targetFolder, DefaultFolders.Inbox, StringComparison.Ordinal)
             || string.IsNullOrWhiteSpace(envelopeSender)
             || !MailboxAddress.TryParse(envelopeSender, out var senderMailbox)

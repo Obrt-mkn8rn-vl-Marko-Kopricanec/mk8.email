@@ -126,6 +126,8 @@ public sealed class MailboxMessageContentService(
 
     public static void ApplyReference(EmailDB email, LargeObjectReference reference)
     {
+        ArgumentNullException.ThrowIfNull(email);
+        ArgumentNullException.ThrowIfNull(reference);
         if (!string.Equals(reference.Provider, LargeObjectProviders.AzureBlob, StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
@@ -141,6 +143,7 @@ public sealed class MailboxMessageContentService(
 
     public static void ApplySearchProjection(EmailDB email, byte[] rawMessage)
     {
+        ArgumentNullException.ThrowIfNull(email);
         var rawText = MailWireEncoding.Instance.GetString(rawMessage);
         var (headers, fallbackBody) = SplitMessage(rawText);
         email.RawHeaders = Truncate(headers, MaximumSearchProjectionCharacters);

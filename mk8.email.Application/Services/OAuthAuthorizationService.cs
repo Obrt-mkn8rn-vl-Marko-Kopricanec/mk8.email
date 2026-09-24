@@ -138,28 +138,35 @@ public sealed class OAuthAuthorizationService(
                 authorizationCode.Scopes,
                 cancellationToken).ConfigureAwait(false);
             if (pair?.IdToken is not null)
-            {
-                var grant = await database.OAuthGrants
-                    .Include(candidate => candidate.User)
-                    .SingleAsync(candidate => candidate.Id == pair.GrantId, cancellationToken).ConfigureAwait(false);
-                grant.CreatedAt = authorizationCode.CreatedAt;
-                pair = pair with
-                {
-                    IdToken = openIdConnect.CreateIdToken(
-                        grant.UserId,
-                        grant.User.Username,
-                        grant.ClientId,
-                        pair.AccessToken,
-                        authorizationCode.CreatedAt,
-                        now,
-                        authorizationCode.Nonce,
-                        grant.Scopes),
-                };
-            }
+                pair = await AddIdTokenAsync(pair, authorizationCode, now, cancellationToken).ConfigureAwait(false);
             await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             return pair;
         }
+    }
+
+    private async Task<OAuthTokenPair> AddIdTokenAsync(
+        OAuthTokenPair pair,
+        OAuthAuthorizationCodeDB authorizationCode,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var grant = await database.OAuthGrants
+            .Include(candidate => candidate.User)
+            .SingleAsync(candidate => candidate.Id == pair.GrantId, cancellationToken).ConfigureAwait(false);
+        grant.CreatedAt = authorizationCode.CreatedAt;
+        return pair with
+        {
+            IdToken = openIdConnect.CreateIdToken(
+                grant.UserId,
+                grant.User.Username,
+                grant.ClientId,
+                pair.AccessToken,
+                authorizationCode.CreatedAt,
+                now,
+                authorizationCode.Nonce,
+                grant.Scopes),
+        };
     }
 
     private static string CreateOpaqueValue(string prefix, Guid id)

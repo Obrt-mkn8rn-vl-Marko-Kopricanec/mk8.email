@@ -266,22 +266,7 @@ public sealed class MfaService(
             if (normalizedCode.Length == 6
                 && normalizedCode.All(character => character is >= '0' and <= '9'))
             {
-                try
-                {
-                    var secret = DecryptSecret(credential, encryptionKey);
-                    verified = TotpMfa.TryVerify(
-                        secret,
-                        normalizedCode,
-                        now,
-                        credential.LastAcceptedTimeStep,
-                        out var acceptedTimeStep);
-                    if (verified)
-                        credential.LastAcceptedTimeStep = acceptedTimeStep;
-                }
-                catch (CryptographicException)
-                {
-                    verified = false;
-                }
+                verified = VerifyTotpCode(credential, encryptionKey, normalizedCode, now);
             }
             else if (TryParseRecoveryCodeId(normalizedCode, out var recoveryCodeId))
             {
@@ -303,6 +288,31 @@ public sealed class MfaService(
             await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             return MfaVerificationResult.Succeeded;
+        }
+    }
+
+    private static bool VerifyTotpCode(
+        MfaTotpCredentialDB credential,
+        byte[] encryptionKey,
+        string normalizedCode,
+        DateTime now)
+    {
+        try
+        {
+            var secret = DecryptSecret(credential, encryptionKey);
+            if (!TotpMfa.TryVerify(
+                    secret,
+                    normalizedCode,
+                    now,
+                    credential.LastAcceptedTimeStep,
+                    out var acceptedTimeStep))
+                return false;
+            credential.LastAcceptedTimeStep = acceptedTimeStep;
+            return true;
+        }
+        catch (CryptographicException)
+        {
+            return false;
         }
     }
 

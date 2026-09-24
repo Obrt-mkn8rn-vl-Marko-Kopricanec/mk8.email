@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
@@ -115,7 +116,7 @@ public sealed class PostgresMailSubmissionQueue(
             NextAttemptAt = now,
         };
 
-        foreach (var recipient in recipients)
+        foreach (ref readonly var recipient in CollectionsMarshal.AsSpan(recipients))
         {
             string? dsnNotify = null;
             string? dsnOriginalRecipient = null;

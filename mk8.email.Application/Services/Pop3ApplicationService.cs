@@ -126,8 +126,9 @@ internal sealed class Pop3ApplicationService(
                     .Where(folder => folderIds.Contains(folder.Id))
                     .ToDictionaryAsync(folder => folder.Id, cancellationToken).ConfigureAwait(false);
 
-                foreach (var email in emails)
+                for (var index = 0; index < emails.Count; index++)
                 {
+                    var email = emails[index];
                     var folder = folders[email.FolderId];
                     await database.ExpungedUids.AddAsync(new ExpungedUidDB
                     {

@@ -82,8 +82,8 @@ public sealed class MailQueueLargeObjectMigrationService(
             if (legacy.Count == 0)
                 break;
 
-            foreach (var message in legacy)
-                await MigrateAsync(message, cancellationToken).ConfigureAwait(false);
+            for (var index = 0; index < legacy.Count; index++)
+                await MigrateAsync(legacy[index], cancellationToken).ConfigureAwait(false);
             database.ChangeTracker.Clear();
         }
     }

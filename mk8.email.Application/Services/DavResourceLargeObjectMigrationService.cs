@@ -81,8 +81,8 @@ public sealed class DavResourceLargeObjectMigrationService(
             if (legacy.Count == 0)
                 break;
 
-            foreach (var resource in legacy)
-                await MigrateAsync(resource, cancellationToken).ConfigureAwait(false);
+            for (var index = 0; index < legacy.Count; index++)
+                await MigrateAsync(legacy[index], cancellationToken).ConfigureAwait(false);
             database.ChangeTracker.Clear();
         }
     }

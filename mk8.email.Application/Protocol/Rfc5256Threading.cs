@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Text;
 using MimeKit.Utils;
 using mk8.email.Contracts.Imap;
@@ -106,14 +107,14 @@ internal static class Rfc5256Threading
         }
 
         var root = new ThreadNode(nextOrder++, null);
-        foreach (var node in allNodes)
+        foreach (ref readonly var node in CollectionsMarshal.AsSpan(allNodes))
         {
             if (node.Parent is null)
                 Link(root, node);
         }
 
         PruneDummyNodes(root);
-        foreach (var node in root.Children)
+        foreach (ref readonly var node in CollectionsMarshal.AsSpan(root.Children))
         {
             if (node.IsDummy)
                 node.Children.Sort(CompareBySentDate);
@@ -287,7 +288,7 @@ internal static class Rfc5256Threading
         {
             var node = traversal.Pop();
             postOrder.Add(node);
-            foreach (var child in node.Children)
+            foreach (ref readonly var child in CollectionsMarshal.AsSpan(node.Children))
                 traversal.Push(child);
         }
 
@@ -429,7 +430,7 @@ internal static class Rfc5256Threading
         {
             var node = traversal.Pop();
             postOrder.Add(node);
-            foreach (var child in node.Children)
+            foreach (ref readonly var child in CollectionsMarshal.AsSpan(node.Children))
                 traversal.Push(child);
         }
 

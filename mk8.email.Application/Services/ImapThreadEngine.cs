@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using MimeKit;
 using mk8.email.Application.Protocol;
 using mk8.email.Contracts.Imap;
@@ -35,7 +36,7 @@ internal static class ImapThreadEngine
         groups.Sort(static (left, right) => CompareSentDate(left[0], right[0]));
 
         var result = new List<ImapThreadNode>(messages.Count);
-        foreach (var group in groups)
+        foreach (ref readonly var group in CollectionsMarshal.AsSpan(groups))
         {
             var rootIndex = result.Count;
             result.Add(new ImapThreadNode(Identifier(group[0], useUid), -1));

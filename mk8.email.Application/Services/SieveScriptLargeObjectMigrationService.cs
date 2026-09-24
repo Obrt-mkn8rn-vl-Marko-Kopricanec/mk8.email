@@ -82,8 +82,8 @@ public sealed class SieveScriptLargeObjectMigrationService(
             if (legacy.Count == 0)
                 break;
 
-            foreach (var script in legacy)
-                await MigrateScriptAsync(script, cancellationToken).ConfigureAwait(false);
+            for (var index = 0; index < legacy.Count; index++)
+                await MigrateScriptAsync(legacy[index], cancellationToken).ConfigureAwait(false);
             database.ChangeTracker.Clear();
         }
     }

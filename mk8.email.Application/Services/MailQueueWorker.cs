@@ -1,4 +1,5 @@
 using System.Data;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
@@ -339,17 +340,18 @@ public sealed class MailQueueWorker(
             message.SentCopyCreated = true;
         }
 
-        foreach (var recipient in message.Recipients
+        var dueRecipients = message.Recipients
                      .Where(item => string.Equals(
                          item.State, MailQueueRecipientStates.Pending, StringComparison.Ordinal)
                          && item.NextAttemptAt <= now)
                      .OrderBy(item => item.Id)
-                     .ToList())
+                     .ToList();
+        for (var index = 0; index < dueRecipients.Count; index++)
         {
             await DeliverRecipientAsync(
                 database,
                 message,
-                recipient,
+                dueRecipients[index],
                 deliveryMessage,
                 delivery,
                 vacationResponder,
@@ -1167,7 +1169,7 @@ public sealed class MailQueueWorker(
                 return 0;
             }
 
-            foreach (var message in expired)
+            foreach (ref readonly var message in CollectionsMarshal.AsSpan(expired))
             {
                 var reference = content.TryGetReference(message);
                 if (reference is not null)

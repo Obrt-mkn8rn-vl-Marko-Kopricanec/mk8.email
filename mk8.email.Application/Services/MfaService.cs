@@ -1,4 +1,5 @@
 using System.Data;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
@@ -337,17 +338,17 @@ public sealed class MfaService(
         var grants = await database.OAuthGrants
             .Where(grant => grant.UserId == userId && grant.RevokedAt == null)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
-        foreach (var grant in grants)
+        foreach (ref readonly var grant in CollectionsMarshal.AsSpan(grants))
             grant.RevokedAt = revokedAt;
         var tokens = await database.OAuthTokens
             .Where(token => token.Grant.UserId == userId && token.RevokedAt == null)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
-        foreach (var token in tokens)
+        foreach (ref readonly var token in CollectionsMarshal.AsSpan(tokens))
             token.RevokedAt = revokedAt;
         var authorizationCodes = await database.OAuthAuthorizationCodes
             .Where(code => code.UserId == userId && code.ConsumedAt == null)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
-        foreach (var authorizationCode in authorizationCodes)
+        foreach (ref readonly var authorizationCode in CollectionsMarshal.AsSpan(authorizationCodes))
             authorizationCode.ConsumedAt = revokedAt;
     }
 

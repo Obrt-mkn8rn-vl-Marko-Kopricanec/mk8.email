@@ -1,4 +1,5 @@
 using System.Data;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
@@ -116,7 +117,7 @@ public sealed class OAuthTokenService(
                     && candidate.TokenType == AccessTokenType
                     && candidate.RevokedAt == null)
                 .ToListAsync(cancellationToken).ConfigureAwait(false);
-            foreach (var activeAccessToken in activeAccessTokens)
+            foreach (ref readonly var activeAccessToken in CollectionsMarshal.AsSpan(activeAccessTokens))
                 activeAccessToken.RevokedAt = now;
 
             token.RevokedAt = now;
@@ -305,7 +306,7 @@ public sealed class OAuthTokenService(
         var tokens = await database.OAuthTokens
             .Where(token => token.GrantId == grant.Id && token.RevokedAt == null)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
-        foreach (var token in tokens)
+        foreach (ref readonly var token in CollectionsMarshal.AsSpan(tokens))
             token.RevokedAt = revokedAt;
     }
 

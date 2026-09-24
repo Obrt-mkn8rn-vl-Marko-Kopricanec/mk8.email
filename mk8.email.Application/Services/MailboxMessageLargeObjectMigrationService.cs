@@ -90,8 +90,8 @@ public sealed class MailboxMessageLargeObjectMigrationService(
             if (legacy.Count == 0)
                 break;
 
-            foreach (var email in legacy)
-                await MigrateAsync(email, cancellationToken).ConfigureAwait(false);
+            for (var index = 0; index < legacy.Count; index++)
+                await MigrateAsync(legacy[index], cancellationToken).ConfigureAwait(false);
             database.ChangeTracker.Clear();
         }
     }

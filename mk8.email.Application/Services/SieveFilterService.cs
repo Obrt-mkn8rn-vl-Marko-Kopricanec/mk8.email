@@ -48,10 +48,24 @@ internal sealed class SieveFilterService(
             return DefaultPlan(defaultFolder);
         }
 
+        return EvaluateCompiledScript(
+            compilation.Program!, envelopeSender, recipient, rawMessage,
+            defaultFolder, mailboxes, script.Id);
+    }
+
+    private SieveDeliveryPlan EvaluateCompiledScript(
+        SieveProgram program,
+        string envelopeSender,
+        string recipient,
+        string rawMessage,
+        string defaultFolder,
+        HashSet<string> mailboxes,
+        Guid scriptId)
+    {
         try
         {
             var result = SieveScript.Evaluate(
-                compilation.Program!,
+                program,
                 new SieveMessageContext(
                     envelopeSender,
                     recipient,
@@ -63,7 +77,7 @@ internal sealed class SieveFilterService(
                     || !delivery.Create
                         && !mailboxes.Contains(MailboxName.Normalize(delivery.Folder))))
             {
-                ApplicationServiceLog.SieveMailboxUnavailable(logger, script.Id);
+                ApplicationServiceLog.SieveMailboxUnavailable(logger, scriptId);
                 return DefaultPlan(defaultFolder);
             }
             return new SieveDeliveryPlan(
@@ -78,7 +92,7 @@ internal sealed class SieveFilterService(
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            ApplicationServiceLog.SieveEvaluationFailed(logger, exception, script.Id);
+            ApplicationServiceLog.SieveEvaluationFailed(logger, exception, scriptId);
             return DefaultPlan(defaultFolder);
         }
     }

@@ -91,34 +91,39 @@ public sealed class RspamdMailScanner : IMailScanner, IDisposable
                 buffer,
                 new JsonDocumentOptions { MaxDepth = 32 },
                 timeout.Token).ConfigureAwait(false);
-            var root = document.RootElement;
-            var action = GetRequiredString(root, "action").ToMailLowerInvariant();
-            if (!SupportedActions.Contains(action))
-                throw new InvalidDataException("Rspamd returned an unsupported action.");
-
-            var score = GetRequiredNumber(root, "score");
-            var requiredScore = GetRequiredNumber(root, "required_score");
-            var symbols = ReadSymbols(root);
-            var scannerFailed = symbols.Contains("CLAM_VIRUS_FAIL");
-            var isTemporaryFailure = scannerFailed
-                || action is "soft reject" or "greylist";
-            var isMalware = symbols.Any(symbol =>
-                symbol.StartsWith("CLAM_VIRUS", StringComparison.Ordinal)
-                && !string.Equals(symbol, "CLAM_VIRUS_FAIL", StringComparison.Ordinal));
-
-            var headers = isTemporaryFailure
-                ? string.Empty
-                : BuildAddedHeaders(root, request.AuthenticatedUser is not null, action, score, requiredScore, symbols);
-
-            return new MailScanResult(
-                action,
-                score,
-                requiredScore,
-                symbols,
-                headers,
-                isMalware,
-                isTemporaryFailure);
+            return ParseScanResult(
+                document.RootElement, request.AuthenticatedUser is not null);
         }
+    }
+
+    private MailScanResult ParseScanResult(JsonElement root, bool isAuthenticated)
+    {
+        var action = GetRequiredString(root, "action").ToMailLowerInvariant();
+        if (!SupportedActions.Contains(action))
+            throw new InvalidDataException("Rspamd returned an unsupported action.");
+
+        var score = GetRequiredNumber(root, "score");
+        var requiredScore = GetRequiredNumber(root, "required_score");
+        var symbols = ReadSymbols(root);
+        var scannerFailed = symbols.Contains("CLAM_VIRUS_FAIL");
+        var isTemporaryFailure = scannerFailed
+            || action is "soft reject" or "greylist";
+        var isMalware = symbols.Any(symbol =>
+            symbol.StartsWith("CLAM_VIRUS", StringComparison.Ordinal)
+            && !string.Equals(symbol, "CLAM_VIRUS_FAIL", StringComparison.Ordinal));
+
+        var headers = isTemporaryFailure
+            ? string.Empty
+            : BuildAddedHeaders(root, isAuthenticated, action, score, requiredScore, symbols);
+
+        return new MailScanResult(
+            action,
+            score,
+            requiredScore,
+            symbols,
+            headers,
+            isMalware,
+            isTemporaryFailure);
     }
 
     public void Dispose()

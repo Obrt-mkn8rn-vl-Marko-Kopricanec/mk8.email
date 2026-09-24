@@ -75,9 +75,16 @@ public sealed class AzureBlobLargeObjectStoreTests
             + "AccountKey=ZmFrZS1mYWtlLWZha2UtZmFrZS1mYWtlLWZha2U=;"
             + "BlobEndpoint=https://blob.example.invalid/;");
 
-        Assert.ThrowsExactly<ArgumentException>(() =>
+        var invalidContainer = Assert.ThrowsExactly<ArgumentException>(() =>
             new AzureBlobLargeObjectStore(
                 serviceClient,
                 new AzureBlobLargeObjectStoreOptions { ContainerName = "X" }));
+        Assert.AreEqual("options", invalidContainer.ParamName);
+
+        var invalidPrefix = Assert.ThrowsExactly<ArgumentException>(() =>
+            new AzureBlobLargeObjectStore(
+                serviceClient,
+                new AzureBlobLargeObjectStoreOptions { ObjectPrefix = "/objects" }));
+        Assert.AreEqual("options", invalidPrefix.ParamName);
     }
 }

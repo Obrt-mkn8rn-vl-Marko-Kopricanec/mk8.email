@@ -19,7 +19,7 @@ public sealed partial class AzureBlobLargeObjectStore : ILargeObjectStore
     {
         ArgumentNullException.ThrowIfNull(serviceClient);
         _options = options ?? new AzureBlobLargeObjectStoreOptions();
-        _options.Validate();
+        AzureBlobLargeObjectStoreOptions.Validate(_options);
         _container = serviceClient.GetBlobContainerClient(_options.ContainerName);
     }
 
@@ -55,7 +55,7 @@ public sealed partial class AzureBlobLargeObjectStore : ILargeObjectStore
         }
 
         if (_options.CreateContainerIfMissing)
-            await _container.CreateIfNotExistsAsync(cancellationToken: cancellationToken);
+            await _container.CreateIfNotExistsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
 
         var blob = _container.GetBlobClient(BuildBlobName(objectName));
         try
@@ -72,7 +72,7 @@ public sealed partial class AzureBlobLargeObjectStore : ILargeObjectStore
                         ["mk8length"] = length.ToString(CultureInfo.InvariantCulture),
                     },
                 },
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             return new LargeObjectWriteResult(
                 new LargeObjectReference(
                     Provider,
@@ -84,7 +84,8 @@ public sealed partial class AzureBlobLargeObjectStore : ILargeObjectStore
         }
         catch (RequestFailedException exception) when (exception.Status is 409 or 412)
         {
-            var properties = (await blob.GetPropertiesAsync(cancellationToken: cancellationToken)).Value;
+            var properties = (await blob.GetPropertiesAsync(cancellationToken: cancellationToken)
+                .ConfigureAwait(false)).Value;
             VerifyProperties(properties, length, sha256);
             return new LargeObjectWriteResult(
                 new LargeObjectReference(
@@ -110,7 +111,7 @@ public sealed partial class AzureBlobLargeObjectStore : ILargeObjectStore
         var blob = _container.GetBlobClient(BuildBlobName(reference.ObjectName));
         var properties = (await blob.GetPropertiesAsync(
             conditions: new BlobRequestConditions { IfMatch = new ETag(reference.EntityTag) },
-            cancellationToken: cancellationToken)).Value;
+            cancellationToken: cancellationToken).ConfigureAwait(false)).Value;
         VerifyProperties(properties, reference.Length, reference.Sha256);
         await blob.DownloadToAsync(
             destination,
@@ -118,7 +119,7 @@ public sealed partial class AzureBlobLargeObjectStore : ILargeObjectStore
             {
                 Conditions = new BlobRequestConditions { IfMatch = new ETag(reference.EntityTag) },
             },
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<bool> DeleteIfMatchAsync(
@@ -132,7 +133,7 @@ public sealed partial class AzureBlobLargeObjectStore : ILargeObjectStore
             var response = await blob.DeleteIfExistsAsync(
                 DeleteSnapshotsOption.IncludeSnapshots,
                 new BlobRequestConditions { IfMatch = new ETag(reference.EntityTag) },
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             return response.Value;
         }
         catch (RequestFailedException exception) when (exception.Status is 404 or 412)
@@ -155,7 +156,7 @@ public sealed partial class AzureBlobLargeObjectStore : ILargeObjectStore
         ValidateLengthAndHash(reference.Length, reference.Sha256);
         if (string.IsNullOrWhiteSpace(reference.EntityTag)
             || reference.EntityTag.Length > 256
-            || reference.EntityTag.Contains('\0'))
+            || reference.EntityTag.Contains('\0', StringComparison.Ordinal))
         {
             throw new ArgumentException("The large-object entity tag is invalid.", nameof(reference));
         }
@@ -165,10 +166,10 @@ public sealed partial class AzureBlobLargeObjectStore : ILargeObjectStore
     {
         if (string.IsNullOrWhiteSpace(objectName)
             || objectName.Length > 1024
-            || objectName.StartsWith("/", StringComparison.Ordinal)
-            || objectName.EndsWith("/", StringComparison.Ordinal)
+            || objectName.StartsWith('/')
+            || objectName.EndsWith('/')
             || objectName.Contains("//", StringComparison.Ordinal)
-            || objectName.Contains('\0'))
+            || objectName.Contains('\0', StringComparison.Ordinal))
         {
             throw new ArgumentException("The large-object name is invalid.", nameof(objectName));
         }
@@ -176,8 +177,7 @@ public sealed partial class AzureBlobLargeObjectStore : ILargeObjectStore
 
     private static void ValidateLengthAndHash(long length, string sha256)
     {
-        if (length < 0)
-            throw new ArgumentOutOfRangeException(nameof(length));
+        ArgumentOutOfRangeException.ThrowIfNegative(length);
         if (sha256 is null || !Sha256Pattern().IsMatch(sha256))
             throw new ArgumentException("The large-object SHA-256 digest is invalid.", nameof(sha256));
     }
@@ -195,6 +195,6 @@ public sealed partial class AzureBlobLargeObjectStore : ILargeObjectStore
         }
     }
 
-    [GeneratedRegex("^[0-9a-f]{64}$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex("^[0-9a-f]{64}$", RegexOptions.CultureInvariant, 100)]
     private static partial Regex Sha256Pattern();
 }

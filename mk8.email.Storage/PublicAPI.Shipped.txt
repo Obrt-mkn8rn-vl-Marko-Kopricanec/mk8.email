@@ -1,0 +1,16 @@
+#nullable enable
+mk8.email.Storage.AzureBlobLargeObjectStore
+mk8.email.Storage.AzureBlobLargeObjectStore.AzureBlobLargeObjectStore(Azure.Storage.Blobs.BlobServiceClient! serviceClient, mk8.email.Storage.AzureBlobLargeObjectStoreOptions? options = null) -> void
+mk8.email.Storage.AzureBlobLargeObjectStore.CopyToAsync(mk8.email.Contracts.Storage.LargeObjectReference! reference, System.IO.Stream! destination, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+mk8.email.Storage.AzureBlobLargeObjectStore.DeleteIfMatchAsync(mk8.email.Contracts.Storage.LargeObjectReference! reference, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
+mk8.email.Storage.AzureBlobLargeObjectStore.Provider.get -> string!
+mk8.email.Storage.AzureBlobLargeObjectStore.PutIfAbsentAsync(string! objectName, System.IO.Stream! content, long length, string! sha256, string! contentType, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Storage.LargeObjectWriteResult!>!
+mk8.email.Storage.AzureBlobLargeObjectStoreOptions
+mk8.email.Storage.AzureBlobLargeObjectStoreOptions.AzureBlobLargeObjectStoreOptions() -> void
+mk8.email.Storage.AzureBlobLargeObjectStoreOptions.ContainerName.get -> string!
+mk8.email.Storage.AzureBlobLargeObjectStoreOptions.ContainerName.init -> void
+mk8.email.Storage.AzureBlobLargeObjectStoreOptions.CreateContainerIfMissing.get -> bool
+mk8.email.Storage.AzureBlobLargeObjectStoreOptions.CreateContainerIfMissing.init -> void
+mk8.email.Storage.AzureBlobLargeObjectStoreOptions.ObjectPrefix.get -> string!
+mk8.email.Storage.AzureBlobLargeObjectStoreOptions.ObjectPrefix.init -> void
+static mk8.email.Storage.AzureBlobLargeObjectStore.FromConnectionString(string! connectionString, mk8.email.Storage.AzureBlobLargeObjectStoreOptions? options = null) -> mk8.email.Storage.AzureBlobLargeObjectStore!

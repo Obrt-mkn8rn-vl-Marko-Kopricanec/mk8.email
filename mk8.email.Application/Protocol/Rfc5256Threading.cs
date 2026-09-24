@@ -50,11 +50,40 @@ internal static class Rfc5256Threading
             .OrderBy(message => message.SequenceNumber)
             .ToArray();
         var containerTable = new Dictionary<string, ThreadNode>(StringComparer.Ordinal);
-        var messageNodes = new List<(Rfc5256ThreadMessage Message, ThreadNode Node)>(
-            orderedMessages.Length);
         var allNodes = new List<ThreadNode>(orderedMessages.Length);
         var nextOrder = 0;
+        var messageNodes = CreateMessageNodes(
+            orderedMessages, containerTable, allNodes, ref nextOrder);
+        LinkReferences(messageNodes, containerTable, allNodes, ref nextOrder);
 
+        var root = new ThreadNode(nextOrder++, null);
+        foreach (ref readonly var node in CollectionsMarshal.AsSpan(allNodes))
+        {
+            if (node.Parent is null)
+                Link(root, node);
+        }
+
+        PruneDummyNodes(root);
+        foreach (ref readonly var node in CollectionsMarshal.AsSpan(root.Children))
+        {
+            if (node.IsDummy)
+                node.Children.Sort(CompareBySentDate);
+        }
+        root.Children.Sort(CompareBySentDate);
+
+        MergeRootsBySubject(root, ref nextOrder);
+        SortAllSiblingSets(root);
+        return root.Children;
+    }
+
+    private static List<(Rfc5256ThreadMessage Message, ThreadNode Node)> CreateMessageNodes(
+        Rfc5256ThreadMessage[] orderedMessages,
+        Dictionary<string, ThreadNode> containerTable,
+        List<ThreadNode> allNodes,
+        ref int nextOrder)
+    {
+        var messageNodes = new List<(Rfc5256ThreadMessage Message, ThreadNode Node)>(
+            orderedMessages.Length);
         foreach (var message in orderedMessages)
         {
             ThreadNode node;
@@ -74,7 +103,15 @@ internal static class Rfc5256Threading
             messageNodes.Add((message, node));
             allNodes.Add(node);
         }
+        return messageNodes;
+    }
 
+    private static void LinkReferences(
+        List<(Rfc5256ThreadMessage Message, ThreadNode Node)> messageNodes,
+        Dictionary<string, ThreadNode> containerTable,
+        List<ThreadNode> allNodes,
+        ref int nextOrder)
+    {
         foreach (var (message, current) in messageNodes)
         {
             ThreadNode? previousReference = null;
@@ -105,25 +142,6 @@ internal static class Rfc5256Threading
                 Link(previousReference, current);
             }
         }
-
-        var root = new ThreadNode(nextOrder++, null);
-        foreach (ref readonly var node in CollectionsMarshal.AsSpan(allNodes))
-        {
-            if (node.Parent is null)
-                Link(root, node);
-        }
-
-        PruneDummyNodes(root);
-        foreach (ref readonly var node in CollectionsMarshal.AsSpan(root.Children))
-        {
-            if (node.IsDummy)
-                node.Children.Sort(CompareBySentDate);
-        }
-        root.Children.Sort(CompareBySentDate);
-
-        MergeRootsBySubject(root, ref nextOrder);
-        SortAllSiblingSets(root);
-        return root.Children;
     }
 
     private static List<ImapThreadNode> Flatten(IReadOnlyList<ThreadNode> roots)
@@ -149,6 +167,22 @@ internal static class Rfc5256Threading
         if (string.IsNullOrEmpty(value))
             return null;
 
+        var separator = FindMessageIdSeparator(value);
+        if (separator <= 0 || separator == value.Length - 1)
+            return null;
+
+        var localPart = UnquoteLocalPart(value.AsSpan(0, separator));
+        var domain = value[(separator + 1)..];
+        if (localPart.Length == 0 || domain.Length == 0)
+            return null;
+
+        // NUL cannot occur in a valid msg-id, so it safely preserves the
+        // local/domain boundary even when a quoted local part contains '@'.
+        return string.Concat(localPart, "\0", domain);
+    }
+
+    private static int FindMessageIdSeparator(string value)
+    {
         var separator = -1;
         var quoted = false;
         var escaped = false;
@@ -191,25 +225,11 @@ internal static class Rfc5256Threading
             if (character != '@' || domainLiteral)
                 continue;
             if (separator >= 0)
-                return null;
+                return -1;
             separator = index;
         }
 
-        if (quoted || escaped || domainLiteral
-            || separator <= 0
-            || separator == value.Length - 1)
-        {
-            return null;
-        }
-
-        var localPart = UnquoteLocalPart(value.AsSpan(0, separator));
-        var domain = value[(separator + 1)..];
-        if (localPart.Length == 0 || domain.Length == 0)
-            return null;
-
-        // NUL cannot occur in a valid msg-id, so it safely preserves the
-        // local/domain boundary even when a quoted local part contains '@'.
-        return string.Concat(localPart, "\0", domain);
+        return quoted || escaped || domainLiteral ? -1 : separator;
     }
 
     private static string UnquoteLocalPart(ReadOnlySpan<char> value)
@@ -281,16 +301,7 @@ internal static class Rfc5256Threading
 
     private static void PruneDummyNodes(ThreadNode root)
     {
-        var traversal = new Stack<ThreadNode>();
-        var postOrder = new List<ThreadNode>();
-        traversal.Push(root);
-        while (traversal.Count > 0)
-        {
-            var node = traversal.Pop();
-            postOrder.Add(node);
-            foreach (ref readonly var child in CollectionsMarshal.AsSpan(node.Children))
-                traversal.Push(child);
-        }
+        var postOrder = CollectPostOrder(root);
 
         for (var nodeIndex = postOrder.Count - 1; nodeIndex >= 0; nodeIndex--)
         {
@@ -331,31 +342,25 @@ internal static class Rfc5256Threading
         }
     }
 
+    private static List<ThreadNode> CollectPostOrder(ThreadNode root)
+    {
+        var traversal = new Stack<ThreadNode>();
+        var postOrder = new List<ThreadNode>();
+        traversal.Push(root);
+        while (traversal.Count > 0)
+        {
+            var node = traversal.Pop();
+            postOrder.Add(node);
+            foreach (ref readonly var child in CollectionsMarshal.AsSpan(node.Children))
+                traversal.Push(child);
+        }
+        return postOrder;
+    }
+
     private static void MergeRootsBySubject(ThreadNode root, ref int nextOrder)
     {
-        var subjectTable = new Dictionary<string, ThreadNode>(StringComparer.Ordinal);
         var initialRoots = root.Children.ToArray();
-        foreach (var current in initialRoots)
-        {
-            var subject = ThreadSubject(current);
-            if (subject.Length == 0)
-                continue;
-
-            if (!subjectTable.TryGetValue(subject, out var associated))
-            {
-                subjectTable.Add(subject, current);
-                continue;
-            }
-
-            if (!associated.IsDummy
-                && (current.IsDummy
-                    || (associated.Message!.IsReplyOrForward
-                        && !current.Message!.IsReplyOrForward)))
-            {
-                subjectTable[subject] = current;
-            }
-        }
-
+        var subjectTable = BuildSubjectTable(initialRoots);
         foreach (var current in initialRoots)
         {
             if (!ReferenceEquals(current.Parent, root))
@@ -395,6 +400,32 @@ internal static class Rfc5256Threading
         }
     }
 
+    private static Dictionary<string, ThreadNode> BuildSubjectTable(ThreadNode[] initialRoots)
+    {
+        var subjectTable = new Dictionary<string, ThreadNode>(StringComparer.Ordinal);
+        foreach (var current in initialRoots)
+        {
+            var subject = ThreadSubject(current);
+            if (subject.Length == 0)
+                continue;
+
+            if (!subjectTable.TryGetValue(subject, out var associated))
+            {
+                subjectTable.Add(subject, current);
+                continue;
+            }
+
+            if (!associated.IsDummy
+                && (current.IsDummy
+                    || (associated.Message!.IsReplyOrForward
+                        && !current.Message!.IsReplyOrForward)))
+            {
+                subjectTable[subject] = current;
+            }
+        }
+        return subjectTable;
+    }
+
     private static string ThreadSubject(ThreadNode node) =>
         Representative(node).BaseSubjectKey;
 
@@ -423,17 +454,7 @@ internal static class Rfc5256Threading
 
     private static void SortAllSiblingSets(ThreadNode root)
     {
-        var traversal = new Stack<ThreadNode>();
-        var postOrder = new List<ThreadNode>();
-        traversal.Push(root);
-        while (traversal.Count > 0)
-        {
-            var node = traversal.Pop();
-            postOrder.Add(node);
-            foreach (ref readonly var child in CollectionsMarshal.AsSpan(node.Children))
-                traversal.Push(child);
-        }
-
+        var postOrder = CollectPostOrder(root);
         for (var index = postOrder.Count - 1; index >= 0; index--)
             postOrder[index].Children.Sort(CompareBySentDate);
     }

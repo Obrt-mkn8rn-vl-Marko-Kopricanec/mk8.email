@@ -14,12 +14,17 @@ public sealed class Rfc5256ThreadingTests
             "<01KF8JCEOCBS0045PS@xxx.yyy.com>");
         var escaped = Rfc5256Threading.ParseMessageIds("""<"a\.b"@example.net>""");
         var dotted = Rfc5256Threading.ParseMessageIds("<a.b@example.net>");
+        var quotedAtSign = Rfc5256Threading.ParseMessageIds(
+            """<"a@b"@example.net>""");
         var differentCase = Rfc5256Threading.ParseMessageIds(
             "<01kf8jceocbs0045ps@xxx.yyy.com>");
 
         Assert.HasCount(1, quoted);
         Assert.AreEqual(quoted[0], unquoted[0]);
         Assert.AreEqual(escaped[0], dotted[0]);
+        Assert.HasCount(1, quotedAtSign);
+        Assert.IsEmpty(Rfc5256Threading.ParseMessageIds("<a@b@example.net>"));
+        Assert.AreNotEqual(quotedAtSign[0], unquoted[0]);
         Assert.AreNotEqual(quoted[0], differentCase[0]);
         Assert.AreEqual(
             unquoted[0],

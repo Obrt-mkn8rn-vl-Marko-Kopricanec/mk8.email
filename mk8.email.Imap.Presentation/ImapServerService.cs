@@ -7,6 +7,7 @@ using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Runtime.InteropServices;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -93,6 +94,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
 
     private enum BinaryFetchKind { Content, Size }
 
+    [StructLayout(LayoutKind.Auto)]
     private readonly record struct MessageSetRange(int Start, int End);
     private readonly record struct BinaryFetchRequest(
         BinaryFetchKind Kind,
@@ -126,15 +128,9 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         string[] StatusItems);
 
     private readonly ConnectionLimiter _connectionLimiter = new(MaximumConcurrentConnections);
-    private readonly SemaphoreSlim _messageWriteCommandLimiter = new(
-        MaximumConcurrentMessageWriteCommands,
-        MaximumConcurrentMessageWriteCommands);
-    private readonly SemaphoreSlim _fetchCommandLimiter = new(
-        MaximumConcurrentFetchCommands,
-        MaximumConcurrentFetchCommands);
-    private readonly SemaphoreSlim _searchCommandLimiter = new(
-        MaximumConcurrentSearchCommands,
-        MaximumConcurrentSearchCommands);
+    private readonly NonBlockingCommandLimiter _messageWriteCommandLimiter = new(MaximumConcurrentMessageWriteCommands);
+    private readonly NonBlockingCommandLimiter _fetchCommandLimiter = new(MaximumConcurrentFetchCommands);
+    private readonly NonBlockingCommandLimiter _searchCommandLimiter = new(MaximumConcurrentSearchCommands);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -150,37 +146,44 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
 
         if (tasks.Count == 0)
         {
-            logger.LogWarning("No IMAP listeners are enabled.");
+            LogNoListeners(logger);
             return;
         }
 
-        await Task.WhenAll(tasks);
+        await Task.WhenAll(tasks).ConfigureAwait(false);
     }
 
     private async Task ListenAsync(int port, ListenerMode mode, ImapListenerConfig config, CancellationToken ct)
     {
-        var listener = new TcpListener(IPAddress.Any, port);
+        using var listener = new TcpListener(IPAddress.Any, port);
         listener.Start();
-        logger.LogInformation("IMAP {Mode} listener started on port {Port}", mode, port);
+        LogListenerStarted(logger, mode, port);
 
         try
         {
             while (!ct.IsCancellationRequested)
             {
-                var client = await listener.AcceptTcpClientAsync(ct);
+                var client = await listener.AcceptTcpClientAsync(ct).ConfigureAwait(false);
+                // The detached handler owns its accepted client and observes shutdown cancellation.
+#pragma warning disable CA2025
                 _ = HandleConnectionAsync(client, mode, config, ct);
+#pragma warning restore CA2025
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         finally
         {
             listener.Stop();
-            logger.LogInformation("IMAP {Mode} listener on port {Port} stopped.", mode, port);
+            LogListenerStopped(logger, mode, port);
         }
     }
 
+    // Keep the ordered IMAP protocol handler/parser steps together.
+#pragma warning disable MA0051
     private async Task HandleConnectionAsync(TcpClient client, ListenerMode mode, ImapListenerConfig config, CancellationToken ct)
+#pragma warning restore MA0051
     {
+        using var clientLifetime = client;
         var remoteEndpoint = client.Client.RemoteEndPoint;
         var remoteIp = (remoteEndpoint as IPEndPoint)?.Address ?? IPAddress.None;
         var remoteLabel = remoteEndpoint?.ToString() ?? "unknown";
@@ -190,51 +193,44 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             config.MaxConnectionsPerIp);
         if (connectionLease is null)
         {
-            logger.LogWarning("Rejected IMAP connection from {Endpoint}: connection limit", remoteLabel);
-            client.Dispose();
+            LogConnectionRejected(logger, remoteLabel);
             return;
         }
 
         try
         {
-            using (client)
-            {
-                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                timeout.CancelAfter(TimeSpan.FromSeconds(config.ConnectionTimeoutSeconds));
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(config.ConnectionTimeoutSeconds));
 
-                Stream stream = client.GetStream();
+            Stream stream = client.GetStream();
+            try
+            {
                 if (journal is not null)
                 {
                     var traffic = new GatewayTrafficSession(
                         journal,
                         "imap",
-                        new Dictionary<string, string>
+                        new Dictionary<string, string>(StringComparer.Ordinal)
                         {
                             ["remoteEndpoint"] = remoteLabel,
                             ["listenerPort"] = ((client.Client.LocalEndPoint as IPEndPoint)?.Port ?? 0)
                                 .ToString(CultureInfo.InvariantCulture),
                         });
+                    // The stream finally below owns the whole wrapper chain.
+#pragma warning disable CA2000
                     stream = new GatewayTrafficStream(stream, traffic, leaveInnerOpen: false);
+#pragma warning restore CA2000
                 }
-                SslStream? sslStream = null;
-
                 if (mode == ListenerMode.ImplicitTls)
                 {
                     if (config.TlsCertificatePath is null)
                         throw new InvalidOperationException("Implicit TLS requires a certificate.");
 
-                    using var cert = LoadCertificate(config);
-                    sslStream = new SslStream(stream, leaveInnerStreamOpen: false);
-                    if (!await TryAuthenticateAsServerAsync(
-                            sslStream,
-                            cert,
-                            timeout.Token,
-                            remoteLabel))
-                    {
-                        sslStream.Dispose();
+                    var upgraded = await TryUpgradeToTlsAsync(
+                        stream, config, remoteLabel, timeout.Token).ConfigureAwait(false);
+                    if (upgraded is null)
                         return;
-                    }
-                    stream = sslStream;
+                    stream = upgraded;
                 }
 
                 var session = new ImapSession
@@ -248,460 +244,470 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                 SessionUpgrade upgrade;
                 do
                 {
-                    upgrade = await RunImapSessionAsync(stream, config, session, timeout, sendGreeting);
+                    upgrade = await RunImapSessionAsync(
+                        stream, config, session, timeout, sendGreeting).ConfigureAwait(false);
                     sendGreeting = false;
 
                     if (upgrade == SessionUpgrade.StartTls && config.TlsCertificatePath is not null)
                     {
-                        using var cert = LoadCertificate(config);
-                        var tlsStream = new SslStream(stream, leaveInnerStreamOpen: false);
-                        if (!await TryAuthenticateAsServerAsync(
-                                tlsStream,
-                                cert,
-                                timeout.Token,
-                                remoteLabel))
-                        {
-                            tlsStream.Dispose();
+                        var upgraded = await TryUpgradeToTlsAsync(
+                            stream, config, remoteLabel, timeout.Token).ConfigureAwait(false);
+                        if (upgraded is null)
                             return;
-                        }
-                        stream = tlsStream;
+                        stream = upgraded;
                         session.IsSecure = true;
                     }
                     else if (upgrade == SessionUpgrade.Compress)
                     {
-                        var deflateStream = new DeflateStream(stream, CompressionMode.Compress, leaveOpen: true);
-                        var inflateStream = new DeflateStream(stream, CompressionMode.Decompress, leaveOpen: true);
-                        stream = new CompressedDuplexStream(inflateStream, deflateStream);
+                        // The final active stream owns compression and the underlying transport.
+#pragma warning disable CA2000
+                        stream = CreateCompressedStream(stream);
+#pragma warning restore CA2000
                     }
                 } while (upgrade != SessionUpgrade.None && session.State != ImapState.Logout);
+            }
+            finally
+            {
+                await stream.DisposeAsync().ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException)
         {
-            logger.LogDebug("IMAP connection from {Endpoint} timed out", remoteLabel);
+            LogConnectionTimedOut(logger, remoteLabel);
         }
+        // The connection boundary must log and close any failed client task.
+#pragma warning disable CA1031
         catch (Exception ex)
+#pragma warning restore CA1031
         {
-            logger.LogWarning(ex, "Error handling IMAP connection from {Endpoint}", remoteLabel);
+            LogConnectionError(logger, ex, remoteLabel);
         }
     }
 
+    // Keep the ordered IMAP protocol handler/parser steps together.
+#pragma warning disable MA0051
     private async Task<SessionUpgrade> RunImapSessionAsync(
+#pragma warning restore MA0051
         Stream stream, ImapListenerConfig config, ImapSession session, CancellationTokenSource timeout, bool sendGreeting = true)
     {
         var ct = timeout.Token;
 
         using var streamReader = new StreamReader(stream, ProtocolEncoding, detectEncodingFromByteOrderMarks: false, bufferSize: 4096, leaveOpen: true);
         var reader = new BoundedLineReader(streamReader);
-        await using var writer = new StreamWriter(stream, ProtocolEncoding, bufferSize: 4096, leaveOpen: true)
+        var writer = new StreamWriter(stream, ProtocolEncoding, bufferSize: 4096, leaveOpen: true)
         {
             AutoFlush = true,
             NewLine = "\r\n"
         };
-
-        if (sendGreeting)
-            await writer.WriteLineAsync($"* OK {config.SmtpHostname} IMAP4rev1 mk8.email ready");
-
-        while (!timeout.IsCancellationRequested && session.State != ImapState.Logout)
+        await using (writer.ConfigureAwait(false))
         {
-            timeout.CancelAfter(TimeSpan.FromSeconds(config.ConnectionTimeoutSeconds));
-            var lineResult = await reader.ReadLineAsync(MaximumCommandLineCharacters, ct);
-            if (lineResult.IsTooLong)
+            if (sendGreeting)
+                await writer.WriteLineAsync($"* OK {config.SmtpHostname} IMAP4rev1 mk8.email ready").ConfigureAwait(false);
+
+            while (!timeout.IsCancellationRequested && session.State != ImapState.Logout)
             {
-                await writer.WriteLineAsync("* BYE Command line is too long");
-                session.State = ImapState.Logout;
-                break;
-            }
-
-            var initialLine = lineResult.Value;
-            if (initialLine is null)
-                break;
-
-            var line = await ReadCommandLiteralsAsync(
-                initialLine,
-                reader,
-                writer,
-                session,
-                timeout,
-                config.ConnectionTimeoutSeconds);
-            if (line is null)
-                continue;
-
-            var spaceIdx = line.IndexOf(' ');
-            if (spaceIdx <= 0)
-            {
-                await writer.WriteLineAsync("* BAD Invalid command");
-                continue;
-            }
-
-            var tag = line[..spaceIdx];
-            var rest = line[(spaceIdx + 1)..];
-
-            var cmdSpaceIdx = rest.IndexOf(' ');
-            var command = (cmdSpaceIdx > 0 ? rest[..cmdSpaceIdx] : rest).ToUpperInvariant();
-            var args = cmdSpaceIdx > 0 ? rest[(cmdSpaceIdx + 1)..] : string.Empty;
-
-            switch (command)
-            {
-                case "CAPABILITY":
-                    await HandleCapabilityAsync(writer, tag, config, session);
-                    break;
-
-                case "NOOP":
-                    await writer.WriteLineAsync($"{tag} OK NOOP completed");
-                    break;
-
-                case "LOGOUT":
-                    await writer.WriteLineAsync("* BYE IMAP4rev1 server logging out");
-                    await writer.WriteLineAsync($"{tag} OK LOGOUT completed");
+                timeout.CancelAfter(TimeSpan.FromSeconds(config.ConnectionTimeoutSeconds));
+                var lineResult = await reader.ReadLineAsync(MaximumCommandLineCharacters, ct).ConfigureAwait(false);
+                if (lineResult.IsTooLong)
+                {
+                    await writer.WriteLineAsync("* BYE Command line is too long").ConfigureAwait(false);
                     session.State = ImapState.Logout;
                     break;
+                }
 
-                case "STARTTLS":
-                    if (session.IsSecure)
-                    {
-                        await writer.WriteLineAsync($"{tag} BAD TLS is already active");
-                        break;
-                    }
-                    if (session.State != ImapState.NotAuthenticated)
-                    {
-                        await writer.WriteLineAsync($"{tag} BAD STARTTLS is only available before authentication");
-                        break;
-                    }
-                    if (config.EnableStartTls && config.TlsCertificatePath is not null)
-                    {
-                        await writer.WriteLineAsync($"{tag} OK Begin TLS negotiation");
-                        await writer.FlushAsync(ct);
-                        return SessionUpgrade.StartTls;
-                    }
-                    await writer.WriteLineAsync($"{tag} BAD STARTTLS not enabled");
+                var initialLine = lineResult.Value;
+                if (initialLine is null)
                     break;
 
-                case "LOGIN":
-                    await HandleLoginAsync(writer, tag, args, session, ct);
-                    await StopAfterTooManyAuthenticationFailuresAsync(writer, session);
-                    break;
+                var line = await ReadCommandLiteralsAsync(
+                    initialLine,
+                    reader,
+                    writer,
+                    session,
+                    timeout,
+                    config.ConnectionTimeoutSeconds).ConfigureAwait(false);
+                if (line is null)
+                    continue;
 
-                case "AUTHENTICATE":
-                    await HandleAuthenticateAsync(reader, writer, tag, args, session, ct);
-                    await StopAfterTooManyAuthenticationFailuresAsync(writer, session);
-                    break;
+                var spaceIdx = line.IndexOf(' ', StringComparison.Ordinal);
+                if (spaceIdx <= 0)
+                {
+                    await writer.WriteLineAsync("* BAD Invalid command").ConfigureAwait(false);
+                    continue;
+                }
 
-                case "NAMESPACE":
-                    await writer.WriteLineAsync("* NAMESPACE ((\"\" \"/\")) NIL NIL");
-                    await writer.WriteLineAsync($"{tag} OK NAMESPACE completed");
-                    break;
+                var tag = line[..spaceIdx];
+                var rest = line[(spaceIdx + 1)..];
 
-                case "ID":
-                    await writer.WriteLineAsync("* ID (\"name\" \"mk8.email\" \"version\" \"1.0\")");
-                    await writer.WriteLineAsync($"{tag} OK ID completed");
-                    break;
+                var cmdSpaceIdx = rest.IndexOf(' ', StringComparison.Ordinal);
+                var command = (cmdSpaceIdx > 0 ? rest[..cmdSpaceIdx] : rest).ToUpperInvariant();
+                var args = cmdSpaceIdx > 0 ? rest[(cmdSpaceIdx + 1)..] : string.Empty;
 
-                case "ENABLE":
-                    if (session.State != ImapState.Authenticated)
-                    {
-                        await writer.WriteLineAsync($"{tag} BAD ENABLE is only valid in the authenticated state");
+                switch (command)
+                {
+                    case "CAPABILITY":
+                        await HandleCapabilityAsync(writer, tag, config, session).ConfigureAwait(false);
                         break;
-                    }
-                    await HandleEnableAsync(writer, tag, args, session);
-                    break;
 
-                case "SUBSCRIBE":
-                    if (session.State == ImapState.NotAuthenticated)
-                    {
-                        await writer.WriteLineAsync($"{tag} NO Not authenticated");
+                    case "NOOP":
+                        await writer.WriteLineAsync($"{tag} OK NOOP completed").ConfigureAwait(false);
                         break;
-                    }
-                    await HandleSubscribeAsync(writer, tag, args, session, subscribe: true, ct);
-                    break;
 
-                case "UNSUBSCRIBE":
-                    if (session.State == ImapState.NotAuthenticated)
-                    {
-                        await writer.WriteLineAsync($"{tag} NO Not authenticated");
+                    case "LOGOUT":
+                        await writer.WriteLineAsync("* BYE IMAP4rev1 server logging out").ConfigureAwait(false);
+                        await writer.WriteLineAsync($"{tag} OK LOGOUT completed").ConfigureAwait(false);
+                        session.State = ImapState.Logout;
                         break;
-                    }
-                    await HandleSubscribeAsync(writer, tag, args, session, subscribe: false, ct);
-                    break;
 
-                case "GETQUOTAROOT":
-                    if (session.State == ImapState.NotAuthenticated)
-                    {
-                        await writer.WriteLineAsync($"{tag} NO Not authenticated");
-                        break;
-                    }
-                    await HandleGetQuotaRootAsync(writer, tag, args, session, ct);
-                    break;
-
-                case "GETQUOTA":
-                    if (session.State == ImapState.NotAuthenticated)
-                    {
-                        await writer.WriteLineAsync($"{tag} NO Not authenticated");
-                        break;
-                    }
-                    await HandleGetQuotaAsync(writer, tag, args, session, ct);
-                    break;
-
-                case "LIST":
-                    if (session.State == ImapState.NotAuthenticated)
-                    {
-                        await writer.WriteLineAsync($"{tag} NO Not authenticated");
-                        break;
-                    }
-                    await HandleListAsync(writer, tag, args, session, ct);
-                    break;
-
-                case "LSUB":
-                    if (session.State == ImapState.NotAuthenticated)
-                    {
-                        await writer.WriteLineAsync($"{tag} NO Not authenticated");
-                        break;
-                    }
-                    await HandleLsubAsync(writer, tag, args, session, ct);
-                    break;
-
-                case "SELECT":
-                    if (session.State == ImapState.NotAuthenticated)
-                    {
-                        await writer.WriteLineAsync($"{tag} NO Not authenticated");
-                        break;
-                    }
-                    await HandleSelectAsync(writer, tag, args, session, readOnly: false, ct);
-                    break;
-
-                case "EXAMINE":
-                    if (session.State == ImapState.NotAuthenticated)
-                    {
-                        await writer.WriteLineAsync($"{tag} NO Not authenticated");
-                        break;
-                    }
-                    await HandleSelectAsync(writer, tag, args, session, readOnly: true, ct);
-                    break;
-
-                case "CREATE":
-                    if (session.State == ImapState.NotAuthenticated)
-                    {
-                        await writer.WriteLineAsync($"{tag} NO Not authenticated");
-                        break;
-                    }
-                    await HandleCreateAsync(writer, tag, args, session, ct);
-                    break;
-
-                case "DELETE":
-                    if (session.State == ImapState.NotAuthenticated)
-                    {
-                        await writer.WriteLineAsync($"{tag} NO Not authenticated");
-                        break;
-                    }
-                    await HandleDeleteAsync(writer, tag, args, session, ct);
-                    break;
-
-                case "RENAME":
-                    if (session.State == ImapState.NotAuthenticated)
-                    {
-                        await writer.WriteLineAsync($"{tag} NO Not authenticated");
-                        break;
-                    }
-                    await HandleRenameAsync(writer, tag, args, session, ct);
-                    break;
-
-                case "STATUS":
-                    if (session.State == ImapState.NotAuthenticated)
-                    {
-                        await writer.WriteLineAsync($"{tag} NO Not authenticated");
-                        break;
-                    }
-                    await HandleStatusAsync(writer, tag, args, session, ct);
-                    break;
-
-                case "FETCH":
-                    if (session.State != ImapState.Selected)
-                    {
-                        await writer.WriteLineAsync($"{tag} NO No mailbox selected");
-                        break;
-                    }
-                    await HandleFetchAsync(writer, tag, args, session, ct);
-                    break;
-
-                case "STORE":
-                    if (session.State != ImapState.Selected)
-                    {
-                        await writer.WriteLineAsync($"{tag} NO No mailbox selected");
-                        break;
-                    }
-                    await HandleStoreAsync(writer, tag, args, session, ct);
-                    break;
-
-                case "SEARCH":
-                    if (session.State != ImapState.Selected)
-                    {
-                        await writer.WriteLineAsync($"{tag} NO No mailbox selected");
-                        break;
-                    }
-                    await HandleSearchAsync(writer, tag, args, session, ct);
-                    break;
-
-                case "EXPUNGE":
-                    if (session.State != ImapState.Selected)
-                    {
-                        await writer.WriteLineAsync($"{tag} NO No mailbox selected");
-                        break;
-                    }
-                    if (session.SelectedReadOnly)
-                    {
-                        await writer.WriteLineAsync($"{tag} NO Mailbox is read-only");
-                        break;
-                    }
-                    await HandleExpungeAsync(writer, tag, session, ct);
-                    break;
-
-                case "COPY":
-                    if (session.State != ImapState.Selected)
-                    {
-                        await writer.WriteLineAsync($"{tag} NO No mailbox selected");
-                        break;
-                    }
-                    await HandleCopyAsync(writer, tag, args, session, ct);
-                    break;
-
-                case "MOVE":
-                    if (session.State != ImapState.Selected)
-                    {
-                        await writer.WriteLineAsync($"{tag} NO No mailbox selected");
-                        break;
-                    }
-                    if (session.SelectedReadOnly)
-                    {
-                        await writer.WriteLineAsync($"{tag} NO Mailbox is read-only");
-                        break;
-                    }
-                    await HandleMoveAsync(writer, tag, args, session, ct);
-                    break;
-
-                case "APPEND":
-                    if (session.State == ImapState.NotAuthenticated)
-                    {
-                        await writer.WriteLineAsync($"{tag} NO Not authenticated");
-                        break;
-                    }
-                    await HandleAppendAsync(
-                        reader,
-                        writer,
-                        tag,
-                        args,
-                        session,
-                        config.MaxMessageSizeBytes,
-                        timeout,
-                        config.ConnectionTimeoutSeconds);
-                    break;
-
-                case "IDLE":
-                    if (session.State == ImapState.NotAuthenticated)
-                    {
-                        await writer.WriteLineAsync($"{tag} NO Not authenticated");
-                        break;
-                    }
-                    await HandleIdleAsync(reader, writer, tag, session, timeout, config.ConnectionTimeoutSeconds);
-                    break;
-
-                case "CHECK":
-                    if (session.State != ImapState.Selected)
-                    {
-                        await writer.WriteLineAsync($"{tag} NO No mailbox selected");
-                        break;
-                    }
-                    await writer.WriteLineAsync($"{tag} OK CHECK completed");
-                    break;
-
-                case "CLOSE":
-                    if (session.State != ImapState.Selected)
-                    {
-                        await writer.WriteLineAsync($"{tag} NO No mailbox selected");
-                        break;
-                    }
-                    if (!session.SelectedReadOnly)
-                    {
-                        var closeResult = await TryExpungeDeletedAsync(
-                            writer, tag, "CLOSE", session, ct);
-                        if (closeResult is null)
-                            break;
-                        if (!closeResult.FolderFound)
+                    case "STARTTLS":
+                        if (session.IsSecure)
                         {
-                            await writer.WriteLineAsync($"{tag} NO Mailbox not found");
+                            await writer.WriteLineAsync($"{tag} BAD TLS is already active").ConfigureAwait(false);
                             break;
                         }
-                    }
-                    session.SelectedFolderId = null;
-                    session.SelectedFolderName = null;
-                    session.State = ImapState.Authenticated;
-                    await writer.WriteLineAsync($"{tag} OK CLOSE completed");
-                    break;
+                        if (session.State != ImapState.NotAuthenticated)
+                        {
+                            await writer.WriteLineAsync($"{tag} BAD STARTTLS is only available before authentication").ConfigureAwait(false);
+                            break;
+                        }
+                        if (config.EnableStartTls && config.TlsCertificatePath is not null)
+                        {
+                            await writer.WriteLineAsync($"{tag} OK Begin TLS negotiation").ConfigureAwait(false);
+                            await writer.FlushAsync(ct).ConfigureAwait(false);
+                            return SessionUpgrade.StartTls;
+                        }
+                        await writer.WriteLineAsync($"{tag} BAD STARTTLS not enabled").ConfigureAwait(false);
+                        break;
 
-                case "UNSELECT":
-                    if (session.State != ImapState.Selected)
-                    {
-                        await writer.WriteLineAsync($"{tag} NO No mailbox selected");
+                    case "LOGIN":
+                        await HandleLoginAsync(writer, tag, args, session, ct).ConfigureAwait(false);
+                        await StopAfterTooManyAuthenticationFailuresAsync(writer, session).ConfigureAwait(false);
                         break;
-                    }
-                    session.SelectedFolderId = null;
-                    session.SelectedFolderName = null;
-                    session.State = ImapState.Authenticated;
-                    await writer.WriteLineAsync($"{tag} OK UNSELECT completed");
-                    break;
 
-                case "UID":
-                    if (session.State != ImapState.Selected)
-                    {
-                        await writer.WriteLineAsync($"{tag} NO No mailbox selected");
+                    case "AUTHENTICATE":
+                        await HandleAuthenticateAsync(reader, writer, tag, args, session, ct).ConfigureAwait(false);
+                        await StopAfterTooManyAuthenticationFailuresAsync(writer, session).ConfigureAwait(false);
                         break;
-                    }
-                    await HandleUidAsync(writer, tag, args, session, ct);
-                    break;
 
-                case "SORT":
-                    if (session.State != ImapState.Selected)
-                    {
-                        await writer.WriteLineAsync($"{tag} NO No mailbox selected");
+                    case "NAMESPACE":
+                        await writer.WriteLineAsync("* NAMESPACE ((\"\" \"/\")) NIL NIL").ConfigureAwait(false);
+                        await writer.WriteLineAsync($"{tag} OK NAMESPACE completed").ConfigureAwait(false);
                         break;
-                    }
-                    await HandleSortAsync(writer, tag, args, session, useUid: false, ct);
-                    break;
 
-                case "THREAD":
-                    if (session.State != ImapState.Selected)
-                    {
-                        await writer.WriteLineAsync($"{tag} NO No mailbox selected");
+                    case "ID":
+                        await writer.WriteLineAsync("* ID (\"name\" \"mk8.email\" \"version\" \"1.0\")").ConfigureAwait(false);
+                        await writer.WriteLineAsync($"{tag} OK ID completed").ConfigureAwait(false);
                         break;
-                    }
-                    await HandleThreadAsync(writer, tag, args, session, useUid: false, ct);
-                    break;
 
-                case "COMPRESS":
-                    if (session.State == ImapState.NotAuthenticated)
-                    {
-                        await writer.WriteLineAsync($"{tag} NO Not authenticated");
+                    case "ENABLE":
+                        if (session.State != ImapState.Authenticated)
+                        {
+                            await writer.WriteLineAsync($"{tag} BAD ENABLE is only valid in the authenticated state").ConfigureAwait(false);
+                            break;
+                        }
+                        await HandleEnableAsync(writer, tag, args, session).ConfigureAwait(false);
                         break;
-                    }
-                    if (session.CompressEnabled)
-                    {
-                        await writer.WriteLineAsync($"{tag} BAD COMPRESS already active");
-                        break;
-                    }
-                    if (!await HandleCompressAsync(writer, tag, args))
-                        break;
-                    session.CompressEnabled = true;
-                    return SessionUpgrade.Compress;
 
-                default:
-                    await writer.WriteLineAsync($"{tag} BAD Command not recognized");
-                    break;
+                    case "SUBSCRIBE":
+                        if (session.State == ImapState.NotAuthenticated)
+                        {
+                            await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
+                            break;
+                        }
+                        await HandleSubscribeAsync(writer, tag, args, session, subscribe: true, ct).ConfigureAwait(false);
+                        break;
+
+                    case "UNSUBSCRIBE":
+                        if (session.State == ImapState.NotAuthenticated)
+                        {
+                            await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
+                            break;
+                        }
+                        await HandleSubscribeAsync(writer, tag, args, session, subscribe: false, ct).ConfigureAwait(false);
+                        break;
+
+                    case "GETQUOTAROOT":
+                        if (session.State == ImapState.NotAuthenticated)
+                        {
+                            await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
+                            break;
+                        }
+                        await HandleGetQuotaRootAsync(writer, tag, args, session, ct).ConfigureAwait(false);
+                        break;
+
+                    case "GETQUOTA":
+                        if (session.State == ImapState.NotAuthenticated)
+                        {
+                            await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
+                            break;
+                        }
+                        await HandleGetQuotaAsync(writer, tag, args, session, ct).ConfigureAwait(false);
+                        break;
+
+                    case "LIST":
+                        if (session.State == ImapState.NotAuthenticated)
+                        {
+                            await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
+                            break;
+                        }
+                        await HandleListAsync(writer, tag, args, session, ct).ConfigureAwait(false);
+                        break;
+
+                    case "LSUB":
+                        if (session.State == ImapState.NotAuthenticated)
+                        {
+                            await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
+                            break;
+                        }
+                        await HandleLsubAsync(writer, tag, args, session, ct).ConfigureAwait(false);
+                        break;
+
+                    case "SELECT":
+                        if (session.State == ImapState.NotAuthenticated)
+                        {
+                            await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
+                            break;
+                        }
+                        await HandleSelectAsync(writer, tag, args, session, readOnly: false, ct).ConfigureAwait(false);
+                        break;
+
+                    case "EXAMINE":
+                        if (session.State == ImapState.NotAuthenticated)
+                        {
+                            await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
+                            break;
+                        }
+                        await HandleSelectAsync(writer, tag, args, session, readOnly: true, ct).ConfigureAwait(false);
+                        break;
+
+                    case "CREATE":
+                        if (session.State == ImapState.NotAuthenticated)
+                        {
+                            await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
+                            break;
+                        }
+                        await HandleCreateAsync(writer, tag, args, session, ct).ConfigureAwait(false);
+                        break;
+
+                    case "DELETE":
+                        if (session.State == ImapState.NotAuthenticated)
+                        {
+                            await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
+                            break;
+                        }
+                        await HandleDeleteAsync(writer, tag, args, session, ct).ConfigureAwait(false);
+                        break;
+
+                    case "RENAME":
+                        if (session.State == ImapState.NotAuthenticated)
+                        {
+                            await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
+                            break;
+                        }
+                        await HandleRenameAsync(writer, tag, args, session, ct).ConfigureAwait(false);
+                        break;
+
+                    case "STATUS":
+                        if (session.State == ImapState.NotAuthenticated)
+                        {
+                            await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
+                            break;
+                        }
+                        await HandleStatusAsync(writer, tag, args, session, ct).ConfigureAwait(false);
+                        break;
+
+                    case "FETCH":
+                        if (session.State != ImapState.Selected)
+                        {
+                            await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
+                            break;
+                        }
+                        await HandleFetchAsync(writer, tag, args, session, ct).ConfigureAwait(false);
+                        break;
+
+                    case "STORE":
+                        if (session.State != ImapState.Selected)
+                        {
+                            await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
+                            break;
+                        }
+                        await HandleStoreAsync(writer, tag, args, session, ct).ConfigureAwait(false);
+                        break;
+
+                    case "SEARCH":
+                        if (session.State != ImapState.Selected)
+                        {
+                            await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
+                            break;
+                        }
+                        await HandleSearchAsync(writer, tag, args, session, ct).ConfigureAwait(false);
+                        break;
+
+                    case "EXPUNGE":
+                        if (session.State != ImapState.Selected)
+                        {
+                            await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
+                            break;
+                        }
+                        if (session.SelectedReadOnly)
+                        {
+                            await writer.WriteLineAsync($"{tag} NO Mailbox is read-only").ConfigureAwait(false);
+                            break;
+                        }
+                        await HandleExpungeAsync(writer, tag, session, ct).ConfigureAwait(false);
+                        break;
+
+                    case "COPY":
+                        if (session.State != ImapState.Selected)
+                        {
+                            await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
+                            break;
+                        }
+                        await HandleCopyAsync(writer, tag, args, session, ct).ConfigureAwait(false);
+                        break;
+
+                    case "MOVE":
+                        if (session.State != ImapState.Selected)
+                        {
+                            await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
+                            break;
+                        }
+                        if (session.SelectedReadOnly)
+                        {
+                            await writer.WriteLineAsync($"{tag} NO Mailbox is read-only").ConfigureAwait(false);
+                            break;
+                        }
+                        await HandleMoveAsync(writer, tag, args, session, ct).ConfigureAwait(false);
+                        break;
+
+                    case "APPEND":
+                        if (session.State == ImapState.NotAuthenticated)
+                        {
+                            await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
+                            break;
+                        }
+                        await HandleAppendAsync(
+                            reader,
+                            writer,
+                            tag,
+                            args,
+                            session,
+                            config.MaxMessageSizeBytes,
+                            timeout,
+                            config.ConnectionTimeoutSeconds).ConfigureAwait(false);
+                        break;
+
+                    case "IDLE":
+                        if (session.State == ImapState.NotAuthenticated)
+                        {
+                            await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
+                            break;
+                        }
+                        await HandleIdleAsync(reader, writer, tag, session, timeout, config.ConnectionTimeoutSeconds).ConfigureAwait(false);
+                        break;
+
+                    case "CHECK":
+                        if (session.State != ImapState.Selected)
+                        {
+                            await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
+                            break;
+                        }
+                        await writer.WriteLineAsync($"{tag} OK CHECK completed").ConfigureAwait(false);
+                        break;
+
+                    case "CLOSE":
+                        if (session.State != ImapState.Selected)
+                        {
+                            await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
+                            break;
+                        }
+                        if (!session.SelectedReadOnly)
+                        {
+                            var closeResult = await TryExpungeDeletedAsync(
+                                writer, tag, "CLOSE", session, ct).ConfigureAwait(false);
+                            if (closeResult is null)
+                                break;
+                            if (!closeResult.FolderFound)
+                            {
+                                await writer.WriteLineAsync($"{tag} NO Mailbox not found").ConfigureAwait(false);
+                                break;
+                            }
+                        }
+                        session.SelectedFolderId = null;
+                        session.SelectedFolderName = null;
+                        session.State = ImapState.Authenticated;
+                        await writer.WriteLineAsync($"{tag} OK CLOSE completed").ConfigureAwait(false);
+                        break;
+
+                    case "UNSELECT":
+                        if (session.State != ImapState.Selected)
+                        {
+                            await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
+                            break;
+                        }
+                        session.SelectedFolderId = null;
+                        session.SelectedFolderName = null;
+                        session.State = ImapState.Authenticated;
+                        await writer.WriteLineAsync($"{tag} OK UNSELECT completed").ConfigureAwait(false);
+                        break;
+
+                    case "UID":
+                        if (session.State != ImapState.Selected)
+                        {
+                            await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
+                            break;
+                        }
+                        await HandleUidAsync(writer, tag, args, session, ct).ConfigureAwait(false);
+                        break;
+
+                    case "SORT":
+                        if (session.State != ImapState.Selected)
+                        {
+                            await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
+                            break;
+                        }
+                        await HandleSortAsync(writer, tag, args, session, useUid: false, ct).ConfigureAwait(false);
+                        break;
+
+                    case "THREAD":
+                        if (session.State != ImapState.Selected)
+                        {
+                            await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
+                            break;
+                        }
+                        await HandleThreadAsync(writer, tag, args, session, useUid: false, ct).ConfigureAwait(false);
+                        break;
+
+                    case "COMPRESS":
+                        if (session.State == ImapState.NotAuthenticated)
+                        {
+                            await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
+                            break;
+                        }
+                        if (session.CompressEnabled)
+                        {
+                            await writer.WriteLineAsync($"{tag} BAD COMPRESS already active").ConfigureAwait(false);
+                            break;
+                        }
+                        if (!await HandleCompressAsync(writer, tag, args).ConfigureAwait(false))
+                            break;
+                        session.CompressEnabled = true;
+                        return SessionUpgrade.Compress;
+
+                    default:
+                        await writer.WriteLineAsync($"{tag} BAD Command not recognized").ConfigureAwait(false);
+                        break;
+                }
             }
-        }
 
-        return SessionUpgrade.None;
+            return SessionUpgrade.None;
+        }
     }
 
+    // Keep the ordered IMAP protocol handler/parser steps together.
+#pragma warning disable MA0051
     private static async Task<string?> ReadCommandLiteralsAsync(
+#pragma warning restore MA0051
         string initialLine,
         BoundedLineReader reader,
         StreamWriter writer,
@@ -710,7 +716,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         int connectionTimeoutSeconds)
     {
         var line = initialLine;
-        var tagEnd = line.IndexOf(' ');
+        var tagEnd = line.IndexOf(' ', StringComparison.Ordinal);
         var tag = tagEnd > 0 ? line[..tagEnd] : "*";
 
         for (var literalIndex = 0; ; literalIndex++)
@@ -724,18 +730,18 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             {
                 if (isNonSynchronizing)
                 {
-                    await writer.WriteLineAsync("* BYE [PRIVACYREQUIRED] TLS is required for authentication");
+                    await writer.WriteLineAsync("* BYE [PRIVACYREQUIRED] TLS is required for authentication").ConfigureAwait(false);
                     session.State = ImapState.Logout;
                 }
                 else
                 {
-                    await writer.WriteLineAsync($"{tag} NO [PRIVACYREQUIRED] TLS is required for authentication");
+                    await writer.WriteLineAsync($"{tag} NO [PRIVACYREQUIRED] TLS is required for authentication").ConfigureAwait(false);
                 }
                 return null;
             }
 
             if (literalIndex >= MaximumCommandLiterals
-                || !int.TryParse(match.Groups[1].ValueSpan, out var literalSize)
+                || !int.TryParse(match.Groups[1].ValueSpan, System.Globalization.CultureInfo.InvariantCulture, out var literalSize)
                 || literalSize > MaximumCommandLineCharacters)
             {
                 await RejectCommandLiteralAsync(
@@ -743,12 +749,12 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                     tag,
                     session,
                     isNonSynchronizing,
-                    "Command literal exceeds the server limit");
+                    "Command literal exceeds the server limit").ConfigureAwait(false);
                 return null;
             }
 
             if (!isNonSynchronizing)
-                await writer.WriteLineAsync("+ Ready for literal data");
+                await writer.WriteLineAsync("+ Ready for literal data").ConfigureAwait(false);
 
             var literal = new char[literalSize];
             var totalRead = 0;
@@ -757,7 +763,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                 timeout.CancelAfter(TimeSpan.FromSeconds(connectionTimeoutSeconds));
                 var read = await reader.ReadAsync(
                     literal.AsMemory(totalRead, literal.Length - totalRead),
-                    timeout.Token);
+                    timeout.Token).ConfigureAwait(false);
                 if (read == 0)
                 {
                     session.State = ImapState.Logout;
@@ -768,16 +774,16 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
 
             if (literal.AsSpan().Contains('\0'))
             {
-                await writer.WriteLineAsync("* BYE Binary command literals are not supported");
+                await writer.WriteLineAsync("* BYE Binary command literals are not supported").ConfigureAwait(false);
                 session.State = ImapState.Logout;
                 return null;
             }
 
             timeout.CancelAfter(TimeSpan.FromSeconds(connectionTimeoutSeconds));
-            var remainderResult = await reader.ReadLineAsync(MaximumCommandLineCharacters, timeout.Token);
+            var remainderResult = await reader.ReadLineAsync(MaximumCommandLineCharacters, timeout.Token).ConfigureAwait(false);
             if (remainderResult.IsTooLong)
             {
-                await writer.WriteLineAsync("* BYE Command continuation is too long");
+                await writer.WriteLineAsync("* BYE Command continuation is too long").ConfigureAwait(false);
                 session.State = ImapState.Logout;
                 return null;
             }
@@ -793,7 +799,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             var expandedLength = match.Index + escapedLiteral.Length + 2 + remainder.Length;
             if (expandedLength > MaximumCommandLineCharacters)
             {
-                await writer.WriteLineAsync("* BYE Expanded command exceeds the server limit");
+                await writer.WriteLineAsync("* BYE Expanded command exceeds the server limit").ConfigureAwait(false);
                 session.State = ImapState.Logout;
                 return null;
             }
@@ -828,7 +834,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     {
         commandStart = 0;
         commandEnd = 0;
-        var tagEnd = line.IndexOf(' ');
+        var tagEnd = line.IndexOf(' ', StringComparison.Ordinal);
         if (tagEnd <= 0)
             return false;
 
@@ -853,26 +859,26 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     {
         if (isNonSynchronizing)
         {
-            await writer.WriteLineAsync($"* BYE {response}");
+            await writer.WriteLineAsync($"* BYE {response}").ConfigureAwait(false);
             session.State = ImapState.Logout;
             return;
         }
 
-        await writer.WriteLineAsync($"{tag} BAD {response}");
+        await writer.WriteLineAsync($"{tag} BAD {response}").ConfigureAwait(false);
     }
 
     private static async Task<bool> HandleCompressAsync(StreamWriter writer, string tag, string args)
     {
         var mechanism = args.Trim().ToUpperInvariant();
-        if (mechanism != "DEFLATE")
+        if (!string.Equals(mechanism, "DEFLATE", StringComparison.Ordinal))
         {
-            await writer.WriteLineAsync($"{tag} BAD Unknown compression mechanism");
+            await writer.WriteLineAsync($"{tag} BAD Unknown compression mechanism").ConfigureAwait(false);
             return false;
         }
 
         // Signal OK — the caller will upgrade the stream
-        await writer.WriteLineAsync($"{tag} OK COMPRESS DEFLATE active");
-        await writer.FlushAsync();
+        await writer.WriteLineAsync($"{tag} OK COMPRESS DEFLATE active").ConfigureAwait(false);
+        await writer.FlushAsync().ConfigureAwait(false);
         return true;
     }
 
@@ -899,84 +905,87 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             if (config.EnableStartTls)
                 caps += " STARTTLS";
         }
-        await writer.WriteLineAsync($"* CAPABILITY {caps}");
-        await writer.WriteLineAsync($"{tag} OK CAPABILITY completed");
+        await writer.WriteLineAsync($"* CAPABILITY {caps}").ConfigureAwait(false);
+        await writer.WriteLineAsync($"{tag} OK CAPABILITY completed").ConfigureAwait(false);
     }
 
     private async Task HandleLoginAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
         if (!session.IsSecure)
         {
-            await writer.WriteLineAsync($"{tag} NO [PRIVACYREQUIRED] TLS is required for authentication");
+            await writer.WriteLineAsync($"{tag} NO [PRIVACYREQUIRED] TLS is required for authentication").ConfigureAwait(false);
             return;
         }
 
         if (session.State != ImapState.NotAuthenticated)
         {
-            await writer.WriteLineAsync($"{tag} BAD Already authenticated");
+            await writer.WriteLineAsync($"{tag} BAD Already authenticated").ConfigureAwait(false);
             return;
         }
 
         var (username, password) = ParseLoginArgs(args);
         if (username is null || password is null)
         {
-            await writer.WriteLineAsync($"{tag} BAD Syntax error in LOGIN");
+            await writer.WriteLineAsync($"{tag} BAD Syntax error in LOGIN").ConfigureAwait(false);
             return;
         }
 
         ImapIdentityResult user;
         try
         {
-            user = await AuthenticateUserAsync(username, password, ct);
+            user = await AuthenticateUserAsync(username, password, ct).ConfigureAwait(false);
         }
         catch (Exception exception) when (
             exception is not OperationCanceledException && !ct.IsCancellationRequested)
         {
-            logger.LogWarning(exception, "IMAP password authentication service is unavailable");
-            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Authentication service unavailable");
+            LogPasswordAuthenticationUnavailable(logger, exception);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Authentication service unavailable").ConfigureAwait(false);
             return;
         }
         if (user.UserId is null || user.Username is null)
         {
             RecordAuthenticationFailure(session);
-            await writer.WriteLineAsync($"{tag} NO LOGIN failed");
+            await writer.WriteLineAsync($"{tag} NO LOGIN failed").ConfigureAwait(false);
             return;
         }
 
         session.UserId = user.UserId.Value;
         session.UserName = user.Username;
         session.State = ImapState.Authenticated;
-        await writer.WriteLineAsync($"{tag} OK LOGIN completed");
+        await writer.WriteLineAsync($"{tag} OK LOGIN completed").ConfigureAwait(false);
     }
 
+    // Keep the ordered IMAP protocol handler/parser steps together.
+#pragma warning disable MA0051
     private async Task HandleAuthenticateAsync(
+#pragma warning restore MA0051
         BoundedLineReader reader, StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
         if (!session.IsSecure)
         {
-            await writer.WriteLineAsync($"{tag} NO [PRIVACYREQUIRED] TLS is required for authentication");
+            await writer.WriteLineAsync($"{tag} NO [PRIVACYREQUIRED] TLS is required for authentication").ConfigureAwait(false);
             return;
         }
 
         if (session.State != ImapState.NotAuthenticated)
         {
-            await writer.WriteLineAsync($"{tag} BAD Already authenticated");
+            await writer.WriteLineAsync($"{tag} BAD Already authenticated").ConfigureAwait(false);
             return;
         }
 
         var authenticationArgs = args.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
         if (authenticationArgs.Length == 0)
         {
-            await writer.WriteLineAsync($"{tag} BAD Missing authentication mechanism");
+            await writer.WriteLineAsync($"{tag} BAD Missing authentication mechanism").ConfigureAwait(false);
             return;
         }
 
         var mechanism = authenticationArgs[0].ToUpperInvariant();
 
         if (mechanism is not ("PLAIN" or "XOAUTH2")
-            || mechanism == "XOAUTH2" && !env.OAuth.EnableOAuth)
+            || string.Equals(mechanism, "XOAUTH2", StringComparison.Ordinal) && !env.OAuth.EnableOAuth)
         {
-            await writer.WriteLineAsync($"{tag} NO Unsupported authentication mechanism");
+            await writer.WriteLineAsync($"{tag} NO Unsupported authentication mechanism").ConfigureAwait(false);
             return;
         }
 
@@ -986,37 +995,37 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             encoded = authenticationArgs[1];
             if (encoded.Length > MaximumAuthenticationLineCharacters)
             {
-                await writer.WriteLineAsync($"{tag} BAD Authentication response is too long");
+                await writer.WriteLineAsync($"{tag} BAD Authentication response is too long").ConfigureAwait(false);
                 return;
             }
 
-            if (encoded == "=")
+            if (string.Equals(encoded, "=", StringComparison.Ordinal))
                 encoded = string.Empty;
         }
         else
         {
-            await writer.WriteLineAsync("+ ");
-            var encodedResult = await reader.ReadLineAsync(MaximumAuthenticationLineCharacters, ct);
+            await writer.WriteLineAsync("+ ").ConfigureAwait(false);
+            var encodedResult = await reader.ReadLineAsync(MaximumAuthenticationLineCharacters, ct).ConfigureAwait(false);
             encoded = encodedResult.Value;
             if (encodedResult.IsTooLong)
             {
-                await writer.WriteLineAsync($"{tag} BAD Authentication response is too long");
+                await writer.WriteLineAsync($"{tag} BAD Authentication response is too long").ConfigureAwait(false);
                 return;
             }
         }
 
-        if (encoded is null || encoded == "*")
+        if (encoded is null || string.Equals(encoded, "*", StringComparison.Ordinal))
         {
-            await writer.WriteLineAsync($"{tag} BAD Authentication cancelled");
+            await writer.WriteLineAsync($"{tag} BAD Authentication cancelled").ConfigureAwait(false);
             return;
         }
 
-        if (mechanism == "XOAUTH2")
+        if (string.Equals(mechanism, "XOAUTH2", StringComparison.Ordinal))
         {
             if (!OAuthSasl.TryParseXOAuth2(encoded, out var oauthUsername, out var accessToken))
             {
                 RecordAuthenticationFailure(session);
-                await writer.WriteLineAsync($"{tag} NO Authentication failed");
+                await writer.WriteLineAsync($"{tag} NO Authentication failed").ConfigureAwait(false);
                 return;
             }
 
@@ -1026,26 +1035,26 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             try
             {
                 oauthUser = await application.AuthenticateOAuthAsync(
-                    new ImapOAuthAuthentication(oauthUsername, accessToken), ct);
+                    new ImapOAuthAuthentication(oauthUsername, accessToken), ct).ConfigureAwait(false);
             }
             catch (Exception exception) when (
                 exception is not OperationCanceledException && !ct.IsCancellationRequested)
             {
-                logger.LogWarning(exception, "IMAP OAuth authentication service is unavailable");
-                await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Authentication service unavailable");
+                LogOAuthAuthenticationUnavailable(logger, exception);
+                await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Authentication service unavailable").ConfigureAwait(false);
                 return;
             }
             if (oauthUser.UserId is null || oauthUser.Username is null)
             {
                 RecordAuthenticationFailure(session);
-                await writer.WriteLineAsync($"{tag} NO Authentication failed");
+                await writer.WriteLineAsync($"{tag} NO Authentication failed").ConfigureAwait(false);
                 return;
             }
 
             session.UserId = oauthUser.UserId.Value;
             session.UserName = oauthUser.Username;
             session.State = ImapState.Authenticated;
-            await writer.WriteLineAsync($"{tag} OK AUTHENTICATE completed");
+            await writer.WriteLineAsync($"{tag} OK AUTHENTICATE completed").ConfigureAwait(false);
             return;
         }
 
@@ -1056,18 +1065,18 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         }
         catch (Exception exception) when (exception is FormatException or DecoderFallbackException)
         {
-            await writer.WriteLineAsync($"{tag} BAD Invalid base64");
+            await writer.WriteLineAsync($"{tag} BAD Invalid base64").ConfigureAwait(false);
             return;
         }
 
-        var firstSeparator = decoded.IndexOf('\0');
+        var firstSeparator = decoded.IndexOf('\0', StringComparison.Ordinal);
         var secondSeparator = firstSeparator < 0
             ? -1
             : decoded.IndexOf('\0', firstSeparator + 1);
         if (firstSeparator < 0 || secondSeparator < 0)
         {
             RecordAuthenticationFailure(session);
-            await writer.WriteLineAsync($"{tag} NO Authentication failed");
+            await writer.WriteLineAsync($"{tag} NO Authentication failed").ConfigureAwait(false);
             return;
         }
 
@@ -1079,33 +1088,33 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             && !string.Equals(authorizationIdentity, username, StringComparison.OrdinalIgnoreCase))
         {
             RecordAuthenticationFailure(session);
-            await writer.WriteLineAsync($"{tag} NO Authentication failed");
+            await writer.WriteLineAsync($"{tag} NO Authentication failed").ConfigureAwait(false);
             return;
         }
 
         ImapIdentityResult user;
         try
         {
-            user = await AuthenticateUserAsync(username, password, ct);
+            user = await AuthenticateUserAsync(username, password, ct).ConfigureAwait(false);
         }
         catch (Exception exception) when (
             exception is not OperationCanceledException && !ct.IsCancellationRequested)
         {
-            logger.LogWarning(exception, "IMAP SASL password authentication service is unavailable");
-            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Authentication service unavailable");
+            LogSaslAuthenticationUnavailable(logger, exception);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Authentication service unavailable").ConfigureAwait(false);
             return;
         }
         if (user.UserId is null || user.Username is null)
         {
             RecordAuthenticationFailure(session);
-            await writer.WriteLineAsync($"{tag} NO Authentication failed");
+            await writer.WriteLineAsync($"{tag} NO Authentication failed").ConfigureAwait(false);
             return;
         }
 
         session.UserId = user.UserId.Value;
         session.UserName = user.Username;
         session.State = ImapState.Authenticated;
-        await writer.WriteLineAsync($"{tag} OK AUTHENTICATE completed");
+        await writer.WriteLineAsync($"{tag} OK AUTHENTICATE completed").ConfigureAwait(false);
     }
 
     private async Task<ImapIdentityResult> AuthenticateUserAsync(
@@ -1116,15 +1125,13 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         using var scope = scopeFactory.CreateScope();
         var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
         return await application.AuthenticatePasswordAsync(
-            new ImapPasswordAuthentication(username, password), ct);
+            new ImapPasswordAuthentication(username, password), ct).ConfigureAwait(false);
     }
 
     private void RecordAuthenticationFailure(ImapSession session)
     {
         session.AuthenticationFailures++;
-        logger.LogWarning(
-            "Mail authentication failed for protocol IMAP from {RemoteIp}",
-            session.RemoteIp);
+        LogAuthenticationFailure(logger, session.RemoteIp);
     }
 
     private static async Task StopAfterTooManyAuthenticationFailuresAsync(
@@ -1134,37 +1141,40 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         if (session.AuthenticationFailures < 5)
             return;
 
-        await writer.WriteLineAsync("* BYE Too many authentication failures");
+        await writer.WriteLineAsync("* BYE Too many authentication failures").ConfigureAwait(false);
         session.State = ImapState.Logout;
     }
 
+    // Keep the ordered IMAP protocol handler/parser steps together.
+#pragma warning disable MA0051
     private async Task HandleListAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
+#pragma warning restore MA0051
     {
         if (!TryParseListCommand(args, session.Utf8Enabled, out var options, out var failureResponse))
         {
-            await writer.WriteLineAsync($"{tag} BAD {failureResponse}");
+            await writer.WriteLineAsync($"{tag} BAD {failureResponse}").ConfigureAwait(false);
             return;
         }
 
         if (!options.IsExtended
             && options.Patterns.Count == 1
-            && options.Patterns[0] == string.Empty)
+            && string.IsNullOrEmpty(options.Patterns[0]))
         {
-            await writer.WriteLineAsync("* LIST (\\Noselect) \"/\" \"\"");
-            await writer.WriteLineAsync($"{tag} OK LIST completed");
+            await writer.WriteLineAsync("* LIST (\\Noselect) \"/\" \"\"").ConfigureAwait(false);
+            await writer.WriteLineAsync($"{tag} OK LIST completed").ConfigureAwait(false);
             return;
         }
 
         List<MailboxFolderInfo> folders;
         try
         {
-            folders = await GetUserFoldersAsync(session.UserId, ct);
+            folders = await GetUserFoldersAsync(session.UserId, ct).ConfigureAwait(false);
         }
         catch (Exception exception) when (
             exception is not OperationCanceledException && !ct.IsCancellationRequested)
         {
-            logger.LogWarning(exception, "IMAP mailbox listing is unavailable for {UserId}", session.UserId);
-            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailboxes unavailable");
+            LogMailboxListingUnavailable(logger, exception, session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailboxes unavailable").ConfigureAwait(false);
             return;
         }
         var entries = BuildMailboxListEntries(folders);
@@ -1181,18 +1191,21 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                         .Select(entry => entry.FullName)
                         .ToList(),
                     options.StatusItems,
-                    ct);
+                    ct).ConfigureAwait(false);
             }
             catch (Exception exception) when (
                 exception is not OperationCanceledException && !ct.IsCancellationRequested)
             {
-                logger.LogWarning(exception, "IMAP LIST-STATUS is unavailable for {UserId}", session.UserId);
-                await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailbox status unavailable");
+                LogListStatusUnavailable(logger, exception, session.UserId);
+                await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailbox status unavailable").ConfigureAwait(false);
                 return;
             }
         }
 
+        // This protocol loop awaits I/O; a list span cannot cross suspension.
+#pragma warning disable HLQ012
         foreach (var entry in entries)
+#pragma warning restore HLQ012
         {
             if (!MatchesAnyPattern(entry.FullName, options.Reference, options.Patterns))
                 continue;
@@ -1222,42 +1235,45 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                 ? $" (CHILDINFO ({BuildChildInfoCriteria(options)}))"
                 : string.Empty;
             await writer.WriteLineAsync(
-                $"* LIST ({attrs}) \"/\" \"{EscapeImapString(FormatWireMailboxName(entry.FullName, session.Utf8Enabled))}\"{childInfo}");
+                $"* LIST ({attrs}) \"/\" \"{EscapeImapString(FormatWireMailboxName(entry.FullName, session.Utf8Enabled))}\"{childInfo}").ConfigureAwait(false);
 
             if (entry.IsSelectable
                 && matchesSelection
                 && statusLines.TryGetValue(entry.FullName, out var statusResult))
             {
                 await writer.WriteLineAsync(
-                    $"* STATUS \"{EscapeImapString(FormatWireMailboxName(entry.FullName, session.Utf8Enabled))}\" ({statusResult})");
+                    $"* STATUS \"{EscapeImapString(FormatWireMailboxName(entry.FullName, session.Utf8Enabled))}\" ({statusResult})").ConfigureAwait(false);
             }
         }
 
-        await writer.WriteLineAsync($"{tag} OK LIST completed");
+        await writer.WriteLineAsync($"{tag} OK LIST completed").ConfigureAwait(false);
     }
 
     private async Task HandleLsubAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
         if (!TryParseMailboxArgs(args, session.Utf8Enabled, out var reference, out var pattern))
         {
-            await writer.WriteLineAsync($"{tag} BAD Invalid mailbox name");
+            await writer.WriteLineAsync($"{tag} BAD Invalid mailbox name").ConfigureAwait(false);
             return;
         }
 
         List<MailboxFolderInfo> folders;
         try
         {
-            folders = await GetUserFoldersAsync(session.UserId, ct, subscribedOnly: true);
+            folders = await GetUserFoldersAsync(session.UserId, ct, subscribedOnly: true).ConfigureAwait(false);
         }
         catch (Exception exception) when (
             exception is not OperationCanceledException && !ct.IsCancellationRequested)
         {
-            logger.LogWarning(exception, "IMAP subscribed mailbox listing is unavailable for {UserId}", session.UserId);
-            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailboxes unavailable");
+            LogSubscribedListingUnavailable(logger, exception, session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailboxes unavailable").ConfigureAwait(false);
             return;
         }
 
+        // This protocol loop awaits I/O; a list span cannot cross suspension.
+#pragma warning disable HLQ012
         foreach (var entry in BuildMailboxListEntries(folders))
+#pragma warning restore HLQ012
         {
             if (MatchesPattern(entry.FullName, reference, pattern))
             {
@@ -1266,27 +1282,30 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                     entry.IsSelectable,
                     entry.HasChildren);
                 await writer.WriteLineAsync(
-                    $"* LSUB ({attrs}) \"/\" \"{EscapeImapString(FormatWireMailboxName(entry.FullName, session.Utf8Enabled))}\"");
+                    $"* LSUB ({attrs}) \"/\" \"{EscapeImapString(FormatWireMailboxName(entry.FullName, session.Utf8Enabled))}\"").ConfigureAwait(false);
             }
         }
 
-        await writer.WriteLineAsync($"{tag} OK LSUB completed");
+        await writer.WriteLineAsync($"{tag} OK LSUB completed").ConfigureAwait(false);
     }
 
+    // Keep the ordered IMAP protocol handler/parser steps together.
+#pragma warning disable MA0051
     private async Task HandleSelectAsync(
+#pragma warning restore MA0051
         StreamWriter writer, string tag, string args, ImapSession session, bool readOnly, CancellationToken ct)
     {
         var selectArgs = args.Trim();
-        var parenIdx = selectArgs.IndexOf('(');
+        var parenIdx = selectArgs.IndexOf('(', StringComparison.Ordinal);
         int? qresyncUidValidity = null;
         long? qresyncModSeq = null;
         if (parenIdx >= 0)
         {
             var modifiers = selectArgs[parenIdx..].ToUpperInvariant();
-            if (modifiers.Contains("CONDSTORE"))
+            if (modifiers.Contains("CONDSTORE", StringComparison.Ordinal))
                 session.CondstoreEnabled = true;
 
-            if (modifiers.Contains("QRESYNC") && session.QresyncEnabled)
+            if (modifiers.Contains("QRESYNC", StringComparison.Ordinal) && session.QresyncEnabled)
             {
                 session.CondstoreEnabled = true;
                 var qresyncStart = selectArgs.IndexOf("QRESYNC", parenIdx, StringComparison.OrdinalIgnoreCase);
@@ -1299,8 +1318,8 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                         var qrParams = selectArgs[(qrOpen + 1)..qrClose].Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
                         if (qrParams.Length >= 2)
                         {
-                            if (int.TryParse(qrParams[0], out var uv)) qresyncUidValidity = uv;
-                            if (long.TryParse(qrParams[1], out var ms)) qresyncModSeq = ms;
+                            if (int.TryParse(qrParams[0], System.Globalization.CultureInfo.InvariantCulture, out var uv)) qresyncUidValidity = uv;
+                            if (long.TryParse(qrParams[1], System.Globalization.CultureInfo.InvariantCulture, out var ms)) qresyncModSeq = ms;
                         }
                     }
                 }
@@ -1311,7 +1330,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
 
         if (!TryParseMailboxName(selectArgs, session.Utf8Enabled, out var mailboxName))
         {
-            await writer.WriteLineAsync($"{tag} BAD Invalid mailbox name");
+            await writer.WriteLineAsync($"{tag} BAD Invalid mailbox name").ConfigureAwait(false);
             return;
         }
 
@@ -1323,7 +1342,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
             var result = await application.SelectMailboxAsync(
                 new ImapMailboxSelectRequest(
-                    session.UserId, mailboxName, qresyncUidValidity, qresyncModSeq), ct);
+                    session.UserId, mailboxName, qresyncUidValidity, qresyncModSeq), ct).ConfigureAwait(false);
             mailbox = result.Mailbox;
             if (mailbox is not null)
                 responseLines = BuildMailboxSelectionLines(mailbox);
@@ -1331,14 +1350,14 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         catch (Exception exception) when (
             exception is not OperationCanceledException && !ct.IsCancellationRequested)
         {
-            logger.LogWarning(exception, "IMAP mailbox selection is unavailable for {UserId}", session.UserId);
-            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailbox selection unavailable");
+            LogMailboxSelectionUnavailable(logger, exception, session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailbox selection unavailable").ConfigureAwait(false);
             return;
         }
 
         if (mailbox is null)
         {
-            await writer.WriteLineAsync($"{tag} NO Mailbox not found");
+            await writer.WriteLineAsync($"{tag} NO Mailbox not found").ConfigureAwait(false);
             return;
         }
         session.SelectedFolderId = mailbox.FolderId;
@@ -1346,12 +1365,15 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         session.SelectedReadOnly = readOnly;
         session.SavedSearchUids = [];
         session.State = ImapState.Selected;
+        // This protocol loop awaits I/O; a list span cannot cross suspension.
+#pragma warning disable HLQ012
         foreach (var line in responseLines!)
-            await writer.WriteLineAsync(line);
+#pragma warning restore HLQ012
+            await writer.WriteLineAsync(line).ConfigureAwait(false);
 
         var cmdName = readOnly ? "EXAMINE" : "SELECT";
         var access = readOnly ? "[READ-ONLY]" : "[READ-WRITE]";
-        await writer.WriteLineAsync($"{tag} OK {access} {cmdName} completed");
+        await writer.WriteLineAsync($"{tag} OK {access} {cmdName} completed").ConfigureAwait(false);
     }
 
     private static List<string> BuildMailboxSelectionLines(ImapSelectedMailbox mailbox)
@@ -1391,7 +1413,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             lines.Add($"* OK [UNSEEN {mailbox.FirstUnseenSequence}]");
         if (mailbox.VanishedUids.Count > 0)
             lines.Add($"* VANISHED (EARLIER) {FormatUidRange(mailbox.VanishedUids)}");
-        foreach (var changed in mailbox.ChangedMessages)
+        foreach (ref readonly var changed in CollectionsMarshal.AsSpan(mailbox.ChangedMessages))
         {
             if (changed.Sequence is < 1 || changed.Sequence > mailbox.MessageCount
                 || changed.Uid < 1 || changed.Keywords is null)
@@ -1444,7 +1466,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     {
         if (!TryParseMailboxName(args.Trim(), session.Utf8Enabled, out var mailboxName))
         {
-            await writer.WriteLineAsync($"{tag} BAD Invalid mailbox name");
+            await writer.WriteLineAsync($"{tag} BAD Invalid mailbox name").ConfigureAwait(false);
             return;
         }
 
@@ -1454,7 +1476,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             using var scope = scopeFactory.CreateScope();
             var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
             result = await application.CreateMailboxAsync(
-                new ImapMailboxCreateRequest(session.UserId, mailboxName), ct);
+                new ImapMailboxCreateRequest(session.UserId, mailboxName), ct).ConfigureAwait(false);
             if (result.Disposition == ImapMailboxCreateDisposition.Created
                 && (result.FolderId == Guid.Empty || string.IsNullOrEmpty(result.MailboxId)))
             {
@@ -1464,25 +1486,25 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         catch (Exception exception) when (
             exception is not OperationCanceledException && !ct.IsCancellationRequested)
         {
-            logger.LogWarning(exception, "IMAP mailbox creation is unavailable for {UserId}", session.UserId);
-            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailbox creation unavailable");
+            LogMailboxCreationUnavailable(logger, exception, session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailbox creation unavailable").ConfigureAwait(false);
             return;
         }
 
         switch (result.Disposition)
         {
             case ImapMailboxCreateDisposition.InvalidName:
-                await writer.WriteLineAsync($"{tag} NO [CANNOT] Invalid mailbox name");
+                await writer.WriteLineAsync($"{tag} NO [CANNOT] Invalid mailbox name").ConfigureAwait(false);
                 return;
             case ImapMailboxCreateDisposition.AlreadyExists:
-                await writer.WriteLineAsync($"{tag} NO [ALREADYEXISTS] Mailbox already exists");
+                await writer.WriteLineAsync($"{tag} NO [ALREADYEXISTS] Mailbox already exists").ConfigureAwait(false);
                 return;
             case ImapMailboxCreateDisposition.Created:
                 await writer.WriteLineAsync(
-                    $"{tag} OK [MAILBOXID ({FormatObjectId('F', result.MailboxId!, result.FolderId)})] CREATE completed");
+                    $"{tag} OK [MAILBOXID ({FormatObjectId('F', result.MailboxId!, result.FolderId)})] CREATE completed").ConfigureAwait(false);
                 return;
             default:
-                await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailbox creation unavailable");
+                await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailbox creation unavailable").ConfigureAwait(false);
                 return;
         }
     }
@@ -1491,7 +1513,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     {
         if (!TryParseMailboxName(args.Trim(), session.Utf8Enabled, out var mailboxName))
         {
-            await writer.WriteLineAsync($"{tag} BAD Invalid mailbox name");
+            await writer.WriteLineAsync($"{tag} BAD Invalid mailbox name").ConfigureAwait(false);
             return;
         }
 
@@ -1501,33 +1523,33 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             using var scope = scopeFactory.CreateScope();
             var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
             result = await application.DeleteMailboxAsync(
-                new ImapMailboxDeleteRequest(session.UserId, mailboxName), ct);
+                new ImapMailboxDeleteRequest(session.UserId, mailboxName), ct).ConfigureAwait(false);
         }
         catch (Exception exception) when (
             exception is not OperationCanceledException && !ct.IsCancellationRequested)
         {
-            logger.LogWarning(exception, "IMAP mailbox deletion is unavailable for {UserId}", session.UserId);
-            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailbox deletion unavailable");
+            LogMailboxDeletionUnavailable(logger, exception, session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailbox deletion unavailable").ConfigureAwait(false);
             return;
         }
 
         switch (result.Disposition)
         {
             case ImapMailboxDeleteDisposition.NotFound:
-                await writer.WriteLineAsync($"{tag} NO [NONEXISTENT] Mailbox not found");
+                await writer.WriteLineAsync($"{tag} NO [NONEXISTENT] Mailbox not found").ConfigureAwait(false);
                 return;
             case ImapMailboxDeleteDisposition.SystemFolder:
-                await writer.WriteLineAsync($"{tag} NO [CANNOT] System mailboxes cannot be deleted");
+                await writer.WriteLineAsync($"{tag} NO [CANNOT] System mailboxes cannot be deleted").ConfigureAwait(false);
                 return;
             case ImapMailboxDeleteDisposition.Deleted:
                 if (result.FolderId == Guid.Empty)
                 {
-                    await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailbox deletion unavailable");
+                    await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailbox deletion unavailable").ConfigureAwait(false);
                     return;
                 }
                 break;
             default:
-                await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailbox deletion unavailable");
+                await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailbox deletion unavailable").ConfigureAwait(false);
                 return;
         }
 
@@ -1538,7 +1560,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             session.State = ImapState.Authenticated;
         }
 
-        await writer.WriteLineAsync($"{tag} OK DELETE completed");
+        await writer.WriteLineAsync($"{tag} OK DELETE completed").ConfigureAwait(false);
     }
 
     private async Task HandleRenameAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
@@ -1546,7 +1568,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         var parsedArgs = ParseTwoMailboxArgs(args, session.Utf8Enabled);
         if (parsedArgs is null)
         {
-            await writer.WriteLineAsync($"{tag} BAD Syntax error");
+            await writer.WriteLineAsync($"{tag} BAD Syntax error").ConfigureAwait(false);
             return;
         }
 
@@ -1557,34 +1579,34 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             using var scope = scopeFactory.CreateScope();
             var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
             result = await application.RenameMailboxAsync(
-                new ImapMailboxRenameRequest(session.UserId, oldName, newName), ct);
+                new ImapMailboxRenameRequest(session.UserId, oldName, newName), ct).ConfigureAwait(false);
         }
         catch (Exception exception) when (
             exception is not OperationCanceledException && !ct.IsCancellationRequested)
         {
-            logger.LogWarning(exception, "IMAP mailbox rename is unavailable for {UserId}", session.UserId);
-            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailbox rename unavailable");
+            LogMailboxRenameUnavailable(logger, exception, session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailbox rename unavailable").ConfigureAwait(false);
             return;
         }
 
         switch (result.Disposition)
         {
             case ImapMailboxRenameDisposition.NotFound:
-                await writer.WriteLineAsync($"{tag} NO [NONEXISTENT] Mailbox not found");
+                await writer.WriteLineAsync($"{tag} NO [NONEXISTENT] Mailbox not found").ConfigureAwait(false);
                 return;
             case ImapMailboxRenameDisposition.SystemFolder:
-                await writer.WriteLineAsync($"{tag} NO [CANNOT] System mailboxes cannot be renamed");
+                await writer.WriteLineAsync($"{tag} NO [CANNOT] System mailboxes cannot be renamed").ConfigureAwait(false);
                 return;
             case ImapMailboxRenameDisposition.InvalidDestination:
-                await writer.WriteLineAsync($"{tag} NO [CANNOT] Invalid rename destination");
+                await writer.WriteLineAsync($"{tag} NO [CANNOT] Invalid rename destination").ConfigureAwait(false);
                 return;
             case ImapMailboxRenameDisposition.AlreadyExists:
-                await writer.WriteLineAsync($"{tag} NO [ALREADYEXISTS] Rename destination already exists");
+                await writer.WriteLineAsync($"{tag} NO [ALREADYEXISTS] Rename destination already exists").ConfigureAwait(false);
                 return;
             case ImapMailboxRenameDisposition.Renamed:
                 break;
             default:
-                await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailbox rename unavailable");
+                await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailbox rename unavailable").ConfigureAwait(false);
                 return;
         }
 
@@ -1595,21 +1617,21 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             session.SelectedFolderName = newName + session.SelectedFolderName[oldName.Length..];
         }
 
-        await writer.WriteLineAsync($"{tag} OK RENAME completed");
+        await writer.WriteLineAsync($"{tag} OK RENAME completed").ConfigureAwait(false);
     }
 
     private async Task HandleStatusAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
-        var parenIdx = args.IndexOf('(');
+        var parenIdx = args.IndexOf('(', StringComparison.Ordinal);
         if (parenIdx < 0)
         {
-            await writer.WriteLineAsync($"{tag} BAD Syntax error");
+            await writer.WriteLineAsync($"{tag} BAD Syntax error").ConfigureAwait(false);
             return;
         }
 
         if (!TryParseMailboxName(args[..parenIdx].Trim(), session.Utf8Enabled, out var mailboxName))
         {
-            await writer.WriteLineAsync($"{tag} BAD Invalid mailbox name");
+            await writer.WriteLineAsync($"{tag} BAD Invalid mailbox name").ConfigureAwait(false);
             return;
         }
         var statusItemsRaw = args[(parenIdx + 1)..].TrimEnd(')').Trim();
@@ -1618,24 +1640,24 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         try
         {
             statusLines = await GetMailboxStatusLinesAsync(
-                session.UserId, [mailboxName], statusItems, ct);
+                session.UserId, [mailboxName], statusItems, ct).ConfigureAwait(false);
         }
         catch (Exception exception) when (
             exception is not OperationCanceledException && !ct.IsCancellationRequested)
         {
-            logger.LogWarning(exception, "IMAP STATUS is unavailable for {UserId}", session.UserId);
-            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailbox status unavailable");
+            LogStatusUnavailable(logger, exception, session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailbox status unavailable").ConfigureAwait(false);
             return;
         }
         if (!statusLines.TryGetValue(mailboxName, out var statusResult))
         {
-            await writer.WriteLineAsync($"{tag} NO Mailbox not found");
+            await writer.WriteLineAsync($"{tag} NO Mailbox not found").ConfigureAwait(false);
             return;
         }
 
         await writer.WriteLineAsync(
-            $"* STATUS \"{EscapeImapString(FormatWireMailboxName(mailboxName, session.Utf8Enabled))}\" ({statusResult})");
-        await writer.WriteLineAsync($"{tag} OK STATUS completed");
+            $"* STATUS \"{EscapeImapString(FormatWireMailboxName(mailboxName, session.Utf8Enabled))}\" ({statusResult})").ConfigureAwait(false);
+        await writer.WriteLineAsync($"{tag} OK STATUS completed").ConfigureAwait(false);
     }
 
     private async Task<Dictionary<string, string>> GetMailboxStatusLinesAsync(
@@ -1653,7 +1675,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                 statusItems.Contains("MESSAGES", StringComparer.OrdinalIgnoreCase),
                 statusItems.Contains("UNSEEN", StringComparer.OrdinalIgnoreCase),
                 statusItems.Contains("SIZE", StringComparer.OrdinalIgnoreCase)),
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         return result.Statuses.ToDictionary(
             entry => entry.Key,
             entry => BuildStatusResult(entry.Value, statusItems),
@@ -1671,28 +1693,28 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             switch (item.ToUpperInvariant())
             {
                 case "MESSAGES":
-                    results.Append($"MESSAGES {status.MessageCount ?? throw new InvalidOperationException("Missing message count.")}");
+                    results.Append(System.Globalization.CultureInfo.InvariantCulture, $"MESSAGES {status.MessageCount ?? throw new InvalidOperationException("Missing message count.")}");
                     break;
                 case "RECENT":
                     results.Append("RECENT 0");
                     break;
                 case "UNSEEN":
-                    results.Append($"UNSEEN {status.UnseenCount ?? throw new InvalidOperationException("Missing unseen count.")}");
+                    results.Append(System.Globalization.CultureInfo.InvariantCulture, $"UNSEEN {status.UnseenCount ?? throw new InvalidOperationException("Missing unseen count.")}");
                     break;
                 case "UIDVALIDITY":
-                    results.Append($"UIDVALIDITY {status.UidValidity}");
+                    results.Append(System.Globalization.CultureInfo.InvariantCulture, $"UIDVALIDITY {status.UidValidity}");
                     break;
                 case "UIDNEXT":
-                    results.Append($"UIDNEXT {status.NextUid}");
+                    results.Append(System.Globalization.CultureInfo.InvariantCulture, $"UIDNEXT {status.NextUid}");
                     break;
                 case "HIGHESTMODSEQ":
-                    results.Append($"HIGHESTMODSEQ {status.HighestModSeq}");
+                    results.Append(System.Globalization.CultureInfo.InvariantCulture, $"HIGHESTMODSEQ {status.HighestModSeq}");
                     break;
                 case "SIZE":
-                    results.Append($"SIZE {status.SizeBytes ?? throw new InvalidOperationException("Missing mailbox size.")}");
+                    results.Append(System.Globalization.CultureInfo.InvariantCulture, $"SIZE {status.SizeBytes ?? throw new InvalidOperationException("Missing mailbox size.")}");
                     break;
                 case "MAILBOXID":
-                    results.Append($"MAILBOXID ({FormatObjectId('F', status.MailboxId, status.FolderId)})");
+                    results.Append(CultureInfo.InvariantCulture, $"MAILBOXID ({FormatObjectId('F', status.MailboxId, status.FolderId)})");
                     break;
             }
         }
@@ -1702,7 +1724,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
 
     private async Task HandleFetchAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
-        await HandleFetchWithLimitAsync(writer, tag, args, session, useUid: false, ct);
+        await HandleFetchWithLimitAsync(writer, tag, args, session, useUid: false, ct).ConfigureAwait(false);
     }
 
     private async Task HandleFetchWithLimitAsync(
@@ -1713,23 +1735,20 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         bool useUid,
         CancellationToken ct)
     {
-        if (!_fetchCommandLimiter.Wait(0))
+        using var slot = _fetchCommandLimiter.TryAcquire();
+        if (slot is null)
         {
-            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Too many concurrent FETCH commands");
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Too many concurrent FETCH commands").ConfigureAwait(false);
             return;
         }
 
-        try
-        {
-            await HandleFetchCoreAsync(writer, tag, args, session, useUid, ct);
-        }
-        finally
-        {
-            _fetchCommandLimiter.Release();
-        }
+        await HandleFetchCoreAsync(writer, tag, args, session, useUid, ct).ConfigureAwait(false);
     }
 
+    // Keep the ordered IMAP protocol handler/parser steps together.
+#pragma warning disable MA0051
     private async Task HandleFetchCoreAsync(
+#pragma warning restore MA0051
         StreamWriter writer,
         string tag,
         string args,
@@ -1737,10 +1756,10 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         bool useUid,
         CancellationToken ct)
     {
-        var spaceIdx = args.IndexOf(' ');
+        var spaceIdx = args.IndexOf(' ', StringComparison.Ordinal);
         if (spaceIdx <= 0)
         {
-            await writer.WriteLineAsync($"{tag} BAD Syntax error");
+            await writer.WriteLineAsync($"{tag} BAD Syntax error").ConfigureAwait(false);
             return;
         }
 
@@ -1748,7 +1767,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         var fetchItems = StripFetchList(args[(spaceIdx + 1)..]);
         if (!TryParseBinaryFetchRequests(fetchItems, out var binaryRequests))
         {
-            await writer.WriteLineAsync($"{tag} BAD Invalid BINARY data item");
+            await writer.WriteLineAsync($"{tag} BAD Invalid BINARY data item").ConfigureAwait(false);
             return;
         }
 
@@ -1759,7 +1778,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
 
         var folderId = session.SelectedFolderId!.Value;
         ImapMessageSelection selection;
-        if (messageSet == "$")
+        if (string.Equals(messageSet, "$", StringComparison.Ordinal))
         {
             selection = new ImapMessageSelection(null, session.SavedSearchUids.ToList());
         }
@@ -1771,14 +1790,14 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         }
         else
         {
-            await writer.WriteLineAsync($"{tag} BAD Invalid message set");
+            await writer.WriteLineAsync($"{tag} BAD Invalid message set").ConfigureAwait(false);
             return;
         }
 
         var includeStoredContent = FetchNeedsStoredContent(fetchItems, binaryRequests);
         var normalizedFetchItems = fetchItems
             .ToUpperInvariant()
-            .Replace("BODY.PEEK[", "BODY[");
+            .Replace("BODY.PEEK[", "BODY[", StringComparison.Ordinal);
         var needsMimeProjection = normalizedFetchItems.Contains("BODYSTRUCTURE", StringComparison.Ordinal)
             || BodyStandaloneRegex().IsMatch(normalizedFetchItems)
             || NumericBodySectionRegex().IsMatch(normalizedFetchItems)
@@ -1803,7 +1822,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                     snapshotMaxUid,
                     snapshotMaximumIdentifier,
                     snapshotMessageCount,
-                    includeStoredContent), ct);
+                    includeStoredContent), ct).ConfigureAwait(false);
                 if (!IsValidFetchPage(page, afterUid, snapshotMaxUid,
                     snapshotMaximumIdentifier, snapshotMessageCount, includeStoredContent))
                 {
@@ -1813,25 +1832,31 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             catch (Exception exception) when (
                 exception is not OperationCanceledException && !ct.IsCancellationRequested)
             {
-                logger.LogWarning(exception, "IMAP FETCH unavailable for {UserId}", session.UserId);
-                await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] FETCH backend unavailable");
+                LogFetchUnavailable(logger, exception, session.UserId);
+                await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] FETCH backend unavailable").ConfigureAwait(false);
                 return;
             }
             if (!page.FolderFound)
             {
-                await writer.WriteLineAsync($"{tag} NO Mailbox not found");
+                await writer.WriteLineAsync($"{tag} NO Mailbox not found").ConfigureAwait(false);
                 return;
             }
 
+            // This protocol loop awaits I/O; a list span cannot cross suspension.
+#pragma warning disable HLQ012
             foreach (var fetched in page.Messages)
+#pragma warning restore HLQ012
             {
                 var email = ToTransientFetchMessage(fetched);
                 if (fetched.RawMessage is not null)
                     ApplyTransientRawMessage(email, fetched.RawMessage);
 
+                // Conditional MIME projection is owned by this using declaration.
+#pragma warning disable CA2000
                 using var mimeMessage = needsMimeProjection
                     ? ImapMimeMessage.TryParse(BuildRfc822(email))
                     : null;
+#pragma warning restore CA2000
 
                 if (!TryDecodeBinarySections(
                         mimeMessage,
@@ -1839,7 +1864,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                         out var binarySections,
                         out var binaryFailure))
                 {
-                    await writer.WriteLineAsync($"{tag} NO {binaryFailure}");
+                    await writer.WriteLineAsync($"{tag} NO {binaryFailure}").ConfigureAwait(false);
                     return;
                 }
 
@@ -1849,7 +1874,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                     try
                     {
                         seenResult = await application.MarkMessagesSeenAsync(new ImapMarkSeenRequest(
-                            session.UserId, folderId, [email.Id]), ct);
+                            session.UserId, folderId, [email.Id]), ct).ConfigureAwait(false);
                         if (seenResult is null
                             || seenResult.Messages is null
                             || seenResult.FolderFound && seenResult.Messages.Count != 1
@@ -1865,14 +1890,13 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                     catch (Exception exception) when (
                         exception is not OperationCanceledException && !ct.IsCancellationRequested)
                     {
-                        logger.LogWarning(exception,
-                            "IMAP FETCH seen update unavailable for {UserId}", session.UserId);
-                        await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] FETCH backend unavailable");
+                        LogFetchSeenUnavailable(logger, exception, session.UserId);
+                        await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] FETCH backend unavailable").ConfigureAwait(false);
                         return;
                     }
                     if (!seenResult.FolderFound || !seenResult.Messages[0].Found)
                     {
-                        await writer.WriteLineAsync($"{tag} NO Message unavailable");
+                        await writer.WriteLineAsync($"{tag} NO Message unavailable").ConfigureAwait(false);
                         return;
                     }
                     email.IsRead = true;
@@ -1887,7 +1911,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                     mimeMessage,
                     binaryRequests,
                     binarySections);
-                await writer.WriteLineAsync(response);
+                await writer.WriteLineAsync(response).ConfigureAwait(false);
             }
 
             if (!page.HasMore)
@@ -1899,7 +1923,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         }
 
         var commandName = useUid ? "UID FETCH" : "FETCH";
-        await writer.WriteLineAsync($"{tag} OK {commandName} completed");
+        await writer.WriteLineAsync($"{tag} OK {commandName} completed").ConfigureAwait(false);
     }
 
     private static bool IsValidFetchPage(
@@ -1940,7 +1964,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
 
         var previousUid = afterUid;
         var previousSequence = 0;
-        foreach (var message in page.Messages)
+        foreach (ref readonly var message in CollectionsMarshal.AsSpan(page.Messages))
         {
             if (message is null
                 || message.Id == Guid.Empty
@@ -1970,9 +1994,12 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         ImapFetchMessage fetched) => new(fetched);
 
     private async Task HandleStoreAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
-        => await HandleStoreCoreAsync(writer, tag, args, session, useUid: false, ct);
+        => await HandleStoreCoreAsync(writer, tag, args, session, useUid: false, ct).ConfigureAwait(false);
 
+    // Keep the ordered IMAP protocol handler/parser steps together.
+#pragma warning disable MA0051
     private async Task HandleStoreCoreAsync(
+#pragma warning restore MA0051
         StreamWriter writer,
         string tag,
         string args,
@@ -1982,14 +2009,14 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     {
         if (session.SelectedReadOnly)
         {
-            await writer.WriteLineAsync($"{tag} NO Mailbox is read-only");
+            await writer.WriteLineAsync($"{tag} NO Mailbox is read-only").ConfigureAwait(false);
             return;
         }
 
         var (messageSet, unchangedSince, action, flagsRaw) = ParseStoreArgs(args);
         if (messageSet is null || action is null || flagsRaw is null)
         {
-            await writer.WriteLineAsync($"{tag} BAD Syntax error");
+            await writer.WriteLineAsync($"{tag} BAD Syntax error").ConfigureAwait(false);
             return;
         }
 
@@ -1999,17 +2026,17 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         var flagsList = flagsRaw.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         if (!IsStoreAction(action))
         {
-            await writer.WriteLineAsync($"{tag} BAD Invalid STORE action");
+            await writer.WriteLineAsync($"{tag} BAD Invalid STORE action").ConfigureAwait(false);
             return;
         }
         if (!TryValidateFlagList(flagsList, out var flagFailure))
         {
-            await writer.WriteLineAsync($"{tag} BAD {flagFailure}");
+            await writer.WriteLineAsync($"{tag} BAD {flagFailure}").ConfigureAwait(false);
             return;
         }
 
         ImapMessageSelection selection;
-        if (messageSet == "$")
+        if (string.Equals(messageSet, "$", StringComparison.Ordinal))
         {
             selection = new ImapMessageSelection(null, session.SavedSearchUids.ToList());
         }
@@ -2021,7 +2048,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         }
         else
         {
-            await writer.WriteLineAsync($"{tag} BAD Invalid message set");
+            await writer.WriteLineAsync($"{tag} BAD Invalid message set").ConfigureAwait(false);
             return;
         }
 
@@ -2044,22 +2071,24 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                 selection,
                 unchangedSince,
                 mode,
-                flagsList), ct);
+                flagsList), ct).ConfigureAwait(false);
             responseLines = BuildStoreResponseLines(
-                tag, commandName, result, useUid, action.Contains(".SILENT"),
+                tag, commandName, result, useUid, action.Contains(".SILENT", StringComparison.Ordinal),
                 session.CondstoreEnabled);
         }
         catch (Exception exception) when (
             exception is not OperationCanceledException && !ct.IsCancellationRequested)
         {
-            logger.LogWarning(exception, "IMAP {Command} is unavailable for {UserId}",
-                commandName, session.UserId);
-            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] {commandName} backend unavailable");
+            LogCommandUnavailable(logger, exception, commandName, session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] {commandName} backend unavailable").ConfigureAwait(false);
             return;
         }
 
+        // This protocol loop awaits I/O; a list span cannot cross suspension.
+#pragma warning disable HLQ012
         foreach (var line in responseLines)
-            await writer.WriteLineAsync(line);
+#pragma warning restore HLQ012
+            await writer.WriteLineAsync(line).ConfigureAwait(false);
     }
 
     private static List<string> BuildStoreResponseLines(
@@ -2101,7 +2130,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         var lines = new List<string>();
         if (!isSilent)
         {
-            foreach (var message in result.Updated)
+            foreach (ref readonly var message in CollectionsMarshal.AsSpan(result.Updated))
             {
                 var uid = useUid ? $"UID {message.Uid} " : string.Empty;
                 var modSeq = condstoreEnabled ? $" MODSEQ ({message.ModSeq})" : string.Empty;
@@ -2117,7 +2146,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
 
     private async Task HandleSearchAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
-        await HandleSearchWithLimitAsync(writer, tag, args, session, useUid: false, ct);
+        await HandleSearchWithLimitAsync(writer, tag, args, session, useUid: false, ct).ConfigureAwait(false);
     }
 
     private async Task HandleSearchWithLimitAsync(
@@ -2128,26 +2157,23 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         bool useUid,
         CancellationToken ct)
     {
-        if (!_searchCommandLimiter.Wait(0))
+        using var slot = _searchCommandLimiter.TryAcquire();
+        if (slot is null)
         {
             var (returnOptions, _) = ParseEsearchReturn(args);
             if (returnOptions?.Any(option => option.Equals("SAVE", StringComparison.OrdinalIgnoreCase)) == true)
                 session.SavedSearchUids = [];
-            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Too many concurrent SEARCH commands");
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Too many concurrent SEARCH commands").ConfigureAwait(false);
             return;
         }
 
-        try
-        {
-            await HandleSearchCoreAsync(writer, tag, args, session, useUid, ct);
-        }
-        finally
-        {
-            _searchCommandLimiter.Release();
-        }
+        await HandleSearchCoreAsync(writer, tag, args, session, useUid, ct).ConfigureAwait(false);
     }
 
+    // Keep the ordered IMAP protocol handler/parser steps together.
+#pragma warning disable MA0051
     private async Task HandleSearchCoreAsync(
+#pragma warning restore MA0051
         StreamWriter writer,
         string tag,
         string args,
@@ -2162,14 +2188,14 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         if (normalizedReturnOptions is not null
             && normalizedReturnOptions.Any(option => option is not ("MIN" or "MAX" or "COUNT" or "ALL" or "SAVE")))
         {
-            await writer.WriteLineAsync($"{tag} BAD Unsupported SEARCH return option");
+            await writer.WriteLineAsync($"{tag} BAD Unsupported SEARCH return option").ConfigureAwait(false);
             return;
         }
 
         var saveResults = normalizedReturnOptions?.Contains("SAVE") == true;
         if (session.Utf8Enabled && StartsWithCharsetSearchKey(searchCriteria))
         {
-            await writer.WriteLineAsync($"{tag} BAD SEARCH CHARSET is not permitted after UTF8=ACCEPT");
+            await writer.WriteLineAsync($"{tag} BAD SEARCH CHARSET is not permitted after UTF8=ACCEPT").ConfigureAwait(false);
             return;
         }
 
@@ -2183,7 +2209,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                 session.SelectedFolderId!.Value,
                 searchCriteria,
                 session.SavedSearchUids.ToList(),
-                session.Utf8Enabled), ct);
+                session.Utf8Enabled), ct).ConfigureAwait(false);
             if (searchResult is null
                 || searchResult.Matches is null
                 || searchResult.HighestModSequence is < 0
@@ -2211,8 +2237,8 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         {
             if (saveResults)
                 session.SavedSearchUids = [];
-            logger.LogWarning(exception, "IMAP SEARCH unavailable for {UserId}", session.UserId);
-            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] SEARCH backend unavailable");
+            LogSearchUnavailable(logger, exception, session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] SEARCH backend unavailable").ConfigureAwait(false);
             return;
         }
 
@@ -2220,7 +2246,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         {
             if (saveResults)
                 session.SavedSearchUids = [];
-            await writer.WriteLineAsync($"{tag} NO Mailbox not found");
+            await writer.WriteLineAsync($"{tag} NO Mailbox not found").ConfigureAwait(false);
             return;
         }
         if (searchResult.FailureResponse is not null)
@@ -2230,7 +2256,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             {
                 session.SavedSearchUids = [];
             }
-            await writer.WriteLineAsync($"{tag} {searchResult.FailureResponse}");
+            await writer.WriteLineAsync($"{tag} {searchResult.FailureResponse}").ConfigureAwait(false);
             return;
         }
 
@@ -2246,7 +2272,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         }
 
         var responseOptions = normalizedReturnOptions?
-            .Where(option => option != "SAVE")
+            .Where(option => !string.Equals(option, "SAVE", StringComparison.Ordinal))
             .ToArray();
         if (responseOptions is { Length: > 0 })
         {
@@ -2256,7 +2282,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                 searchResult.HighestModSequence);
             var uidMarker = useUid ? " UID" : string.Empty;
             var resultSuffix = result.Length > 0 ? $" {result}" : string.Empty;
-            await writer.WriteLineAsync($"* ESEARCH (TAG \"{tag}\"){uidMarker}{resultSuffix}");
+            await writer.WriteLineAsync($"* ESEARCH (TAG \"{tag}\"){uidMarker}{resultSuffix}").ConfigureAwait(false);
         }
         else if (returnOptions is null)
         {
@@ -2265,26 +2291,26 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             var modSequenceSuffix = searchResult.HighestModSequence is { } highestModSequence
                 ? $" (MODSEQ {highestModSequence})"
                 : string.Empty;
-            await writer.WriteLineAsync($"* SEARCH{numberSuffix}{modSequenceSuffix}");
+            await writer.WriteLineAsync($"* SEARCH{numberSuffix}{modSequenceSuffix}").ConfigureAwait(false);
         }
 
         var commandName = useUid ? "UID SEARCH" : "SEARCH";
-        await writer.WriteLineAsync($"{tag} OK {commandName} completed");
+        await writer.WriteLineAsync($"{tag} OK {commandName} completed").ConfigureAwait(false);
     }
 
     private async Task HandleExpungeAsync(StreamWriter writer, string tag, ImapSession session, CancellationToken ct)
     {
-        var result = await TryExpungeDeletedAsync(writer, tag, "EXPUNGE", session, ct);
+        var result = await TryExpungeDeletedAsync(writer, tag, "EXPUNGE", session, ct).ConfigureAwait(false);
         if (result is null)
             return;
         if (!result.FolderFound)
         {
-            await writer.WriteLineAsync($"{tag} NO Mailbox not found");
+            await writer.WriteLineAsync($"{tag} NO Mailbox not found").ConfigureAwait(false);
             return;
         }
 
-        await WriteExpungeMessagesAsync(writer, session, result);
-        await writer.WriteLineAsync($"{tag} OK EXPUNGE completed");
+        await WriteExpungeMessagesAsync(writer, session, result).ConfigureAwait(false);
+        await writer.WriteLineAsync($"{tag} OK EXPUNGE completed").ConfigureAwait(false);
     }
 
     private async Task<ImapExpungeResult?> TryExpungeDeletedAsync(
@@ -2300,7 +2326,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             using var scope = scopeFactory.CreateScope();
             var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
             var result = await application.ExpungeDeletedAsync(new ImapExpungeRequest(
-                session.UserId, session.SelectedFolderId!.Value, selection), ct);
+                session.UserId, session.SelectedFolderId!.Value, selection), ct).ConfigureAwait(false);
             if (result.Messages is null
                 || (!result.FolderFound && result.Messages.Count > 0)
                 || result.Messages.Any(message => message is null
@@ -2316,9 +2342,8 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         catch (Exception exception) when (
             exception is not OperationCanceledException && !ct.IsCancellationRequested)
         {
-            logger.LogWarning(exception, "IMAP {Operation} is unavailable for {UserId}",
-                operation, session.UserId);
-            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] {operation} backend unavailable");
+            LogOperationUnavailable(logger, exception, operation, session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] {operation} backend unavailable").ConfigureAwait(false);
             return null;
         }
     }
@@ -2330,12 +2355,15 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         {
             if (result.Messages.Count > 0)
                 await writer.WriteLineAsync($"* VANISHED {FormatUidRange(
-                    result.Messages.Select(message => message.Uid).ToList())}");
+                    result.Messages.Select(message => message.Uid).ToList())}").ConfigureAwait(false);
         }
         else
         {
+            // This protocol loop awaits I/O; a list span cannot cross suspension.
+#pragma warning disable HLQ012
             foreach (var message in result.Messages)
-                await writer.WriteLineAsync($"* {message.SequenceNumber} EXPUNGE");
+#pragma warning restore HLQ012
+                await writer.WriteLineAsync($"* {message.SequenceNumber} EXPUNGE").ConfigureAwait(false);
         }
     }
 
@@ -2346,7 +2374,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         ImapSession session,
         CancellationToken ct)
     {
-        await HandleCopyWithLimitAsync(writer, tag, args, session, useUid: false, ct);
+        await HandleCopyWithLimitAsync(writer, tag, args, session, useUid: false, ct).ConfigureAwait(false);
     }
 
     private async Task HandleCopyWithLimitAsync(
@@ -2357,20 +2385,14 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         bool useUid,
         CancellationToken ct)
     {
-        if (!_messageWriteCommandLimiter.Wait(0))
+        using var slot = _messageWriteCommandLimiter.TryAcquire();
+        if (slot is null)
         {
-            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Too many concurrent message writes");
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Too many concurrent message writes").ConfigureAwait(false);
             return;
         }
 
-        try
-        {
-            await HandleCopyCoreAsync(writer, tag, args, session, useUid, ct);
-        }
-        finally
-        {
-            _messageWriteCommandLimiter.Release();
-        }
+        await HandleCopyCoreAsync(writer, tag, args, session, useUid, ct).ConfigureAwait(false);
     }
 
     private async Task HandleCopyCoreAsync(
@@ -2381,22 +2403,22 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         bool useUid,
         CancellationToken ct)
     {
-        var spaceIdx = args.IndexOf(' ');
+        var spaceIdx = args.IndexOf(' ', StringComparison.Ordinal);
         if (spaceIdx <= 0)
         {
-            await writer.WriteLineAsync($"{tag} BAD Syntax error");
+            await writer.WriteLineAsync($"{tag} BAD Syntax error").ConfigureAwait(false);
             return;
         }
 
         var messageSet = args[..spaceIdx];
         if (!TryParseMailboxName(args[(spaceIdx + 1)..].Trim(), session.Utf8Enabled, out var destMailbox))
         {
-            await writer.WriteLineAsync($"{tag} BAD Invalid destination mailbox name");
+            await writer.WriteLineAsync($"{tag} BAD Invalid destination mailbox name").ConfigureAwait(false);
             return;
         }
 
         ImapMessageSelection selection;
-        if (messageSet == "$")
+        if (string.Equals(messageSet, "$", StringComparison.Ordinal))
         {
             selection = new ImapMessageSelection(null, session.SavedSearchUids.ToList());
         }
@@ -2408,7 +2430,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         }
         else
         {
-            await writer.WriteLineAsync($"{tag} BAD Invalid message set");
+            await writer.WriteLineAsync($"{tag} BAD Invalid message set").ConfigureAwait(false);
             return;
         }
 
@@ -2420,20 +2442,22 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
             var result = await application.CopyMessagesAsync(new ImapCopyRequest(
                 session.UserId, session.SelectedFolderId!.Value,
-                destMailbox, useUid, selection), ct);
+                destMailbox, useUid, selection), ct).ConfigureAwait(false);
             responseLines = BuildCopyResponseLines(tag, commandName, result);
         }
         catch (Exception exception) when (
             exception is not OperationCanceledException && !ct.IsCancellationRequested)
         {
-            logger.LogWarning(exception, "IMAP {Command} is unavailable for {UserId}",
-                commandName, session.UserId);
-            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] {commandName} backend unavailable");
+            LogCommandUnavailable(logger, exception, commandName, session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] {commandName} backend unavailable").ConfigureAwait(false);
             return;
         }
 
+        // This protocol loop awaits I/O; a list span cannot cross suspension.
+#pragma warning disable HLQ012
         foreach (var line in responseLines)
-            await writer.WriteLineAsync(line);
+#pragma warning restore HLQ012
+            await writer.WriteLineAsync(line).ConfigureAwait(false);
     }
 
     private static List<string> BuildCopyResponseLines(
@@ -2480,10 +2504,10 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     private async Task HandleUidAsync(
         StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
-        var spaceIdx = args.IndexOf(' ');
+        var spaceIdx = args.IndexOf(' ', StringComparison.Ordinal);
         if (spaceIdx <= 0)
         {
-            await writer.WriteLineAsync($"{tag} BAD Syntax error");
+            await writer.WriteLineAsync($"{tag} BAD Syntax error").ConfigureAwait(false);
             return;
         }
 
@@ -2493,57 +2517,57 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         switch (subCommand)
         {
             case "FETCH":
-                await HandleUidFetchAsync(writer, tag, subArgs, session, ct);
+                await HandleUidFetchAsync(writer, tag, subArgs, session, ct).ConfigureAwait(false);
                 break;
             case "SEARCH":
-                await HandleUidSearchAsync(writer, tag, subArgs, session, ct);
+                await HandleUidSearchAsync(writer, tag, subArgs, session, ct).ConfigureAwait(false);
                 break;
             case "STORE":
-                await HandleUidStoreAsync(writer, tag, subArgs, session, ct);
+                await HandleUidStoreAsync(writer, tag, subArgs, session, ct).ConfigureAwait(false);
                 break;
             case "COPY":
-                await HandleUidCopyAsync(writer, tag, subArgs, session, ct);
+                await HandleUidCopyAsync(writer, tag, subArgs, session, ct).ConfigureAwait(false);
                 break;
             case "MOVE":
                 if (session.SelectedReadOnly)
                 {
-                    await writer.WriteLineAsync($"{tag} NO Mailbox is read-only");
+                    await writer.WriteLineAsync($"{tag} NO Mailbox is read-only").ConfigureAwait(false);
                     break;
                 }
-                await HandleUidMoveAsync(writer, tag, subArgs, session, ct);
+                await HandleUidMoveAsync(writer, tag, subArgs, session, ct).ConfigureAwait(false);
                 break;
             case "SORT":
-                await HandleSortAsync(writer, tag, subArgs, session, useUid: true, ct);
+                await HandleSortAsync(writer, tag, subArgs, session, useUid: true, ct).ConfigureAwait(false);
                 break;
             case "THREAD":
-                await HandleThreadAsync(writer, tag, subArgs, session, useUid: true, ct);
+                await HandleThreadAsync(writer, tag, subArgs, session, useUid: true, ct).ConfigureAwait(false);
                 break;
             case "EXPUNGE":
                 if (session.SelectedReadOnly)
                 {
-                    await writer.WriteLineAsync($"{tag} NO Mailbox is read-only");
+                    await writer.WriteLineAsync($"{tag} NO Mailbox is read-only").ConfigureAwait(false);
                     break;
                 }
-                await HandleUidExpungeAsync(writer, tag, subArgs, session, ct);
+                await HandleUidExpungeAsync(writer, tag, subArgs, session, ct).ConfigureAwait(false);
                 break;
             default:
-                await writer.WriteLineAsync($"{tag} BAD Unknown UID command");
+                await writer.WriteLineAsync($"{tag} BAD Unknown UID command").ConfigureAwait(false);
                 break;
         }
     }
 
     private async Task HandleUidFetchAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
-        await HandleFetchWithLimitAsync(writer, tag, args, session, useUid: true, ct);
+        await HandleFetchWithLimitAsync(writer, tag, args, session, useUid: true, ct).ConfigureAwait(false);
     }
 
     private async Task HandleUidSearchAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
-        await HandleSearchWithLimitAsync(writer, tag, args, session, useUid: true, ct);
+        await HandleSearchWithLimitAsync(writer, tag, args, session, useUid: true, ct).ConfigureAwait(false);
     }
 
     private async Task HandleUidStoreAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
-        => await HandleStoreCoreAsync(writer, tag, args, session, useUid: true, ct);
+        => await HandleStoreCoreAsync(writer, tag, args, session, useUid: true, ct).ConfigureAwait(false);
 
     private async Task HandleUidCopyAsync(
         StreamWriter writer,
@@ -2552,7 +2576,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         ImapSession session,
         CancellationToken ct)
     {
-        await HandleCopyWithLimitAsync(writer, tag, args, session, useUid: true, ct);
+        await HandleCopyWithLimitAsync(writer, tag, args, session, useUid: true, ct).ConfigureAwait(false);
     }
 
     private static async Task HandleEnableAsync(StreamWriter writer, string tag, string args, ImapSession session)
@@ -2581,8 +2605,8 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         }
 
         var enabledStr = enabled.Count > 0 ? string.Join(' ', enabled) : "";
-        await writer.WriteLineAsync($"* ENABLED {enabledStr}");
-        await writer.WriteLineAsync($"{tag} OK ENABLE completed");
+        await writer.WriteLineAsync($"* ENABLED {enabledStr}").ConfigureAwait(false);
+        await writer.WriteLineAsync($"{tag} OK ENABLE completed").ConfigureAwait(false);
     }
 
     private async Task HandleSubscribeAsync(
@@ -2590,7 +2614,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     {
         if (!TryParseMailboxName(args.Trim(), session.Utf8Enabled, out var mailboxName))
         {
-            await writer.WriteLineAsync($"{tag} BAD Invalid mailbox name");
+            await writer.WriteLineAsync($"{tag} BAD Invalid mailbox name").ConfigureAwait(false);
             return;
         }
 
@@ -2600,24 +2624,24 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             using var scope = scopeFactory.CreateScope();
             var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
             result = await application.SetMailboxSubscriptionAsync(
-                new ImapMailboxSubscriptionRequest(session.UserId, mailboxName, subscribe), ct);
+                new ImapMailboxSubscriptionRequest(session.UserId, mailboxName, subscribe), ct).ConfigureAwait(false);
         }
         catch (Exception exception) when (
             exception is not OperationCanceledException && !ct.IsCancellationRequested)
         {
-            logger.LogWarning(exception, "IMAP mailbox subscription is unavailable for {UserId}", session.UserId);
-            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailbox subscription unavailable");
+            LogSubscriptionUnavailable(logger, exception, session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Mailbox subscription unavailable").ConfigureAwait(false);
             return;
         }
 
         if (!result.Found)
         {
-            await writer.WriteLineAsync($"{tag} NO Mailbox not found");
+            await writer.WriteLineAsync($"{tag} NO Mailbox not found").ConfigureAwait(false);
             return;
         }
 
         var cmd = subscribe ? "SUBSCRIBE" : "UNSUBSCRIBE";
-        await writer.WriteLineAsync($"{tag} OK {cmd} completed");
+        await writer.WriteLineAsync($"{tag} OK {cmd} completed").ConfigureAwait(false);
     }
 
     // ?? Helpers ??
@@ -2628,7 +2652,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         using var scope = scopeFactory.CreateScope();
         var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
         var result = await application.ListMailboxesAsync(
-            new ImapMailboxListRequest(userId, subscribedOnly), ct);
+            new ImapMailboxListRequest(userId, subscribedOnly), ct).ConfigureAwait(false);
         return result.Mailboxes
             .Select(folder => new MailboxFolderInfo(
                 folder.InboxName,
@@ -2653,7 +2677,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             : folderName;
     }
 
-    private static IReadOnlyList<MailboxListEntry> BuildMailboxListEntries(
+    private static List<MailboxListEntry> BuildMailboxListEntries(
         IReadOnlyList<MailboxFolderInfo> folders)
     {
         var selectable = folders
@@ -2676,7 +2700,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
 
         foreach (var fullName in selectable.Keys)
         {
-            for (var index = fullName.IndexOf('/'); index >= 0; index = fullName.IndexOf('/', index + 1))
+            for (var index = fullName.IndexOf('/', StringComparison.Ordinal); index >= 0; index = fullName.IndexOf('/', index + 1))
             {
                 if (index > 0)
                     names.Add(fullName[..index]);
@@ -2750,11 +2774,67 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         return X509CertificateLoader.LoadPkcs12FromFile(config.TlsCertificatePath!, password: null);
     }
 
+    private async Task<SslStream?> TryUpgradeToTlsAsync(
+        Stream transport,
+        ImapListenerConfig config,
+        string remoteLabel,
+        CancellationToken cancellationToken)
+    {
+        using var certificate = LoadCertificate(config);
+        // Success transfers ownership to the caller; every failure disposes candidate.
+#pragma warning disable CA2000
+        var candidate = new SslStream(transport, leaveInnerStreamOpen: false);
+#pragma warning restore CA2000
+        try
+        {
+            if (await TryAuthenticateAsServerAsync(
+                    candidate, certificate, remoteLabel, cancellationToken).ConfigureAwait(false))
+            {
+                return candidate;
+            }
+            await candidate.DisposeAsync().ConfigureAwait(false);
+            return null;
+        }
+        catch
+        {
+            await candidate.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private static CompressedDuplexStream CreateCompressedStream(Stream transport)
+    {
+        // These two streams transfer to CompressedDuplexStream or are disposed on failure.
+#pragma warning disable CA2000
+        var deflate = new DeflateStream(transport, CompressionMode.Compress, leaveOpen: true);
+#pragma warning restore CA2000
+        try
+        {
+#pragma warning disable CA2000
+            var inflate = new DeflateStream(transport, CompressionMode.Decompress, leaveOpen: true);
+#pragma warning restore CA2000
+            try
+            {
+                return new CompressedDuplexStream(transport, inflate, deflate);
+            }
+            catch
+            {
+                inflate.Dispose();
+                throw;
+            }
+        }
+        catch
+        {
+            deflate.Dispose();
+            throw;
+        }
+    }
+
     private async Task<bool> TryAuthenticateAsServerAsync(
         SslStream stream,
         X509Certificate2 certificate,
-        CancellationToken cancellationToken,
-        string remoteLabel)
+        string remoteLabel,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -2763,19 +2843,23 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                 {
                     ServerCertificate = certificate,
                     ClientCertificateRequired = false,
+                    // The public TLS minimum intentionally excludes TLS 1.0/1.1.
+#pragma warning disable CA5398
                     EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
+#pragma warning restore CA5398
                     CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
                 },
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             return true;
         }
         catch (Exception exception) when (
             exception is IOException or AuthenticationException or SocketException)
         {
-            logger.LogDebug(
-                "IMAP TLS handshake from {Endpoint} ended before authentication: {ExceptionType}",
-                remoteLabel,
-                exception.GetType().Name);
+            if (logger.IsEnabled(LogLevel.Debug))
+            {
+                var exceptionType = exception.GetType().Name;
+                LogTlsPeerEnded(logger, remoteLabel, exceptionType);
+            }
             return false;
         }
     }
@@ -2798,7 +2882,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             return true;
         }
 
-        foreach (var item in TokenizeFetchDataItems(fetchItems))
+        foreach (ref readonly var item in CollectionsMarshal.AsSpan(TokenizeFetchDataItems(fetchItems)))
         {
             if (item.Equals("RFC822", StringComparison.OrdinalIgnoreCase)
                 || item.StartsWith("RFC822.TEXT", StringComparison.OrdinalIgnoreCase))
@@ -2819,7 +2903,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     {
         var normalized = fetchItems
             .ToUpperInvariant()
-            .Replace("BODY.PEEK[", "BODY[");
+            .Replace("BODY.PEEK[", "BODY[", StringComparison.Ordinal);
         return normalized.Contains("BODY[", StringComparison.Ordinal)
             || normalized.Contains("BODYSTRUCTURE", StringComparison.Ordinal)
             || BodyStandaloneRegex().IsMatch(normalized)
@@ -2829,7 +2913,10 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             || binaryRequests.Count > 0;
     }
 
-    private static IReadOnlyList<string> TokenizeFetchDataItems(string fetchItems)
+    // Keep the ordered IMAP protocol handler/parser steps together.
+#pragma warning disable MA0051
+    private static List<string> TokenizeFetchDataItems(string fetchItems)
+#pragma warning restore MA0051
     {
         var items = new List<string>();
         var index = 0;
@@ -2902,7 +2989,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         out List<BinaryFetchRequest> requests)
     {
         requests = [];
-        foreach (var item in TokenizeFetchDataItems(fetchItems))
+        foreach (ref readonly var item in CollectionsMarshal.AsSpan(TokenizeFetchDataItems(fetchItems)))
         {
             var sizeMatch = BinarySizeDataItemRegex().Match(item);
             if (sizeMatch.Success)
@@ -2988,8 +3075,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         return true;
     }
 
-    private static bool IsFetchMacro(string items, string macro) =>
-        items == macro || items.StartsWith(macro + " ") || items.EndsWith(" " + macro) || items.Contains(" " + macro + " ");
+    private static bool IsFetchMacro(string items, string macro) => string.Equals(items, macro, StringComparison.Ordinal) || items.StartsWith(macro + " ", StringComparison.Ordinal) || items.EndsWith(" " + macro, StringComparison.Ordinal) || items.Contains(" " + macro + " ", StringComparison.Ordinal);
 
     private static string GetFolderAttributes(
         string? folderName,
@@ -3046,29 +3132,41 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     private static bool MatchesPattern(string name, string reference, string pattern)
     {
         var fullPattern = reference + pattern;
-        if (fullPattern == "*")
+        if (string.Equals(fullPattern, "*", StringComparison.Ordinal))
             return true;
-        if (fullPattern == "%")
-            return !name.Contains('/');
+        if (string.Equals(fullPattern, "%", StringComparison.Ordinal))
+            return !name.Contains('/', StringComparison.Ordinal);
 
         var regexPattern = "^" + Regex.Escape(fullPattern)
-            .Replace("\\*", ".*")
-            .Replace("%", "[^/]*") + "$";
+            .Replace("\\*", ".*", StringComparison.Ordinal)
+            .Replace("%", "[^/]*", StringComparison.Ordinal) + "$";
 
-        return Regex.IsMatch(name, regexPattern, RegexOptions.IgnoreCase);
+        try
+        {
+            return Regex.IsMatch(name, regexPattern,
+                RegexOptions.IgnoreCase,
+                TimeSpan.FromMilliseconds(100));
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return false;
+        }
     }
 
+    // Keep the ordered IMAP protocol handler/parser steps together.
+#pragma warning disable MA0051
     private static string BuildFetchResponse(
+#pragma warning restore MA0051
         int seqNum,
         FetchPresentationMessage email,
         string fetchItems,
         bool useUid,
         ImapMimeMessage? mimeMessage,
         IReadOnlyList<BinaryFetchRequest> binaryRequests,
-        IReadOnlyDictionary<string, ImapBinarySection> binarySections)
+        Dictionary<string, ImapBinarySection> binarySections)
     {
         var items = fetchItems.ToUpperInvariant();
-        var normalizedItems = items.Replace("BODY.PEEK[", "BODY[");
+        var normalizedItems = items.Replace("BODY.PEEK[", "BODY[", StringComparison.Ordinal);
         var requestedDataItems = TokenizeFetchDataItems(fetchItems);
         var parts = new List<string>();
 
@@ -3078,32 +3176,32 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         int? partialCount = null;
         if (partialMatch.Success)
         {
-            partialOffset = int.Parse(partialMatch.Groups[1].Value);
-            partialCount = int.Parse(partialMatch.Groups[2].Value);
+            partialOffset = int.Parse(partialMatch.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+            partialCount = int.Parse(partialMatch.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture);
         }
 
         var isMacroAll = IsFetchMacro(normalizedItems, "ALL");
         var isMacroFast = IsFetchMacro(normalizedItems, "FAST");
         var isMacroFull = IsFetchMacro(normalizedItems, "FULL");
 
-        if (normalizedItems.Contains("FLAGS") || isMacroAll || isMacroFast || isMacroFull)
+        if (normalizedItems.Contains("FLAGS", StringComparison.Ordinal) || isMacroAll || isMacroFast || isMacroFull)
             parts.Add($"FLAGS ({BuildFlagsList(email)})");
 
-        if (normalizedItems.Contains("INTERNALDATE") || isMacroAll || isMacroFast || isMacroFull)
+        if (normalizedItems.Contains("INTERNALDATE", StringComparison.Ordinal) || isMacroAll || isMacroFast || isMacroFull)
             parts.Add($"INTERNALDATE \"{email.ReceivedAt:dd-MMM-yyyy HH:mm:ss} +0000\"");
 
-        if (normalizedItems.Contains("RFC822.SIZE") || isMacroAll || isMacroFast || isMacroFull)
+        if (normalizedItems.Contains("RFC822.SIZE", StringComparison.Ordinal) || isMacroAll || isMacroFast || isMacroFull)
         {
             var size = email.SizeBytes > 0 ? email.SizeBytes : MailWireEncoding.Instance.GetByteCount(BuildRfc822(email));
             parts.Add($"RFC822.SIZE {size}");
         }
 
-        if (normalizedItems.Contains("ENVELOPE") || isMacroAll || isMacroFull)
+        if (normalizedItems.Contains("ENVELOPE", StringComparison.Ordinal) || isMacroAll || isMacroFull)
         {
             parts.Add($"ENVELOPE {BuildEnvelope(email)}");
         }
 
-        if (normalizedItems.Contains("BODY[]") || IsFetchMacro(normalizedItems, "RFC822"))
+        if (normalizedItems.Contains("BODY[]", StringComparison.Ordinal) || IsFetchMacro(normalizedItems, "RFC822"))
         {
             var rfc822 = BuildRfc822(email);
             var (data, origin) = ApplyPartial(rfc822, partialOffset, partialCount);
@@ -3111,13 +3209,13 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             parts.Add($"BODY[]{suffix} {{{MailWireEncoding.Instance.GetByteCount(data)}}}\r\n{data}");
         }
 
-        if (normalizedItems.Contains("BODY[HEADER]") || normalizedItems.Contains("RFC822.HEADER"))
+        if (normalizedItems.Contains("BODY[HEADER]", StringComparison.Ordinal) || normalizedItems.Contains("RFC822.HEADER", StringComparison.Ordinal))
         {
             var header = BuildRfc822Header(email);
             parts.Add($"BODY[HEADER] {{{MailWireEncoding.Instance.GetByteCount(header)}}}\r\n{header}");
         }
 
-        if (normalizedItems.Contains("BODY[TEXT]") || normalizedItems.Contains("RFC822.TEXT"))
+        if (normalizedItems.Contains("BODY[TEXT]", StringComparison.Ordinal) || normalizedItems.Contains("RFC822.TEXT", StringComparison.Ordinal))
         {
             var body = email.Body;
             parts.Add($"BODY[TEXT] {{{MailWireEncoding.Instance.GetByteCount(body)}}}\r\n{body}");
@@ -3141,7 +3239,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             parts.Add($"BODY[HEADER.FIELDS.NOT ({headerFieldsNotMatch.Groups[1].Value})] {{{MailWireEncoding.Instance.GetByteCount(filtered)}}}\r\n{filtered}");
         }
 
-        if (normalizedItems.Contains("BODYSTRUCTURE"))
+        if (normalizedItems.Contains("BODYSTRUCTURE", StringComparison.Ordinal))
         {
             parts.Add($"BODYSTRUCTURE {mimeMessage?.BodyStructure ?? BuildFallbackBodyStructure(email, extended: true)}");
         }
@@ -3159,7 +3257,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             {
                 sectionContent = mimeContent;
             }
-            else if (section == "1")
+            else if (string.Equals(section, "1", StringComparison.Ordinal))
             {
                 sectionContent = email.Body;
             }
@@ -3211,30 +3309,39 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         return $"* {seqNum} FETCH ({string.Join(' ', parts)})";
     }
 
-    [GeneratedRegex(@"BODY(?:\.PEEK)?\[HEADER\.FIELDS\s*\(([^)]+)\)\]")]
+    // These indexed captures feed the existing FETCH section parser.
+#pragma warning disable MA0023
+    [GeneratedRegex(@"BODY(?:\.PEEK)?\[HEADER\.FIELDS\s*\(([^)]+)\)\]", RegexOptions.None, 100)]
     private static partial Regex HeaderFieldsRegex();
 
-    [GeneratedRegex(@"BODY(?:\.PEEK)?\[HEADER\.FIELDS\.NOT\s*\(([^)]+)\)\]")]
+    [GeneratedRegex(@"BODY(?:\.PEEK)?\[HEADER\.FIELDS\.NOT\s*\(([^)]+)\)\]", RegexOptions.None, 100)]
     private static partial Regex HeaderFieldsNotRegex();
 
-    [GeneratedRegex(@"BODY(?:\.PEEK)?\[((?:\d+\.)*\d+)(\.MIME)?\]")]
+    [GeneratedRegex(@"BODY(?:\.PEEK)?\[((?:\d+\.)*\d+)(\.MIME)?\]", RegexOptions.None, 100)]
     private static partial Regex NumericBodySectionRegex();
 
-    [GeneratedRegex(@"BODY(?:\.PEEK)?\[[^\]]*\]<(\d+)\.(\d+)>")]
+    [GeneratedRegex(@"BODY(?:\.PEEK)?\[[^\]]*\]<(\d+)\.(\d+)>", RegexOptions.None, 100)]
     private static partial Regex BodyPartialFetchRegex();
+#pragma warning restore MA0023
 
-    [GeneratedRegex(@"(?<![.\[A-Z])BODY(?![.\[A-Z])")]
+    [GeneratedRegex(@"(?<![.\[A-Z])BODY(?![.\[A-Z])", RegexOptions.None, 100)]
     private static partial Regex BodyStandaloneRegex();
 
+    // Numeric capture indexes are part of the BINARY parser's existing wire mapping.
+#pragma warning disable MA0023
     [GeneratedRegex(
         @"^BINARY(?:\.(PEEK))?\[((?:[1-9][0-9]*)(?:\.[1-9][0-9]*)*|)\](?:<([0-9]+)\.([1-9][0-9]*)>)?$",
-        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, 100)]
     private static partial Regex BinaryContentDataItemRegex();
+#pragma warning restore MA0023
 
+    // Numeric capture indexes are likewise consumed by the BINARY.SIZE parser.
+#pragma warning disable MA0023
     [GeneratedRegex(
         @"^BINARY\.SIZE\[((?:[1-9][0-9]*)(?:\.[1-9][0-9]*)*|)\]$",
-        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, 100)]
     private static partial Regex BinarySizeDataItemRegex();
+#pragma warning restore MA0023
 
     private static (string data, int? origin) ApplyPartial(string content, int? offset, int? count)
     {
@@ -3329,16 +3436,16 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             return email.RawHeaders + "\r\n\r\n" + email.Body;
 
         var sb = new StringBuilder();
-        sb.Append($"From: {email.Sender}\r\n");
-        sb.Append($"To: {email.Recipient}\r\n");
+        sb.Append(CultureInfo.InvariantCulture, $"From: {email.Sender}\r\n");
+        sb.Append(CultureInfo.InvariantCulture, $"To: {email.Recipient}\r\n");
         if (!string.IsNullOrEmpty(email.Cc))
-            sb.Append($"Cc: {email.Cc}\r\n");
-        sb.Append($"Subject: {email.Subject}\r\n");
-        sb.Append($"Date: {email.ReceivedAt:ddd, dd MMM yyyy HH:mm:ss +0000}\r\n");
+            sb.Append(CultureInfo.InvariantCulture, $"Cc: {email.Cc}\r\n");
+        sb.Append(CultureInfo.InvariantCulture, $"Subject: {email.Subject}\r\n");
+        sb.Append(System.Globalization.CultureInfo.InvariantCulture, $"Date: {email.ReceivedAt:ddd, dd MMM yyyy HH:mm:ss +0000}\r\n");
         if (!string.IsNullOrEmpty(email.MessageId))
-            sb.Append($"Message-ID: {email.MessageId}\r\n");
+            sb.Append(CultureInfo.InvariantCulture, $"Message-ID: {email.MessageId}\r\n");
         if (!string.IsNullOrEmpty(email.InReplyTo))
-            sb.Append($"In-Reply-To: {email.InReplyTo}\r\n");
+            sb.Append(CultureInfo.InvariantCulture, $"In-Reply-To: {email.InReplyTo}\r\n");
         sb.Append("MIME-Version: 1.0\r\n");
         sb.Append("Content-Type: text/plain; charset=UTF-8\r\n");
         sb.Append("\r\n");
@@ -3388,16 +3495,16 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             return email.RawHeaders + "\r\n\r\n";
 
         var sb = new StringBuilder();
-        sb.Append($"From: {email.Sender}\r\n");
-        sb.Append($"To: {email.Recipient}\r\n");
+        sb.Append(CultureInfo.InvariantCulture, $"From: {email.Sender}\r\n");
+        sb.Append(CultureInfo.InvariantCulture, $"To: {email.Recipient}\r\n");
         if (!string.IsNullOrEmpty(email.Cc))
-            sb.Append($"Cc: {email.Cc}\r\n");
-        sb.Append($"Subject: {email.Subject}\r\n");
-        sb.Append($"Date: {email.ReceivedAt:ddd, dd MMM yyyy HH:mm:ss +0000}\r\n");
+            sb.Append(CultureInfo.InvariantCulture, $"Cc: {email.Cc}\r\n");
+        sb.Append(CultureInfo.InvariantCulture, $"Subject: {email.Subject}\r\n");
+        sb.Append(System.Globalization.CultureInfo.InvariantCulture, $"Date: {email.ReceivedAt:ddd, dd MMM yyyy HH:mm:ss +0000}\r\n");
         if (!string.IsNullOrEmpty(email.MessageId))
-            sb.Append($"Message-ID: {email.MessageId}\r\n");
+            sb.Append(CultureInfo.InvariantCulture, $"Message-ID: {email.MessageId}\r\n");
         if (!string.IsNullOrEmpty(email.InReplyTo))
-            sb.Append($"In-Reply-To: {email.InReplyTo}\r\n");
+            sb.Append(CultureInfo.InvariantCulture, $"In-Reply-To: {email.InReplyTo}\r\n");
         sb.Append("MIME-Version: 1.0\r\n");
         sb.Append("Content-Type: text/plain; charset=UTF-8\r\n");
         sb.Append("\r\n");
@@ -3413,7 +3520,10 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     private static bool IsValidImapKeyword(string keyword)
         => ImapFlagSyntax.IsValidKeyword(keyword);
 
+    // Keep the ordered IMAP protocol handler/parser steps together.
+#pragma warning disable MA0051
     private static bool TryParseMessageSet(
+#pragma warning restore MA0051
         string value,
         int maximumIdentifier,
         out List<MessageSetRange> ranges)
@@ -3428,7 +3538,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             if (part.Length == 0)
                 return false;
 
-            var separator = part.IndexOf(':');
+            var separator = part.IndexOf(':', StringComparison.Ordinal);
             int start;
             int end;
             if (separator >= 0)
@@ -3462,7 +3572,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             return startComparison != 0 ? startComparison : left.End.CompareTo(right.End);
         });
 
-        foreach (var range in parsedRanges)
+        foreach (ref readonly var range in CollectionsMarshal.AsSpan(parsedRanges))
         {
             if (ranges.Count == 0)
             {
@@ -3522,7 +3632,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         int maximumIdentifier,
         out int identifier)
     {
-        if (value == "*")
+        if (string.Equals(value, "*", StringComparison.Ordinal))
         {
             identifier = maximumIdentifier;
             return true;
@@ -3537,7 +3647,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             }
         }
 
-        return int.TryParse(value, out identifier) && identifier > 0;
+        return int.TryParse(value, System.Globalization.CultureInfo.InvariantCulture, out identifier) && identifier > 0;
     }
 
     private static bool MessageSetContains(IReadOnlyList<MessageSetRange> ranges, int identifier)
@@ -3572,7 +3682,10 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         return (UnquoteArg(tokens[0]), UnquoteArg(tokens[1]));
     }
 
+    // Keep the ordered IMAP protocol handler/parser steps together.
+#pragma warning disable MA0051
     private static bool TryTokenizeListArguments(
+#pragma warning restore MA0051
         string criteria,
         out List<SearchToken> tokens)
     {
@@ -3673,7 +3786,10 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         return tokens.Count <= MaximumSearchTokens;
     }
 
+    // Keep the ordered IMAP protocol handler/parser steps together.
+#pragma warning disable MA0051
     private static bool TryParseListCommand(
+#pragma warning restore MA0051
         string args,
         bool utf8Enabled,
         out ListCommandOptions options,
@@ -3730,7 +3846,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         }
 
         var patterns = new List<string>(wirePatterns.Count);
-        foreach (var wirePattern in wirePatterns)
+        foreach (ref readonly var wirePattern in CollectionsMarshal.AsSpan(wirePatterns))
         {
             if (!TryParseMailboxName(wirePattern, utf8Enabled, out var pattern))
             {
@@ -3811,7 +3927,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         var selectRemote = false;
         var selectRecursiveMatch = false;
         var selectSpecialUse = false;
-        foreach (var selectionOption in selectionOptions)
+        foreach (ref readonly var selectionOption in CollectionsMarshal.AsSpan(selectionOptions))
         {
             switch (selectionOption.ToUpperInvariant())
             {
@@ -4054,7 +4170,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     }
 
     private static string EscapeImapString(string value) =>
-        value.Replace("\\", "\\\\").Replace("\"", "\\\"");
+        value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal);
 
     private static (string? sequenceSet, long? unchangedSince, string? action, string? flagsRaw) ParseStoreArgs(string args)
     {
@@ -4067,7 +4183,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         if (parts[1].StartsWith('('))
         {
             var rest = parts[1] + " " + parts[2];
-            var closeParenIdx = rest.IndexOf(')');
+            var closeParenIdx = rest.IndexOf(')', StringComparison.Ordinal);
             if (closeParenIdx < 0)
                 return (null, null, null, null);
 
@@ -4077,7 +4193,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             long? unchangedSince = null;
             if (modParts.Length == 2 &&
                 modParts[0].Equals("UNCHANGEDSINCE", StringComparison.OrdinalIgnoreCase) &&
-                long.TryParse(modParts[1], out var modSeq))
+                long.TryParse(modParts[1], System.Globalization.CultureInfo.InvariantCulture, out var modSeq))
             {
                 unchangedSince = modSeq;
             }
@@ -4104,7 +4220,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     {
         if (!TryParseMailboxName(args.Trim(), session.Utf8Enabled, out var mailboxName))
         {
-            await writer.WriteLineAsync($"{tag} BAD Invalid mailbox name");
+            await writer.WriteLineAsync($"{tag} BAD Invalid mailbox name").ConfigureAwait(false);
             return;
         }
 
@@ -4114,38 +4230,38 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             using var scope = scopeFactory.CreateScope();
             var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
             quota = await application.GetQuotaAsync(
-                new ImapQuotaRequest(session.UserId, mailboxName), ct);
+                new ImapQuotaRequest(session.UserId, mailboxName), ct).ConfigureAwait(false);
         }
         catch (Exception exception) when (
             exception is not OperationCanceledException && !ct.IsCancellationRequested)
         {
-            logger.LogWarning(exception, "IMAP quota lookup is unavailable for {UserId}", session.UserId);
-            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Quota unavailable");
+            LogQuotaUnavailable(logger, exception, session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Quota unavailable").ConfigureAwait(false);
             return;
         }
 
         if (!quota.MailboxFound)
         {
-            await writer.WriteLineAsync($"{tag} NO [NONEXISTENT] Mailbox not found");
+            await writer.WriteLineAsync($"{tag} NO [NONEXISTENT] Mailbox not found").ConfigureAwait(false);
             return;
         }
 
         await writer.WriteLineAsync(
-            $"* QUOTAROOT \"{EscapeImapString(FormatWireMailboxName(mailboxName, session.Utf8Enabled))}\" \"\"");
+            $"* QUOTAROOT \"{EscapeImapString(FormatWireMailboxName(mailboxName, session.Utf8Enabled))}\" \"\"").ConfigureAwait(false);
         if (quota.LimitBytes > 0)
             await writer.WriteLineAsync(
-                $"* QUOTA \"\" (STORAGE {ToQuotaStorageUnits(quota.UsedBytes)} {ToQuotaStorageUnits(quota.LimitBytes)})");
+                $"* QUOTA \"\" (STORAGE {ToQuotaStorageUnits(quota.UsedBytes)} {ToQuotaStorageUnits(quota.LimitBytes)})").ConfigureAwait(false);
         else
-            await writer.WriteLineAsync("* QUOTA \"\" ()");
-        await writer.WriteLineAsync($"{tag} OK GETQUOTAROOT completed");
+            await writer.WriteLineAsync("* QUOTA \"\" ()").ConfigureAwait(false);
+        await writer.WriteLineAsync($"{tag} OK GETQUOTAROOT completed").ConfigureAwait(false);
     }
 
     private async Task HandleGetQuotaAsync(
         StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
-        if (!string.Equals(UnquoteArg(args.Trim()), string.Empty, StringComparison.Ordinal))
+        if (!string.IsNullOrEmpty(UnquoteArg(args.Trim())))
         {
-            await writer.WriteLineAsync($"{tag} NO [NONEXISTENT] Quota root not found");
+            await writer.WriteLineAsync($"{tag} NO [NONEXISTENT] Quota root not found").ConfigureAwait(false);
             return;
         }
 
@@ -4154,22 +4270,22 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         {
             using var scope = scopeFactory.CreateScope();
             var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
-            quota = await application.GetQuotaAsync(new ImapQuotaRequest(session.UserId, null), ct);
+            quota = await application.GetQuotaAsync(new ImapQuotaRequest(session.UserId, null), ct).ConfigureAwait(false);
         }
         catch (Exception exception) when (
             exception is not OperationCanceledException && !ct.IsCancellationRequested)
         {
-            logger.LogWarning(exception, "IMAP quota lookup is unavailable for {UserId}", session.UserId);
-            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Quota unavailable");
+            LogQuotaUnavailable(logger, exception, session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Quota unavailable").ConfigureAwait(false);
             return;
         }
 
         if (quota.LimitBytes > 0)
             await writer.WriteLineAsync(
-                $"* QUOTA \"\" (STORAGE {ToQuotaStorageUnits(quota.UsedBytes)} {ToQuotaStorageUnits(quota.LimitBytes)})");
+                $"* QUOTA \"\" (STORAGE {ToQuotaStorageUnits(quota.UsedBytes)} {ToQuotaStorageUnits(quota.LimitBytes)})").ConfigureAwait(false);
         else
-            await writer.WriteLineAsync("* QUOTA \"\" ()");
-        await writer.WriteLineAsync($"{tag} OK GETQUOTA completed");
+            await writer.WriteLineAsync("* QUOTA \"\" ()").ConfigureAwait(false);
+        await writer.WriteLineAsync($"{tag} OK GETQUOTA completed").ConfigureAwait(false);
     }
 
     private static long ToQuotaStorageUnits(long bytes) =>
@@ -4180,7 +4296,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         var (senderLocal, senderDomain) = SplitAddress(email.Sender);
         var (rcptLocal, rcptDomain) = SplitAddress(email.Recipient);
 
-        var date = email.ReceivedAt.ToString("ddd, dd MMM yyyy HH:mm:ss +0000");
+        var date = email.ReceivedAt.ToString("ddd, dd MMM yyyy HH:mm:ss +0000", System.Globalization.CultureInfo.InvariantCulture);
 
         var inReplyTo = string.IsNullOrEmpty(email.InReplyTo)
             ? "NIL"
@@ -4206,7 +4322,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
 
     private static (string local, string domain) SplitAddress(string address)
     {
-        var atIdx = address.IndexOf('@');
+        var atIdx = address.IndexOf('@', StringComparison.Ordinal);
         return atIdx >= 0
             ? (address[..atIdx], address[(atIdx + 1)..])
             : (address, string.Empty);
@@ -4235,7 +4351,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             }
 
             include = false;
-            var colonIdx = line.IndexOf(':');
+            var colonIdx = line.IndexOf(':', StringComparison.Ordinal);
             if (colonIdx > 0)
             {
                 var fieldName = line[..colonIdx].Trim();
@@ -4280,7 +4396,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             }
 
             include = true;
-            var colonIdx = line.IndexOf(':');
+            var colonIdx = line.IndexOf(':', StringComparison.Ordinal);
             if (colonIdx > 0)
             {
                 var fieldName = line[..colonIdx].Trim();
@@ -4322,11 +4438,11 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
 
     private static HashSet<int> SelectSavedSearchUids(
         IReadOnlyCollection<string> returnOptions,
-        IReadOnlyList<ImapSearchMatch> matches)
+        List<ImapSearchMatch> matches)
     {
-        var saveAll = returnOptions.Contains("ALL")
-            || returnOptions.Contains("COUNT")
-            || !returnOptions.Contains("MIN") && !returnOptions.Contains("MAX");
+        var saveAll = returnOptions.Contains("ALL", StringComparer.Ordinal)
+            || returnOptions.Contains("COUNT", StringComparer.Ordinal)
+            || !returnOptions.Contains("MIN", StringComparer.Ordinal) && !returnOptions.Contains("MAX", StringComparer.Ordinal);
         if (saveAll)
             return matches.Select(match => match.Uid).ToHashSet();
 
@@ -4334,9 +4450,9 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         if (matches.Count == 0)
             return saved;
 
-        if (returnOptions.Contains("MIN"))
+        if (returnOptions.Contains("MIN", StringComparer.Ordinal))
             saved.Add(matches[0].Uid);
-        if (returnOptions.Contains("MAX"))
+        if (returnOptions.Contains("MAX", StringComparer.Ordinal))
             saved.Add(matches[^1].Uid);
         return saved;
     }
@@ -4346,8 +4462,8 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         var trimmed = args.TrimStart();
         if (trimmed.StartsWith("RETURN", StringComparison.OrdinalIgnoreCase))
         {
-            var openParen = trimmed.IndexOf('(');
-            var closeParen = trimmed.IndexOf(')');
+            var openParen = trimmed.IndexOf('(', StringComparison.Ordinal);
+            var closeParen = trimmed.IndexOf(')', StringComparison.Ordinal);
             if (openParen >= 0 && closeParen > openParen)
             {
                 var opts = trimmed[(openParen + 1)..closeParen]
@@ -4365,7 +4481,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         long? highestModSequence)
     {
         var parts = new List<string>();
-        var opts = new HashSet<string>(returnOpts.Select(o => o.ToUpperInvariant()));
+        var opts = new HashSet<string>(returnOpts.Select(o => o.ToUpperInvariant()), StringComparer.Ordinal);
 
         // If RETURN () with no opts, default to ALL
         if (opts.Count == 0)
@@ -4388,23 +4504,20 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     private async Task HandleSortAsync(
         StreamWriter writer, string tag, string args, ImapSession session, bool useUid, CancellationToken ct)
     {
-        if (!_searchCommandLimiter.Wait(0))
+        using var slot = _searchCommandLimiter.TryAcquire();
+        if (slot is null)
         {
-            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Too many concurrent search commands");
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Too many concurrent search commands").ConfigureAwait(false);
             return;
         }
 
-        try
-        {
-            await HandleSortCoreAsync(writer, tag, args, session, useUid, ct);
-        }
-        finally
-        {
-            _searchCommandLimiter.Release();
-        }
+        await HandleSortCoreAsync(writer, tag, args, session, useUid, ct).ConfigureAwait(false);
     }
 
+    // Keep the ordered IMAP protocol handler/parser steps together.
+#pragma warning disable MA0051
     private async Task HandleSortCoreAsync(
+#pragma warning restore MA0051
         StreamWriter writer, string tag, string args, ImapSession session, bool useUid, CancellationToken ct)
     {
         if (!TryParseSortArguments(
@@ -4413,7 +4526,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                 out var charset,
                 out var searchCriteria))
         {
-            await writer.WriteLineAsync($"{tag} BAD Syntax error");
+            await writer.WriteLineAsync($"{tag} BAD Syntax error").ConfigureAwait(false);
             return;
         }
 
@@ -4421,7 +4534,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             && !charset.Equals("UTF-8", StringComparison.OrdinalIgnoreCase))
         {
             await writer.WriteLineAsync(
-                $"{tag} NO [BADCHARSET (US-ASCII UTF-8)] Unsupported sort charset");
+                $"{tag} NO [BADCHARSET (US-ASCII UTF-8)] Unsupported sort charset").ConfigureAwait(false);
             return;
         }
 
@@ -4437,7 +4550,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                 session.SavedSearchUids.ToList(),
                 session.Utf8Enabled,
                 charset,
-                sortCriteria.ToList()), ct);
+                sortCriteria.ToList()), ct).ConfigureAwait(false);
             if (sortResult is null
                 || sortResult.SortedMatches is null
                 || sortResult.HighestModSequence is < 0
@@ -4464,19 +4577,19 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         catch (Exception exception) when (
             exception is not OperationCanceledException && !ct.IsCancellationRequested)
         {
-            logger.LogWarning(exception, "IMAP SORT unavailable for {UserId}", session.UserId);
-            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] SORT backend unavailable");
+            LogSortUnavailable(logger, exception, session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] SORT backend unavailable").ConfigureAwait(false);
             return;
         }
 
         if (!sortResult.FolderFound)
         {
-            await writer.WriteLineAsync($"{tag} NO Mailbox not found");
+            await writer.WriteLineAsync($"{tag} NO Mailbox not found").ConfigureAwait(false);
             return;
         }
         if (sortResult.FailureResponse is not null)
         {
-            await writer.WriteLineAsync($"{tag} {sortResult.FailureResponse}");
+            await writer.WriteLineAsync($"{tag} {sortResult.FailureResponse}").ConfigureAwait(false);
             return;
         }
 
@@ -4486,30 +4599,27 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         var modSequenceSuffix = sortResult.HighestModSequence is { } highestModSequence
             ? $" (MODSEQ {highestModSequence})"
             : string.Empty;
-        await writer.WriteLineAsync($"* SORT{resultSuffix}{modSequenceSuffix}");
-        await writer.WriteLineAsync($"{tag} OK {(useUid ? "UID SORT" : "SORT")} completed");
+        await writer.WriteLineAsync($"* SORT{resultSuffix}{modSequenceSuffix}").ConfigureAwait(false);
+        await writer.WriteLineAsync($"{tag} OK {(useUid ? "UID SORT" : "SORT")} completed").ConfigureAwait(false);
     }
 
     private async Task HandleThreadAsync(
         StreamWriter writer, string tag, string args, ImapSession session, bool useUid, CancellationToken ct)
     {
-        if (!_searchCommandLimiter.Wait(0))
+        using var slot = _searchCommandLimiter.TryAcquire();
+        if (slot is null)
         {
-            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Too many concurrent search commands");
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Too many concurrent search commands").ConfigureAwait(false);
             return;
         }
 
-        try
-        {
-            await HandleThreadCoreAsync(writer, tag, args, session, useUid, ct);
-        }
-        finally
-        {
-            _searchCommandLimiter.Release();
-        }
+        await HandleThreadCoreAsync(writer, tag, args, session, useUid, ct).ConfigureAwait(false);
     }
 
+    // Keep the ordered IMAP protocol handler/parser steps together.
+#pragma warning disable MA0051
     private async Task HandleThreadCoreAsync(
+#pragma warning restore MA0051
         StreamWriter writer, string tag, string args, ImapSession session, bool useUid, CancellationToken ct)
     {
         if (!TryParseThreadArguments(
@@ -4518,20 +4628,20 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                 out var charset,
                 out var searchCriteria))
         {
-            await writer.WriteLineAsync($"{tag} BAD Syntax error");
+            await writer.WriteLineAsync($"{tag} BAD Syntax error").ConfigureAwait(false);
             return;
         }
 
         if (algorithm is not "REFERENCES" and not "ORDEREDSUBJECT")
         {
-            await writer.WriteLineAsync($"{tag} BAD Unknown threading algorithm");
+            await writer.WriteLineAsync($"{tag} BAD Unknown threading algorithm").ConfigureAwait(false);
             return;
         }
         if (!charset.Equals("US-ASCII", StringComparison.OrdinalIgnoreCase)
             && !charset.Equals("UTF-8", StringComparison.OrdinalIgnoreCase))
         {
             await writer.WriteLineAsync(
-                $"{tag} NO [BADCHARSET (US-ASCII UTF-8)] Unsupported thread charset");
+                $"{tag} NO [BADCHARSET (US-ASCII UTF-8)] Unsupported thread charset").ConfigureAwait(false);
             return;
         }
 
@@ -4548,10 +4658,10 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                 session.SavedSearchUids.ToList(),
                 session.Utf8Enabled,
                 charset,
-                algorithm == "REFERENCES"
+                string.Equals(algorithm, "REFERENCES", StringComparison.Ordinal)
                     ? ImapThreadAlgorithm.References
                     : ImapThreadAlgorithm.OrderedSubject,
-                useUid), ct);
+                useUid), ct).ConfigureAwait(false);
             if (threadResult is null
                 || threadResult.Nodes is null
                 || !threadResult.FolderFound
@@ -4570,31 +4680,31 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         catch (Exception exception) when (
             exception is not OperationCanceledException && !ct.IsCancellationRequested)
         {
-            logger.LogWarning(exception, "IMAP THREAD unavailable for {UserId}", session.UserId);
-            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] THREAD backend unavailable");
+            LogThreadUnavailable(logger, exception, session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] THREAD backend unavailable").ConfigureAwait(false);
             return;
         }
 
         if (!threadResult.FolderFound)
         {
-            await writer.WriteLineAsync($"{tag} NO Mailbox not found");
+            await writer.WriteLineAsync($"{tag} NO Mailbox not found").ConfigureAwait(false);
             return;
         }
         if (threadResult.FailureResponse is not null)
         {
-            await writer.WriteLineAsync($"{tag} {threadResult.FailureResponse}");
+            await writer.WriteLineAsync($"{tag} {threadResult.FailureResponse}").ConfigureAwait(false);
             return;
         }
 
         var responseSuffix = threads.Length == 0 ? string.Empty : $" {threads}";
-        await writer.WriteLineAsync($"* THREAD{responseSuffix}");
+        await writer.WriteLineAsync($"* THREAD{responseSuffix}").ConfigureAwait(false);
         await writer.WriteLineAsync(
-            $"{tag} OK {(useUid ? "UID THREAD" : "THREAD")} completed");
+            $"{tag} OK {(useUid ? "UID THREAD" : "THREAD")} completed").ConfigureAwait(false);
     }
 
     private static bool TryParseSortArguments(
         string args,
-        out IReadOnlyList<ImapSortCriterion> criteria,
+        out List<ImapSortCriterion> criteria,
         out string charset,
         out string searchCriteria)
     {
@@ -4605,7 +4715,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         var value = args.TrimStart(' ');
         if (value.Length < 3 || value[0] != '(')
             return false;
-        var closeParen = value.IndexOf(')');
+        var closeParen = value.IndexOf(')', StringComparison.Ordinal);
         if (closeParen <= 1
             || closeParen + 1 >= value.Length
             || value[closeParen + 1] != ' '
@@ -4659,7 +4769,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         searchCriteria = string.Empty;
 
         var value = args.TrimStart(' ');
-        var separator = value.IndexOf(' ');
+        var separator = value.IndexOf(' ', StringComparison.Ordinal);
         if (separator <= 0)
             return false;
 
@@ -4670,7 +4780,10 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             out searchCriteria);
     }
 
+    // Keep the ordered IMAP protocol handler/parser steps together.
+#pragma warning disable MA0051
     private static bool TryReadCharsetAndSearchCriteria(
+#pragma warning restore MA0051
         string value,
         out string charset,
         out string searchCriteria)
@@ -4737,13 +4850,19 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         return true;
     }
 
-    private static string RenderThreadNodes(IReadOnlyList<ImapThreadNode> nodes)
+    // Keep the ordered IMAP protocol handler/parser steps together.
+#pragma warning disable MA0051
+    private static string RenderThreadNodes(List<ImapThreadNode> nodes)
+#pragma warning restore MA0051
     {
         var children = new List<int>[nodes.Count];
         var roots = new List<int>();
         var identifiers = new HashSet<int>();
+        // Indexes are graph identifiers; foreach cannot assign the parallel child array.
+#pragma warning disable HLQ013
         for (var index = 0; index < nodes.Count; index++)
             children[index] = [];
+#pragma warning restore HLQ013
 
         for (var index = 0; index < nodes.Count; index++)
         {
@@ -4763,7 +4882,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         }
 
         var result = new StringBuilder();
-        foreach (var root in roots)
+        foreach (ref readonly var root in CollectionsMarshal.AsSpan(roots))
         {
             var actions = new Stack<(int Index, bool Close)>();
             actions.Push((root, false));
@@ -4812,7 +4931,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         StreamWriter writer, string tag, string uidSetArg, ImapSession session, CancellationToken ct)
     {
         ImapUidSelection selection;
-        if (uidSetArg == "$")
+        if (string.Equals(uidSetArg, "$", StringComparison.Ordinal))
         {
             selection = new ImapUidSelection(null, session.SavedSearchUids.ToList());
         }
@@ -4823,22 +4942,22 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         }
         else
         {
-            await writer.WriteLineAsync($"{tag} BAD Invalid message set");
+            await writer.WriteLineAsync($"{tag} BAD Invalid message set").ConfigureAwait(false);
             return;
         }
 
         var result = await TryExpungeDeletedAsync(
-            writer, tag, "UID EXPUNGE", session, ct, selection);
+            writer, tag, "UID EXPUNGE", session, ct, selection).ConfigureAwait(false);
         if (result is null)
             return;
         if (!result.FolderFound)
         {
-            await writer.WriteLineAsync($"{tag} NO Mailbox not found");
+            await writer.WriteLineAsync($"{tag} NO Mailbox not found").ConfigureAwait(false);
             return;
         }
 
-        await WriteExpungeMessagesAsync(writer, session, result);
-        await writer.WriteLineAsync($"{tag} OK UID EXPUNGE completed");
+        await WriteExpungeMessagesAsync(writer, session, result).ConfigureAwait(false);
+        await writer.WriteLineAsync($"{tag} OK UID EXPUNGE completed").ConfigureAwait(false);
     }
 
     private async Task HandleMoveAsync(
@@ -4848,7 +4967,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         ImapSession session,
         CancellationToken ct)
     {
-        await HandleMoveCoreAsync(writer, tag, args, session, useUid: false, ct);
+        await HandleMoveCoreAsync(writer, tag, args, session, useUid: false, ct).ConfigureAwait(false);
     }
 
     private async Task HandleUidMoveAsync(
@@ -4858,7 +4977,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         ImapSession session,
         CancellationToken ct)
     {
-        await HandleMoveCoreAsync(writer, tag, args, session, useUid: true, ct);
+        await HandleMoveCoreAsync(writer, tag, args, session, useUid: true, ct).ConfigureAwait(false);
     }
 
     private async Task HandleMoveCoreAsync(
@@ -4869,22 +4988,22 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         bool useUid,
         CancellationToken ct)
     {
-        var spaceIdx = args.IndexOf(' ');
+        var spaceIdx = args.IndexOf(' ', StringComparison.Ordinal);
         if (spaceIdx <= 0)
         {
-            await writer.WriteLineAsync($"{tag} BAD Syntax error");
+            await writer.WriteLineAsync($"{tag} BAD Syntax error").ConfigureAwait(false);
             return;
         }
 
         var messageSet = args[..spaceIdx];
         if (!TryParseMailboxName(args[(spaceIdx + 1)..].Trim(), session.Utf8Enabled, out var destMailbox))
         {
-            await writer.WriteLineAsync($"{tag} BAD Invalid destination mailbox name");
+            await writer.WriteLineAsync($"{tag} BAD Invalid destination mailbox name").ConfigureAwait(false);
             return;
         }
 
         ImapMessageSelection selection;
-        if (messageSet == "$")
+        if (string.Equals(messageSet, "$", StringComparison.Ordinal))
         {
             selection = new ImapMessageSelection(null, session.SavedSearchUids.ToList());
         }
@@ -4896,7 +5015,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         }
         else
         {
-            await writer.WriteLineAsync($"{tag} BAD Invalid message set");
+            await writer.WriteLineAsync($"{tag} BAD Invalid message set").ConfigureAwait(false);
             return;
         }
 
@@ -4908,20 +5027,22 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
             var result = await application.MoveMessagesAsync(new ImapMoveRequest(
                 session.UserId, session.SelectedFolderId!.Value,
-                destMailbox, useUid, selection), ct);
+                destMailbox, useUid, selection), ct).ConfigureAwait(false);
             responseLines = BuildMoveResponseLines(tag, commandName, result, session.QresyncEnabled);
         }
         catch (Exception exception) when (
             exception is not OperationCanceledException && !ct.IsCancellationRequested)
         {
-            logger.LogWarning(exception, "IMAP {Command} is unavailable for {UserId}",
-                commandName, session.UserId);
-            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] {commandName} backend unavailable");
+            LogCommandUnavailable(logger, exception, commandName, session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] {commandName} backend unavailable").ConfigureAwait(false);
             return;
         }
 
+        // This protocol loop awaits I/O; a list span cannot cross suspension.
+#pragma warning disable HLQ012
         foreach (var line in responseLines)
-            await writer.WriteLineAsync(line);
+#pragma warning restore HLQ012
+            await writer.WriteLineAsync(line).ConfigureAwait(false);
     }
 
     private static List<string> BuildMoveResponseLines(
@@ -4988,40 +5109,37 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         CancellationTokenSource timeout,
         int connectionTimeoutSeconds)
     {
-        if (!_messageWriteCommandLimiter.Wait(0))
+        using var slot = _messageWriteCommandLimiter.TryAcquire();
+        if (slot is null)
         {
             if (NonSynchronizingLiteralRegex().IsMatch(args))
             {
-                await writer.WriteLineAsync("* BYE Too many concurrent APPEND commands");
+                await writer.WriteLineAsync("* BYE Too many concurrent APPEND commands").ConfigureAwait(false);
                 session.State = ImapState.Logout;
             }
             else
             {
-                await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Too many concurrent APPEND commands");
+                await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] Too many concurrent APPEND commands").ConfigureAwait(false);
             }
 
             return;
         }
 
-        try
-        {
-            await HandleAppendCoreAsync(
-                reader,
-                writer,
-                tag,
-                args,
-                session,
-                maximumMessageSize,
-                timeout,
-                connectionTimeoutSeconds);
-        }
-        finally
-        {
-            _messageWriteCommandLimiter.Release();
-        }
+        await HandleAppendCoreAsync(
+            reader,
+            writer,
+            tag,
+            args,
+            session,
+            maximumMessageSize,
+            timeout,
+            connectionTimeoutSeconds).ConfigureAwait(false);
     }
 
+    // Keep the ordered IMAP protocol handler/parser steps together.
+#pragma warning disable MA0051
     private async Task HandleAppendCoreAsync(
+#pragma warning restore MA0051
         BoundedLineReader reader,
         StreamWriter writer,
         string tag,
@@ -5050,7 +5168,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             {
                 if (pendingMessages.Count == 0)
                 {
-                    await writer.WriteLineAsync($"{tag} BAD Syntax error");
+                    await writer.WriteLineAsync($"{tag} BAD Syntax error").ConfigureAwait(false);
                     return;
                 }
                 break;
@@ -5065,7 +5183,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                     tag,
                     session,
                     isLiteralPlus,
-                    $"[CANNOT] {flagFailure}");
+                    $"[CANNOT] {flagFailure}").ConfigureAwait(false);
                 return;
             }
 
@@ -5080,7 +5198,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                     tag,
                     session,
                     isLiteralPlus,
-                    "[LIMIT] APPEND contains too many keywords");
+                    "[LIMIT] APPEND contains too many keywords").ConfigureAwait(false);
                 return;
             }
 
@@ -5091,7 +5209,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                     tag,
                     session,
                     isLiteralPlus,
-                    "[LIMIT] APPEND contains too many messages");
+                    "[LIMIT] APPEND contains too many messages").ConfigureAwait(false);
                 return;
             }
 
@@ -5102,7 +5220,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                     tag,
                     session,
                     isLiteralPlus,
-                    "APPEND requires a non-empty message");
+                    "APPEND requires a non-empty message").ConfigureAwait(false);
                 return;
             }
 
@@ -5115,7 +5233,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                     tag,
                     session,
                     isLiteralPlus,
-                    "[TOOBIG] APPEND exceeds the command size limit");
+                    "[TOOBIG] APPEND exceeds the command size limit").ConfigureAwait(false);
                 return;
             }
 
@@ -5125,16 +5243,15 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             {
                 preflight = await application.CheckAppendCapacityAsync(
                     new ImapAppendPreflightRequest(
-                        session.UserId, targetMailbox, nextPendingBytes), ct);
+                        session.UserId, targetMailbox, nextPendingBytes), ct).ConfigureAwait(false);
             }
             catch (Exception exception) when (
                 exception is not OperationCanceledException && !ct.IsCancellationRequested)
             {
-                logger.LogWarning(exception, "IMAP APPEND preflight unavailable for {UserId}",
-                    session.UserId);
+                LogAppendPreflightUnavailable(logger, exception, session.UserId);
                 await RejectAppendBeforeLiteralAsync(
                     writer, tag, session, isLiteralPlus,
-                    "[UNAVAILABLE] APPEND backend unavailable");
+                    "[UNAVAILABLE] APPEND backend unavailable").ConfigureAwait(false);
                 return;
             }
 
@@ -5142,7 +5259,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             {
                 await RejectAppendBeforeLiteralAsync(
                     writer, tag, session, isLiteralPlus,
-                    "[TRYCREATE] Mailbox not found");
+                    "[TRYCREATE] Mailbox not found").ConfigureAwait(false);
                 return;
             }
             if (preflight?.Disposition == ImapAppendPreflightDisposition.OverQuota)
@@ -5152,33 +5269,33 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                     tag,
                     session,
                     isLiteralPlus,
-                    "[OVERQUOTA] APPEND exceeds the mailbox quota");
+                    "[OVERQUOTA] APPEND exceeds the mailbox quota").ConfigureAwait(false);
                 return;
             }
             if (preflight?.Disposition != ImapAppendPreflightDisposition.Ready)
             {
                 await RejectAppendBeforeLiteralAsync(
                     writer, tag, session, isLiteralPlus,
-                    "[UNAVAILABLE] APPEND backend unavailable");
+                    "[UNAVAILABLE] APPEND backend unavailable").ConfigureAwait(false);
                 return;
             }
 
             if (!isLiteralPlus)
-                await writer.WriteLineAsync("+ Ready for literal data");
+                await writer.WriteLineAsync("+ Ready for literal data").ConfigureAwait(false);
 
             var buffer = new char[literalSize.Value];
             var totalRead = 0;
             while (totalRead < literalSize.Value)
             {
                 timeout.CancelAfter(TimeSpan.FromSeconds(connectionTimeoutSeconds));
-                var read = await reader.ReadAsync(buffer.AsMemory(totalRead, literalSize.Value - totalRead), ct);
+                var read = await reader.ReadAsync(buffer.AsMemory(totalRead, literalSize.Value - totalRead), ct).ConfigureAwait(false);
                 if (read == 0)
                     throw new EndOfStreamException("The APPEND literal ended before its declared size.");
                 totalRead += read;
             }
 
             var messageData = new string(buffer, 0, totalRead);
-            if (messageData.Contains('\0'))
+            if (messageData.Contains('\0', StringComparison.Ordinal))
             {
                 if (!await ConsumeRejectedAppendRemainderAsync(
                         reader,
@@ -5186,14 +5303,14 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                         session,
                         timeout,
                         connectionTimeoutSeconds,
-                        ct))
+                        ct).ConfigureAwait(false))
                 {
                     return;
                 }
                 var response = isLiteral8
                     ? "[UNKNOWN-CTE] Binary APPEND storage is not supported"
                     : "APPEND content contains a NUL byte";
-                await writer.WriteLineAsync($"{tag} NO {response}");
+                await writer.WriteLineAsync($"{tag} NO {response}").ConfigureAwait(false);
                 return;
             }
 
@@ -5209,11 +5326,11 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                         session,
                         timeout,
                         connectionTimeoutSeconds,
-                        ct))
+                        ct).ConfigureAwait(false))
                 {
                     return;
                 }
-                await writer.WriteLineAsync($"{tag} NO [CANNOT] {utf8Failure}");
+                await writer.WriteLineAsync($"{tag} NO [CANNOT] {utf8Failure}").ConfigureAwait(false);
                 return;
             }
 
@@ -5225,10 +5342,10 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             pendingBytes = nextPendingBytes;
 
             timeout.CancelAfter(TimeSpan.FromSeconds(connectionTimeoutSeconds));
-            var nextLineResult = await reader.ReadLineAsync(MaximumCommandLineCharacters, ct);
+            var nextLineResult = await reader.ReadLineAsync(MaximumCommandLineCharacters, ct).ConfigureAwait(false);
             if (nextLineResult.IsTooLong)
             {
-                await writer.WriteLineAsync("* BYE APPEND continuation is too long");
+                await writer.WriteLineAsync("* BYE APPEND continuation is too long").ConfigureAwait(false);
                 session.State = ImapState.Logout;
                 return;
             }
@@ -5240,7 +5357,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                 && !nextLine.TrimStart().StartsWith('{')
                 && !nextLine.TrimStart().StartsWith("~{", StringComparison.Ordinal))
             {
-                await writer.WriteLineAsync($"{tag} BAD Invalid APPEND continuation");
+                await writer.WriteLineAsync($"{tag} BAD Invalid APPEND continuation").ConfigureAwait(false);
                 return;
             }
 
@@ -5252,7 +5369,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         try
         {
             result = await application.AppendMessagesAsync(new ImapAppendRequest(
-                session.UserId, targetMailbox!, session.Utf8Enabled, pendingMessages), ct);
+                session.UserId, targetMailbox!, session.Utf8Enabled, pendingMessages), ct).ConfigureAwait(false);
             if (!Enum.IsDefined(result.Disposition)
                 || result.Uids is null
                 || result.Disposition == ImapAppendDisposition.Appended
@@ -5270,29 +5387,29 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         catch (Exception exception) when (
             exception is not OperationCanceledException && !ct.IsCancellationRequested)
         {
-            logger.LogWarning(exception, "IMAP APPEND unavailable for {UserId}", session.UserId);
-            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] APPEND backend unavailable");
+            LogAppendUnavailable(logger, exception, session.UserId);
+            await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] APPEND backend unavailable").ConfigureAwait(false);
             return;
         }
 
         switch (result.Disposition)
         {
             case ImapAppendDisposition.MailboxNotFound:
-                await writer.WriteLineAsync($"{tag} NO [TRYCREATE] Mailbox not found");
+                await writer.WriteLineAsync($"{tag} NO [TRYCREATE] Mailbox not found").ConfigureAwait(false);
                 break;
             case ImapAppendDisposition.OverQuota:
-                await writer.WriteLineAsync($"{tag} NO [OVERQUOTA] APPEND exceeds the mailbox quota");
+                await writer.WriteLineAsync($"{tag} NO [OVERQUOTA] APPEND exceeds the mailbox quota").ConfigureAwait(false);
                 break;
             case ImapAppendDisposition.InvalidFlags:
-                await writer.WriteLineAsync($"{tag} NO [LIMIT] APPEND flags are invalid");
+                await writer.WriteLineAsync($"{tag} NO [LIMIT] APPEND flags are invalid").ConfigureAwait(false);
                 break;
             case ImapAppendDisposition.InvalidContent:
-                await writer.WriteLineAsync($"{tag} NO [CANNOT] APPEND content is invalid");
+                await writer.WriteLineAsync($"{tag} NO [CANNOT] APPEND content is invalid").ConfigureAwait(false);
                 break;
             case ImapAppendDisposition.Appended:
                 var uidSetStr = FormatUidRange(result.Uids);
                 await writer.WriteLineAsync(
-                    $"{tag} OK [APPENDUID {result.UidValidity} {uidSetStr}] APPEND completed");
+                    $"{tag} OK [APPENDUID {result.UidValidity} {uidSetStr}] APPEND completed").ConfigureAwait(false);
                 break;
         }
     }
@@ -5346,10 +5463,10 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         CancellationToken ct)
     {
         timeout.CancelAfter(TimeSpan.FromSeconds(connectionTimeoutSeconds));
-        var remainder = await reader.ReadLineAsync(MaximumCommandLineCharacters, ct);
+        var remainder = await reader.ReadLineAsync(MaximumCommandLineCharacters, ct).ConfigureAwait(false);
         if (remainder.IsTooLong)
         {
-            await writer.WriteLineAsync("* BYE APPEND continuation is too long");
+            await writer.WriteLineAsync("* BYE APPEND continuation is too long").ConfigureAwait(false);
             session.State = ImapState.Logout;
             return false;
         }
@@ -5362,7 +5479,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
 
         if (remainder.Value.Length > 0)
         {
-            await writer.WriteLineAsync("* BYE APPEND rejected with pending continuation data");
+            await writer.WriteLineAsync("* BYE APPEND rejected with pending continuation data").ConfigureAwait(false);
             session.State = ImapState.Logout;
             return false;
         }
@@ -5379,20 +5496,25 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     {
         if (isLiteralPlus)
         {
-            await writer.WriteLineAsync($"* BYE {response}");
+            await writer.WriteLineAsync($"* BYE {response}").ConfigureAwait(false);
             session.State = ImapState.Logout;
             return;
         }
 
-        await writer.WriteLineAsync($"{tag} NO {response}");
+        await writer.WriteLineAsync($"{tag} NO {response}").ConfigureAwait(false);
     }
 
-    [GeneratedRegex(@"\{\d+\+\}\s*$")]
+    [GeneratedRegex(@"\{\d+\+\}\s*$", RegexOptions.None, 100)]
     private static partial Regex NonSynchronizingLiteralRegex();
 
-    [GeneratedRegex(@"\{([0-9]+)(\+)?\}$")]
+    // The literal parser consumes both numeric captures by index.
+#pragma warning disable MA0023
+    [GeneratedRegex(@"\{([0-9]+)(\+)?\}$", RegexOptions.None, 100)]
     private static partial Regex CommandLiteralRegex();
+#pragma warning restore MA0023
 
+    // Preserve the complete APPEND literal grammar and rejection order.
+#pragma warning disable MA0051
     private static (
         string? mailboxName,
         List<string> flags,
@@ -5400,6 +5522,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         int? literalSize,
         bool isLiteral8,
         bool isLiteralPlus) ParseAppendArgs(
+#pragma warning restore MA0051
         string args,
         bool utf8Enabled)
     {
@@ -5422,13 +5545,13 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             if (token.StartsWith('('))
             {
                 var flagStr = token.TrimStart('(').TrimEnd(')');
-                if (!token.Contains(')'))
+                if (!token.Contains(')', StringComparison.Ordinal))
                 {
                     while (i + 1 < tokens.Count)
                     {
                         i++;
                         flagStr += " " + tokens[i].TrimEnd(')');
-                        if (tokens[i].Contains(')')) break;
+                        if (tokens[i].Contains(')', StringComparison.Ordinal)) break;
                     }
                 }
                 flags.AddRange(flagStr.Split(' ', StringSplitOptions.RemoveEmptyEntries));
@@ -5438,7 +5561,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             {
                 var literalValue = token[(token[0] == '~' ? 2 : 1)..^1];
                 isLiteralPlus = literalValue.EndsWith('+');
-                if (int.TryParse(literalValue.TrimEnd('+'), out var size))
+                if (int.TryParse(literalValue.TrimEnd('+'), System.Globalization.CultureInfo.InvariantCulture, out var size))
                 {
                     literalSize = size;
                     isLiteral8 = token[0] == '~';
@@ -5446,7 +5569,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             }
             else if (token.StartsWith('"') || char.IsDigit(token[0]))
             {
-                if (DateTime.TryParse(UnquoteArg(token), out var dt))
+                if (DateTime.TryParse(UnquoteArg(token), System.Globalization.CultureInfo.InvariantCulture, out var dt))
                     internalDate = dt;
             }
         }
@@ -5459,7 +5582,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             {
                 var literalValue = args[(braceIdx + 1)..braceEnd];
                 isLiteralPlus = literalValue.EndsWith('+');
-                if (int.TryParse(literalValue.TrimEnd('+'), out var size))
+                if (int.TryParse(literalValue.TrimEnd('+'), System.Globalization.CultureInfo.InvariantCulture, out var size))
                 {
                     literalSize = size;
                     isLiteral8 = braceIdx > 0 && args[braceIdx - 1] == '~';
@@ -5470,7 +5593,10 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         return (mailboxName, flags, internalDate, literalSize, isLiteral8, isLiteralPlus);
     }
 
+    // Keep the ordered IMAP protocol handler/parser steps together.
+#pragma warning disable MA0051
     private async Task HandleIdleAsync(
+#pragma warning restore MA0051
         BoundedLineReader reader, StreamWriter writer, string tag,
         ImapSession session, CancellationTokenSource timeout, int connectionTimeoutSeconds)
     {
@@ -5482,7 +5608,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             try
             {
                 var initial = await GetIdleSnapshotAsync(
-                    session.UserId, session.SelectedFolderId.Value, timeout.Token);
+                    session.UserId, session.SelectedFolderId.Value, timeout.Token).ConfigureAwait(false);
                 ValidateIdleSnapshot(initial);
                 knownMessages = initial.Messages;
                 lastKnownModSeq = initial.HighestModSeq;
@@ -5490,28 +5616,28 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             catch (Exception exception) when (
                 exception is not OperationCanceledException && !timeout.IsCancellationRequested)
             {
-                logger.LogWarning(exception, "IMAP IDLE initialization is unavailable for {UserId}", session.UserId);
-                await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] IDLE backend unavailable");
+                LogIdleInitializationUnavailable(logger, exception, session.UserId);
+                await writer.WriteLineAsync($"{tag} NO [UNAVAILABLE] IDLE backend unavailable").ConfigureAwait(false);
                 return;
             }
         }
 
-        await writer.WriteLineAsync("+ idling");
+        await writer.WriteLineAsync("+ idling").ConfigureAwait(false);
         timeout.CancelAfter(TimeSpan.FromMinutes(30));
 
         var backendUnavailableLogged = false;
         var readTask = reader.ReadLineAsync(MaximumCommandLineCharacters, timeout.Token).AsTask();
         while (!timeout.IsCancellationRequested)
         {
-            var completed = await Task.WhenAny(readTask, Task.Delay(TimeSpan.FromSeconds(5), timeout.Token));
+            var completed = await Task.WhenAny(readTask, Task.Delay(TimeSpan.FromSeconds(5), timeout.Token)).ConfigureAwait(false);
 
             if (completed == readTask)
             {
-                var lineResult = await readTask;
+                var lineResult = await readTask.ConfigureAwait(false);
                 if (lineResult.IsTooLong)
                 {
                     timeout.CancelAfter(TimeSpan.FromSeconds(connectionTimeoutSeconds));
-                    await writer.WriteLineAsync($"{tag} BAD IDLE terminator is too long");
+                    await writer.WriteLineAsync($"{tag} BAD IDLE terminator is too long").ConfigureAwait(false);
                     return;
                 }
                 var line = lineResult.Value;
@@ -5521,12 +5647,12 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                 if (line.Equals("DONE", StringComparison.OrdinalIgnoreCase))
                 {
                     timeout.CancelAfter(TimeSpan.FromSeconds(connectionTimeoutSeconds));
-                    await writer.WriteLineAsync($"{tag} OK IDLE terminated");
+                    await writer.WriteLineAsync($"{tag} OK IDLE terminated").ConfigureAwait(false);
                     return;
                 }
 
                 timeout.CancelAfter(TimeSpan.FromSeconds(connectionTimeoutSeconds));
-                await writer.WriteLineAsync($"{tag} BAD IDLE requires DONE");
+                await writer.WriteLineAsync($"{tag} BAD IDLE requires DONE").ConfigureAwait(false);
                 return;
             }
             else if (session.SelectedFolderId is not null)
@@ -5537,7 +5663,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                 try
                 {
                     var snapshot = await GetIdleSnapshotAsync(
-                        session.UserId, session.SelectedFolderId.Value, timeout.Token);
+                        session.UserId, session.SelectedFolderId.Value, timeout.Token).ConfigureAwait(false);
                     ValidateIdleSnapshot(snapshot);
                     currentMessages = snapshot.Messages;
                     currentModSeq = snapshot.HighestModSeq;
@@ -5587,10 +5713,11 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
 
                         if (changed.Count > 0)
                         {
-                            foreach (var email in changed)
+                            foreach (ref readonly var email in CollectionsMarshal.AsSpan(changed))
                             {
+                                var emailId = email.Id;
                                 var seqIdx = currentMessages.FindIndex(
-                                    candidate => candidate.Id == email.Id);
+                                    candidate => candidate.Id == emailId);
                                 if (seqIdx >= 0)
                                 {
                                     var seqNum = seqIdx + 1;
@@ -5611,18 +5738,24 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                 {
                     break;
                 }
+                // IDLE polling reports a backend failure once and remains available for recovery.
+#pragma warning disable CA1031
                 catch (Exception exception)
+#pragma warning restore CA1031
                 {
                     if (!backendUnavailableLogged)
                     {
-                        logger.LogWarning(exception, "IMAP IDLE polling is unavailable for {UserId}", session.UserId);
+                        LogIdlePollingUnavailable(logger, exception, session.UserId);
                         backendUnavailableLogged = true;
                     }
                     continue;
                 }
 
+                // This protocol loop awaits I/O; a list span cannot cross suspension.
+#pragma warning disable HLQ012
                 foreach (var responseLine in responseLines)
-                    await writer.WriteLineAsync(responseLine);
+#pragma warning restore HLQ012
+                    await writer.WriteLineAsync(responseLine).ConfigureAwait(false);
                 if (currentModSeq > lastKnownModSeq)
                     lastKnownModSeq = currentModSeq;
                 knownMessages = currentMessages;
@@ -5639,7 +5772,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         using var scope = scopeFactory.CreateScope();
         var application = scope.ServiceProvider.GetRequiredService<IImapApplicationService>();
         return await application.GetIdleSnapshotAsync(
-            new ImapIdleSnapshotRequest(userId, folderId), cancellationToken);
+            new ImapIdleSnapshotRequest(userId, folderId), cancellationToken).ConfigureAwait(false);
     }
 
     private static void ValidateIdleSnapshot(ImapIdleSnapshotResult snapshot)
@@ -5657,12 +5790,111 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         }
     }
 
+    [LoggerMessage(EventId = 1000, Level = LogLevel.Warning, Message = "No IMAP listeners are enabled.")]
+    private static partial void LogNoListeners(ILogger logger);
+
+    [LoggerMessage(EventId = 1001, Level = LogLevel.Information, Message = "IMAP {Mode} listener started on port {Port}")]
+    private static partial void LogListenerStarted(ILogger logger, ListenerMode mode, int port);
+
+    [LoggerMessage(EventId = 1002, Level = LogLevel.Information, Message = "IMAP {Mode} listener on port {Port} stopped.")]
+    private static partial void LogListenerStopped(ILogger logger, ListenerMode mode, int port);
+
+    [LoggerMessage(EventId = 1003, Level = LogLevel.Warning, Message = "Rejected IMAP connection from {Endpoint}: connection limit")]
+    private static partial void LogConnectionRejected(ILogger logger, string endpoint);
+
+    [LoggerMessage(EventId = 1004, Level = LogLevel.Debug, Message = "IMAP connection from {Endpoint} timed out")]
+    private static partial void LogConnectionTimedOut(ILogger logger, string endpoint);
+
+    [LoggerMessage(EventId = 1005, Level = LogLevel.Warning, Message = "Error handling IMAP connection from {Endpoint}")]
+    private static partial void LogConnectionError(ILogger logger, Exception exception, string endpoint);
+
+    [LoggerMessage(EventId = 1006, Level = LogLevel.Warning, Message = "IMAP password authentication service is unavailable")]
+    private static partial void LogPasswordAuthenticationUnavailable(ILogger logger, Exception exception);
+
+    [LoggerMessage(EventId = 1007, Level = LogLevel.Warning, Message = "IMAP OAuth authentication service is unavailable")]
+    private static partial void LogOAuthAuthenticationUnavailable(ILogger logger, Exception exception);
+
+    [LoggerMessage(EventId = 1008, Level = LogLevel.Warning, Message = "IMAP SASL password authentication service is unavailable")]
+    private static partial void LogSaslAuthenticationUnavailable(ILogger logger, Exception exception);
+
+    [LoggerMessage(EventId = 1009, Level = LogLevel.Warning, Message = "Mail authentication failed for protocol IMAP from {RemoteIp}")]
+    private static partial void LogAuthenticationFailure(ILogger logger, string remoteIp);
+
+    [LoggerMessage(EventId = 1010, Level = LogLevel.Warning, Message = "IMAP mailbox listing is unavailable for {UserId}")]
+    private static partial void LogMailboxListingUnavailable(ILogger logger, Exception exception, Guid userId);
+
+    [LoggerMessage(EventId = 1011, Level = LogLevel.Warning, Message = "IMAP LIST-STATUS is unavailable for {UserId}")]
+    private static partial void LogListStatusUnavailable(ILogger logger, Exception exception, Guid userId);
+
+    [LoggerMessage(EventId = 1012, Level = LogLevel.Warning, Message = "IMAP subscribed mailbox listing is unavailable for {UserId}")]
+    private static partial void LogSubscribedListingUnavailable(ILogger logger, Exception exception, Guid userId);
+
+    [LoggerMessage(EventId = 1013, Level = LogLevel.Warning, Message = "IMAP mailbox selection is unavailable for {UserId}")]
+    private static partial void LogMailboxSelectionUnavailable(ILogger logger, Exception exception, Guid userId);
+
+    [LoggerMessage(EventId = 1014, Level = LogLevel.Warning, Message = "IMAP mailbox creation is unavailable for {UserId}")]
+    private static partial void LogMailboxCreationUnavailable(ILogger logger, Exception exception, Guid userId);
+
+    [LoggerMessage(EventId = 1015, Level = LogLevel.Warning, Message = "IMAP mailbox deletion is unavailable for {UserId}")]
+    private static partial void LogMailboxDeletionUnavailable(ILogger logger, Exception exception, Guid userId);
+
+    [LoggerMessage(EventId = 1016, Level = LogLevel.Warning, Message = "IMAP mailbox rename is unavailable for {UserId}")]
+    private static partial void LogMailboxRenameUnavailable(ILogger logger, Exception exception, Guid userId);
+
+    [LoggerMessage(EventId = 1017, Level = LogLevel.Warning, Message = "IMAP STATUS is unavailable for {UserId}")]
+    private static partial void LogStatusUnavailable(ILogger logger, Exception exception, Guid userId);
+
+    [LoggerMessage(EventId = 1018, Level = LogLevel.Warning, Message = "IMAP FETCH unavailable for {UserId}")]
+    private static partial void LogFetchUnavailable(ILogger logger, Exception exception, Guid userId);
+
+    [LoggerMessage(EventId = 1019, Level = LogLevel.Warning, Message = "IMAP FETCH seen update unavailable for {UserId}")]
+    private static partial void LogFetchSeenUnavailable(ILogger logger, Exception exception, Guid userId);
+
+    [LoggerMessage(EventId = 1020, Level = LogLevel.Warning, Message = "IMAP {Command} is unavailable for {UserId}")]
+    private static partial void LogCommandUnavailable(ILogger logger, Exception exception, string command, Guid userId);
+
+    [LoggerMessage(EventId = 1021, Level = LogLevel.Warning, Message = "IMAP SEARCH unavailable for {UserId}")]
+    private static partial void LogSearchUnavailable(ILogger logger, Exception exception, Guid userId);
+
+    [LoggerMessage(EventId = 1022, Level = LogLevel.Warning, Message = "IMAP {Operation} is unavailable for {UserId}")]
+    private static partial void LogOperationUnavailable(ILogger logger, Exception exception, string operation, Guid userId);
+
+    [LoggerMessage(EventId = 1023, Level = LogLevel.Warning, Message = "IMAP mailbox subscription is unavailable for {UserId}")]
+    private static partial void LogSubscriptionUnavailable(ILogger logger, Exception exception, Guid userId);
+
+    [LoggerMessage(EventId = 1024, Level = LogLevel.Debug, Message = "IMAP TLS handshake from {Endpoint} ended before authentication: {ExceptionType}")]
+    private static partial void LogTlsPeerEnded(ILogger logger, string endpoint, string exceptionType);
+
+    [LoggerMessage(EventId = 1025, Level = LogLevel.Warning, Message = "IMAP quota lookup is unavailable for {UserId}")]
+    private static partial void LogQuotaUnavailable(ILogger logger, Exception exception, Guid userId);
+
+    [LoggerMessage(EventId = 1026, Level = LogLevel.Warning, Message = "IMAP SORT unavailable for {UserId}")]
+    private static partial void LogSortUnavailable(ILogger logger, Exception exception, Guid userId);
+
+    [LoggerMessage(EventId = 1027, Level = LogLevel.Warning, Message = "IMAP THREAD unavailable for {UserId}")]
+    private static partial void LogThreadUnavailable(ILogger logger, Exception exception, Guid userId);
+
+    [LoggerMessage(EventId = 1028, Level = LogLevel.Warning, Message = "IMAP APPEND preflight unavailable for {UserId}")]
+    private static partial void LogAppendPreflightUnavailable(ILogger logger, Exception exception, Guid userId);
+
+    [LoggerMessage(EventId = 1029, Level = LogLevel.Warning, Message = "IMAP APPEND unavailable for {UserId}")]
+    private static partial void LogAppendUnavailable(ILogger logger, Exception exception, Guid userId);
+
+    [LoggerMessage(EventId = 1030, Level = LogLevel.Warning, Message = "IMAP IDLE initialization is unavailable for {UserId}")]
+    private static partial void LogIdleInitializationUnavailable(ILogger logger, Exception exception, Guid userId);
+
+    [LoggerMessage(EventId = 1031, Level = LogLevel.Warning, Message = "IMAP IDLE polling is unavailable for {UserId}")]
+    private static partial void LogIdlePollingUnavailable(ILogger logger, Exception exception, Guid userId);
+
     /// <summary>
     /// A duplex stream that reads from one underlying stream and writes to another.
     /// Used for COMPRESS=DEFLATE where inflate and deflate are separate streams over the same transport.
     /// </summary>
-    private sealed class CompressedDuplexStream(Stream readStream, Stream writeStream) : Stream
+    private sealed class CompressedDuplexStream(
+        Stream transport, Stream readStream, Stream writeStream) : Stream
     {
+        private int _disposed;
+
         public override bool CanRead => true;
         public override bool CanWrite => true;
         public override bool CanSeek => false;
@@ -5688,12 +5920,48 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing)
+            if (disposing && Interlocked.Exchange(ref _disposed, 1) == 0)
             {
-                readStream.Dispose();
-                writeStream.Dispose();
+                try
+                {
+                    writeStream.Dispose();
+                }
+                finally
+                {
+                    try
+                    {
+                        readStream.Dispose();
+                    }
+                    finally
+                    {
+                        transport.Dispose();
+                    }
+                }
             }
             base.Dispose(disposing);
+        }
+
+        public override async ValueTask DisposeAsync()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0)
+            {
+                try
+                {
+                    await writeStream.DisposeAsync().ConfigureAwait(false);
+                }
+                finally
+                {
+                    try
+                    {
+                        await readStream.DisposeAsync().ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        await transport.DisposeAsync().ConfigureAwait(false);
+                    }
+                }
+            }
+            await base.DisposeAsync().ConfigureAwait(false);
         }
     }
 }

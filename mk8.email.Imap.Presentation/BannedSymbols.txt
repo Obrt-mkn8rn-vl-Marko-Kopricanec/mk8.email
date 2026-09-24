@@ -1,0 +1,6 @@
+T:Microsoft.AspNetCore.Http.HttpContext; IMAP presentation must not host HTTP requests
+T:Microsoft.EntityFrameworkCore.DbContext; IMAP presentation must not own application persistence
+T:Npgsql.NpgsqlDataSource; IMAP presentation must use the messaging control plane
+T:Azure.Storage.Blobs.BlobServiceClient; IMAP presentation must use the storage boundary
+T:System.Net.Http.HttpClient; IMAP presentation must not bypass the mail wire protocol
+T:System.IO.File; IMAP presentation must not use host files for mail data (configured TLS certificate loading remains allowed)

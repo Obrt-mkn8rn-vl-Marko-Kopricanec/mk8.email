@@ -4,20 +4,6 @@ using mk8.email.MailWire;
 
 namespace mk8.email.Imap.Presentation.Protocol;
 
-internal enum ImapBinarySectionStatus
-{
-    Success,
-    NotFound,
-    NotLeaf,
-    UnknownTransferEncoding,
-    InvalidContent,
-}
-
-internal readonly record struct ImapBinarySection(byte[] Content)
-{
-    public bool RequiresLiteral8 => Content.AsSpan().Contains((byte)0);
-}
-
 internal sealed class ImapMimeMessage : IDisposable
 {
     private static readonly FormatOptions WireFormat = CreateWireFormat();
@@ -59,7 +45,7 @@ internal sealed class ImapMimeMessage : IDisposable
         MimeEntity? entity = _message.Body;
         for (var index = 0; index < components.Length; index++)
         {
-            if (!int.TryParse(components[index], out var partNumber) || partNumber < 1)
+            if (!int.TryParse(components[index], System.Globalization.CultureInfo.InvariantCulture, out var partNumber) || partNumber < 1)
                 return false;
 
             entity = SelectPart(entity, partNumber, index == 0);
@@ -139,7 +125,7 @@ internal sealed class ImapMimeMessage : IDisposable
         var components = section.Split('.');
         for (var index = 0; index < components.Length; index++)
         {
-            if (!int.TryParse(components[index], out var partNumber) || partNumber < 1)
+            if (!int.TryParse(components[index], System.Globalization.CultureInfo.InvariantCulture, out var partNumber) || partNumber < 1)
             {
                 entity = null;
                 return false;
@@ -470,7 +456,7 @@ internal sealed class ImapMimeMessage : IDisposable
                 return;
 
             _length += buffer.Length;
-            foreach (var value in buffer)
+            foreach (ref readonly var value in buffer)
             {
                 if (value == (byte)'\n')
                     _newLines++;

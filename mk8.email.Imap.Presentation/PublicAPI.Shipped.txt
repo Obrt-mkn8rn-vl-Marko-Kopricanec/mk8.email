@@ -1,0 +1,4 @@
+#nullable enable
+mk8.email.Imap.Presentation.ImapServerService
+mk8.email.Imap.Presentation.ImapServerService.ImapServerService(Microsoft.Extensions.DependencyInjection.IServiceScopeFactory! scopeFactory, mk8.email.Configuration.EnvironmentConfig! env, Microsoft.Extensions.Logging.ILogger<mk8.email.Imap.Presentation.ImapServerService!>! logger, mk8.email.Messaging.IGatewayTrafficJournal? journal = null) -> void
+override mk8.email.Imap.Presentation.ImapServerService.ExecuteAsync(System.Threading.CancellationToken stoppingToken) -> System.Threading.Tasks.Task!

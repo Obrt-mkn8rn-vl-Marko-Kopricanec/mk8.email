@@ -1,0 +1,6 @@
+T:Microsoft.AspNetCore.Http.HttpContext; SMTP presentation must not host HTTP requests
+T:Microsoft.EntityFrameworkCore.DbContext; SMTP presentation must not own application persistence
+T:Npgsql.NpgsqlDataSource; SMTP presentation must use the messaging control plane
+T:Azure.Storage.Blobs.BlobServiceClient; SMTP presentation must use the storage boundary
+T:System.Net.Http.HttpClient; SMTP presentation must not bypass the mail wire protocol
+T:System.IO.File; SMTP presentation must not read host state directly

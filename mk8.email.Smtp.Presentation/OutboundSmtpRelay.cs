@@ -11,7 +11,7 @@ using mk8.email.Configuration;
 
 namespace mk8.email.Smtp.Presentation;
 
-public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRelay
+public sealed partial class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRelay
 {
     private const int MaximumAttempts = 5;
     private const int MaximumResponseLines = 100;
@@ -75,15 +75,20 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRel
     public Task<OutboundDeliveryResult> RelayAsync(
         SmtpRelayPresentationRequest request,
         Guid applicationRequestId,
-        CancellationToken cancellationToken) =>
-        RelayCoreAsync(
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return RelayCoreAsync(
             request.Sender,
             request.Recipient,
             request.RawMessage,
             request.Options,
             applicationRequestId,
             cancellationToken);
+    }
 
+    // Keep route selection and its SMTP failure classification in one ordered path.
+#pragma warning disable MA0051
     private async Task<OutboundDeliveryResult> RelayCoreAsync(
         string sender,
         string recipient,
@@ -92,6 +97,7 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRel
         Guid? applicationRequestId,
         CancellationToken cancellationToken)
     {
+#pragma warning restore MA0051
         if (rawMessage.Any(character => character > byte.MaxValue))
         {
             return new OutboundDeliveryResult(
@@ -129,10 +135,10 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRel
         var timeoutSeconds = Math.Clamp(_environment.Limits.ConnectionTimeoutSeconds, 10, 60);
         using var lookupTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         lookupTimeout.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
-        var route = await _resolver.ResolveAsync(domain, lookupTimeout.Token);
+        var route = await _resolver.ResolveAsync(domain, lookupTimeout.Token).ConfigureAwait(false);
         if (route.Status != MailRoutingStatus.Available)
         {
-            _logger.LogWarning("Mail routing is unavailable for {Domain}: {Status}", domain, route.Status);
+            LogRouteUnavailable(_logger, domain, route.Status);
             return route.Status == MailRoutingStatus.DoesNotAcceptMail
                 ? new OutboundDeliveryResult(
                     OutboundDeliveryStatus.PermanentFailure,
@@ -153,11 +159,14 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRel
         {
             if (string.Equals(endpoint.Host, _environment.Smtp.Hostname, StringComparison.OrdinalIgnoreCase))
             {
-                _logger.LogWarning("Skipped outbound mail loop through {Host}", endpoint.Host);
+                LogMailLoop(_logger, endpoint.Host);
                 continue;
             }
 
+            // This per-host token source is disposed at the end of the loop iteration.
+#pragma warning disable CA2000
             using var attemptTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+#pragma warning restore CA2000
             attemptTimeout.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
             var result = await TryDeliverAsync(
                 endpoint,
@@ -167,11 +176,11 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRel
                 requiresSmtpUtf8,
                 options,
                 applicationRequestId,
-                attemptTimeout.Token);
+                attemptTimeout.Token).ConfigureAwait(false);
 
             if (result.Status == DeliveryAttemptStatus.Delivered)
             {
-                _logger.LogInformation("Outbound SMTP delivery through {Host} completed", endpoint.Host);
+                LogDeliveryCompleted(_logger, endpoint.Host);
                 return new OutboundDeliveryResult(
                     OutboundDeliveryStatus.Delivered,
                     "The remote mail server accepted the message.",
@@ -180,10 +189,7 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRel
                     result.EnhancedStatusCode);
             }
 
-            _logger.LogWarning(
-                "Outbound SMTP delivery through {Host} ended with {Result}",
-                endpoint.Host,
-                result.Status);
+            LogDeliveryEnded(_logger, endpoint.Host, result.Status);
             if (result.Status == DeliveryAttemptStatus.PermanentFailure)
             {
                 return new OutboundDeliveryResult(
@@ -206,6 +212,8 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRel
             EnhancedStatusCode: lastTemporaryFailure?.EnhancedStatusCode ?? "4.4.1");
     }
 
+    // The SMTP command/response sequence must retain its exact failure boundaries.
+#pragma warning disable MA0051
     private async Task<DeliveryAttempt> TryDeliverAsync(
         MailExchangeEndpoint endpoint,
         string sender,
@@ -216,6 +224,7 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRel
         Guid? applicationRequestId,
         CancellationToken cancellationToken)
     {
+#pragma warning restore MA0051
         GatewayTrafficSession? traffic = null;
         if (applicationRequestId is { } requestId)
         {
@@ -224,7 +233,7 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRel
             traffic = new GatewayTrafficSession(
                 _traffic,
                 SmtpPresentationOperations.Protocol,
-                new Dictionary<string, string>
+                new Dictionary<string, string>(StringComparer.Ordinal)
                 {
                     ["remoteHost"] = endpoint.Host,
                     ["remotePort"] = endpoint.Port.ToString(CultureInfo.InvariantCulture),
@@ -234,20 +243,21 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRel
 
         try
         {
-            await using var connection = await SmtpConnection.ConnectAsync(
+            var connection = (await SmtpConnection.ConnectAsync(
                 endpoint,
                 _certificateValidationCallback,
                 traffic,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false));
+            await using var connectionLifetime = connection.ConfigureAwait(false);
 
-            var greeting = await connection.ReadResponseAsync(cancellationToken);
+            var greeting = await connection.ReadResponseAsync(cancellationToken).ConfigureAwait(false);
             if (greeting?.Code != 220)
                 return Classify(greeting);
 
             var ehlo = await SendCommandAsync(
                 connection,
                 $"EHLO {_environment.Smtp.Hostname}",
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             if (ehlo is null)
                 return new DeliveryAttempt(DeliveryAttemptStatus.TryNextHost);
 
@@ -259,21 +269,21 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRel
                 var helo = await SendCommandAsync(
                     connection,
                     $"HELO {_environment.Smtp.Hostname}",
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 if (helo?.Code != 250)
                     return Classify(helo);
             }
             else if (HasCapability(ehlo, "STARTTLS"))
             {
-                var startTls = await SendCommandAsync(connection, "STARTTLS", cancellationToken);
+                var startTls = await SendCommandAsync(connection, "STARTTLS", cancellationToken).ConfigureAwait(false);
                 if (startTls?.Code != 220)
                     return new DeliveryAttempt(DeliveryAttemptStatus.TryNextHost);
 
-                await connection.UpgradeToTlsAsync(endpoint.Host, cancellationToken);
+                await connection.UpgradeToTlsAsync(endpoint.Host, cancellationToken).ConfigureAwait(false);
                 ehlo = await SendCommandAsync(
                     connection,
                     $"EHLO {_environment.Smtp.Hostname}",
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 if (ehlo?.Code != 250)
                     return Classify(ehlo);
             }
@@ -315,7 +325,7 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRel
                 connection,
                 mailCommand.ToString(),
                 requiresSmtpUtf8,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             if (mail?.Code / 100 != 2)
                 return Classify(mail);
 
@@ -328,20 +338,20 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRel
                 connection,
                 recipientCommand.ToString(),
                 requiresSmtpUtf8,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             if (recipientResponse?.Code / 100 != 2)
                 return Classify(recipientResponse);
 
-            var data = await SendCommandAsync(connection, "DATA", cancellationToken);
+            var data = await SendCommandAsync(connection, "DATA", cancellationToken).ConfigureAwait(false);
             if (data?.Code != 354)
                 return Classify(data);
 
-            await connection.WriteMessageAsync(rawMessage, cancellationToken);
-            var completion = await connection.ReadResponseAsync(cancellationToken);
+            await connection.WriteMessageAsync(rawMessage, cancellationToken).ConfigureAwait(false);
+            var completion = await connection.ReadResponseAsync(cancellationToken).ConfigureAwait(false);
             if (completion?.Code / 100 != 2)
                 return Classify(completion);
 
-            await connection.WriteLineAsync("QUIT", cancellationToken);
+            await connection.WriteLineAsync("QUIT", cancellationToken).ConfigureAwait(false);
             var dsnForwarded = supportsDsn
                 && (options?.Dsn?.ReturnContent is not null
                     || options?.Dsn?.EnvelopeId is not null
@@ -359,7 +369,7 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRel
         catch (Exception exception) when (
             exception is SocketException or IOException or AuthenticationException or OperationCanceledException)
         {
-            _logger.LogWarning(exception, "Outbound SMTP attempt failed through {Host}", endpoint.Host);
+            LogDeliveryAttemptFailed(_logger, exception, endpoint.Host);
             return new DeliveryAttempt(DeliveryAttemptStatus.TryNextHost);
         }
     }
@@ -371,10 +381,10 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRel
         CancellationToken cancellationToken)
     {
         if (utf8)
-            await connection.WriteUtf8LineAsync(command, cancellationToken);
+            await connection.WriteUtf8LineAsync(command, cancellationToken).ConfigureAwait(false);
         else
-            await connection.WriteLineAsync(command, cancellationToken);
-        return await connection.ReadResponseAsync(cancellationToken);
+            await connection.WriteLineAsync(command, cancellationToken).ConfigureAwait(false);
+        return await connection.ReadResponseAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static Task<SmtpResponse?> SendCommandAsync(
@@ -390,12 +400,12 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRel
                 ? DeliveryAttemptStatus.PermanentFailure
                 : DeliveryAttemptStatus.TryNextHost,
             GetEnhancedStatusCode(response),
-            Detail: response?.Lines.LastOrDefault());
+            Detail: LastResponseLine(response));
     }
 
     private static string? GetEnhancedStatusCode(SmtpResponse? response)
     {
-        var line = response?.Lines.LastOrDefault();
+        var line = LastResponseLine(response);
         if (line is null || line.Length <= 4)
             return null;
         var token = line[4..].TrimStart().Split(' ', 2)[0];
@@ -407,6 +417,12 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRel
                 && part.All(char.IsAsciiDigit))
             ? token
             : null;
+    }
+
+    private static string? LastResponseLine(SmtpResponse? response)
+    {
+        var lines = response?.Lines;
+        return lines is { Count: > 0 } ? lines[^1] : null;
     }
 
     private static bool TryNormalizeDsnOptions(
@@ -474,7 +490,10 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRel
         if (separator <= 0 || separator == recipient.Length - 1)
             return false;
 
+        // DNS labels are case-insensitive; preserve the established canonical routing key.
+#pragma warning disable CA1308
         domain = recipient[(separator + 1)..].ToLowerInvariant();
+#pragma warning restore CA1308
         return Uri.CheckHostName(domain) == UriHostNameType.Dns;
     }
 
@@ -504,7 +523,10 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRel
         private readonly TcpClient _client;
         private readonly RemoteCertificateValidationCallback? _certificateValidationCallback;
         private readonly GatewayTrafficSession? _traffic;
+        // TcpClient owns the NetworkStream returned by GetStream and disposes it with the client.
+#pragma warning disable CA2213
         private readonly NetworkStream _rawStream;
+#pragma warning restore CA2213
         private Stream _stream;
         private StreamReader _streamReader;
         private BoundedLineReader _lineReader;
@@ -536,7 +558,7 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRel
             var client = new TcpClient();
             try
             {
-                await client.ConnectAsync(endpoint.Host, endpoint.Port, cancellationToken);
+                await client.ConnectAsync(endpoint.Host, endpoint.Port, cancellationToken).ConfigureAwait(false);
                 return new SmtpConnection(client, certificateValidationCallback, traffic);
             }
             catch
@@ -555,10 +577,14 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRel
             {
                 var readResult = await _lineReader.ReadLineAsync(
                     MaximumResponseLineCharacters,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 var line = readResult.Value;
                 if (readResult.IsTooLong || line is null || line.Length < 3
-                    || !int.TryParse(line.AsSpan(0, 3), out var lineCode))
+                    || !int.TryParse(
+                        line.AsSpan(0, 3),
+                        NumberStyles.None,
+                        CultureInfo.InvariantCulture,
+                        out var lineCode))
                 {
                     return null;
                 }
@@ -582,10 +608,10 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRel
 
         public async Task WriteUtf8LineAsync(string line, CancellationToken cancellationToken)
         {
-            await _writer.FlushAsync(cancellationToken);
+            await _writer.FlushAsync(cancellationToken).ConfigureAwait(false);
             var bytes = Encoding.UTF8.GetBytes(line + "\r\n");
-            await _stream.WriteAsync(bytes, cancellationToken);
-            await _stream.FlushAsync(cancellationToken);
+            await _stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
+            await _stream.FlushAsync(cancellationToken).ConfigureAwait(false);
         }
 
         public async Task WriteMessageAsync(string rawMessage, CancellationToken cancellationToken)
@@ -594,7 +620,10 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRel
             using var messageReader = new StringReader(normalized);
             var data = new StringBuilder(normalized.Length + 16);
 
+            // StringReader only reads this already-materialized in-memory string.
+#pragma warning disable CA1849, VSTHRD103
             while (messageReader.ReadLine() is { } line)
+#pragma warning restore CA1849, VSTHRD103
             {
                 if (line.Length > 0 && line[0] == '.')
                     data.Append('.');
@@ -602,18 +631,18 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRel
             }
 
             data.Append(".\r\n");
-            await _writer.FlushAsync(cancellationToken);
-            await _stream.WriteAsync(ProtocolEncoding.GetBytes(data.ToString()), cancellationToken);
-            await _stream.FlushAsync(cancellationToken);
+            await _writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+            await _stream.WriteAsync(ProtocolEncoding.GetBytes(data.ToString()), cancellationToken).ConfigureAwait(false);
+            await _stream.FlushAsync(cancellationToken).ConfigureAwait(false);
         }
 
         public async Task UpgradeToTlsAsync(string host, CancellationToken cancellationToken)
         {
-            await _writer.FlushAsync(cancellationToken);
+            await _writer.FlushAsync(cancellationToken).ConfigureAwait(false);
             _streamReader.Dispose();
-            await _writer.DisposeAsync();
+            await _writer.DisposeAsync().ConfigureAwait(false);
             if (_traffic is not null)
-                await _stream.DisposeAsync();
+                await _stream.DisposeAsync().ConfigureAwait(false);
 
             var tlsStream = new SslStream(
                 _rawStream,
@@ -623,11 +652,11 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRel
             {
                 await tlsStream.AuthenticateAsClientAsync(
                     new SslClientAuthenticationOptions { TargetHost = host },
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
             }
             catch
             {
-                await tlsStream.DisposeAsync();
+                await tlsStream.DisposeAsync().ConfigureAwait(false);
                 throw;
             }
 
@@ -642,8 +671,8 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRel
         public async ValueTask DisposeAsync()
         {
             _streamReader.Dispose();
-            await _writer.DisposeAsync();
-            await _stream.DisposeAsync();
+            await _writer.DisposeAsync().ConfigureAwait(false);
+            await _stream.DisposeAsync().ConfigureAwait(false);
             _client.Dispose();
         }
 
@@ -657,4 +686,24 @@ public sealed class OutboundSmtpRelay : IOutboundMailRelay, ISmtpPresentationRel
                 NewLine = "\r\n",
             };
     }
+
+    [LoggerMessage(EventId = 3101, Level = LogLevel.Warning,
+        Message = "Mail routing is unavailable for {Domain}: {Status}")]
+    private static partial void LogRouteUnavailable(ILogger logger, string domain, MailRoutingStatus status);
+
+    [LoggerMessage(EventId = 3102, Level = LogLevel.Warning,
+        Message = "Skipped outbound mail loop through {Host}")]
+    private static partial void LogMailLoop(ILogger logger, string host);
+
+    [LoggerMessage(EventId = 3103, Level = LogLevel.Information,
+        Message = "Outbound SMTP delivery through {Host} completed")]
+    private static partial void LogDeliveryCompleted(ILogger logger, string host);
+
+    [LoggerMessage(EventId = 3104, Level = LogLevel.Warning,
+        Message = "Outbound SMTP delivery through {Host} ended with {Result}")]
+    private static partial void LogDeliveryEnded(ILogger logger, string host, DeliveryAttemptStatus result);
+
+    [LoggerMessage(EventId = 3105, Level = LogLevel.Warning,
+        Message = "Outbound SMTP attempt failed through {Host}")]
+    private static partial void LogDeliveryAttemptFailed(ILogger logger, Exception exception, string host);
 }

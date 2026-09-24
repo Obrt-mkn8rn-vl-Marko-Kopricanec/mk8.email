@@ -4,7 +4,7 @@ using mk8.email.Contracts.Mail;
 
 namespace mk8.email.Smtp.Presentation;
 
-public sealed class DnsMailExchangeResolver(
+public sealed partial class DnsMailExchangeResolver(
     ILookupClient lookupClient,
     ILogger<DnsMailExchangeResolver> logger) : IMailExchangeResolver
 {
@@ -16,7 +16,7 @@ public sealed class DnsMailExchangeResolver(
                 domain,
                 QueryType.MX,
                 QueryClass.IN,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             var exchanges = response.Answers.MxRecords()
                 .Select(record => (record.Exchange.Value, record.Preference));
 
@@ -24,7 +24,7 @@ public sealed class DnsMailExchangeResolver(
         }
         catch (Exception exception) when (exception is DnsResponseException or OperationCanceledException)
         {
-            logger.LogWarning(exception, "MX lookup failed for {Domain}", domain);
+            LogMxLookupFailure(logger, exception, domain);
             return new MailRoutingResult(MailRoutingStatus.TemporaryFailure, []);
         }
     }
@@ -64,4 +64,7 @@ public sealed class DnsMailExchangeResolver(
     }
 
     private static string NormalizeHost(string host) => host.Trim().TrimEnd('.');
+
+    [LoggerMessage(EventId = 3001, Level = LogLevel.Warning, Message = "MX lookup failed for {Domain}")]
+    private static partial void LogMxLookupFailure(ILogger logger, Exception exception, string domain);
 }

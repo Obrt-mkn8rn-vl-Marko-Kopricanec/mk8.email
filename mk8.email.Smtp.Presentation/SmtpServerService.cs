@@ -15,7 +15,7 @@ using mk8.email.Messaging;
 
 namespace mk8.email.Smtp.Presentation;
 
-public class SmtpServerService(
+public partial class SmtpServerService(
     IServiceScopeFactory scopeFactory,
     EnvironmentConfig env,
     ILogger<SmtpServerService> logger,
@@ -51,23 +51,24 @@ public class SmtpServerService(
         public string? DsnEnvelopeId { get; set; }
         public bool InDataMode { get; set; }
         public int AuthenticationFailures { get; set; }
-        private SemaphoreSlim? DataSemaphore { get; set; }
+        private IDisposable? DataLease { get; set; }
 
-        public bool TryEnterDataMode(SemaphoreSlim dataSemaphore)
+        public bool TryEnterDataMode(ConnectionLimiter dataLimiter)
         {
-            if (!dataSemaphore.Wait(0))
+            var lease = dataLimiter.TryAcquire(IPAddress.None, MaximumConcurrentDataTransactions);
+            if (lease is null)
                 return false;
 
-            DataSemaphore = dataSemaphore;
+            DataLease = lease;
             InDataMode = true;
             return true;
         }
 
         public void Reset()
         {
-            var dataSemaphore = DataSemaphore;
-            DataSemaphore = null;
-            dataSemaphore?.Release();
+            var dataLease = DataLease;
+            DataLease = null;
+            dataLease?.Dispose();
             Sender = null;
             HasMailFrom = false;
             Recipients.Clear();
@@ -86,9 +87,7 @@ public class SmtpServerService(
     }
 
     private readonly ConnectionLimiter _connectionLimiter = new(MaximumConcurrentConnections);
-    private readonly SemaphoreSlim _dataTransactionLimiter = new(
-        MaximumConcurrentDataTransactions,
-        MaximumConcurrentDataTransactions);
+    private readonly ConnectionLimiter _dataTransactionLimiter = new(MaximumConcurrentDataTransactions);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -107,102 +106,112 @@ public class SmtpServerService(
 
         if (tasks.Count == 0)
         {
-            logger.LogWarning("No SMTP listeners are enabled.");
+            LogNoListeners(logger);
             return;
         }
 
-        await Task.WhenAll(tasks);
+        await Task.WhenAll(tasks).ConfigureAwait(false);
     }
 
     private async Task ListenAsync(int port, ListenerMode mode, SmtpListenerOptions config, CancellationToken ct)
     {
         var listener = new TcpListener(IPAddress.Any, port);
-        listener.Start();
-        logger.LogInformation("SMTP {Mode} listener started on port {Port}", mode, port);
-
         try
         {
+            listener.Start();
+            LogListenerStarted(logger, mode, port);
             while (!ct.IsCancellationRequested)
             {
-                var client = await listener.AcceptTcpClientAsync(ct);
+                var client = await listener.AcceptTcpClientAsync(ct).ConfigureAwait(false);
+                // The detached handler owns and closes this client; the listener never disposes it.
+#pragma warning disable CA2025
                 _ = HandleConnectionAsync(client, mode, config, ct);
+#pragma warning restore CA2025
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         finally
         {
             listener.Stop();
-            logger.LogInformation("SMTP {Mode} listener on port {Port} stopped.", mode, port);
+            listener.Dispose();
+            LogListenerStopped(logger, mode, port);
         }
     }
 
+    // Connection setup keeps its TLS, journal, and client-disposal lifetimes together.
+#pragma warning disable MA0051
     private async Task HandleConnectionAsync(TcpClient client, ListenerMode mode, SmtpListenerOptions config, CancellationToken ct)
     {
-        var remoteEndpoint = client.Client.RemoteEndPoint;
-        var remoteIp = (remoteEndpoint as IPEndPoint)?.Address ?? IPAddress.None;
-        var remoteLabel = remoteEndpoint?.ToString() ?? "unknown";
-
-        using var connectionLease = _connectionLimiter.TryAcquire(
-            remoteIp,
-            config.MaxConnectionsPerIp);
-        if (connectionLease is null)
-        {
-            logger.LogWarning("Rejected SMTP connection from {Endpoint}: connection limit", remoteLabel);
-            client.Dispose();
-            return;
-        }
-
+#pragma warning restore MA0051
+        using var clientLifetime = client;
+        var remoteLabel = "unknown";
         try
         {
-            using (client)
+            var remoteEndpoint = client.Client.RemoteEndPoint;
+            var remoteIp = (remoteEndpoint as IPEndPoint)?.Address ?? IPAddress.None;
+            remoteLabel = remoteEndpoint?.ToString() ?? "unknown";
+            using var connectionLease = _connectionLimiter.TryAcquire(
+                remoteIp,
+                config.MaxConnectionsPerIp);
+            if (connectionLease is null)
             {
-                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                timeout.CancelAfter(TimeSpan.FromSeconds(config.ConnectionTimeoutSeconds));
+                LogConnectionLimit(logger, remoteLabel);
+                return;
+            }
 
-                using var scope = scopeFactory.CreateScope();
-                var application = scope.ServiceProvider.GetRequiredService<ISmtpApplicationService>();
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(config.ConnectionTimeoutSeconds));
 
-                Stream stream = client.GetStream();
-                if (journal is not null)
-                {
-                    var traffic = new GatewayTrafficSession(
-                        journal,
-                        SmtpPresentationOperations.Protocol,
-                        new Dictionary<string, string>
-                        {
-                            ["remoteEndpoint"] = remoteLabel,
-                            ["listenerPort"] = ((client.Client.LocalEndPoint as IPEndPoint)?.Port ?? 0)
-                                .ToString(CultureInfo.InvariantCulture),
-                        });
-                    stream = new GatewayTrafficStream(stream, traffic, leaveInnerOpen: false);
-                }
+            using var scope = scopeFactory.CreateScope();
+            var application = scope.ServiceProvider.GetRequiredService<ISmtpApplicationService>();
 
+            Stream stream = client.GetStream();
+            if (journal is not null)
+            {
+                var traffic = new GatewayTrafficSession(
+                    journal,
+                    SmtpPresentationOperations.Protocol,
+                    new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["remoteEndpoint"] = remoteLabel,
+                        ["listenerPort"] = ((client.Client.LocalEndPoint as IPEndPoint)?.Port ?? 0)
+                            .ToString(CultureInfo.InvariantCulture),
+                    });
+                stream = new GatewayTrafficStream(stream, traffic, leaveInnerOpen: false);
+            }
+
+            SslStream? implicitTlsStream = null;
+            try
+            {
                 if (mode == ListenerMode.ImplicitTls)
                 {
                     if (config.TlsCertificatePath is null)
                         throw new InvalidOperationException("Implicit TLS requires a certificate.");
 
                     using var cert = LoadCertificate(config);
-                    var sslStream = new SslStream(stream, leaveInnerStreamOpen: false);
+                    // The enclosing finally performs asynchronous disposal on every path.
+#pragma warning disable CA2000
+                    implicitTlsStream = new SslStream(stream, leaveInnerStreamOpen: false);
+#pragma warning restore CA2000
                     if (!await TryAuthenticateAsServerAsync(
-                            sslStream,
+                            implicitTlsStream,
                             cert,
-                            timeout.Token,
-                            remoteLabel))
+                            remoteLabel,
+                            timeout.Token).ConfigureAwait(false))
                     {
-                        sslStream.Dispose();
                         return;
                     }
-                    stream = sslStream;
+                    stream = implicitTlsStream;
                 }
 
                 using var streamReader = new StreamReader(stream, ProtocolEncoding, detectEncodingFromByteOrderMarks: false, bufferSize: 4096, leaveOpen: true);
                 var reader = new BoundedLineReader(streamReader);
-                await using var writer = new StreamWriter(stream, ProtocolEncoding, bufferSize: 4096, leaveOpen: true)
+                var writer = new StreamWriter(stream, ProtocolEncoding, bufferSize: 4096, leaveOpen: true)
                 {
                     AutoFlush = true,
                     NewLine = "\r\n"
                 };
+                await using var writerLifetime = writer.ConfigureAwait(false);
 
                 var session = new SmtpSession
                 {
@@ -211,7 +220,7 @@ public class SmtpServerService(
                 };
                 try
                 {
-                    await writer.WriteLineAsync($"220 {config.SmtpHostname} ESMTP mk8.email");
+                    await writer.WriteLineAsync($"220 {config.SmtpHostname} ESMTP mk8.email").ConfigureAwait(false);
 
                     await RunSmtpSessionAsync(
                         reader,
@@ -221,30 +230,41 @@ public class SmtpServerService(
                         config,
                         timeout,
                         stream,
-                        remoteIp.ToString());
+                        remoteIp.ToString()).ConfigureAwait(false);
                 }
                 finally
                 {
                     session.Reset();
                 }
             }
+            finally
+            {
+                if (implicitTlsStream is not null)
+                    await implicitTlsStream.DisposeAsync().ConfigureAwait(false);
+            }
         }
         catch (OperationCanceledException)
         {
-            logger.LogDebug("SMTP connection from {Endpoint} timed out", remoteLabel);
+            LogConnectionTimedOut(logger, remoteLabel);
         }
+        // A detached connection task must log and close rather than fault unobserved.
+#pragma warning disable CA1031
         catch (Exception ex)
+#pragma warning restore CA1031
         {
-            logger.LogWarning(ex, "Error handling SMTP connection from {Endpoint}", remoteLabel);
+            LogConnectionError(logger, ex, remoteLabel);
         }
     }
 
+    // SMTP transaction state is intentionally processed as one ordered protocol state machine.
+#pragma warning disable MA0051
     private async Task RunSmtpSessionAsync(
         BoundedLineReader reader, StreamWriter writer, SmtpSession session,
         ISmtpApplicationService application,
         SmtpListenerOptions config,
         CancellationTokenSource timeout, Stream? upgradableStream = null, string? clientIp = null)
     {
+#pragma warning restore MA0051
 
         while (!timeout.IsCancellationRequested)
         {
@@ -252,7 +272,7 @@ public class SmtpServerService(
             var maximumLineLength = session.InDataMode
                 ? Math.Min(config.MaxMessageSizeBytes, MaximumDataLineCharacters)
                 : MaximumCommandLineCharacters;
-            var readResult = await reader.ReadLineAsync(maximumLineLength, timeout.Token);
+            var readResult = await reader.ReadLineAsync(maximumLineLength, timeout.Token).ConfigureAwait(false);
             if (readResult.Value is null && !readResult.IsTooLong)
                 break;
 
@@ -265,7 +285,7 @@ public class SmtpServerService(
                 }
                 else
                 {
-                    await writer.WriteLineAsync("500 5.5.2 Line too long");
+                    await writer.WriteLineAsync("500 5.5.2 Line too long").ConfigureAwait(false);
                 }
 
                 continue;
@@ -275,19 +295,19 @@ public class SmtpServerService(
 
             if (session.InDataMode)
             {
-                if (wireLine == ".")
+                if (string.Equals(wireLine, ".", StringComparison.Ordinal))
                 {
                     session.InDataMode = false;
                     if (session.MessageTooLarge)
                     {
                         session.Reset();
-                        await writer.WriteLineAsync("552 5.3.4 Message exceeds server limits");
+                        await writer.WriteLineAsync("552 5.3.4 Message exceeds server limits").ConfigureAwait(false);
                     }
                     else if (session.DataFailureResponse is not null)
                     {
                         var failureResponse = session.DataFailureResponse;
                         session.Reset();
-                        await writer.WriteLineAsync(failureResponse);
+                        await writer.WriteLineAsync(failureResponse).ConfigureAwait(false);
                     }
                     else
                     {
@@ -298,7 +318,7 @@ public class SmtpServerService(
                         {
                             session.Reset();
                             await writer.WriteLineAsync(
-                                "554 5.6.9 UTF-8 header message requires SMTPUTF8");
+                                "554 5.6.9 UTF-8 header message requires SMTPUTF8").ConfigureAwait(false);
                             continue;
                         }
                         if (session.SmtpUtf8
@@ -306,7 +326,7 @@ public class SmtpServerService(
                         {
                             session.Reset();
                             await writer.WriteLineAsync(
-                                "554 5.6.0 Internationalized headers are not valid UTF-8");
+                                "554 5.6.0 Internationalized headers are not valid UTF-8").ConfigureAwait(false);
                             continue;
                         }
                         if (SmtpInternationalization.ContainsEightBit(raw)
@@ -314,7 +334,7 @@ public class SmtpServerService(
                         {
                             session.Reset();
                             await writer.WriteLineAsync(
-                                "554 5.6.3 Eight-bit content requires BODY=8BITMIME");
+                                "554 5.6.3 Eight-bit content requires BODY=8BITMIME").ConfigureAwait(false);
                             continue;
                         }
 
@@ -326,23 +346,23 @@ public class SmtpServerService(
                                 authorizedSender = await application.CanSendAsAsync(
                                         new SmtpSenderAuthorization(
                                             session.AuthenticatedUser!, session.Sender ?? string.Empty),
-                                        timeout.Token)
+                                        timeout.Token).ConfigureAwait(false)
                                     && await application.HasMatchingFromAddressAsync(
                                         new SmtpFromAddressCheck(raw, session.Sender ?? string.Empty),
-                                        timeout.Token);
+                                        timeout.Token).ConfigureAwait(false);
                             }
                             catch (Exception exception) when (!timeout.IsCancellationRequested)
                             {
-                                logger.LogWarning(exception, "SMTP sender policy is temporarily unavailable");
+                                LogSenderPolicyUnavailable(logger, exception);
                                 session.Reset();
-                                await writer.WriteLineAsync("451 4.3.0 Sender policy is temporarily unavailable");
+                                await writer.WriteLineAsync("451 4.3.0 Sender policy is temporarily unavailable").ConfigureAwait(false);
                                 continue;
                             }
                         }
                         if (!authorizedSender)
                         {
                             session.Reset();
-                            await writer.WriteLineAsync("550 5.7.1 Sender identity is not authorized");
+                            await writer.WriteLineAsync("550 5.7.1 Sender identity is not authorized").ConfigureAwait(false);
                             continue;
                         }
 
@@ -371,26 +391,26 @@ public class SmtpServerService(
                                     new MailDsnEnvelope(
                                         session.DsnReturnContent,
                                         session.DsnEnvelopeId)),
-                                timeout.Token);
+                                timeout.Token).ConfigureAwait(false);
                         }
                         catch (OperationCanceledException) when (timeout.IsCancellationRequested)
                         {
                             throw;
                         }
+                        // Any durable queue failure must be reported as a temporary SMTP failure.
+#pragma warning disable CA1031
                         catch (Exception exception)
+#pragma warning restore CA1031
                         {
-                            logger.LogError(exception, "Could not persist SMTP queue message {QueueId}", queueId);
+                            LogQueuePersistFailed(logger, exception, queueId);
                             session.Reset();
-                            await writer.WriteLineAsync("451 4.3.0 Queue storage is temporarily unavailable");
+                            await writer.WriteLineAsync("451 4.3.0 Queue storage is temporarily unavailable").ConfigureAwait(false);
                             continue;
                         }
 
-                        logger.LogInformation(
-                            "Accepted SMTP queue message {QueueId} with {RecipientCount} recipients",
-                            queueId,
-                            session.Recipients.Count);
+                        LogQueueAccepted(logger, queueId, session.Recipients.Count);
                         session.Reset();
-                        await writer.WriteLineAsync($"250 2.0.0 Queued as {queueId:N}");
+                        await writer.WriteLineAsync($"250 2.0.0 Queued as {queueId:N}").ConfigureAwait(false);
                     }
                 }
                 else
@@ -400,7 +420,7 @@ public class SmtpServerService(
                         : wireLine;
                     var lineByteCount = MailWireEncoding.Instance.GetByteCount(messageLine) + 2;
 
-                    if (messageLine.Contains('\0'))
+                    if (messageLine.Contains('\0', StringComparison.Ordinal))
                     {
                         session.DataFailureResponse ??= "554 5.6.0 NUL bytes are not supported";
                         session.DataBuilder.Clear();
@@ -426,11 +446,11 @@ public class SmtpServerService(
 
             if (!SmtpInternationalization.TryDecodeCommandLine(wireLine, out var line))
             {
-                await writer.WriteLineAsync("500 5.5.2 Command line is not valid UTF-8");
+                await writer.WriteLineAsync("500 5.5.2 Command line is not valid UTF-8").ConfigureAwait(false);
                 continue;
             }
 
-            var spaceIdx = line.IndexOf(' ');
+            var spaceIdx = line.IndexOf(' ', StringComparison.Ordinal);
             var verb = (spaceIdx > 0 ? line[..spaceIdx] : line).ToUpperInvariant();
 
             switch (verb)
@@ -438,41 +458,41 @@ public class SmtpServerService(
                 case "EHLO":
                     if (!TryGetGreeting(line, out var ehlo))
                     {
-                        await writer.WriteLineAsync("501 5.5.4 A valid EHLO argument is required");
+                        await writer.WriteLineAsync("501 5.5.4 A valid EHLO argument is required").ConfigureAwait(false);
                         break;
                     }
                     session.Reset();
                     session.Helo = ehlo;
                     session.IsExtendedSmtp = true;
-                    await WriteEhloAsync(writer, config, session.IsSecure);
+                    await WriteEhloAsync(writer, config, session.IsSecure).ConfigureAwait(false);
                     break;
 
                 case "HELO":
                     if (!TryGetGreeting(line, out var helo))
                     {
-                        await writer.WriteLineAsync("501 5.5.4 A valid HELO argument is required");
+                        await writer.WriteLineAsync("501 5.5.4 A valid HELO argument is required").ConfigureAwait(false);
                         break;
                     }
                     session.Reset();
                     session.Helo = helo;
                     session.IsExtendedSmtp = false;
-                    await writer.WriteLineAsync($"250 {config.SmtpHostname}");
+                    await writer.WriteLineAsync($"250 {config.SmtpHostname}").ConfigureAwait(false);
                     break;
 
                 case "AUTH":
                     if (!session.HasGreeting)
                     {
-                        await writer.WriteLineAsync("503 5.5.1 Send EHLO first");
+                        await writer.WriteLineAsync("503 5.5.1 Send EHLO first").ConfigureAwait(false);
                         break;
                     }
                     if (!session.IsSecure)
                     {
-                        await writer.WriteLineAsync("538 5.7.11 Encryption required for authentication");
+                        await writer.WriteLineAsync("538 5.7.11 Encryption required for authentication").ConfigureAwait(false);
                         break;
                     }
                     if (session.Sender is not null)
                     {
-                        await writer.WriteLineAsync("503 5.5.1 Mail transaction is already active");
+                        await writer.WriteLineAsync("503 5.5.1 Mail transaction is already active").ConfigureAwait(false);
                         break;
                     }
                     await HandleAuthAsync(
@@ -482,10 +502,10 @@ public class SmtpServerService(
                         session,
                         application,
                         clientIp ?? "unknown",
-                        timeout.Token);
+                        timeout.Token).ConfigureAwait(false);
                     if (session.AuthenticationFailures >= 5)
                     {
-                        await writer.WriteLineAsync("421 4.7.0 Too many authentication failures");
+                        await writer.WriteLineAsync("421 4.7.0 Too many authentication failures").ConfigureAwait(false);
                         return;
                     }
                     break;
@@ -493,17 +513,17 @@ public class SmtpServerService(
                 case "MAIL":
                     if (!session.HasGreeting)
                     {
-                        await writer.WriteLineAsync("503 5.5.1 Send EHLO or HELO first");
+                        await writer.WriteLineAsync("503 5.5.1 Send EHLO or HELO first").ConfigureAwait(false);
                         break;
                     }
                     if (!session.IsSecure && (session.Mode == ListenerMode.Submission || config.RequireTls))
                     {
-                        await writer.WriteLineAsync("530 5.7.0 Issue STARTTLS first");
+                        await writer.WriteLineAsync("530 5.7.0 Issue STARTTLS first").ConfigureAwait(false);
                         break;
                     }
                     if (session.Mode is ListenerMode.Submission && !session.IsAuthenticated && config.RequireAuth)
                     {
-                        await writer.WriteLineAsync("530 5.7.0 Authentication required");
+                        await writer.WriteLineAsync("530 5.7.0 Authentication required").ConfigureAwait(false);
                         break;
                     }
                     session.Reset();
@@ -515,7 +535,7 @@ public class SmtpServerService(
                             out var mailCommand,
                             out var mailFailure))
                     {
-                        await writer.WriteLineAsync(mailFailure);
+                        await writer.WriteLineAsync(mailFailure).ConfigureAwait(false);
                         break;
                     }
                     var canSendAs = true;
@@ -526,18 +546,18 @@ public class SmtpServerService(
                             canSendAs = await application.CanSendAsAsync(
                                 new SmtpSenderAuthorization(
                                     session.AuthenticatedUser!, mailCommand.Address),
-                                timeout.Token);
+                                timeout.Token).ConfigureAwait(false);
                         }
                         catch (Exception exception) when (!timeout.IsCancellationRequested)
                         {
-                            logger.LogWarning(exception, "SMTP sender policy is temporarily unavailable");
-                            await writer.WriteLineAsync("451 4.3.0 Sender policy is temporarily unavailable");
+                            LogSenderPolicyUnavailable(logger, exception);
+                            await writer.WriteLineAsync("451 4.3.0 Sender policy is temporarily unavailable").ConfigureAwait(false);
                             break;
                         }
                     }
                     if (!canSendAs)
                     {
-                        await writer.WriteLineAsync("553 5.7.1 Sender address is not authorized");
+                        await writer.WriteLineAsync("553 5.7.1 Sender address is not authorized").ConfigureAwait(false);
                         break;
                     }
                     session.Sender = mailCommand.Address;
@@ -546,18 +566,18 @@ public class SmtpServerService(
                     session.BodyIsEightBit = mailCommand.BodyIsEightBit;
                     session.DsnReturnContent = mailCommand.DsnReturnContent;
                     session.DsnEnvelopeId = mailCommand.DsnEnvelopeId;
-                    await writer.WriteLineAsync("250 2.1.0 OK");
+                    await writer.WriteLineAsync("250 2.1.0 OK").ConfigureAwait(false);
                     break;
 
                 case "RCPT":
                     if (!session.HasMailFrom)
                     {
-                        await writer.WriteLineAsync("503 5.5.1 MAIL FROM required first");
+                        await writer.WriteLineAsync("503 5.5.1 MAIL FROM required first").ConfigureAwait(false);
                         break;
                     }
                     if (session.Recipients.Count >= config.MaxRecipientsPerMessage)
                     {
-                        await writer.WriteLineAsync("452 4.5.3 Too many recipients");
+                        await writer.WriteLineAsync("452 4.5.3 Too many recipients").ConfigureAwait(false);
                         break;
                     }
                     if (!TryExtractPath(
@@ -568,7 +588,7 @@ public class SmtpServerService(
                             out var rcptRequiresSmtpUtf8,
                             out var rcptParameters))
                     {
-                        await writer.WriteLineAsync("501 5.1.3 Recipient address syntax is invalid");
+                        await writer.WriteLineAsync("501 5.1.3 Recipient address syntax is invalid").ConfigureAwait(false);
                         break;
                     }
                     if (!TryParseRecipientDsnParameters(
@@ -578,88 +598,89 @@ public class SmtpServerService(
                             out var recipientDsn,
                             out var rcptFailure))
                     {
-                        await writer.WriteLineAsync(rcptFailure);
+                        await writer.WriteLineAsync(rcptFailure).ConfigureAwait(false);
                         break;
                     }
                     if (rcptRequiresSmtpUtf8 && !session.SmtpUtf8)
                     {
                         await writer.WriteLineAsync(
-                            "553 5.6.7 Non-ASCII recipient requires SMTPUTF8");
+                            "553 5.6.7 Non-ASCII recipient requires SMTPUTF8").ConfigureAwait(false);
                         break;
                     }
                     bool isLocal;
                     try
                     {
                         isLocal = await application.CanReceiveAsync(
-                            new SmtpRecipientCheck(rcpt), timeout.Token);
+                            new SmtpRecipientCheck(rcpt), timeout.Token).ConfigureAwait(false);
                     }
                     catch (Exception exception) when (!timeout.IsCancellationRequested)
                     {
-                        logger.LogWarning(exception, "SMTP recipient policy is temporarily unavailable");
-                        await writer.WriteLineAsync("451 4.3.0 Recipient policy is temporarily unavailable");
+                        LogRecipientPolicyUnavailable(logger, exception);
+                        await writer.WriteLineAsync("451 4.3.0 Recipient policy is temporarily unavailable").ConfigureAwait(false);
                         break;
                     }
                     if (isLocal)
                     {
                         AddRecipient(session, rcpt, isLocal: true, recipientDsn);
-                        await writer.WriteLineAsync("250 2.1.5 OK");
+                        await writer.WriteLineAsync("250 2.1.5 OK").ConfigureAwait(false);
                     }
                     else if (session.IsAuthenticated && config.AllowRelay)
                     {
                         AddRecipient(session, rcpt, isLocal: false, recipientDsn);
-                        await writer.WriteLineAsync("250 2.1.5 OK");
+                        await writer.WriteLineAsync("250 2.1.5 OK").ConfigureAwait(false);
                     }
                     else
                     {
-                        await writer.WriteLineAsync("550 5.1.1 No such user");
+                        await writer.WriteLineAsync("550 5.1.1 No such user").ConfigureAwait(false);
                     }
                     break;
 
                 case "DATA":
                     if (session.Recipients.Count == 0)
                     {
-                        await writer.WriteLineAsync("503 5.5.1 No valid recipients");
+                        await writer.WriteLineAsync("503 5.5.1 No valid recipients").ConfigureAwait(false);
                     }
                     else if (!session.TryEnterDataMode(_dataTransactionLimiter))
                     {
-                        await writer.WriteLineAsync("452 4.3.2 Too many concurrent message transfers");
+                        await writer.WriteLineAsync("452 4.3.2 Too many concurrent message transfers").ConfigureAwait(false);
                     }
                     else
                     {
-                        await writer.WriteLineAsync("354 Start mail input; end with <CRLF>.<CRLF>");
+                        await writer.WriteLineAsync("354 Start mail input; end with <CRLF>.<CRLF>").ConfigureAwait(false);
                     }
                     break;
 
                 case "STARTTLS":
                     if (session.IsSecure)
                     {
-                        await writer.WriteLineAsync("503 5.5.1 TLS is already active");
+                        await writer.WriteLineAsync("503 5.5.1 TLS is already active").ConfigureAwait(false);
                     }
                     else if (config.EnableStartTls && config.TlsCertificatePath is not null
                         && upgradableStream is not null)
                     {
-                        await writer.WriteLineAsync("220 Ready to start TLS");
-                        await writer.FlushAsync(timeout.Token);
+                        await writer.WriteLineAsync("220 Ready to start TLS").ConfigureAwait(false);
+                        await writer.FlushAsync(timeout.Token).ConfigureAwait(false);
 
                         using var cert = LoadCertificate(config);
                         var tlsStream = new SslStream(upgradableStream, leaveInnerStreamOpen: false);
+                        await using var tlsStreamLifetime = tlsStream.ConfigureAwait(false);
                         if (!await TryAuthenticateAsServerAsync(
                                 tlsStream,
                                 cert,
-                                timeout.Token,
-                                clientIp ?? "unknown"))
+                                clientIp ?? "unknown",
+                                timeout.Token).ConfigureAwait(false))
                         {
-                            tlsStream.Dispose();
                             return;
                         }
 
-                        var tlsStreamReader = new StreamReader(tlsStream, ProtocolEncoding, detectEncodingFromByteOrderMarks: false, bufferSize: 4096, leaveOpen: true);
+                        using var tlsStreamReader = new StreamReader(tlsStream, ProtocolEncoding, detectEncodingFromByteOrderMarks: false, bufferSize: 4096, leaveOpen: true);
                         var tlsReader = new BoundedLineReader(tlsStreamReader);
                         var tlsWriter = new StreamWriter(tlsStream, ProtocolEncoding, bufferSize: 4096, leaveOpen: true)
                         {
                             AutoFlush = true,
                             NewLine = "\r\n"
                         };
+                        await using var tlsWriterLifetime = tlsWriter.ConfigureAwait(false);
 
                         session.Reset();
                         session.AuthenticatedUser = null;
@@ -674,38 +695,38 @@ public class SmtpServerService(
                             application,
                             config,
                             timeout,
-                            clientIp: clientIp);
+                            clientIp: clientIp).ConfigureAwait(false);
                         return;
                     }
                     else
                     {
-                        await writer.WriteLineAsync("502 STARTTLS not enabled");
+                        await writer.WriteLineAsync("502 STARTTLS not enabled").ConfigureAwait(false);
                     }
                     break;
 
                 case "RSET":
                     session.Reset();
-                    await writer.WriteLineAsync("250 2.0.0 OK");
+                    await writer.WriteLineAsync("250 2.0.0 OK").ConfigureAwait(false);
                     break;
 
                 case "NOOP":
-                    await writer.WriteLineAsync("250 2.0.0 OK");
+                    await writer.WriteLineAsync("250 2.0.0 OK").ConfigureAwait(false);
                     break;
 
                 case "QUIT":
-                    await writer.WriteLineAsync("221 2.0.0 Bye");
+                    await writer.WriteLineAsync("221 2.0.0 Bye").ConfigureAwait(false);
                     return;
 
                 case "VRFY":
-                    await writer.WriteLineAsync("252 2.5.2 Cannot VRFY user, but will accept message");
+                    await writer.WriteLineAsync("252 2.5.2 Cannot VRFY user, but will accept message").ConfigureAwait(false);
                     break;
 
                 case "EXPN":
-                    await writer.WriteLineAsync("252 2.5.2 Cannot supply mailing list info");
+                    await writer.WriteLineAsync("252 2.5.2 Cannot supply mailing list info").ConfigureAwait(false);
                     break;
 
                 default:
-                    await writer.WriteLineAsync("502 5.5.1 Command not implemented");
+                    await writer.WriteLineAsync("502 5.5.1 Command not implemented").ConfigureAwait(false);
                     break;
             }
         }
@@ -713,23 +734,23 @@ public class SmtpServerService(
 
     private async Task WriteEhloAsync(StreamWriter writer, SmtpListenerOptions config, bool isSecure)
     {
-        await writer.WriteLineAsync($"250-{config.SmtpHostname}");
-        await writer.WriteLineAsync($"250-SIZE {config.MaxMessageSizeBytes}");
-        await writer.WriteLineAsync("250-8BITMIME");
-        await writer.WriteLineAsync("250-SMTPUTF8");
-        await writer.WriteLineAsync("250-DSN");
-        await writer.WriteLineAsync("250-PIPELINING");
-        await writer.WriteLineAsync("250-ENHANCEDSTATUSCODES");
+        await writer.WriteLineAsync($"250-{config.SmtpHostname}").ConfigureAwait(false);
+        await writer.WriteLineAsync($"250-SIZE {config.MaxMessageSizeBytes}").ConfigureAwait(false);
+        await writer.WriteLineAsync("250-8BITMIME").ConfigureAwait(false);
+        await writer.WriteLineAsync("250-SMTPUTF8").ConfigureAwait(false);
+        await writer.WriteLineAsync("250-DSN").ConfigureAwait(false);
+        await writer.WriteLineAsync("250-PIPELINING").ConfigureAwait(false);
+        await writer.WriteLineAsync("250-ENHANCEDSTATUSCODES").ConfigureAwait(false);
         if (config.EnableStartTls && !isSecure)
-            await writer.WriteLineAsync("250-STARTTLS");
+            await writer.WriteLineAsync("250-STARTTLS").ConfigureAwait(false);
         if (isSecure)
         {
             var mechanisms = env.OAuth.EnableOAuth
                 ? "PLAIN LOGIN XOAUTH2"
                 : "PLAIN LOGIN";
-            await writer.WriteLineAsync($"250-AUTH {mechanisms}");
+            await writer.WriteLineAsync($"250-AUTH {mechanisms}").ConfigureAwait(false);
         }
-        await writer.WriteLineAsync("250 OK");
+        await writer.WriteLineAsync("250 OK").ConfigureAwait(false);
     }
 
     private static X509Certificate2 LoadCertificate(SmtpListenerOptions config)
@@ -742,8 +763,8 @@ public class SmtpServerService(
     private async Task<bool> TryAuthenticateAsServerAsync(
         SslStream stream,
         X509Certificate2 certificate,
-        CancellationToken cancellationToken,
-        string remoteLabel)
+        string remoteLabel,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -752,38 +773,45 @@ public class SmtpServerService(
                 {
                     ServerCertificate = certificate,
                     ClientCertificateRequired = false,
+                    // The server's minimum TLS policy is 1.2; OS defaults may allow older versions.
+#pragma warning disable CA5398
                     EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
+#pragma warning restore CA5398
                     CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
                 },
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             return true;
         }
         catch (Exception exception) when (
             exception is IOException or AuthenticationException or SocketException)
         {
-            logger.LogDebug(
-                "SMTP TLS handshake from {Endpoint} ended before authentication: {ExceptionType}",
-                remoteLabel,
-                exception.GetType().Name);
+            if (logger.IsEnabled(LogLevel.Debug))
+            {
+                var exceptionType = exception.GetType().Name;
+                LogTlsHandshakeEnded(logger, remoteLabel, exceptionType);
+            }
             return false;
         }
     }
 
+    // SASL mechanism negotiation shares the same attempt and failure state.
+#pragma warning disable MA0051
     private async Task HandleAuthAsync(
         string line, BoundedLineReader reader, StreamWriter writer,
         SmtpSession session, ISmtpApplicationService application,
         string clientIp, CancellationToken ct)
     {
+#pragma warning restore MA0051
         if (session.IsAuthenticated)
         {
-            await writer.WriteLineAsync("503 5.5.1 Already authenticated");
+            await writer.WriteLineAsync("503 5.5.1 Already authenticated").ConfigureAwait(false);
             return;
         }
 
         var parts = line.Split(' ', 3);
         if (parts.Length < 2)
         {
-            await writer.WriteLineAsync("501 5.5.4 Syntax error");
+            await writer.WriteLineAsync("501 5.5.4 Syntax error").ConfigureAwait(false);
             return;
         }
 
@@ -799,24 +827,24 @@ public class SmtpServerService(
                     var encoded = parts.Length == 3 ? parts[2] : null;
                     if (encoded is null)
                     {
-                        await writer.WriteLineAsync("334 ");
-                        var encodedResult = await reader.ReadLineAsync(MaximumCommandLineCharacters, ct);
+                        await writer.WriteLineAsync("334 ").ConfigureAwait(false);
+                        var encodedResult = await reader.ReadLineAsync(MaximumCommandLineCharacters, ct).ConfigureAwait(false);
                         encoded = encodedResult.Value;
                         if (encodedResult.IsTooLong)
                         {
-                            await writer.WriteLineAsync("501 Authentication response is too long");
+                            await writer.WriteLineAsync("501 Authentication response is too long").ConfigureAwait(false);
                             return;
                         }
                     }
                     if (encoded is null or "*")
                     {
-                        await writer.WriteLineAsync("501 Authentication cancelled");
+                        await writer.WriteLineAsync("501 Authentication cancelled").ConfigureAwait(false);
                         return;
                     }
                     if (!OAuthSasl.TryParseXOAuth2(encoded, out var oauthUsername, out var accessToken))
                     {
                         RecordAuthenticationFailure(session, clientIp);
-                        await writer.WriteLineAsync("535 5.7.8 Authentication failed");
+                        await writer.WriteLineAsync("535 5.7.8 Authentication failed").ConfigureAwait(false);
                         return;
                     }
 
@@ -824,12 +852,12 @@ public class SmtpServerService(
                     try
                     {
                         oauthUser = await application.AuthenticateOAuthAsync(
-                            new SmtpOAuthAuthentication(accessToken), ct);
+                            new SmtpOAuthAuthentication(accessToken), ct).ConfigureAwait(false);
                     }
                     catch (Exception exception) when (!ct.IsCancellationRequested)
                     {
-                        logger.LogWarning(exception, "SMTP authentication service is temporarily unavailable");
-                        await writer.WriteLineAsync("454 4.7.0 Authentication service is temporarily unavailable");
+                        LogAuthenticationUnavailable(logger, exception);
+                        await writer.WriteLineAsync("454 4.7.0 Authentication service is temporarily unavailable").ConfigureAwait(false);
                         return;
                     }
                     if (oauthUser.Username is null
@@ -839,12 +867,12 @@ public class SmtpServerService(
                             StringComparison.OrdinalIgnoreCase))
                     {
                         RecordAuthenticationFailure(session, clientIp);
-                        await writer.WriteLineAsync("535 5.7.8 Authentication failed");
+                        await writer.WriteLineAsync("535 5.7.8 Authentication failed").ConfigureAwait(false);
                         return;
                     }
 
                     session.AuthenticatedUser = oauthUser.Username;
-                    await writer.WriteLineAsync("235 2.7.0 Authentication successful");
+                    await writer.WriteLineAsync("235 2.7.0 Authentication successful").ConfigureAwait(false);
                     return;
                 }
 
@@ -853,17 +881,17 @@ public class SmtpServerService(
                     var encoded = parts.Length == 3 ? parts[2] : null;
                     if (encoded is null)
                     {
-                        await writer.WriteLineAsync("334 ");
-                        var encodedResult = await reader.ReadLineAsync(MaximumCommandLineCharacters, ct);
+                        await writer.WriteLineAsync("334 ").ConfigureAwait(false);
+                        var encodedResult = await reader.ReadLineAsync(MaximumCommandLineCharacters, ct).ConfigureAwait(false);
                         encoded = encodedResult.Value;
                         if (encodedResult.IsTooLong)
                         {
-                            await writer.WriteLineAsync("501 Authentication response is too long");
+                            await writer.WriteLineAsync("501 Authentication response is too long").ConfigureAwait(false);
                             return;
                         }
-                        if (encoded is null || encoded == "*")
+                        if (encoded is null || string.Equals(encoded, "*", StringComparison.Ordinal))
                         {
-                            await writer.WriteLineAsync("501 Authentication cancelled");
+                            await writer.WriteLineAsync("501 Authentication cancelled").ConfigureAwait(false);
                             return;
                         }
                     }
@@ -880,7 +908,7 @@ public class SmtpServerService(
                     }
                     catch (FormatException)
                     {
-                        await writer.WriteLineAsync("501 Invalid base64");
+                        await writer.WriteLineAsync("501 Invalid base64").ConfigureAwait(false);
                         return;
                     }
                     break;
@@ -888,17 +916,17 @@ public class SmtpServerService(
 
             case "LOGIN":
                 {
-                    await writer.WriteLineAsync("334 VXNlcm5hbWU6");
-                    var userResult = await reader.ReadLineAsync(MaximumCommandLineCharacters, ct);
+                    await writer.WriteLineAsync("334 VXNlcm5hbWU6").ConfigureAwait(false);
+                    var userResult = await reader.ReadLineAsync(MaximumCommandLineCharacters, ct).ConfigureAwait(false);
                     var userB64 = userResult.Value;
-                    if (userResult.IsTooLong) { await writer.WriteLineAsync("501 Authentication response is too long"); return; }
-                    if (userB64 is null or "*") { await writer.WriteLineAsync("501 Authentication cancelled"); return; }
+                    if (userResult.IsTooLong) { await writer.WriteLineAsync("501 Authentication response is too long").ConfigureAwait(false); return; }
+                    if (userB64 is null or "*") { await writer.WriteLineAsync("501 Authentication cancelled").ConfigureAwait(false); return; }
 
-                    await writer.WriteLineAsync("334 UGFzc3dvcmQ6");
-                    var passwordResult = await reader.ReadLineAsync(MaximumCommandLineCharacters, ct);
+                    await writer.WriteLineAsync("334 UGFzc3dvcmQ6").ConfigureAwait(false);
+                    var passwordResult = await reader.ReadLineAsync(MaximumCommandLineCharacters, ct).ConfigureAwait(false);
                     var passB64 = passwordResult.Value;
-                    if (passwordResult.IsTooLong) { await writer.WriteLineAsync("501 Authentication response is too long"); return; }
-                    if (passB64 is null or "*") { await writer.WriteLineAsync("501 Authentication cancelled"); return; }
+                    if (passwordResult.IsTooLong) { await writer.WriteLineAsync("501 Authentication response is too long").ConfigureAwait(false); return; }
+                    if (passB64 is null or "*") { await writer.WriteLineAsync("501 Authentication cancelled").ConfigureAwait(false); return; }
 
                     try
                     {
@@ -907,21 +935,21 @@ public class SmtpServerService(
                     }
                     catch (FormatException)
                     {
-                        await writer.WriteLineAsync("501 Invalid base64");
+                        await writer.WriteLineAsync("501 Invalid base64").ConfigureAwait(false);
                         return;
                     }
                     break;
                 }
 
             default:
-                await writer.WriteLineAsync("504 Unsupported authentication mechanism");
+                await writer.WriteLineAsync("504 Unsupported authentication mechanism").ConfigureAwait(false);
                 return;
         }
 
         if (username is null || password is null)
         {
             RecordAuthenticationFailure(session, clientIp);
-            await writer.WriteLineAsync("535 5.7.8 Authentication failed");
+            await writer.WriteLineAsync("535 5.7.8 Authentication failed").ConfigureAwait(false);
             return;
         }
 
@@ -929,31 +957,29 @@ public class SmtpServerService(
         try
         {
             user = await application.AuthenticatePasswordAsync(
-                new SmtpPasswordAuthentication(username, password), ct);
+                new SmtpPasswordAuthentication(username, password), ct).ConfigureAwait(false);
         }
         catch (Exception exception) when (!ct.IsCancellationRequested)
         {
-            logger.LogWarning(exception, "SMTP authentication service is temporarily unavailable");
-            await writer.WriteLineAsync("454 4.7.0 Authentication service is temporarily unavailable");
+            LogAuthenticationUnavailable(logger, exception);
+            await writer.WriteLineAsync("454 4.7.0 Authentication service is temporarily unavailable").ConfigureAwait(false);
             return;
         }
         if (user.Username is null)
         {
             RecordAuthenticationFailure(session, clientIp);
-            await writer.WriteLineAsync("535 5.7.8 Authentication failed");
+            await writer.WriteLineAsync("535 5.7.8 Authentication failed").ConfigureAwait(false);
             return;
         }
 
         session.AuthenticatedUser = user.Username;
-        await writer.WriteLineAsync("235 2.7.0 Authentication successful");
+        await writer.WriteLineAsync("235 2.7.0 Authentication successful").ConfigureAwait(false);
     }
 
     private void RecordAuthenticationFailure(SmtpSession session, string clientIp)
     {
         session.AuthenticationFailures++;
-        logger.LogWarning(
-            "Mail authentication failed for protocol SMTP from {RemoteIp}",
-            clientIp);
+        LogAuthenticationFailed(logger, clientIp);
     }
 
     private static void AddRecipient(
@@ -976,6 +1002,8 @@ public class SmtpServerService(
         string? DsnReturnContent,
         string? DsnEnvelopeId);
 
+    // MAIL FROM extension parsing must preserve its protocol validation order.
+#pragma warning disable MA0051
     private static bool TryParseMailCommand(
         string line,
         bool isExtendedSmtp,
@@ -984,6 +1012,7 @@ public class SmtpServerService(
         out ParsedMailCommand command,
         out string failureResponse)
     {
+#pragma warning restore MA0051
         command = new ParsedMailCommand(string.Empty, false, false, null, null);
         failureResponse = "501 5.1.7 Sender address syntax is invalid";
         if (!TryExtractPath(
@@ -1011,7 +1040,7 @@ public class SmtpServerService(
                 return false;
             }
 
-            var equals = parameter.IndexOf('=');
+            var equals = parameter.IndexOf('=', StringComparison.Ordinal);
             var name = (equals < 0 ? parameter : parameter[..equals]).ToUpperInvariant();
             var value = equals < 0 ? null : parameter[(equals + 1)..];
             switch (name)
@@ -1119,7 +1148,7 @@ public class SmtpServerService(
                 return false;
             }
 
-            var equals = parameter.IndexOf('=');
+            var equals = parameter.IndexOf('=', StringComparison.Ordinal);
             var name = (equals < 0 ? parameter : parameter[..equals]).ToUpperInvariant();
             var value = equals < 0 ? null : parameter[(equals + 1)..];
             switch (name)
@@ -1170,12 +1199,12 @@ public class SmtpServerService(
         address = string.Empty;
         requiresSmtpUtf8 = false;
         parameters = [];
-        var colon = line.IndexOf(':');
+        var colon = line.IndexOf(':', StringComparison.Ordinal);
         if (colon < 0)
             return false;
 
         var prefix = line[..colon].Trim();
-        if (!prefix.Equals($"{(pathName == "FROM" ? "MAIL" : "RCPT")} {pathName}", StringComparison.OrdinalIgnoreCase))
+        if (!prefix.Equals($"{(string.Equals(pathName, "FROM", StringComparison.Ordinal) ? "MAIL" : "RCPT")} {pathName}", StringComparison.OrdinalIgnoreCase))
             return false;
 
         var remainder = line[(colon + 1)..].TrimStart();
@@ -1190,7 +1219,7 @@ public class SmtpServerService(
         }
         else
         {
-            var separator = remainder.IndexOf(' ');
+            var separator = remainder.IndexOf(' ', StringComparison.Ordinal);
             candidate = separator < 0 ? remainder : remainder[..separator];
             remainder = separator < 0 ? string.Empty : remainder[separator..];
         }
@@ -1249,7 +1278,7 @@ public class SmtpServerService(
     private static bool TryGetGreeting(string line, out string greeting)
     {
         greeting = string.Empty;
-        var separator = line.IndexOf(' ');
+        var separator = line.IndexOf(' ', StringComparison.Ordinal);
         if (separator < 0)
             return false;
 
@@ -1288,4 +1317,55 @@ public class SmtpServerService(
         return $"Received: from {source} ([{address}])\r\n" +
                $"\tby {host} with {protocol} id {queueId:N}; {DateTimeOffset.UtcNow:r}\r\n";
     }
+
+    [LoggerMessage(EventId = 3201, Level = LogLevel.Warning, Message = "No SMTP listeners are enabled.")]
+    private static partial void LogNoListeners(ILogger logger);
+
+    [LoggerMessage(EventId = 3202, Level = LogLevel.Information,
+        Message = "SMTP {Mode} listener started on port {Port}")]
+    private static partial void LogListenerStarted(ILogger logger, ListenerMode mode, int port);
+
+    [LoggerMessage(EventId = 3203, Level = LogLevel.Information,
+        Message = "SMTP {Mode} listener on port {Port} stopped.")]
+    private static partial void LogListenerStopped(ILogger logger, ListenerMode mode, int port);
+
+    [LoggerMessage(EventId = 3204, Level = LogLevel.Warning,
+        Message = "Rejected SMTP connection from {Endpoint}: connection limit")]
+    private static partial void LogConnectionLimit(ILogger logger, string endpoint);
+
+    [LoggerMessage(EventId = 3205, Level = LogLevel.Debug,
+        Message = "SMTP connection from {Endpoint} timed out")]
+    private static partial void LogConnectionTimedOut(ILogger logger, string endpoint);
+
+    [LoggerMessage(EventId = 3206, Level = LogLevel.Warning,
+        Message = "Error handling SMTP connection from {Endpoint}")]
+    private static partial void LogConnectionError(ILogger logger, Exception exception, string endpoint);
+
+    [LoggerMessage(EventId = 3207, Level = LogLevel.Warning,
+        Message = "SMTP sender policy is temporarily unavailable")]
+    private static partial void LogSenderPolicyUnavailable(ILogger logger, Exception exception);
+
+    [LoggerMessage(EventId = 3208, Level = LogLevel.Error,
+        Message = "Could not persist SMTP queue message {QueueId}")]
+    private static partial void LogQueuePersistFailed(ILogger logger, Exception exception, Guid queueId);
+
+    [LoggerMessage(EventId = 3209, Level = LogLevel.Information,
+        Message = "Accepted SMTP queue message {QueueId} with {RecipientCount} recipients")]
+    private static partial void LogQueueAccepted(ILogger logger, Guid queueId, int recipientCount);
+
+    [LoggerMessage(EventId = 3210, Level = LogLevel.Warning,
+        Message = "SMTP recipient policy is temporarily unavailable")]
+    private static partial void LogRecipientPolicyUnavailable(ILogger logger, Exception exception);
+
+    [LoggerMessage(EventId = 3211, Level = LogLevel.Debug,
+        Message = "SMTP TLS handshake from {Endpoint} ended before authentication: {ExceptionType}")]
+    private static partial void LogTlsHandshakeEnded(ILogger logger, string endpoint, string exceptionType);
+
+    [LoggerMessage(EventId = 3212, Level = LogLevel.Warning,
+        Message = "SMTP authentication service is temporarily unavailable")]
+    private static partial void LogAuthenticationUnavailable(ILogger logger, Exception exception);
+
+    [LoggerMessage(EventId = 3213, Level = LogLevel.Warning,
+        Message = "Mail authentication failed for protocol SMTP from {RemoteIp}")]
+    private static partial void LogAuthenticationFailed(ILogger logger, string remoteIp);
 }

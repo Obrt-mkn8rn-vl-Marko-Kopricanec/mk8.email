@@ -1,0 +1,16 @@
+#nullable enable
+mk8.email.Smtp.Presentation.DnsMailExchangeResolver
+mk8.email.Smtp.Presentation.DnsMailExchangeResolver.DnsMailExchangeResolver(DnsClient.ILookupClient! lookupClient, Microsoft.Extensions.Logging.ILogger<mk8.email.Smtp.Presentation.DnsMailExchangeResolver!>! logger) -> void
+mk8.email.Smtp.Presentation.DnsMailExchangeResolver.ResolveAsync(string! domain, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<mk8.email.Contracts.Mail.MailRoutingResult!>!
+mk8.email.Smtp.Presentation.ISmtpPresentationRelay
+mk8.email.Smtp.Presentation.ISmtpPresentationRelay.RelayAsync(mk8.email.Contracts.Mail.SmtpRelayPresentationRequest! request, System.Guid applicationRequestId, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<mk8.email.Contracts.Mail.OutboundDeliveryResult!>!
+mk8.email.Smtp.Presentation.OutboundSmtpRelay
+mk8.email.Smtp.Presentation.OutboundSmtpRelay.OutboundSmtpRelay(mk8.email.Contracts.Mail.IMailExchangeResolver! resolver, mk8.email.Configuration.EnvironmentConfig! environment, Microsoft.Extensions.Logging.ILogger<mk8.email.Smtp.Presentation.OutboundSmtpRelay!>! logger) -> void
+mk8.email.Smtp.Presentation.OutboundSmtpRelay.OutboundSmtpRelay(mk8.email.Contracts.Mail.IMailExchangeResolver! resolver, mk8.email.Configuration.EnvironmentConfig! environment, Microsoft.Extensions.Logging.ILogger<mk8.email.Smtp.Presentation.OutboundSmtpRelay!>! logger, mk8.email.Messaging.IGatewayTrafficJournal! traffic) -> void
+mk8.email.Smtp.Presentation.OutboundSmtpRelay.RelayAsync(mk8.email.Contracts.Mail.SmtpRelayPresentationRequest! request, System.Guid applicationRequestId, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<mk8.email.Contracts.Mail.OutboundDeliveryResult!>!
+mk8.email.Smtp.Presentation.OutboundSmtpRelay.RelayAsync(string! sender, string! recipient, string! rawMessage, mk8.email.Contracts.Mail.OutboundMailOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Mail.OutboundDeliveryResult!>!
+mk8.email.Smtp.Presentation.SmtpPresentationServiceExtensions
+mk8.email.Smtp.Presentation.SmtpServerService
+mk8.email.Smtp.Presentation.SmtpServerService.SmtpServerService(Microsoft.Extensions.DependencyInjection.IServiceScopeFactory! scopeFactory, mk8.email.Configuration.EnvironmentConfig! env, Microsoft.Extensions.Logging.ILogger<mk8.email.Smtp.Presentation.SmtpServerService!>! logger, mk8.email.Messaging.IGatewayTrafficJournal? journal = null) -> void
+override mk8.email.Smtp.Presentation.SmtpServerService.ExecuteAsync(System.Threading.CancellationToken stoppingToken) -> System.Threading.Tasks.Task!
+static mk8.email.Smtp.Presentation.SmtpPresentationServiceExtensions.AddOutboundSmtpPresentation(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!

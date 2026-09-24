@@ -18,9 +18,9 @@ internal sealed class DavApplicationService(
         {
             ProtocolAuthenticationKinds.Password when authentication.Username is not null =>
                 await authenticator.AuthenticateAsync(
-                    authentication.Username, authentication.Secret, cancellationToken),
+                    authentication.Username, authentication.Secret, cancellationToken).ConfigureAwait(false),
             ProtocolAuthenticationKinds.BearerToken =>
-                await AuthenticateBearerAsync(authentication.Secret, cancellationToken),
+                await AuthenticateBearerAsync(authentication.Secret, cancellationToken).ConfigureAwait(false),
             _ => null,
         };
         return new DavLookupResult<DavUser>(user is null
@@ -32,7 +32,7 @@ internal sealed class DavApplicationService(
         DavEnsureCollectionsRequest request,
         CancellationToken cancellationToken)
     {
-        await store.EnsureDefaultCollectionsAsync(ToAuthenticatedUser(request.User), cancellationToken);
+        await store.EnsureDefaultCollectionsAsync(ToAuthenticatedUser(request.User), cancellationToken).ConfigureAwait(false);
         return new DavAcknowledgement(true);
     }
 
@@ -49,7 +49,7 @@ internal sealed class DavApplicationService(
             request.Kind,
             request.HrefUserId,
             request.HrefSlug,
-            cancellationToken));
+            cancellationToken).ConfigureAwait(false));
 
     public Task<DavCollectionWriteResult> CreateCollectionAsync(
         DavCollectionCreateRequest request,
@@ -87,7 +87,7 @@ internal sealed class DavApplicationService(
         DavPrincipalLookupRequest request,
         CancellationToken cancellationToken) =>
         new(await store.GetPrincipalAsync(
-            ToAuthenticatedUser(request.User), request.PrincipalId, cancellationToken));
+            ToAuthenticatedUser(request.User), request.PrincipalId, cancellationToken).ConfigureAwait(false));
 
     public Task<DavAclWriteResult> ReplaceSharesAsync(
         DavShareReplaceRequest request,
@@ -101,29 +101,29 @@ internal sealed class DavApplicationService(
     public async Task<IReadOnlyList<DavResource>> GetResourcesAsync(
         DavCollectionReference request,
         CancellationToken cancellationToken) =>
-        await ResolveCollectionAsync(request, cancellationToken) is null
+        await ResolveCollectionAsync(request, cancellationToken).ConfigureAwait(false) is null
             ? []
-            : await store.GetResourcesAsync(request.Collection.Id, cancellationToken);
+            : await store.GetResourcesAsync(request.Collection.Id, cancellationToken).ConfigureAwait(false);
 
     public async Task<DavLookupResult<DavResource>> GetResourceAsync(
         DavResourceLookupRequest request,
         CancellationToken cancellationToken) =>
-        new(await ResolveCollectionAsync(request.Reference, cancellationToken) is null
+        new(await ResolveCollectionAsync(request.Reference, cancellationToken).ConfigureAwait(false) is null
             ? null
             : await store.GetResourceAsync(
                 request.Reference.Collection.Id,
                 request.ResourceName,
-                cancellationToken));
+                cancellationToken).ConfigureAwait(false));
 
     public async Task<IReadOnlyList<DavChange>> GetChangesAsync(
         DavChangesRequest request,
         CancellationToken cancellationToken) =>
-        await ResolveCollectionAsync(request.Reference, cancellationToken) is null
+        await ResolveCollectionAsync(request.Reference, cancellationToken).ConfigureAwait(false) is null
             ? []
             : await store.GetChangesAsync(
                 request.Reference.Collection.Id,
                 request.SinceSequence,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
 
     public Task<DavResourceWriteResult> PutResourceAsync(
         DavResourcePutRequest request,
@@ -171,7 +171,7 @@ internal sealed class DavApplicationService(
             requested.Kind,
             requested.HrefUserId,
             requested.HrefSlug,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         return accessible?.Id == requested.Id ? accessible : null;
     }
 

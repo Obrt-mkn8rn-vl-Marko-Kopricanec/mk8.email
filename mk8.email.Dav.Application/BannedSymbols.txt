@@ -1,0 +1,6 @@
+T:Microsoft.AspNetCore.Http.HttpContext; DAV application logic must not host HTTP requests
+T:System.Net.Sockets.TcpListener; DAV application logic must not accept protocol connections
+T:System.Net.Http.HttpClient; DAV application logic must not bypass the presentation boundary
+T:Azure.Storage.Blobs.BlobServiceClient; DAV application logic must use the storage abstraction
+T:Npgsql.NpgsqlDataSource; DAV application logic must use the owned persistence boundary
+T:System.IO.File; DAV application logic must not read host state directly

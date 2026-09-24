@@ -1,0 +1,3 @@
+#nullable enable
+mk8.email.Dav.DavServiceExtensions
+static mk8.email.Dav.DavServiceExtensions.AddDavProtocol(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!

@@ -11,16 +11,7 @@ using mk8.email.Infrastructure.Models;
 
 namespace mk8.email.Dav;
 
-internal sealed record DavCalendarRecipient(
-    string Address,
-    bool IsLocal,
-    AuthenticatedMailUser? User);
-
-internal sealed record DavCalendarResourceSet(
-    IReadOnlyList<DavResource> Resources,
-    bool IsComplete);
-
-internal sealed class DavStore(
+internal sealed partial class DavStore(
     EmailDbContext database,
     EnvironmentConfig environment,
     DavResourceContentService resourceContent,
@@ -41,28 +32,28 @@ internal sealed class DavStore(
             "default",
             "Calendar",
             ["VEVENT", "VTODO", "VJOURNAL"],
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         await EnsureDefaultCollectionAsync(
             user,
             DavCollectionKind.AddressBook,
             "default",
             "Address Book",
             [],
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         await EnsureDefaultCollectionAsync(
             user,
             DavCollectionKind.Calendar,
             SchedulingInboxSlug,
             "Scheduling Inbox",
             ["VEVENT", "VTODO", "VFREEBUSY"],
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         await EnsureDefaultCollectionAsync(
             user,
             DavCollectionKind.Calendar,
             SchedulingOutboxSlug,
             "Scheduling Outbox",
             ["VEVENT", "VTODO", "VFREEBUSY"],
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<IReadOnlyList<DavCollection>> GetCollectionsAsync(
@@ -70,8 +61,8 @@ internal sealed class DavStore(
         DavCollectionKind kind,
         CancellationToken cancellationToken)
     {
-        await EnsureDefaultCollectionsAsync(user, cancellationToken);
-        var companyId = await GetActiveCompanyIdAsync(user.Id, cancellationToken);
+        await EnsureDefaultCollectionsAsync(user, cancellationToken).ConfigureAwait(false);
+        var companyId = await GetActiveCompanyIdAsync(user.Id, cancellationToken).ConfigureAwait(false);
         if (companyId is null)
             return [];
         var type = ToStoredType(kind);
@@ -90,7 +81,7 @@ internal sealed class DavStore(
             .OrderBy(collection => collection.SortOrder)
             .ThenBy(collection => collection.DisplayName)
             .ThenBy(collection => collection.Slug)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         return collections.Select(collection => ToCollection(collection, user.Id)).ToList();
     }
 
@@ -108,7 +99,7 @@ internal sealed class DavStore(
         DavCollectionDB? collection;
         if (TryParseSharedBindingSlug(hrefSlug, out var sharedCollectionId))
         {
-            var companyId = await GetActiveCompanyIdAsync(user.Id, cancellationToken);
+            var companyId = await GetActiveCompanyIdAsync(user.Id, cancellationToken).ConfigureAwait(false);
             if (companyId is null)
                 return null;
             collection = await database.DavCollections
@@ -121,7 +112,7 @@ internal sealed class DavStore(
                     && candidate.User.Company != null
                     && candidate.User.Company.IsActive
                     && candidate.Shares.Any(share => share.GranteeUserId == user.Id),
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         }
         else
         {
@@ -131,7 +122,7 @@ internal sealed class DavStore(
                 .SingleOrDefaultAsync(candidate => candidate.UserId == user.Id
                     && candidate.CollectionType == type
                     && candidate.Slug == hrefSlug,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         }
 
         return collection is null ? null : ToCollection(collection, user.Id);
@@ -149,10 +140,12 @@ internal sealed class DavStore(
             .Include(candidate => candidate.Shares)
             .SingleOrDefaultAsync(candidate => candidate.UserId == user.Id
                 && candidate.CollectionType == type
-                && candidate.Slug == slug, cancellationToken);
+                && candidate.Slug == slug, cancellationToken).ConfigureAwait(false);
         return collection is null ? null : ToCollection(collection, user.Id);
     }
 
+    // Preserve the ordered collection uniqueness and transaction checks in one write path.
+#pragma warning disable MA0051
     public async Task<DavCollectionWriteResult> CreateCollectionAsync(
         AuthenticatedMailUser user,
         DavCollectionKind kind,
@@ -160,15 +153,19 @@ internal sealed class DavStore(
         DavCollectionProperties properties,
         CancellationToken cancellationToken)
     {
+#pragma warning restore MA0051
         if (IsSchedulingCollection(slug) || IsSharedBindingSlug(slug))
             return new DavCollectionWriteResult(DavCollectionWriteStatus.Protected);
 
-        await using var transaction = await BeginSerializableTransactionAsync(cancellationToken);
+        // In-memory tests intentionally have no transaction; await using safely skips null.
+#pragma warning disable CA2007, MA0004
+        await using var transaction = await BeginSerializableTransactionAsync(cancellationToken).ConfigureAwait(false);
+#pragma warning restore CA2007, MA0004
         if (await database.DavCollections.AnyAsync(collection =>
                 collection.UserId == user.Id
                 && collection.CollectionType == ToStoredType(kind)
                 && collection.Slug == slug,
-            cancellationToken))
+            cancellationToken).ConfigureAwait(false))
         {
             return new DavCollectionWriteResult(DavCollectionWriteStatus.AlreadyExists);
         }
@@ -176,7 +173,7 @@ internal sealed class DavStore(
                 collection => collection.UserId == user.Id
                     && collection.Slug != SchedulingInboxSlug
                     && collection.Slug != SchedulingOutboxSlug,
-                cancellationToken) >= environment.Dav.MaxCollectionsPerUser)
+                cancellationToken).ConfigureAwait(false) >= environment.Dav.MaxCollectionsPerUser)
         {
             return new DavCollectionWriteResult(DavCollectionWriteStatus.LimitExceeded);
         }
@@ -188,7 +185,7 @@ internal sealed class DavStore(
                 candidate.UserId == user.Id
                 && candidate.CollectionType == DavCollectionDB.AddressBookType
                 && candidate.IsDefault,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         var collection = new DavCollectionDB
         {
             Id = Guid.CreateVersion7(),
@@ -205,12 +202,12 @@ internal sealed class DavStore(
             CreatedAt = now,
             UpdatedAt = now,
         };
-        database.DavCollections.Add(collection);
+        await database.DavCollections.AddAsync(collection, cancellationToken).ConfigureAwait(false);
         try
         {
-            await database.SaveChangesAsync(cancellationToken);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             if (transaction is not null)
-                await transaction.CommitAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (DbUpdateException)
         {
@@ -235,7 +232,7 @@ internal sealed class DavStore(
         var collection = await FindTrackedWritableCollectionAsync(
             user,
             current.Id,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (collection is null)
             return new DavCollectionWriteResult(DavCollectionWriteStatus.NotFound);
 
@@ -245,7 +242,7 @@ internal sealed class DavStore(
         collection.SortOrder = properties.SortOrder;
         collection.Components = NormalizeComponents(current.Kind, properties.Components);
         collection.UpdatedAt = DateTime.UtcNow;
-        await database.SaveChangesAsync(cancellationToken);
+        await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return new DavCollectionWriteResult(
             DavCollectionWriteStatus.Updated,
             ToCollection(collection, user.Id));
@@ -258,15 +255,18 @@ internal sealed class DavStore(
     {
         if (!current.IsOwner)
         {
+            // Duplicate share rows must be detected, not silently selected.
+#pragma warning disable HLQ005
             var share = await database.DavShares.SingleOrDefaultAsync(candidate =>
                 candidate.CollectionId == current.Id
                 && candidate.GranteeUserId == user.Id,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
+#pragma warning restore HLQ005
             if (share is null)
                 return new DavCollectionWriteResult(DavCollectionWriteStatus.NotFound);
 
             database.DavShares.Remove(share);
-            await database.SaveChangesAsync(cancellationToken);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             return new DavCollectionWriteResult(DavCollectionWriteStatus.Updated);
         }
 
@@ -278,12 +278,12 @@ internal sealed class DavStore(
             user,
             current.Kind,
             current.Slug,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (collection is null)
             return new DavCollectionWriteResult(DavCollectionWriteStatus.NotFound);
 
         database.DavCollections.Remove(collection);
-        await database.SaveChangesAsync(cancellationToken);
+        await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return new DavCollectionWriteResult(DavCollectionWriteStatus.Updated);
     }
 
@@ -292,7 +292,7 @@ internal sealed class DavStore(
         Guid principalId,
         CancellationToken cancellationToken)
     {
-        var companyId = await GetActiveCompanyIdAsync(requester.Id, cancellationToken);
+        var companyId = await GetActiveCompanyIdAsync(requester.Id, cancellationToken).ConfigureAwait(false);
         if (companyId is null)
             return null;
 
@@ -304,14 +304,14 @@ internal sealed class DavStore(
                 && user.Company != null
                 && user.Company.IsActive)
             .Select(user => new DavPrincipal(user.Id, user.Username))
-            .SingleOrDefaultAsync(cancellationToken);
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<IReadOnlyList<DavPrincipal>> GetPrincipalsAsync(
         AuthenticatedMailUser requester,
         CancellationToken cancellationToken)
     {
-        var companyId = await GetActiveCompanyIdAsync(requester.Id, cancellationToken);
+        var companyId = await GetActiveCompanyIdAsync(requester.Id, cancellationToken).ConfigureAwait(false);
         if (companyId is null)
             return [];
 
@@ -324,25 +324,31 @@ internal sealed class DavStore(
             .OrderBy(user => user.Username)
             .Take(MaximumSharesPerCollection)
             .Select(user => new DavPrincipal(user.Id, user.Username))
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    // ACL replacement must validate and apply the complete binding set atomically.
+#pragma warning disable MA0051
     public async Task<DavAclWriteResult> ReplaceSharesAsync(
         AuthenticatedMailUser owner,
         Guid collectionId,
         IReadOnlyList<DavShareGrant> grants,
         CancellationToken cancellationToken)
     {
+#pragma warning restore MA0051
         if (grants.Count > MaximumSharesPerCollection)
             return new DavAclWriteResult(DavAclWriteStatus.TooManyEntries);
         if (grants.Select(grant => grant.UserId).Distinct().Count() != grants.Count)
             return new DavAclWriteResult(DavAclWriteStatus.BindingConflict);
 
-        await using var transaction = await BeginSerializableTransactionAsync(cancellationToken);
+        // In-memory tests intentionally have no transaction; await using safely skips null.
+#pragma warning disable CA2007, MA0004
+        await using var transaction = await BeginSerializableTransactionAsync(cancellationToken).ConfigureAwait(false);
+#pragma warning restore CA2007, MA0004
         var collection = await database.DavCollections
             .Include(candidate => candidate.Shares)
             .SingleOrDefaultAsync(candidate => candidate.Id == collectionId,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         if (collection is null)
             return new DavAclWriteResult(DavAclWriteStatus.NotFound);
         if (collection.UserId != owner.Id)
@@ -357,7 +363,7 @@ internal sealed class DavStore(
         {
             var recognized = await database.Users
                 .AsNoTracking()
-                .CountAsync(user => granteeIds.Contains(user.Id), cancellationToken);
+                .CountAsync(user => granteeIds.Contains(user.Id), cancellationToken).ConfigureAwait(false);
             if (recognized != granteeIds.Length)
                 return new DavAclWriteResult(DavAclWriteStatus.UnrecognizedPrincipal);
 
@@ -365,7 +371,7 @@ internal sealed class DavStore(
                 .AsNoTracking()
                 .Where(user => user.Id == owner.Id)
                 .Select(user => user.CompanyId)
-                .SingleAsync(cancellationToken);
+                .SingleAsync(cancellationToken).ConfigureAwait(false);
             var allowed = await database.Users
                 .AsNoTracking()
                 .CountAsync(user => granteeIds.Contains(user.Id)
@@ -373,7 +379,7 @@ internal sealed class DavStore(
                     && user.CompanyId == ownerCompanyId
                     && user.Company != null
                     && user.Company.IsActive,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             if (allowed != granteeIds.Length)
                 return new DavAclWriteResult(DavAclWriteStatus.DisallowedPrincipal);
 
@@ -382,7 +388,7 @@ internal sealed class DavStore(
                     granteeIds.Contains(candidate.UserId)
                     && candidate.CollectionType == collection.CollectionType
                     && candidate.Slug == bindingSlug,
-                cancellationToken))
+                cancellationToken).ConfigureAwait(false))
             {
                 return new DavAclWriteResult(DavAclWriteStatus.BindingConflict);
             }
@@ -390,7 +396,10 @@ internal sealed class DavStore(
 
         var now = DateTime.UtcNow;
         var requested = grants.ToDictionary(grant => grant.UserId);
+        // Iterate a snapshot because removing tracked shares may update the navigation collection.
+#pragma warning disable HLQ012
         foreach (var existing in collection.Shares.ToList())
+#pragma warning restore HLQ012
         {
             if (!requested.Remove(existing.GranteeUserId, out var grant))
             {
@@ -403,7 +412,7 @@ internal sealed class DavStore(
         }
         foreach (var grant in requested.Values)
         {
-            database.DavShares.Add(new DavShareDB
+            await database.DavShares.AddAsync(new DavShareDB
             {
                 Id = Guid.CreateVersion7(),
                 CollectionId = collection.Id,
@@ -411,14 +420,14 @@ internal sealed class DavStore(
                 AccessLevel = ToStoredAccess(grant.Access),
                 CreatedAt = now,
                 UpdatedAt = now,
-            });
+            }, cancellationToken).ConfigureAwait(false);
         }
 
         try
         {
-            await database.SaveChangesAsync(cancellationToken);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             if (transaction is not null)
-                await transaction.CommitAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (DbUpdateException)
         {
@@ -436,8 +445,8 @@ internal sealed class DavStore(
             .AsNoTracking()
             .Where(resource => resource.CollectionId == collectionId)
             .OrderBy(resource => resource.ResourceName)
-            .ToListAsync(cancellationToken);
-        return await ToResourcesAsync(resources, cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        return await ToResourcesAsync(resources, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<DavCalendarResourceSet> GetCalendarResourcesAsync(
@@ -452,18 +461,18 @@ internal sealed class DavStore(
                 && resource.Collection.CollectionType == DavCollectionDB.CalendarType
                 && resource.Collection.Slug != SchedulingInboxSlug
                 && resource.Collection.Slug != SchedulingOutboxSlug);
-        var count = await query.CountAsync(cancellationToken);
+        var count = await query.CountAsync(cancellationToken).ConfigureAwait(false);
         var totalBytes = await query.SumAsync(
             resource => (long?)resource.SizeBytes,
-            cancellationToken) ?? 0;
+            cancellationToken).ConfigureAwait(false) ?? 0;
         if (count > maximumResources || totalBytes > maximumBytes)
             return new DavCalendarResourceSet([], false);
 
         var resources = await query
             .OrderBy(resource => resource.UpdatedAt)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         return new DavCalendarResourceSet(
-            await ToResourcesAsync(resources, cancellationToken),
+            await ToResourcesAsync(resources, cancellationToken).ConfigureAwait(false),
             true);
     }
 
@@ -471,7 +480,10 @@ internal sealed class DavStore(
         string address,
         CancellationToken cancellationToken)
     {
+        // Preserve the existing mailbox lookup key used by persisted DAV principals.
+#pragma warning disable CA1308
         var normalized = address.Trim().ToLowerInvariant();
+#pragma warning restore CA1308
         var separator = normalized.LastIndexOf('@');
         if (separator <= 0 || separator == normalized.Length - 1)
             return new DavCalendarRecipient(normalized, false, null);
@@ -487,7 +499,7 @@ internal sealed class DavStore(
                 && (inbox.Name != "*" || inbox.AliasForInboxId != null))
             .OrderBy(inbox => inbox.Name == localPart ? 0 : 1)
             .Select(inbox => new { inbox.Id, inbox.AliasForInboxId })
-            .FirstOrDefaultAsync(cancellationToken);
+            .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
         if (route is not null)
         {
             var targetId = route.AliasForInboxId ?? route.Id;
@@ -500,7 +512,7 @@ internal sealed class DavStore(
                 .Select(inbox => new AuthenticatedMailUser(
                     inbox.OwnerId,
                     inbox.Owner.Username))
-                .SingleOrDefaultAsync(cancellationToken);
+                .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
             return new DavCalendarRecipient(normalized, true, target);
         }
 
@@ -516,13 +528,13 @@ internal sealed class DavStore(
                     && hostedDomain.Domain == domain
                     && hostedDomain.IsActive))
             .Select(user => new AuthenticatedMailUser(user.Id, user.Username))
-            .SingleOrDefaultAsync(cancellationToken);
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
         var isHostedDomain = principal is not null
             || await database.Addresses.AsNoTracking().AnyAsync(
                 addressEntry => addressEntry.Domain == domain
                     && addressEntry.IsActive
                     && addressEntry.Company.IsActive,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         return new DavCalendarRecipient(normalized, isHostedDomain, principal);
     }
 
@@ -533,12 +545,12 @@ internal sealed class DavStore(
         byte[] body,
         CancellationToken cancellationToken)
     {
-        await EnsureDefaultCollectionsAsync(recipient, cancellationToken);
+        await EnsureDefaultCollectionsAsync(recipient, cancellationToken).ConfigureAwait(false);
         var collection = await GetOwnedCollectionAsync(
             recipient,
             DavCollectionKind.Calendar,
             SchedulingInboxSlug,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (collection is null)
             return new DavResourceWriteResult(DavResourceWriteStatus.NotFound);
 
@@ -551,7 +563,7 @@ internal sealed class DavStore(
             body,
             ifMatch: null,
             ifNoneMatchStar: false,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<DavResource?> GetResourceAsync(
@@ -562,10 +574,10 @@ internal sealed class DavStore(
         var resource = await database.DavResources
             .AsNoTracking()
             .SingleOrDefaultAsync(candidate => candidate.CollectionId == collectionId
-                && candidate.ResourceName == resourceName, cancellationToken);
+                && candidate.ResourceName == resourceName, cancellationToken).ConfigureAwait(false);
         return resource is null
             ? null
-            : await ToResourceAsync(resource, cancellationToken);
+            : await ToResourceAsync(resource, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<IReadOnlyList<DavChange>> GetChangesAsync(
@@ -578,7 +590,7 @@ internal sealed class DavStore(
             .Where(change => change.CollectionId == collectionId
                 && change.Sequence > sinceSequence)
             .OrderBy(change => change.Sequence)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         return changes.Select(change => new DavChange(
             change.Sequence,
             change.ResourceName,
@@ -587,6 +599,8 @@ internal sealed class DavStore(
             change.ChangedAt)).ToList();
     }
 
+    // Resource preconditions, UID uniqueness, Blob effects, and commit form one ordered write.
+#pragma warning disable MA0051
     public async Task<DavResourceWriteResult> PutResourceAsync(
         AuthenticatedMailUser user,
         Guid collectionId,
@@ -598,33 +612,40 @@ internal sealed class DavStore(
         bool ifNoneMatchStar,
         CancellationToken cancellationToken)
     {
+#pragma warning restore MA0051
         var effectMarker = transactionEffects.Mark();
-        await using var transaction = await BeginSerializableTransactionAsync(cancellationToken);
+        // In-memory tests intentionally have no transaction; await using safely skips null.
+#pragma warning disable CA2007, MA0004
+        await using var transaction = await BeginSerializableTransactionAsync(cancellationToken).ConfigureAwait(false);
+#pragma warning restore CA2007, MA0004
         var commitAttempted = false;
         var collection = await FindTrackedWritableCollectionAsync(
             user,
             collectionId,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (collection is null)
             return new DavResourceWriteResult(DavResourceWriteStatus.Forbidden);
-        if (collection.CollectionType == DavCollectionDB.AddressBookType)
+        if (string.Equals(collection.CollectionType, DavCollectionDB.AddressBookType, StringComparison.Ordinal))
         {
             await DavContactUidInvariant.AcquireAccountLockAsync(
                 database,
                 collection.UserId,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         }
 
+        // Preserve detection of duplicate resource names in a DAV collection.
+#pragma warning disable HLQ005
         var existing = await database.DavResources.SingleOrDefaultAsync(
             resource => resource.CollectionId == collection.Id
                 && resource.ResourceName == resourceName,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
+#pragma warning restore HLQ005
         if (!PreconditionsAllow(existing?.Etag, existing is not null, ifMatch, ifNoneMatchStar))
             return new DavResourceWriteResult(DavResourceWriteStatus.PreconditionFailed);
         if (existing is null
             && await database.DavResources.CountAsync(
                 resource => resource.CollectionId == collection.Id,
-                cancellationToken) >= environment.Dav.MaxResourcesPerCollection)
+                cancellationToken).ConfigureAwait(false) >= environment.Dav.MaxResourcesPerCollection)
         {
             return new DavResourceWriteResult(DavResourceWriteStatus.LimitExceeded);
         }
@@ -635,21 +656,21 @@ internal sealed class DavStore(
                         && resource.Collection.CollectionType == DavCollectionDB.AddressBookType
                     : resource.CollectionId == collection.Id)
                 && (existing == null || resource.Id != existing.Id),
-            cancellationToken))
+            cancellationToken).ConfigureAwait(false))
         {
             return new DavResourceWriteResult(DavResourceWriteStatus.UidConflict);
         }
 
         var etag = Convert.ToHexStringLower(SHA256.HashData(content));
         if (existing is not null
-            && existing.Etag == etag
-            && existing.Uid == uid
-            && existing.ContentType == contentType)
+            && string.Equals(existing.Etag, etag, StringComparison.Ordinal)
+            && string.Equals(existing.Uid, uid, StringComparison.Ordinal)
+            && string.Equals(existing.ContentType, contentType, StringComparison.Ordinal))
         {
             if (transaction is not null)
             {
                 commitAttempted = true;
-                await transaction.CommitAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             }
             transactionEffects.Discard(effectMarker);
             return new DavResourceWriteResult(
@@ -671,7 +692,7 @@ internal sealed class DavStore(
                 ResourceName = resourceName,
                 CreatedAt = now,
             };
-            database.DavResources.Add(resource);
+            await database.DavResources.AddAsync(resource, cancellationToken).ConfigureAwait(false);
             status = DavResourceWriteStatus.Created;
         }
         else
@@ -687,7 +708,7 @@ internal sealed class DavStore(
         resource.ChangeSequence = sequence;
         resource.UpdatedAt = now;
         collection.UpdatedAt = now;
-        database.DavChanges.Add(new DavChangeDB
+        await database.DavChanges.AddAsync(new DavChangeDB
         {
             Id = Guid.CreateVersion7(),
             CollectionId = collection.Id,
@@ -696,29 +717,29 @@ internal sealed class DavStore(
             IsDeleted = false,
             Etag = etag,
             ChangedAt = now,
-        });
+        }, cancellationToken).ConfigureAwait(false);
 
         try
         {
-            await resourceContent.SetAsync(resource, content, cancellationToken);
-            await database.SaveChangesAsync(cancellationToken);
+            await resourceContent.SetAsync(resource, content, cancellationToken).ConfigureAwait(false);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             if (transaction is not null)
             {
                 commitAttempted = true;
-                await transaction.CommitAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             }
-            await transactionEffects.CommitAsync(effectMarker);
+            await transactionEffects.CommitAsync(effectMarker).ConfigureAwait(false);
         }
         catch (DbUpdateException exception)
         {
-            await RollBackAsync(transaction, exception);
-            await CompleteRollbackAsync(effectMarker, commitAttempted);
+            await RollBackAsync(transaction, exception).ConfigureAwait(false);
+            await CompleteRollbackAsync(effectMarker, commitAttempted).ConfigureAwait(false);
             return new DavResourceWriteResult(DavResourceWriteStatus.UidConflict);
         }
         catch (Exception exception)
         {
-            await RollBackAsync(transaction, exception);
-            await CompleteRollbackAsync(effectMarker, commitAttempted);
+            await RollBackAsync(transaction, exception).ConfigureAwait(false);
+            await CompleteRollbackAsync(effectMarker, commitAttempted).ConfigureAwait(false);
             throw;
         }
         return new DavResourceWriteResult(status, ToResource(resource, content));
@@ -732,18 +753,24 @@ internal sealed class DavStore(
         CancellationToken cancellationToken)
     {
         var effectMarker = transactionEffects.Mark();
-        await using var transaction = await BeginSerializableTransactionAsync(cancellationToken);
+        // In-memory tests intentionally have no transaction; await using safely skips null.
+#pragma warning disable CA2007, MA0004
+        await using var transaction = await BeginSerializableTransactionAsync(cancellationToken).ConfigureAwait(false);
+#pragma warning restore CA2007, MA0004
         var commitAttempted = false;
         var collection = await FindTrackedWritableCollectionAsync(
             user,
             collectionId,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (collection is null)
             return new DavResourceWriteResult(DavResourceWriteStatus.Forbidden);
+        // Preserve detection of duplicate resource names in a DAV collection.
+#pragma warning disable HLQ005
         var resource = await database.DavResources.SingleOrDefaultAsync(
             candidate => candidate.CollectionId == collection.Id
                 && candidate.ResourceName == resourceName,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
+#pragma warning restore HLQ005
         if (resource is null)
             return new DavResourceWriteResult(DavResourceWriteStatus.NotFound);
         if (!PreconditionsAllow(resource.Etag, exists: true, ifMatch, ifNoneMatchStar: false))
@@ -754,7 +781,7 @@ internal sealed class DavStore(
         collection.UpdatedAt = now;
         resourceContent.DeleteOnCommit(resource);
         database.DavResources.Remove(resource);
-        database.DavChanges.Add(new DavChangeDB
+        await database.DavChanges.AddAsync(new DavChangeDB
         {
             Id = Guid.CreateVersion7(),
             CollectionId = collection.Id,
@@ -762,22 +789,22 @@ internal sealed class DavStore(
             ResourceName = resourceName,
             IsDeleted = true,
             ChangedAt = now,
-        });
+        }, cancellationToken).ConfigureAwait(false);
         try
         {
-            await database.SaveChangesAsync(cancellationToken);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             if (transaction is not null)
             {
                 commitAttempted = true;
-                await transaction.CommitAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             }
-            await transactionEffects.CommitAsync(effectMarker);
+            await transactionEffects.CommitAsync(effectMarker).ConfigureAwait(false);
             return new DavResourceWriteResult(DavResourceWriteStatus.Updated);
         }
         catch (Exception exception)
         {
-            await RollBackAsync(transaction, exception);
-            await CompleteRollbackAsync(effectMarker, commitAttempted);
+            await RollBackAsync(transaction, exception).ConfigureAwait(false);
+            await CompleteRollbackAsync(effectMarker, commitAttempted).ConfigureAwait(false);
             throw;
         }
     }
@@ -795,7 +822,7 @@ internal sealed class DavStore(
                 collection.UserId == user.Id
                 && collection.CollectionType == type
                 && collection.Slug == slug,
-            cancellationToken))
+            cancellationToken).ConfigureAwait(false))
         {
             return;
         }
@@ -807,7 +834,7 @@ internal sealed class DavStore(
                 candidate.UserId == user.Id
                 && candidate.CollectionType == DavCollectionDB.AddressBookType
                 && candidate.IsDefault,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         var collection = new DavCollectionDB
         {
             Id = Guid.CreateVersion7(),
@@ -821,10 +848,10 @@ internal sealed class DavStore(
             CreatedAt = now,
             UpdatedAt = now,
         };
-        database.DavCollections.Add(collection);
+        await database.DavCollections.AddAsync(collection, cancellationToken).ConfigureAwait(false);
         try
         {
-            await database.SaveChangesAsync(cancellationToken);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (DbUpdateException)
         {
@@ -844,7 +871,7 @@ internal sealed class DavStore(
             .SingleOrDefaultAsync(collection => collection.UserId == user.Id
                 && collection.CollectionType == type
                 && collection.Slug == slug,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<DavCollectionDB?> FindTrackedWritableCollectionAsync(
@@ -852,7 +879,7 @@ internal sealed class DavStore(
         Guid collectionId,
         CancellationToken cancellationToken)
     {
-        var companyId = await GetActiveCompanyIdAsync(user.Id, cancellationToken);
+        var companyId = await GetActiveCompanyIdAsync(user.Id, cancellationToken).ConfigureAwait(false);
         if (companyId is null)
             return null;
         return await database.DavCollections
@@ -865,7 +892,7 @@ internal sealed class DavStore(
                         && collection.User.Company.IsActive
                         && collection.Shares.Any(share => share.GranteeUserId == user.Id
                             && share.AccessLevel == DavShareDB.ReadWriteAccess)),
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<Guid?> GetActiveCompanyIdAsync(
@@ -880,7 +907,7 @@ internal sealed class DavStore(
                 && user.Company != null
                 && user.Company.IsActive)
             .Select(user => user.CompanyId)
-            .SingleOrDefaultAsync(cancellationToken);
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction?>
@@ -889,7 +916,7 @@ internal sealed class DavStore(
         return database.Database.IsRelational()
             ? await database.Database.BeginTransactionAsync(
                 IsolationLevel.Serializable,
-                cancellationToken)
+                cancellationToken).ConfigureAwait(false)
             : null;
     }
 
@@ -905,7 +932,7 @@ internal sealed class DavStore(
             return true;
         if (!exists)
             return false;
-        if (ifMatch.Trim() == "*")
+        if (string.Equals(ifMatch.Trim(), "*", StringComparison.Ordinal))
             return true;
 
         var quoted = QuoteEtag(currentEtag!);
@@ -974,12 +1001,15 @@ internal sealed class DavStore(
         DavCollectionDB collection,
         Guid requesterId)
     {
+        // A shared binding is unique per user; duplicate grants are data corruption.
+#pragma warning disable HLQ005
         var access = collection.UserId == requesterId
             ? DavCollectionAccess.Owner
             : collection.Shares
                 .Where(share => share.GranteeUserId == requesterId)
                 .Select(share => FromStoredAccess(share.AccessLevel))
                 .Single();
+#pragma warning restore HLQ005
         var hrefSlug = access == DavCollectionAccess.Owner
             ? collection.Slug
             : SharedBindingSlug(collection.Id);
@@ -997,7 +1027,7 @@ internal sealed class DavStore(
             requesterId,
             hrefSlug,
             shares,
-            collection.CollectionType == DavCollectionDB.CalendarType
+            string.Equals(collection.CollectionType, DavCollectionDB.CalendarType, StringComparison.Ordinal)
                 ? DavCollectionKind.Calendar
                 : DavCollectionKind.AddressBook,
             collection.Slug,
@@ -1012,19 +1042,22 @@ internal sealed class DavStore(
     }
 
     private async Task<IReadOnlyList<DavResource>> ToResourcesAsync(
-        IReadOnlyList<DavResourceDB> resources,
+        List<DavResourceDB> resources,
         CancellationToken cancellationToken)
     {
         var result = new List<DavResource>(resources.Count);
+        // Each resource read awaits Blob-backed content; Span cannot cross those awaits.
+#pragma warning disable HLQ012
         foreach (var resource in resources)
-            result.Add(await ToResourceAsync(resource, cancellationToken));
+#pragma warning restore HLQ012
+            result.Add(await ToResourceAsync(resource, cancellationToken).ConfigureAwait(false));
         return result;
     }
 
     private async Task<DavResource> ToResourceAsync(
         DavResourceDB resource,
         CancellationToken cancellationToken) =>
-        ToResource(resource, await resourceContent.ReadAsync(resource, cancellationToken));
+        ToResource(resource, await resourceContent.ReadAsync(resource, cancellationToken).ConfigureAwait(false));
 
     private static DavResource ToResource(DavResourceDB resource, byte[] content) => new(
         resource.Id,
@@ -1046,7 +1079,7 @@ internal sealed class DavStore(
             transactionEffects.Discard(marker);
             return;
         }
-        await transactionEffects.RollbackAsync(marker);
+        await transactionEffects.RollbackAsync(marker).ConfigureAwait(false);
     }
 
     private async Task RollBackAsync(
@@ -1057,14 +1090,22 @@ internal sealed class DavStore(
             return;
         try
         {
-            await transaction.RollbackAsync(CancellationToken.None);
+            await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
         }
+        // The original failure remains authoritative when best-effort rollback also fails.
+#pragma warning disable CA1031
         catch (Exception rollbackException)
+#pragma warning restore CA1031
         {
-            logger.LogWarning(
-                rollbackException,
-                "Could not roll back a DAV resource transaction after {FailureType}",
-                originalException.GetType().Name);
+            if (logger.IsEnabled(LogLevel.Warning))
+            {
+                var failureType = originalException.GetType().Name;
+                LogRollbackFailure(logger, rollbackException, failureType);
+            }
         }
     }
+
+    [LoggerMessage(EventId = 3301, Level = LogLevel.Warning,
+        Message = "Could not roll back a DAV resource transaction after {FailureType}")]
+    private static partial void LogRollbackFailure(ILogger logger, Exception exception, string failureType);
 }

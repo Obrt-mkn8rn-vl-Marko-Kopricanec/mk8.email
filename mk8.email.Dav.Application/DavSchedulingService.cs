@@ -10,17 +10,6 @@ using mk8.email.Configuration;
 
 namespace mk8.email.Dav;
 
-internal sealed record DavSchedulingRequest(
-    string Method,
-    string Uid,
-    string Organizer,
-    IReadOnlySet<string> Attendees,
-    string? Summary,
-    bool IsFreeBusy,
-    DateTimeOffset? RangeStart,
-    DateTimeOffset? RangeEnd,
-    DavContentInfo Content);
-
 internal sealed class DavSchedulingService(
     DavStore store,
     IMailSubmissionQueue queue,
@@ -46,6 +35,8 @@ internal sealed class DavSchedulingService(
         "CANCEL",
     };
 
+    // The scheduling request is validated and queued recipient-by-recipient in protocol order.
+#pragma warning disable MA0051
     public async Task<DavScheduleSubmissionResult> SubmitAsync(
         AuthenticatedMailUser user,
         IEnumerable<string> originatorHeaders,
@@ -55,6 +46,7 @@ internal sealed class DavSchedulingService(
         string? clientIp,
         CancellationToken cancellationToken)
     {
+#pragma warning restore MA0051
         if (!TryParseHeaderAddresses(originatorHeaders, out var originators)
             || originators.Count != 1
             || !string.Equals(originators[0], user.Username, StringComparison.OrdinalIgnoreCase))
@@ -83,7 +75,10 @@ internal sealed class DavSchedulingService(
             return Failure(403, "The authenticated calendar user cannot send this iTIP method.");
 
         var results = new List<DavScheduleRecipientResult>(recipients.Count);
+        // The recipient loop awaits queue work; a Span cannot cross those awaits.
+#pragma warning disable HLQ012
         foreach (var recipient in recipients)
+#pragma warning restore HLQ012
         {
             if (!IsExpectedRecipient(request!, recipient))
             {
@@ -93,7 +88,7 @@ internal sealed class DavSchedulingService(
                 continue;
             }
 
-            var resolved = await store.ResolveCalendarRecipientAsync(recipient, cancellationToken);
+            var resolved = await store.ResolveCalendarRecipientAsync(recipient, cancellationToken).ConfigureAwait(false);
             if (request!.IsFreeBusy)
             {
                 if (resolved.User is null)
@@ -105,7 +100,7 @@ internal sealed class DavSchedulingService(
                 }
                 var resources = await store.GetCalendarResourcesAsync(
                     resolved.User.Id,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 if (!resources.IsComplete)
                 {
                     results.Add(new DavScheduleRecipientResult(
@@ -132,7 +127,7 @@ internal sealed class DavSchedulingService(
                     resourceName,
                     request.Content,
                     body,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 results.Add(new DavScheduleRecipientResult(
                     Mailto(recipient),
                     stored.Status is DavResourceWriteStatus.Created
@@ -164,7 +159,7 @@ internal sealed class DavSchedulingService(
                     user.Username,
                     recipient,
                     request,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 if (Encoding.Latin1.GetByteCount(rawMessage) > environment.Limits.MaxMessageSizeBytes)
                 {
                     results.Add(new DavScheduleRecipientResult(
@@ -179,7 +174,7 @@ internal sealed class DavSchedulingService(
                     rawMessage,
                     clientIp,
                     environment.Smtp.Hostname,
-                    user.Username), cancellationToken);
+                    user.Username), cancellationToken).ConfigureAwait(false);
                 results.Add(new DavScheduleRecipientResult(
                     Mailto(recipient),
                     "2.0;Success"));
@@ -195,12 +190,15 @@ internal sealed class DavSchedulingService(
         return new DavScheduleSubmissionResult(200, null, results);
     }
 
+    // iTIP and iCalendar validation shares one ordered failure response path.
+#pragma warning disable MA0051
     private static bool TryParseRequest(
         DavContentInfo content,
         string? contentType,
         out DavSchedulingRequest? request,
         out string failure)
     {
+#pragma warning restore MA0051
         request = null;
         failure = string.Empty;
         var lines = DavContent.UnfoldLines(content.Text);
@@ -244,7 +242,7 @@ internal sealed class DavSchedulingService(
         DateTimeOffset? rangeEnd = null;
         if (isFreeBusy)
         {
-            if (method != "REQUEST"
+            if (!string.Equals(method, "REQUEST", StringComparison.Ordinal)
                 || !TryPropertyDate(content.Properties, "DTSTART", out var start)
                 || !TryPropertyDate(content.Properties, "DTEND", out var end)
                 || end <= start
@@ -286,7 +284,7 @@ internal sealed class DavSchedulingService(
     {
         if (OrganizerMethods.Contains(request.Method))
         {
-            return request.Method == "PUBLISH"
+            return string.Equals(request.Method, "PUBLISH", StringComparison.Ordinal)
                 || request.Attendees.Contains(recipient);
         }
         return string.Equals(request.Organizer, recipient, StringComparison.OrdinalIgnoreCase);
@@ -325,8 +323,9 @@ internal sealed class DavSchedulingService(
 
         var format = FormatOptions.Default.Clone();
         format.NewLineFormat = NewLineFormat.Dos;
-        await using var stream = new MemoryStream();
-        await message.WriteToAsync(format, stream, cancellationToken);
+        var stream = new MemoryStream();
+        await using var streamLifetime = stream.ConfigureAwait(false);
+        await message.WriteToAsync(format, stream, cancellationToken).ConfigureAwait(false);
         return Encoding.Latin1.GetString(stream.ToArray());
     }
 
@@ -414,7 +413,7 @@ internal sealed class DavSchedulingService(
     private static bool TryAddresses(
         IReadOnlyDictionary<string, IReadOnlyList<string>> properties,
         string name,
-        out IReadOnlySet<string> addresses)
+        out HashSet<string> addresses)
     {
         var parsed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         addresses = parsed;
@@ -444,9 +443,12 @@ internal sealed class DavSchedulingService(
                 return null;
             }
         }
-        return MailboxAddress.TryParse(candidate, out var mailbox)
-            ? mailbox.Address.ToLowerInvariant()
-            : null;
+        if (!MailboxAddress.TryParse(candidate, out var mailbox))
+            return null;
+        // Existing calendar recipient keys are lower-case mailbox addresses.
+#pragma warning disable CA1308
+        return mailbox.Address.ToLowerInvariant();
+#pragma warning restore CA1308
     }
 
     private static string? CalendarLevelValue(IReadOnlyList<string> lines, string name)
@@ -480,7 +482,7 @@ internal sealed class DavSchedulingService(
             return null;
         foreach (var segment in contentType.Split(';').Skip(1))
         {
-            var separator = segment.IndexOf('=');
+            var separator = segment.IndexOf('=', StringComparison.Ordinal);
             if (separator <= 0
                 || !segment[..separator].Trim().Equals(name, StringComparison.OrdinalIgnoreCase))
             {
@@ -493,8 +495,8 @@ internal sealed class DavSchedulingService(
 
     private static string? FirstValue(
         IReadOnlyDictionary<string, IReadOnlyList<string>> properties,
-        string name) => properties.TryGetValue(name, out var values)
-        ? values.FirstOrDefault()
+        string name) => properties.TryGetValue(name, out var values) && values.Count > 0
+        ? values[0]
         : null;
 
     private static bool TryPropertyDate(
@@ -524,10 +526,11 @@ internal sealed class DavSchedulingService(
         new(statusCode, error, []);
 }
 
-internal sealed record DavBusyInterval(DateTimeOffset Start, DateTimeOffset End);
-
+// Free/busy parsing and recurrence expansion form one protocol parser below.
+#pragma warning disable MA0048
 internal static class DavFreeBusy
 {
+#pragma warning restore MA0048
     private const int MaximumOccurrences = 10_000;
     private const int MaximumScannedDays = 200_000;
 
@@ -557,7 +560,7 @@ internal static class DavFreeBusy
     }
 
     private static void AddEventGroup(
-        ICollection<DavBusyInterval> output,
+        List<DavBusyInterval> output,
         IReadOnlyList<DavEvent> events,
         DateTimeOffset rangeStart,
         DateTimeOffset rangeEnd)
@@ -761,7 +764,7 @@ internal static class DavFreeBusy
     private static int MonthsBetween(DateTime start, DateTime value) =>
         (value.Year - start.Year) * 12 + value.Month - start.Month;
 
-    private static IReadOnlyList<DavBusyInterval> Merge(
+    private static List<DavBusyInterval> Merge(
         IEnumerable<DavBusyInterval> values,
         DateTimeOffset rangeStart,
         DateTimeOffset rangeEnd)
@@ -801,7 +804,7 @@ internal static class DavFreeBusy
         DateTimeOffset rangeStart,
         DateTimeOffset rangeEnd) => start < rangeEnd && end > rangeStart;
 
-    private static IReadOnlyList<DavEvent> ParseEvents(string text)
+    private static List<DavEvent> ParseEvents(string text)
     {
         var result = new List<DavEvent>();
         List<DavCalendarProperty>? properties = null;
@@ -841,10 +844,13 @@ internal static class DavFreeBusy
         return result;
     }
 
+    // Event recurrence input must be validated before any interval projection.
+#pragma warning disable MA0051
     private static bool TryCreateEvent(
         IReadOnlyList<DavCalendarProperty> properties,
         out DavEvent? calendarEvent)
     {
+#pragma warning restore MA0051
         calendarEvent = null;
         var uid = Value(properties, "UID");
         var startProperty = Property(properties, "DTSTART");
@@ -928,8 +934,11 @@ internal static class DavFreeBusy
         return result;
     }
 
+    // Keep RRULE field validation together so invalid combinations fail as a unit.
+#pragma warning disable MA0051
     private static DavRecurrenceRule? ParseRecurrence(string? value)
     {
+#pragma warning restore MA0051
         if (string.IsNullOrWhiteSpace(value))
             return null;
         var parts = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -1054,14 +1063,14 @@ internal static class DavFreeBusy
     private static bool TryParseProperty(string line, out DavCalendarProperty? property)
     {
         property = null;
-        var separator = line.IndexOf(':');
+        var separator = line.IndexOf(':', StringComparison.Ordinal);
         if (separator <= 0)
             return false;
         var header = line[..separator].Split(';');
         var parameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var item in header.Skip(1))
         {
-            var equals = item.IndexOf('=');
+            var equals = item.IndexOf('=', StringComparison.Ordinal);
             if (equals > 0)
                 parameters[item[..equals]] = item[(equals + 1)..].Trim('"');
         }
@@ -1072,12 +1081,15 @@ internal static class DavFreeBusy
         return true;
     }
 
+    // Date and timezone alternatives share a single iCalendar value parser.
+#pragma warning disable MA0051
     internal static bool TryParseDate(
         string value,
         IReadOnlyDictionary<string, string>? parameters,
         out DateTimeOffset result,
         out bool dateOnly)
     {
+#pragma warning restore MA0051
         result = default;
         dateOnly = parameters?.TryGetValue("VALUE", out var valueType) == true
             && valueType.Equals("DATE", StringComparison.OrdinalIgnoreCase)

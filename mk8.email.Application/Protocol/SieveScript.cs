@@ -1260,6 +1260,12 @@ internal static class SieveScript
 
     private readonly record struct Token(TokenKind Kind, string Value, int Line, int Column);
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "Design", "CA1032",
+        Justification = "This private lexer sentinel requires line and column and never crosses the compilation boundary.")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "Design", "CA1064",
+        Justification = "The parser catches this private positional exception and returns a public SieveDiagnostic.")]
     private sealed class SieveParseException(int line, int column, string message) : Exception(message)
     {
         public int Line { get; } = line;

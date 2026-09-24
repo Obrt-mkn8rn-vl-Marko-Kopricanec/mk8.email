@@ -24,6 +24,15 @@ public sealed class DkimSigningTests
     private string _testDirectory = null!;
     private TestDkimKey _key = null!;
 
+    [TestMethod]
+    public void SigningExceptionProvidesStandardConstructors()
+    {
+        Assert.IsNotNull(new DkimSigningException().Message);
+        Assert.AreEqual("missing key", new DkimSigningException("missing key").Message);
+        var cause = new InvalidOperationException("invalid key");
+        Assert.AreSame(cause, new DkimSigningException("signing failed", cause).InnerException);
+    }
+
     [TestInitialize]
     public void Initialize()
     {

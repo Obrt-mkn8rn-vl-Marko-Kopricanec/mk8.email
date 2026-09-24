@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using mk8.email.Application.Interfaces;
@@ -285,7 +286,7 @@ public sealed partial class MailAdministrationService(EmailDbContext db) : IMail
         var passwords = await db.ApplicationPasswords
             .Where(password => password.UserId == userId && password.RevokedAt == null)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
-        foreach (var password in passwords)
+        foreach (ref readonly var password in CollectionsMarshal.AsSpan(passwords))
             password.RevokedAt = now;
     }
 
@@ -300,19 +301,19 @@ public sealed partial class MailAdministrationService(EmailDbContext db) : IMail
         var grants = await db.OAuthGrants
             .Where(grant => userIds.Contains(grant.UserId) && grant.RevokedAt == null)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
-        foreach (var grant in grants)
+        foreach (ref readonly var grant in CollectionsMarshal.AsSpan(grants))
             grant.RevokedAt = now;
 
         var tokens = await db.OAuthTokens
             .Where(token => userIds.Contains(token.Grant.UserId) && token.RevokedAt == null)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
-        foreach (var token in tokens)
+        foreach (ref readonly var token in CollectionsMarshal.AsSpan(tokens))
             token.RevokedAt = now;
 
         var authorizationCodes = await db.OAuthAuthorizationCodes
             .Where(code => userIds.Contains(code.UserId) && code.ConsumedAt == null)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
-        foreach (var authorizationCode in authorizationCodes)
+        foreach (ref readonly var authorizationCode in CollectionsMarshal.AsSpan(authorizationCodes))
             authorizationCode.ConsumedAt = now;
     }
 
@@ -331,7 +332,7 @@ public sealed partial class MailAdministrationService(EmailDbContext db) : IMail
         var subscriptions = await db.JmapPushSubscriptions
             .Where(subscription => userIds.Contains(subscription.UserId))
             .ToListAsync(cancellationToken).ConfigureAwait(false);
-        foreach (var subscription in subscriptions)
+        foreach (ref readonly var subscription in CollectionsMarshal.AsSpan(subscriptions))
         {
             subscription.Url = string.Empty;
             subscription.KeysJson = null;
@@ -463,6 +464,6 @@ public sealed partial class MailAdministrationService(EmailDbContext db) : IMail
                 : null;
     }
 
-    [GeneratedRegex("^[a-z0-9!#$%&'*+/=?^_`{|}~.-]+$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex("^[a-z0-9!#$%&'*+/=?^_`{|}~.-]+$", RegexOptions.CultureInvariant, 100)]
     private static partial Regex LocalPartPattern();
 }

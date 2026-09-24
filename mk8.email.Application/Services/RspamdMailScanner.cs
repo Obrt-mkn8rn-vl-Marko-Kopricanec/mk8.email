@@ -291,6 +291,9 @@ public sealed class RspamdMailScanner : IMailScanner, IDisposable
 
     private static HttpClient CreateClient()
     {
+        // HttpClient owns this handler (disposeHandler: true); the catch below
+        // disposes it if client construction or initialization fails.
+#pragma warning disable CA2000
         var handler = new SocketsHttpHandler
         {
             AllowAutoRedirect = false,
@@ -299,10 +302,19 @@ public sealed class RspamdMailScanner : IMailScanner, IDisposable
             UseCookies = false,
             UseProxy = false,
         };
-        return new HttpClient(handler)
+#pragma warning restore CA2000
+        try
         {
-            Timeout = Timeout.InfiniteTimeSpan,
-            MaxResponseContentBufferSize = MaximumResponseBytes,
-        };
+            return new HttpClient(handler, disposeHandler: true)
+            {
+                Timeout = Timeout.InfiniteTimeSpan,
+                MaxResponseContentBufferSize = MaximumResponseBytes,
+            };
+        }
+        catch
+        {
+            handler.Dispose();
+            throw;
+        }
     }
 }

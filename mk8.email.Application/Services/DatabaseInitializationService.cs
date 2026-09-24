@@ -1,4 +1,5 @@
 using System.Data;
+using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using mk8.email.Application.Interfaces;
 using mk8.email.Contracts.DTOs;
@@ -26,7 +27,9 @@ public sealed class DatabaseInitializationService(
             WHERE table_schema = 'public'
               AND table_type = 'BASE TABLE'
             """;
-            var tableCount = Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false));
+            var tableCount = Convert.ToInt32(
+                await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false),
+                CultureInfo.InvariantCulture);
             if (tableCount != 0)
             {
                 return new AdministrationResult(

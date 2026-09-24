@@ -162,9 +162,12 @@ public sealed class MailQueueWorker(
             return false;
 
         using var processingCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        // The renewal task is cancelled and directly awaited in this method's finally block.
+#pragma warning disable CA2025
         var renewal = IsPostgreSql(database)
             ? RenewLeaseAsync(messageId.Value, leaseToken, processingCancellation)
             : Task.CompletedTask;
+#pragma warning restore CA2025
         try
         {
             try

@@ -1,4 +1,6 @@
 #nullable enable
+mk8.email.Application.Interfaces.DkimSigningException.DkimSigningException() -> void
+mk8.email.Application.Interfaces.DkimSigningException.DkimSigningException(string! message) -> void
 mk8.email.Application.Services.VacationResponseContentService
 mk8.email.Application.Services.VacationResponseContentService.VacationResponseContentService(mk8.email.Contracts.Storage.ILargeObjectStore! objects, mk8.email.Application.Services.LargeObjectTransactionEffects! transactionEffects) -> void
 mk8.email.Application.Services.VacationResponseContentService.ReadAsync(mk8.email.Infrastructure.Models.JmapVacationResponseDB! response, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<(string? TextBody, string? HtmlBody)>!

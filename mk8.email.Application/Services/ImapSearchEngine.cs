@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using mk8.email.Infrastructure.Models;
@@ -10,6 +12,7 @@ internal static class ImapSearchEngine
     private const int MaximumSearchTokens = 4096;
     private const int MaximumSearchNestingDepth = 64;
     private static readonly Encoding StrictUtf8 = new UTF8Encoding(false, true);
+    [StructLayout(LayoutKind.Sequential)]
     private readonly record struct MessageSetRange(int Start, int End);
 
     [Flags]
@@ -614,8 +617,9 @@ internal static class ImapSearchEngine
                 .OrderBy(message => message.Uid)
                 .ToListAsync(cancellationToken).ConfigureAwait(false);
             messages = new List<SearchStoredMessage>(stored.Count);
-            foreach (var email in stored)
+            for (var index = 0; index < stored.Count; index++)
             {
+                var email = stored[index];
                 var rawMessage = await content.ReadAsync(email, cancellationToken).ConfigureAwait(false);
                 ApplyTransientRawMessage(email, rawMessage);
                 messages.Add(CreateSearchStoredMessage(email, includeBody, includeRawHeaders));
@@ -629,7 +633,7 @@ internal static class ImapSearchEngine
         var matches = new List<SearchCandidate>();
         long? highestModSequence = null;
         var sequenceNumber = 0;
-        foreach (var message in messages)
+        foreach (ref readonly var message in CollectionsMarshal.AsSpan(messages))
         {
             sequenceNumber++;
             if (predicate.IsMatch(message, sequenceNumber))
@@ -1198,7 +1202,7 @@ internal static class ImapSearchEngine
             var startComparison = left.Start.CompareTo(right.Start);
             return startComparison != 0 ? startComparison : left.End.CompareTo(right.End);
         });
-        foreach (var range in parsedRanges)
+        foreach (ref readonly var range in CollectionsMarshal.AsSpan(parsedRanges))
         {
             if (ranges.Count == 0)
             {
@@ -1233,7 +1237,9 @@ internal static class ImapSearchEngine
                 return false;
             }
         }
-        return int.TryParse(value, out identifier) && identifier > 0;
+        return int.TryParse(
+            value, NumberStyles.None, CultureInfo.InvariantCulture, out identifier)
+            && identifier > 0;
     }
 
     private static bool MessageSetContains(IReadOnlyList<MessageSetRange> ranges, int identifier)

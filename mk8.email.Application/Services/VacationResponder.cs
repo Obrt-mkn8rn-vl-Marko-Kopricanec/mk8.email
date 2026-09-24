@@ -97,7 +97,7 @@ public sealed class VacationResponder(
                 }
 
                 var bodies = await content.ReadAsync(vacation, cancellationToken).ConfigureAwait(false);
-                var response = BuildResponse(route.Address, senderMailbox, original, vacation, bodies, now);
+                using var response = BuildResponse(route.Address, senderMailbox, original, vacation, bodies, now);
                 var format = FormatOptions.Default.Clone();
                 format.NewLineFormat = NewLineFormat.Dos;
                 var stream = new MemoryStream();

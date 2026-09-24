@@ -109,7 +109,11 @@ internal static class TotpMfa
     {
         Span<byte> counter = stackalloc byte[8];
         BinaryPrimitives.WriteInt64BigEndian(counter, timeStep);
+        // RFC 6238's SHA-1 TOTP form is used by existing authenticator enrollments;
+        // changing the MAC would invalidate their provisioned secrets and codes.
+#pragma warning disable CA5350
         var hash = HMACSHA1.HashData(secret, counter);
+#pragma warning restore CA5350
         var offset = hash[^1] & 0x0f;
         var binary = ((hash[offset] & 0x7f) << 24)
             | (hash[offset + 1] << 16)

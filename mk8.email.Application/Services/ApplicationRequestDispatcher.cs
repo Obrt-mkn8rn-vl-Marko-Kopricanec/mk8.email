@@ -27,362 +27,28 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
 
         try
         {
-            return request.Operation switch
+            var operation = request.Operation ?? string.Empty;
+            return operation switch
             {
                 ApplicationOperations.SystemPing => Success(
                     request.Id,
                     new SystemPingResult(DateTimeOffset.UtcNow)),
-                ApplicationOperations.SmtpAuthenticatePassword => Success(
-                    request.Id,
-                    await services.GetRequiredService<ISmtpApplicationService>()
-                        .AuthenticatePasswordAsync(
-                            Deserialize<SmtpPasswordAuthentication>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.SmtpAuthenticateOAuth => Success(
-                    request.Id,
-                    await services.GetRequiredService<ISmtpApplicationService>()
-                        .AuthenticateOAuthAsync(
-                            Deserialize<SmtpOAuthAuthentication>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.SmtpCanSendAs => Success(
-                    request.Id,
-                    await services.GetRequiredService<ISmtpApplicationService>()
-                        .CanSendAsAsync(
-                            Deserialize<SmtpSenderAuthorization>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.SmtpHasMatchingFromAddress => Success(
-                    request.Id,
-                    await services.GetRequiredService<ISmtpApplicationService>()
-                        .HasMatchingFromAddressAsync(
-                            Deserialize<SmtpFromAddressCheck>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.SmtpCanReceive => Success(
-                    request.Id,
-                    await services.GetRequiredService<ISmtpApplicationService>()
-                        .CanReceiveAsync(
-                            Deserialize<SmtpRecipientCheck>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.SmtpEnqueue => Success(
-                    request.Id,
-                    await services.GetRequiredService<ISmtpApplicationService>()
-                        .EnqueueAsync(Deserialize<MailSubmission>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.SieveAuthenticatePassword => Success(
-                    request.Id,
-                    await services.GetRequiredService<ISieveApplicationService>()
-                        .AuthenticatePasswordAsync(
-                            Deserialize<SievePasswordAuthentication>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.SieveAuthenticateOAuth => Success(
-                    request.Id,
-                    await services.GetRequiredService<ISieveApplicationService>()
-                        .AuthenticateOAuthAsync(
-                            Deserialize<SieveOAuthAuthentication>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.SieveCheckSpace => Success(
-                    request.Id,
-                    await services.GetRequiredService<ISieveApplicationService>()
-                        .CheckSpaceAsync(
-                            Deserialize<SieveCheckSpaceRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.SieveList => Success(
-                    request.Id,
-                    await services.GetRequiredService<ISieveApplicationService>()
-                        .ListAsync(Deserialize<SieveUserRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.SieveGet => Success(
-                    request.Id,
-                    await services.GetRequiredService<ISieveApplicationService>()
-                        .GetAsync(Deserialize<SieveNamedRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.SievePut => Success(
-                    request.Id,
-                    await services.GetRequiredService<ISieveApplicationService>()
-                        .PutAsync(Deserialize<SievePutRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.SieveSetActive => Success(
-                    request.Id,
-                    await services.GetRequiredService<ISieveApplicationService>()
-                        .SetActiveAsync(
-                            Deserialize<SieveSetActiveRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.SieveDelete => Success(
-                    request.Id,
-                    await services.GetRequiredService<ISieveApplicationService>()
-                        .DeleteAsync(Deserialize<SieveNamedRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.SieveRename => Success(
-                    request.Id,
-                    await services.GetRequiredService<ISieveApplicationService>()
-                        .RenameAsync(Deserialize<SieveRenameRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.SieveValidate => Success(
-                    request.Id,
-                    await services.GetRequiredService<ISieveApplicationService>()
-                        .ValidateAsync(
-                            Deserialize<SieveValidationRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.Pop3AuthenticatePassword => Success(
-                    request.Id,
-                    await services.GetRequiredService<IPop3ApplicationService>()
-                        .AuthenticatePasswordAsync(
-                            Deserialize<Pop3PasswordAuthentication>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.Pop3AuthenticateOAuth => Success(
-                    request.Id,
-                    await services.GetRequiredService<IPop3ApplicationService>()
-                        .AuthenticateOAuthAsync(
-                            Deserialize<Pop3OAuthAuthentication>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.Pop3ListMaildrop => Success(
-                    request.Id,
-                    await services.GetRequiredService<IPop3ApplicationService>()
-                        .ListMaildropAsync(
-                            Deserialize<Pop3UserRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.Pop3GetMessage => Success(
-                    request.Id,
-                    await services.GetRequiredService<IPop3ApplicationService>()
-                        .GetMessageAsync(
-                            Deserialize<Pop3MessageRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.Pop3CommitDeletes => Success(
-                    request.Id,
-                    await services.GetRequiredService<IPop3ApplicationService>()
-                        .CommitDeletesAsync(
-                            Deserialize<Pop3DeleteRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.ImapAuthenticatePassword => Success(
-                    request.Id,
-                    await services.GetRequiredService<IImapApplicationService>()
-                        .AuthenticatePasswordAsync(
-                            Deserialize<ImapPasswordAuthentication>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.ImapAuthenticateOAuth => Success(
-                    request.Id,
-                    await services.GetRequiredService<IImapApplicationService>()
-                        .AuthenticateOAuthAsync(
-                            Deserialize<ImapOAuthAuthentication>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.ImapListMailboxes => Success(
-                    request.Id,
-                    await services.GetRequiredService<IImapApplicationService>()
-                        .ListMailboxesAsync(
-                            Deserialize<ImapMailboxListRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.ImapGetMailboxStatuses => Success(
-                    request.Id,
-                    await services.GetRequiredService<IImapApplicationService>()
-                        .GetMailboxStatusesAsync(
-                            Deserialize<ImapMailboxStatusRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.ImapSetMailboxSubscription => Success(
-                    request.Id,
-                    await services.GetRequiredService<IImapApplicationService>()
-                        .SetMailboxSubscriptionAsync(
-                            Deserialize<ImapMailboxSubscriptionRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.ImapCreateMailbox => Success(
-                    request.Id,
-                    await services.GetRequiredService<IImapApplicationService>()
-                        .CreateMailboxAsync(
-                            Deserialize<ImapMailboxCreateRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.ImapRenameMailbox => Success(
-                    request.Id,
-                    await services.GetRequiredService<IImapApplicationService>()
-                        .RenameMailboxAsync(
-                            Deserialize<ImapMailboxRenameRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.ImapDeleteMailbox => Success(
-                    request.Id,
-                    await services.GetRequiredService<IImapApplicationService>()
-                        .DeleteMailboxAsync(
-                            Deserialize<ImapMailboxDeleteRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.ImapSelectMailbox => Success(
-                    request.Id,
-                    await services.GetRequiredService<IImapApplicationService>()
-                        .SelectMailboxAsync(
-                            Deserialize<ImapMailboxSelectRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.ImapGetQuota => Success(
-                    request.Id,
-                    await services.GetRequiredService<IImapApplicationService>()
-                        .GetQuotaAsync(
-                            Deserialize<ImapQuotaRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.ImapGetIdleSnapshot => Success(
-                    request.Id,
-                    await services.GetRequiredService<IImapApplicationService>()
-                        .GetIdleSnapshotAsync(
-                            Deserialize<ImapIdleSnapshotRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.ImapExpungeDeleted => Success(
-                    request.Id,
-                    await services.GetRequiredService<IImapApplicationService>()
-                        .ExpungeDeletedAsync(
-                            Deserialize<ImapExpungeRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.ImapStoreFlags => Success(
-                    request.Id,
-                    await services.GetRequiredService<IImapApplicationService>()
-                        .StoreFlagsAsync(
-                            Deserialize<ImapStoreRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.ImapMoveMessages => Success(
-                    request.Id,
-                    await services.GetRequiredService<IImapApplicationService>()
-                        .MoveMessagesAsync(
-                            Deserialize<ImapMoveRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.ImapCopyMessages => Success(
-                    request.Id,
-                    await services.GetRequiredService<IImapApplicationService>()
-                        .CopyMessagesAsync(
-                            Deserialize<ImapCopyRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.ImapCheckAppendCapacity => Success(
-                    request.Id,
-                    await services.GetRequiredService<IImapApplicationService>()
-                        .CheckAppendCapacityAsync(
-                            Deserialize<ImapAppendPreflightRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.ImapAppendMessages => Success(
-                    request.Id,
-                    await services.GetRequiredService<IImapApplicationService>()
-                        .AppendMessagesAsync(
-                            Deserialize<ImapAppendRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.ImapSearchMessages => Success(
-                    request.Id,
-                    await services.GetRequiredService<IImapApplicationService>()
-                        .SearchMessagesAsync(
-                            Deserialize<ImapSearchRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.ImapSortMessages => Success(
-                    request.Id,
-                    await services.GetRequiredService<IImapApplicationService>()
-                        .SortMessagesAsync(
-                            Deserialize<ImapSortRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.ImapThreadMessages => Success(
-                    request.Id,
-                    await services.GetRequiredService<IImapApplicationService>()
-                        .ThreadMessagesAsync(
-                            Deserialize<ImapThreadRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.ImapMarkMessagesSeen => Success(
-                    request.Id,
-                    await services.GetRequiredService<IImapApplicationService>()
-                        .MarkMessagesSeenAsync(
-                            Deserialize<ImapMarkSeenRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.ImapFetchPage => Success(
-                    request.Id,
-                    await services.GetRequiredService<IImapApplicationService>()
-                        .GetFetchPageAsync(
-                            Deserialize<ImapFetchPageRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.AdminAuthenticate => Success(
-                    request.Id,
-                    await services.GetRequiredService<IAuthService>().LoginAsync(
-                        Deserialize<LoginRequestDTO>(request)).ConfigureAwait(false)),
-                ApplicationOperations.AdminDashboardGet => await GetDashboardAsync(
-                    request.Id,
-                    cancellationToken).ConfigureAwait(false),
-                ApplicationOperations.AdminDomainsGet => Success(
-                    request.Id,
-                    await services.GetRequiredService<IMailAdministrationService>()
-                        .GetDomainsAsync(cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.AdminDomainsEnsure => await EnsureDomainAsync(
-                    request,
-                    cancellationToken).ConfigureAwait(false),
-                ApplicationOperations.AdminDomainsSetCatchAll => await SetCatchAllAsync(
-                    request,
-                    cancellationToken).ConfigureAwait(false),
-                ApplicationOperations.AdminDomainsSetActive => await SetDomainActiveAsync(
-                    request,
-                    cancellationToken).ConfigureAwait(false),
-                ApplicationOperations.AdminAccountsGet => Success(
-                    request.Id,
-                    await services.GetRequiredService<IMailAdministrationService>()
-                        .GetAccountsAsync(cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.AdminAccountsCreate => await CreateAccountAsync(
-                    request,
-                    cancellationToken).ConfigureAwait(false),
-                ApplicationOperations.AdminAccountsSetActive => await SetAccountActiveAsync(
-                    request,
-                    cancellationToken).ConfigureAwait(false),
-                ApplicationOperations.AdminAccountsResetPassword => await ResetPasswordAsync(
-                    request,
-                    cancellationToken).ConfigureAwait(false),
-                ApplicationOperations.OAuthPublicKeyGet => Success(
-                    request.Id,
-                    await services.GetRequiredService<IOAuthApplicationService>()
-                        .GetPublicKeyAsync(cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.OAuthIdentityAuthenticate => Success(
-                    request.Id,
-                    await services.GetRequiredService<IOAuthApplicationService>()
-                        .AuthenticateIdentityAsync(
-                            Deserialize<OAuthIdentityLookupRequest>(request),
-                            cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.OAuthAuthorize => Success(
-                    request.Id,
-                    await services.GetRequiredService<IOAuthApplicationService>()
-                        .AuthorizeAsync(
-                            Deserialize<OAuthAuthorizeApplicationRequest>(request),
-                            cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.OAuthAuthorizationCodeRedeem => Success(
-                    request.Id,
-                    await services.GetRequiredService<IOAuthApplicationService>()
-                        .RedeemAuthorizationCodeAsync(
-                            Deserialize<OAuthAuthorizationCodeRedeemRequest>(request),
-                            cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.OAuthTokenRefresh => Success(
-                    request.Id,
-                    await services.GetRequiredService<IOAuthApplicationService>()
-                        .RefreshTokenAsync(
-                            Deserialize<OAuthRefreshTokenRequest>(request),
-                            cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.OAuthTokenRevoke => await RevokeOAuthTokenAsync(
-                    request,
-                    cancellationToken).ConfigureAwait(false),
-                ApplicationOperations.JmapSessionGet => Success(
-                    request.Id,
-                    await services.GetRequiredService<IJmapApplicationService>()
-                        .GetSessionAsync(
-                            Deserialize<JmapSessionApplicationRequest>(request),
-                            cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.JmapApiProcess => Success(
-                    request.Id,
-                    await services.GetRequiredService<IJmapApplicationService>()
-                        .ProcessApiRequestAsync(
-                            Deserialize<JmapApiApplicationRequest>(request),
-                            cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.JmapUpload => Success(
-                    request.Id,
-                    await services.GetRequiredService<IJmapApplicationService>()
-                        .UploadAsync(
-                            Deserialize<JmapUploadApplicationRequest>(request),
-                            cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.JmapDownload => Success(
-                    request.Id,
-                    await services.GetRequiredService<IJmapApplicationService>()
-                        .DownloadAsync(
-                            Deserialize<JmapDownloadApplicationRequest>(request),
-                            cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.JmapEventPoll => Success(
-                    request.Id,
-                    await services.GetRequiredService<IJmapApplicationService>()
-                        .PollEventAsync(
-                            Deserialize<JmapEventApplicationRequest>(request),
-                            cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.DavAuthenticate => Success(request.Id,
-                    await Dav.AuthenticateAsync(
-                        Deserialize<DavAuthenticationRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.DavEnsureCollections => Success(request.Id,
-                    await Dav.EnsureCollectionsAsync(
-                        Deserialize<DavEnsureCollectionsRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.DavCollectionsGet => Success(request.Id,
-                    await Dav.GetCollectionsAsync(
-                        Deserialize<DavCollectionListRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.DavCollectionGet => Success(request.Id,
-                    await Dav.GetCollectionAsync(
-                        Deserialize<DavCollectionLookupRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.DavCollectionCreate => Success(request.Id,
-                    await Dav.CreateCollectionAsync(
-                        Deserialize<DavCollectionCreateRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.DavCollectionUpdate => Success(request.Id,
-                    await Dav.UpdateCollectionAsync(
-                        Deserialize<DavCollectionUpdateRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.DavCollectionDelete => Success(request.Id,
-                    await Dav.DeleteCollectionAsync(
-                        Deserialize<DavCollectionDeleteRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.DavPrincipalsGet => Success(request.Id,
-                    await Dav.GetPrincipalsAsync(
-                        Deserialize<DavPrincipalListRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.DavPrincipalGet => Success(request.Id,
-                    await Dav.GetPrincipalAsync(
-                        Deserialize<DavPrincipalLookupRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.DavSharesReplace => Success(request.Id,
-                    await Dav.ReplaceSharesAsync(
-                        Deserialize<DavShareReplaceRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.DavResourcesGet => Success(request.Id,
-                    await Dav.GetResourcesAsync(
-                        Deserialize<DavCollectionReference>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.DavResourceGet => Success(request.Id,
-                    await Dav.GetResourceAsync(
-                        Deserialize<DavResourceLookupRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.DavChangesGet => Success(request.Id,
-                    await Dav.GetChangesAsync(
-                        Deserialize<DavChangesRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.DavResourcePut => Success(request.Id,
-                    await Dav.PutResourceAsync(
-                        Deserialize<DavResourcePutRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.DavResourceDelete => Success(request.Id,
-                    await Dav.DeleteResourceAsync(
-                        Deserialize<DavResourceDeleteRequest>(request), cancellationToken).ConfigureAwait(false)),
-                ApplicationOperations.DavScheduleSubmit => Success(request.Id,
-                    await Dav.SubmitScheduleAsync(
-                        Deserialize<DavScheduleSubmitRequest>(request), cancellationToken).ConfigureAwait(false)),
+                _ when operation.StartsWith("smtp.", StringComparison.Ordinal) =>
+                    await DispatchSmtpAsync(request, cancellationToken).ConfigureAwait(false),
+                _ when operation.StartsWith("sieve.", StringComparison.Ordinal) =>
+                    await DispatchSieveAsync(request, cancellationToken).ConfigureAwait(false),
+                _ when operation.StartsWith("pop3.", StringComparison.Ordinal) =>
+                    await DispatchPop3Async(request, cancellationToken).ConfigureAwait(false),
+                _ when operation.StartsWith("imap.", StringComparison.Ordinal) =>
+                    await DispatchImapAsync(request, cancellationToken).ConfigureAwait(false),
+                _ when operation.StartsWith("admin.", StringComparison.Ordinal) =>
+                    await DispatchAdminAsync(request, cancellationToken).ConfigureAwait(false),
+                _ when operation.StartsWith("oauth.", StringComparison.Ordinal) =>
+                    await DispatchOAuthAsync(request, cancellationToken).ConfigureAwait(false),
+                _ when operation.StartsWith("jmap.", StringComparison.Ordinal) =>
+                    await DispatchJmapAsync(request, cancellationToken).ConfigureAwait(false),
+                _ when operation.StartsWith("dav.", StringComparison.Ordinal) =>
+                    await DispatchDavAsync(request, cancellationToken).ConfigureAwait(false),
                 _ => Error(request.Id, "unknown-operation", "The application operation is not supported."),
             };
         }
@@ -390,6 +56,495 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
         {
             return Error(request.Id, "invalid-arguments", "The application request payload is invalid.");
         }
+    }
+
+    private async Task<ApplicationResponse> DispatchSmtpAsync(
+        ApplicationRequest request,
+        CancellationToken cancellationToken)
+    {
+        return request.Operation switch
+        {
+            ApplicationOperations.SmtpAuthenticatePassword => Success(
+                request.Id,
+                await services.GetRequiredService<ISmtpApplicationService>()
+                    .AuthenticatePasswordAsync(
+                        Deserialize<SmtpPasswordAuthentication>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.SmtpAuthenticateOAuth => Success(
+                request.Id,
+                await services.GetRequiredService<ISmtpApplicationService>()
+                    .AuthenticateOAuthAsync(
+                        Deserialize<SmtpOAuthAuthentication>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.SmtpCanSendAs => Success(
+                request.Id,
+                await services.GetRequiredService<ISmtpApplicationService>()
+                    .CanSendAsAsync(
+                        Deserialize<SmtpSenderAuthorization>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.SmtpHasMatchingFromAddress => Success(
+                request.Id,
+                await services.GetRequiredService<ISmtpApplicationService>()
+                    .HasMatchingFromAddressAsync(
+                        Deserialize<SmtpFromAddressCheck>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.SmtpCanReceive => Success(
+                request.Id,
+                await services.GetRequiredService<ISmtpApplicationService>()
+                    .CanReceiveAsync(
+                        Deserialize<SmtpRecipientCheck>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.SmtpEnqueue => Success(
+                request.Id,
+                await services.GetRequiredService<ISmtpApplicationService>()
+                    .EnqueueAsync(Deserialize<MailSubmission>(request), cancellationToken).ConfigureAwait(false)),
+            _ => Error(request.Id, "unknown-operation", "The application operation is not supported."),
+        };
+    }
+
+    private async Task<ApplicationResponse> DispatchSieveAsync(
+        ApplicationRequest request,
+        CancellationToken cancellationToken)
+    {
+        return request.Operation switch
+        {
+            ApplicationOperations.SieveAuthenticatePassword => Success(
+                request.Id,
+                await services.GetRequiredService<ISieveApplicationService>()
+                    .AuthenticatePasswordAsync(
+                        Deserialize<SievePasswordAuthentication>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.SieveAuthenticateOAuth => Success(
+                request.Id,
+                await services.GetRequiredService<ISieveApplicationService>()
+                    .AuthenticateOAuthAsync(
+                        Deserialize<SieveOAuthAuthentication>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.SieveCheckSpace => Success(
+                request.Id,
+                await services.GetRequiredService<ISieveApplicationService>()
+                    .CheckSpaceAsync(
+                        Deserialize<SieveCheckSpaceRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.SieveList => Success(
+                request.Id,
+                await services.GetRequiredService<ISieveApplicationService>()
+                    .ListAsync(Deserialize<SieveUserRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.SieveGet => Success(
+                request.Id,
+                await services.GetRequiredService<ISieveApplicationService>()
+                    .GetAsync(Deserialize<SieveNamedRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.SievePut => Success(
+                request.Id,
+                await services.GetRequiredService<ISieveApplicationService>()
+                    .PutAsync(Deserialize<SievePutRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.SieveSetActive => Success(
+                request.Id,
+                await services.GetRequiredService<ISieveApplicationService>()
+                    .SetActiveAsync(
+                        Deserialize<SieveSetActiveRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.SieveDelete => Success(
+                request.Id,
+                await services.GetRequiredService<ISieveApplicationService>()
+                    .DeleteAsync(Deserialize<SieveNamedRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.SieveRename => Success(
+                request.Id,
+                await services.GetRequiredService<ISieveApplicationService>()
+                    .RenameAsync(Deserialize<SieveRenameRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.SieveValidate => Success(
+                request.Id,
+                await services.GetRequiredService<ISieveApplicationService>()
+                    .ValidateAsync(
+                        Deserialize<SieveValidationRequest>(request), cancellationToken).ConfigureAwait(false)),
+            _ => Error(request.Id, "unknown-operation", "The application operation is not supported."),
+        };
+    }
+
+    private async Task<ApplicationResponse> DispatchPop3Async(
+        ApplicationRequest request,
+        CancellationToken cancellationToken)
+    {
+        return request.Operation switch
+        {
+            ApplicationOperations.Pop3AuthenticatePassword => Success(
+                request.Id,
+                await services.GetRequiredService<IPop3ApplicationService>()
+                    .AuthenticatePasswordAsync(
+                        Deserialize<Pop3PasswordAuthentication>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.Pop3AuthenticateOAuth => Success(
+                request.Id,
+                await services.GetRequiredService<IPop3ApplicationService>()
+                    .AuthenticateOAuthAsync(
+                        Deserialize<Pop3OAuthAuthentication>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.Pop3ListMaildrop => Success(
+                request.Id,
+                await services.GetRequiredService<IPop3ApplicationService>()
+                    .ListMaildropAsync(
+                        Deserialize<Pop3UserRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.Pop3GetMessage => Success(
+                request.Id,
+                await services.GetRequiredService<IPop3ApplicationService>()
+                    .GetMessageAsync(
+                        Deserialize<Pop3MessageRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.Pop3CommitDeletes => Success(
+                request.Id,
+                await services.GetRequiredService<IPop3ApplicationService>()
+                    .CommitDeletesAsync(
+                        Deserialize<Pop3DeleteRequest>(request), cancellationToken).ConfigureAwait(false)),
+            _ => Error(request.Id, "unknown-operation", "The application operation is not supported."),
+        };
+    }
+
+    private async Task<ApplicationResponse> DispatchAdminAsync(
+        ApplicationRequest request,
+        CancellationToken cancellationToken)
+    {
+        return request.Operation switch
+        {
+            ApplicationOperations.AdminAuthenticate => Success(
+                request.Id,
+                await services.GetRequiredService<IAuthService>().LoginAsync(
+                    Deserialize<LoginRequestDTO>(request)).ConfigureAwait(false)),
+            ApplicationOperations.AdminDashboardGet => await GetDashboardAsync(
+                request.Id,
+                cancellationToken).ConfigureAwait(false),
+            ApplicationOperations.AdminDomainsGet => Success(
+                request.Id,
+                await services.GetRequiredService<IMailAdministrationService>()
+                    .GetDomainsAsync(cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.AdminDomainsEnsure => await EnsureDomainAsync(
+                request,
+                cancellationToken).ConfigureAwait(false),
+            ApplicationOperations.AdminDomainsSetCatchAll => await SetCatchAllAsync(
+                request,
+                cancellationToken).ConfigureAwait(false),
+            ApplicationOperations.AdminDomainsSetActive => await SetDomainActiveAsync(
+                request,
+                cancellationToken).ConfigureAwait(false),
+            ApplicationOperations.AdminAccountsGet => Success(
+                request.Id,
+                await services.GetRequiredService<IMailAdministrationService>()
+                    .GetAccountsAsync(cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.AdminAccountsCreate => await CreateAccountAsync(
+                request,
+                cancellationToken).ConfigureAwait(false),
+            ApplicationOperations.AdminAccountsSetActive => await SetAccountActiveAsync(
+                request,
+                cancellationToken).ConfigureAwait(false),
+            ApplicationOperations.AdminAccountsResetPassword => await ResetPasswordAsync(
+                request,
+                cancellationToken).ConfigureAwait(false),
+            _ => Error(request.Id, "unknown-operation", "The application operation is not supported."),
+        };
+    }
+
+    private async Task<ApplicationResponse> DispatchOAuthAsync(
+        ApplicationRequest request,
+        CancellationToken cancellationToken)
+    {
+        return request.Operation switch
+        {
+            ApplicationOperations.OAuthPublicKeyGet => Success(
+                request.Id,
+                await services.GetRequiredService<IOAuthApplicationService>()
+                    .GetPublicKeyAsync(cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.OAuthIdentityAuthenticate => Success(
+                request.Id,
+                await services.GetRequiredService<IOAuthApplicationService>()
+                    .AuthenticateIdentityAsync(
+                        Deserialize<OAuthIdentityLookupRequest>(request),
+                        cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.OAuthAuthorize => Success(
+                request.Id,
+                await services.GetRequiredService<IOAuthApplicationService>()
+                    .AuthorizeAsync(
+                        Deserialize<OAuthAuthorizeApplicationRequest>(request),
+                        cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.OAuthAuthorizationCodeRedeem => Success(
+                request.Id,
+                await services.GetRequiredService<IOAuthApplicationService>()
+                    .RedeemAuthorizationCodeAsync(
+                        Deserialize<OAuthAuthorizationCodeRedeemRequest>(request),
+                        cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.OAuthTokenRefresh => Success(
+                request.Id,
+                await services.GetRequiredService<IOAuthApplicationService>()
+                    .RefreshTokenAsync(
+                        Deserialize<OAuthRefreshTokenRequest>(request),
+                        cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.OAuthTokenRevoke => await RevokeOAuthTokenAsync(
+                request,
+                cancellationToken).ConfigureAwait(false),
+            _ => Error(request.Id, "unknown-operation", "The application operation is not supported."),
+        };
+    }
+
+    private async Task<ApplicationResponse> DispatchJmapAsync(
+        ApplicationRequest request,
+        CancellationToken cancellationToken)
+    {
+        return request.Operation switch
+        {
+            ApplicationOperations.JmapSessionGet => Success(
+                request.Id,
+                await services.GetRequiredService<IJmapApplicationService>()
+                    .GetSessionAsync(
+                        Deserialize<JmapSessionApplicationRequest>(request),
+                        cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.JmapApiProcess => Success(
+                request.Id,
+                await services.GetRequiredService<IJmapApplicationService>()
+                    .ProcessApiRequestAsync(
+                        Deserialize<JmapApiApplicationRequest>(request),
+                        cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.JmapUpload => Success(
+                request.Id,
+                await services.GetRequiredService<IJmapApplicationService>()
+                    .UploadAsync(
+                        Deserialize<JmapUploadApplicationRequest>(request),
+                        cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.JmapDownload => Success(
+                request.Id,
+                await services.GetRequiredService<IJmapApplicationService>()
+                    .DownloadAsync(
+                        Deserialize<JmapDownloadApplicationRequest>(request),
+                        cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.JmapEventPoll => Success(
+                request.Id,
+                await services.GetRequiredService<IJmapApplicationService>()
+                    .PollEventAsync(
+                        Deserialize<JmapEventApplicationRequest>(request),
+                        cancellationToken).ConfigureAwait(false)),
+            _ => Error(request.Id, "unknown-operation", "The application operation is not supported."),
+        };
+    }
+
+    private async Task<ApplicationResponse> DispatchDavAsync(
+        ApplicationRequest request,
+        CancellationToken cancellationToken)
+    {
+        return request.Operation switch
+        {
+            ApplicationOperations.DavAuthenticate => Success(request.Id,
+                await Dav.AuthenticateAsync(
+                    Deserialize<DavAuthenticationRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.DavEnsureCollections => Success(request.Id,
+                await Dav.EnsureCollectionsAsync(
+                    Deserialize<DavEnsureCollectionsRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.DavCollectionsGet => Success(request.Id,
+                await Dav.GetCollectionsAsync(
+                    Deserialize<DavCollectionListRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.DavCollectionGet => Success(request.Id,
+                await Dav.GetCollectionAsync(
+                    Deserialize<DavCollectionLookupRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.DavCollectionCreate => Success(request.Id,
+                await Dav.CreateCollectionAsync(
+                    Deserialize<DavCollectionCreateRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.DavCollectionUpdate => Success(request.Id,
+                await Dav.UpdateCollectionAsync(
+                    Deserialize<DavCollectionUpdateRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.DavCollectionDelete => Success(request.Id,
+                await Dav.DeleteCollectionAsync(
+                    Deserialize<DavCollectionDeleteRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.DavPrincipalsGet => Success(request.Id,
+                await Dav.GetPrincipalsAsync(
+                    Deserialize<DavPrincipalListRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.DavPrincipalGet => Success(request.Id,
+                await Dav.GetPrincipalAsync(
+                    Deserialize<DavPrincipalLookupRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.DavSharesReplace => Success(request.Id,
+                await Dav.ReplaceSharesAsync(
+                    Deserialize<DavShareReplaceRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.DavResourcesGet => Success(request.Id,
+                await Dav.GetResourcesAsync(
+                    Deserialize<DavCollectionReference>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.DavResourceGet => Success(request.Id,
+                await Dav.GetResourceAsync(
+                    Deserialize<DavResourceLookupRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.DavChangesGet => Success(request.Id,
+                await Dav.GetChangesAsync(
+                    Deserialize<DavChangesRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.DavResourcePut => Success(request.Id,
+                await Dav.PutResourceAsync(
+                    Deserialize<DavResourcePutRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.DavResourceDelete => Success(request.Id,
+                await Dav.DeleteResourceAsync(
+                    Deserialize<DavResourceDeleteRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.DavScheduleSubmit => Success(request.Id,
+                await Dav.SubmitScheduleAsync(
+                    Deserialize<DavScheduleSubmitRequest>(request), cancellationToken).ConfigureAwait(false)),
+            _ => Error(request.Id, "unknown-operation", "The application operation is not supported."),
+        };
+    }
+
+    private async Task<ApplicationResponse> DispatchImapAsync(
+        ApplicationRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request.Operation.StartsWith("imap.mailboxes.", StringComparison.Ordinal))
+            return await DispatchImapMailboxesAsync(request, cancellationToken).ConfigureAwait(false);
+        if (request.Operation.StartsWith("imap.messages.", StringComparison.Ordinal))
+            return await DispatchImapMessagesAsync(request, cancellationToken).ConfigureAwait(false);
+        return await DispatchImapOtherAsync(request, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<ApplicationResponse> DispatchImapMailboxesAsync(
+        ApplicationRequest request,
+        CancellationToken cancellationToken)
+    {
+        return request.Operation switch
+        {
+            ApplicationOperations.ImapListMailboxes => Success(
+                request.Id,
+                await services.GetRequiredService<IImapApplicationService>()
+                    .ListMailboxesAsync(
+                        Deserialize<ImapMailboxListRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.ImapGetMailboxStatuses => Success(
+                request.Id,
+                await services.GetRequiredService<IImapApplicationService>()
+                    .GetMailboxStatusesAsync(
+                        Deserialize<ImapMailboxStatusRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.ImapSetMailboxSubscription => Success(
+                request.Id,
+                await services.GetRequiredService<IImapApplicationService>()
+                    .SetMailboxSubscriptionAsync(
+                        Deserialize<ImapMailboxSubscriptionRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.ImapCreateMailbox => Success(
+                request.Id,
+                await services.GetRequiredService<IImapApplicationService>()
+                    .CreateMailboxAsync(
+                        Deserialize<ImapMailboxCreateRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.ImapRenameMailbox => Success(
+                request.Id,
+                await services.GetRequiredService<IImapApplicationService>()
+                    .RenameMailboxAsync(
+                        Deserialize<ImapMailboxRenameRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.ImapDeleteMailbox => Success(
+                request.Id,
+                await services.GetRequiredService<IImapApplicationService>()
+                    .DeleteMailboxAsync(
+                        Deserialize<ImapMailboxDeleteRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.ImapSelectMailbox => Success(
+                request.Id,
+                await services.GetRequiredService<IImapApplicationService>()
+                    .SelectMailboxAsync(
+                        Deserialize<ImapMailboxSelectRequest>(request), cancellationToken).ConfigureAwait(false)),
+            _ => Error(request.Id, "unknown-operation", "The application operation is not supported."),
+        };
+    }
+
+    private async Task<ApplicationResponse> DispatchImapOtherAsync(
+        ApplicationRequest request,
+        CancellationToken cancellationToken)
+    {
+        return request.Operation switch
+        {
+            ApplicationOperations.ImapAuthenticatePassword => Success(
+                request.Id,
+                await services.GetRequiredService<IImapApplicationService>()
+                    .AuthenticatePasswordAsync(
+                        Deserialize<ImapPasswordAuthentication>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.ImapAuthenticateOAuth => Success(
+                request.Id,
+                await services.GetRequiredService<IImapApplicationService>()
+                    .AuthenticateOAuthAsync(
+                        Deserialize<ImapOAuthAuthentication>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.ImapGetQuota => Success(
+                request.Id,
+                await services.GetRequiredService<IImapApplicationService>()
+                    .GetQuotaAsync(
+                        Deserialize<ImapQuotaRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.ImapGetIdleSnapshot => Success(
+                request.Id,
+                await services.GetRequiredService<IImapApplicationService>()
+                    .GetIdleSnapshotAsync(
+                        Deserialize<ImapIdleSnapshotRequest>(request), cancellationToken).ConfigureAwait(false)),
+            _ => Error(request.Id, "unknown-operation", "The application operation is not supported."),
+        };
+    }
+
+    private async Task<ApplicationResponse> DispatchImapMessagesAsync(
+        ApplicationRequest request,
+        CancellationToken cancellationToken)
+    {
+        return request.Operation switch
+        {
+            ApplicationOperations.ImapExpungeDeleted or
+            ApplicationOperations.ImapStoreFlags or
+            ApplicationOperations.ImapMoveMessages or
+            ApplicationOperations.ImapCopyMessages or
+            ApplicationOperations.ImapAppendMessages or
+            ApplicationOperations.ImapMarkMessagesSeen =>
+                await DispatchImapMessageMutationAsync(request, cancellationToken).ConfigureAwait(false),
+            _ => await DispatchImapMessageQueryAsync(request, cancellationToken).ConfigureAwait(false),
+        };
+    }
+
+    private async Task<ApplicationResponse> DispatchImapMessageMutationAsync(
+        ApplicationRequest request,
+        CancellationToken cancellationToken)
+    {
+        return request.Operation switch
+        {
+            ApplicationOperations.ImapExpungeDeleted => Success(
+                request.Id,
+                await services.GetRequiredService<IImapApplicationService>()
+                    .ExpungeDeletedAsync(
+                        Deserialize<ImapExpungeRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.ImapStoreFlags => Success(
+                request.Id,
+                await services.GetRequiredService<IImapApplicationService>()
+                    .StoreFlagsAsync(
+                        Deserialize<ImapStoreRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.ImapMoveMessages => Success(
+                request.Id,
+                await services.GetRequiredService<IImapApplicationService>()
+                    .MoveMessagesAsync(
+                        Deserialize<ImapMoveRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.ImapCopyMessages => Success(
+                request.Id,
+                await services.GetRequiredService<IImapApplicationService>()
+                    .CopyMessagesAsync(
+                        Deserialize<ImapCopyRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.ImapAppendMessages => Success(
+                request.Id,
+                await services.GetRequiredService<IImapApplicationService>()
+                    .AppendMessagesAsync(
+                        Deserialize<ImapAppendRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.ImapMarkMessagesSeen => Success(
+                request.Id,
+                await services.GetRequiredService<IImapApplicationService>()
+                    .MarkMessagesSeenAsync(
+                        Deserialize<ImapMarkSeenRequest>(request), cancellationToken).ConfigureAwait(false)),
+            _ => Error(request.Id, "unknown-operation", "The application operation is not supported."),
+        };
+    }
+
+    private async Task<ApplicationResponse> DispatchImapMessageQueryAsync(
+        ApplicationRequest request,
+        CancellationToken cancellationToken)
+    {
+        return request.Operation switch
+        {
+            ApplicationOperations.ImapCheckAppendCapacity => Success(
+                request.Id,
+                await services.GetRequiredService<IImapApplicationService>()
+                    .CheckAppendCapacityAsync(
+                        Deserialize<ImapAppendPreflightRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.ImapSearchMessages => Success(
+                request.Id,
+                await services.GetRequiredService<IImapApplicationService>()
+                    .SearchMessagesAsync(
+                        Deserialize<ImapSearchRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.ImapSortMessages => Success(
+                request.Id,
+                await services.GetRequiredService<IImapApplicationService>()
+                    .SortMessagesAsync(
+                        Deserialize<ImapSortRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.ImapThreadMessages => Success(
+                request.Id,
+                await services.GetRequiredService<IImapApplicationService>()
+                    .ThreadMessagesAsync(
+                        Deserialize<ImapThreadRequest>(request), cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.ImapFetchPage => Success(
+                request.Id,
+                await services.GetRequiredService<IImapApplicationService>()
+                    .GetFetchPageAsync(
+                        Deserialize<ImapFetchPageRequest>(request), cancellationToken).ConfigureAwait(false)),
+            _ => Error(request.Id, "unknown-operation", "The application operation is not supported."),
+        };
     }
 
     private async Task<ApplicationResponse> GetDashboardAsync(

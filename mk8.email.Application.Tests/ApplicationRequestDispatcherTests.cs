@@ -29,16 +29,43 @@ public sealed class ApplicationRequestDispatcherTests
     }
 
     [TestMethod]
-    public async Task UnknownOperationReturnsAStableApplicationError()
+    [DataRow("unknown.operation")]
+    [DataRow("smtp.unknown")]
+    [DataRow("sieve.unknown")]
+    [DataRow("pop3.unknown")]
+    [DataRow("imap.unknown")]
+    [DataRow("imap.mailboxes.unknown")]
+    [DataRow("imap.messages.unknown")]
+    [DataRow("admin.unknown")]
+    [DataRow("oauth.unknown")]
+    [DataRow("jmap.unknown")]
+    [DataRow("dav.unknown")]
+    public async Task UnknownOperationReturnsAStableApplicationError(string operation)
     {
         await using var services = new ServiceCollection().BuildServiceProvider();
         var dispatcher = new ApplicationRequestDispatcher(services);
-        var request = NewRequest("unknown.operation", "{}"u8.ToArray());
+        var request = NewRequest(operation, "{}"u8.ToArray());
 
         var response = await dispatcher.DispatchAsync(request);
 
         Assert.IsTrue(response.IsError);
         Assert.AreEqual("unknown-operation", response.ErrorCode);
+        Assert.AreEqual("application/problem+json", response.ContentType);
+    }
+
+    [TestMethod]
+    public async Task MalformedDelegatedPayloadReturnsInvalidArguments()
+    {
+        await using var services = new ServiceCollection()
+            .AddSingleton<IJmapApplicationService>(new StubJmapApplicationService())
+            .BuildServiceProvider();
+        var dispatcher = new ApplicationRequestDispatcher(services);
+        var request = NewRequest(ApplicationOperations.JmapApiProcess, "{"u8.ToArray());
+
+        var response = await dispatcher.DispatchAsync(request);
+
+        Assert.IsTrue(response.IsError);
+        Assert.AreEqual("invalid-arguments", response.ErrorCode);
         Assert.AreEqual("application/problem+json", response.ContentType);
     }
 

@@ -25,6 +25,44 @@ internal static class DeliveryStatusNotificationBuilder
         var safeDiagnostic = SanitizeFieldText(
             diagnostic ?? DefaultDiagnostic(action),
             allowUtf8: message.RequiresSmtpUtf8);
+        var (statusBody, usesGlobalStatus) = CreateStatusBody(
+            message,
+            recipient,
+            action,
+            actionName,
+            status,
+            safeDiagnostic,
+            reportingHost,
+            now,
+            remoteMta);
+
+        var boundary = $"=_mk8_dsn_{recipient.Id:N}_{actionName}";
+        while (rawMessage.Contains(boundary, StringComparison.Ordinal))
+            boundary += "x";
+
+        var messageBuilder = new StringBuilder();
+        AppendReportHeaders(messageBuilder, message, recipient, action, actionName, reportingHost, now, boundary);
+        AppendHumanPart(messageBuilder, recipient, action, safeDiagnostic, boundary);
+        AppendStatusPart(messageBuilder, statusBody, usesGlobalStatus, boundary);
+        AppendReturnedPart(messageBuilder, message, action, rawMessage, boundary);
+        messageBuilder.Append("--").Append(boundary).Append("--\r\n");
+
+        return new BuiltDeliveryStatusNotification(
+            messageBuilder.ToString(),
+            message.EnvelopeSender.Any(character => !char.IsAscii(character)));
+    }
+
+    private static (string Body, bool UsesGlobalStatus) CreateStatusBody(
+        MailQueueMessageDB message,
+        MailQueueRecipientDB recipient,
+        DeliveryStatusAction action,
+        string actionName,
+        string status,
+        string safeDiagnostic,
+        string reportingHost,
+        DateTimeOffset now,
+        string? remoteMta)
+    {
         var finalAddressType = message.RequiresSmtpUtf8
             || recipient.Recipient.Any(character => !char.IsAscii(character))
                 ? "utf-8"
@@ -57,14 +95,7 @@ internal static class DeliveryStatusNotificationBuilder
         statusBody.Append("Reporting-MTA: dns; ").Append(reportingHost).Append("\r\n")
             .Append("Arrival-Date: ").Append(FormatDate(message.ReceivedAt)).Append("\r\n")
             .Append("\r\n");
-        if (originalAddressType is not null && originalAddress is not null)
-        {
-            statusBody.Append("Original-Recipient: ")
-                .Append(originalAddressType)
-                .Append("; ")
-                .Append(SanitizeFieldText(originalAddress, usesGlobalStatus))
-                .Append("\r\n");
-        }
+        AppendOriginalRecipient(statusBody, originalAddressType, originalAddress, usesGlobalStatus);
         statusBody.Append("Final-Recipient: ")
             .Append(finalAddressType)
             .Append("; ")
@@ -85,72 +116,38 @@ internal static class DeliveryStatusNotificationBuilder
                 .Append("\r\n");
         }
         statusBody.Append("Last-Attempt-Date: ").Append(FormatDate(now.UtcDateTime)).Append("\r\n");
+        return (statusBody.ToString(), usesGlobalStatus);
+    }
 
-        var originalHeaders = ExtractHeaders(rawMessage);
+    private static void AppendOriginalRecipient(
+        StringBuilder statusBody,
+        string? originalAddressType,
+        string? originalAddress,
+        bool usesGlobalStatus)
+    {
+        if (originalAddressType is null || originalAddress is null)
+            return;
+        statusBody.Append("Original-Recipient: ")
+            .Append(originalAddressType)
+            .Append("; ")
+            .Append(SanitizeFieldText(originalAddress, usesGlobalStatus))
+            .Append("\r\n");
+    }
+
+    private static void AppendReturnedPart(
+        StringBuilder messageBuilder,
+        MailQueueMessageDB message,
+        DeliveryStatusAction action,
+        string rawMessage,
+        string boundary)
+    {
         var returnFullMessage = action == DeliveryStatusAction.Failed
             && string.Equals(message.DsnReturnContent, "FULL", StringComparison.Ordinal)
             && MailWireEncoding.Instance.GetByteCount(rawMessage) <= MaximumFullReturnBytes;
-        var returnedContent = returnFullMessage ? rawMessage : originalHeaders;
+        var returnedContent = returnFullMessage ? rawMessage : ExtractHeaders(rawMessage);
         var returnedType = message.RequiresSmtpUtf8
             ? (returnFullMessage ? "message/global" : "message/global-headers")
             : (returnFullMessage ? "message/rfc822" : "text/rfc822-headers");
-
-        var boundary = $"=_mk8_dsn_{recipient.Id:N}_{actionName}";
-        while (rawMessage.Contains(boundary, StringComparison.Ordinal))
-            boundary += "x";
-
-        var humanText = action switch
-        {
-            DeliveryStatusAction.Failed =>
-                $"Delivery to {recipient.Recipient} failed.\r\n\r\n{safeDiagnostic}\r\n",
-            DeliveryStatusAction.Delayed =>
-                $"Delivery to {recipient.Recipient} has been delayed.\r\n\r\n{safeDiagnostic}\r\n",
-            DeliveryStatusAction.Delivered =>
-                $"Delivery to {recipient.Recipient} succeeded.\r\n",
-            DeliveryStatusAction.Relayed =>
-                $"The message for {recipient.Recipient} was relayed.\r\n",
-            _ => $"The address {recipient.Recipient} was expanded.\r\n",
-        };
-        var subject = action switch
-        {
-            DeliveryStatusAction.Failed => "Delivery Status Notification (Failure)",
-            DeliveryStatusAction.Delayed => "Delivery Status Notification (Delay)",
-            DeliveryStatusAction.Delivered => "Delivery Status Notification (Success)",
-            DeliveryStatusAction.Relayed => "Delivery Status Notification (Relayed)",
-            _ => "Delivery Status Notification (Expanded)",
-        };
-
-        var messageBuilder = new StringBuilder();
-        AppendUtf8Wire(messageBuilder,
-            $"From: Mail Delivery System <mailer-daemon@{reportingHost}>\r\n" +
-            $"To: <{message.EnvelopeSender}>\r\n" +
-            $"Subject: {subject}\r\n" +
-            $"Date: {FormatDate(now.UtcDateTime)}\r\n" +
-            $"Message-ID: <dsn-{recipient.Id:N}-{actionName}@{reportingHost}>\r\n" +
-            "Auto-Submitted: auto-replied\r\n" +
-            "MIME-Version: 1.0\r\n" +
-            $"Content-Type: multipart/report; report-type=delivery-status; boundary=\"{boundary}\"\r\n" +
-            "\r\n");
-        messageBuilder.Append("--").Append(boundary).Append("\r\n")
-            .Append("Content-Type: text/plain; charset=utf-8\r\n")
-            .Append("Content-Transfer-Encoding: base64\r\n\r\n")
-            .Append(WrapBase64(Encoding.UTF8.GetBytes(humanText))).Append("\r\n")
-            .Append("--").Append(boundary).Append("\r\n")
-            .Append("Content-Type: ")
-            .Append(usesGlobalStatus
-                ? "message/global-delivery-status"
-                : "message/delivery-status")
-            .Append("\r\n");
-        if (usesGlobalStatus)
-        {
-            messageBuilder.Append("Content-Transfer-Encoding: base64\r\n\r\n")
-                .Append(WrapBase64(Encoding.UTF8.GetBytes(statusBody.ToString())))
-                .Append("\r\n");
-        }
-        else
-        {
-            messageBuilder.Append("\r\n").Append(statusBody).Append("\r\n");
-        }
 
         messageBuilder.Append("--").Append(boundary).Append("\r\n")
             .Append("Content-Type: ").Append(returnedType).Append("\r\n");
@@ -169,11 +166,85 @@ internal static class DeliveryStatusNotificationBuilder
             if (!returnedContent.EndsWith("\r\n", StringComparison.Ordinal))
                 messageBuilder.Append("\r\n");
         }
-        messageBuilder.Append("--").Append(boundary).Append("--\r\n");
+    }
 
-        return new BuiltDeliveryStatusNotification(
-            messageBuilder.ToString(),
-            message.EnvelopeSender.Any(character => !char.IsAscii(character)));
+    private static void AppendHumanPart(
+        StringBuilder messageBuilder,
+        MailQueueRecipientDB recipient,
+        DeliveryStatusAction action,
+        string safeDiagnostic,
+        string boundary)
+    {
+        var humanText = action switch
+        {
+            DeliveryStatusAction.Failed =>
+                $"Delivery to {recipient.Recipient} failed.\r\n\r\n{safeDiagnostic}\r\n",
+            DeliveryStatusAction.Delayed =>
+                $"Delivery to {recipient.Recipient} has been delayed.\r\n\r\n{safeDiagnostic}\r\n",
+            DeliveryStatusAction.Delivered =>
+                $"Delivery to {recipient.Recipient} succeeded.\r\n",
+            DeliveryStatusAction.Relayed =>
+                $"The message for {recipient.Recipient} was relayed.\r\n",
+            _ => $"The address {recipient.Recipient} was expanded.\r\n",
+        };
+        messageBuilder.Append("--").Append(boundary).Append("\r\n")
+            .Append("Content-Type: text/plain; charset=utf-8\r\n")
+            .Append("Content-Transfer-Encoding: base64\r\n\r\n")
+            .Append(WrapBase64(Encoding.UTF8.GetBytes(humanText))).Append("\r\n");
+    }
+
+    private static void AppendReportHeaders(
+        StringBuilder messageBuilder,
+        MailQueueMessageDB message,
+        MailQueueRecipientDB recipient,
+        DeliveryStatusAction action,
+        string actionName,
+        string reportingHost,
+        DateTimeOffset now,
+        string boundary)
+    {
+        var subject = action switch
+        {
+            DeliveryStatusAction.Failed => "Delivery Status Notification (Failure)",
+            DeliveryStatusAction.Delayed => "Delivery Status Notification (Delay)",
+            DeliveryStatusAction.Delivered => "Delivery Status Notification (Success)",
+            DeliveryStatusAction.Relayed => "Delivery Status Notification (Relayed)",
+            _ => "Delivery Status Notification (Expanded)",
+        };
+        AppendUtf8Wire(messageBuilder,
+            $"From: Mail Delivery System <mailer-daemon@{reportingHost}>\r\n" +
+            $"To: <{message.EnvelopeSender}>\r\n" +
+            $"Subject: {subject}\r\n" +
+            $"Date: {FormatDate(now.UtcDateTime)}\r\n" +
+            $"Message-ID: <dsn-{recipient.Id:N}-{actionName}@{reportingHost}>\r\n" +
+            "Auto-Submitted: auto-replied\r\n" +
+            "MIME-Version: 1.0\r\n" +
+            $"Content-Type: multipart/report; report-type=delivery-status; boundary=\"{boundary}\"\r\n" +
+            "\r\n");
+    }
+
+    private static void AppendStatusPart(
+        StringBuilder messageBuilder,
+        string statusBody,
+        bool usesGlobalStatus,
+        string boundary)
+    {
+        messageBuilder.Append("--").Append(boundary).Append("\r\n")
+            .Append("Content-Type: ")
+            .Append(usesGlobalStatus
+                ? "message/global-delivery-status"
+                : "message/delivery-status")
+            .Append("\r\n");
+        if (usesGlobalStatus)
+        {
+            messageBuilder.Append("Content-Transfer-Encoding: base64\r\n\r\n")
+                .Append(WrapBase64(Encoding.UTF8.GetBytes(statusBody)))
+                .Append("\r\n");
+        }
+        else
+        {
+            messageBuilder.Append("\r\n").Append(statusBody).Append("\r\n");
+        }
     }
 
     private static string NormalizeStatus(string? value, DeliveryStatusAction action)

@@ -147,6 +147,42 @@ public sealed class SmtpDsnTests
         StringAssert.Contains(DecodePart(returnedHeaders), "Subject: Žuta pošta");
     }
 
+    [TestMethod]
+    [DataRow((int)DeliveryStatusAction.Failed, "Failure", "failed", "5.0.0", "message/rfc822")]
+    [DataRow((int)DeliveryStatusAction.Delayed, "Delay", "delayed", "4.0.0", "text/rfc822-headers")]
+    [DataRow((int)DeliveryStatusAction.Delivered, "Success", "delivered", "2.0.0", "text/rfc822-headers")]
+    [DataRow((int)DeliveryStatusAction.Relayed, "Relayed", "relayed", "2.0.0", "text/rfc822-headers")]
+    [DataRow((int)DeliveryStatusAction.Expanded, "Expanded", "expanded", "2.0.0", "text/rfc822-headers")]
+    public void ReportActionsKeepTheirStatusAndReturnContent(
+        int actionValue,
+        string subjectSuffix,
+        string actionName,
+        string statusCode,
+        string returnedType)
+    {
+        var message = CreateMessage(
+            "sender@example.net",
+            "recipient@example.com",
+            requiresSmtpUtf8: false);
+        message.DsnReturnContent = "FULL";
+        var built = DeliveryStatusNotificationBuilder.Build(
+            message,
+            message.Recipients.Single(),
+            (DeliveryStatusAction)actionValue,
+            message.RawMessage!,
+            "email.mk8n.com",
+            new DateTimeOffset(2026, 9, 21, 12, 0, 0, TimeSpan.Zero));
+
+        using var parsed = MimeMessage.Load(new MemoryStream(
+            Encoding.Latin1.GetBytes(built.RawMessage)));
+        Assert.AreEqual($"Delivery Status Notification ({subjectSuffix})", parsed.Subject);
+        var report = Assert.IsInstanceOfType<MultipartReport>(parsed.Body);
+        var deliveryStatus = Assert.IsInstanceOfType<MessageDeliveryStatus>(report[1]);
+        Assert.AreEqual(actionName, deliveryStatus.StatusGroups[1]["Action"]);
+        Assert.AreEqual(statusCode, deliveryStatus.StatusGroups[1]["Status"]);
+        Assert.AreEqual(returnedType, report[2].ContentType.MimeType);
+    }
+
     private static MailQueueMessageDB CreateMessage(
         string sender,
         string recipientAddress,

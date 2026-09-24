@@ -42,6 +42,7 @@ public sealed class JmapEmailSubmissionDB
     public string EnvelopeSender { get; set; } = string.Empty;
 
     [Column("envelope_recipients", TypeName = "text[]")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1819", Justification = "EF-mapped array column preserves the relational schema and existing persistence contract.")]
     public string[] EnvelopeRecipients { get; set; } = [];
 
     [Column("envelope_json", TypeName = "jsonb")]

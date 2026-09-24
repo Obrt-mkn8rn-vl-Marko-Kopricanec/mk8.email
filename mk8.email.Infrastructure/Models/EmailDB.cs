@@ -45,6 +45,7 @@ public class EmailDB
     public bool IsAnswered { get; set; }
 
     [Column("keywords", TypeName = "text[]")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1819", Justification = "EF-mapped array column preserves the relational schema and existing persistence contract.")]
     public string[] Keywords { get; set; } = [];
 
     [Column("mod_seq")]
@@ -71,6 +72,7 @@ public class EmailDB
     // Transitional legacy column. Exact RFC 5322 octets live in Azure Blob-compatible
     // storage; RawHeaders and Body are bounded, non-attachment search projections.
     [Column("raw_message")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1819", Justification = "EF-mapped array column preserves the relational schema and existing persistence contract.")]
     public byte[]? RawMessage { get; set; }
 
     [MaxLength(32)]

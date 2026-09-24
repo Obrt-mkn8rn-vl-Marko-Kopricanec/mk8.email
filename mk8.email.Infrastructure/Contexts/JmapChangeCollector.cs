@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
+using System.Runtime.InteropServices;
 using mk8.email.Infrastructure.Models;
 
 namespace mk8.email.Infrastructure.Data;
@@ -19,6 +20,7 @@ internal static class JmapChangeCollector
     private const string Updated = "updated";
     private const string Destroyed = "destroyed";
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ordered EF change snapshot and JMAP delta derivation form one save boundary.")]
     public static async Task CollectAsync(
         EmailDbContext database,
         CancellationToken cancellationToken)
@@ -86,10 +88,10 @@ internal static class JmapChangeCollector
                     email.FolderId,
                     email.ThreadObjectId,
                     email.IsDeleted))
-                .ToDictionaryAsync(email => email.Id, cancellationToken);
+                .ToDictionaryAsync(email => email.Id, cancellationToken).ConfigureAwait(false);
 
         var folderIds = new HashSet<Guid>();
-        foreach (var entry in emailEntries)
+        foreach (ref readonly var entry in CollectionsMarshal.AsSpan(emailEntries))
         {
             if (entry.State == EntityState.Added
                 || entry.Property(email => email.FolderId).IsModified)
@@ -99,7 +101,7 @@ internal static class JmapChangeCollector
             if (persistedEmails.TryGetValue(entry.Entity.Id, out var persisted))
                 folderIds.Add(persisted.FolderId);
         }
-        foreach (var entry in folderEntries)
+        foreach (ref readonly var entry in CollectionsMarshal.AsSpan(folderEntries))
             folderIds.Add(entry.Entity.Id);
 
         var folderAccounts = folderIds.Count == 0
@@ -108,8 +110,8 @@ internal static class JmapChangeCollector
                 .AsNoTracking()
                 .Where(folder => folderIds.Contains(folder.Id))
                 .Select(folder => new { folder.Id, folder.InboxId })
-                .ToDictionaryAsync(folder => folder.Id, folder => folder.InboxId, cancellationToken);
-        foreach (var entry in folderEntries)
+                .ToDictionaryAsync(folder => folder.Id, folder => folder.InboxId, cancellationToken).ConfigureAwait(false);
+        foreach (ref readonly var entry in CollectionsMarshal.AsSpan(folderEntries))
         {
             if (entry.State != EntityState.Deleted)
                 folderAccounts[entry.Entity.Id] = entry.Entity.InboxId;
@@ -134,7 +136,7 @@ internal static class JmapChangeCollector
                     email.FolderId,
                     email.ThreadObjectId,
                     email.IsDeleted))
-                .ToListAsync(cancellationToken);
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
 
         var persistedDavResourceIds = davResourceEntries
             .Where(entry => entry.State is EntityState.Modified or EntityState.Deleted)
@@ -147,10 +149,10 @@ internal static class JmapChangeCollector
                 .AsNoTracking()
                 .Where(resource => persistedDavResourceIds.Contains(resource.Id))
                 .Select(resource => new PersistedDavResource(resource.Id, resource.CollectionId))
-                .ToDictionaryAsync(resource => resource.Id, cancellationToken);
+                .ToDictionaryAsync(resource => resource.Id, cancellationToken).ConfigureAwait(false);
 
         var davCollectionIds = davCollectionEntries.Select(entry => entry.Entity.Id).ToHashSet();
-        foreach (var entry in davResourceEntries)
+        foreach (ref readonly var entry in CollectionsMarshal.AsSpan(davResourceEntries))
         {
             davCollectionIds.Add(entry.Entity.CollectionId);
             if (persistedDavResources.TryGetValue(entry.Entity.Id, out var persistedResource))
@@ -165,7 +167,7 @@ internal static class JmapChangeCollector
                     collection.Id,
                     collection.UserId,
                     collection.CollectionType))
-                .ToDictionaryAsync(collection => collection.Id, cancellationToken);
+                .ToDictionaryAsync(collection => collection.Id, cancellationToken).ConfigureAwait(false);
         foreach (var entry in davCollectionEntries.Where(entry => entry.State != EntityState.Deleted))
         {
             davCollections[entry.Entity.Id] = new DavCollectionOwner(
@@ -177,7 +179,7 @@ internal static class JmapChangeCollector
         var trackedDavResourceIds = davResourceEntries.Select(entry => entry.Entity.Id).ToArray();
         var deletedAddressBookIds = davCollectionEntries
             .Where(entry => entry.State == EntityState.Deleted
-                && entry.Entity.CollectionType == DavCollectionDB.AddressBookType)
+                && string.Equals(entry.Entity.CollectionType, DavCollectionDB.AddressBookType, StringComparison.Ordinal))
             .Select(entry => entry.Entity.Id)
             .ToArray();
         var cascadeDeletedDavResources = deletedAddressBookIds.Length == 0
@@ -187,22 +189,22 @@ internal static class JmapChangeCollector
                 .Where(resource => deletedAddressBookIds.Contains(resource.CollectionId)
                     && !trackedDavResourceIds.Contains(resource.Id))
                 .Select(resource => new PersistedDavResource(resource.Id, resource.CollectionId))
-                .ToListAsync(cancellationToken);
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
 
         var davUserIds = davCollections.Values
-            .Where(collection => collection.CollectionType == DavCollectionDB.AddressBookType)
+            .Where(collection => string.Equals(collection.CollectionType, DavCollectionDB.AddressBookType, StringComparison.Ordinal))
             .Select(collection => collection.UserId)
             .Distinct()
             .ToArray();
         var contactAccounts = await GetPrimaryAccountIdsAsync(
             database,
             davUserIds,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
 
         var changes = new Dictionary<ChangeKey, string>();
         var threadDeltas = new Dictionary<ThreadKey, int>();
 
-        foreach (var entry in davCollectionEntries)
+        foreach (ref readonly var entry in CollectionsMarshal.AsSpan(davCollectionEntries))
         {
             if (entry.State == EntityState.Modified
                 && !IsJmapAddressBookPropertyModified(entry))
@@ -214,8 +216,8 @@ internal static class JmapChangeCollector
                     entry.Entity.Id,
                     entry.Entity.UserId,
                     entry.Entity.CollectionType);
-            if (owner.CollectionType != DavCollectionDB.AddressBookType
-                || !contactAccounts.TryGetValue(owner.UserId, out var accountId))
+            if (!string.Equals(owner.CollectionType, DavCollectionDB.AddressBookType
+, StringComparison.Ordinal) || !contactAccounts.TryGetValue(owner.UserId, out var accountId))
             {
                 continue;
             }
@@ -228,7 +230,7 @@ internal static class JmapChangeCollector
             AddChange(changes, accountId, AddressBookType, $"D{entry.Entity.Id:N}", kind);
         }
 
-        foreach (var entry in davResourceEntries)
+        foreach (ref readonly var entry in CollectionsMarshal.AsSpan(davResourceEntries))
         {
             var oldCollectionId = persistedDavResources.TryGetValue(entry.Entity.Id, out var persistedResource)
                 ? persistedResource.CollectionId
@@ -243,13 +245,13 @@ internal static class JmapChangeCollector
                 ? davCollections.GetValueOrDefault(newCollectionId.Value)
                 : null;
             var oldAccountId = oldOwner is not null
-                && oldOwner.CollectionType == DavCollectionDB.AddressBookType
-                && contactAccounts.TryGetValue(oldOwner.UserId, out var oldAccount)
+                && string.Equals(oldOwner.CollectionType, DavCollectionDB.AddressBookType
+, StringComparison.Ordinal) && contactAccounts.TryGetValue(oldOwner.UserId, out var oldAccount)
                     ? oldAccount
                     : (Guid?)null;
             var newAccountId = newOwner is not null
-                && newOwner.CollectionType == DavCollectionDB.AddressBookType
-                && contactAccounts.TryGetValue(newOwner.UserId, out var newAccount)
+                && string.Equals(newOwner.CollectionType, DavCollectionDB.AddressBookType
+, StringComparison.Ordinal) && contactAccounts.TryGetValue(newOwner.UserId, out var newAccount)
                     ? newAccount
                     : (Guid?)null;
             var objectId = $"C{entry.Entity.Id:N}";
@@ -270,7 +272,7 @@ internal static class JmapChangeCollector
             }
         }
 
-        foreach (var resource in cascadeDeletedDavResources)
+        foreach (ref readonly var resource in CollectionsMarshal.AsSpan(cascadeDeletedDavResources))
         {
             if (!davCollections.TryGetValue(resource.CollectionId, out var collection)
                 || !contactAccounts.TryGetValue(collection.UserId, out var accountId))
@@ -279,7 +281,7 @@ internal static class JmapChangeCollector
             }
             AddChange(changes, accountId, ContactCardType, $"C{resource.Id:N}", Destroyed);
         }
-        foreach (var entry in emailEntries)
+        foreach (ref readonly var entry in CollectionsMarshal.AsSpan(emailEntries))
         {
             var persisted = persistedEmails.GetValueOrDefault(entry.Entity.Id);
             var oldFolderId = persisted?.FolderId;
@@ -373,7 +375,7 @@ internal static class JmapChangeCollector
             }
         }
 
-        foreach (var email in cascadeDeletedEmails)
+        foreach (ref readonly var email in CollectionsMarshal.AsSpan(cascadeDeletedEmails))
         {
             if (!folderAccounts.TryGetValue(email.FolderId, out var accountId))
                 continue;
@@ -389,9 +391,9 @@ internal static class JmapChangeCollector
                 -1);
         }
 
-        await AddThreadChangesAsync(database, changes, threadDeltas, cancellationToken);
+        await AddThreadChangesAsync(database, changes, threadDeltas, cancellationToken).ConfigureAwait(false);
 
-        foreach (var entry in folderEntries)
+        foreach (ref readonly var entry in CollectionsMarshal.AsSpan(folderEntries))
         {
             var accountId = entry.Entity.InboxId;
             var kind = entry.State switch
@@ -403,7 +405,7 @@ internal static class JmapChangeCollector
             AddChange(changes, accountId, MailboxType, $"M{entry.Entity.Id:N}", kind);
         }
 
-        foreach (var entry in inboxEntries)
+        foreach (ref readonly var entry in CollectionsMarshal.AsSpan(inboxEntries))
         {
             if (!IsJmapAccount(entry.Entity))
                 continue;
@@ -416,7 +418,7 @@ internal static class JmapChangeCollector
             AddChange(changes, entry.Entity.Id, IdentityType, $"I{entry.Entity.Id:N}", kind);
         }
 
-        foreach (var entry in submissionEntries)
+        foreach (ref readonly var entry in CollectionsMarshal.AsSpan(submissionEntries))
         {
             var kind = entry.State switch
             {
@@ -442,8 +444,8 @@ internal static class JmapChangeCollector
                     submission.Id,
                     submission.AccountId,
                 })
-                .ToListAsync(cancellationToken);
-            foreach (var submission in affectedSubmissions)
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
+            foreach (ref readonly var submission in CollectionsMarshal.AsSpan(affectedSubmissions))
             {
                 AddChange(
                     changes,
@@ -454,7 +456,7 @@ internal static class JmapChangeCollector
             }
         }
 
-        foreach (var entry in vacationEntries)
+        foreach (ref readonly var entry in CollectionsMarshal.AsSpan(vacationEntries))
         {
             var kind = entry.State switch
             {
@@ -465,7 +467,7 @@ internal static class JmapChangeCollector
             AddChange(changes, entry.Entity.AccountId, VacationType, "singleton", kind);
         }
 
-        foreach (var entry in identityEntries)
+        foreach (ref readonly var entry in CollectionsMarshal.AsSpan(identityEntries))
         {
             var kind = entry.State switch
             {
@@ -484,14 +486,14 @@ internal static class JmapChangeCollector
         var now = DateTime.UtcNow;
         foreach (var change in changes)
         {
-            database.JmapChanges.Add(new JmapChangeDB
+            await database.JmapChanges.AddAsync(new JmapChangeDB
             {
                 AccountId = change.Key.AccountId,
                 DataType = change.Key.DataType,
                 ObjectId = change.Key.ObjectId,
                 ChangeKind = change.Value,
                 ChangedAt = now,
-            });
+            }, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -529,7 +531,7 @@ internal static class JmapChangeCollector
                 email.Id,
                 email.ThreadObjectId,
             })
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         var counts = existing
             .GroupBy(email => new ThreadKey(
                 email.AccountId,
@@ -573,7 +575,7 @@ internal static class JmapChangeCollector
     }
 
     private static bool IsJmapAccount(InboxDB inbox) =>
-        inbox.AliasForInboxId is null && inbox.Name != "*";
+        inbox.AliasForInboxId is null && !string.Equals(inbox.Name, "*", StringComparison.Ordinal);
 
     private static bool IsJmapAddressBookPropertyModified(
         EntityEntry<DavCollectionDB> entry) =>
@@ -588,15 +590,14 @@ internal static class JmapChangeCollector
 
     private static async Task<IReadOnlyDictionary<Guid, Guid>> GetPrimaryAccountIdsAsync(
         EmailDbContext database,
-        IReadOnlyCollection<Guid> userIds,
+        Guid[] userIds,
         CancellationToken cancellationToken)
     {
-        if (userIds.Count == 0)
+        if (userIds.Length == 0)
             return new Dictionary<Guid, Guid>();
-        var ids = userIds.ToArray();
         var candidates = await database.Inboxes
             .AsNoTracking()
-            .Where(inbox => ids.Contains(inbox.OwnerId)
+            .Where(inbox => userIds.Contains(inbox.OwnerId)
                 && inbox.AliasForInboxId == null
                 && inbox.Name != "*"
                 && inbox.Owner.IsActive
@@ -608,7 +609,7 @@ internal static class JmapChangeCollector
                 inbox.Owner.Username,
                 inbox.Name,
                 inbox.Address.Domain))
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         return candidates
             .GroupBy(candidate => candidate.UserId)
             .ToDictionary(

@@ -6,7 +6,7 @@ namespace mk8.email.Infrastructure.Data;
 
 public sealed class MailRuntimeSchemaService(EmailDbContext database)
 {
-    private static readonly IReadOnlyDictionary<string, string> RequiredMessageColumns =
+    private static readonly Dictionary<string, string> RequiredMessageColumns =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["id"] = "uuid",
@@ -40,7 +40,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["completed_at"] = "timestamptz",
         };
 
-    private static readonly IReadOnlyDictionary<string, string> RequiredRecipientColumns =
+    private static readonly Dictionary<string, string> RequiredRecipientColumns =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["id"] = "uuid",
@@ -65,7 +65,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["completed_at"] = "timestamptz",
         };
 
-    private static readonly IReadOnlyDictionary<string, string> RequiredSieveScriptColumns =
+    private static readonly Dictionary<string, string> RequiredSieveScriptColumns =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["id"] = "uuid",
@@ -82,7 +82,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["updated_at"] = "timestamptz",
         };
 
-    private static readonly IReadOnlyDictionary<string, string> RequiredEmailColumns =
+    private static readonly Dictionary<string, string> RequiredEmailColumns =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["queue_delivery_id"] = "uuid",
@@ -96,7 +96,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["thread_object_id"] = "varchar",
         };
 
-    private static readonly IReadOnlyDictionary<string, string> RequiredFolderColumns =
+    private static readonly Dictionary<string, string> RequiredFolderColumns =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["jmap_role"] = "varchar",
@@ -105,7 +105,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["mailbox_id"] = "varchar",
         };
 
-    private static readonly IReadOnlyDictionary<string, string> RequiredJmapChangeColumns =
+    private static readonly Dictionary<string, string> RequiredJmapChangeColumns =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["sequence"] = "int8",
@@ -116,7 +116,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["changed_at"] = "timestamptz",
         };
 
-    private static readonly IReadOnlyDictionary<string, string> RequiredJmapBlobColumns =
+    private static readonly Dictionary<string, string> RequiredJmapBlobColumns =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["id"] = "uuid",
@@ -134,7 +134,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["expires_at"] = "timestamptz",
         };
 
-    private static readonly IReadOnlyDictionary<string, string> RequiredJmapSubmissionColumns =
+    private static readonly Dictionary<string, string> RequiredJmapSubmissionColumns =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["id"] = "uuid",
@@ -153,7 +153,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["updated_at"] = "timestamptz",
         };
 
-    private static readonly IReadOnlyDictionary<string, string> RequiredJmapPushColumns =
+    private static readonly Dictionary<string, string> RequiredJmapPushColumns =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["id"] = "uuid",
@@ -173,7 +173,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["failure_count"] = "int4",
         };
 
-    private static readonly IReadOnlyDictionary<string, string> RequiredJmapVacationColumns =
+    private static readonly Dictionary<string, string> RequiredJmapVacationColumns =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["account_id"] = "uuid",
@@ -186,7 +186,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["updated_at"] = "timestamptz",
         };
 
-    private static readonly IReadOnlyDictionary<string, string> RequiredJmapVacationReplyColumns =
+    private static readonly Dictionary<string, string> RequiredJmapVacationReplyColumns =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["id"] = "uuid",
@@ -196,7 +196,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["last_sent_at"] = "timestamptz",
         };
 
-    private static readonly IReadOnlyDictionary<string, string> RequiredJmapIdentityColumns =
+    private static readonly Dictionary<string, string> RequiredJmapIdentityColumns =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["id"] = "uuid",
@@ -213,7 +213,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["updated_at"] = "timestamptz",
         };
 
-    private static readonly IReadOnlyDictionary<string, string> RequiredDavCollectionColumns =
+    private static readonly Dictionary<string, string> RequiredDavCollectionColumns =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["id"] = "uuid",
@@ -232,7 +232,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["updated_at"] = "timestamptz",
         };
 
-    private static readonly IReadOnlyDictionary<string, string> RequiredDavResourceColumns =
+    private static readonly Dictionary<string, string> RequiredDavResourceColumns =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["id"] = "uuid",
@@ -253,7 +253,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["updated_at"] = "timestamptz",
         };
 
-    private static readonly IReadOnlyDictionary<string, string> RequiredDavChangeColumns =
+    private static readonly Dictionary<string, string> RequiredDavChangeColumns =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["id"] = "uuid",
@@ -265,7 +265,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["changed_at"] = "timestamptz",
         };
 
-    private static readonly IReadOnlyDictionary<string, string> RequiredDavShareColumns =
+    private static readonly Dictionary<string, string> RequiredDavShareColumns =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["id"] = "uuid",
@@ -276,7 +276,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["updated_at"] = "timestamptz",
         };
 
-    private static readonly IReadOnlyDictionary<string, string> RequiredApplicationPasswordColumns =
+    private static readonly Dictionary<string, string> RequiredApplicationPasswordColumns =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["id"] = "uuid",
@@ -288,7 +288,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["revoked_at"] = "timestamptz",
         };
 
-    private static readonly IReadOnlyDictionary<string, string> RequiredOAuthGrantColumns =
+    private static readonly Dictionary<string, string> RequiredOAuthGrantColumns =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["id"] = "uuid",
@@ -301,7 +301,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["revoked_at"] = "timestamptz",
         };
 
-    private static readonly IReadOnlyDictionary<string, string> RequiredOAuthTokenColumns =
+    private static readonly Dictionary<string, string> RequiredOAuthTokenColumns =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["id"] = "uuid",
@@ -315,7 +315,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["replaced_by_token_id"] = "uuid",
         };
 
-    private static readonly IReadOnlyDictionary<string, string> RequiredOAuthAuthorizationCodeColumns =
+    private static readonly Dictionary<string, string> RequiredOAuthAuthorizationCodeColumns =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["id"] = "uuid",
@@ -332,7 +332,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["consumed_at"] = "timestamptz",
         };
 
-    private static readonly IReadOnlyDictionary<string, string> RequiredMfaTotpCredentialColumns =
+    private static readonly Dictionary<string, string> RequiredMfaTotpCredentialColumns =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["id"] = "uuid",
@@ -348,7 +348,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["revoked_at"] = "timestamptz",
         };
 
-    private static readonly IReadOnlyDictionary<string, string> RequiredMfaRecoveryCodeColumns =
+    private static readonly Dictionary<string, string> RequiredMfaRecoveryCodeColumns =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["id"] = "uuid",
@@ -358,6 +358,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["used_at"] = "timestamptz",
         };
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ordered relational schema upgrade is an existing atomic migration sequence.")]
     public async Task EnsureAsync(CancellationToken cancellationToken = default)
     {
         if (!string.Equals(
@@ -1198,150 +1199,157 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             CREATE INDEX IF NOT EXISTS ix_mfa_recovery_codes_credential_used
                 ON mfa_recovery_codes (credential_id, used_at);
             """,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
 
-        await EnsureContactUidInvariantAsync(cancellationToken);
+        await EnsureContactUidInvariantAsync(cancellationToken).ConfigureAwait(false);
 
         await ValidateTableAsync(
             "mail_queue_messages",
             RequiredMessageColumns,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         await ValidateTableAsync(
             "mail_queue_recipients",
             RequiredRecipientColumns,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         await ValidateTableAsync(
             "emails",
             RequiredEmailColumns,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         await ValidateTableAsync(
             "folders",
             RequiredFolderColumns,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         await ValidateTableAsync(
             "jmap_changes",
             RequiredJmapChangeColumns,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         await ValidateTableAsync(
             "jmap_blobs",
             RequiredJmapBlobColumns,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         await ValidateTableAsync(
             "jmap_email_submissions",
             RequiredJmapSubmissionColumns,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         await ValidateTableAsync(
             "jmap_push_subscriptions",
             RequiredJmapPushColumns,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         await ValidateTableAsync(
             "jmap_vacation_responses",
             RequiredJmapVacationColumns,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         await ValidateTableAsync(
             "jmap_vacation_replies",
             RequiredJmapVacationReplyColumns,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         await ValidateTableAsync(
             "jmap_identities",
             RequiredJmapIdentityColumns,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         await ValidateTableAsync(
             "dav_collections",
             RequiredDavCollectionColumns,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         await ValidateTableAsync(
             "dav_resources",
             RequiredDavResourceColumns,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         await ValidateTableAsync(
             "dav_changes",
             RequiredDavChangeColumns,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         await ValidateTableAsync(
             "dav_shares",
             RequiredDavShareColumns,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         await ValidateTableAsync(
             "sieve_scripts",
             RequiredSieveScriptColumns,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         await ValidateTableAsync(
             "application_passwords",
             RequiredApplicationPasswordColumns,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         await ValidateTableAsync(
             "oauth_grants",
             RequiredOAuthGrantColumns,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         await ValidateTableAsync(
             "oauth_tokens",
             RequiredOAuthTokenColumns,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         await ValidateTableAsync(
             "oauth_authorization_codes",
             RequiredOAuthAuthorizationCodeColumns,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         await ValidateTableAsync(
             "mfa_totp_credentials",
             RequiredMfaTotpCredentialColumns,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         await ValidateTableAsync(
             "mfa_recovery_codes",
             RequiredMfaRecoveryCodeColumns,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
     }
 
     private async Task ValidateTableAsync(
         string tableName,
-        IReadOnlyDictionary<string, string> requiredColumns,
+        Dictionary<string, string> requiredColumns,
         CancellationToken cancellationToken)
     {
         var connection = database.Database.GetDbConnection();
         if (connection.State != ConnectionState.Open)
-            await connection.OpenAsync(cancellationToken);
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
+        var command = connection.CreateCommand();
+        await using (command.ConfigureAwait(false))
+        {
+            command.CommandText = """
             SELECT column_name, udt_name
             FROM information_schema.columns
             WHERE table_schema = 'public' AND table_name = @table_name
             """;
-        var parameter = command.CreateParameter();
-        parameter.ParameterName = "table_name";
-        parameter.Value = tableName;
-        command.Parameters.Add(parameter);
+            var parameter = command.CreateParameter();
+            parameter.ParameterName = "table_name";
+            parameter.Value = tableName;
+            command.Parameters.Add(parameter);
 
-        var actualColumns = new Dictionary<string, string>(StringComparer.Ordinal);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
-            actualColumns.Add(reader.GetString(0), reader.GetString(1));
+            var actualColumns = new Dictionary<string, string>(StringComparer.Ordinal);
+            var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            await using var readerLifetime = reader.ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                actualColumns.Add(reader.GetString(0), reader.GetString(1));
 
-        foreach (var requiredColumn in requiredColumns)
-        {
-            if (!actualColumns.TryGetValue(requiredColumn.Key, out var actualType)
-                || !string.Equals(actualType, requiredColumn.Value, StringComparison.Ordinal))
+            foreach (var requiredColumn in requiredColumns)
             {
-                throw new InvalidOperationException(
-                    $"The {tableName}.{requiredColumn.Key} database column is missing or invalid.");
+                if (!actualColumns.TryGetValue(requiredColumn.Key, out var actualType)
+                    || !string.Equals(actualType, requiredColumn.Value, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"The {tableName}.{requiredColumn.Key} database column is missing or invalid.");
+                }
             }
         }
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "Legacy UID repair, triggers, and unique index must remain within the same locked transaction.")]
     private async Task EnsureContactUidInvariantAsync(CancellationToken cancellationToken)
     {
-        await using var transaction = await database.Database.BeginTransactionAsync(
+        var transaction = await database.Database.BeginTransactionAsync(
             IsolationLevel.Serializable,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
+        await using (transaction.ConfigureAwait(false))
+        {
 
-        // Keep the backfill, duplicate repair, triggers, and unique index in one
-        // atomic boundary. The lock also prevents a protocol write from slipping
-        // between legacy-data repair and index creation during an upgrade.
-        await database.Database.ExecuteSqlRawAsync(
+            // Keep the backfill, duplicate repair, triggers, and unique index in one
+            // atomic boundary. The lock also prevents a protocol write from slipping
+            // between legacy-data repair and index creation during an upgrade.
+            await database.Database.ExecuteSqlRawAsync(
             "LOCK TABLE dav_resources IN SHARE ROW EXCLUSIVE MODE",
-            cancellationToken);
-        await database.Database.ExecuteSqlRawAsync(
-            """
+            cancellationToken).ConfigureAwait(false);
+            await database.Database.ExecuteSqlRawAsync(
+                """
             UPDATE dav_resources resource
             SET addressbook_user_id = CASE
                 WHEN collection.collection_type = 'addressbook' THEN collection.user_id
@@ -1354,11 +1362,11 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                   ELSE NULL
               END
             """,
-            cancellationToken);
+                cancellationToken).ConfigureAwait(false);
 
-        var duplicates = await database.DavResources
-            .FromSqlRaw(
-                """
+            var duplicates = await database.DavResources
+                .FromSqlRaw(
+                    """
                 SELECT resource.*
                 FROM dav_resources resource
                 JOIN (
@@ -1377,68 +1385,71 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 ) duplicate ON duplicate.id = resource.id
                 ORDER BY resource.created_at, resource.id
                 """)
-            .Include(resource => resource.Collection)
-            .ToListAsync(cancellationToken);
+                .Include(resource => resource.Collection)
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
 
-        if (duplicates.Count > 0)
-        {
-            var affectedUsers = duplicates
-                .Select(resource => resource.AddressBookUserId!.Value)
-                .Distinct()
-                .ToArray();
-            var occupiedRows = await database.DavResources
-                .AsNoTracking()
-                .Where(resource => resource.AddressBookUserId != null
-                    && affectedUsers.Contains(resource.AddressBookUserId.Value))
-                .Select(resource => new { resource.AddressBookUserId, resource.Uid })
-                .ToListAsync(cancellationToken);
-            var occupied = occupiedRows
-                .GroupBy(row => row.AddressBookUserId!.Value)
-                .ToDictionary(
-                    group => group.Key,
-                    group => group.Select(row => row.Uid).ToHashSet(StringComparer.Ordinal));
-
-            foreach (var resource in duplicates)
+            if (duplicates.Count > 0)
             {
-                var userId = resource.AddressBookUserId!.Value;
-                var userUids = occupied[userId];
-                var replacement = $"urn:uuid:{resource.Id:D}";
-                for (var suffix = 2; userUids.Contains(replacement); suffix++)
-                    replacement = $"urn:uuid:{resource.Id:D}#legacy-{suffix}";
+                var affectedUsers = duplicates
+                    .Select(resource => resource.AddressBookUserId!.Value)
+                    .Distinct()
+                    .ToArray();
+                var occupiedRows = await database.DavResources
+                    .AsNoTracking()
+                    .Where(resource => resource.AddressBookUserId != null
+                        && affectedUsers.Contains(resource.AddressBookUserId.Value))
+                    .Select(resource => new { resource.AddressBookUserId, resource.Uid })
+                    .ToListAsync(cancellationToken).ConfigureAwait(false);
+                var occupied = occupiedRows
+                    .GroupBy(row => row.AddressBookUserId!.Value)
+                    .ToDictionary(
+                        group => group.Key,
+                        group => group.Select(row => row.Uid).ToHashSet(StringComparer.Ordinal));
 
-                var legacyContent = resource.Content
-                    ?? throw new InvalidOperationException(
-                        $"Legacy duplicate DAV resource {resource.Id:D} has no inline content.");
-                var content = DavContactUidMigration.Rewrite(legacyContent, replacement);
-                var now = DateTime.UtcNow;
-                var sequence = checked(++resource.Collection.SyncToken);
-                resource.Uid = replacement;
-                resource.Content = content;
-                resource.Etag = Convert.ToHexStringLower(
-                    System.Security.Cryptography.SHA256.HashData(content));
-                resource.SizeBytes = content.Length;
-                resource.ChangeSequence = sequence;
-                resource.UpdatedAt = now;
-                resource.Collection.UpdatedAt = now;
-                database.DavChanges.Add(new DavChangeDB
+                // The loop awaits EF AddAsync, so a Span enumerator cannot safely cross it.
+#pragma warning disable HLQ012
+                foreach (var resource in duplicates)
                 {
-                    Id = Guid.CreateVersion7(),
-                    CollectionId = resource.CollectionId,
-                    Collection = resource.Collection,
-                    Sequence = sequence,
-                    ResourceName = resource.ResourceName,
-                    IsDeleted = false,
-                    Etag = resource.Etag,
-                    ChangedAt = now,
-                });
-                userUids.Add(replacement);
+                    var userId = resource.AddressBookUserId!.Value;
+                    var userUids = occupied[userId];
+                    var replacement = $"urn:uuid:{resource.Id:D}";
+                    for (var suffix = 2; userUids.Contains(replacement); suffix++)
+                        replacement = $"urn:uuid:{resource.Id:D}#legacy-{suffix}";
+
+                    var legacyContent = resource.Content
+                        ?? throw new InvalidOperationException(
+                            $"Legacy duplicate DAV resource {resource.Id:D} has no inline content.");
+                    var content = DavContactUidMigration.Rewrite(legacyContent, replacement);
+                    var now = DateTime.UtcNow;
+                    var sequence = checked(++resource.Collection.SyncToken);
+                    resource.Uid = replacement;
+                    resource.Content = content;
+                    resource.Etag = Convert.ToHexStringLower(
+                        System.Security.Cryptography.SHA256.HashData(content));
+                    resource.SizeBytes = content.Length;
+                    resource.ChangeSequence = sequence;
+                    resource.UpdatedAt = now;
+                    resource.Collection.UpdatedAt = now;
+                    await database.DavChanges.AddAsync(new DavChangeDB
+                    {
+                        Id = Guid.CreateVersion7(),
+                        CollectionId = resource.CollectionId,
+                        Collection = resource.Collection,
+                        Sequence = sequence,
+                        ResourceName = resource.ResourceName,
+                        IsDeleted = false,
+                        Etag = resource.Etag,
+                        ChangedAt = now,
+                    }, cancellationToken).ConfigureAwait(false);
+                    userUids.Add(replacement);
+                }
+#pragma warning restore HLQ012
+
+                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             }
 
-            await database.SaveChangesAsync(cancellationToken);
-        }
-
-        await database.Database.ExecuteSqlRawAsync(
-            """
+            await database.Database.ExecuteSqlRawAsync(
+                """
             CREATE OR REPLACE FUNCTION set_dav_resource_addressbook_user_id()
             RETURNS trigger
             LANGUAGE plpgsql
@@ -1497,9 +1508,10 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 ON dav_resources (addressbook_user_id, uid)
                 WHERE addressbook_user_id IS NOT NULL;
             """,
-            cancellationToken);
+                cancellationToken).ConfigureAwait(false);
 
-        await transaction.CommitAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        }
     }
 
 }

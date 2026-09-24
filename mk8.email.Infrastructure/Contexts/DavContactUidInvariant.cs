@@ -12,6 +12,7 @@ public static class DavContactUidInvariant
         Guid userId,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(database);
         if (!string.Equals(
                 database.Database.ProviderName,
                 "Npgsql.EntityFrameworkCore.PostgreSQL",
@@ -29,11 +30,14 @@ public static class DavContactUidInvariant
         var key = BinaryPrimitives.ReadInt64BigEndian(digest);
         await database.Database.ExecuteSqlInterpolatedAsync(
             $"SELECT pg_advisory_xact_lock({key})",
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
     }
 
-    public static Guid? ScopeFor(DavCollectionDB collection) =>
-        collection.CollectionType == DavCollectionDB.AddressBookType
+    public static Guid? ScopeFor(DavCollectionDB collection)
+    {
+        ArgumentNullException.ThrowIfNull(collection);
+        return string.Equals(collection.CollectionType, DavCollectionDB.AddressBookType, StringComparison.Ordinal)
             ? collection.UserId
             : null;
+    }
 }

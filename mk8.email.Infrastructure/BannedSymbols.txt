@@ -1,0 +1,6 @@
+T:Microsoft.AspNetCore.Http.HttpContext; persistence must not depend on ASP.NET request hosting
+T:System.Net.Http.HttpClient; persistence must not own outbound presentation HTTP
+T:Azure.Storage.Blobs.BlobServiceClient; large objects must use the separate Azure Blob protocol abstraction
+T:System.Net.Sockets.TcpListener; persistence must not host public mail protocols
+T:System.Net.Mail.SmtpClient; persistence must not send mail directly
+T:System.IO.File; persistence must not read mail or secrets from host files

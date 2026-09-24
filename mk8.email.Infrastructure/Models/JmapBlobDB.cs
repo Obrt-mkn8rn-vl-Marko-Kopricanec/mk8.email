@@ -28,6 +28,7 @@ public sealed class JmapBlobDB
     public string? Name { get; set; }
 
     [Column("content", TypeName = "bytea")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1819", Justification = "EF-mapped array column preserves the relational schema and existing persistence contract.")]
     public byte[]? Content { get; set; }
 
     [MaxLength(32)]

@@ -56,7 +56,9 @@ public class FolderDB
     [ForeignKey(nameof(InboxId))]
     public InboxDB Inbox { get; set; } = null!;
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA2227", Justification = "The EF navigation remains settable for materialization and existing object initializers.")]
     public ICollection<EmailDB> Emails { get; set; } = [];
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA2227", Justification = "The EF navigation remains settable for materialization and existing object initializers.")]
     public ICollection<ExpungedUidDB> ExpungedUids { get; set; } = [];
 }

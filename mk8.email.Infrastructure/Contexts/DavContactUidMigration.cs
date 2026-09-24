@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json.Nodes;
 
@@ -10,6 +11,7 @@ internal static class DavContactUidMigration
     private const string HashProperty = "X-MK8-JSCONTACT-HASH";
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ordered legacy vCard repair and embedded representation rewrite is one atomic migration unit.")]
     public static byte[] Rewrite(byte[] content, string replacementUid)
     {
         string text;
@@ -24,7 +26,7 @@ internal static class DavContactUidMigration
                 exception);
         }
 
-        var lines = Unfold(text).ToList();
+        var lines = Unfold(text);
         if (!lines.Any(line => HasPropertyName(line, "BEGIN")
                 && PropertyValue(line).Equals("VCARD", StringComparison.OrdinalIgnoreCase))
             || !lines.Any(line => HasPropertyName(line, "END")
@@ -78,9 +80,10 @@ internal static class DavContactUidMigration
         }
 
         var output = new StringBuilder();
-        foreach (var line in core)
+        foreach (ref readonly var line in CollectionsMarshal.AsSpan(core))
         {
-            foreach (var folded in Fold(line))
+            var foldedLines = Fold(line);
+            foreach (ref readonly var folded in CollectionsMarshal.AsSpan(foldedLines))
                 output.Append(folded).Append("\r\n");
         }
         return Encoding.UTF8.GetBytes(output.ToString());
@@ -107,7 +110,7 @@ internal static class DavContactUidMigration
         }
     }
 
-    private static IReadOnlyList<string> Unfold(string text)
+    private static List<string> Unfold(string text)
     {
         var result = new List<string>();
         foreach (var line in text.Replace("\r\n", "\n", StringComparison.Ordinal)
@@ -121,7 +124,7 @@ internal static class DavContactUidMigration
         return result;
     }
 
-    private static IReadOnlyList<string> Fold(string line)
+    private static List<string> Fold(string line)
     {
         var result = new List<string>();
         var remaining = line.AsSpan();
@@ -153,7 +156,7 @@ internal static class DavContactUidMigration
         if (colon <= 0)
             return false;
         var header = line[..colon];
-        var parameter = header.IndexOf(';');
+        var parameter = header.IndexOf(';', StringComparison.Ordinal);
         if (parameter >= 0)
             header = header[..parameter];
         var group = header.LastIndexOf('.');

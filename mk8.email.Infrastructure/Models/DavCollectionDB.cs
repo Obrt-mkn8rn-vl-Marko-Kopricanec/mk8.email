@@ -52,6 +52,7 @@ public sealed class DavCollectionDB
     public bool IsSubscribed { get; set; } = true;
 
     [Column("components", TypeName = "text[]")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1819", Justification = "EF-mapped array column preserves the relational schema and existing persistence contract.")]
     public string[] Components { get; set; } = [];
 
     [Column("sync_token")]
@@ -63,7 +64,10 @@ public sealed class DavCollectionDB
     [Column("updated_at")]
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA2227", Justification = "The EF navigation remains settable for materialization and existing object initializers.")]
     public ICollection<DavResourceDB> Resources { get; set; } = [];
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA2227", Justification = "The EF navigation remains settable for materialization and existing object initializers.")]
     public ICollection<DavChangeDB> Changes { get; set; } = [];
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA2227", Justification = "The EF navigation remains settable for materialization and existing object initializers.")]
     public ICollection<DavShareDB> Shares { get; set; } = [];
 }

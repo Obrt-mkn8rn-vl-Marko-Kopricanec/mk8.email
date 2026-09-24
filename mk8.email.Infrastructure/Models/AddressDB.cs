@@ -30,5 +30,6 @@ public class AddressDB
     [ForeignKey(nameof(CompanyId))]
     public CompanyDB Company { get; set; } = null!;
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA2227", Justification = "The EF navigation remains settable for materialization and existing object initializers.")]
     public ICollection<InboxDB> Inboxes { get; set; } = [];
 }

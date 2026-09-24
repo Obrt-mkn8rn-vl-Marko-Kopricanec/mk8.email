@@ -44,7 +44,10 @@ public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContex
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
+        // EF's synchronous override must finish change collection before committing synchronously.
+#pragma warning disable VSTHRD002
         PrepareJmapChangesAsync(CancellationToken.None).GetAwaiter().GetResult();
+#pragma warning restore VSTHRD002
         return base.SaveChanges(acceptAllChangesOnSuccess);
     }
 
@@ -52,8 +55,8 @@ public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContex
         bool acceptAllChangesOnSuccess,
         CancellationToken cancellationToken = default)
     {
-        await PrepareJmapChangesAsync(cancellationToken);
-        return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+        await PrepareJmapChangesAsync(cancellationToken).ConfigureAwait(false);
+        return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task PrepareJmapChangesAsync(CancellationToken cancellationToken)
@@ -64,7 +67,7 @@ public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContex
         _collectingJmapChanges = true;
         try
         {
-            await JmapChangeCollector.CollectAsync(this, cancellationToken);
+            await JmapChangeCollector.CollectAsync(this, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -72,8 +75,10 @@ public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContex
         }
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The EF entity configuration is kept in one model-building method to preserve mapping order.")]
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        ArgumentNullException.ThrowIfNull(modelBuilder);
         base.OnModelCreating(modelBuilder);
 
         modelBuilder.Entity<CompanyDB>(entity =>

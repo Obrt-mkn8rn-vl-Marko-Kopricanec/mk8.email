@@ -24,7 +24,9 @@ public class CompanyDB
     [Column("updated_at")]
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA2227", Justification = "The EF navigation remains settable for materialization and existing object initializers.")]
     public ICollection<AddressDB> Addresses { get; set; } = [];
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA2227", Justification = "The EF navigation remains settable for materialization and existing object initializers.")]
     public ICollection<UserDB> Users { get; set; } = [];
     public CompanyConfigDB? Config { get; set; }
     public CompanyLimitsDB? Limits { get; set; }

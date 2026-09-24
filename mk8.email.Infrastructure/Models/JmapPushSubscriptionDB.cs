@@ -26,9 +26,11 @@ public sealed class JmapPushSubscriptionDB
     [Required]
     [MaxLength(2048)]
     [Column("url")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1056", Justification = "The EF-mapped URI text column and existing application contract require string.")]
     public string Url { get; set; } = string.Empty;
 
     [Column("types", TypeName = "text[]")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1819", Justification = "EF-mapped array column preserves the relational schema and existing persistence contract.")]
     public string[]? Types { get; set; }
 
     [Column("keys_json", TypeName = "jsonb")]

@@ -36,5 +36,6 @@ public class InboxDB
     [ForeignKey(nameof(AliasForInboxId))]
     public InboxDB? AliasForInbox { get; set; }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA2227", Justification = "The EF navigation remains settable for materialization and existing object initializers.")]
     public ICollection<FolderDB> Folders { get; set; } = [];
 }

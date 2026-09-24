@@ -276,16 +276,18 @@ public sealed class SmtpPresentationTransportTests
             Assert.AreEqual("recipient@remote.test", smtp.Request.Recipient);
             Assert.AreEqual("job+2B42", smtp.Request.Options?.Dsn?.EnvelopeId);
 
-            await using var requestQuery = gatewayDataSource.CreateCommand(
-                "SELECT id, request_payload_inline FROM presentation_requests WHERE operation = @operation");
-            requestQuery.Parameters.AddWithValue("operation", SmtpPresentationOperations.Relay);
-            await using var requestReader = await requestQuery.ExecuteReaderAsync(timeout.Token);
-            Assert.IsTrue(await requestReader.ReadAsync(timeout.Token));
-            var requestId = requestReader.GetGuid(0);
-            Assert.AreEqual(requestId, smtp.ApplicationRequestId);
-            var ciphertext = requestReader.GetFieldValue<byte[]>(1);
-            Assert.IsFalse(Encoding.UTF8.GetString(ciphertext).Contains("reverse lane", StringComparison.Ordinal));
-            await requestReader.DisposeAsync();
+            Guid requestId;
+            await using (var requestQuery = gatewayDataSource.CreateCommand(
+                "SELECT id, request_payload_inline FROM presentation_requests WHERE operation = @operation"))
+            {
+                requestQuery.Parameters.AddWithValue("operation", SmtpPresentationOperations.Relay);
+                await using var requestReader = await requestQuery.ExecuteReaderAsync(timeout.Token);
+                Assert.IsTrue(await requestReader.ReadAsync(timeout.Token));
+                requestId = requestReader.GetGuid(0);
+                Assert.AreEqual(requestId, smtp.ApplicationRequestId);
+                var ciphertext = requestReader.GetFieldValue<byte[]>(1);
+                Assert.IsFalse(Encoding.UTF8.GetString(ciphertext).Contains("reverse lane", StringComparison.Ordinal));
+            }
 
             await using var trafficQuery = gatewayDataSource.CreateCommand(
                 "SELECT DISTINCT session_id FROM gateway_traffic_records "

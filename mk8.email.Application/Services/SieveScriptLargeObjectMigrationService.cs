@@ -123,11 +123,14 @@ public sealed class SieveScriptLargeObjectMigrationService(
                     {
                         await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
                     }
+                    // Keep the migration failure primary if provider rollback also fails.
+#pragma warning disable CA1031
                     catch (Exception rollbackException)
                     {
                         ApplicationServiceLog.SieveMigrationRollbackFailed(
                             logger, rollbackException, script.Id);
                     }
+#pragma warning restore CA1031
                 }
                 if (commitAttempted)
                     transactionEffects.Discard(marker);

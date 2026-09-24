@@ -333,10 +333,13 @@ internal sealed class SieveScriptService(
         {
             await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
         }
+        // Rollback failure is logged without masking the original Sieve write failure.
+#pragma warning disable CA1031
         catch (Exception exception)
         {
             ApplicationServiceLog.SieveContentTransactionRollbackFailed(logger, exception);
         }
+#pragma warning restore CA1031
     }
 
     private static SieveScriptOperationResult Success() => new(true);

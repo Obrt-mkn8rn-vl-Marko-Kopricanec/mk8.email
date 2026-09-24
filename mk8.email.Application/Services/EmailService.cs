@@ -257,10 +257,13 @@ public class EmailService(
         {
             await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
         }
+        // Rollback must not replace the original delivery failure.
+#pragma warning disable CA1031
         catch
         {
             // Preserve the original failure; an ambiguous commit retains the object.
         }
+#pragma warning restore CA1031
     }
 
     private static (string? localPart, string? domain) ParseRecipient(string address)

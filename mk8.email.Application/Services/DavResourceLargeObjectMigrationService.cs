@@ -139,11 +139,14 @@ public sealed class DavResourceLargeObjectMigrationService(
                     {
                         await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
                     }
+                    // Keep the migration failure primary if provider rollback also fails.
+#pragma warning disable CA1031
                     catch (Exception rollbackException)
                     {
                         ApplicationServiceLog.DavMigrationRollbackFailed(
                             logger, rollbackException, resource.Id);
                     }
+#pragma warning restore CA1031
                 }
                 if (written is { Created: true } && !commitAttempted)
                 {
@@ -151,11 +154,14 @@ public sealed class DavResourceLargeObjectMigrationService(
                     {
                         await objects.DeleteIfMatchAsync(written.Reference, CancellationToken.None).ConfigureAwait(false);
                     }
+                    // Failed orphan cleanup is logged without replacing the migration failure.
+#pragma warning disable CA1031
                     catch (Exception cleanupException)
                     {
                         ApplicationServiceLog.DavMigrationCleanupFailed(
                             logger, cleanupException, written.Reference.ObjectName);
                     }
+#pragma warning restore CA1031
                 }
                 throw;
             }

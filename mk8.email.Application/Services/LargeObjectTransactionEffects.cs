@@ -39,11 +39,14 @@ public sealed class LargeObjectTransactionEffects(
             {
                 await objects.DeleteIfMatchAsync(effect.Reference, CancellationToken.None).ConfigureAwait(false);
             }
+            // Post-transaction cleanup must log any storage-provider failure and continue.
+#pragma warning disable CA1031
             catch (Exception exception)
             {
                 ApplicationServiceLog.TransactionalObjectDeleteFailed(
                     logger, exception, effect.Reference.ObjectName);
             }
+#pragma warning restore CA1031
         }
     }
 

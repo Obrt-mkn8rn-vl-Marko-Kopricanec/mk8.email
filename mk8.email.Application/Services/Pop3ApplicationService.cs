@@ -158,10 +158,13 @@ internal sealed class Pop3ApplicationService(
                     {
                         await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
                     }
+                    // Preserve the original POP3 deletion failure if rollback also fails.
+#pragma warning disable CA1031
                     catch (Exception rollbackException)
                     {
                         ApplicationServiceLog.Pop3DeletionRollbackFailed(logger, rollbackException);
                     }
+#pragma warning restore CA1031
                 }
                 if (commitAttempted)
                     transactionEffects.Discard(marker);

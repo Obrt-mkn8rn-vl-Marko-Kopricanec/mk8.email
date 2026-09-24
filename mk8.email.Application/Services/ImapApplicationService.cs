@@ -325,10 +325,13 @@ internal sealed class ImapApplicationService(
                 {
                     await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
                 }
+                // Preserve the original mailbox-deletion failure if rollback also fails.
+#pragma warning disable CA1031
                 catch (Exception rollbackException)
                 {
                     ApplicationServiceLog.ImapMailboxDeletionRollbackFailed(logger, rollbackException);
                 }
+#pragma warning restore CA1031
             }
             if (commitAttempted)
                 effects.Discard(marker);
@@ -543,10 +546,13 @@ internal sealed class ImapApplicationService(
                 {
                     await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
                 }
+                // Preserve the original expunge failure if rollback also fails.
+#pragma warning disable CA1031
                 catch (Exception rollbackException)
                 {
                     ApplicationServiceLog.ImapExpungeRollbackFailed(logger, rollbackException);
                 }
+#pragma warning restore CA1031
             }
             if (commitAttempted)
                 effects.Discard(marker);
@@ -1019,10 +1025,13 @@ internal sealed class ImapApplicationService(
                 {
                     await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
                 }
+                // Preserve the original copy failure if rollback also fails.
+#pragma warning disable CA1031
                 catch (Exception rollbackException)
                 {
                     ApplicationServiceLog.ImapCopyRollbackFailed(logger, rollbackException);
                 }
+#pragma warning restore CA1031
             }
             if (commitAttempted)
                 effects.Discard(marker);
@@ -1248,10 +1257,13 @@ internal sealed class ImapApplicationService(
                     {
                         await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
                     }
+                    // Preserve the original append failure if rollback also fails.
+#pragma warning disable CA1031
                     catch (Exception rollbackException)
                     {
                         ApplicationServiceLog.ImapAppendRollbackFailed(logger, rollbackException);
                     }
+#pragma warning restore CA1031
                 }
                 if (commitAttempted)
                     effects.Discard(marker);

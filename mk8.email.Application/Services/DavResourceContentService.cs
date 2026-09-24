@@ -141,10 +141,13 @@ public sealed class DavResourceContentService(
         {
             await objects.DeleteIfMatchAsync(reference, CancellationToken.None).ConfigureAwait(false);
         }
+        // A committed DAV write cannot be undone by a failed object cleanup.
+#pragma warning disable CA1031
         catch (Exception exception)
         {
             ApplicationServiceLog.DavObjectDeleteFailed(logger, exception, reference.ObjectName);
         }
+#pragma warning restore CA1031
     }
 
     private void EnsureAzureBlobProvider()

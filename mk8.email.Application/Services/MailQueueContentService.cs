@@ -129,10 +129,13 @@ public sealed class MailQueueContentService(
         {
             await objects.DeleteIfMatchAsync(reference, CancellationToken.None).ConfigureAwait(false);
         }
+        // A committed queue write cannot be undone by a failed object cleanup.
+#pragma warning disable CA1031
         catch (Exception exception)
         {
             ApplicationServiceLog.QueueObjectDeleteFailed(logger, exception, reference.ObjectName);
         }
+#pragma warning restore CA1031
     }
 
     public static string BuildObjectName(Guid queueId) =>

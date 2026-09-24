@@ -181,11 +181,14 @@ public sealed class PostgresMailSubmissionQueue(
                 {
                     await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
                 }
+                // Preserve the original queue-insertion failure if rollback also fails.
+#pragma warning disable CA1031
                 catch (Exception rollbackException)
                 {
                     ApplicationServiceLog.QueueSubmissionRollbackFailed(
                         logger, rollbackException, message.Id);
                 }
+#pragma warning restore CA1031
             }
             if (commitAttempted)
                 transactionEffects.Discard(effectMarker);

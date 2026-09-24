@@ -63,11 +63,14 @@ public sealed class MailQueueWorker(
             {
                 return;
             }
+            // Any non-shutdown provider failure is logged before the durable poll retries.
+#pragma warning disable CA1031
             catch (Exception exception)
             {
                 ApplicationServiceLog.QueueWorkerFailed(logger, exception);
                 await Task.Delay(TimeSpan.FromSeconds(5), timeProvider, stoppingToken).ConfigureAwait(false);
             }
+#pragma warning restore CA1031
         }
     }
 
@@ -106,11 +109,14 @@ public sealed class MailQueueWorker(
             {
                 return;
             }
+            // A failed notification connection must not permanently stop durable polling.
+#pragma warning disable CA1031
             catch (Exception exception)
             {
                 ApplicationServiceLog.QueueNotificationListenerFailed(logger, exception);
                 await Task.Delay(TimeSpan.FromSeconds(5), timeProvider, stoppingToken).ConfigureAwait(false);
             }
+#pragma warning restore CA1031
         }
     }
 
@@ -185,6 +191,8 @@ public sealed class MailQueueWorker(
             {
                 throw;
             }
+            // Handler failures from any provider must release the claimed durable lease.
+#pragma warning disable CA1031
             catch (Exception exception)
             {
                 ApplicationServiceLog.QueueProcessingFailed(logger, exception, messageId.Value);
@@ -196,6 +204,7 @@ public sealed class MailQueueWorker(
                     timeProvider.GetUtcNow().UtcDateTime,
                     cancellationToken).ConfigureAwait(false);
             }
+#pragma warning restore CA1031
         }
         finally
         {
@@ -252,11 +261,14 @@ public sealed class MailQueueWorker(
         catch (OperationCanceledException) when (processingCancellation.IsCancellationRequested)
         {
         }
+        // An unexpected renewal failure must cancel processing before lease ownership is lost.
+#pragma warning disable CA1031
         catch (Exception exception)
         {
             ApplicationServiceLog.QueueLeaseRenewalFailed(logger, exception, messageId);
             await processingCancellation.CancelAsync().ConfigureAwait(false);
         }
+#pragma warning restore CA1031
     }
 
     private async Task ProcessClaimedAsync(
@@ -622,10 +634,13 @@ public sealed class MailQueueWorker(
         {
             throw;
         }
+        // Any relay or local-delivery failure becomes a durable recipient retry.
+#pragma warning disable CA1031
         catch (Exception exception)
         {
             ScheduleRecipientRetry(message, recipient, GetSafeError(exception), now);
         }
+#pragma warning restore CA1031
     }
 
     private static async Task<int> AddSieveRedirectsAsync(

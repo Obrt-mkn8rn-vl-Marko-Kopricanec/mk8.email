@@ -69,7 +69,7 @@ public sealed class OpenIdConnectService : IOpenIdConnectService
             environment.Smtp.Hostname,
             environment.Jmap.PublicBaseUrl).AbsoluteUri.TrimEnd('/');
         var issued = ToUnixTimeSeconds(issuedAt);
-        var payload = new Dictionary<string, object>
+        var payload = new Dictionary<string, object>(StringComparer.Ordinal)
         {
             ["iss"] = issuer,
             ["sub"] = userId.ToString("D"),
@@ -89,7 +89,7 @@ public sealed class OpenIdConnectService : IOpenIdConnectService
         if (scopes.Contains("profile", StringComparer.Ordinal))
             payload["preferred_username"] = username;
 
-        var header = new Dictionary<string, object>
+        var header = new Dictionary<string, object>(StringComparer.Ordinal)
         {
             ["alg"] = "RS256",
             ["kid"] = publishedKey.KeyId,

@@ -236,7 +236,7 @@ public sealed class MailQueueWorker(
                         .Where(message => message.Id == messageId)
                         .Select(message => message.State)
                         .SingleOrDefaultAsync(processingCancellation.Token).ConfigureAwait(false);
-                    if (state == MailQueueStates.Processing)
+                    if (string.Equals(state, MailQueueStates.Processing, StringComparison.Ordinal))
                     {
                         logger.LogError(
                             "The queue processing lease was lost for {QueueId}",
@@ -282,7 +282,7 @@ public sealed class MailQueueWorker(
         var relay = services.GetRequiredService<IOutboundMailRelay>();
         var rawMessage = await content.ReadAsync(message, cancellationToken).ConfigureAwait(false);
 
-        if (message.ScanState == MailQueueScanStates.Pending)
+        if (string.Equals(message.ScanState, MailQueueScanStates.Pending, StringComparison.Ordinal))
         {
             var scan = await scanner.ScanAsync(
                 new MailScanRequest(
@@ -311,7 +311,7 @@ public sealed class MailQueueWorker(
                 : DefaultFolders.Inbox;
 
             if (scan.IsMalware
-                || (message.Direction == MailQueueDirections.Submission && IsSpamAction(scan.Action)))
+                || (string.Equals(message.Direction, MailQueueDirections.Submission, StringComparison.Ordinal) && IsSpamAction(scan.Action)))
             {
                 await QuarantineAsync(message, delivery, now, cancellationToken).ConfigureAwait(false);
                 await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
@@ -322,7 +322,7 @@ public sealed class MailQueueWorker(
 
         var deliveryMessage = (message.AddedHeaders ?? string.Empty) + rawMessage;
 
-        if (message.Direction == MailQueueDirections.Submission && !message.SentCopyCreated)
+        if (string.Equals(message.Direction, MailQueueDirections.Submission, StringComparison.Ordinal) && !message.SentCopyCreated)
         {
             if (!await delivery.SaveSentCopyAsync(
                     message.EnvelopeSender,
@@ -339,7 +339,8 @@ public sealed class MailQueueWorker(
         }
 
         foreach (var recipient in message.Recipients
-                     .Where(item => item.State == MailQueueRecipientStates.Pending
+                     .Where(item => string.Equals(
+                         item.State, MailQueueRecipientStates.Pending, StringComparison.Ordinal)
                          && item.NextAttemptAt <= now)
                      .OrderBy(item => item.Id)
                      .ToList())
@@ -359,7 +360,7 @@ public sealed class MailQueueWorker(
 
         foreach (var recipient in message.Recipients.OrderBy(item => item.Id))
         {
-            if (recipient.State == MailQueueRecipientStates.Delivered)
+            if (string.Equals(recipient.State, MailQueueRecipientStates.Delivered, StringComparison.Ordinal))
             {
                 if (recipient.DsnForwarded
                     || !ShouldNotifySuccess(recipient)
@@ -399,7 +400,7 @@ public sealed class MailQueueWorker(
                     }
                 }
             }
-            else if (recipient.State == MailQueueRecipientStates.PermanentFailure)
+            else if (string.Equals(recipient.State, MailQueueRecipientStates.PermanentFailure, StringComparison.Ordinal))
             {
                 if (!ShouldNotifyFailure(recipient)
                     || string.IsNullOrEmpty(message.EnvelopeSender))
@@ -433,7 +434,8 @@ public sealed class MailQueueWorker(
                     }
                 }
             }
-            else if (recipient.State == MailQueueRecipientStates.Pending
+            else if (string.Equals(
+                    recipient.State, MailQueueRecipientStates.Pending, StringComparison.Ordinal)
                 && !recipient.DelayNoticeCreated
                 && ShouldNotifyDelay(recipient)
                 && now - message.ReceivedAt >= DeliveryDelayNotificationThreshold
@@ -814,7 +816,7 @@ public sealed class MailQueueWorker(
             recipient.FailureNoticeCreated = true;
         }
 
-        if (message.Direction != MailQueueDirections.Submission
+        if (!string.Equals(message.Direction, MailQueueDirections.Submission, StringComparison.Ordinal)
             || string.IsNullOrEmpty(message.AuthenticatedUser))
         {
             return;
@@ -968,13 +970,13 @@ public sealed class MailQueueWorker(
     private void FinalizeMessageState(MailQueueMessageDB message, DateTime now)
     {
         var pendingNotices = message.Recipients.Where(item =>
-                (item.State == MailQueueRecipientStates.PermanentFailure
+                (string.Equals(item.State, MailQueueRecipientStates.PermanentFailure, StringComparison.Ordinal)
                     && !item.FailureNoticeCreated)
-                || (item.State == MailQueueRecipientStates.Delivered
+                || (string.Equals(item.State, MailQueueRecipientStates.Delivered, StringComparison.Ordinal)
                     && !item.SuccessNoticeCreated))
             .ToList();
         var pending = message.Recipients
-            .Where(item => item.State == MailQueueRecipientStates.Pending)
+            .Where(item => string.Equals(item.State, MailQueueRecipientStates.Pending, StringComparison.Ordinal))
             .ToList();
         if (pending.Count > 0 || pendingNotices.Count > 0)
         {
@@ -987,9 +989,9 @@ public sealed class MailQueueWorker(
             return;
         }
 
-        if (message.Direction == MailQueueDirections.Inbound
-            && message.Recipients.Any(item =>
-                item.State == MailQueueRecipientStates.PermanentFailure))
+        if (string.Equals(message.Direction, MailQueueDirections.Inbound, StringComparison.Ordinal)
+            && message.Recipients.Any(item => string.Equals(
+                item.State, MailQueueRecipientStates.PermanentFailure, StringComparison.Ordinal)))
         {
             MarkDead(message, "A local inbound recipient could not accept the message.", now);
             return;

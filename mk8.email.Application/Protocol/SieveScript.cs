@@ -743,7 +743,7 @@ internal static class SieveScript
                 if (PeekOrDefault() == '\n')
                     Advance();
                 var text = line.ToString();
-                if (text == ".")
+                if (string.Equals(text, ".", StringComparison.Ordinal))
                     return value.ToString();
                 if (text.StartsWith("..", StringComparison.Ordinal))
                     text = text[1..];
@@ -1142,7 +1142,7 @@ internal static class SieveScript
                 && separator == value.LastIndexOf('/')
                 && separator < value.Length - 1
                 && IsMimeToken(value[..separator])
-                && (value[(separator + 1)..] == "*"
+                && (string.Equals(value[(separator + 1)..], "*", StringComparison.Ordinal)
                     || IsMimeToken(value[(separator + 1)..]));
         }
 

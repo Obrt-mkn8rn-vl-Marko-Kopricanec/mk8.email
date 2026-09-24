@@ -35,14 +35,14 @@ public sealed class MailQueueMaintenanceService(
                 && message.Direction == MailQueueDirections.Inbound)
             .Take(2)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
-            if (matches.Count != 1 || matches[0].State != MailQueueStates.Quarantined)
+            if (matches.Count != 1 || !string.Equals(matches[0].State, MailQueueStates.Quarantined, StringComparison.Ordinal))
                 return false;
 
             var message = matches[0];
             var reference = content.TryGetReference(message);
             if (message.RawMessage is not null
                 || reference is null
-                || reference.ObjectName != MailQueueContentService.BuildObjectName(message.Id))
+                || !string.Equals(reference.ObjectName, MailQueueContentService.BuildObjectName(message.Id), StringComparison.Ordinal))
             {
                 throw new InvalidOperationException("The quarantined smoke message has no valid Blob reference.");
             }

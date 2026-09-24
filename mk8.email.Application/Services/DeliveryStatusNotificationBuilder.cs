@@ -57,7 +57,7 @@ internal static class DeliveryStatusNotificationBuilder
         }
 
         var usesGlobalStatus = message.RequiresSmtpUtf8
-            || finalAddressType == "utf-8"
+            || string.Equals(finalAddressType, "utf-8", StringComparison.Ordinal)
             || string.Equals(originalAddressType, "utf-8", StringComparison.OrdinalIgnoreCase)
             || safeDiagnostic.Any(character => !char.IsAscii(character));
         var statusBody = new StringBuilder();

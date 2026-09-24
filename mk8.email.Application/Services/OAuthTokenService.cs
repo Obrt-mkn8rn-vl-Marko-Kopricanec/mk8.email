@@ -88,7 +88,7 @@ public sealed class OAuthTokenService(
             .ThenInclude(user => user.Company)
             .SingleOrDefaultAsync(candidate => candidate.Id == tokenId, cancellationToken).ConfigureAwait(false);
             var hashMatches = TokenHashMatches(refreshToken, token?.TokenHash);
-            if (token is null || !hashMatches || token.TokenType != RefreshTokenType)
+            if (token is null || !hashMatches || !string.Equals(token.TokenType, RefreshTokenType, StringComparison.Ordinal))
                 return null;
 
             var now = DateTime.UtcNow;
@@ -163,7 +163,7 @@ public sealed class OAuthTokenService(
         var now = DateTime.UtcNow;
         if (token is null
             || !hashMatches
-            || token.TokenType != AccessTokenType
+            || !string.Equals(token.TokenType, AccessTokenType, StringComparison.Ordinal)
             || token.RevokedAt is not null
             || token.ExpiresAt <= now
             || token.Grant.RevokedAt is not null

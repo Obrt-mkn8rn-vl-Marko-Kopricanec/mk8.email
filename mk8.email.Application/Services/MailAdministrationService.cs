@@ -149,7 +149,7 @@ public sealed partial class MailAdministrationService(EmailDbContext db) : IMail
     {
         var normalizedDomain = NormalizeDomain(domain);
         var parsedTarget = ParseAddress(targetAddress);
-        if (normalizedDomain is null || parsedTarget is null || parsedTarget.Value.Domain != normalizedDomain)
+        if (normalizedDomain is null || parsedTarget is null || !string.Equals(parsedTarget.Value.Domain, normalizedDomain, StringComparison.Ordinal))
             return Failure("The catch-all target must use the selected domain.");
 
         var transaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
@@ -351,7 +351,7 @@ public sealed partial class MailAdministrationService(EmailDbContext db) : IMail
 
         return domains.Select(item =>
         {
-            var catchAll = item.Inboxes.FirstOrDefault(inbox => inbox.Name == "*");
+            var catchAll = item.Inboxes.FirstOrDefault(inbox => string.Equals(inbox.Name, "*", StringComparison.Ordinal));
             var target = catchAll?.AliasForInbox is null
                 ? null
                 : $"{catchAll.AliasForInbox.Name}@{item.Domain}";
@@ -361,7 +361,7 @@ public sealed partial class MailAdministrationService(EmailDbContext db) : IMail
                 item.Domain,
                 item.Company.Name,
                 item.IsActive,
-                item.Inboxes.Count(inbox => inbox.Name != "*" && inbox.AliasForInboxId is null),
+                item.Inboxes.Count(inbox => !string.Equals(inbox.Name, "*", StringComparison.Ordinal) && inbox.AliasForInboxId is null),
                 target);
         }).ToList();
     }

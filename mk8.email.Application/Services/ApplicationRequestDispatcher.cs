@@ -487,13 +487,13 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
         requestId,
         JsonContentType,
         JsonSerializer.SerializeToUtf8Bytes(value, JsonOptions),
-        new Dictionary<string, string>());
+        new Dictionary<string, string>(StringComparer.Ordinal));
 
     private static ApplicationResponse Error(Guid requestId, string code, string detail) => new(
         requestId,
         "application/problem+json",
         JsonSerializer.SerializeToUtf8Bytes(new { code, detail }, JsonOptions),
-        new Dictionary<string, string>(),
+        new Dictionary<string, string>(StringComparer.Ordinal),
         IsError: true,
         ErrorCode: code,
         ErrorDetail: detail);

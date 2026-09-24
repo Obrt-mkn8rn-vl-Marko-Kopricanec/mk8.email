@@ -103,7 +103,7 @@ public sealed class RspamdMailScanner : IMailScanner, IDisposable
                 || action is "soft reject" or "greylist";
             var isMalware = symbols.Any(symbol =>
                 symbol.StartsWith("CLAM_VIRUS", StringComparison.Ordinal)
-                && symbol != "CLAM_VIRUS_FAIL");
+                && !string.Equals(symbol, "CLAM_VIRUS_FAIL", StringComparison.Ordinal));
 
             var headers = isTemporaryFailure
                 ? string.Empty

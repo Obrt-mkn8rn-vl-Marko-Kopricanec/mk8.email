@@ -173,7 +173,7 @@ internal static class ImapSearchEngine
             if (token.Kind != SearchTokenKind.Atom)
                 return false;
 
-            if (token.Value == "$")
+            if (string.Equals(token.Value, "$", StringComparison.Ordinal))
             {
                 predicate = new SearchPredicate(
                     SearchDataRequirements.None,
@@ -374,7 +374,7 @@ internal static class ImapSearchEngine
                         return false;
                     }
 
-                    if (uidSet == "$")
+                    if (string.Equals(uidSet, "$", StringComparison.Ordinal))
                     {
                         predicate = new SearchPredicate(
                             SearchDataRequirements.None,
@@ -1220,7 +1220,7 @@ internal static class ImapSearchEngine
         int maximumIdentifier,
         out int identifier)
     {
-        if (value == "*")
+        if (string.Equals(value, "*", StringComparison.Ordinal))
         {
             identifier = maximumIdentifier;
             return true;

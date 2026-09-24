@@ -48,7 +48,8 @@ public sealed class VacationResponder(
         MimeMessage original;
         try
         {
-            original = MimeMessage.Load(new MemoryStream(Encoding.Latin1.GetBytes(rawMessage)));
+            using var source = new MemoryStream(Encoding.Latin1.GetBytes(rawMessage));
+            original = await MimeMessage.LoadAsync(source, cancellationToken).ConfigureAwait(false);
         }
         catch (FormatException)
         {
@@ -117,7 +118,7 @@ public sealed class VacationResponder(
                         AccountId = route.AccountId,
                         SenderAddress = senderMailbox.Address.ToMailLowerInvariant(),
                     };
-                    database.JmapVacationReplies.Add(sent);
+                    await database.JmapVacationReplies.AddAsync(sent, cancellationToken).ConfigureAwait(false);
                 }
                 sent.LastDeliveryId = deliveryId;
                 sent.LastSentAt = now;

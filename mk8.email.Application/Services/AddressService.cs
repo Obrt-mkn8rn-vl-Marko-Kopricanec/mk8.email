@@ -50,7 +50,7 @@ public class AddressService(EmailDbContext db) : IAddressService
             IsActive = false,
         };
 
-        db.Addresses.Add(address);
+        await db.Addresses.AddAsync(address).ConfigureAwait(false);
         await db.SaveChangesAsync().ConfigureAwait(false);
 
         return new AddressDTO(address.Id, address.Domain, address.CompanyId, address.IsActive, address.CreatedAt);

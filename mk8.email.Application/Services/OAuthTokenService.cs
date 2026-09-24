@@ -60,7 +60,7 @@ public sealed class OAuthTokenService(
             Scopes = normalizedScopes,
             CreatedAt = now,
         };
-        database.OAuthGrants.Add(grant);
+        await database.OAuthGrants.AddAsync(grant, cancellationToken).ConfigureAwait(false);
         var issued = IssueTokenPair(grant, now);
         await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return issued.Pair;

@@ -49,7 +49,7 @@ public class AuthService(EmailDbContext db) : IAuthService
             Role = nameof(UserRole.User),
         };
 
-        db.Users.Add(user);
+        await db.Users.AddAsync(user).ConfigureAwait(false);
         await db.SaveChangesAsync().ConfigureAwait(false);
 
         return new LoginResultDTO(true, ToDTO(user), null);

@@ -195,7 +195,7 @@ public sealed class MailQueueWorker(
         }
         finally
         {
-            processingCancellation.Cancel();
+            await processingCancellation.CancelAsync().ConfigureAwait(false);
             await renewal.ConfigureAwait(false);
         }
 
@@ -241,7 +241,7 @@ public sealed class MailQueueWorker(
                         logger.LogError(
                             "The queue processing lease was lost for {QueueId}",
                             messageId);
-                        processingCancellation.Cancel();
+                        await processingCancellation.CancelAsync().ConfigureAwait(false);
                     }
                     return;
                 }
@@ -253,7 +253,7 @@ public sealed class MailQueueWorker(
         catch (Exception exception)
         {
             logger.LogError(exception, "Could not renew the queue lease for {QueueId}", messageId);
-            processingCancellation.Cancel();
+            await processingCancellation.CancelAsync().ConfigureAwait(false);
         }
     }
 
@@ -669,7 +669,7 @@ public sealed class MailQueueWorker(
                 .Append(redirect)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
-            database.MailQueueRecipients.Add(new MailQueueRecipientDB
+            await database.MailQueueRecipients.AddAsync(new MailQueueRecipientDB
             {
                 Id = redirectId,
                 MessageId = message.Id,
@@ -682,7 +682,7 @@ public sealed class MailQueueWorker(
                 RedirectHistory = redirectHistory,
                 DsnNotify = RemoveSuccessNotification(source.DsnNotify),
                 DsnOriginalRecipient = source.DsnOriginalRecipient,
-            });
+            }, cancellationToken).ConfigureAwait(false);
             added++;
         }
         return added;

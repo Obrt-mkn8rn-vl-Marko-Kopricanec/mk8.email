@@ -68,19 +68,19 @@ public class InboxService(EmailDbContext db) : IInboxService
             AliasForInboxId = request.AliasForInboxId,
         };
 
-        db.Inboxes.Add(inbox);
+        await db.Inboxes.AddAsync(inbox).ConfigureAwait(false);
         await db.SaveChangesAsync().ConfigureAwait(false);
 
         if (request.AliasForInboxId is null)
         {
             foreach (var folder in DefaultFolders.All)
             {
-                db.Folders.Add(new FolderDB
+                await db.Folders.AddAsync(new FolderDB
                 {
                     Id = Guid.CreateVersion7(),
                     Name = folder,
                     InboxId = inbox.Id,
-                });
+                }).ConfigureAwait(false);
             }
             await db.SaveChangesAsync().ConfigureAwait(false);
         }

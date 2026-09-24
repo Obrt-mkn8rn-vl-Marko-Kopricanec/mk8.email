@@ -81,7 +81,7 @@ public class EmailService(
                     InboxId = target.Id,
                     Name = folderName,
                 };
-                db.Folders.Add(folder);
+                await db.Folders.AddAsync(folder, cancellationToken).ConfigureAwait(false);
             }
 
             var uid = folder.NextUid++;
@@ -125,7 +125,7 @@ public class EmailService(
             try
             {
                 await content.SetAsync(email, rawBytes, cancellationToken).ConfigureAwait(false);
-                db.Emails.Add(email);
+                await db.Emails.AddAsync(email, cancellationToken).ConfigureAwait(false);
                 await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
                 commitAttempted = true;
                 await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -223,7 +223,7 @@ public class EmailService(
             try
             {
                 await content.SetAsync(email, rawBytes, cancellationToken).ConfigureAwait(false);
-                db.Emails.Add(email);
+                await db.Emails.AddAsync(email, cancellationToken).ConfigureAwait(false);
                 await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
                 commitAttempted = true;
                 await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);

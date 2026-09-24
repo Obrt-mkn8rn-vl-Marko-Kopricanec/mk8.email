@@ -43,14 +43,14 @@ public sealed class ApplicationPasswordService(EmailDbContext database) : IAppli
             .Replace('/', '_');
         var passwordValue = $"mk8_{id:N}_{secret}";
         var now = DateTime.UtcNow;
-        database.ApplicationPasswords.Add(new ApplicationPasswordDB
+        await database.ApplicationPasswords.AddAsync(new ApplicationPasswordDB
         {
             Id = id,
             UserId = user.Id,
             Name = normalizedName,
             PasswordHash = PasswordHasher.Hash(passwordValue),
             CreatedAt = now,
-        });
+        }, cancellationToken).ConfigureAwait(false);
         await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
 
         return new(

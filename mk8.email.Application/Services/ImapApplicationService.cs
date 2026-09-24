@@ -183,7 +183,7 @@ internal sealed class ImapApplicationService(
             Name = location.Value.FolderName,
             InboxId = location.Value.InboxId,
         };
-        database.Folders.Add(folder);
+        await database.Folders.AddAsync(folder, cancellationToken).ConfigureAwait(false);
         try
         {
             await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
@@ -511,13 +511,13 @@ internal sealed class ImapApplicationService(
                 }
 
                 folder.HighestModSeq++;
-                database.ExpungedUids.Add(new ExpungedUidDB
+                await database.ExpungedUids.AddAsync(new ExpungedUidDB
                 {
                     Id = Guid.CreateVersion7(),
                     Uid = message.Uid,
                     ModSeq = folder.HighestModSeq,
                     FolderId = folder.Id,
-                });
+                }, cancellationToken).ConfigureAwait(false);
                 content.DeleteOnCommit(message);
                 database.Emails.Remove(new EmailDB { Id = message.Id });
                 expunged.Add(new ImapExpungedMessage(
@@ -802,13 +802,13 @@ internal sealed class ImapApplicationService(
             }
 
             var sourceModSeq = ++source.HighestModSeq;
-            database.ExpungedUids.Add(new ExpungedUidDB
+            await database.ExpungedUids.AddAsync(new ExpungedUidDB
             {
                 Id = Guid.CreateVersion7(),
                 Uid = message.Uid,
                 ModSeq = sourceModSeq,
                 FolderId = source.Id,
-            });
+            }, cancellationToken).ConfigureAwait(false);
             var destinationUid = destination.NextUid++;
             var destinationModSeq = ++destination.HighestModSeq;
             AttachMoveUpdate(database, message, destination.Id, destinationUid, destinationModSeq);
@@ -995,7 +995,7 @@ internal sealed class ImapApplicationService(
                     FolderId = destination.Id,
                 };
                 await content.SetAsync(copy, rawMessage, cancellationToken).ConfigureAwait(false);
-                database.Emails.Add(copy);
+                await database.Emails.AddAsync(copy, cancellationToken).ConfigureAwait(false);
                 sourceUids.Add(source.Uid);
                 destinationUids.Add(destinationUid);
             }
@@ -1224,7 +1224,7 @@ internal sealed class ImapApplicationService(
                     }
                     uids.Add(email.Uid);
                     await content.SetAsync(email, message.RawMessage, cancellationToken).ConfigureAwait(false);
-                    database.Emails.Add(email);
+                    await database.Emails.AddAsync(email, cancellationToken).ConfigureAwait(false);
                 }
 
                 await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);

@@ -23,7 +23,7 @@ public class CompanyService(EmailDbContext db) : ICompanyService
             Name = request.Name,
         };
 
-        db.Companies.Add(company);
+        await db.Companies.AddAsync(company).ConfigureAwait(false);
         await db.SaveChangesAsync().ConfigureAwait(false);
 
         return ToDTO(company);
@@ -139,7 +139,7 @@ public class CompanyService(EmailDbContext db) : ICompanyService
                 CompanyId = companyId,
                 AllowUserRegistration = allowUserRegistration,
             };
-            db.CompanyConfigs.Add(config);
+            await db.CompanyConfigs.AddAsync(config).ConfigureAwait(false);
         }
         else
         {
@@ -179,7 +179,7 @@ public class CompanyService(EmailDbContext db) : ICompanyService
                 MaxInboxes = maxInboxes,
                 MaxInboxesPerDomain = maxInboxesPerDomain,
             };
-            db.CompanyLimits.Add(limits);
+            await db.CompanyLimits.AddAsync(limits).ConfigureAwait(false);
         }
         else
         {

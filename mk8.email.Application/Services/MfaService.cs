@@ -52,7 +52,7 @@ public sealed class MfaService(
                 Id = Guid.CreateVersion7(),
                 UserId = user.Id,
             };
-            database.MfaTotpCredentials.Add(credential);
+            await database.MfaTotpCredentials.AddAsync(credential, cancellationToken).ConfigureAwait(false);
         }
         else
         {

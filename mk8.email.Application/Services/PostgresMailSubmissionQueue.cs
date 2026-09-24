@@ -157,7 +157,7 @@ public sealed class PostgresMailSubmissionQueue(
             if (database.Database.IsRelational())
                 transaction = await database.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
             await content.SetAsync(message, submission.RawMessage, cancellationToken).ConfigureAwait(false);
-            database.MailQueueMessages.Add(message);
+            await database.MailQueueMessages.AddAsync(message, cancellationToken).ConfigureAwait(false);
             await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             if (transaction is not null)
             {

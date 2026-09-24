@@ -128,13 +128,13 @@ internal sealed class Pop3ApplicationService(
                 foreach (var email in emails)
                 {
                     var folder = folders[email.FolderId];
-                    database.ExpungedUids.Add(new ExpungedUidDB
+                    await database.ExpungedUids.AddAsync(new ExpungedUidDB
                     {
                         Id = Guid.CreateVersion7(),
                         Uid = email.Uid,
                         ModSeq = ++folder.HighestModSeq,
                         FolderId = folder.Id,
-                    });
+                    }, cancellationToken).ConfigureAwait(false);
                     content.DeleteOnCommit(email);
                     database.Emails.Remove(email);
                 }

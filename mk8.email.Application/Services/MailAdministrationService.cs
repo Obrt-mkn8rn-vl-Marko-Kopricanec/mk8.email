@@ -41,7 +41,7 @@ public sealed partial class MailAdministrationService(EmailDbContext db) : IMail
                     Id = Guid.CreateVersion7(),
                     Name = normalizedCompany,
                 };
-                db.Companies.Add(company);
+                await db.Companies.AddAsync(company, cancellationToken).ConfigureAwait(false);
             }
             else if (!company.IsActive)
             {
@@ -68,7 +68,7 @@ public sealed partial class MailAdministrationService(EmailDbContext db) : IMail
                 IsActive = false,
             };
 
-            db.Addresses.Add(mailDomain);
+            await db.Addresses.AddAsync(mailDomain, cancellationToken).ConfigureAwait(false);
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             return Success("The domain was created.", mailDomain.Id);
@@ -132,8 +132,8 @@ public sealed partial class MailAdministrationService(EmailDbContext db) : IMail
                 CreatedAt = now,
             };
 
-            db.Users.Add(user);
-            db.Inboxes.Add(inbox);
+            await db.Users.AddAsync(user, cancellationToken).ConfigureAwait(false);
+            await db.Inboxes.AddAsync(inbox, cancellationToken).ConfigureAwait(false);
             AddDefaultFolders(inbox, now);
 
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
@@ -185,7 +185,7 @@ public sealed partial class MailAdministrationService(EmailDbContext db) : IMail
                     OwnerId = target.OwnerId,
                     AliasForInboxId = target.Id,
                 };
-                db.Inboxes.Add(catchAll);
+                await db.Inboxes.AddAsync(catchAll, cancellationToken).ConfigureAwait(false);
             }
             else
             {

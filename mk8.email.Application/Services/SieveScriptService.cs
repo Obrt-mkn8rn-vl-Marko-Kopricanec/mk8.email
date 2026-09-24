@@ -145,7 +145,7 @@ internal sealed class SieveScriptService(
                         CreatedAt = now,
                         UpdatedAt = now,
                     };
-                    database.SieveScripts.Add(script);
+                    await database.SieveScripts.AddAsync(script, cancellationToken).ConfigureAwait(false);
                 }
                 else
                 {

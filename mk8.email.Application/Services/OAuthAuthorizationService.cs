@@ -71,7 +71,7 @@ public sealed class OAuthAuthorizationService(
 
         var id = Guid.CreateVersion7();
         var codeValue = CreateOpaqueValue("mk8_ac_", id);
-        database.OAuthAuthorizationCodes.Add(new OAuthAuthorizationCodeDB
+        await database.OAuthAuthorizationCodes.AddAsync(new OAuthAuthorizationCodeDB
         {
             Id = id,
             UserId = userId,
@@ -84,7 +84,7 @@ public sealed class OAuthAuthorizationService(
             Nonce = normalizedNonce,
             CreatedAt = now,
             ExpiresAt = now.AddMinutes(environment.OAuth.AuthorizationCodeMinutes),
-        });
+        }, cancellationToken).ConfigureAwait(false);
         await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return codeValue;
     }

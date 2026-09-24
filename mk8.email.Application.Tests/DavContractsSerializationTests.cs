@@ -37,4 +37,12 @@ public sealed class DavContractsSerializationTests
         CollectionAssert.Contains(restoredContent.Components.ToArray(), "VEVENT");
         Assert.AreEqual("calendar-uid", restoredContent.Properties["UID"][0]);
     }
+
+    [TestMethod]
+    public void DavContentRejectsNullInputBeforeParsing()
+    {
+        Assert.ThrowsExactly<ArgumentNullException>(() =>
+            DavContent.TryValidate(DavCollectionKind.AddressBook, "text/vcard", null!, out _, out _));
+        Assert.ThrowsExactly<ArgumentNullException>(() => DavContent.UnfoldLines(null!));
+    }
 }

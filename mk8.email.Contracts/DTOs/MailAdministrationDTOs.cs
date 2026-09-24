@@ -1,3 +1,5 @@
+// Protocol request/result types are deliberately grouped in this transport-contract file.
+#pragma warning disable MA0048
 using mk8.email.Contracts.Enums;
 
 namespace mk8.email.Contracts.DTOs;

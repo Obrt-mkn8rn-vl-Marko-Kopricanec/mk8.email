@@ -1,3 +1,5 @@
+// Protocol request/result types are deliberately grouped in this transport-contract file; array fields are part of the established JSON/public API; URI values are serialized as strings.
+#pragma warning disable MA0048, CA1054, CA1056, CA1819
 namespace mk8.email.Contracts.Messaging;
 
 public static class WebPushPresentationOperations

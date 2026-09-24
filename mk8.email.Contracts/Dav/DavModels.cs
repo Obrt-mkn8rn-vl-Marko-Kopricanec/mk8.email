@@ -1,3 +1,5 @@
+// Protocol request/result types are deliberately grouped in this transport-contract file; array fields are part of the established JSON/public API; the protocol name denotes a resource or queue, not a generic collection.
+#pragma warning disable MA0048, CA1819, MA0016, CA1711
 namespace mk8.email.Dav;
 
 // Shared, transport-safe DAV values. HTTP handling belongs to Gateway; persistence and

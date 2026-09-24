@@ -1,3 +1,5 @@
+// Protocol request/result types are deliberately grouped in this transport-contract file; concrete collection types are part of the established JSON/public API.
+#pragma warning disable MA0048, CA1002, CA1819, MA0016
 namespace mk8.email.Contracts.Pop3;
 
 public interface IPop3ApplicationService

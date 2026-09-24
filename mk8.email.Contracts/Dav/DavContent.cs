@@ -15,6 +15,7 @@ public static class DavContent
         out DavContentInfo? info,
         out string failure)
     {
+        ArgumentNullException.ThrowIfNull(content);
         info = null;
         failure = string.Empty;
         if (content.Length == 0 || content.Contains((byte)0))
@@ -40,7 +41,7 @@ public static class DavContent
         var expectedMediaType = kind == DavCollectionKind.Calendar
             ? "text/calendar"
             : "text/vcard";
-        if (kind == DavCollectionKind.Calendar && mediaType != "text/calendar")
+        if (kind == DavCollectionKind.Calendar && !string.Equals(mediaType, "text/calendar", StringComparison.Ordinal))
         {
             failure = "Calendar resources must use the text/calendar media type.";
             return false;
@@ -156,7 +157,7 @@ public static class DavContent
             AddProperty(properties, property.Name, property.Value);
         }
 
-        var versions = parsed.Where(property => property.Name == "VERSION").ToArray();
+        var versions = parsed.Where(property => string.Equals(property.Name, "VERSION", StringComparison.Ordinal)).ToArray();
         if (versions.Length != 1 || versions[0].Value is not ("3.0" or "4.0"))
         {
             failure = "The resource must contain exactly one supported vCard VERSION.";
@@ -164,7 +165,7 @@ public static class DavContent
         }
         var version = versions[0].Value;
 
-        var uidProperties = parsed.Where(property => property.Name == "UID").ToArray();
+        var uidProperties = parsed.Where(property => string.Equals(property.Name, "UID", StringComparison.Ordinal)).ToArray();
         if (uidProperties.Length != 1
             || !TryVCardUid(uidProperties[0], version, out var uid)
             || string.IsNullOrWhiteSpace(uid)
@@ -174,19 +175,36 @@ public static class DavContent
             return false;
         }
 
-        if (!parsed.Any(property => property.Name == "FN"))
+        if (!parsed.Any(property => string.Equals(property.Name, "FN", StringComparison.Ordinal)))
         {
             failure = "A vCard resource must contain an FN property.";
             return false;
         }
 
-        var kinds = parsed.Where(property => property.Name == "KIND").ToArray();
+        if (!TryValidateVCardGroup(parsed, out failure))
+            return false;
+
+        info = new DavContentInfo(
+            uid,
+            contentType,
+            new HashSet<string>(StringComparer.Ordinal),
+            text,
+            ToReadOnlyProperties(properties));
+        return true;
+    }
+
+    private static bool TryValidateVCardGroup(
+        IReadOnlyList<VCardProperty> parsed,
+        out string failure)
+    {
+        failure = string.Empty;
+        var kinds = parsed.Where(property => string.Equals(property.Name, "KIND", StringComparison.Ordinal)).ToArray();
         if (kinds.Length > 1)
         {
             failure = "A vCard resource must not contain multiple KIND properties.";
             return false;
         }
-        var members = parsed.Where(property => property.Name == "MEMBER").ToArray();
+        var members = parsed.Where(property => string.Equals(property.Name, "MEMBER", StringComparison.Ordinal)).ToArray();
         var isGroup = kinds.Length == 1
             && UnescapeText(kinds[0].Value).Equals("group", StringComparison.OrdinalIgnoreCase);
         if (members.Length > 0 && !isGroup)
@@ -199,13 +217,6 @@ public static class DavContent
             failure = "Every MEMBER property must contain a single absolute URI value.";
             return false;
         }
-
-        info = new DavContentInfo(
-            uid,
-            contentType,
-            new HashSet<string>(StringComparer.Ordinal),
-            text,
-            ToReadOnlyProperties(properties));
         return true;
     }
 
@@ -219,7 +230,8 @@ public static class DavContent
             return false;
         }
 
-        if (valueType == "uri" || version == "4.0" && valueType is null)
+        if (string.Equals(valueType, "uri", StringComparison.Ordinal)
+            || (string.Equals(version, "4.0", StringComparison.Ordinal) && valueType is null))
         {
             if (!IsAbsoluteUri(property.Value))
                 return false;
@@ -239,7 +251,10 @@ public static class DavContent
 
     private static string? ParameterValue(VCardProperty property, string name) =>
         property.Parameters.TryGetValue(name, out var value)
+            // vCard VALUE parameters are lower-case wire tokens; upper-casing changes their semantics.
+#pragma warning disable CA1308
             ? value.Trim().Trim('"').ToLowerInvariant()
+#pragma warning restore CA1308
             : null;
 
     private static bool IsAbsoluteUri(string value) =>
@@ -269,6 +284,7 @@ public static class DavContent
 
     public static IReadOnlyList<string> UnfoldLines(string text)
     {
+        ArgumentNullException.ThrowIfNull(text);
         var physicalLines = text
             .Replace("\r\n", "\n", StringComparison.Ordinal)
             .Replace('\r', '\n')
@@ -323,7 +339,7 @@ public static class DavContent
         var parameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var parameter in headerParts.Skip(1))
         {
-            var equals = parameter.IndexOf('=');
+            var equals = parameter.IndexOf('=', StringComparison.Ordinal);
             if (equals <= 0 || equals == parameter.Length - 1)
                 return false;
             parameters[parameter[..equals].ToUpperInvariant()] = parameter[(equals + 1)..];
@@ -356,7 +372,7 @@ public static class DavContent
         return -1;
     }
 
-    private static IReadOnlyList<string> SplitHeader(string value)
+    private static List<string> SplitHeader(string value)
     {
         var result = new List<string>();
         var start = 0;
@@ -400,7 +416,7 @@ public static class DavContent
         values.Add(value);
     }
 
-    private static IReadOnlyDictionary<string, IReadOnlyList<string>> ToReadOnlyProperties(
+    private static Dictionary<string, IReadOnlyList<string>> ToReadOnlyProperties(
         Dictionary<string, List<string>> properties) => properties.ToDictionary(
             pair => pair.Key,
             pair => (IReadOnlyList<string>)pair.Value,
@@ -408,10 +424,13 @@ public static class DavContent
 
     private static string NormalizeMediaType(string? contentType)
     {
-        var separator = contentType?.IndexOf(';') ?? -1;
+        var separator = contentType?.IndexOf(';', StringComparison.Ordinal) ?? -1;
+        // MIME media types are lower-case protocol tokens in this parser.
+#pragma warning disable CA1308
         return (separator >= 0 ? contentType![..separator] : contentType ?? string.Empty)
             .Trim()
             .ToLowerInvariant();
+#pragma warning restore CA1308
     }
 
     private sealed record VCardProperty(

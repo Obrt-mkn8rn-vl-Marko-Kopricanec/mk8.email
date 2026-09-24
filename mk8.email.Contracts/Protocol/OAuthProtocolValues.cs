@@ -13,22 +13,25 @@ public static class OAuthProtocolValues
         IEnumerable<string> scopes,
         out string[] normalized)
     {
+        // OAuth scope tokens are specified and exchanged in lower case.
+#pragma warning disable CA1308
         normalized = scopes
             .SelectMany(scope => scope.Split(' ', StringSplitOptions.RemoveEmptyEntries))
             .Select(scope => scope.Trim().ToLowerInvariant())
             .Distinct(StringComparer.Ordinal)
             .Order(StringComparer.Ordinal)
             .ToArray();
+#pragma warning restore CA1308
         return normalized.Length is > 0 and <= 16
             && normalized.All(SupportedScopes.Contains)
             && normalized.Contains("offline_access", StringComparer.Ordinal);
     }
 
     public static bool IsValidPkceChallenge(string value) =>
-        value.Length == 43 && value.All(IsBase64UrlCharacter);
+        value is not null && value.Length == 43 && value.All(IsBase64UrlCharacter);
 
     public static bool IsValidPkceVerifier(string value) =>
-        value.Length is >= 43 and <= 128
+        value is not null && value.Length is >= 43 and <= 128
         && value.All(character =>
             char.IsAsciiLetterOrDigit(character) || character is '-' or '.' or '_' or '~');
 
@@ -44,11 +47,11 @@ public static class OAuthProtocolValues
     public static bool IsAllowedRedirectUri(string value)
     {
         if (!Uri.TryCreate(value, UriKind.Absolute, out var uri)
-            || uri.Scheme != Uri.UriSchemeHttp
+            || !string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.Ordinal)
             || uri.UserInfo.Length > 0
             || uri.Fragment.Length > 0
             || uri.Query.Length > 0
-            || uri.AbsolutePath != "/")
+            || !string.Equals(uri.AbsolutePath, "/", StringComparison.Ordinal))
         {
             return false;
         }

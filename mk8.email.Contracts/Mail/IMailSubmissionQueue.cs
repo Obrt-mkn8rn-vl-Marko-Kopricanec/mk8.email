@@ -1,3 +1,5 @@
+// Protocol request/result types are deliberately grouped in this transport-contract file; the protocol name denotes a resource or queue, not a generic collection.
+#pragma warning disable MA0048, CA1711
 namespace mk8.email.Contracts.Mail;
 
 public sealed record MailDsnEnvelope(

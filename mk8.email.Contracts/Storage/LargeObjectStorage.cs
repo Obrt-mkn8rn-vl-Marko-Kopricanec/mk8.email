@@ -1,3 +1,5 @@
+// Protocol request/result types are deliberately grouped in this transport-contract file.
+#pragma warning disable MA0048
 namespace mk8.email.Contracts.Storage;
 
 public static class LargeObjectProviders

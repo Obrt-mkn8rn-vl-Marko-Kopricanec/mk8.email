@@ -1,3 +1,5 @@
+// Protocol request/result types are deliberately grouped in this transport-contract file; URI values are serialized as strings.
+#pragma warning disable MA0048, CA1054, CA1056
 namespace mk8.email.Contracts.Messaging;
 
 public enum OAuthAuthorizationOutcome

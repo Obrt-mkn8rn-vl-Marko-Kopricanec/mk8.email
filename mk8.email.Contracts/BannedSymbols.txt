@@ -1,0 +1,6 @@
+// Shared wire contracts must remain independent of presentation and infrastructure.
+T:Microsoft.AspNetCore.Http.HttpContext;Contracts must not know ASP.NET Core
+T:Microsoft.EntityFrameworkCore.DbContext;Contracts must not access database models
+T:Npgsql.NpgsqlConnection;Contracts must not access PostgreSQL
+T:Azure.Storage.Blobs.BlobServiceClient;Contracts must not access Blob implementations
+T:System.IO.File;Contracts must not read or write host files

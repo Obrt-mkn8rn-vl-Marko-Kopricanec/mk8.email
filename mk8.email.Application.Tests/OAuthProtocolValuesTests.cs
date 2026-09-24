@@ -38,6 +38,8 @@ public sealed class OAuthProtocolValuesTests
 
         Assert.IsTrue(OAuthProtocolValues.IsValidPkceVerifier(verifier));
         Assert.IsTrue(OAuthProtocolValues.IsValidPkceChallenge(challenge));
+        Assert.IsFalse(OAuthProtocolValues.IsValidPkceVerifier(null!));
+        Assert.IsFalse(OAuthProtocolValues.IsValidPkceChallenge(null!));
         Assert.IsTrue(OAuthProtocolValues.IsAllowedRedirectUri("http://127.0.0.1:49152/"));
         Assert.IsTrue(OAuthProtocolValues.IsAllowedRedirectUri("http://[::1]:49152/"));
         Assert.IsFalse(OAuthProtocolValues.IsAllowedRedirectUri("https://attacker.example/"));

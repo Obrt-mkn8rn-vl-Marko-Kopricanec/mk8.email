@@ -1,3 +1,5 @@
+// The byte-array payload is part of the established JSON/public transport API.
+#pragma warning disable CA1819
 namespace mk8.email.Contracts.Messaging;
 
 public sealed record ApplicationResponse(

@@ -183,6 +183,11 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             ["subject"] = "varchar",
             ["text_body"] = "text",
             ["html_body"] = "text",
+            ["body_size_bytes"] = "int4",
+            ["body_object_provider"] = "varchar",
+            ["body_object_name"] = "varchar",
+            ["body_object_sha256"] = "varchar",
+            ["body_object_etag"] = "varchar",
             ["updated_at"] = "timestamptz",
         };
 
@@ -757,8 +762,24 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
                 subject varchar(998),
                 text_body text,
                 html_body text,
+                body_size_bytes integer NOT NULL DEFAULT 0,
+                body_object_provider varchar(32),
+                body_object_name varchar(1024),
+                body_object_sha256 varchar(64),
+                body_object_etag varchar(256),
                 updated_at timestamp with time zone NOT NULL
             );
+
+            ALTER TABLE jmap_vacation_responses
+                ADD COLUMN IF NOT EXISTS body_size_bytes integer NOT NULL DEFAULT 0;
+            ALTER TABLE jmap_vacation_responses
+                ADD COLUMN IF NOT EXISTS body_object_provider varchar(32);
+            ALTER TABLE jmap_vacation_responses
+                ADD COLUMN IF NOT EXISTS body_object_name varchar(1024);
+            ALTER TABLE jmap_vacation_responses
+                ADD COLUMN IF NOT EXISTS body_object_sha256 varchar(64);
+            ALTER TABLE jmap_vacation_responses
+                ADD COLUMN IF NOT EXISTS body_object_etag varchar(256);
 
             CREATE TABLE IF NOT EXISTS jmap_vacation_replies (
                 id uuid PRIMARY KEY,

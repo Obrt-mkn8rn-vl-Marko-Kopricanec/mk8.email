@@ -464,7 +464,6 @@ mk8.email.Application.Services.SmtpApplicationService.HasMatchingFromAddressAsyn
 mk8.email.Application.Services.SmtpApplicationService.SmtpApplicationService(mk8.email.Application.Interfaces.IMailAuthenticator! authenticator, mk8.email.Application.Interfaces.IOAuthTokenService! oauthTokens, mk8.email.Application.Interfaces.ISenderAuthorizationService! senderAuthorization, mk8.email.Application.Interfaces.IEmailService! emailService, mk8.email.Contracts.Mail.IMailSubmissionQueue! queue) -> void
 mk8.email.Application.Services.VacationResponder
 mk8.email.Application.Services.VacationResponder.QueueResponseAsync(string! envelopeSender, string! deliveredRecipient, string! rawMessage, string! targetFolder, System.Guid deliveryId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
-mk8.email.Application.Services.VacationResponder.VacationResponder(mk8.email.Infrastructure.Data.EmailDbContext! database, mk8.email.Application.Interfaces.IEmailService! emailService, mk8.email.Contracts.Mail.IMailSubmissionQueue! queue, mk8.email.Configuration.EnvironmentConfig! environment, System.TimeProvider! timeProvider) -> void
 override mk8.email.Application.Interfaces.ApplicationPasswordCreationResult.Equals(object? obj) -> bool
 override mk8.email.Application.Interfaces.ApplicationPasswordCreationResult.GetHashCode() -> int
 override mk8.email.Application.Interfaces.ApplicationPasswordCreationResult.ToString() -> string!

@@ -106,6 +106,31 @@ public sealed class VacationResponderTests
     }
 
     [TestMethod]
+    public async Task ResponseReadsExternalVacationBody()
+    {
+        await using var fixture = await VacationFixture.CreateAsync(includeAlias: false);
+        var settings = await fixture.Database.JmapVacationResponses.SingleAsync();
+        var marker = fixture.Effects.Mark();
+        await fixture.Content.SetAsync(
+            settings, "Blob-backed vacation response", null, CancellationToken.None);
+        await fixture.Database.SaveChangesAsync();
+        await fixture.Effects.CommitAsync(marker);
+        Assert.IsNull(settings.TextBody);
+
+        Assert.IsTrue(await fixture.Responder.QueueResponseAsync(
+            SenderAddress,
+            AccountAddress,
+            "From: sender@example.net\r\nTo: admin@mk8n.com\r\nSubject: Away\r\n\r\nbody\r\n",
+            DefaultFolders.Inbox,
+            Guid.CreateVersion7()));
+
+        using var response = MimeMessage.Load(new MemoryStream(
+            Encoding.Latin1.GetBytes(fixture.Queue.Submission!.RawMessage)));
+        Assert.IsNotNull(response.TextBody);
+        Assert.AreEqual("Blob-backed vacation response", response.TextBody.TrimEnd('\r', '\n'));
+    }
+
+    [TestMethod]
     public async Task ParameterizedManualAutoSubmittedHeaderStillReceivesAResponse()
     {
         await using var fixture = await VacationFixture.CreateAsync(includeAlias: false);
@@ -190,11 +215,15 @@ public sealed class VacationResponderTests
     private sealed class VacationFixture(
         EmailDbContext database,
         CapturingQueue queue,
-        VacationResponder responder) : IAsyncDisposable
+        VacationResponder responder,
+        VacationResponseContentService content,
+        LargeObjectTransactionEffects effects) : IAsyncDisposable
     {
         public EmailDbContext Database { get; } = database;
         public CapturingQueue Queue { get; } = queue;
         public VacationResponder Responder { get; } = responder;
+        public VacationResponseContentService Content { get; } = content;
+        public LargeObjectTransactionEffects Effects { get; } = effects;
 
         public static async Task<VacationFixture> CreateAsync(bool includeAlias)
         {
@@ -265,6 +294,7 @@ public sealed class VacationResponderTests
             var effects = new LargeObjectTransactionEffects(
                 store,
                 NullLogger<LargeObjectTransactionEffects>.Instance);
+            var content = new VacationResponseContentService(store, effects);
             var responder = new VacationResponder(
                 database,
                 new EmailService(
@@ -272,9 +302,10 @@ public sealed class VacationResponderTests
                     new MailboxMessageContentService(store, effects),
                     effects),
                 queue,
+                content,
                 environment,
                 new FixedTimeProvider(new DateTimeOffset(2026, 9, 20, 12, 0, 0, TimeSpan.Zero)));
-            return new VacationFixture(database, queue, responder);
+            return new VacationFixture(database, queue, responder, content, effects);
         }
 
         public ValueTask DisposeAsync() => Database.DisposeAsync();

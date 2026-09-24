@@ -4370,6 +4370,74 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task VacationBodiesRoundTripThroughAzureBlobReferencesAndClearOnRemoval()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var firstBody = new string('x', 128 * 1024);
+        var first = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Vacation}}}"],
+          "methodCalls": [["VacationResponse/set", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "update":{"singleton":{"isEnabled":true,"textBody":"{{{firstBody}}}"}}
+          }, "v1"], ["VacationResponse/get", {
+            "accountId":"{{{fixture.AccountId}}}", "ids":["singleton"]
+          }, "v2"]]
+        }
+        """);
+        Assert.IsNull(Arguments(first)["notUpdated"]);
+        Assert.AreEqual(firstBody,
+            Arguments(first, 1)["list"]![0]!["textBody"]!.GetValue<string>());
+
+        using (var scope = fixture.Services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            var stored = await database.JmapVacationResponses.SingleAsync();
+            Assert.IsNull(stored.TextBody);
+            Assert.IsNull(stored.HtmlBody);
+            Assert.AreEqual(LargeObjectProviders.AzureBlob, stored.BodyObjectProvider);
+            Assert.IsTrue(stored.BodySizeBytes > firstBody.Length);
+            Assert.IsNotNull(stored.BodyObjectName);
+        }
+        Assert.AreEqual(1,
+            fixture.Services.GetRequiredService<InMemoryLargeObjectStore>().Count);
+
+        var replacement = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Vacation}}}"],
+          "methodCalls": [["VacationResponse/set", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "update":{"singleton":{"textBody":"replacement","htmlBody":"<p>away</p>"}}
+          }, "v1"], ["VacationResponse/get", {
+            "accountId":"{{{fixture.AccountId}}}"
+          }, "v2"]]
+        }
+        """);
+        Assert.AreEqual("replacement",
+            Arguments(replacement, 1)["list"]![0]!["textBody"]!.GetValue<string>());
+        Assert.AreEqual("<p>away</p>",
+            Arguments(replacement, 1)["list"]![0]!["htmlBody"]!.GetValue<string>());
+        Assert.AreEqual(1,
+            fixture.Services.GetRequiredService<InMemoryLargeObjectStore>().Count);
+
+        var cleared = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Vacation}}}"],
+          "methodCalls": [["VacationResponse/set", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "update":{"singleton":{"textBody":null,"htmlBody":null}}
+          }, "v1"], ["VacationResponse/get", {
+            "accountId":"{{{fixture.AccountId}}}"
+          }, "v2"]]
+        }
+        """);
+        Assert.IsNull(Arguments(cleared, 1)["list"]![0]!["textBody"]);
+        Assert.IsNull(Arguments(cleared, 1)["list"]![0]!["htmlBody"]);
+        Assert.AreEqual(0,
+            fixture.Services.GetRequiredService<InMemoryLargeObjectStore>().Count);
+    }
+
+    [TestMethod]
     public async Task VacationResponseAllowsAnEmptyDateWindow()
     {
         await using var fixture = await JmapFixture.CreateAsync();

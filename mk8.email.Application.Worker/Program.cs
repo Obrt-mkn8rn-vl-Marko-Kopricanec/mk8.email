@@ -82,6 +82,8 @@ try
             .MigrateAsync().ConfigureAwait(false);
         await scope.ServiceProvider.GetRequiredService<SieveScriptLargeObjectMigrationService>()
             .MigrateAsync().ConfigureAwait(false);
+        await scope.ServiceProvider.GetRequiredService<VacationResponseLargeObjectMigrationService>()
+            .MigrateAsync().ConfigureAwait(false);
         if (environment.Dav.EnableDav || environment.Jmap.EnableJmap)
         {
             await scope.ServiceProvider.GetRequiredService<DavResourceLargeObjectMigrationService>()

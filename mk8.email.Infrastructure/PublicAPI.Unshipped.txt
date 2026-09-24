@@ -1,1 +1,11 @@
 #nullable enable
+mk8.email.Infrastructure.Models.JmapVacationResponseDB.BodyObjectEntityTag.get -> string?
+mk8.email.Infrastructure.Models.JmapVacationResponseDB.BodyObjectEntityTag.set -> void
+mk8.email.Infrastructure.Models.JmapVacationResponseDB.BodyObjectName.get -> string?
+mk8.email.Infrastructure.Models.JmapVacationResponseDB.BodyObjectName.set -> void
+mk8.email.Infrastructure.Models.JmapVacationResponseDB.BodyObjectProvider.get -> string?
+mk8.email.Infrastructure.Models.JmapVacationResponseDB.BodyObjectProvider.set -> void
+mk8.email.Infrastructure.Models.JmapVacationResponseDB.BodyObjectSha256.get -> string?
+mk8.email.Infrastructure.Models.JmapVacationResponseDB.BodyObjectSha256.set -> void
+mk8.email.Infrastructure.Models.JmapVacationResponseDB.BodySizeBytes.get -> int
+mk8.email.Infrastructure.Models.JmapVacationResponseDB.BodySizeBytes.set -> void

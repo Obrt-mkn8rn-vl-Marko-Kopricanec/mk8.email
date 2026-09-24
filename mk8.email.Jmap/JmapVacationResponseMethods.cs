@@ -3,12 +3,22 @@ using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
+using mk8.email.Application.Services;
 using mk8.email.Infrastructure.Models;
 
 namespace mk8.email.Jmap;
 
-internal sealed class JmapVacationResponseService(EmailDbContext database)
+internal sealed class JmapVacationResponseService(
+    EmailDbContext database,
+    VacationResponseContentService content)
 {
+    public Task SetBodiesAsync(
+        JmapVacationResponseDB response,
+        string? textBody,
+        string? htmlBody,
+        CancellationToken cancellationToken) =>
+        content.SetAsync(response, textBody, htmlBody, cancellationToken);
+
     public Task SaveAsync(CancellationToken cancellationToken) =>
         database.SaveChangesAsync(cancellationToken);
 
@@ -55,17 +65,22 @@ internal sealed class JmapVacationResponseService(EmailDbContext database)
         }
     }
 
-    public static JsonObject ToJson(
+    public async Task<JsonObject> ToJsonAsync(
         JmapVacationResponseDB response,
-        IReadOnlySet<string>? properties = null)
+        IReadOnlySet<string>? properties,
+        CancellationToken cancellationToken)
     {
         var result = new JsonObject { ["id"] = "singleton" };
         if (Wants("isEnabled")) result["isEnabled"] = response.IsEnabled;
         if (Wants("fromDate")) result["fromDate"] = FormatDate(response.FromDate);
         if (Wants("toDate")) result["toDate"] = FormatDate(response.ToDate);
         if (Wants("subject")) result["subject"] = response.Subject;
-        if (Wants("textBody")) result["textBody"] = response.TextBody;
-        if (Wants("htmlBody")) result["htmlBody"] = response.HtmlBody;
+        if (Wants("textBody") || Wants("htmlBody"))
+        {
+            var bodies = await content.ReadAsync(response, cancellationToken).ConfigureAwait(false);
+            if (Wants("textBody")) result["textBody"] = bodies.TextBody;
+            if (Wants("htmlBody")) result["htmlBody"] = bodies.HtmlBody;
+        }
         return result;
 
         bool Wants(string property) => properties is null || properties.Contains(property);
@@ -180,7 +195,7 @@ internal sealed class VacationResponseGetMethod(
         var response = await vacations.GetOrCreateAsync(account.InboxId, cancellationToken);
         var include = requestedIds is null || requestedIds.Contains("singleton", StringComparer.Ordinal);
         var list = new JsonArray();
-        if (include) list.Add(JmapVacationResponseService.ToJson(response, properties));
+        if (include) list.Add(await vacations.ToJsonAsync(response, properties, cancellationToken));
         var notFound = new JsonArray();
         if (requestedIds is not null)
         {
@@ -265,7 +280,7 @@ internal sealed class VacationResponseSetMethod(
                     notUpdated[item.Key] = JmapMethodHelpers.SetError("notFound");
                     continue;
                 }
-                var current = JmapVacationResponseService.ToJson(response);
+                var current = await vacations.ToJsonAsync(response, null, cancellationToken);
                 if (!JmapMethodHelpers.TryApplyPatchAllowingUnchangedProperties(
                         current,
                         item.Value,
@@ -298,8 +313,8 @@ internal sealed class VacationResponseSetMethod(
                 response.FromDate = values.FromDate;
                 response.ToDate = values.ToDate;
                 response.Subject = values.Subject;
-                response.TextBody = values.TextBody;
-                response.HtmlBody = values.HtmlBody;
+                await vacations.SetBodiesAsync(
+                    response, values.TextBody, values.HtmlBody, cancellationToken);
                 response.UpdatedAt = DateTime.UtcNow;
                 await vacations.SaveAsync(cancellationToken);
                 updated["singleton"] = null;

@@ -16,6 +16,7 @@ public sealed class VacationResponder(
     EmailDbContext database,
     IEmailService emailService,
     IMailSubmissionQueue queue,
+    VacationResponseContentService content,
     EnvironmentConfig environment,
     TimeProvider timeProvider) : IVacationResponder
 {
@@ -95,7 +96,8 @@ public sealed class VacationResponder(
                     return true;
                 }
 
-                var response = BuildResponse(route.Address, senderMailbox, original, vacation, now);
+                var bodies = await content.ReadAsync(vacation, cancellationToken).ConfigureAwait(false);
+                var response = BuildResponse(route.Address, senderMailbox, original, vacation, bodies, now);
                 var format = FormatOptions.Default.Clone();
                 format.NewLineFormat = NewLineFormat.Dos;
                 var stream = new MemoryStream();
@@ -356,6 +358,7 @@ public sealed class VacationResponder(
         MailboxAddress recipient,
         MimeMessage original,
         JmapVacationResponseDB settings,
+        (string? TextBody, string? HtmlBody) bodies,
         DateTime now)
     {
         var response = new MimeMessage
@@ -385,8 +388,8 @@ public sealed class VacationResponder(
         }
         var body = new BodyBuilder
         {
-            TextBody = settings.TextBody,
-            HtmlBody = settings.HtmlBody,
+            TextBody = bodies.TextBody,
+            HtmlBody = bodies.HtmlBody,
         };
         if (body.TextBody is null && body.HtmlBody is null)
             body.TextBody = "I am currently away and may not be able to read your message promptly.";

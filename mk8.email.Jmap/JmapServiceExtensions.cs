@@ -20,6 +20,7 @@ public static class JmapServiceExtensions
         services.TryAddScoped<MailQueueContentService>();
         services.TryAddScoped<MailboxMessageContentService>();
         services.TryAddScoped<DavResourceContentService>();
+        services.TryAddScoped<VacationResponseContentService>();
         services.AddScoped<JmapBlobService>();
         services.AddScoped<JmapBlobLargeObjectMigrationService>();
         services.AddScoped<JmapEmailBuilder>();

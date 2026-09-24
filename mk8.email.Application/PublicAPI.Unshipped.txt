@@ -1,1 +1,10 @@
 #nullable enable
+mk8.email.Application.Services.VacationResponseContentService
+mk8.email.Application.Services.VacationResponseContentService.VacationResponseContentService(mk8.email.Contracts.Storage.ILargeObjectStore! objects, mk8.email.Application.Services.LargeObjectTransactionEffects! transactionEffects) -> void
+mk8.email.Application.Services.VacationResponseContentService.ReadAsync(mk8.email.Infrastructure.Models.JmapVacationResponseDB! response, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<(string? TextBody, string? HtmlBody)>!
+mk8.email.Application.Services.VacationResponseContentService.SetAsync(mk8.email.Infrastructure.Models.JmapVacationResponseDB! response, string? textBody, string? htmlBody, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+const mk8.email.Application.Services.VacationResponseContentService.ContentType = "application/vnd.mk8.vacation-bodies+json" -> string!
+mk8.email.Application.Services.VacationResponseLargeObjectMigrationService
+mk8.email.Application.Services.VacationResponseLargeObjectMigrationService.MigrateAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+mk8.email.Application.Services.VacationResponseLargeObjectMigrationService.VacationResponseLargeObjectMigrationService(mk8.email.Infrastructure.Data.EmailDbContext! database, mk8.email.Contracts.Storage.ILargeObjectStore! objects, mk8.email.Application.Services.VacationResponseContentService! content, mk8.email.Application.Services.LargeObjectTransactionEffects! transactionEffects) -> void
+mk8.email.Application.Services.VacationResponder.VacationResponder(mk8.email.Infrastructure.Data.EmailDbContext! database, mk8.email.Application.Interfaces.IEmailService! emailService, mk8.email.Contracts.Mail.IMailSubmissionQueue! queue, mk8.email.Application.Services.VacationResponseContentService! content, mk8.email.Configuration.EnvironmentConfig! environment, System.TimeProvider! timeProvider) -> void

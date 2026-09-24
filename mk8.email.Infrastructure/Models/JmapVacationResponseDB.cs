@@ -29,6 +29,25 @@ public sealed class JmapVacationResponseDB
     [Column("html_body")]
     public string? HtmlBody { get; set; }
 
+    [Column("body_size_bytes")]
+    public int BodySizeBytes { get; set; }
+
+    [MaxLength(32)]
+    [Column("body_object_provider")]
+    public string? BodyObjectProvider { get; set; }
+
+    [MaxLength(1024)]
+    [Column("body_object_name")]
+    public string? BodyObjectName { get; set; }
+
+    [MaxLength(64)]
+    [Column("body_object_sha256")]
+    public string? BodyObjectSha256 { get; set; }
+
+    [MaxLength(256)]
+    [Column("body_object_etag")]
+    public string? BodyObjectEntityTag { get; set; }
+
     [Column("updated_at")]
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

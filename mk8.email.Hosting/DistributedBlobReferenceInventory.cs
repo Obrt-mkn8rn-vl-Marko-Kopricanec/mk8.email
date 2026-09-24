@@ -18,7 +18,8 @@ public static class DistributedBlobReferenceInventory
         string Sha256,
         string EntityTag,
         string Length,
-        string ContentTypeSql)
+        string ContentTypeSql,
+        string RowId = "id")
     {
         public string Key => $"{Table}.{Name}";
     }
@@ -56,6 +57,9 @@ public static class DistributedBlobReferenceInventory
             "object_etag", "size_bytes", "content_type"),
         new("jmap_blobs", "object_name", "object_provider", "object_sha256",
             "object_etag", "size_bytes", "content_type"),
+        new("jmap_vacation_responses", "body_object_name", "body_object_provider",
+            "body_object_sha256", "body_object_etag", "body_size_bytes",
+            "'application/vnd.mk8.vacation-bodies+json'", "account_id"),
     ]);
 
     // Validation compares all fixed reference sources against the live schema as one gate.
@@ -115,7 +119,7 @@ public static class DistributedBlobReferenceInventory
             var names = columns[source.Table];
             foreach (var column in new[]
                      {
-                         "id", source.Provider, source.Sha256, source.EntityTag, source.Length,
+                         source.RowId, source.Provider, source.Sha256, source.EntityTag, source.Length,
                      })
             {
                 if (!names.Contains(column))
@@ -130,6 +134,20 @@ public static class DistributedBlobReferenceInventory
                     + $"{source.Table}.{source.ContentTypeSql} is missing.");
             }
         }
+
+        var legacy = connection.CreateCommand();
+        await using (legacy.ConfigureAwait(false))
+        {
+            legacy.Transaction = transaction;
+            legacy.CommandText = """
+                SELECT EXISTS (
+                    SELECT 1 FROM jmap_vacation_responses
+                    WHERE text_body IS NOT NULL OR html_body IS NOT NULL)
+                """;
+            if ((bool)(await legacy.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!)
+                throw new InvalidOperationException(
+                    "Vacation response bodies must be migrated to Azure Blob storage before backup.");
+        }
     }
 
     internal static string BuildQuerySql()
@@ -139,7 +157,8 @@ public static class DistributedBlobReferenceInventory
         {
             if (sql.Length != 0)
                 sql.AppendLine("UNION ALL");
-            sql.Append("SELECT '").Append(source.Key).Append("' AS source, id, ")
+            sql.Append("SELECT '").Append(source.Key).Append("' AS source, ")
+                .Append(source.RowId).Append(", ")
                 .Append(source.Provider).Append(", ").Append(source.Name).Append(", ")
                 .Append(source.Length).Append("::bigint, ").Append(source.Sha256)
                 .Append(", ").Append(source.EntityTag).Append(", ")

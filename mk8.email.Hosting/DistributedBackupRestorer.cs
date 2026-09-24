@@ -388,7 +388,7 @@ public static class DistributedBackupRestorer
                 SET {source.EntityTag} = binding.new_etag
                 FROM restore_blob_rebindings AS binding
                 WHERE binding.source = @source
-                    AND target.id = binding.row_id
+                    AND target.{source.RowId} = binding.row_id
                     AND target.{source.Name} = binding.object_name
                     AND target.{source.EntityTag} = binding.old_etag
                 """;

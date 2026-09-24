@@ -37,6 +37,8 @@ public static class ApplicationServiceExtensions
         services.AddScoped<DavResourceLargeObjectMigrationService>();
         services.AddScoped<SieveScriptContentService>();
         services.AddScoped<SieveScriptLargeObjectMigrationService>();
+        services.AddScoped<VacationResponseContentService>();
+        services.AddScoped<VacationResponseLargeObjectMigrationService>();
 
         return services;
     }

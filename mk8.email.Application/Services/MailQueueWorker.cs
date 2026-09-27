@@ -296,62 +296,43 @@ public sealed class MailQueueWorker(
         var relay = services.GetRequiredService<IOutboundMailRelay>();
         var rawMessage = await content.ReadAsync(message, cancellationToken).ConfigureAwait(false);
 
-        if (string.Equals(message.ScanState, MailQueueScanStates.Pending, StringComparison.Ordinal))
+        if (!await ScanClaimedMessageAsync(database, message, rawMessage, scanner, delivery, now, cancellationToken)
+            .ConfigureAwait(false))
         {
-            var scan = await scanner.ScanAsync(
-                new MailScanRequest(
-                    message.Id,
-                    message.EnvelopeSender,
-                    message.Recipients.Select(item => item.Recipient).ToList(),
-                    rawMessage,
-                    message.ClientIp,
-                    message.Helo,
-                    message.AuthenticatedUser),
-                cancellationToken).ConfigureAwait(false);
-
-            if (scan.IsTemporaryFailure)
-            {
-                ScheduleMessageRetry(message, "The mail scanner requested a temporary retry.", now);
-                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-                return;
-            }
-
-            message.ScanState = MailQueueScanStates.Complete;
-            message.ScanAction = scan.Action;
-            message.ScanScore = scan.Score;
-            message.AddedHeaders = scan.AddedHeaders;
-            message.TargetFolder = IsSpamAction(scan.Action)
-                ? DefaultFolders.Spam
-                : DefaultFolders.Inbox;
-
-            if (scan.IsMalware
-                || (string.Equals(message.Direction, MailQueueDirections.Submission, StringComparison.Ordinal) && IsSpamAction(scan.Action)))
-            {
-                await QuarantineAsync(message, delivery, now, cancellationToken).ConfigureAwait(false);
-                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-                ApplicationServiceLog.QueueMessageQuarantined(logger, message.Id);
-                return;
-            }
+            return;
         }
 
         var deliveryMessage = (message.AddedHeaders ?? string.Empty) + rawMessage;
-
-        if (string.Equals(message.Direction, MailQueueDirections.Submission, StringComparison.Ordinal) && !message.SentCopyCreated)
+        if (!await EnsureSentCopyAsync(database, message, deliveryMessage, delivery, now, cancellationToken)
+            .ConfigureAwait(false))
         {
-            if (!await delivery.SaveSentCopyAsync(
-                    message.EnvelopeSender,
-                    deliveryMessage,
-                    message.Id,
-                    cancellationToken).ConfigureAwait(false))
-            {
-                ScheduleMessageRetry(message, "The sent copy could not be stored.", now);
-                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-                return;
-            }
-
-            message.SentCopyCreated = true;
+            return;
         }
 
+        await DeliverDueRecipientsAsync(database, message, deliveryMessage, delivery, vacationResponder,
+            sieveFilter, relay, now, cancellationToken).ConfigureAwait(false);
+
+        foreach (var recipient in message.Recipients.OrderBy(item => item.Id))
+        {
+            await UpdateRecipientNoticeAsync(message, recipient, rawMessage, delivery, relay, now, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        FinalizeMessageState(message, now);
+        await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task DeliverDueRecipientsAsync(
+        EmailDbContext database,
+        MailQueueMessageDB message,
+        string deliveryMessage,
+        IEmailService delivery,
+        IVacationResponder? vacationResponder,
+        ISieveFilterService? sieveFilter,
+        IOutboundMailRelay relay,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
         var dueRecipients = message.Recipients
                      .Where(item => string.Equals(
                          item.State, MailQueueRecipientStates.Pending, StringComparison.Ordinal)
@@ -372,101 +353,209 @@ public sealed class MailQueueWorker(
                 now,
                 cancellationToken).ConfigureAwait(false);
         }
+    }
 
-        foreach (var recipient in message.Recipients.OrderBy(item => item.Id))
+    private async Task<bool> ScanClaimedMessageAsync(
+        EmailDbContext database,
+        MailQueueMessageDB message,
+        string rawMessage,
+        IMailScanner scanner,
+        IEmailService delivery,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        if (!string.Equals(message.ScanState, MailQueueScanStates.Pending, StringComparison.Ordinal))
+            return true;
+
+        var scan = await scanner.ScanAsync(
+            new MailScanRequest(
+                message.Id,
+                message.EnvelopeSender,
+                message.Recipients.Select(item => item.Recipient).ToList(),
+                rawMessage,
+                message.ClientIp,
+                message.Helo,
+                message.AuthenticatedUser),
+            cancellationToken).ConfigureAwait(false);
+
+        if (scan.IsTemporaryFailure)
         {
-            if (string.Equals(recipient.State, MailQueueRecipientStates.Delivered, StringComparison.Ordinal))
-            {
-                if (recipient.DsnForwarded
-                    || !ShouldNotifySuccess(recipient)
-                    || string.IsNullOrEmpty(message.EnvelopeSender))
-                {
-                    recipient.SuccessNoticeCreated = true;
-                }
-                else if (!recipient.SuccessNoticeCreated)
-                {
-                    var action = recipient.IsLocal
-                        ? WasExpanded(message, recipient)
-                            ? DeliveryStatusAction.Expanded
-                            : DeliveryStatusAction.Delivered
-                        : DeliveryStatusAction.Relayed;
-                    if (await SendDeliveryStatusNotificationAsync(
-                            message,
-                            recipient,
-                            action,
-                            rawMessage,
-                            delivery,
-                            relay,
-                            now,
-                            cancellationToken).ConfigureAwait(false))
-                    {
-                        recipient.SuccessNoticeCreated = true;
-                    }
-                    else if (IsExpired(message.AttemptCount, message.ReceivedAt, now))
-                    {
-                        recipient.SuccessNoticeCreated = true;
-                        ApplicationServiceLog.SuccessDsnAbandoned(logger, recipient.Id);
-                    }
-                    else
-                    {
-                        ScheduleNoticeRetry(recipient, now);
-                    }
-                }
-            }
-            else if (string.Equals(recipient.State, MailQueueRecipientStates.PermanentFailure, StringComparison.Ordinal))
-            {
-                if (!ShouldNotifyFailure(recipient)
-                    || string.IsNullOrEmpty(message.EnvelopeSender))
-                {
-                    recipient.FailureNoticeCreated = true;
-                }
-                else if (!recipient.FailureNoticeCreated)
-                {
-                    if (await SendDeliveryStatusNotificationAsync(
-                            message,
-                            recipient,
-                            DeliveryStatusAction.Failed,
-                            rawMessage,
-                            delivery,
-                            relay,
-                            now,
-                            cancellationToken).ConfigureAwait(false))
-                    {
-                        recipient.FailureNoticeCreated = true;
-                    }
-                    else if (IsExpired(message.AttemptCount, message.ReceivedAt, now))
-                    {
-                        recipient.FailureNoticeCreated = true;
-                        ApplicationServiceLog.FailureDsnAbandoned(logger, recipient.Id);
-                    }
-                    else
-                    {
-                        ScheduleNoticeRetry(recipient, now);
-                    }
-                }
-            }
-            else if (string.Equals(
-                    recipient.State, MailQueueRecipientStates.Pending, StringComparison.Ordinal)
-                && !recipient.DelayNoticeCreated
-                && ShouldNotifyDelay(recipient)
-                && now - message.ReceivedAt >= DeliveryDelayNotificationThreshold
-                && !string.IsNullOrEmpty(message.EnvelopeSender)
-                && await SendDeliveryStatusNotificationAsync(
+            ScheduleMessageRetry(message, "The mail scanner requested a temporary retry.", now);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            return false;
+        }
+
+        message.ScanState = MailQueueScanStates.Complete;
+        message.ScanAction = scan.Action;
+        message.ScanScore = scan.Score;
+        message.AddedHeaders = scan.AddedHeaders;
+        message.TargetFolder = IsSpamAction(scan.Action)
+            ? DefaultFolders.Spam
+            : DefaultFolders.Inbox;
+
+        if (scan.IsMalware
+            || (string.Equals(message.Direction, MailQueueDirections.Submission, StringComparison.Ordinal) && IsSpamAction(scan.Action)))
+        {
+            await QuarantineAsync(message, delivery, now, cancellationToken).ConfigureAwait(false);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            ApplicationServiceLog.QueueMessageQuarantined(logger, message.Id);
+            return false;
+        }
+        return true;
+    }
+
+    private async Task<bool> EnsureSentCopyAsync(
+        EmailDbContext database,
+        MailQueueMessageDB message,
+        string deliveryMessage,
+        IEmailService delivery,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        if (!string.Equals(message.Direction, MailQueueDirections.Submission, StringComparison.Ordinal)
+            || message.SentCopyCreated)
+        {
+            return true;
+        }
+
+        if (!await delivery.SaveSentCopyAsync(
+                message.EnvelopeSender,
+                deliveryMessage,
+                message.Id,
+                cancellationToken).ConfigureAwait(false))
+        {
+            ScheduleMessageRetry(message, "The sent copy could not be stored.", now);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            return false;
+        }
+
+        message.SentCopyCreated = true;
+        return true;
+    }
+
+    private async Task UpdateRecipientNoticeAsync(
+        MailQueueMessageDB message,
+        MailQueueRecipientDB recipient,
+        string rawMessage,
+        IEmailService delivery,
+        IOutboundMailRelay relay,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        if (string.Equals(recipient.State, MailQueueRecipientStates.Delivered, StringComparison.Ordinal))
+        {
+            await UpdateSuccessNoticeAsync(message, recipient, rawMessage, delivery, relay, now, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        else if (string.Equals(recipient.State, MailQueueRecipientStates.PermanentFailure, StringComparison.Ordinal))
+        {
+            await UpdateFailureNoticeAsync(message, recipient, rawMessage, delivery, relay, now, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        else if (string.Equals(
+                recipient.State, MailQueueRecipientStates.Pending, StringComparison.Ordinal)
+            && !recipient.DelayNoticeCreated
+            && ShouldNotifyDelay(recipient)
+            && now - message.ReceivedAt >= DeliveryDelayNotificationThreshold
+            && !string.IsNullOrEmpty(message.EnvelopeSender)
+            && await SendDeliveryStatusNotificationAsync(
+                message,
+                recipient,
+                DeliveryStatusAction.Delayed,
+                rawMessage,
+                delivery,
+                relay,
+                now,
+                cancellationToken).ConfigureAwait(false))
+        {
+            recipient.DelayNoticeCreated = true;
+        }
+    }
+
+    private async Task UpdateSuccessNoticeAsync(
+        MailQueueMessageDB message,
+        MailQueueRecipientDB recipient,
+        string rawMessage,
+        IEmailService delivery,
+        IOutboundMailRelay relay,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        if (recipient.DsnForwarded
+            || !ShouldNotifySuccess(recipient)
+            || string.IsNullOrEmpty(message.EnvelopeSender))
+        {
+            recipient.SuccessNoticeCreated = true;
+        }
+        else if (!recipient.SuccessNoticeCreated)
+        {
+            var action = recipient.IsLocal
+                ? WasExpanded(message, recipient)
+                    ? DeliveryStatusAction.Expanded
+                    : DeliveryStatusAction.Delivered
+                : DeliveryStatusAction.Relayed;
+            if (await SendDeliveryStatusNotificationAsync(
                     message,
                     recipient,
-                    DeliveryStatusAction.Delayed,
+                    action,
                     rawMessage,
                     delivery,
                     relay,
                     now,
                     cancellationToken).ConfigureAwait(false))
             {
-                recipient.DelayNoticeCreated = true;
+                recipient.SuccessNoticeCreated = true;
+            }
+            else if (IsExpired(message.AttemptCount, message.ReceivedAt, now))
+            {
+                recipient.SuccessNoticeCreated = true;
+                ApplicationServiceLog.SuccessDsnAbandoned(logger, recipient.Id);
+            }
+            else
+            {
+                ScheduleNoticeRetry(recipient, now);
             }
         }
+    }
 
-        FinalizeMessageState(message, now);
-        await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    private async Task UpdateFailureNoticeAsync(
+        MailQueueMessageDB message,
+        MailQueueRecipientDB recipient,
+        string rawMessage,
+        IEmailService delivery,
+        IOutboundMailRelay relay,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        if (!ShouldNotifyFailure(recipient)
+            || string.IsNullOrEmpty(message.EnvelopeSender))
+        {
+            recipient.FailureNoticeCreated = true;
+        }
+        else if (!recipient.FailureNoticeCreated)
+        {
+            if (await SendDeliveryStatusNotificationAsync(
+                    message,
+                    recipient,
+                    DeliveryStatusAction.Failed,
+                    rawMessage,
+                    delivery,
+                    relay,
+                    now,
+                    cancellationToken).ConfigureAwait(false))
+            {
+                recipient.FailureNoticeCreated = true;
+            }
+            else if (IsExpired(message.AttemptCount, message.ReceivedAt, now))
+            {
+                recipient.FailureNoticeCreated = true;
+                ApplicationServiceLog.FailureDsnAbandoned(logger, recipient.Id);
+            }
+            else
+            {
+                ScheduleNoticeRetry(recipient, now);
+            }
+        }
     }
 
     private async Task DeliverRecipientAsync(
@@ -488,147 +577,14 @@ public sealed class MailQueueWorker(
         {
             if (recipient.IsLocal)
             {
-                var defaultFolder = message.TargetFolder ?? DefaultFolders.Inbox;
-                var plan = sieveFilter is null
-                    ? new SieveDeliveryPlan(
-                        false,
-                        [new SieveDeliveryInstruction(defaultFolder, [], false)],
-                        [],
-                        null,
-                        false)
-                    : await sieveFilter.EvaluateAsync(
-                        message.EnvelopeSender,
-                        recipient.Recipient,
-                        rawMessage,
-                        defaultFolder,
-                        cancellationToken).ConfigureAwait(false);
-
-                if (plan.RejectReason is not null)
-                {
-                    if (!await CreateSieveRejectionAsync(
-                            message,
-                            recipient,
-                            plan.RejectReason,
-                            delivery,
-                            relay,
-                            cancellationToken).ConfigureAwait(false))
-                    {
-                        ScheduleRecipientRetry(
-                            message,
-                            recipient,
-                            "The Sieve rejection notice could not be delivered.",
-                            now);
-                        return;
-                    }
-                    recipient.SuccessNoticeCreated = true;
-                    MarkDelivered(recipient, now);
-                    return;
-                }
-
-                var redirectsAdded = await AddSieveRedirectsAsync(
-                    database,
-                    message,
-                    recipient,
-                    plan.Redirects,
-                    delivery,
-                    now,
-                    cancellationToken).ConfigureAwait(false);
-                var deliveries = plan.Deliveries;
-                if (deliveries.Count == 0
-                    && plan.Redirects.Count > 0
-                    && redirectsAdded == 0
-                    && !plan.Discarded)
-                {
-                    deliveries = [new SieveDeliveryInstruction(defaultFolder, [], false)];
-                }
-
-                for (var index = 0; index < deliveries.Count; index++)
-                {
-                    var instruction = deliveries[index];
-                    var deliveryId = plan.ScriptApplied
-                        ? DeriveQueueDeliveryId(recipient.Id, $"sieve-delivery-{index}")
-                        : recipient.Id;
-                    var delivered = await delivery.DeliverAsync(
-                        message.EnvelopeSender,
-                        recipient.Recipient,
-                        rawMessage,
-                        instruction.Folder,
-                        deliveryId,
-                        cancellationToken,
-                        instruction.Flags,
-                        instruction.Create).ConfigureAwait(false);
-                    if (!delivered)
-                    {
-                        ScheduleRecipientRetry(
-                            message,
-                            recipient,
-                            "The local mailbox is unavailable, missing, or over quota.",
-                            now);
-                        return;
-                    }
-
-                    if (vacationResponder is not null
-                        && !await vacationResponder.QueueResponseAsync(
-                            message.EnvelopeSender,
-                            recipient.Recipient,
-                            rawMessage,
-                            instruction.Folder,
-                            deliveryId,
-                            cancellationToken).ConfigureAwait(false))
-                    {
-                        ScheduleRecipientRetry(
-                            message,
-                            recipient,
-                            "The vacation response could not be queued.",
-                            now);
-                        return;
-                    }
-                }
-
-                MarkDelivered(recipient, now);
-                return;
+                await DeliverLocalRecipientAsync(database, message, recipient, rawMessage, delivery,
+                    vacationResponder, sieveFilter, relay, now, cancellationToken).ConfigureAwait(false);
             }
-
-            var result = await relay.RelayAsync(
-                message.EnvelopeSender,
-                recipient.Recipient,
-                rawMessage,
-                new OutboundMailOptions(
-                    message.RequiresSmtpUtf8,
-                    new MailDsnEnvelope(
-                        message.DsnReturnContent,
-                        message.DsnEnvelopeId),
-                    new MailDsnRecipient(
-                        recipient.DsnNotify,
-                        recipient.DsnOriginalRecipient)),
-                cancellationToken).ConfigureAwait(false);
-            if (result.Status == OutboundDeliveryStatus.Delivered)
+            else
             {
-                recipient.DsnForwarded = result.DsnParametersForwarded;
-                recipient.LastEnhancedStatusCode = result.EnhancedStatusCode;
-                recipient.LastRemoteMta = result.RemoteMta;
-                MarkDelivered(recipient, now);
-                return;
+                await DeliverRemoteRecipientAsync(message, recipient, rawMessage, relay, now, cancellationToken)
+                    .ConfigureAwait(false);
             }
-
-            if (result.Status == OutboundDeliveryStatus.PermanentFailure)
-            {
-                MarkPermanentFailure(
-                    recipient,
-                    result.Detail,
-                    now,
-                    result.EnhancedStatusCode,
-                    result.RemoteMta);
-                return;
-            }
-
-            ScheduleRecipientRetry(
-                message,
-                recipient,
-                result.Detail,
-                now,
-                result.EnhancedStatusCode,
-                result.RemoteMta);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -641,6 +597,217 @@ public sealed class MailQueueWorker(
             ScheduleRecipientRetry(message, recipient, GetSafeError(exception), now);
         }
 #pragma warning restore CA1031
+    }
+
+    private async Task DeliverLocalRecipientAsync(
+        EmailDbContext database,
+        MailQueueMessageDB message,
+        MailQueueRecipientDB recipient,
+        string rawMessage,
+        IEmailService delivery,
+        IVacationResponder? vacationResponder,
+        ISieveFilterService? sieveFilter,
+        IOutboundMailRelay relay,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var defaultFolder = message.TargetFolder ?? DefaultFolders.Inbox;
+        var plan = sieveFilter is null
+            ? new SieveDeliveryPlan(
+                false,
+                [new SieveDeliveryInstruction(defaultFolder, [], false)],
+                [],
+                null,
+                false)
+            : await sieveFilter.EvaluateAsync(
+                message.EnvelopeSender,
+                recipient.Recipient,
+                rawMessage,
+                defaultFolder,
+                cancellationToken).ConfigureAwait(false);
+        if (plan.RejectReason is not null)
+        {
+            await DeliverSieveRejectionAsync(message, recipient, plan.RejectReason, delivery, relay, now, cancellationToken)
+                .ConfigureAwait(false);
+            return;
+        }
+
+        var redirectsAdded = await AddSieveRedirectsAsync(
+            database,
+            message,
+            recipient,
+            plan.Redirects,
+            delivery,
+            now,
+            cancellationToken).ConfigureAwait(false);
+        var deliveries = plan.Deliveries;
+        if (deliveries.Count == 0
+            && plan.Redirects.Count > 0
+            && redirectsAdded == 0
+            && !plan.Discarded)
+        {
+            deliveries = [new SieveDeliveryInstruction(defaultFolder, [], false)];
+        }
+        if (!await DeliverSieveInstructionsAsync(message, recipient, rawMessage, deliveries, plan.ScriptApplied,
+                delivery, vacationResponder, now, cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        MarkDelivered(recipient, now);
+    }
+
+    private async Task DeliverSieveRejectionAsync(
+        MailQueueMessageDB message,
+        MailQueueRecipientDB recipient,
+        string rejectReason,
+        IEmailService delivery,
+        IOutboundMailRelay relay,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        if (!await CreateSieveRejectionAsync(
+                message,
+                recipient,
+                rejectReason,
+                delivery,
+                relay,
+                cancellationToken).ConfigureAwait(false))
+        {
+            ScheduleRecipientRetry(
+                message,
+                recipient,
+                "The Sieve rejection notice could not be delivered.",
+                now);
+            return;
+        }
+        recipient.SuccessNoticeCreated = true;
+        MarkDelivered(recipient, now);
+    }
+
+    private async Task<bool> DeliverSieveInstructionsAsync(
+        MailQueueMessageDB message,
+        MailQueueRecipientDB recipient,
+        string rawMessage,
+        IReadOnlyList<SieveDeliveryInstruction> deliveries,
+        bool scriptApplied,
+        IEmailService delivery,
+        IVacationResponder? vacationResponder,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        for (var index = 0; index < deliveries.Count; index++)
+        {
+            var instruction = deliveries[index];
+            var deliveryId = scriptApplied
+                ? DeriveQueueDeliveryId(recipient.Id, $"sieve-delivery-{index}")
+                : recipient.Id;
+            if (!await DeliverSieveInstructionAsync(message, recipient, rawMessage, instruction, deliveryId,
+                    delivery, vacationResponder, now, cancellationToken).ConfigureAwait(false))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private async Task<bool> DeliverSieveInstructionAsync(
+        MailQueueMessageDB message,
+        MailQueueRecipientDB recipient,
+        string rawMessage,
+        SieveDeliveryInstruction instruction,
+        Guid deliveryId,
+        IEmailService delivery,
+        IVacationResponder? vacationResponder,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var delivered = await delivery.DeliverAsync(
+            message.EnvelopeSender,
+            recipient.Recipient,
+            rawMessage,
+            instruction.Folder,
+            deliveryId,
+            cancellationToken,
+            instruction.Flags,
+            instruction.Create).ConfigureAwait(false);
+        if (!delivered)
+        {
+            ScheduleRecipientRetry(
+                message,
+                recipient,
+                "The local mailbox is unavailable, missing, or over quota.",
+                now);
+            return false;
+        }
+
+        if (vacationResponder is not null
+            && !await vacationResponder.QueueResponseAsync(
+                message.EnvelopeSender,
+                recipient.Recipient,
+                rawMessage,
+                instruction.Folder,
+                deliveryId,
+                cancellationToken).ConfigureAwait(false))
+        {
+            ScheduleRecipientRetry(
+                message,
+                recipient,
+                "The vacation response could not be queued.",
+                now);
+            return false;
+        }
+        return true;
+    }
+
+    private async Task DeliverRemoteRecipientAsync(
+        MailQueueMessageDB message,
+        MailQueueRecipientDB recipient,
+        string rawMessage,
+        IOutboundMailRelay relay,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var result = await relay.RelayAsync(
+            message.EnvelopeSender,
+            recipient.Recipient,
+            rawMessage,
+            new OutboundMailOptions(
+                message.RequiresSmtpUtf8,
+                new MailDsnEnvelope(
+                    message.DsnReturnContent,
+                    message.DsnEnvelopeId),
+                new MailDsnRecipient(
+                    recipient.DsnNotify,
+                    recipient.DsnOriginalRecipient)),
+            cancellationToken).ConfigureAwait(false);
+        if (result.Status == OutboundDeliveryStatus.Delivered)
+        {
+            recipient.DsnForwarded = result.DsnParametersForwarded;
+            recipient.LastEnhancedStatusCode = result.EnhancedStatusCode;
+            recipient.LastRemoteMta = result.RemoteMta;
+            MarkDelivered(recipient, now);
+            return;
+        }
+
+        if (result.Status == OutboundDeliveryStatus.PermanentFailure)
+        {
+            MarkPermanentFailure(
+                recipient,
+                result.Detail,
+                now,
+                result.EnhancedStatusCode,
+                result.RemoteMta);
+            return;
+        }
+
+        ScheduleRecipientRetry(
+            message,
+            recipient,
+            result.Detail,
+            now,
+            result.EnhancedStatusCode,
+            result.RemoteMta);
     }
 
     private static async Task<int> AddSieveRedirectsAsync(

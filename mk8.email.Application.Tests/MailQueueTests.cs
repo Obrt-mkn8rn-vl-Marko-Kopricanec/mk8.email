@@ -1115,6 +1115,148 @@ public sealed class MailQueueTests
         StringAssert.Contains(relay.LastRawMessage!, "Auto-Submitted: auto-replied");
     }
 
+    [TestMethod]
+    public async Task WorkerRetainsCompletedScanWithoutCallingScannerAgain()
+    {
+        var environment = CreateEnvironment();
+        var relay = new StubRelay(OutboundDeliveryStatus.Delivered);
+        await using var services = CreateServices(environment, CleanScan() with { IsTemporaryFailure = true }, relay);
+        await SeedAccountAsync(services, includeCatchAll: false);
+        var queueId = await EnqueueAsync(services, "sender@example.net", TestAccount, isLocal: true, authenticatedUser: null);
+        using (var setup = services.CreateScope())
+        {
+            var database = setup.ServiceProvider.GetRequiredService<EmailDbContext>();
+            var queued = await database.MailQueueMessages.SingleAsync(message => message.Id == queueId);
+            queued.ScanState = MailQueueScanStates.Complete;
+            queued.ScanAction = "no action";
+            queued.AddedHeaders = "X-Retained-Scan: yes\r\n";
+            queued.TargetFolder = DefaultFolders.Inbox;
+            await database.SaveChangesAsync();
+        }
+        Assert.IsTrue(await ProcessOneAsync(services, environment));
+        using var scope = services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var message = await db.MailQueueMessages.Include(item => item.Recipients).SingleAsync(item => item.Id == queueId);
+        Assert.AreEqual(MailQueueStates.Completed, message.State);
+        Assert.AreEqual(MailQueueRecipientStates.Delivered, message.Recipients.Single().State);
+        Assert.AreEqual(0, ((StubScanner)scope.ServiceProvider.GetRequiredService<IMailScanner>()).CallCount);
+        var stored = await db.Emails.SingleAsync();
+        StringAssert.Contains(stored.RawHeaders!, "X-Retained-Scan: yes");
+        Assert.AreEqual(0, relay.CallCount);
+    }
+
+    [TestMethod]
+    [DataRow("add header")]
+    [DataRow("rewrite subject")]
+    [DataRow("reject")]
+    [DataRow("discard")]
+    public async Task WorkerQuarantinesSpamSubmissionBeforeSentCopyOrRelay(string action)
+    {
+        var environment = CreateEnvironment();
+        var relay = new StubRelay(OutboundDeliveryStatus.Delivered);
+        await using var services = CreateServices(environment, CleanScan("X-Spam: yes\r\n") with { Action = action, Score = 20 }, relay);
+        await SeedAccountAsync(services, includeCatchAll: false);
+        var queueId = await EnqueueAsync(services, TestAccount, "recipient@example.net", isLocal: false, authenticatedUser: TestAccount);
+        Assert.IsTrue(await ProcessOneAsync(services, environment));
+        using var scope = services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var queued = await database.MailQueueMessages.Include(item => item.Recipients).SingleAsync(item => item.Id == queueId);
+        Assert.AreEqual(MailQueueStates.Quarantined, queued.State);
+        Assert.AreEqual(MailQueueScanStates.Complete, queued.ScanState);
+        Assert.AreEqual(action, queued.ScanAction);
+        Assert.AreEqual(20d, queued.ScanScore);
+        Assert.AreEqual(DefaultFolders.Spam, queued.TargetFolder);
+        Assert.IsFalse(queued.SentCopyCreated);
+        Assert.AreEqual(MailQueueRecipientStates.Quarantined, queued.Recipients.Single().State);
+        Assert.AreEqual(0, queued.Recipients.Single().AttemptCount);
+        Assert.AreEqual(0, relay.CallCount);
+        var notice = await database.Emails.Include(item => item.Folder).SingleAsync();
+        Assert.AreEqual("Message quarantined", notice.Subject);
+        Assert.AreEqual(DefaultFolders.Inbox, notice.Folder.Name);
+        Assert.AreEqual(RawMessage, await ReadQueueContentAsync(scope, queued));
+    }
+
+    [TestMethod]
+    public async Task WorkerRetriesUnavailableSentCopyBeforeAttemptingRecipients()
+    {
+        var environment = CreateEnvironment();
+        var relay = new StubRelay(OutboundDeliveryStatus.Delivered);
+        await using var services = CreateServices(environment, CleanScan(), relay);
+        await SeedAccountAsync(services, includeCatchAll: false);
+        using (var setup = services.CreateScope())
+        {
+            var database = setup.ServiceProvider.GetRequiredService<EmailDbContext>();
+            var user = await database.Users.SingleAsync();
+            user.QuotaBytes = 1;
+            await database.SaveChangesAsync();
+        }
+        var queueId = await EnqueueAsync(services, TestAccount, "recipient@example.net", isLocal: false, authenticatedUser: TestAccount);
+        Assert.IsTrue(await ProcessOneAsync(services, environment));
+        using var scope = services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var queued = await db.MailQueueMessages.Include(item => item.Recipients).SingleAsync(item => item.Id == queueId);
+        Assert.AreEqual(MailQueueStates.Pending, queued.State);
+        Assert.AreEqual(MailQueueScanStates.Complete, queued.ScanState);
+        Assert.IsFalse(queued.SentCopyCreated);
+        Assert.AreEqual("The sent copy could not be stored.", queued.LastError);
+        Assert.IsNull(queued.LeaseToken);
+        Assert.IsNull(queued.LeaseExpiresAt);
+        Assert.AreEqual(1, queued.AttemptCount);
+        Assert.AreEqual(0, queued.Recipients.Single().AttemptCount);
+        Assert.AreEqual(MailQueueRecipientStates.Pending, queued.Recipients.Single().State);
+        Assert.IsTrue(queued.NextAttemptAt > queued.ReceivedAt);
+        Assert.AreEqual(0, relay.CallCount);
+        Assert.AreEqual(0, await db.Emails.CountAsync());
+    }
+
+    [TestMethod]
+    public async Task RecipientRelayExceptionDoesNotPreventOtherDueRecipientDelivery()
+    {
+        var environment = CreateEnvironment();
+        var relay = new SelectivelyFailingRelay();
+        await using var services = CreateServices(environment, CleanScan(), relay);
+        var queueId = Guid.CreateVersion7();
+        using (var setup = services.CreateScope())
+        {
+            var queue = setup.ServiceProvider.GetRequiredService<IMailSubmissionQueue>();
+            await queue.EnqueueAsync(new MailSubmission(queueId, string.Empty,
+                [new MailEnvelopeRecipient("failed@example.net", false), new MailEnvelopeRecipient("delivered@example.net", false)],
+                RawMessage, null, null, null));
+        }
+        Assert.IsTrue(await ProcessOneAsync(services, environment));
+        using var scope = services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var queued = await database.MailQueueMessages.Include(item => item.Recipients).SingleAsync(item => item.Id == queueId);
+        var failed = queued.Recipients.Single(item => item.Recipient == "failed@example.net");
+        var delivered = queued.Recipients.Single(item => item.Recipient == "delivered@example.net");
+        Assert.AreEqual(MailQueueStates.Pending, queued.State);
+        Assert.AreEqual(MailQueueRecipientStates.Pending, failed.State);
+        Assert.AreEqual("temporary relay failure", failed.LastError);
+        Assert.AreEqual(1, failed.AttemptCount);
+        Assert.AreEqual(MailQueueRecipientStates.Delivered, delivered.State);
+        Assert.AreEqual(1, delivered.AttemptCount);
+        Assert.IsTrue(delivered.SuccessNoticeCreated);
+        Assert.IsNull(queued.LeaseToken);
+        Assert.AreEqual(failed.NextAttemptAt, queued.NextAttemptAt);
+        Assert.AreEqual(2, relay.CallCount);
+        Assert.AreEqual(1, ((StubScanner)scope.ServiceProvider.GetRequiredService<IMailScanner>()).CallCount);
+        Assert.AreEqual(0, await database.Emails.CountAsync());
+    }
+
+    private sealed class SelectivelyFailingRelay : IOutboundMailRelay
+    {
+        public int CallCount { get; private set; }
+
+        public Task<OutboundDeliveryResult> RelayAsync(string sender, string recipient, string rawMessage,
+            OutboundMailOptions? options = null, CancellationToken cancellationToken = default)
+        {
+            CallCount++;
+            if (recipient == "failed@example.net")
+                throw new IOException("temporary\r\nrelay\0failure");
+            return Task.FromResult(new OutboundDeliveryResult(OutboundDeliveryStatus.Delivered, "delivered"));
+        }
+    }
+
     private static ServiceProvider CreateServices(
         EnvironmentConfig environment,
         MailScanResult scanResult,
@@ -1258,9 +1400,15 @@ public sealed class MailQueueTests
 
     private sealed class StubScanner(MailScanResult result) : IMailScanner
     {
+        public int CallCount { get; private set; }
+
         public Task<MailScanResult> ScanAsync(
             MailScanRequest request,
-            CancellationToken cancellationToken = default) => Task.FromResult(result);
+            CancellationToken cancellationToken = default)
+        {
+            CallCount++;
+            return Task.FromResult(result);
+        }
     }
 
     private sealed class CapturingQueueLogger : ILogger<MailQueueWorker>

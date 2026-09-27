@@ -20,7 +20,7 @@ internal sealed class EmailQueryChangesMethod(
     MailboxMessageContentService content) : IJmapMethod
 {
     public MailOperationKind Operation => MailOperationKind.FindMessageChanges;
-    public string Capability => JmapConstants.MailCapability;
+    public MailFeature Feature => MailFeature.Messages;
 
     public async Task<JmapMethodResponse> InvokeAsync(
         JmapInvocationContext context,

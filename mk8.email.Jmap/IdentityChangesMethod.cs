@@ -15,7 +15,7 @@ internal sealed class IdentityChangesMethod(
     EnvironmentConfig environment) : IJmapMethod
 {
     public MailOperationKind Operation => MailOperationKind.ReadSenderIdentityChanges;
-    public string Capability => JmapConstants.SubmissionCapability;
+    public MailFeature Feature => MailFeature.Submission;
 
     public async Task<JmapMethodResponse> InvokeAsync(
         JmapInvocationContext context,

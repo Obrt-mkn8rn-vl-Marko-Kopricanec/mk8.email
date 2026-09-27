@@ -21,7 +21,7 @@ internal sealed class BlobCopyMethod(
     EnvironmentConfig environment) : IJmapMethod
 {
     public MailOperationKind Operation => MailOperationKind.CopyBinaryObjects;
-    public string Capability => JmapConstants.CoreCapability;
+    public MailFeature Feature => MailFeature.Basic;
 
     public async Task<JmapMethodResponse> InvokeAsync(
         JmapInvocationContext context,

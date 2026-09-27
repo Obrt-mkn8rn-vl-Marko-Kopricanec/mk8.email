@@ -72,7 +72,7 @@ internal sealed class EmailSubmissionSetMethod(
         };
 
     public MailOperationKind Operation => MailOperationKind.MutateSubmissions;
-    public string Capability => JmapConstants.SubmissionCapability;
+    public MailFeature Feature => MailFeature.Submission;
 
     public async Task<JmapMethodResponse> InvokeAsync(
         JmapInvocationContext context,

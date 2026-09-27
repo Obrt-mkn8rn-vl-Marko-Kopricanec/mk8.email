@@ -30,7 +30,7 @@ internal sealed class PushSubscriptionSetMethod(
         StringComparer.Ordinal);
 
     public MailOperationKind Operation => MailOperationKind.MutateNotificationSubscriptions;
-    public string Capability => JmapConstants.CoreCapability;
+    public MailFeature Feature => MailFeature.Basic;
 
     public async Task<JmapMethodResponse> InvokeAsync(
         JmapInvocationContext context,

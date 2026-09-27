@@ -84,7 +84,7 @@ public sealed class JmapOperationBoundaryTests
         await using var fixture = await JmapFixture.CreateAsync();
         var response = await fixture.InvokeAsync(new JsonObject
         {
-            ["using"] = new JsonArray(JmapConstants.CoreCapability),
+            ["using"] = new JsonArray(GatewayJmapFeatureCodec.CoreCapability),
             ["methodCalls"] = new JsonArray(new JsonArray(name, new JsonObject(), "unknown"),
                 new JsonArray("Core/echo", new JsonObject { ["value"] = name }, "next")),
         });
@@ -163,9 +163,9 @@ public sealed class JmapOperationBoundaryTests
         await using var fixture = await JmapFixture.CreateAsync(configureServices: services =>
             JmapFixture.OverrideMethod(services, new ProbeMethod(MailOperationKind.FindFolders, () => calls++)));
         using var scope = fixture.Services.CreateScope();
-        var batch = new JmapApplicationBatch([JmapConstants.CoreCapability],
+        var batch = new JmapApplicationBatch([MailFeature.Basic],
             [new(MailOperationKind.FindFolders, new JsonObject(), "first"), new(operation, new JsonObject(), "invalid")]);
-        await Assert.ThrowsAsync<JmapRequestException>(() =>
+        await Assert.ThrowsAsync<MailApplicationException>(() =>
             scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>().ProcessAsync(batch, fixture.User));
         Assert.AreEqual(0, calls);
     }
@@ -177,10 +177,10 @@ public sealed class JmapOperationBoundaryTests
         await using var fixture = await JmapFixture.CreateAsync(configureServices: services =>
             JmapFixture.OverrideMethod(services, new ProbeMethod(MailOperationKind.FindFolders, () => calls++)));
         using var scope = fixture.Services.CreateScope();
-        var batch = new JmapApplicationBatch([JmapConstants.CoreCapability],
+        var batch = new JmapApplicationBatch([MailFeature.Basic],
             [new(MailOperationKind.FindFolders, new JsonObject(), "first"), new(MailOperationKind.Echo, new JsonObject(), "invalid",
                 [new("value", "first", (MailOperationKind)999, [])])]);
-        await Assert.ThrowsAsync<JmapRequestException>(() =>
+        await Assert.ThrowsAsync<MailApplicationException>(() =>
             scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>().ProcessAsync(batch, fixture.User));
         Assert.AreEqual(0, calls);
     }
@@ -210,7 +210,7 @@ public sealed class JmapOperationBoundaryTests
     private sealed class ProbeMethod(MailOperationKind operation, Action onInvoke) : IJmapMethod
     {
         public MailOperationKind Operation => operation;
-        public string Capability => JmapConstants.CoreCapability;
+        public MailFeature Feature => MailFeature.Basic;
         public Task<JmapMethodResponse> InvokeAsync(JmapInvocationContext context, JsonObject arguments,
             CancellationToken cancellationToken = default)
         {

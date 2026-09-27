@@ -48,15 +48,11 @@ internal sealed class JmapApplicationService(
             var response = await processor.ProcessAsync(request.Batch, user, operationId, cancellationToken).ConfigureAwait(false);
             return new JmapApplicationResult(JmapApplicationOutcomes.Ok, Batch: response);
         }
-        catch (JmapRequestException exception)
+        catch (MailApplicationException exception)
         {
             return new JmapApplicationResult(
                 JmapApplicationOutcomes.Ok,
-                Problem: new JmapApplicationProblem(
-                    exception.Type,
-                    exception.Title,
-                    exception.Detail,
-                    exception.Limit));
+                Failure: exception.Failure);
         }
     }
 
@@ -71,11 +67,8 @@ internal sealed class JmapApplicationService(
         {
             return new JmapApplicationResult(
                 JmapApplicationOutcomes.Ok,
-                Problem: new JmapApplicationProblem(
-                    "urn:ietf:params:jmap:error:limit",
-                    "Upload failed",
-                    "Upload is larger than the server limit.",
-                    "maxSizeUpload"));
+                Failure: new MailApplicationFailure(MailFailureKind.ResourceLimit,
+                    "Content is larger than the storage admission limit.", MailResourceLimit.UploadSize));
         }
 
         var account = await accounts.GetAccountAsync(user, request.AccountId, cancellationToken).ConfigureAwait(false);
@@ -100,15 +93,11 @@ internal sealed class JmapApplicationService(
                 BlobId: stored.BlobId,
                 Size: stored.SizeBytes);
         }
-        catch (JmapRequestException exception)
+        catch (MailApplicationException exception)
         {
             return new JmapApplicationResult(
                 JmapApplicationOutcomes.Ok,
-                Problem: new JmapApplicationProblem(
-                    exception.Type,
-                    exception.Title,
-                    exception.Detail,
-                    exception.Limit));
+                Failure: exception.Failure);
         }
     }
 
@@ -149,9 +138,7 @@ internal sealed class JmapApplicationService(
             {
                 return new JmapApplicationResult(
                     JmapApplicationOutcomes.Ok,
-                    Problem: new JmapApplicationProblem(
-                        "urn:ietf:params:jmap:error:invalidArguments",
-                        "Invalid event source parameters"));
+                    Failure: new MailApplicationFailure(MailFailureKind.InvalidSelection));
             }
             types = requested;
         }

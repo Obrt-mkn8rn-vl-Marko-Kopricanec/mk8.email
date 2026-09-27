@@ -27,11 +27,11 @@ public sealed record JmapBatchApplicationRequest(
     JmapBatchPreflight? Preflight = null);
 
 public sealed record JmapBatchPreflight(
-    string[] Capabilities,
+    [property: JsonRequired] MailFeature[] Features,
     int InvocationCount);
 
 public sealed record JmapApplicationBatch(
-    string[] Capabilities,
+    [property: JsonRequired] MailFeature[] Features,
     JmapApplicationCall[] Invocations,
     IReadOnlyDictionary<string, string>? CreatedIds = null);
 
@@ -131,12 +131,6 @@ public static class JmapApplicationOutcomes
     public const string NotFound = "not-found";
 }
 
-public sealed record JmapApplicationProblem(
-    string Type,
-    string Title,
-    string? Detail = null,
-    string? Limit = null);
-
 public sealed record JmapApplicationResult(
     string Outcome,
     byte[]? Content = null,
@@ -144,7 +138,7 @@ public sealed record JmapApplicationResult(
     string? BlobId = null,
     long? Size = null,
     long? Cursor = null,
-    JmapApplicationProblem? Problem = null,
+    MailApplicationFailure? Failure = null,
     JmapApplicationBatchResult? Batch = null,
     JmapApplicationProfile? Profile = null,
     JmapApplicationChanges? Changes = null);

@@ -10,11 +10,11 @@ namespace mk8.email.Gateway.Protocols.Jmap;
 
 internal static class GatewayJmapProfileCodec
 {
-    private const string Core = "urn:ietf:params:jmap:core";
-    private const string Mail = "urn:ietf:params:jmap:mail";
-    private const string Submission = "urn:ietf:params:jmap:submission";
-    private const string Vacation = "urn:ietf:params:jmap:vacationresponse";
-    private const string Contacts = "urn:ietf:params:jmap:contacts";
+    private const string Core = GatewayJmapFeatureCodec.CoreCapability;
+    private const string Mail = GatewayJmapFeatureCodec.MailCapability;
+    private const string Submission = GatewayJmapFeatureCodec.SubmissionCapability;
+    private const string Vacation = GatewayJmapFeatureCodec.VacationResponseCapability;
+    private const string Contacts = GatewayJmapFeatureCodec.ContactsCapability;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public static JsonObject Render(JmapApplicationProfile profile, EnvironmentConfig environment)

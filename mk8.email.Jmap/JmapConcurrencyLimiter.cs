@@ -1,4 +1,5 @@
 using mk8.email.Configuration;
+using mk8.email.Contracts.Messaging;
 
 namespace mk8.email.Jmap;
 
@@ -18,10 +19,10 @@ internal sealed class JmapConcurrencyLimiter : IDisposable
     }
 
     public Task<IDisposable> AcquireRequestAsync(CancellationToken cancellationToken) =>
-        AcquireAsync(_requests, "maxConcurrentRequests", cancellationToken);
+        AcquireAsync(_requests, MailResourceLimit.RequestConcurrency, cancellationToken);
 
     public Task<IDisposable> AcquireUploadAsync(CancellationToken cancellationToken) =>
-        AcquireAsync(_uploads, "maxConcurrentUpload", cancellationToken);
+        AcquireAsync(_uploads, MailResourceLimit.UploadConcurrency, cancellationToken);
 
     public void Dispose()
     {
@@ -31,17 +32,14 @@ internal sealed class JmapConcurrencyLimiter : IDisposable
 
     private static async Task<IDisposable> AcquireAsync(
         SemaphoreSlim semaphore,
-        string limit,
+        MailResourceLimit limit,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (!await semaphore.WaitAsync(TimeSpan.Zero, cancellationToken).ConfigureAwait(false))
         {
-            throw new JmapRequestException(
-                "urn:ietf:params:jmap:error:limit",
-                "Request limit exceeded",
-                "The server is already processing the maximum number of concurrent requests.",
-                limit);
+            throw new MailApplicationException(new MailApplicationFailure(MailFailureKind.ResourceLimit,
+                "The server is already processing the maximum number of concurrent operations.", limit));
         }
         return new Lease(semaphore);
     }

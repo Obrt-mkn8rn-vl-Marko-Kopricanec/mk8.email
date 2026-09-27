@@ -13,7 +13,7 @@ internal sealed class EmailChangesMethod(
     EnvironmentConfig environment) : IJmapMethod
 {
     public MailOperationKind Operation => MailOperationKind.ReadMessageChanges;
-    public string Capability => JmapConstants.MailCapability;
+    public MailFeature Feature => MailFeature.Messages;
 
     public async Task<JmapMethodResponse> InvokeAsync(
         JmapInvocationContext context,

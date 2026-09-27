@@ -10,7 +10,7 @@ internal sealed class MailboxQueryChangesMethod(
     JmapStateService states) : IJmapMethod
 {
     public MailOperationKind Operation => MailOperationKind.FindFolderChanges;
-    public string Capability => JmapConstants.MailCapability;
+    public MailFeature Feature => MailFeature.Messages;
 
     public async Task<JmapMethodResponse> InvokeAsync(
         JmapInvocationContext context,

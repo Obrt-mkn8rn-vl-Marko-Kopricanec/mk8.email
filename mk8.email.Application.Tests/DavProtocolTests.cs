@@ -1,3 +1,4 @@
+using mk8.email.Gateway.Protocols.Jmap;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -445,7 +446,7 @@ public sealed class DavProtocolTests
 
         var query = await fixture.SendJmapAsync(new JsonObject
         {
-            ["using"] = new JsonArray(JmapConstants.CoreCapability, JmapConstants.ContactsCapability),
+            ["using"] = new JsonArray(GatewayJmapFeatureCodec.CoreCapability, GatewayJmapFeatureCodec.ContactsCapability),
             ["methodCalls"] = new JsonArray(new JsonArray(
                 "ContactCard/query",
                 new JsonObject
@@ -460,7 +461,7 @@ public sealed class DavProtocolTests
 
         var get = await fixture.SendJmapAsync(new JsonObject
         {
-            ["using"] = new JsonArray(JmapConstants.CoreCapability, JmapConstants.ContactsCapability),
+            ["using"] = new JsonArray(GatewayJmapFeatureCodec.CoreCapability, GatewayJmapFeatureCodec.ContactsCapability),
             ["methodCalls"] = new JsonArray(new JsonArray(
                 "ContactCard/get",
                 new JsonObject
@@ -487,7 +488,7 @@ public sealed class DavProtocolTests
 
         var update = await fixture.SendJmapAsync(new JsonObject
         {
-            ["using"] = new JsonArray(JmapConstants.CoreCapability, JmapConstants.ContactsCapability),
+            ["using"] = new JsonArray(GatewayJmapFeatureCodec.CoreCapability, GatewayJmapFeatureCodec.ContactsCapability),
             ["methodCalls"] = new JsonArray(new JsonArray(
                 "ContactCard/set",
                 new JsonObject
@@ -612,7 +613,7 @@ public sealed class DavProtocolTests
 
         var response = await fixture.SendJmapAsync(new JsonObject
         {
-            ["using"] = new JsonArray(JmapConstants.CoreCapability, JmapConstants.ContactsCapability),
+            ["using"] = new JsonArray(GatewayJmapFeatureCodec.CoreCapability, GatewayJmapFeatureCodec.ContactsCapability),
             ["methodCalls"] = new JsonArray(
                 Query("forged", "forged-shared-uid"),
                 Query("first", "indexed-first-uid"),
@@ -629,7 +630,7 @@ public sealed class DavProtocolTests
 
         var get = await fixture.SendJmapAsync(new JsonObject
         {
-            ["using"] = new JsonArray(JmapConstants.CoreCapability, JmapConstants.ContactsCapability),
+            ["using"] = new JsonArray(GatewayJmapFeatureCodec.CoreCapability, GatewayJmapFeatureCodec.ContactsCapability),
             ["methodCalls"] = new JsonArray(new JsonArray(
                 "ContactCard/get",
                 new JsonObject
@@ -775,7 +776,7 @@ public sealed class DavProtocolTests
 
         var query = await fixture.SendJmapAsync(new JsonObject
         {
-            ["using"] = new JsonArray(JmapConstants.CoreCapability, JmapConstants.ContactsCapability),
+            ["using"] = new JsonArray(GatewayJmapFeatureCodec.CoreCapability, GatewayJmapFeatureCodec.ContactsCapability),
             ["methodCalls"] = new JsonArray(new JsonArray(
                 "ContactCard/query",
                 new JsonObject
@@ -789,7 +790,7 @@ public sealed class DavProtocolTests
 
         var get = await fixture.SendJmapAsync(new JsonObject
         {
-            ["using"] = new JsonArray(JmapConstants.CoreCapability, JmapConstants.ContactsCapability),
+            ["using"] = new JsonArray(GatewayJmapFeatureCodec.CoreCapability, GatewayJmapFeatureCodec.ContactsCapability),
             ["methodCalls"] = new JsonArray(new JsonArray(
                 "ContactCard/get",
                 new JsonObject

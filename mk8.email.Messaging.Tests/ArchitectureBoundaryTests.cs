@@ -330,7 +330,17 @@ public sealed class ArchitectureBoundaryTests
         Assert.AreEqual(
             typeof(mk8.email.Contracts.Messaging.JmapApplicationBatch),
             typeof(mk8.email.Contracts.Messaging.JmapBatchApplicationRequest).GetProperty("Batch")?.PropertyType);
-        Assert.IsNull(typeof(mk8.email.Jmap.JmapRequestException).GetProperty("StatusCode"));
+        Assert.IsNull(typeof(mk8.email.Jmap.MailApplicationException).GetProperty("StatusCode"));
+        Assert.IsNull(typeof(mk8.email.Jmap.MailApplicationException).GetProperty("Type"));
+        Assert.IsNull(typeof(MailApplicationFailure).GetProperty("Type"));
+        Assert.IsNull(typeof(MailApplicationFailure).GetProperty("Title"));
+        Assert.IsNull(typeof(JmapApplicationResult).GetProperty("Problem"));
+        Assert.AreEqual(typeof(MailApplicationFailure), typeof(JmapApplicationResult).GetProperty("Failure")?.PropertyType);
+        Assert.AreEqual(typeof(MailFeature[]), typeof(JmapApplicationBatch).GetProperty("Features")?.PropertyType);
+        Assert.AreEqual(typeof(MailFeature[]), typeof(JmapBatchPreflight).GetProperty("Features")?.PropertyType);
+        Assert.IsNull(typeof(JmapApplicationBatch).GetProperty("Capabilities"));
+        Assert.IsNull(typeof(mk8.email.Jmap.JmapInvocationContext).GetProperty("Capabilities"));
+        Assert.IsNull(typeof(mk8.email.Jmap.IJmapMethod).GetProperty("Capability"));
         Assert.IsNull(typeof(mk8.email.Jmap.JmapJson).GetMethod("ParseRequest"));
         Assert.AreEqual("mk8.email.Gateway", typeof(
             mk8.email.Gateway.Protocols.Jmap.GatewayJmapJson).Assembly.GetName().Name);

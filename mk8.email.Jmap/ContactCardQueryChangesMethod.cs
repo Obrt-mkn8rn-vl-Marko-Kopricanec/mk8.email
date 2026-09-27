@@ -11,7 +11,7 @@ internal sealed class ContactCardQueryChangesMethod(
     JmapStateService states) : IJmapMethod
 {
     public MailOperationKind Operation => MailOperationKind.FindContactChanges;
-    public string Capability => JmapConstants.ContactsCapability;
+    public MailFeature Feature => MailFeature.Contacts;
 
     public async Task<JmapMethodResponse> InvokeAsync(
         JmapInvocationContext context,

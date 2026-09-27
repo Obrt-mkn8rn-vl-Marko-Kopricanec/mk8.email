@@ -20,7 +20,7 @@ internal sealed class VacationResponseSetMethod(
         StringComparer.Ordinal);
 
     public MailOperationKind Operation => MailOperationKind.MutateVacationSettings;
-    public string Capability => JmapConstants.VacationResponseCapability;
+    public MailFeature Feature => MailFeature.AutomaticReplies;
 
     public async Task<JmapMethodResponse> InvokeAsync(
         JmapInvocationContext context,

@@ -20,7 +20,7 @@ internal sealed class IdentityGetMethod(
         StringComparer.Ordinal);
 
     public MailOperationKind Operation => MailOperationKind.ReadSenderIdentities;
-    public string Capability => JmapConstants.SubmissionCapability;
+    public MailFeature Feature => MailFeature.Submission;
 
     public async Task<JmapMethodResponse> InvokeAsync(
         JmapInvocationContext context,

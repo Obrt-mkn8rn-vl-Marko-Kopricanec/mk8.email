@@ -1,3 +1,4 @@
+using mk8.email.Gateway.Protocols.Jmap;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
@@ -22,12 +23,12 @@ public sealed class JmapPresentationBoundaryTests
             JmapFixture.OverrideMethod(services, new ProbeMethod(() => count++)));
         using var scope = fixture.Services.CreateScope();
         var processor = scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>();
-        var batch = new JmapApplicationBatch([JmapConstants.CoreCapability],
+        var batch = new JmapApplicationBatch([MailFeature.Basic],
             [new JmapApplicationCall(MailOperationKind.FindFolders, new JsonObject(), "first"),
              new JmapApplicationCall(MailOperationKind.Echo, null!, "second")]);
-        var exception = await Assert.ThrowsAsync<JmapRequestException>(() => processor.ProcessAsync(batch, fixture.User));
+        var exception = await Assert.ThrowsAsync<MailApplicationException>(() => processor.ProcessAsync(batch, fixture.User));
 
-        Assert.AreEqual("urn:ietf:params:jmap:error:notRequest", exception.Type);
+        Assert.AreEqual(MailFailureKind.MalformedBatch, exception.Failure.Kind);
         Assert.AreEqual(0, count);
     }
 
@@ -37,11 +38,11 @@ public sealed class JmapPresentationBoundaryTests
         await using var fixture = await JmapFixture.CreateAsync();
         using var scope = fixture.Services.CreateScope();
         var processor = scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>();
-        var batch = new JmapApplicationBatch([JmapConstants.CoreCapability], [],
+        var batch = new JmapApplicationBatch([MailFeature.Basic], [],
             new Dictionary<string, string> { ["invalid key"] = "object-id" });
-        var exception = await Assert.ThrowsAsync<JmapRequestException>(() => processor.ProcessAsync(batch, fixture.User));
+        var exception = await Assert.ThrowsAsync<MailApplicationException>(() => processor.ProcessAsync(batch, fixture.User));
 
-        Assert.AreEqual("urn:ietf:params:jmap:error:notRequest", exception.Type);
+        Assert.AreEqual(MailFailureKind.MalformedBatch, exception.Failure.Kind);
     }
 
     [TestMethod]
@@ -156,7 +157,7 @@ public sealed class JmapPresentationBoundaryTests
     private sealed class ProbeMethod(Action onInvoke) : IJmapMethod
     {
         public MailOperationKind Operation => MailOperationKind.FindFolders;
-        public string Capability => JmapConstants.CoreCapability;
+        public MailFeature Feature => MailFeature.Basic;
 
         public Task<JmapMethodResponse> InvokeAsync(JmapInvocationContext context, JsonObject arguments,
             CancellationToken cancellationToken = default)

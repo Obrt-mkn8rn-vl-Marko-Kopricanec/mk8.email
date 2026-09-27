@@ -2,12 +2,6 @@ namespace mk8.email.Jmap;
 
 public static class JmapConstants
 {
-    public const string CoreCapability = "urn:ietf:params:jmap:core";
-    public const string MailCapability = "urn:ietf:params:jmap:mail";
-    public const string SubmissionCapability = "urn:ietf:params:jmap:submission";
-    public const string VacationResponseCapability = "urn:ietf:params:jmap:vacationresponse";
-    public const string ContactsCapability = "urn:ietf:params:jmap:contacts";
-
     public const string MailboxDataType = "Mailbox";
     public const string ThreadDataType = "Thread";
     public const string EmailDataType = "Email";

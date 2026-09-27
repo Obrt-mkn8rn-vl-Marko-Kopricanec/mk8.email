@@ -141,12 +141,10 @@ public static class WorkerWakeSchemaTransition
         await tableLock.ExecuteNonQueryAsync(token).ConfigureAwait(false);
         var command = new NpgsqlCommand("""
             SELECT EXISTS (SELECT 1 FROM public.application_requests
-                WHERE state IN ('pending', 'processing') AND operation IN (@operation, @priorOperation))
+                WHERE state IN ('pending', 'processing') AND operation = ANY(@operations))
             """, connection, transaction);
         await using var commandLifetime = command.ConfigureAwait(false);
-        command.Parameters.AddWithValue("operation", ApplicationOperations.JmapBatchExecute);
-        // v4 introduced durable invocation receipts; its work remains unsafe for a pre-receipt downgrade.
-        command.Parameters.AddWithValue("priorOperation", "jmap.batch.execute.v4");
+        command.Parameters.AddWithValue("operations", DistributedContractVersions.ReceiptBatchOperations.ToArray());
         if (await command.ExecuteScalarAsync(token).ConfigureAwait(false) is true)
             throw new InvalidOperationException("New-contract JMAP work prevents rollback to a pre-receipt Worker.");
     }

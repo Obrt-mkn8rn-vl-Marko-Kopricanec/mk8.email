@@ -15,7 +15,7 @@ internal sealed class ContactCardSetMethod(
     EnvironmentConfig environment) : IJmapMethod
 {
     public MailOperationKind Operation => MailOperationKind.MutateContacts;
-    public string Capability => JmapConstants.ContactsCapability;
+    public MailFeature Feature => MailFeature.Contacts;
 
     public async Task<JmapMethodResponse> InvokeAsync(
         JmapInvocationContext context,

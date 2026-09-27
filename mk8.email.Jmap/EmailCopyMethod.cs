@@ -21,7 +21,7 @@ internal sealed class EmailCopyMethod(
         StringComparer.Ordinal);
 
     public MailOperationKind Operation => MailOperationKind.CopyMessages;
-    public string Capability => JmapConstants.MailCapability;
+    public MailFeature Feature => MailFeature.Messages;
 
     public async Task<JmapMethodResponse> InvokeAsync(
         JmapInvocationContext context,

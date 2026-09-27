@@ -14,18 +14,18 @@ internal static class GatewayJmapBatchCodec
             || request["methodCalls"] is not JsonArray calls)
             throw NotRequest("The JSON document is not a valid JMAP Request object.");
 
-        var capabilities = new string[usingNode.Count];
+        var features = new MailFeature[usingNode.Count];
         for (var index = 0; index < usingNode.Count; index++)
         {
             if (usingNode[index] is not JsonValue value
                 || !value.TryGetValue<string>(out var capability)
                 || capability is null)
                 throw NotRequest("The using property must contain capability strings.");
-            capabilities[index] = capability;
+            features[index] = GatewayJmapFeatureCodec.Decode(capability);
         }
         // Worker still checks authorization, capacity and supported capabilities
         // before Gateway reveals a later malformed-invocation/createdIds error.
-        preflight = new JmapBatchPreflight(capabilities, calls.Count);
+        preflight = new JmapBatchPreflight(features, calls.Count);
 
         var invocations = new JmapApplicationCall[calls.Count];
         for (var index = 0; index < calls.Count; index++)
@@ -59,7 +59,7 @@ internal static class GatewayJmapBatchCodec
                 createdIds.Add(entry.Key, id);
             }
         }
-        return new JmapApplicationBatch(capabilities, invocations, createdIds);
+        return new JmapApplicationBatch(features, invocations, createdIds);
     }
 
     public static JsonObject Render(JmapApplicationBatchResult batch, EnvironmentConfig environment)
@@ -105,20 +105,20 @@ internal static class GatewayJmapBatchCodec
 
         public RequestException(string message) : base(message)
         {
-            Problem = new JmapApplicationProblem("urn:ietf:params:jmap:error:notRequest", message);
+            Problem = new GatewayJmapProblem("urn:ietf:params:jmap:error:notRequest", message);
         }
 
         public RequestException(string message, Exception innerException) : base(message, innerException)
         {
-            Problem = new JmapApplicationProblem("urn:ietf:params:jmap:error:notRequest", message);
+            Problem = new GatewayJmapProblem("urn:ietf:params:jmap:error:notRequest", message);
         }
 
         public RequestException(string type, string title, string? detail = null, string? limit = null)
             : base(detail ?? title)
         {
-            Problem = new JmapApplicationProblem(type, title, detail, limit);
+            Problem = new GatewayJmapProblem(type, title, detail, limit);
         }
 
-        public JmapApplicationProblem Problem { get; }
+        public GatewayJmapProblem Problem { get; }
     }
 }

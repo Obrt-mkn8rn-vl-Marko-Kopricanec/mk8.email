@@ -1,3 +1,4 @@
+using mk8.email.Gateway.Protocols.Jmap;
 using System.Text;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
@@ -12,8 +13,8 @@ namespace mk8.email.Application.Tests;
 [TestClass]
 public sealed class JmapContactsTests
 {
-    private const string Core = JmapConstants.CoreCapability;
-    private const string Contacts = JmapConstants.ContactsCapability;
+    private const string Core = GatewayJmapFeatureCodec.CoreCapability;
+    private const string Contacts = GatewayJmapFeatureCodec.ContactsCapability;
 
     [TestMethod]
     public async Task SessionAdvertisesRfc9610ForThePrimaryAccount()

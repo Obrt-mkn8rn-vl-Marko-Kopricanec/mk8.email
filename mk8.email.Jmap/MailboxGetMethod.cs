@@ -11,7 +11,7 @@ internal sealed class MailboxGetMethod(
     EnvironmentConfig environment) : IJmapMethod
 {
     public MailOperationKind Operation => MailOperationKind.ReadFolders;
-    public string Capability => JmapConstants.MailCapability;
+    public MailFeature Feature => MailFeature.Messages;
 
     public async Task<JmapMethodResponse> InvokeAsync(
         JmapInvocationContext context,

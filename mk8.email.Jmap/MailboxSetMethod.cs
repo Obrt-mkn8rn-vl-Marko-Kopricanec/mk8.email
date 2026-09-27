@@ -29,7 +29,7 @@ internal sealed class MailboxSetMethod(
         StringComparer.Ordinal);
 
     public MailOperationKind Operation => MailOperationKind.MutateFolders;
-    public string Capability => JmapConstants.MailCapability;
+    public MailFeature Feature => MailFeature.Messages;
 
     public async Task<JmapMethodResponse> InvokeAsync(
         JmapInvocationContext context,
@@ -475,7 +475,7 @@ internal sealed class MailboxSetMethod(
         }
         var planningContext = new JmapInvocationContext(
             context.User,
-            context.Capabilities,
+            context.Features,
             planningIds);
 
         var createPlans = new List<MailboxCreatePlan>(requestedCreates.Count);

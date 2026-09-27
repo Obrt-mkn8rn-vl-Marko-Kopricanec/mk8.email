@@ -1,5 +1,5 @@
 #nullable enable
-const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v6" -> string!
+const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v7" -> string!
 mk8.email.Contracts.Messaging.ApplicationArgumentBinding
 mk8.email.Contracts.Messaging.ApplicationArgumentBinding.<Clone>$() -> mk8.email.Contracts.Messaging.ApplicationArgumentBinding!
 mk8.email.Contracts.Messaging.ApplicationArgumentBinding.ApplicationArgumentBinding(string! Target, string! SourceCorrelationId, mk8.email.Contracts.Messaging.MailOperationKind SourceOperation, mk8.email.Contracts.Messaging.ApplicationValuePathSegment![]! Path, mk8.email.Contracts.Messaging.ApplicationBindingFailure Failure = mk8.email.Contracts.Messaging.ApplicationBindingFailure.None) -> void
@@ -48,15 +48,15 @@ mk8.email.Contracts.Messaging.JmapAccountProfile.SupportsContacts.get -> bool
 mk8.email.Contracts.Messaging.JmapAccountProfile.SupportsContacts.init -> void
 mk8.email.Contracts.Messaging.JmapApplicationBatch
 mk8.email.Contracts.Messaging.JmapApplicationBatch.<Clone>$() -> mk8.email.Contracts.Messaging.JmapApplicationBatch!
-mk8.email.Contracts.Messaging.JmapApplicationBatch.Capabilities.get -> string![]!
-mk8.email.Contracts.Messaging.JmapApplicationBatch.Capabilities.init -> void
+mk8.email.Contracts.Messaging.JmapApplicationBatch.Features.get -> mk8.email.Contracts.Messaging.MailFeature[]!
+mk8.email.Contracts.Messaging.JmapApplicationBatch.Features.init -> void
 mk8.email.Contracts.Messaging.JmapApplicationBatch.CreatedIds.get -> System.Collections.Generic.IReadOnlyDictionary<string!, string!>?
 mk8.email.Contracts.Messaging.JmapApplicationBatch.CreatedIds.init -> void
-mk8.email.Contracts.Messaging.JmapApplicationBatch.Deconstruct(out string![]! Capabilities, out mk8.email.Contracts.Messaging.JmapApplicationCall![]! Invocations, out System.Collections.Generic.IReadOnlyDictionary<string!, string!>? CreatedIds) -> void
+mk8.email.Contracts.Messaging.JmapApplicationBatch.Deconstruct(out mk8.email.Contracts.Messaging.MailFeature[]! Features, out mk8.email.Contracts.Messaging.JmapApplicationCall![]! Invocations, out System.Collections.Generic.IReadOnlyDictionary<string!, string!>? CreatedIds) -> void
 mk8.email.Contracts.Messaging.JmapApplicationBatch.Equals(mk8.email.Contracts.Messaging.JmapApplicationBatch? other) -> bool
 mk8.email.Contracts.Messaging.JmapApplicationBatch.Invocations.get -> mk8.email.Contracts.Messaging.JmapApplicationCall![]!
 mk8.email.Contracts.Messaging.JmapApplicationBatch.Invocations.init -> void
-mk8.email.Contracts.Messaging.JmapApplicationBatch.JmapApplicationBatch(string![]! Capabilities, mk8.email.Contracts.Messaging.JmapApplicationCall![]! Invocations, System.Collections.Generic.IReadOnlyDictionary<string!, string!>? CreatedIds = null) -> void
+mk8.email.Contracts.Messaging.JmapApplicationBatch.JmapApplicationBatch(mk8.email.Contracts.Messaging.MailFeature[]! Features, mk8.email.Contracts.Messaging.JmapApplicationCall![]! Invocations, System.Collections.Generic.IReadOnlyDictionary<string!, string!>? CreatedIds = null) -> void
 mk8.email.Contracts.Messaging.JmapApplicationBatchResult
 mk8.email.Contracts.Messaging.JmapApplicationBatchResult.<Clone>$() -> mk8.email.Contracts.Messaging.JmapApplicationBatchResult!
 mk8.email.Contracts.Messaging.JmapApplicationBatchResult.CreatedIds.get -> System.Collections.Generic.IReadOnlyDictionary<string!, string!>?
@@ -114,8 +114,8 @@ mk8.email.Contracts.Messaging.JmapApplicationResult.Batch.get -> mk8.email.Contr
 mk8.email.Contracts.Messaging.JmapApplicationResult.Batch.init -> void
 mk8.email.Contracts.Messaging.JmapApplicationResult.Changes.get -> mk8.email.Contracts.Messaging.JmapApplicationChanges?
 mk8.email.Contracts.Messaging.JmapApplicationResult.Changes.init -> void
-mk8.email.Contracts.Messaging.JmapApplicationResult.Deconstruct(out string! Outcome, out byte[]? Content, out string? ContentType, out string? BlobId, out long? Size, out long? Cursor, out mk8.email.Contracts.Messaging.JmapApplicationProblem? Problem, out mk8.email.Contracts.Messaging.JmapApplicationBatchResult? Batch, out mk8.email.Contracts.Messaging.JmapApplicationProfile? Profile, out mk8.email.Contracts.Messaging.JmapApplicationChanges? Changes) -> void
-mk8.email.Contracts.Messaging.JmapApplicationResult.JmapApplicationResult(string! Outcome, byte[]? Content = null, string? ContentType = null, string? BlobId = null, long? Size = null, long? Cursor = null, mk8.email.Contracts.Messaging.JmapApplicationProblem? Problem = null, mk8.email.Contracts.Messaging.JmapApplicationBatchResult? Batch = null, mk8.email.Contracts.Messaging.JmapApplicationProfile? Profile = null, mk8.email.Contracts.Messaging.JmapApplicationChanges? Changes = null) -> void
+mk8.email.Contracts.Messaging.JmapApplicationResult.Deconstruct(out string! Outcome, out byte[]? Content, out string? ContentType, out string? BlobId, out long? Size, out long? Cursor, out mk8.email.Contracts.Messaging.MailApplicationFailure? Failure, out mk8.email.Contracts.Messaging.JmapApplicationBatchResult? Batch, out mk8.email.Contracts.Messaging.JmapApplicationProfile? Profile, out mk8.email.Contracts.Messaging.JmapApplicationChanges? Changes) -> void
+mk8.email.Contracts.Messaging.JmapApplicationResult.JmapApplicationResult(string! Outcome, byte[]? Content = null, string? ContentType = null, string? BlobId = null, long? Size = null, long? Cursor = null, mk8.email.Contracts.Messaging.MailApplicationFailure? Failure = null, mk8.email.Contracts.Messaging.JmapApplicationBatchResult? Batch = null, mk8.email.Contracts.Messaging.JmapApplicationProfile? Profile = null, mk8.email.Contracts.Messaging.JmapApplicationChanges? Changes = null) -> void
 mk8.email.Contracts.Messaging.JmapApplicationResult.Profile.get -> mk8.email.Contracts.Messaging.JmapApplicationProfile?
 mk8.email.Contracts.Messaging.JmapApplicationResult.Profile.init -> void
 mk8.email.Contracts.Messaging.JmapBatchApplicationRequest
@@ -131,13 +131,13 @@ mk8.email.Contracts.Messaging.JmapBatchApplicationRequest.Preflight.get -> mk8.e
 mk8.email.Contracts.Messaging.JmapBatchApplicationRequest.Preflight.init -> void
 mk8.email.Contracts.Messaging.JmapBatchPreflight
 mk8.email.Contracts.Messaging.JmapBatchPreflight.<Clone>$() -> mk8.email.Contracts.Messaging.JmapBatchPreflight!
-mk8.email.Contracts.Messaging.JmapBatchPreflight.Capabilities.get -> string![]!
-mk8.email.Contracts.Messaging.JmapBatchPreflight.Capabilities.init -> void
-mk8.email.Contracts.Messaging.JmapBatchPreflight.Deconstruct(out string![]! Capabilities, out int InvocationCount) -> void
+mk8.email.Contracts.Messaging.JmapBatchPreflight.Features.get -> mk8.email.Contracts.Messaging.MailFeature[]!
+mk8.email.Contracts.Messaging.JmapBatchPreflight.Features.init -> void
+mk8.email.Contracts.Messaging.JmapBatchPreflight.Deconstruct(out mk8.email.Contracts.Messaging.MailFeature[]! Features, out int InvocationCount) -> void
 mk8.email.Contracts.Messaging.JmapBatchPreflight.Equals(mk8.email.Contracts.Messaging.JmapBatchPreflight? other) -> bool
 mk8.email.Contracts.Messaging.JmapBatchPreflight.InvocationCount.get -> int
 mk8.email.Contracts.Messaging.JmapBatchPreflight.InvocationCount.init -> void
-mk8.email.Contracts.Messaging.JmapBatchPreflight.JmapBatchPreflight(string![]! Capabilities, int InvocationCount) -> void
+mk8.email.Contracts.Messaging.JmapBatchPreflight.JmapBatchPreflight(mk8.email.Contracts.Messaging.MailFeature[]! Features, int InvocationCount) -> void
 mk8.email.Contracts.Messaging.JmapPushMessage
 mk8.email.Contracts.Messaging.JmapPushMessage.<Clone>$() -> mk8.email.Contracts.Messaging.JmapPushMessage!
 mk8.email.Contracts.Messaging.JmapPushMessage.Changes.get -> mk8.email.Contracts.Messaging.JmapApplicationChanges?
@@ -254,7 +254,7 @@ static mk8.email.Contracts.Messaging.JmapPushMessage.operator ==(mk8.email.Contr
 static mk8.email.Contracts.Messaging.JmapServiceLimits.operator !=(mk8.email.Contracts.Messaging.JmapServiceLimits? left, mk8.email.Contracts.Messaging.JmapServiceLimits? right) -> bool
 static mk8.email.Contracts.Messaging.JmapServiceLimits.operator ==(mk8.email.Contracts.Messaging.JmapServiceLimits? left, mk8.email.Contracts.Messaging.JmapServiceLimits? right) -> bool
 *REMOVED*const mk8.email.Contracts.Messaging.ApplicationOperations.JmapBatchExecute = "jmap.batch.execute.v4" -> string!
-const mk8.email.Contracts.Messaging.ApplicationOperations.JmapBatchExecute = "jmap.batch.execute.v5" -> string!
+const mk8.email.Contracts.Messaging.ApplicationOperations.JmapBatchExecute = "jmap.batch.execute.v6" -> string!
 mk8.email.Contracts.Messaging.MailOperationKind
 mk8.email.Contracts.Messaging.MailOperationKind.None = 0 -> mk8.email.Contracts.Messaging.MailOperationKind
 mk8.email.Contracts.Messaging.MailOperationKind.Failure = 1 -> mk8.email.Contracts.Messaging.MailOperationKind
@@ -297,3 +297,69 @@ mk8.email.Contracts.Messaging.MailOperationKind.ReadContactChanges = 102 -> mk8.
 mk8.email.Contracts.Messaging.MailOperationKind.FindContactChanges = 103 -> mk8.email.Contracts.Messaging.MailOperationKind
 mk8.email.Contracts.Messaging.MailOperationKind.MutateContacts = 104 -> mk8.email.Contracts.Messaging.MailOperationKind
 mk8.email.Contracts.Messaging.MailOperationKind.CopyContacts = 105 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.JmapApplicationResult.Failure.get -> mk8.email.Contracts.Messaging.MailApplicationFailure?
+mk8.email.Contracts.Messaging.JmapApplicationResult.Failure.init -> void
+*REMOVED*mk8.email.Contracts.Messaging.JmapApplicationProblem
+*REMOVED*mk8.email.Contracts.Messaging.JmapApplicationProblem.<Clone>$() -> mk8.email.Contracts.Messaging.JmapApplicationProblem!
+*REMOVED*mk8.email.Contracts.Messaging.JmapApplicationProblem.Deconstruct(out string! Type, out string! Title, out string? Detail, out string? Limit) -> void
+*REMOVED*mk8.email.Contracts.Messaging.JmapApplicationProblem.Detail.get -> string?
+*REMOVED*mk8.email.Contracts.Messaging.JmapApplicationProblem.Detail.init -> void
+*REMOVED*mk8.email.Contracts.Messaging.JmapApplicationProblem.Equals(mk8.email.Contracts.Messaging.JmapApplicationProblem? other) -> bool
+*REMOVED*mk8.email.Contracts.Messaging.JmapApplicationProblem.JmapApplicationProblem(string! Type, string! Title, string? Detail = null, string? Limit = null) -> void
+*REMOVED*mk8.email.Contracts.Messaging.JmapApplicationProblem.Limit.get -> string?
+*REMOVED*mk8.email.Contracts.Messaging.JmapApplicationProblem.Limit.init -> void
+*REMOVED*mk8.email.Contracts.Messaging.JmapApplicationProblem.Title.get -> string!
+*REMOVED*mk8.email.Contracts.Messaging.JmapApplicationProblem.Title.init -> void
+*REMOVED*mk8.email.Contracts.Messaging.JmapApplicationProblem.Type.get -> string!
+*REMOVED*mk8.email.Contracts.Messaging.JmapApplicationProblem.Type.init -> void
+*REMOVED*mk8.email.Contracts.Messaging.JmapApplicationResult.Problem.get -> mk8.email.Contracts.Messaging.JmapApplicationProblem?
+*REMOVED*mk8.email.Contracts.Messaging.JmapApplicationResult.Problem.init -> void
+*REMOVED*override mk8.email.Contracts.Messaging.JmapApplicationProblem.Equals(object? obj) -> bool
+*REMOVED*override mk8.email.Contracts.Messaging.JmapApplicationProblem.GetHashCode() -> int
+*REMOVED*override mk8.email.Contracts.Messaging.JmapApplicationProblem.ToString() -> string!
+*REMOVED*static mk8.email.Contracts.Messaging.JmapApplicationProblem.operator !=(mk8.email.Contracts.Messaging.JmapApplicationProblem? left, mk8.email.Contracts.Messaging.JmapApplicationProblem? right) -> bool
+*REMOVED*static mk8.email.Contracts.Messaging.JmapApplicationProblem.operator ==(mk8.email.Contracts.Messaging.JmapApplicationProblem? left, mk8.email.Contracts.Messaging.JmapApplicationProblem? right) -> bool
+*REMOVED*const mk8.email.Contracts.Messaging.ApplicationOperations.JmapProfileGet = "jmap.profile.get" -> string!
+const mk8.email.Contracts.Messaging.ApplicationOperations.JmapProfileGet = "jmap.profile.get.v2" -> string!
+*REMOVED*const mk8.email.Contracts.Messaging.ApplicationOperations.JmapUpload = "jmap.upload" -> string!
+const mk8.email.Contracts.Messaging.ApplicationOperations.JmapUpload = "jmap.upload.v2" -> string!
+*REMOVED*const mk8.email.Contracts.Messaging.ApplicationOperations.JmapDownload = "jmap.download" -> string!
+const mk8.email.Contracts.Messaging.ApplicationOperations.JmapDownload = "jmap.download.v2" -> string!
+*REMOVED*const mk8.email.Contracts.Messaging.ApplicationOperations.JmapChangesPoll = "jmap.changes.poll" -> string!
+const mk8.email.Contracts.Messaging.ApplicationOperations.JmapChangesPoll = "jmap.changes.poll.v2" -> string!
+mk8.email.Contracts.Messaging.MailFeature
+mk8.email.Contracts.Messaging.MailFeature.Unsupported = 0 -> mk8.email.Contracts.Messaging.MailFeature
+mk8.email.Contracts.Messaging.MailFeature.Basic = 1 -> mk8.email.Contracts.Messaging.MailFeature
+mk8.email.Contracts.Messaging.MailFeature.Messages = 2 -> mk8.email.Contracts.Messaging.MailFeature
+mk8.email.Contracts.Messaging.MailFeature.Submission = 3 -> mk8.email.Contracts.Messaging.MailFeature
+mk8.email.Contracts.Messaging.MailFeature.AutomaticReplies = 4 -> mk8.email.Contracts.Messaging.MailFeature
+mk8.email.Contracts.Messaging.MailFeature.Contacts = 5 -> mk8.email.Contracts.Messaging.MailFeature
+mk8.email.Contracts.Messaging.MailFailureKind
+mk8.email.Contracts.Messaging.MailFailureKind.None = 0 -> mk8.email.Contracts.Messaging.MailFailureKind
+mk8.email.Contracts.Messaging.MailFailureKind.MalformedBatch = 1 -> mk8.email.Contracts.Messaging.MailFailureKind
+mk8.email.Contracts.Messaging.MailFailureKind.UnsupportedFeature = 2 -> mk8.email.Contracts.Messaging.MailFailureKind
+mk8.email.Contracts.Messaging.MailFailureKind.ResourceLimit = 3 -> mk8.email.Contracts.Messaging.MailFailureKind
+mk8.email.Contracts.Messaging.MailFailureKind.InvalidSelection = 4 -> mk8.email.Contracts.Messaging.MailFailureKind
+mk8.email.Contracts.Messaging.MailResourceLimit
+mk8.email.Contracts.Messaging.MailResourceLimit.None = 0 -> mk8.email.Contracts.Messaging.MailResourceLimit
+mk8.email.Contracts.Messaging.MailResourceLimit.OperationCount = 1 -> mk8.email.Contracts.Messaging.MailResourceLimit
+mk8.email.Contracts.Messaging.MailResourceLimit.RequestConcurrency = 2 -> mk8.email.Contracts.Messaging.MailResourceLimit
+mk8.email.Contracts.Messaging.MailResourceLimit.UploadConcurrency = 3 -> mk8.email.Contracts.Messaging.MailResourceLimit
+mk8.email.Contracts.Messaging.MailResourceLimit.UploadSize = 4 -> mk8.email.Contracts.Messaging.MailResourceLimit
+static mk8.email.Contracts.Messaging.DistributedContractVersions.ReceiptBatchOperations.get -> System.Collections.Generic.IReadOnlySet<string!>!
+mk8.email.Contracts.Messaging.MailApplicationFailure
+mk8.email.Contracts.Messaging.MailApplicationFailure.<Clone>$() -> mk8.email.Contracts.Messaging.MailApplicationFailure!
+mk8.email.Contracts.Messaging.MailApplicationFailure.Deconstruct(out mk8.email.Contracts.Messaging.MailFailureKind Kind, out string? Detail, out mk8.email.Contracts.Messaging.MailResourceLimit Limit) -> void
+mk8.email.Contracts.Messaging.MailApplicationFailure.Equals(mk8.email.Contracts.Messaging.MailApplicationFailure? other) -> bool
+mk8.email.Contracts.Messaging.MailApplicationFailure.MailApplicationFailure(mk8.email.Contracts.Messaging.MailFailureKind Kind, string? Detail = null, mk8.email.Contracts.Messaging.MailResourceLimit Limit = mk8.email.Contracts.Messaging.MailResourceLimit.None) -> void
+mk8.email.Contracts.Messaging.MailApplicationFailure.Kind.get -> mk8.email.Contracts.Messaging.MailFailureKind
+mk8.email.Contracts.Messaging.MailApplicationFailure.Kind.init -> void
+mk8.email.Contracts.Messaging.MailApplicationFailure.Detail.get -> string?
+mk8.email.Contracts.Messaging.MailApplicationFailure.Detail.init -> void
+mk8.email.Contracts.Messaging.MailApplicationFailure.Limit.get -> mk8.email.Contracts.Messaging.MailResourceLimit
+mk8.email.Contracts.Messaging.MailApplicationFailure.Limit.init -> void
+override mk8.email.Contracts.Messaging.MailApplicationFailure.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailApplicationFailure.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailApplicationFailure.ToString() -> string!
+static mk8.email.Contracts.Messaging.MailApplicationFailure.operator !=(mk8.email.Contracts.Messaging.MailApplicationFailure? left, mk8.email.Contracts.Messaging.MailApplicationFailure? right) -> bool
+static mk8.email.Contracts.Messaging.MailApplicationFailure.operator ==(mk8.email.Contracts.Messaging.MailApplicationFailure? left, mk8.email.Contracts.Messaging.MailApplicationFailure? right) -> bool

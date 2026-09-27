@@ -40,6 +40,11 @@ public sealed class ApplicationRequestDispatcherTests
     [DataRow("admin.unknown")]
     [DataRow("oauth.unknown")]
     [DataRow("jmap.unknown")]
+    [DataRow("jmap.profile.get")]
+    [DataRow("jmap.batch.execute.v5")]
+    [DataRow("jmap.upload")]
+    [DataRow("jmap.download")]
+    [DataRow("jmap.changes.poll")]
     [DataRow("dav.unknown")]
     public async Task UnknownOperationReturnsAStableApplicationError(string operation)
     {
@@ -144,7 +149,7 @@ public sealed class ApplicationRequestDispatcherTests
                 ProtocolAuthenticationKinds.Password,
                 "person@example.test",
                 "secret"),
-            new JmapApplicationBatch(["urn:ietf:params:jmap:core"],
+            new JmapApplicationBatch([MailFeature.Basic],
                 [new JmapApplicationCall(MailOperationKind.Echo, new System.Text.Json.Nodes.JsonObject
                 {
                     ["ok"] = true, ["x"] = 1, ["X"] = 2,
@@ -162,7 +167,7 @@ public sealed class ApplicationRequestDispatcherTests
         Assert.IsFalse(response.IsError);
         Assert.AreEqual(value.Authentication.Username, service.Request?.Authentication.Username);
         Assert.IsNotNull(service.Request?.Batch);
-        CollectionAssert.AreEqual(value.Batch!.Capabilities, service.Request.Batch.Capabilities);
+        CollectionAssert.AreEqual(value.Batch!.Features, service.Request.Batch.Features);
         Assert.AreEqual(MailOperationKind.Echo, service.Request.Batch.Invocations[0].Operation);
         Assert.AreEqual("c1", service.Request.Batch.Invocations[0].CorrelationId);
         Assert.IsTrue(service.Request.Batch.Invocations[0].Arguments["ok"]!.GetValue<bool>());

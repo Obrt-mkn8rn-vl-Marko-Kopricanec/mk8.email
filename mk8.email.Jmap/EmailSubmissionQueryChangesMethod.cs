@@ -14,7 +14,7 @@ internal sealed class EmailSubmissionQueryChangesMethod(
     JmapStateService states) : IJmapMethod
 {
     public MailOperationKind Operation => MailOperationKind.FindSubmissionChanges;
-    public string Capability => JmapConstants.SubmissionCapability;
+    public MailFeature Feature => MailFeature.Submission;
 
     public async Task<JmapMethodResponse> InvokeAsync(
         JmapInvocationContext context,

@@ -52,8 +52,8 @@ public static class JmapEndpointRouteBuilderExtensions
             return GatewayJmapAuthentication.Unauthorized(context, environment);
 
         SetJmapResponseHeaders(context.Response);
-        if (result.Problem is not null)
-            return Problem(result.Problem);
+        if (result.Failure is not null)
+            return Problem(GatewayJmapFailureCodec.Render(result.Failure));
         if (result.Profile is null)
             throw new InvalidOperationException("The Application returned an incomplete account profile.");
         return Results.Json(GatewayJmapProfileCodec.Render(result.Profile, environment), JsonOptions);
@@ -70,7 +70,7 @@ public static class JmapEndpointRouteBuilderExtensions
         SetJmapResponseHeaders(context.Response);
         if (!HasJmapJsonContentType(context.Request))
         {
-            return Problem(new JmapApplicationProblem(
+            return Problem(new GatewayJmapProblem(
                 "urn:ietf:params:jmap:error:notJSON",
                 "Unsupported media type",
                 "JMAP API requests must use the application/json media type."),
@@ -87,7 +87,7 @@ public static class JmapEndpointRouteBuilderExtensions
         }
         catch (GatewayJmapBodyLimitException)
         {
-            return Problem(new JmapApplicationProblem(
+            return Problem(new GatewayJmapProblem(
                 "urn:ietf:params:jmap:error:limit",
                 "Request limit exceeded",
                 "The JMAP request is larger than the server limit.",
@@ -96,7 +96,7 @@ public static class JmapEndpointRouteBuilderExtensions
 
         JmapApplicationBatch? batch = null;
         JmapBatchPreflight? preflight = null;
-        JmapApplicationProblem? parseProblem = null;
+        GatewayJmapProblem? parseProblem = null;
         try
         {
             batch = GatewayJmapBatchCodec.Parse(
@@ -112,8 +112,8 @@ public static class JmapEndpointRouteBuilderExtensions
             cancellationToken).ConfigureAwait(false);
         if (string.Equals(result.Outcome, JmapApplicationOutcomes.Unauthorized, StringComparison.Ordinal))
             return GatewayJmapAuthentication.Unauthorized(context, environment);
-        if (result.Problem is not null)
-            return Problem(result.Problem);
+        if (result.Failure is not null)
+            return Problem(GatewayJmapFailureCodec.Render(result.Failure));
         if (parseProblem is not null)
             return Problem(parseProblem);
         if (result.Batch is null)
@@ -158,8 +158,8 @@ public static class JmapEndpointRouteBuilderExtensions
             return GatewayJmapAuthentication.Unauthorized(context, environment);
         if (string.Equals(result.Outcome, JmapApplicationOutcomes.NotFound, StringComparison.Ordinal))
             return ResourceNotFound("The account or upload resource was not found.");
-        if (result.Problem is not null)
-            return Problem(result.Problem);
+        if (result.Failure is not null)
+            return Problem(GatewayJmapFailureCodec.Render(result.Failure));
         if (result.BlobId is null || result.Size is null)
             throw new InvalidOperationException("The Application returned an incomplete JMAP upload result.");
 
@@ -252,11 +252,10 @@ public static class JmapEndpointRouteBuilderExtensions
             await GatewayJmapAuthentication.Unauthorized(context, environment).ExecuteAsync(context).ConfigureAwait(false);
             return;
         }
-        if (initial.Problem is not null || initial.Cursor is null)
+        if (initial.Failure is not null || initial.Cursor is null)
         {
-            await Problem(initial.Problem ?? new JmapApplicationProblem(
-                "about:blank",
-                "Invalid event source state")).ExecuteAsync(context).ConfigureAwait(false);
+            await Problem(initial.Failure is not null ? GatewayJmapFailureCodec.Render(initial.Failure)
+                : new GatewayJmapProblem("about:blank", "Invalid event source state")).ExecuteAsync(context).ConfigureAwait(false);
             return;
         }
 
@@ -440,7 +439,7 @@ public static class JmapEndpointRouteBuilderExtensions
     }
 
     private static IResult Problem(
-        JmapApplicationProblem problem,
+        GatewayJmapProblem problem,
         int statusCode = StatusCodes.Status400BadRequest)
     {
         var value = new JsonObject

@@ -201,7 +201,7 @@ public sealed class JmapDurableReplayTests
     public async Task VerificationOutboxWakesWorkerAndRetriesTheSameEffectAfterLostEnqueueAcknowledgement()
     {
         await using var rig = await Rig.CreateAsync();
-        var batch = new JmapApplicationBatch([JmapConstants.CoreCapability], [new JmapApplicationCall(MailOperationKind.MutateNotificationSubscriptions,
+        var batch = new JmapApplicationBatch([MailFeature.Basic], [new JmapApplicationCall(MailOperationKind.MutateNotificationSubscriptions,
             new JsonObject { ["create"] = new JsonObject { ["device"] = new JsonObject
             { ["deviceClientId"] = "replay-device", ["url"] = "https://push.example.test/verification" } } }, "push")]);
         var operation = Guid.CreateVersion7();
@@ -302,7 +302,7 @@ public sealed class JmapDurableReplayTests
             scope.ServiceProvider.GetRequiredService<LargeObjectTransactionEffects>(),
             NullLogger<JmapRequestProcessor>.Instance,
             scope.ServiceProvider.GetRequiredService<ApplicationOperationReceiptStore>());
-        var result = await processor.ProcessAsync(new JmapApplicationBatch([JmapConstants.CoreCapability],
+        var result = await processor.ProcessAsync(new JmapApplicationBatch([MailFeature.Basic],
             [new(MailOperationKind.MutateContacts, new JsonObject(), "mutation")], new Dictionary<string, string>()),
             rig.User, Guid.CreateVersion7());
         Assert.AreEqual(MailOperationKind.Failure, result.Invocations[0].Operation);
@@ -317,7 +317,7 @@ public sealed class JmapDurableReplayTests
     private sealed class InvalidResultMethod(EmailDbContext database, MailOperationKind invalid, bool additional, Action callback) : IJmapMethod
     {
         public MailOperationKind Operation => MailOperationKind.MutateContacts;
-        public string Capability => JmapConstants.CoreCapability;
+        public MailFeature Feature => MailFeature.Basic;
         public async Task<JmapMethodResponse> InvokeAsync(JmapInvocationContext context, JsonObject arguments,
             CancellationToken cancellationToken = default)
         {
@@ -427,7 +427,7 @@ public sealed class JmapDurableReplayTests
             using var scope = Services.CreateScope();
             return await scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>().ProcessAsync(batch, User, operation, token);
         }
-        public JmapApplicationBatch ContactsBatch() => new([JmapConstants.CoreCapability, JmapConstants.ContactsCapability],
+        public JmapApplicationBatch ContactsBatch() => new([MailFeature.Basic, MailFeature.Contacts],
         [
             new(MailOperationKind.MutateAddressBooks, new JsonObject { ["accountId"] = JmapId.Account(InboxId), ["create"] = new JsonObject
             { ["book"] = new JsonObject { ["name"] = "Replay book" } } }, "book"),

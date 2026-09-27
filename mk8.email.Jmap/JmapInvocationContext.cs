@@ -1,18 +1,19 @@
 using System.Text.Json.Nodes;
 using mk8.email.Application.Interfaces;
+using mk8.email.Contracts.Messaging;
 
 namespace mk8.email.Jmap;
 
 public sealed class JmapInvocationContext(
     AuthenticatedMailUser user,
-    IReadOnlySet<string> capabilities,
+    IReadOnlySet<MailFeature> features,
     IDictionary<string, string> createdIds)
 {
     private readonly List<Func<CancellationToken, Task>> _postCommitActions = [];
     private readonly List<mk8.email.Contracts.Messaging.ApplicationRequest> _presentationEffects = [];
 
     public AuthenticatedMailUser User { get; } = user;
-    public IReadOnlySet<string> Capabilities { get; } = capabilities;
+    public IReadOnlySet<MailFeature> Features { get; } = features;
     public IDictionary<string, string> CreatedIds { get; } = createdIds;
 
     public string? ResolveId(string? id)

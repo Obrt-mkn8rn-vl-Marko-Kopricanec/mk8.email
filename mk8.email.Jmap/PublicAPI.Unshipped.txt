@@ -14,3 +14,22 @@ mk8.email.Jmap.JmapMethodResponse.Operation.get -> mk8.email.Contracts.Messaging
 mk8.email.Jmap.JmapMethodResponse.Operation.init -> void
 mk8.email.Jmap.JmapMethodResponse.Deconstruct(out mk8.email.Contracts.Messaging.MailOperationKind Operation, out System.Text.Json.Nodes.JsonObject! Arguments, out System.Collections.Generic.IReadOnlyList<mk8.email.Jmap.JmapMethodResponse!>? AdditionalResponses) -> void
 mk8.email.Jmap.JmapMethodResponse.JmapMethodResponse(mk8.email.Contracts.Messaging.MailOperationKind Operation, System.Text.Json.Nodes.JsonObject! Arguments, System.Collections.Generic.IReadOnlyList<mk8.email.Jmap.JmapMethodResponse!>? AdditionalResponses = null) -> void
+*REMOVED*const mk8.email.Jmap.JmapConstants.ContactsCapability = "urn:ietf:params:jmap:contacts" -> string!
+*REMOVED*const mk8.email.Jmap.JmapConstants.CoreCapability = "urn:ietf:params:jmap:core" -> string!
+*REMOVED*const mk8.email.Jmap.JmapConstants.MailCapability = "urn:ietf:params:jmap:mail" -> string!
+*REMOVED*const mk8.email.Jmap.JmapConstants.SubmissionCapability = "urn:ietf:params:jmap:submission" -> string!
+*REMOVED*const mk8.email.Jmap.JmapConstants.VacationResponseCapability = "urn:ietf:params:jmap:vacationresponse" -> string!
+*REMOVED*mk8.email.Jmap.CoreEchoMethod.Capability.get -> string!
+*REMOVED*mk8.email.Jmap.IJmapMethod.Capability.get -> string!
+*REMOVED*mk8.email.Jmap.JmapInvocationContext.Capabilities.get -> System.Collections.Generic.IReadOnlySet<string!>!
+*REMOVED*mk8.email.Jmap.JmapInvocationContext.JmapInvocationContext(mk8.email.Application.Interfaces.AuthenticatedMailUser! user, System.Collections.Generic.IReadOnlySet<string!>! capabilities, System.Collections.Generic.IDictionary<string!, string!>! createdIds) -> void
+*REMOVED*mk8.email.Jmap.JmapRequestException
+*REMOVED*mk8.email.Jmap.JmapRequestException.Detail.get -> string?
+*REMOVED*mk8.email.Jmap.JmapRequestException.JmapRequestException(string! type, string! title, string? detail = null, string? limit = null) -> void
+*REMOVED*mk8.email.Jmap.JmapRequestException.Limit.get -> string?
+*REMOVED*mk8.email.Jmap.JmapRequestException.Title.get -> string!
+*REMOVED*mk8.email.Jmap.JmapRequestException.Type.get -> string!
+mk8.email.Jmap.IJmapMethod.Feature.get -> mk8.email.Contracts.Messaging.MailFeature
+mk8.email.Jmap.CoreEchoMethod.Feature.get -> mk8.email.Contracts.Messaging.MailFeature
+mk8.email.Jmap.JmapInvocationContext.Features.get -> System.Collections.Generic.IReadOnlySet<mk8.email.Contracts.Messaging.MailFeature>!
+mk8.email.Jmap.JmapInvocationContext.JmapInvocationContext(mk8.email.Application.Interfaces.AuthenticatedMailUser! user, System.Collections.Generic.IReadOnlySet<mk8.email.Contracts.Messaging.MailFeature>! features, System.Collections.Generic.IDictionary<string!, string!>! createdIds) -> void

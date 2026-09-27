@@ -12,7 +12,7 @@ internal sealed class ContactCardGetMethod(
     EnvironmentConfig environment) : IJmapMethod
 {
     public MailOperationKind Operation => MailOperationKind.ReadContacts;
-    public string Capability => JmapConstants.ContactsCapability;
+    public MailFeature Feature => MailFeature.Contacts;
 
     public async Task<JmapMethodResponse> InvokeAsync(
         JmapInvocationContext context,

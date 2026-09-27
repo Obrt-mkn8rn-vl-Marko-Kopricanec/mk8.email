@@ -17,7 +17,7 @@ internal sealed class ThreadGetMethod(
         StringComparer.Ordinal);
 
     public MailOperationKind Operation => MailOperationKind.ReadThreads;
-    public string Capability => JmapConstants.MailCapability;
+    public MailFeature Feature => MailFeature.Messages;
 
     public async Task<JmapMethodResponse> InvokeAsync(
         JmapInvocationContext context,

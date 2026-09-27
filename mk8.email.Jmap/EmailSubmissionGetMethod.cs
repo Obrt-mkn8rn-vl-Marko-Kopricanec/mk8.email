@@ -15,7 +15,7 @@ internal sealed class EmailSubmissionGetMethod(
     EnvironmentConfig environment) : IJmapMethod
 {
     public MailOperationKind Operation => MailOperationKind.ReadSubmissions;
-    public string Capability => JmapConstants.SubmissionCapability;
+    public MailFeature Feature => MailFeature.Submission;
 
     public async Task<JmapMethodResponse> InvokeAsync(
         JmapInvocationContext context,

@@ -30,6 +30,16 @@ public sealed class DistributedContractCompatibilityTests
     [DataRow("jmap.batch.execute.v3", false, true)]
     [DataRow("jmap.batch.execute.v4", false, false)]
     [DataRow("jmap.batch.execute.v4", false, true)]
+    [DataRow("jmap.batch.execute.v5", false, false)]
+    [DataRow("jmap.batch.execute.v5", false, true)]
+    [DataRow("jmap.profile.get", false, false)]
+    [DataRow("jmap.profile.get", false, true)]
+    [DataRow("jmap.upload", false, false)]
+    [DataRow("jmap.upload", false, true)]
+    [DataRow("jmap.download", false, false)]
+    [DataRow("jmap.download", false, true)]
+    [DataRow("jmap.changes.poll", false, false)]
+    [DataRow("jmap.changes.poll", false, true)]
     [DataRow("jmap.session.get", false, false)]
     [DataRow("jmap.session.get", false, true)]
     [DataRow("jmap.event.poll", false, false)]
@@ -57,9 +67,14 @@ public sealed class DistributedContractCompatibilityTests
     }
 
     [TestMethod]
-    [DataRow(false)]
-    [DataRow(true)]
-    public async Task ElapsedLegacyDeadlinesRemainBlockedAndAreNotAutomaticallyExpired(bool presentation)
+    [DataRow("jmap.batch.execute.v2", false)]
+    [DataRow("webpush.send", true)]
+    [DataRow("jmap.batch.execute.v5", false)]
+    [DataRow("jmap.profile.get", false)]
+    [DataRow("jmap.upload", false)]
+    [DataRow("jmap.download", false)]
+    [DataRow("jmap.changes.poll", false)]
+    public async Task ElapsedLegacyDeadlinesRemainBlockedAndAreNotAutomaticallyExpired(string operation, bool presentation)
     {
         await using var database = await RequirePostgresAsync();
         await using var source = NpgsqlDataSource.Create(database.ConnectionString);
@@ -67,7 +82,7 @@ public sealed class DistributedContractCompatibilityTests
         using var protector = AesGcmPayloadProtectorTests.CreateProtector("original", "elapsed-legacy-key");
         PostgresApplicationBus bus = presentation
             ? new PostgresPresentationBus(source, protector) : new PostgresApplicationBus(source, protector);
-        var request = Request(presentation ? "webpush.send" : "jmap.batch.execute.v2") with
+        var request = Request(operation) with
         {
             CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-2),
             Deadline = DateTimeOffset.UtcNow.AddMinutes(-1),

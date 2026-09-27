@@ -14,7 +14,7 @@ internal sealed class ContactCardCopyMethod(
     EnvironmentConfig environment) : IJmapMethod
 {
     public MailOperationKind Operation => MailOperationKind.CopyContacts;
-    public string Capability => JmapConstants.ContactsCapability;
+    public MailFeature Feature => MailFeature.Contacts;
 
     public async Task<JmapMethodResponse> InvokeAsync(
         JmapInvocationContext context,

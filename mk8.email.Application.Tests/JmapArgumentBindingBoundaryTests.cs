@@ -162,18 +162,18 @@ public sealed class JmapArgumentBindingBoundaryTests
             JmapFixture.OverrideMethod(services, new ProbeMethod(() => calls++)));
         using var scope = fixture.Services.CreateScope();
         var binding = JsonSerializer.Deserialize<ApplicationArgumentBinding>(bindingJson, new JsonSerializerOptions(JsonSerializerDefaults.Web));
-        var batch = new JmapApplicationBatch([JmapConstants.CoreCapability],
+        var batch = new JmapApplicationBatch([MailFeature.Basic],
             [new JmapApplicationCall(MailOperationKind.FindFolders, new JsonObject(), "first"),
              new JmapApplicationCall(MailOperationKind.Echo, new JsonObject(), "second", [binding!])]);
-        var exception = await Assert.ThrowsAsync<JmapRequestException>(() =>
+        var exception = await Assert.ThrowsAsync<MailApplicationException>(() =>
             scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>().ProcessAsync(batch, fixture.User));
-        Assert.AreEqual("urn:ietf:params:jmap:error:notRequest", exception.Type);
+        Assert.AreEqual(MailFailureKind.MalformedBatch, exception.Failure.Kind);
         Assert.AreEqual(0, calls);
     }
 
     private static JsonObject Request(JsonObject source, JsonObject target) => new()
     {
-        ["using"] = new JsonArray(JmapConstants.CoreCapability),
+        ["using"] = new JsonArray(GatewayJmapFeatureCodec.CoreCapability),
         ["methodCalls"] = new JsonArray(
             new JsonArray("Core/echo", source, "source"), new JsonArray("Core/echo", target, "target")),
     };
@@ -188,7 +188,7 @@ public sealed class JmapArgumentBindingBoundaryTests
     private sealed class ProbeMethod(Action onInvoke) : IJmapMethod
     {
         public MailOperationKind Operation => MailOperationKind.FindFolders;
-        public string Capability => JmapConstants.CoreCapability;
+        public MailFeature Feature => MailFeature.Basic;
         public Task<JmapMethodResponse> InvokeAsync(JmapInvocationContext context, JsonObject arguments,
             CancellationToken cancellationToken = default)
         {
@@ -200,7 +200,7 @@ public sealed class JmapArgumentBindingBoundaryTests
     private sealed class MutatingMethod : IJmapMethod
     {
         public MailOperationKind Operation => MailOperationKind.MutateFolders;
-        public string Capability => JmapConstants.CoreCapability;
+        public MailFeature Feature => MailFeature.Basic;
         public Task<JmapMethodResponse> InvokeAsync(JmapInvocationContext context, JsonObject arguments,
             CancellationToken cancellationToken = default)
         {

@@ -146,7 +146,7 @@ public sealed class JmapGatewayRouteTests
             Assert.AreEqual("person@example.test", jmap.Request?.Authentication.Username);
             Assert.AreEqual("route-password-secret", jmap.Request?.Authentication.Secret);
             Assert.IsNotNull(jmap.Request?.Batch);
-            CollectionAssert.AreEqual(new[] { "urn:ietf:params:jmap:core" }, jmap.Request.Batch.Capabilities);
+            CollectionAssert.AreEqual(new[] { MailFeature.Basic }, jmap.Request.Batch.Features);
             Assert.AreEqual(2, jmap.Request.Batch.Invocations.Length);
             Assert.AreEqual(MailOperationKind.Echo, jmap.Request.Batch.Invocations[0].Operation);
             Assert.AreEqual("call-1", jmap.Request.Batch.Invocations[0].CorrelationId);

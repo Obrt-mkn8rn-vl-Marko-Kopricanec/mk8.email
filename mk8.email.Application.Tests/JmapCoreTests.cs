@@ -46,8 +46,8 @@ public sealed class JmapCoreTests
 
         var capabilities = session["capabilities"]?.AsObject();
         Assert.IsNotNull(capabilities);
-        Assert.IsTrue(capabilities.ContainsKey(JmapConstants.CoreCapability));
-        var collations = capabilities[JmapConstants.CoreCapability]!["collationAlgorithms"]!
+        Assert.IsTrue(capabilities.ContainsKey(GatewayJmapFeatureCodec.CoreCapability));
+        var collations = capabilities[GatewayJmapFeatureCodec.CoreCapability]!["collationAlgorithms"]!
             .AsArray()
             .Select(node => node!.GetValue<string>())
             .ToArray();
@@ -207,9 +207,9 @@ public sealed class JmapCoreTests
 
         var unknownCapability = JsonNode.Parse(
             """{"using":["urn:example:unknown"],"methodCalls":[]}""");
-        var exception = await Assert.ThrowsAsync<JmapRequestException>(
+        var exception = await Assert.ThrowsAsync<MailApplicationException>(
             () => JmapFixture.ProcessAsync(processor, unknownCapability, fixture.User));
-        Assert.AreEqual("urn:ietf:params:jmap:error:unknownCapability", exception.Type);
+        Assert.AreEqual(MailFailureKind.UnsupportedFeature, exception.Failure.Kind);
 
         var invalidReference = JsonNode.Parse(
             """
@@ -246,9 +246,9 @@ public sealed class JmapCoreTests
         var processor = scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>();
         var emptyCapability = JsonNode.Parse(
             """{"using":["urn:ietf:params:jmap:core",""],"methodCalls":[]}""");
-        var exception = await Assert.ThrowsAsync<JmapRequestException>(
+        var exception = await Assert.ThrowsAsync<MailApplicationException>(
             () => JmapFixture.ProcessAsync(processor, emptyCapability, fixture.User));
-        Assert.AreEqual("urn:ietf:params:jmap:error:unknownCapability", exception.Type);
+        Assert.AreEqual(MailFailureKind.UnsupportedFeature, exception.Failure.Kind);
     }
 
     [TestMethod]
@@ -547,9 +547,9 @@ public sealed class JmapCoreTests
             for (var index = 0; index < fixture.Configuration.Jmap.MaxConcurrentRequests; index++)
                 leases.Add(await limiter.AcquireRequestAsync(CancellationToken.None));
 
-            var exception = await Assert.ThrowsAsync<JmapRequestException>(
+            var exception = await Assert.ThrowsAsync<MailApplicationException>(
                 () => limiter.AcquireRequestAsync(CancellationToken.None));
-            Assert.AreEqual("maxConcurrentRequests", exception.Limit);
+            Assert.AreEqual(MailResourceLimit.RequestConcurrency, exception.Failure.Limit);
         }
         finally
         {
@@ -751,9 +751,9 @@ public sealed class JmapCoreTests
         var response = await fixture.InvokeAsync($$$"""
         {
           "using":[
-            "{{{JmapConstants.CoreCapability}}}",
-            "{{{JmapConstants.MailCapability}}}",
-            "{{{JmapConstants.SubmissionCapability}}}"
+            "{{{GatewayJmapFeatureCodec.CoreCapability}}}",
+            "{{{GatewayJmapFeatureCodec.MailCapability}}}",
+            "{{{GatewayJmapFeatureCodec.SubmissionCapability}}}"
           ],
           "methodCalls":[
             ["Mailbox/query",{
@@ -1142,8 +1142,8 @@ public sealed class JmapCoreTests
         var response = await fixture.InvokeAsync(new JsonObject
         {
             ["using"] = new JsonArray(
-                JmapConstants.CoreCapability,
-                JmapConstants.VacationResponseCapability),
+                GatewayJmapFeatureCodec.CoreCapability,
+                GatewayJmapFeatureCodec.VacationResponseCapability),
             ["methodCalls"] = new JsonArray(
                 new JsonArray(
                     "VacationResponse/get",
@@ -1171,7 +1171,7 @@ public sealed class JmapCoreTests
     private sealed class ImplicitResponseMethod : IJmapMethod
     {
         public MailOperationKind Operation => MailOperationKind.FindFolders;
-        public string Capability => JmapConstants.CoreCapability;
+        public MailFeature Feature => MailFeature.Basic;
 
         public Task<JmapMethodResponse> InvokeAsync(
             JmapInvocationContext context,
@@ -1188,7 +1188,7 @@ public sealed class JmapCoreTests
     private sealed class InvalidUnicodeResponseMethod : IJmapMethod
     {
         public MailOperationKind Operation => MailOperationKind.FindFolders;
-        public string Capability => JmapConstants.CoreCapability;
+        public MailFeature Feature => MailFeature.Basic;
 
         public Task<JmapMethodResponse> InvokeAsync(
             JmapInvocationContext context,
@@ -1206,7 +1206,7 @@ public sealed class JmapCoreTests
     private sealed class InvocationProbeMethod(Action invoked) : IJmapMethod
     {
         public MailOperationKind Operation => MailOperationKind.FindFolders;
-        public string Capability => JmapConstants.CoreCapability;
+        public MailFeature Feature => MailFeature.Basic;
 
         public Task<JmapMethodResponse> InvokeAsync(
             JmapInvocationContext context,
@@ -1226,7 +1226,7 @@ public sealed class JmapCoreTests
         bool fail) : IJmapMethod
     {
         public MailOperationKind Operation => operation;
-        public string Capability => JmapConstants.CoreCapability;
+        public MailFeature Feature => MailFeature.Basic;
 
         public Task<JmapMethodResponse> InvokeAsync(
             JmapInvocationContext context,
@@ -1250,7 +1250,7 @@ public sealed class JmapCoreTests
         Action completed) : IJmapMethod
     {
         public MailOperationKind Operation => MailOperationKind.FindFolders;
-        public string Capability => JmapConstants.CoreCapability;
+        public MailFeature Feature => MailFeature.Basic;
 
         public Task<JmapMethodResponse> InvokeAsync(
             JmapInvocationContext context,

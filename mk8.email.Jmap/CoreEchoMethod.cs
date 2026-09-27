@@ -7,7 +7,7 @@ namespace mk8.email.Jmap;
 public sealed class CoreEchoMethod : IJmapMethod
 {
     public MailOperationKind Operation => MailOperationKind.Echo;
-    public string Capability => JmapConstants.CoreCapability;
+    public MailFeature Feature => MailFeature.Basic;
 
     public Task<JmapMethodResponse> InvokeAsync(
         JmapInvocationContext context,

@@ -35,7 +35,7 @@ public sealed class JmapRequestProcessor
         ILogger<JmapRequestProcessor> logger,
         ApplicationOperationReceiptStore? receipts = null)
     {
-        _methods = methods.ToDictionary(method => ValidRegisteredOperation(method.Operation));
+        _methods = methods.ToDictionary(method => ValidRegisteredOperation(method.Operation, method.Feature));
         _sessions = sessions;
         _database = database;
         _environment = environment;
@@ -59,10 +59,10 @@ public sealed class JmapRequestProcessor
         ArgumentNullException.ThrowIfNull(user);
         if (batch.Invocations is null)
             throw NotRequest("The application batch must contain invocations.");
-        var capabilities = ValidateHeader(batch.Capabilities, batch.Invocations.Length);
+        var features = ValidateHeader(batch.Features, batch.Invocations.Length);
         var invocations = CloneInvocations(batch.Invocations);
         var createdIds = CloneCreatedIds(batch.CreatedIds);
-        var context = new JmapInvocationContext(user, capabilities, createdIds);
+        var context = new JmapInvocationContext(user, features, createdIds);
         var responses = new List<JmapApplicationInvocation>();
         var relational = _database.Database.IsRelational();
         if (relational && (operationId is null || operationId == Guid.Empty || _receipts is null))
@@ -86,7 +86,7 @@ public sealed class JmapRequestProcessor
                 response = JmapMethodResponse.Error(referenceFailure == ApplicationBindingFailure.InvalidTarget
                     ? "invalidArguments" : "invalidResultReference");
             else if (!_methods.TryGetValue(invocation.Operation, out var method)
-                || !capabilities.Contains(method.Capability))
+                || !features.Contains(method.Feature))
                 response = JmapMethodResponse.Error("unknownMethod");
             else
                 response = await InvokeAtomicallyAsync(
@@ -147,33 +147,28 @@ public sealed class JmapRequestProcessor
     internal void ValidatePreflight(JmapBatchPreflight? preflight)
     {
         if (preflight is not null)
-            _ = ValidateHeader(preflight.Capabilities, preflight.InvocationCount);
+            _ = ValidateHeader(preflight.Features, preflight.InvocationCount);
     }
 
-    private HashSet<string> ValidateHeader(string[] values, int invocationCount)
+    private HashSet<MailFeature> ValidateHeader(MailFeature[] values, int invocationCount)
     {
-        if (values is null || values.Any(capability => capability is null))
-            throw NotRequest("The using property must contain capability strings.");
-        var capabilities = values.ToHashSet(StringComparer.Ordinal);
-        var supported = _methods.Values.Select(method => method.Capability)
-            .Append(JmapConstants.CoreCapability).ToHashSet(StringComparer.Ordinal);
-        var unknown = capabilities.FirstOrDefault(capability => !supported.Contains(capability));
-        if (unknown is not null)
-            throw new JmapRequestException(
-                "urn:ietf:params:jmap:error:unknownCapability",
-                "Unknown capability",
-                $"The request uses an unsupported capability: {unknown}");
-        if (!capabilities.Contains(JmapConstants.CoreCapability))
-            throw NotRequest("The using property must include the JMAP core capability.");
+        if (values is null || values.Any(feature => !Enum.IsDefined(feature)))
+            throw NotRequest("The application batch contains invalid feature identifiers.");
+        var features = values.ToHashSet();
+        var supported = _methods.Values.Select(method => method.Feature)
+            .Append(MailFeature.Basic).ToHashSet();
+        if (features.Any(feature => !supported.Contains(feature)))
+            throw new MailApplicationException(new MailApplicationFailure(
+                MailFailureKind.UnsupportedFeature, "The requested mail features are not supported."));
+        if (!features.Contains(MailFeature.Basic))
+            throw NotRequest("The application batch must include the basic mail feature.");
         if (invocationCount < 0)
             throw NotRequest("The application invocation count cannot be negative.");
         if (invocationCount > _environment.Jmap.MaxCallsInRequest)
-            throw new JmapRequestException(
-                "urn:ietf:params:jmap:error:limit",
-                "Request limit exceeded",
-                "The request contains too many method calls.",
-                "maxCallsInRequest");
-        return capabilities;
+            throw new MailApplicationException(new MailApplicationFailure(
+                MailFailureKind.ResourceLimit, "The application batch contains too many operations.",
+                MailResourceLimit.OperationCount));
+        return features;
     }
 
     private async Task<JmapMethodResponse> InvokeAtomicallyAsync(
@@ -352,8 +347,9 @@ public sealed class JmapRequestProcessor
         return result;
     }
 
-    private static MailOperationKind ValidRegisteredOperation(MailOperationKind operation) =>
+    private static MailOperationKind ValidRegisteredOperation(MailOperationKind operation, MailFeature feature) =>
         Enum.IsDefined(operation) && operation is not (MailOperationKind.None or MailOperationKind.Failure)
+            && Enum.IsDefined(feature) && feature != MailFeature.Unsupported
             ? operation : throw new ArgumentException("A handler must register a supported mail operation.", nameof(operation));
 
     private static void ValidateResponse(JmapMethodResponse response)
@@ -368,10 +364,7 @@ public sealed class JmapRequestProcessor
         }
     }
 
-    private static JmapRequestException NotRequest(string detail) =>
-        new(
-            "urn:ietf:params:jmap:error:notRequest",
-            "Invalid JMAP request",
-            detail);
+    private static MailApplicationException NotRequest(string detail) =>
+        new(new MailApplicationFailure(MailFailureKind.MalformedBatch, detail));
 
 }

@@ -23,7 +23,7 @@ internal sealed class EmailSetMethod(
         StringComparer.Ordinal);
 
     public MailOperationKind Operation => MailOperationKind.MutateMessages;
-    public string Capability => JmapConstants.MailCapability;
+    public MailFeature Feature => MailFeature.Messages;
 
     public async Task<JmapMethodResponse> InvokeAsync(
         JmapInvocationContext context,

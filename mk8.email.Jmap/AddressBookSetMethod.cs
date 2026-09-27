@@ -21,7 +21,7 @@ internal sealed class AddressBookSetMethod(
         StringComparer.Ordinal);
 
     public MailOperationKind Operation => MailOperationKind.MutateAddressBooks;
-    public string Capability => JmapConstants.ContactsCapability;
+    public MailFeature Feature => MailFeature.Contacts;
 
     public async Task<JmapMethodResponse> InvokeAsync(
         JmapInvocationContext context,

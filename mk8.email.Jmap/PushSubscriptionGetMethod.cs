@@ -22,7 +22,7 @@ internal sealed class PushSubscriptionGetMethod(
         StringComparer.Ordinal);
 
     public MailOperationKind Operation => MailOperationKind.ReadNotificationSubscriptions;
-    public string Capability => JmapConstants.CoreCapability;
+    public MailFeature Feature => MailFeature.Basic;
 
     public async Task<JmapMethodResponse> InvokeAsync(
         JmapInvocationContext context,

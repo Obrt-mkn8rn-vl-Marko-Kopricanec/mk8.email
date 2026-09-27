@@ -37,7 +37,7 @@ public sealed class JmapProfileBoundaryTests
         var gateway = Gateway("https://edge.example.test/mail");
         var session = GatewayJmapProfileCodec.Render(profile, gateway);
         var batch = await scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>().ProcessAsync(
-            new JmapApplicationBatch([JmapConstants.CoreCapability],
+            new JmapApplicationBatch([MailFeature.Basic],
                 [new JmapApplicationCall(MailOperationKind.Echo, new JsonObject { ["ok"] = true }, "one")]), fixture.User);
         var response = GatewayJmapBatchCodec.Render(batch, gateway);
 
@@ -59,14 +59,14 @@ public sealed class JmapProfileBoundaryTests
         {
             Jmap = new JmapConfig { PublicBaseUrl = "https://edge.example.test", MaxRequestSizeBytes = 1024, MaxUploadSizeBytes = 2048 },
         };
-        var core = GatewayJmapProfileCodec.Render(profile, gateway)["capabilities"]![JmapConstants.CoreCapability]!;
+        var core = GatewayJmapProfileCodec.Render(profile, gateway)["capabilities"]![GatewayJmapFeatureCodec.CoreCapability]!;
 
         Assert.AreEqual(1024L, core["maxSizeRequest"]!.GetValue<long>());
         Assert.AreEqual(2048L, core["maxSizeUpload"]!.GetValue<long>());
         Assert.AreEqual(77, core["maxObjectsInGet"]!.GetValue<int>());
         var workerLimited = profile with { Limits = profile.Limits with { MaxRequestSizeBytes = 512 } };
         Assert.AreEqual(512L, GatewayJmapProfileCodec.Render(workerLimited, gateway)
-            ["capabilities"]![JmapConstants.CoreCapability]!["maxSizeRequest"]!.GetValue<long>());
+            ["capabilities"]![GatewayJmapFeatureCodec.CoreCapability]!["maxSizeRequest"]!.GetValue<long>());
     }
 
     [TestMethod]

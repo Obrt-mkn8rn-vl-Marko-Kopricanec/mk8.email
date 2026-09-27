@@ -16,7 +16,7 @@ internal sealed class InProcessGatewayJmapClient(IServiceScopeFactory scopes)
     public Task<JmapApplicationResult> ExecuteBatchAsync(
         JmapBatchApplicationRequest request,
         CancellationToken cancellationToken = default) =>
-        InvokeAsync(service => service.ExecuteBatchAsync(request, cancellationToken));
+        InvokeAsync(service => service.ExecuteBatchAsync(request, Guid.CreateVersion7(), cancellationToken));
 
     public Task<JmapApplicationResult> UploadAsync(
         JmapUploadApplicationRequest request,

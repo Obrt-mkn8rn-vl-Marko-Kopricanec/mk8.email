@@ -318,6 +318,7 @@ public static class DistributedBackupRestorer
             var transaction = await connection.BeginTransactionAsync(
                 IsolationLevel.Serializable, cancellationToken).ConfigureAwait(false);
             await using var transactionLifetime = transaction.ConfigureAwait(false);
+            await EnsureReceiptSchemaAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
             await DistributedBlobReferenceInventory.ValidateSchemaAsync(
                 connection, transaction, cancellationToken).ConfigureAwait(false);
             var create = connection.CreateCommand();
@@ -507,6 +508,31 @@ public static class DistributedBackupRestorer
             }
             throw;
         }
+    }
+
+    private static async Task EnsureReceiptSchemaAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken cancellationToken)
+    {
+        // Version-2/3 archives predating receipts have no such rows. Add the empty
+        // table inside the existing restore gate before validating/rebinding refs.
+        var command = connection.CreateCommand();
+        await using var commandLifetime = command.ConfigureAwait(false);
+        command.Transaction = transaction;
+        command.CommandText = """
+            CREATE TABLE IF NOT EXISTS application_operation_receipts (
+                id uuid PRIMARY KEY, operation_id uuid NOT NULL,
+                step_number integer NOT NULL CHECK (step_number >= 0), user_id uuid NOT NULL,
+                purpose varchar(64) NOT NULL,
+                payload_object_provider varchar(32) NOT NULL CHECK (payload_object_provider = 'azure-blob'),
+                payload_object_name varchar(1024) NOT NULL, payload_object_sha256 varchar(64) NOT NULL,
+                payload_object_etag varchar(256) NOT NULL, payload_length bigint NOT NULL CHECK (payload_length > 0),
+                created_at timestamptz NOT NULL, effects_pending boolean NOT NULL, effects_retry_at timestamptz NOT NULL
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS ix_application_operation_receipts_operation_id_step_number
+                ON application_operation_receipts (operation_id, step_number);
+            CREATE INDEX IF NOT EXISTS ix_application_operation_receipts_effects_retry_at
+                ON application_operation_receipts (effects_retry_at) WHERE effects_pending;
+            """;
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static async IAsyncEnumerable<DistributedBlobReferenceRow> ReadManifestAsync(

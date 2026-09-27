@@ -40,6 +40,7 @@ fi
 if ! runuser -u postgres -- psql --dbname=mk8email --no-psqlrc \
     --tuples-only --no-align --set=ON_ERROR_STOP=1 \
     --command="SELECT to_regclass('public.application_requests') IS NOT NULL
+        AND to_regclass('public.application_operation_receipts') IS NOT NULL
         AND to_regclass('public.mail_queue_messages') IS NOT NULL
         AND to_regclass('public.jmap_push_subscriptions') IS NOT NULL
         AND to_regclass('public.jmap_changes') IS NOT NULL
@@ -93,6 +94,8 @@ BEGIN
                             ('application_requests', 'state'),
                             ('application_requests', 'lease_expires_at'),
                             ('application_requests', 'deadline_at'),
+                            ('application_operation_receipts', 'effects_pending'),
+                            ('application_operation_receipts', 'effects_retry_at'),
                             ('mail_queue_messages', 'state'),
                             ('mail_queue_messages', 'next_attempt_at'),
                             ('mail_queue_messages', 'lease_expires_at'),
@@ -143,6 +146,8 @@ REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM mk8wake;
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM mk8wake;
 GRANT SELECT (state, lease_expires_at, deadline_at)
     ON public.application_requests TO mk8wake;
+GRANT SELECT (effects_pending, effects_retry_at)
+    ON public.application_operation_receipts TO mk8wake;
 GRANT SELECT (state, next_attempt_at, lease_expires_at)
     ON public.mail_queue_messages TO mk8wake;
 GRANT SELECT (expires_at, is_verified, next_push_at, user_id,

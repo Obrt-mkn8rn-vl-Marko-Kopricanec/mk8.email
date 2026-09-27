@@ -28,6 +28,7 @@ public static class ApplicationServiceExtensions
         services.AddScoped<IDatabaseInitializationService, DatabaseInitializationService>();
         services.AddScoped<IApplicationRequestDispatcher, ApplicationRequestDispatcher>();
         services.AddScoped<LargeObjectTransactionEffects>();
+        services.AddScoped<ApplicationOperationReceiptStore>();
         services.AddScoped<MailQueueContentService>();
         services.AddScoped<MailQueueMaintenanceService>();
         services.AddScoped<MailQueueLargeObjectMigrationService>();

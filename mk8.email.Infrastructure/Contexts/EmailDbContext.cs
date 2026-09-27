@@ -38,6 +38,7 @@ public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContex
     public DbSet<OAuthAuthorizationCodeDB> OAuthAuthorizationCodes => Set<OAuthAuthorizationCodeDB>();
     public DbSet<MfaTotpCredentialDB> MfaTotpCredentials => Set<MfaTotpCredentialDB>();
     public DbSet<MfaRecoveryCodeDB> MfaRecoveryCodes => Set<MfaRecoveryCodeDB>();
+    public DbSet<ApplicationOperationReceiptDB> ApplicationOperationReceipts => Set<ApplicationOperationReceiptDB>();
 
     private static readonly Guid GlobalConfigSeedId = Guid.Parse("00000000-0000-0000-0000-000000000001");
     private static readonly Guid GlobalLimitsSeedId = Guid.Parse("00000000-0000-0000-0000-000000000002");
@@ -80,6 +81,12 @@ public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContex
     {
         ArgumentNullException.ThrowIfNull(modelBuilder);
         base.OnModelCreating(modelBuilder);
+
+        modelBuilder.Entity<ApplicationOperationReceiptDB>(entity =>
+        {
+            entity.HasIndex(receipt => new { receipt.OperationId, receipt.StepNumber }).IsUnique();
+            entity.HasIndex(receipt => receipt.EffectsRetryAt).HasFilter("effects_pending");
+        });
 
         modelBuilder.Entity<CompanyDB>(entity =>
         {

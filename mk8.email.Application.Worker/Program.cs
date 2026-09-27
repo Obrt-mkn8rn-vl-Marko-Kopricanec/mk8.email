@@ -58,6 +58,9 @@ try
         : environment.Messaging.WorkerId;
 
     builder.Services.AddDistributedMessaging(environment);
+    builder.Services.AddSingleton<IDurablePresentationEffectSink, DurablePresentationEffectSink>();
+    builder.Services.AddSingleton<ReceiptEffectsWorker>();
+    builder.Services.AddHostedService(provider => provider.GetRequiredService<ReceiptEffectsWorker>());
     builder.Services.AddSingleton(new ApplicationWorkerIdentity(
         workerId,
         TimeSpan.FromSeconds(Math.Max(1, environment.Messaging.LeaseSeconds / 3))));
@@ -130,7 +133,8 @@ try
                 host.Services.GetRequiredService<ApplicationWorkerIdentity>(),
                 queue.ProcessNextAsync,
                 queue.CleanupCompletedAsync,
-                push is null ? null : push.ProcessDueAsync);
+                push is null ? null : push.ProcessDueAsync,
+                host.Services.GetRequiredService<ReceiptEffectsWorker>().ProcessNextAsync);
             var result = await runner.RunAsync(shutdown.Token).ConfigureAwait(false);
             Console.WriteLine(
                 $"The Application Worker drained {result.ApplicationRequests} requests "

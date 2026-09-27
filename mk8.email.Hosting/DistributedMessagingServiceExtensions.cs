@@ -77,6 +77,7 @@ public static class DistributedMessagingServiceExtensions
             return new AesGcmPayloadProtector(activeKey, decryptionKeys);
         });
         services.AddAzureBlobObjectStorage(environment);
+        services.AddSingleton<IStoredContentProtector, MessagingStoredContentProtector>();
         services.AddSingleton(serviceProvider => new PostgresApplicationBus(
             serviceProvider.GetRequiredService<NpgsqlDataSource>(),
             serviceProvider.GetRequiredService<IMessagingPayloadProtector>(),

@@ -13,7 +13,7 @@ public sealed class DistributedApplicationProbeTests
     [DataRow("", false)]
     [DataRow("mk8.distributed.v3", false)]
     [DataRow("different-contract", false)]
-    [DataRow("MK8.distributed.v4", false)]
+    [DataRow("MK8.distributed.v5", false)]
     public async Task ActivationProbeRequiresMatchingWorkerContracts(string? version, bool compatible)
     {
         var client = new ProbeClient(version);

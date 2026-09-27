@@ -104,7 +104,7 @@ mk8.email.Jmap.JmapRequestException.Limit.get -> string?
 mk8.email.Jmap.JmapRequestException.Title.get -> string!
 mk8.email.Jmap.JmapRequestException.Type.get -> string!
 mk8.email.Jmap.JmapRequestProcessor
-mk8.email.Jmap.JmapRequestProcessor.JmapRequestProcessor(System.Collections.Generic.IEnumerable<mk8.email.Jmap.IJmapMethod!>! methods, mk8.email.Jmap.JmapAccountProfileService! sessions, mk8.email.Infrastructure.Data.EmailDbContext! database, mk8.email.Configuration.EnvironmentConfig! environment, mk8.email.Application.Services.LargeObjectTransactionEffects! blobEffects, Microsoft.Extensions.Logging.ILogger<mk8.email.Jmap.JmapRequestProcessor!>! logger) -> void
+mk8.email.Jmap.JmapRequestProcessor.JmapRequestProcessor(System.Collections.Generic.IEnumerable<mk8.email.Jmap.IJmapMethod!>! methods, mk8.email.Jmap.JmapAccountProfileService! sessions, mk8.email.Infrastructure.Data.EmailDbContext! database, mk8.email.Configuration.EnvironmentConfig! environment, mk8.email.Application.Services.LargeObjectTransactionEffects! blobEffects, Microsoft.Extensions.Logging.ILogger<mk8.email.Jmap.JmapRequestProcessor!>! logger, mk8.email.Application.Services.ApplicationOperationReceiptStore? receipts = null) -> void
 mk8.email.Jmap.JmapRequestProcessor.ProcessAsync(mk8.email.Contracts.Messaging.JmapApplicationBatch! batch, mk8.email.Application.Interfaces.AuthenticatedMailUser! user, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Messaging.JmapApplicationBatchResult!>!
 mk8.email.Jmap.JmapServiceExtensions
 mk8.email.Jmap.JmapAccountProfileService

@@ -144,6 +144,7 @@ public sealed class ApplicationRequestWorkerTests
         var mailCalls = 0;
         var cleanupCalls = 0;
         var pushCalls = 0;
+        var effectCalls = 0;
         var runner = new WorkerDrainRunner(
             requests,
             worker,
@@ -158,7 +159,8 @@ public sealed class ApplicationRequestWorkerTests
             {
                 pushCalls++;
                 return Task.CompletedTask;
-            });
+            },
+            _ => Task.FromResult(++effectCalls <= 3));
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
         var result = await runner.RunAsync(timeout.Token);
@@ -168,6 +170,8 @@ public sealed class ApplicationRequestWorkerTests
         Assert.AreEqual(2, dispatcher.DispatchCount);
         Assert.AreEqual(mailCalls, cleanupCalls);
         Assert.AreEqual(mailCalls, pushCalls);
+        Assert.AreEqual(mailCalls, effectCalls);
+        Assert.AreEqual(5, effectCalls);
         Assert.IsFalse(requests.WaitEntered.Task.IsCompleted);
     }
 

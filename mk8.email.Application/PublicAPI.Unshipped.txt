@@ -1,6 +1,38 @@
 #nullable enable
+const mk8.email.Application.Services.ApplicationOperationReceiptStore.ContentType = "application/vnd.mk8.protected-receipt+json" -> string!
 mk8.email.Application.Interfaces.DkimSigningException.DkimSigningException() -> void
 mk8.email.Application.Interfaces.DkimSigningException.DkimSigningException(string! message) -> void
+mk8.email.Application.Interfaces.IDurablePresentationEffectSink
+mk8.email.Application.Interfaces.IDurablePresentationEffectSink.EnqueueAsync(mk8.email.Contracts.Messaging.ApplicationRequest! request, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+mk8.email.Application.Services.ApplicationOperationReceiptStore
+mk8.email.Application.Services.ApplicationOperationReceiptStore.ApplicationOperationReceiptStore(mk8.email.Infrastructure.Data.EmailDbContext! database, mk8.email.Contracts.Storage.ILargeObjectStore! objects, mk8.email.Application.Services.LargeObjectTransactionEffects! transactionEffects, mk8.email.Configuration.EnvironmentConfig! environment, Microsoft.Extensions.Logging.ILogger<mk8.email.Application.Services.ApplicationOperationReceiptStore!>! logger, mk8.email.Contracts.Storage.IStoredContentProtector? protector = null, mk8.email.Application.Interfaces.IDurablePresentationEffectSink? sink = null) -> void
+mk8.email.Application.Services.ApplicationOperationReceiptStore.DispatchNextEffectsAsync(System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<bool>!
+mk8.email.Application.Services.ApplicationOperationReceiptStore.FindLockedAsync(mk8.email.Application.Services.ApplicationReceiptKey! key, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<mk8.email.Application.Services.ApplicationReceiptContent?>!
+mk8.email.Application.Services.ApplicationOperationReceiptStore.SaveAsync(mk8.email.Application.Services.ApplicationReceiptKey! key, mk8.email.Application.Services.ApplicationReceiptContent! content, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+mk8.email.Application.Services.ApplicationReceiptContent
+mk8.email.Application.Services.ApplicationReceiptContent.<Clone>$() -> mk8.email.Application.Services.ApplicationReceiptContent!
+mk8.email.Application.Services.ApplicationReceiptContent.ApplicationReceiptContent(System.ReadOnlyMemory<byte> Result, System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.ApplicationRequest!>! Effects) -> void
+mk8.email.Application.Services.ApplicationReceiptContent.Deconstruct(out System.ReadOnlyMemory<byte> Result, out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.ApplicationRequest!>! Effects) -> void
+mk8.email.Application.Services.ApplicationReceiptContent.Effects.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.ApplicationRequest!>!
+mk8.email.Application.Services.ApplicationReceiptContent.Effects.init -> void
+mk8.email.Application.Services.ApplicationReceiptContent.Equals(mk8.email.Application.Services.ApplicationReceiptContent? other) -> bool
+mk8.email.Application.Services.ApplicationReceiptContent.Result.get -> System.ReadOnlyMemory<byte>
+mk8.email.Application.Services.ApplicationReceiptContent.Result.init -> void
+mk8.email.Application.Services.ApplicationReceiptKey
+mk8.email.Application.Services.ApplicationReceiptKey.<Clone>$() -> mk8.email.Application.Services.ApplicationReceiptKey!
+mk8.email.Application.Services.ApplicationReceiptKey.ApplicationReceiptKey(System.Guid OperationId, int StepNumber, System.Guid UserId, string! Purpose, string! InputHash) -> void
+mk8.email.Application.Services.ApplicationReceiptKey.Deconstruct(out System.Guid OperationId, out int StepNumber, out System.Guid UserId, out string! Purpose, out string! InputHash) -> void
+mk8.email.Application.Services.ApplicationReceiptKey.Equals(mk8.email.Application.Services.ApplicationReceiptKey? other) -> bool
+mk8.email.Application.Services.ApplicationReceiptKey.InputHash.get -> string!
+mk8.email.Application.Services.ApplicationReceiptKey.InputHash.init -> void
+mk8.email.Application.Services.ApplicationReceiptKey.OperationId.get -> System.Guid
+mk8.email.Application.Services.ApplicationReceiptKey.OperationId.init -> void
+mk8.email.Application.Services.ApplicationReceiptKey.Purpose.get -> string!
+mk8.email.Application.Services.ApplicationReceiptKey.Purpose.init -> void
+mk8.email.Application.Services.ApplicationReceiptKey.StepNumber.get -> int
+mk8.email.Application.Services.ApplicationReceiptKey.StepNumber.init -> void
+mk8.email.Application.Services.ApplicationReceiptKey.UserId.get -> System.Guid
+mk8.email.Application.Services.ApplicationReceiptKey.UserId.init -> void
 mk8.email.Application.Services.VacationResponseContentService
 mk8.email.Application.Services.VacationResponseContentService.VacationResponseContentService(mk8.email.Contracts.Storage.ILargeObjectStore! objects, mk8.email.Application.Services.LargeObjectTransactionEffects! transactionEffects) -> void
 mk8.email.Application.Services.VacationResponseContentService.ReadAsync(mk8.email.Infrastructure.Models.JmapVacationResponseDB! response, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<(string? TextBody, string? HtmlBody)>!
@@ -10,3 +42,13 @@ mk8.email.Application.Services.VacationResponseLargeObjectMigrationService
 mk8.email.Application.Services.VacationResponseLargeObjectMigrationService.MigrateAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
 mk8.email.Application.Services.VacationResponseLargeObjectMigrationService.VacationResponseLargeObjectMigrationService(mk8.email.Infrastructure.Data.EmailDbContext! database, mk8.email.Contracts.Storage.ILargeObjectStore! objects, mk8.email.Application.Services.VacationResponseContentService! content, mk8.email.Application.Services.LargeObjectTransactionEffects! transactionEffects) -> void
 mk8.email.Application.Services.VacationResponder.VacationResponder(mk8.email.Infrastructure.Data.EmailDbContext! database, mk8.email.Application.Interfaces.IEmailService! emailService, mk8.email.Contracts.Mail.IMailSubmissionQueue! queue, mk8.email.Application.Services.VacationResponseContentService! content, mk8.email.Configuration.EnvironmentConfig! environment, System.TimeProvider! timeProvider) -> void
+override mk8.email.Application.Services.ApplicationReceiptContent.Equals(object? obj) -> bool
+override mk8.email.Application.Services.ApplicationReceiptContent.GetHashCode() -> int
+override mk8.email.Application.Services.ApplicationReceiptContent.ToString() -> string!
+override mk8.email.Application.Services.ApplicationReceiptKey.Equals(object? obj) -> bool
+override mk8.email.Application.Services.ApplicationReceiptKey.GetHashCode() -> int
+override mk8.email.Application.Services.ApplicationReceiptKey.ToString() -> string!
+static mk8.email.Application.Services.ApplicationReceiptContent.operator !=(mk8.email.Application.Services.ApplicationReceiptContent? left, mk8.email.Application.Services.ApplicationReceiptContent? right) -> bool
+static mk8.email.Application.Services.ApplicationReceiptContent.operator ==(mk8.email.Application.Services.ApplicationReceiptContent? left, mk8.email.Application.Services.ApplicationReceiptContent? right) -> bool
+static mk8.email.Application.Services.ApplicationReceiptKey.operator !=(mk8.email.Application.Services.ApplicationReceiptKey? left, mk8.email.Application.Services.ApplicationReceiptKey? right) -> bool
+static mk8.email.Application.Services.ApplicationReceiptKey.operator ==(mk8.email.Application.Services.ApplicationReceiptKey? left, mk8.email.Application.Services.ApplicationReceiptKey? right) -> bool

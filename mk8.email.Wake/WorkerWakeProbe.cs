@@ -19,6 +19,10 @@ internal sealed class WorkerWakeProbe(NpgsqlDataSource dataSource, bool includeJ
                                 OR r.deadline_at <= tick.at_time))
                 )
                 OR EXISTS (
+                    SELECT 1 FROM application_operation_receipts receipt, tick
+                    WHERE receipt.effects_pending AND receipt.effects_retry_at <= tick.at_time
+                )
+                OR EXISTS (
                     SELECT 1 FROM mail_queue_messages q, tick
                     WHERE q.next_attempt_at <= tick.at_time
                       AND (q.state = 'pending'
@@ -45,6 +49,8 @@ internal sealed class WorkerWakeProbe(NpgsqlDataSource dataSource, bool includeJ
                       AND (s.next_push_at IS NULL OR s.next_push_at <= tick.at_time)
                 )) AS has_due_work,
                 LEAST(
+                    (SELECT min(receipt.effects_retry_at) FROM application_operation_receipts receipt
+                     WHERE receipt.effects_pending),
                     (SELECT min(r.deadline_at) FROM application_requests r
                      WHERE r.state IN ('pending', 'processing')),
                     (SELECT min(r.lease_expires_at) FROM application_requests r

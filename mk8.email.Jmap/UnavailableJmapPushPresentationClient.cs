@@ -7,6 +7,9 @@ namespace mk8.email.Jmap;
 
 internal sealed class UnavailableJmapPushPresentationClient : IJmapPushPresentationClient
 {
+    public ApplicationRequest? CreateVerificationRequest(string url, string? keysJson, DateTime expiresAt, JmapPushMessage payload) =>
+        throw new InvalidOperationException("The JMAP Web Push presentation client is unavailable.");
+
     public Task<bool> IsSafeUrlAsync(string url, CancellationToken cancellationToken) =>
         throw new InvalidOperationException("The JMAP Web Push presentation client is unavailable.");
 

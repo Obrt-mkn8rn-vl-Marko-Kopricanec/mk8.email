@@ -18,6 +18,8 @@ internal static class WorkerWakeDatabasePrivilegeProbe
                     ('application_requests', 'state'),
                     ('application_requests', 'lease_expires_at'),
                     ('application_requests', 'deadline_at'),
+                    ('application_operation_receipts', 'effects_pending'),
+                    ('application_operation_receipts', 'effects_retry_at'),
                     ('mail_queue_messages', 'state'),
                     ('mail_queue_messages', 'next_attempt_at'),
                     ('mail_queue_messages', 'lease_expires_at'),

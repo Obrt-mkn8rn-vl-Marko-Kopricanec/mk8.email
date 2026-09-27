@@ -22,4 +22,6 @@ public interface IJmapPushPresentationClient
         DateTime expiresAt,
         JmapPushMessage payload,
         CancellationToken cancellationToken);
+
+    ApplicationRequest? CreateVerificationRequest(string url, string? keysJson, DateTime expiresAt, JmapPushMessage payload);
 }

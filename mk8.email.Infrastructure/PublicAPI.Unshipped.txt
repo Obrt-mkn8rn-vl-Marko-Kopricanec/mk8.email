@@ -1,4 +1,33 @@
 #nullable enable
+mk8.email.Infrastructure.Data.EmailDbContext.ApplicationOperationReceipts.get -> Microsoft.EntityFrameworkCore.DbSet<mk8.email.Infrastructure.Models.ApplicationOperationReceiptDB!>!
+mk8.email.Infrastructure.Models.ApplicationOperationReceiptDB
+mk8.email.Infrastructure.Models.ApplicationOperationReceiptDB.ApplicationOperationReceiptDB() -> void
+mk8.email.Infrastructure.Models.ApplicationOperationReceiptDB.CreatedAt.get -> System.DateTime
+mk8.email.Infrastructure.Models.ApplicationOperationReceiptDB.CreatedAt.set -> void
+mk8.email.Infrastructure.Models.ApplicationOperationReceiptDB.EffectsPending.get -> bool
+mk8.email.Infrastructure.Models.ApplicationOperationReceiptDB.EffectsPending.set -> void
+mk8.email.Infrastructure.Models.ApplicationOperationReceiptDB.EffectsRetryAt.get -> System.DateTime
+mk8.email.Infrastructure.Models.ApplicationOperationReceiptDB.EffectsRetryAt.set -> void
+mk8.email.Infrastructure.Models.ApplicationOperationReceiptDB.Id.get -> System.Guid
+mk8.email.Infrastructure.Models.ApplicationOperationReceiptDB.Id.set -> void
+mk8.email.Infrastructure.Models.ApplicationOperationReceiptDB.ObjectEntityTag.get -> string!
+mk8.email.Infrastructure.Models.ApplicationOperationReceiptDB.ObjectEntityTag.set -> void
+mk8.email.Infrastructure.Models.ApplicationOperationReceiptDB.ObjectName.get -> string!
+mk8.email.Infrastructure.Models.ApplicationOperationReceiptDB.ObjectName.set -> void
+mk8.email.Infrastructure.Models.ApplicationOperationReceiptDB.ObjectProvider.get -> string!
+mk8.email.Infrastructure.Models.ApplicationOperationReceiptDB.ObjectProvider.set -> void
+mk8.email.Infrastructure.Models.ApplicationOperationReceiptDB.ObjectSha256.get -> string!
+mk8.email.Infrastructure.Models.ApplicationOperationReceiptDB.ObjectSha256.set -> void
+mk8.email.Infrastructure.Models.ApplicationOperationReceiptDB.OperationId.get -> System.Guid
+mk8.email.Infrastructure.Models.ApplicationOperationReceiptDB.OperationId.set -> void
+mk8.email.Infrastructure.Models.ApplicationOperationReceiptDB.PayloadLength.get -> long
+mk8.email.Infrastructure.Models.ApplicationOperationReceiptDB.PayloadLength.set -> void
+mk8.email.Infrastructure.Models.ApplicationOperationReceiptDB.Purpose.get -> string!
+mk8.email.Infrastructure.Models.ApplicationOperationReceiptDB.Purpose.set -> void
+mk8.email.Infrastructure.Models.ApplicationOperationReceiptDB.StepNumber.get -> int
+mk8.email.Infrastructure.Models.ApplicationOperationReceiptDB.StepNumber.set -> void
+mk8.email.Infrastructure.Models.ApplicationOperationReceiptDB.UserId.get -> System.Guid
+mk8.email.Infrastructure.Models.ApplicationOperationReceiptDB.UserId.set -> void
 mk8.email.Infrastructure.Models.JmapVacationResponseDB.BodyObjectEntityTag.get -> string?
 mk8.email.Infrastructure.Models.JmapVacationResponseDB.BodyObjectEntityTag.set -> void
 mk8.email.Infrastructure.Models.JmapVacationResponseDB.BodyObjectName.get -> string?

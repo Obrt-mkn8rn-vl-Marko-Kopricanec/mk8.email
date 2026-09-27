@@ -71,7 +71,13 @@ internal sealed class PushSubscriptionSetMethod(
                 context.CreatedIds[item.Key] = id;
                 created[item.Key] = BuildCreatedResponse(item.Value, subscription);
                 var verification = new JmapPushMessage(id, subscription.VerificationCode);
-                context.AddPostCommitAction(async postCommitCancellationToken =>
+                if (database.Database.IsRelational())
+                {
+                    var effect = delivery.CreateVerificationRequest(subscription.Url, subscription.KeysJson, subscription.ExpiresAt, verification);
+                    if (effect is not null)
+                        context.AddPresentationEffect(effect);
+                }
+                else context.AddPostCommitAction(async postCommitCancellationToken =>
                 {
                     try
                     {

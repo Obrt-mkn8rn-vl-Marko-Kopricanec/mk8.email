@@ -43,6 +43,8 @@ REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 CREATE TABLE application_requests (
     state text, lease_expires_at timestamptz, deadline_at timestamptz,
     request_payload_inline bytea);
+CREATE TABLE application_operation_receipts (
+    effects_pending boolean, effects_retry_at timestamptz, payload_object_name text);
 CREATE TABLE mail_queue_messages (
     state text, next_attempt_at timestamptz, lease_expires_at timestamptz,
     raw_message text);
@@ -71,6 +73,9 @@ run_install_sql
 permissions=$(test_psql --command="SELECT
     has_column_privilege('mk8wake', 'public.users', 'id', 'SELECT')
     AND has_column_privilege('mk8wake', 'public.application_requests', 'state', 'SELECT')
+    AND has_column_privilege('mk8wake', 'public.application_operation_receipts', 'effects_pending', 'SELECT')
+    AND has_column_privilege('mk8wake', 'public.application_operation_receipts', 'effects_retry_at', 'SELECT')
+    AND NOT has_column_privilege('mk8wake', 'public.application_operation_receipts', 'payload_object_name', 'SELECT')
     AND NOT has_table_privilege('mk8wake', 'public.users', 'SELECT')
     AND NOT has_column_privilege('mk8wake', 'public.users', 'password_hash', 'SELECT')
     AND NOT has_column_privilege('mk8wake', 'public.application_requests',

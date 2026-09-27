@@ -186,7 +186,8 @@ public sealed class JmapGatewayRouteTests
             Assert.AreEqual(7L, countReader.GetInt64(1));
 
             await using var operationCommand = gatewayDataSource.CreateCommand(
-                "SELECT operation FROM application_requests WHERE operation = 'jmap.batch.execute.v3' LIMIT 1");
+                "SELECT operation FROM application_requests WHERE operation = @operation LIMIT 1");
+            operationCommand.Parameters.AddWithValue("operation", ApplicationOperations.JmapBatchExecute);
             Assert.AreEqual(
                 ApplicationOperations.JmapBatchExecute,
                 await operationCommand.ExecuteScalarAsync(timeout.Token));
@@ -237,6 +238,7 @@ public sealed class JmapGatewayRouteTests
 
         public Task<JmapApplicationResult> ExecuteBatchAsync(
             JmapBatchApplicationRequest request,
+            Guid operationId,
             CancellationToken cancellationToken = default)
         {
             Request = request;

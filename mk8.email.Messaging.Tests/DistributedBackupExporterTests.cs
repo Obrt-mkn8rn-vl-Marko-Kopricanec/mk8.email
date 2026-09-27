@@ -395,10 +395,16 @@ public sealed class DistributedBackupExporterTests
             await DistributedBackupExporter.ExportAsync(
                 source, objects, sourceDatabase.ConnectionString,
                 destination, PgDumpExecutable);
+            // Reproduce a genuine pre-receipt archive, not just an older format number.
+            await using (var removeReceiptSchema = source.CreateCommand("DROP TABLE application_operation_receipts"))
+                await removeReceiptSchema.ExecuteNonQueryAsync();
+            var dumpPath = Path.Combine(destination, "database.dump");
+            await ReplaceLegacyDumpAsync(dumpPath, sourceDatabase.ConnectionString);
             var metadataPath = Path.Combine(destination, "backup.json");
             var metadata = JsonNode.Parse(await File.ReadAllTextAsync(metadataPath));
             Assert.IsNotNull(metadata);
             metadata["SchemaVersion"] = 2;
+            metadata["DatabaseSha256"] = Convert.ToHexStringLower(SHA256.HashData(await File.ReadAllBytesAsync(dumpPath)));
             await File.WriteAllTextAsync(metadataPath, metadata.ToJsonString());
             await RewriteChecksumsAsync(destination);
             var verified = await RunVerifierCliAsync(destination);
@@ -410,6 +416,8 @@ public sealed class DistributedBackupExporterTests
                 objects, PgRestoreExecutable);
             Assert.AreEqual(0L, result.ReferenceCount);
             await DistributedRestoreActivationGuard.RequireReadyAsync(target);
+            await using var receiptCount = target.CreateCommand("SELECT count(*) FROM application_operation_receipts");
+            Assert.AreEqual(0L, await receiptCount.ExecuteScalarAsync());
         }
         finally
         {
@@ -1035,6 +1043,21 @@ public sealed class DistributedBackupExporterTests
         await process.WaitForExitAsync();
         if (process.ExitCode != 0)
             Assert.Fail($"pg_restore failed: {await error}");
+    }
+
+    private static async Task ReplaceLegacyDumpAsync(string dump, string connectionString)
+    {
+        var database = new NpgsqlConnectionStringBuilder(connectionString);
+        var start = new ProcessStartInfo(PgDumpExecutable) { RedirectStandardError = true, UseShellExecute = false };
+        foreach (var argument in new[] { "--format=custom", "--no-owner", "--no-acl", "--no-password",
+                     $"--host={database.Host}", $"--port={database.Port}", $"--username={database.Username}",
+                     $"--dbname={database.Database}", $"--file={dump}" })
+            start.ArgumentList.Add(argument);
+        start.Environment["PGPASSWORD"] = database.Password;
+        using var process = Process.Start(start) ?? throw new AssertFailedException("pg_dump did not start.");
+        var error = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        Assert.AreEqual(0, process.ExitCode, await error);
     }
 
     private static async Task<PostgresTestDatabase> RequirePostgresAsync()

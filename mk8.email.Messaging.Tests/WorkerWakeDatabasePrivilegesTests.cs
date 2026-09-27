@@ -67,6 +67,8 @@ public sealed class WorkerWakeDatabasePrivilegesTests
                 grant.CommandText = $"""
                     GRANT SELECT (state, lease_expires_at, deadline_at)
                         ON application_requests TO "{role}";
+                    GRANT SELECT (effects_pending, effects_retry_at)
+                        ON application_operation_receipts TO "{role}";
                     GRANT SELECT (state, next_attempt_at, lease_expires_at)
                         ON mail_queue_messages TO "{role}";
                     GRANT SELECT (expires_at, is_verified, next_push_at, user_id,
@@ -106,6 +108,7 @@ public sealed class WorkerWakeDatabasePrivilegesTests
                      {
                          "SELECT password_hash FROM users",
                          "SELECT request_payload_inline FROM application_requests",
+                         "SELECT payload_object_name FROM application_operation_receipts",
                          "SELECT raw_message FROM mail_queue_messages",
                      })
             {

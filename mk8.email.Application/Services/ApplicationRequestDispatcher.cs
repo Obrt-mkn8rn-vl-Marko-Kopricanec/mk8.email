@@ -293,6 +293,7 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
                 await services.GetRequiredService<IJmapApplicationService>()
                     .ExecuteBatchAsync(
                         Deserialize<JmapBatchApplicationRequest>(request),
+                        request.Id,
                         cancellationToken).ConfigureAwait(false)),
             ApplicationOperations.JmapUpload => Success(
                 request.Id,

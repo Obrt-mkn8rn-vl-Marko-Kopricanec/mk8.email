@@ -8,7 +8,8 @@ internal sealed class WorkerDrainRunner(
     ApplicationWorkerIdentity identity,
     Func<CancellationToken, Task<bool>> processMailQueue,
     Func<CancellationToken, Task> cleanupMailQueue,
-    Func<CancellationToken, Task>? processJmapPush = null)
+    Func<CancellationToken, Task>? processJmapPush = null,
+    Func<CancellationToken, Task<bool>>? processEffects = null)
 {
     public async Task<WorkerDrainResult> RunAsync(CancellationToken cancellationToken)
     {
@@ -31,8 +32,10 @@ internal sealed class WorkerDrainRunner(
             await cleanupMailQueue(cancellationToken).ConfigureAwait(false);
             if (processJmapPush is not null)
                 await processJmapPush(cancellationToken).ConfigureAwait(false);
+            var processedEffects = processEffects is not null
+                && await processEffects(cancellationToken).ConfigureAwait(false);
 
-            if (lease is not null || processedMail)
+            if (lease is not null || processedMail || processedEffects)
             {
                 idleScans = 0;
                 continue;

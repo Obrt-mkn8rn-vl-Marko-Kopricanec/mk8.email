@@ -30,6 +30,7 @@ internal sealed class JmapApplicationService(
 
     public async Task<JmapApplicationResult> ExecuteBatchAsync(
         JmapBatchApplicationRequest request,
+        Guid operationId,
         CancellationToken cancellationToken = default)
     {
         var user = await AuthenticateAsync(request.Authentication, cancellationToken).ConfigureAwait(false);
@@ -44,7 +45,7 @@ internal sealed class JmapApplicationService(
                 processor.ValidatePreflight(request.Preflight);
                 return new JmapApplicationResult(JmapApplicationOutcomes.Ok);
             }
-            var response = await processor.ProcessAsync(request.Batch, user, cancellationToken).ConfigureAwait(false);
+            var response = await processor.ProcessAsync(request.Batch, user, operationId, cancellationToken).ConfigureAwait(false);
             return new JmapApplicationResult(JmapApplicationOutcomes.Ok, Batch: response);
         }
         catch (JmapRequestException exception)

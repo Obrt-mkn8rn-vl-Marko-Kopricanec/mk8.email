@@ -53,15 +53,20 @@ internal sealed partial class JmapPushPresentationClient(
         JmapPushMessage payload,
         CancellationToken cancellationToken)
     {
+        var request = CreateVerificationRequest(url, keysJson, expiresAt, payload);
+        if (request is not null)
+            await requests.EnqueueAsync(request, cancellationToken).ConfigureAwait(false);
+    }
+
+    public ApplicationRequest? CreateVerificationRequest(string url, string? keysJson, DateTime expiresAt, JmapPushMessage payload)
+    {
         var target = BuildTarget(url, keysJson, expiresAt, payload);
         var deadline = DateTimeOffset.UtcNow.AddDays(1);
         if (target.ExpiresAt < deadline)
             deadline = target.ExpiresAt;
         if (deadline <= DateTimeOffset.UtcNow)
-            return;
-        await requests.EnqueueAsync(
-            CreateRequest(WebPushPresentationOperations.Send, target, deadline),
-            cancellationToken).ConfigureAwait(false);
+            return null;
+        return CreateRequest(WebPushPresentationOperations.Send, target, deadline);
     }
 
     private static WebPushSendRequest BuildTarget(

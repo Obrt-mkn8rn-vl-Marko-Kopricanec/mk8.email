@@ -10,6 +10,7 @@ public interface IJmapApplicationService
 
     Task<JmapApplicationResult> ExecuteBatchAsync(
         JmapBatchApplicationRequest request,
+        Guid operationId,
         CancellationToken cancellationToken = default);
 
     Task<JmapApplicationResult> UploadAsync(

@@ -2,7 +2,7 @@
 
 Gateway parses and validates I-JSON and the outer JMAP request envelope. It sends
 typed capabilities, invocations, correlation identifiers and creation identifiers
-through `jmap.batch.execute.v3`; Worker returns typed invocation results and an
+through `jmap.batch.execute.v4`; Worker returns typed invocation results and an
 account profile. Gateway renders the JMAP response envelope and HTTP problem status.
 Worker never receives the original API document for this operation.
 
@@ -30,8 +30,8 @@ the backend policy and Gateway's body limit. Gateway frames both event-source
 changes and typed push verification/change notifications before encryption/send.
 
 This changes the durable operation contracts. The old `jmap.api.process`,
-`jmap.batch.execute`, `jmap.batch.execute.v2`, `jmap.session.get`, `jmap.event.poll`
-and `webpush.send` operations are unsupported. The new operations are `jmap.batch.execute.v3`,
+`jmap.batch.execute`, `jmap.batch.execute.v2`, `jmap.batch.execute.v3`, `jmap.session.get`, `jmap.event.poll`
+and `webpush.send` operations are unsupported. The new operations are `jmap.batch.execute.v4`,
 `jmap.profile.get`, `jmap.changes.poll` and `webpush.send.v2`. Old requests must
 not be reinterpreted as new empty or incomplete data.
 Before upgrading an existing distributed installation, stop admission, drain or
@@ -46,7 +46,31 @@ live but unready without consuming it. Late leases are preserved for original-ro
 drain/reconciliation. Gateway activation/candidate upgrades also require a Worker
 ping with matching internal contract metadata; prior-release rollback uses the
 prior Gateway's own health interpretation. These guards are not release attestation
-and do not replace the same-approved-release requirement or business replay receipts.
+and do not replace the same-approved-release requirement.
+
+For PostgreSQL-backed batches, the authoritative durable request ID and invocation
+ordinal identify a business receipt. An account-bound advisory transaction lock
+serializes retries; the receipt row commits in the same transaction as the method's
+business writes. The result, creation-reference state, input fingerprint and any
+verification intent are encrypted into Azure Blob storage, never inline in PostgreSQL.
+A reclaimed request reuses committed results instead of reapplying those writes.
+Uncommitted work is rolled back; an ambiguous commit retains its Blob for reconciliation.
+This does not add exactly-once guarantees to every other application operation or
+to external HTTP delivery.
+
+Relational push-subscription verification is a durable outbox effect in that receipt,
+not an in-memory post-commit callback. One-shot Worker draining publishes the frozen
+effect ID to the presentation lane; losing an enqueue acknowledgement retries the
+same ID. Failed dispatch retains the intent and schedules a Wake-visible retry.
+Wake reads only the two scheduling columns, not receipt content or Blob references.
+Backups inventory the encrypted receipt objects and restore rebinds their ETags.
+Older verified v2/v3 snapshots gain an empty receipt table during isolated restore.
+
+This schema/permission change is not yet a deployable upgrade boundary: coordinating
+the new Wake grants with candidate preflight and prior-release rollback remains
+unfinished. Do not activate it on an existing installation using the current upgrade
+script. Receipt retention and shared encryption-key rotation also require explicit
+reconciliation policy; do not delete receipts while their original requests can retry.
 
 This is an intermediate boundary correction, not completion of the API-agnostic
 architecture. Method-response character normalization still requires further

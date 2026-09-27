@@ -1,5 +1,5 @@
 #nullable enable
-const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v4" -> string!
+const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v5" -> string!
 mk8.email.Contracts.Messaging.ApplicationArgumentBinding
 mk8.email.Contracts.Messaging.ApplicationArgumentBinding.<Clone>$() -> mk8.email.Contracts.Messaging.ApplicationArgumentBinding!
 mk8.email.Contracts.Messaging.ApplicationArgumentBinding.ApplicationArgumentBinding(string! Target, string! SourceCorrelationId, string! SourceName, mk8.email.Contracts.Messaging.ApplicationValuePathSegment![]! Path, mk8.email.Contracts.Messaging.ApplicationBindingFailure Failure = mk8.email.Contracts.Messaging.ApplicationBindingFailure.None) -> void
@@ -184,6 +184,9 @@ mk8.email.Contracts.Messaging.WebPushSendRequest.Deconstruct(out string! Url, ou
 mk8.email.Contracts.Messaging.WebPushSendRequest.JmapMessage.get -> mk8.email.Contracts.Messaging.JmapPushMessage?
 mk8.email.Contracts.Messaging.WebPushSendRequest.JmapMessage.init -> void
 mk8.email.Contracts.Messaging.WebPushSendRequest.WebPushSendRequest(string! Url, string? P256dh, string? Auth, System.DateTimeOffset ExpiresAt, byte[]? Payload, mk8.email.Contracts.Messaging.JmapPushMessage? JmapMessage = null) -> void
+mk8.email.Contracts.Storage.IStoredContentProtector
+mk8.email.Contracts.Storage.IStoredContentProtector.Protect(System.ReadOnlySpan<byte> content, System.ReadOnlySpan<byte> associatedData) -> System.ReadOnlyMemory<byte>
+mk8.email.Contracts.Storage.IStoredContentProtector.Unprotect(System.ReadOnlySpan<byte> envelope, System.ReadOnlySpan<byte> associatedData) -> System.ReadOnlyMemory<byte>
 override mk8.email.Contracts.Messaging.ApplicationArgumentBinding.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.ApplicationArgumentBinding.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.ApplicationArgumentBinding.ToString() -> string!

@@ -9,6 +9,7 @@ public sealed class JmapInvocationContext(
     IDictionary<string, string> createdIds)
 {
     private readonly List<Func<CancellationToken, Task>> _postCommitActions = [];
+    private readonly List<mk8.email.Contracts.Messaging.ApplicationRequest> _presentationEffects = [];
 
     public AuthenticatedMailUser User { get; } = user;
     public IReadOnlySet<string> Capabilities { get; } = capabilities;
@@ -23,6 +24,17 @@ public sealed class JmapInvocationContext(
     }
 
     internal int MarkPostCommitActions() => _postCommitActions.Count;
+
+    internal int MarkPresentationEffects() => _presentationEffects.Count;
+
+    internal void AddPresentationEffect(mk8.email.Contracts.Messaging.ApplicationRequest effect) =>
+        _presentationEffects.Add(effect);
+
+    internal IReadOnlyList<mk8.email.Contracts.Messaging.ApplicationRequest> PresentationEffectsSince(int marker) =>
+        _presentationEffects.Skip(marker).ToArray();
+
+    internal void DiscardPresentationEffects(int marker) =>
+        _presentationEffects.RemoveRange(marker, _presentationEffects.Count - marker);
 
     internal void AddPostCommitAction(Func<CancellationToken, Task> action) =>
         _postCommitActions.Add(action);

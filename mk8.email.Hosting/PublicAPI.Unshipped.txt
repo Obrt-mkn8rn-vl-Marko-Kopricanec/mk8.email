@@ -1,4 +1,8 @@
 #nullable enable
 mk8.email.Hosting.DistributedQueueContractGuard
+mk8.email.Hosting.MessagingStoredContentProtector
+mk8.email.Hosting.MessagingStoredContentProtector.MessagingStoredContentProtector(mk8.email.Messaging.IMessagingPayloadProtector! protector) -> void
+mk8.email.Hosting.MessagingStoredContentProtector.Protect(System.ReadOnlySpan<byte> content, System.ReadOnlySpan<byte> associatedData) -> System.ReadOnlyMemory<byte>
+mk8.email.Hosting.MessagingStoredContentProtector.Unprotect(System.ReadOnlySpan<byte> envelope, System.ReadOnlySpan<byte> associatedData) -> System.ReadOnlyMemory<byte>
 static mk8.email.Hosting.DistributedQueueContractGuard.IsCompatibleAsync(Npgsql.NpgsqlDataSource! dataSource, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
 static mk8.email.Hosting.DistributedQueueContractGuard.RequireCompatibleAsync(Npgsql.NpgsqlDataSource! dataSource, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!

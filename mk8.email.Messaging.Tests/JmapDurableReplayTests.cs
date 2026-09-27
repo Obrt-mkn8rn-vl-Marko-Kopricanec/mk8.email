@@ -1,0 +1,474 @@
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using Azure.Storage.Blobs;
+using Azure.Storage.Blobs.Models;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using mk8.email.Application.Interfaces;
+using mk8.email.Application.Services;
+using mk8.email.Application.Worker;
+using mk8.email.Configuration;
+using mk8.email.Contracts.Messaging;
+using mk8.email.Contracts.Storage;
+using mk8.email.Hosting;
+using mk8.email.Infrastructure.Data;
+using mk8.email.Infrastructure.Models;
+using mk8.email.Jmap;
+using mk8.email.Storage;
+using mk8.email.Wake;
+using Npgsql;
+
+namespace mk8.email.Messaging.Tests;
+
+[TestClass]
+[DoNotParallelize]
+[TestCategory("PostgreSQL")]
+[TestCategory("AzureBlobCompatible")]
+public sealed class JmapDurableReplayTests
+{
+    [TestMethod]
+    public async Task NativeContactMutationsReplayResultsAndCreationReferencesWithoutDuplicatingData()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var operation = Guid.CreateVersion7();
+        var original = await rig.InvokeAsync(rig.ContactsBatch(), operation);
+        Assert.AreEqual("AddressBook/set", original.Invocations[0].Name);
+        Assert.AreEqual("ContactCard/set", original.Invocations[1].Name);
+        Assert.IsNotNull(original.CreatedIds?["book"]);
+        Assert.IsNotNull(original.CreatedIds?["card"]);
+        var replay = await rig.InvokeAsync(rig.ContactsBatch(), operation);
+        Assert.AreEqual(JsonSerializer.Serialize(original.Invocations), JsonSerializer.Serialize(replay.Invocations));
+        CollectionAssert.AreEquivalent(original.CreatedIds!.ToArray(), replay.CreatedIds!.ToArray());
+        await using var database = rig.Context();
+        Assert.AreEqual(1, await database.DavCollections.CountAsync(book => book.DisplayName == "Replay book"));
+        Assert.AreEqual(1, await database.DavResources.CountAsync(card => card.Uid == "replay-card-uid"));
+        var receipts = await database.ApplicationOperationReceipts.OrderBy(receipt => receipt.StepNumber).ToListAsync();
+        Assert.HasCount(2, receipts);
+        foreach (var receipt in receipts)
+        {
+            Assert.AreEqual(LargeObjectProviders.AzureBlob, receipt.ObjectProvider);
+            Assert.IsTrue(receipt.PayloadLength > 0);
+            await using var content = new MemoryStream();
+            await rig.Objects.CopyToAsync(Reference(receipt), content);
+            Assert.IsFalse(Encoding.UTF8.GetString(content.ToArray()).Contains("Replay book", StringComparison.Ordinal));
+        }
+    }
+
+    [TestMethod]
+    public async Task ConcurrentWorkersWaitForTheDatabaseReceiptLockAndDoNotRepeatNativeMutations()
+    {
+        var pause = new ReceiptPause();
+        await using var rig = await Rig.CreateAsync(pause);
+        var operation = Guid.CreateVersion7();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var first = rig.InvokeAsync(rig.ContactsBatch(), operation, timeout.Token);
+        await pause.Entered.Task.WaitAsync(timeout.Token);
+        var second = rig.InvokeAsync(rig.ContactsBatch(), operation, timeout.Token);
+        try
+        {
+            await using var waiting = rig.Source.CreateCommand("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = @database AND wait_event = 'advisory')");
+            waiting.Parameters.AddWithValue("database", rig.Database.DatabaseName);
+            while (await waiting.ExecuteScalarAsync(timeout.Token) is not true)
+                await Task.Delay(25, timeout.Token);
+            Assert.IsFalse(second.IsCompleted);
+        }
+        finally
+        {
+            pause.Release.TrySetResult();
+        }
+        var results = await Task.WhenAll(first, second).WaitAsync(timeout.Token);
+        Assert.AreEqual(JsonSerializer.Serialize(results[0].Invocations), JsonSerializer.Serialize(results[1].Invocations));
+        await using var database = rig.Context();
+        Assert.AreEqual(2, await database.ApplicationOperationReceipts.CountAsync());
+        Assert.AreEqual(1, await database.DavCollections.CountAsync(book => book.DisplayName == "Replay book"));
+        Assert.AreEqual(1, await database.DavResources.CountAsync(card => card.Uid == "replay-card-uid"));
+    }
+
+    [TestMethod]
+    public async Task CancellationBeforeReceiptCommitRollsBackBusinessRowsAndDeletesNewReceiptBlob()
+    {
+        using var cancellation = new CancellationTokenSource();
+        await using var rig = await Rig.CreateAsync(new CancelReceipt(cancellation));
+        await Assert.ThrowsAsync<OperationCanceledException>(() => rig.InvokeAsync(rig.ContactsBatch(), Guid.CreateVersion7(), cancellation.Token));
+        await using var database = rig.Context();
+        Assert.AreEqual(0, await database.ApplicationOperationReceipts.CountAsync());
+        Assert.AreEqual(0, await database.DavCollections.CountAsync(book => book.DisplayName == "Replay book"));
+        var blobs = new List<string>();
+        await foreach (var blob in rig.Container.GetBlobsAsync(BlobTraits.None, BlobStates.None, "application-receipts/", CancellationToken.None))
+            blobs.Add(blob.Name);
+        Assert.HasCount(0, blobs);
+    }
+
+    [TestMethod]
+    public async Task ConflictingInputOrAuthenticatedUserCannotReuseACommittedReceipt()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var operation = Guid.CreateVersion7();
+        await rig.InvokeAsync(rig.ContactsBatch(), operation);
+        var changed = rig.ContactsBatch();
+        changed.Invocations[0].Arguments["create"]!["book"]!["name"] = "Different book";
+        var mismatch = await rig.InvokeAsync(changed, operation);
+        Assert.AreEqual("error", mismatch.Invocations[0].Name);
+        Assert.AreEqual("serverFail", mismatch.Invocations[0].Arguments["type"]!.GetValue<string>());
+        var foreignUser = new AuthenticatedMailUser(Guid.CreateVersion7(), "foreign@example.test");
+        await using (var setup = rig.Context())
+        {
+            setup.Users.Add(new UserDB
+            {
+                Id = foreignUser.Id,
+                Username = foreignUser.Username,
+                PasswordHash = "unused",
+                CompanyId = await setup.Users.Where(user => user.Id == rig.User.Id).Select(user => user.CompanyId).SingleAsync()
+            });
+            await setup.SaveChangesAsync();
+        }
+        using var scope = rig.Services.CreateScope();
+        var foreign = await scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>().ProcessAsync(
+            rig.ContactsBatch(), foreignUser, operationId: operation);
+        Assert.AreEqual("error", foreign.Invocations[0].Name);
+        await using var database = rig.Context();
+        Assert.AreEqual(2, await database.ApplicationOperationReceipts.CountAsync());
+        Assert.AreEqual(0, await database.DavCollections.CountAsync(book => book.DisplayName == "Different book"));
+    }
+
+    [TestMethod]
+    public async Task MissingCommittedReceiptContentFailsClosedWithoutRepeatingBusinessMutations()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var operation = Guid.CreateVersion7();
+        await rig.InvokeAsync(rig.ContactsBatch(), operation);
+        await using (var database = rig.Context())
+        {
+            var receipt = await database.ApplicationOperationReceipts.OrderBy(row => row.StepNumber).FirstAsync();
+            Assert.IsTrue(await rig.Objects.DeleteIfMatchAsync(Reference(receipt)));
+        }
+        var replay = await rig.InvokeAsync(rig.ContactsBatch(), operation);
+        Assert.AreEqual("error", replay.Invocations[0].Name);
+        Assert.AreEqual("serverFail", replay.Invocations[0].Arguments["type"]!.GetValue<string>());
+        await using var unchanged = rig.Context();
+        Assert.AreEqual(2, await unchanged.ApplicationOperationReceipts.CountAsync());
+        Assert.AreEqual(1, await unchanged.DavCollections.CountAsync(book => book.DisplayName == "Replay book"));
+        Assert.AreEqual(1, await unchanged.DavResources.CountAsync(card => card.Uid == "replay-card-uid"));
+    }
+
+    [TestMethod]
+    public async Task WorkerCrashBeforeResponsePublicationReclaimsTheSameRequestWithoutRepeatingMutations()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var now = DateTimeOffset.UtcNow;
+        var request = new ApplicationRequest(Guid.CreateVersion7(), Guid.CreateVersion7(), 0, "jmap", ApplicationOperations.JmapBatchExecute,
+            "application/json", JsonSerializer.SerializeToUtf8Bytes(new JmapBatchApplicationRequest(
+                new ProtocolAuthentication(ProtocolAuthenticationKinds.Password, rig.User.Username, "test"), rig.ContactsBatch()),
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)), new Dictionary<string, string>(), now, now.AddMinutes(3));
+        await rig.Bus.EnqueueAsync(request);
+        var lease = await rig.Bus.TryClaimAsync("first-worker");
+        Assert.IsNotNull(lease);
+        using var stop = new CancellationTokenSource();
+        var crash = new CancelBeforePublication(rig.Bus, stop);
+        using (var worker = new ApplicationRequestWorker(crash, rig.Services.GetRequiredService<IServiceScopeFactory>(),
+                   new ApplicationWorkerIdentity("first-worker", TimeSpan.FromSeconds(1)), NullLogger<ApplicationRequestWorker>.Instance))
+            await worker.ProcessLeaseAsync(lease, stop.Token);
+        await using (var status = rig.Source.CreateCommand("SELECT state FROM application_requests WHERE id = @id"))
+        {
+            status.Parameters.AddWithValue("id", request.Id);
+            Assert.AreEqual("processing", await status.ExecuteScalarAsync());
+        }
+        await using (var expiration = rig.Source.CreateCommand("SELECT lease_expires_at FROM application_requests WHERE id = @id"))
+        {
+            expiration.Parameters.AddWithValue("id", request.Id);
+            var delay = (DateTime)(await expiration.ExecuteScalarAsync())! - DateTime.UtcNow + TimeSpan.FromMilliseconds(100);
+            if (delay > TimeSpan.Zero) await Task.Delay(delay);
+        }
+        var retry = await rig.Bus.TryClaimAsync("replacement-worker");
+        Assert.IsNotNull(retry);
+        using (var worker = new ApplicationRequestWorker(rig.Bus, rig.Services.GetRequiredService<IServiceScopeFactory>(),
+                   new ApplicationWorkerIdentity("replacement-worker", TimeSpan.FromSeconds(1)), NullLogger<ApplicationRequestWorker>.Instance))
+            await worker.ProcessLeaseAsync(retry, CancellationToken.None);
+        var response = await rig.Bus.WaitForResponseAsync(request.Id, request.Deadline);
+        Assert.IsFalse(response.IsError);
+        using var document = JsonDocument.Parse(response.Payload);
+        Assert.AreEqual("AddressBook/set", document.RootElement.GetProperty("batch").GetProperty("invocations")[0].GetProperty("name").GetString());
+        await using var database = rig.Context();
+        Assert.AreEqual(2, await database.ApplicationOperationReceipts.CountAsync());
+        Assert.AreEqual(1, await database.DavCollections.CountAsync(book => book.DisplayName == "Replay book"));
+        Assert.AreEqual(1, await database.DavResources.CountAsync(card => card.Uid == "replay-card-uid"));
+    }
+
+    [TestMethod]
+    public async Task VerificationOutboxWakesWorkerAndRetriesTheSameEffectAfterLostEnqueueAcknowledgement()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var batch = new JmapApplicationBatch([JmapConstants.CoreCapability], [new JmapApplicationCall("PushSubscription/set",
+            new JsonObject { ["create"] = new JsonObject { ["device"] = new JsonObject
+            { ["deviceClientId"] = "replay-device", ["url"] = "https://push.example.test/verification" } } }, "push")]);
+        var operation = Guid.CreateVersion7();
+        var initial = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual("PushSubscription/set", initial.Invocations[0].Name);
+        Assert.IsNotNull(initial.Invocations[0].Arguments["created"]?["device"]);
+        Assert.IsTrue((await new WorkerWakeProbe(rig.Source).ReadAsync()).HasDueWork);
+        rig.Sink.FailAfterEnqueue = true;
+        using (var scope = rig.Services.CreateScope())
+            Assert.IsTrue(await scope.ServiceProvider.GetRequiredService<ApplicationOperationReceiptStore>().DispatchNextEffectsAsync(CancellationToken.None));
+        await using (var count = rig.Source.CreateCommand("SELECT count(*) FROM presentation_requests"))
+            Assert.AreEqual(1L, await count.ExecuteScalarAsync());
+        var delayed = await new WorkerWakeProbe(rig.Source).ReadAsync();
+        Assert.IsFalse(delayed.HasDueWork);
+        Assert.IsTrue(delayed.NextDueAt > DateTimeOffset.UtcNow);
+        await using (var database = rig.Context())
+        {
+            Assert.IsTrue((await database.ApplicationOperationReceipts.SingleAsync()).EffectsPending);
+            await database.ApplicationOperationReceipts.ExecuteUpdateAsync(update => update.SetProperty(receipt => receipt.EffectsRetryAt, DateTime.UtcNow.AddSeconds(-1)));
+        }
+        rig.Sink.FailAfterEnqueue = false;
+        using (var scope = rig.Services.CreateScope())
+            Assert.IsTrue(await scope.ServiceProvider.GetRequiredService<ApplicationOperationReceiptStore>().DispatchNextEffectsAsync(CancellationToken.None));
+        await using (var count = rig.Source.CreateCommand("SELECT count(*) FROM presentation_requests"))
+            Assert.AreEqual(1L, await count.ExecuteScalarAsync());
+        await using (var database = rig.Context())
+        {
+            Assert.IsFalse((await database.ApplicationOperationReceipts.SingleAsync()).EffectsPending);
+            Assert.AreEqual(1, await database.JmapPushSubscriptions.CountAsync());
+        }
+        var replay = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual(JsonSerializer.Serialize(initial.Invocations), JsonSerializer.Serialize(replay.Invocations));
+        Assert.IsFalse((await new WorkerWakeProbe(rig.Source).ReadAsync()).HasDueWork);
+    }
+
+    private static LargeObjectReference Reference(ApplicationOperationReceiptDB row) =>
+        new(row.ObjectProvider, row.ObjectName, row.PayloadLength, row.ObjectSha256, row.ObjectEntityTag);
+
+    [TestMethod]
+    public async Task BackupRestoreRebindsEncryptedReceiptsAndPreservesNativeReplay()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var operation = Guid.CreateVersion7();
+        var original = await rig.InvokeAsync(rig.ContactsBatch(), operation);
+        await using var targetDatabase = await PostgresTestDatabase.TryCreateAsync()
+            ?? throw new AssertFailedException("PostgreSQL is required.");
+        await using var targetSource = NpgsqlDataSource.Create(targetDatabase.ConnectionString);
+        var client = new BlobServiceClient(Environment.GetEnvironmentVariable("MK8_EMAIL_TEST_AZURE_BLOB_CONNECTION"));
+        var container = client.GetBlobContainerClient($"mk8-receipt-restored-{Guid.NewGuid():N}");
+        var objects = new AzureBlobLargeObjectStore(client, new AzureBlobLargeObjectStoreOptions
+        { ContainerName = container.Name, CreateContainerIfMissing = true });
+        var temporary = Directory.CreateTempSubdirectory("mk8-receipt-backup-");
+        try
+        {
+            var dump = Environment.GetEnvironmentVariable("MK8_EMAIL_TEST_PG_DUMP") ?? "pg_dump";
+            var restore = Path.GetDirectoryName(dump) is { Length: > 0 } directory ? Path.Combine(directory, "pg_restore") : "pg_restore";
+            var destination = Path.Combine(temporary.FullName, "snapshot");
+            await DistributedBackupExporter.ExportAsync(rig.Source, rig.Objects, rig.Database.ConnectionString, destination, dump);
+            var manifest = await File.ReadAllLinesAsync(Path.Combine(destination, "references.jsonl"));
+            Assert.AreEqual(2, manifest.Select(line => JsonSerializer.Deserialize<DistributedBlobReferenceRow>(line))
+                .Count(row => row?.Source == "application_operation_receipts.payload_object_name"));
+            await DistributedBackupRestorer.RestoreAsync(destination, targetSource, targetDatabase.ConnectionString, objects, restore);
+            await DistributedRestoreActivationGuard.RequireReadyAsync(targetSource);
+            await using var services = rig.ServicesFor(targetDatabase.ConnectionString, objects);
+            using var scope = services.CreateScope();
+            var replay = await scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>()
+                .ProcessAsync(rig.ContactsBatch(), rig.User, operationId: operation);
+            Assert.AreEqual(JsonSerializer.Serialize(original.Invocations), JsonSerializer.Serialize(replay.Invocations));
+            var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            Assert.AreEqual(2, await database.ApplicationOperationReceipts.CountAsync());
+            Assert.AreEqual(1, await database.DavResources.CountAsync(card => card.Uid == "replay-card-uid"));
+            await using var originalDatabase = rig.Context();
+            Assert.AreNotEqual((await originalDatabase.ApplicationOperationReceipts.OrderBy(receipt => receipt.StepNumber).FirstAsync()).ObjectEntityTag,
+                (await database.ApplicationOperationReceipts.OrderBy(receipt => receipt.StepNumber).FirstAsync()).ObjectEntityTag);
+        }
+        finally
+        {
+            await container.DeleteIfExistsAsync();
+            temporary.Delete(recursive: true);
+        }
+    }
+
+    private sealed class Rig : IAsyncDisposable
+    {
+        private readonly AesGcmPayloadProtector _protector;
+        private Rig(PostgresTestDatabase database, NpgsqlDataSource source, BlobContainerClient container,
+            AzureBlobLargeObjectStore objects, AesGcmPayloadProtector protector, ServiceProvider services,
+            AuthenticatedMailUser user, Guid inboxId, PostgresApplicationBus bus, EffectSink sink)
+        {
+            Database = database; Source = source; Container = container; Objects = objects;
+            _protector = protector; Services = services; User = user; InboxId = inboxId; Bus = bus; Sink = sink;
+        }
+        public PostgresTestDatabase Database { get; }
+        public NpgsqlDataSource Source { get; }
+        public BlobContainerClient Container { get; }
+        public AzureBlobLargeObjectStore Objects { get; }
+        public ServiceProvider Services { get; }
+        public AuthenticatedMailUser User { get; }
+        public Guid InboxId { get; }
+        public PostgresApplicationBus Bus { get; }
+        public EffectSink Sink { get; }
+
+        public ServiceProvider ServicesFor(string connection, ILargeObjectStore objects) =>
+            CreateServices(connection, objects, _protector, User, Sink);
+
+        public static async Task<Rig> CreateAsync(IInterceptor? interceptor = null)
+        {
+            var connection = Environment.GetEnvironmentVariable("MK8_EMAIL_TEST_AZURE_BLOB_CONNECTION");
+            if (string.IsNullOrWhiteSpace(connection)) Assert.Inconclusive("Azure Blob-compatible test configuration is required.");
+            var database = await PostgresTestDatabase.TryCreateAsync();
+            if (database is null) Assert.Inconclusive("PostgreSQL test configuration is required.");
+            var source = NpgsqlDataSource.Create(database!.ConnectionString);
+            var client = new BlobServiceClient(connection);
+            var container = client.GetBlobContainerClient($"mk8-receipt-{Guid.NewGuid():N}");
+            var objects = new AzureBlobLargeObjectStore(client, new AzureBlobLargeObjectStoreOptions { ContainerName = container.Name, CreateContainerIfMissing = true });
+            var protector = AesGcmPayloadProtectorTests.CreateProtector("receipt", "durable-replay-key");
+            var options = new PostgresMessagingOptions { LeaseDuration = TimeSpan.FromSeconds(5) };
+            var bus = new PostgresApplicationBus(source, protector, options, largeObjectStore: objects);
+            var sink = new EffectSink(new PostgresPresentationBus(source, protector, options, largeObjectStore: objects));
+            var user = new AuthenticatedMailUser(Guid.CreateVersion7(), "replay@example.test");
+            var provider = CreateServices(database.ConnectionString, objects, protector, user, sink, interceptor);
+            var inboxId = Guid.CreateVersion7();
+            try
+            {
+                using (var scope = provider.CreateScope())
+                {
+                    var context = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+                    await context.Database.EnsureCreatedAsync();
+                    await new MailRuntimeSchemaService(context).EnsureAsync();
+                    var company = new CompanyDB { Id = Guid.CreateVersion7(), Name = "Replay fixture" };
+                    var address = new AddressDB { Id = Guid.CreateVersion7(), Domain = "example.test", Company = company, IsActive = true };
+                    var owner = new UserDB { Id = user.Id, Username = user.Username, PasswordHash = "unused", Company = company };
+                    context.Inboxes.Add(new InboxDB { Id = inboxId, Name = "replay", Address = address, Owner = owner });
+                    await context.SaveChangesAsync();
+                }
+                await PostgresMessagingSchema.EnsureAsync(source);
+                return new Rig(database, source, container, objects, protector, provider, user, inboxId, bus, sink);
+            }
+            catch
+            {
+                await provider.DisposeAsync();
+                await container.DeleteIfExistsAsync();
+                protector.Dispose();
+                await source.DisposeAsync();
+                await database.DisposeAsync();
+                throw;
+            }
+        }
+
+        private static ServiceProvider CreateServices(string connection, ILargeObjectStore objects,
+            AesGcmPayloadProtector protector, AuthenticatedMailUser user, EffectSink sink, IInterceptor? interceptor = null)
+        {
+            var environment = new EnvironmentConfig
+            {
+                Jmap = new JmapConfig { EnableJmap = true },
+                Smtp = new SmtpConfig { Hostname = "email.example.test" }
+            };
+            var services = new ServiceCollection().AddLogging().AddSingleton(environment).AddSingleton<ILargeObjectStore>(objects)
+                .AddSingleton<IStoredContentProtector>(new MessagingStoredContentProtector(protector))
+                .AddSingleton<IDurablePresentationEffectSink>(sink).AddSingleton<IMailAuthenticator>(new Authenticator(user));
+            services.AddDbContext<EmailDbContext>(builder =>
+            {
+                builder.UseNpgsql(connection);
+                if (interceptor is not null) builder.AddInterceptors(interceptor);
+            });
+            services.AddJmapApplication();
+            services.AddScoped<IApplicationRequestDispatcher, ApplicationRequestDispatcher>();
+            services.AddSingleton<IJmapPushPresentationClient>(new SafePushClient(new JmapPushPresentationClient(
+                new UnusedPresentationClient(), NullLogger<JmapPushPresentationClient>.Instance)));
+            return services.BuildServiceProvider();
+        }
+
+        public EmailDbContext Context() => new(new DbContextOptionsBuilder<EmailDbContext>().UseNpgsql(Database.ConnectionString).Options);
+        public async Task<JmapApplicationBatchResult> InvokeAsync(JmapApplicationBatch batch, Guid operation, CancellationToken token = default)
+        {
+            using var scope = Services.CreateScope();
+            return await scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>().ProcessAsync(batch, User, operation, token);
+        }
+        public JmapApplicationBatch ContactsBatch() => new([JmapConstants.CoreCapability, JmapConstants.ContactsCapability],
+        [
+            new("AddressBook/set", new JsonObject { ["accountId"] = JmapId.Account(InboxId), ["create"] = new JsonObject
+            { ["book"] = new JsonObject { ["name"] = "Replay book" } } }, "book"),
+            new("ContactCard/set", new JsonObject { ["accountId"] = JmapId.Account(InboxId), ["create"] = new JsonObject
+            { ["card"] = new JsonObject { ["@type"] = "Card", ["version"] = "1.0", ["uid"] = "replay-card-uid", ["kind"] = "individual",
+                ["name"] = new JsonObject { ["@type"] = "Name", ["full"] = "Replay person" }, ["addressBookIds"] = new JsonObject { ["#book"] = true } } } }, "card"),
+        ], new Dictionary<string, string>());
+
+        public async ValueTask DisposeAsync()
+        {
+            await Services.DisposeAsync();
+            await Container.DeleteIfExistsAsync();
+            _protector.Dispose();
+            await Source.DisposeAsync();
+            await Database.DisposeAsync();
+        }
+    }
+
+    private sealed class Authenticator(AuthenticatedMailUser user) : IMailAuthenticator
+    {
+        public Task<AuthenticatedMailUser?> AuthenticateAsync(string username, string password, CancellationToken cancellationToken = default) =>
+            Task.FromResult<AuthenticatedMailUser?>(user);
+    }
+    private sealed class UnusedPresentationClient : IPresentationRequestClient
+    {
+        public Task<ApplicationResponse> SendAsync(ApplicationRequest request, CancellationToken cancellationToken = default) => throw new AssertFailedException("The factory must not send presentation work.");
+        public Task<ApplicationExchangeSnapshot?> GetAsync(Guid requestId, CancellationToken cancellationToken = default) => throw new AssertFailedException("The factory must not fetch presentation results.");
+        public Task EnqueueAsync(ApplicationRequest request, CancellationToken cancellationToken = default) => throw new AssertFailedException("The factory must only build durable intent.");
+        public Task<ApplicationResponse> WaitForResponseAsync(Guid requestId, DateTimeOffset deadline, CancellationToken cancellationToken = default) => throw new AssertFailedException("The factory must not wait for presentation.");
+    }
+    private sealed class SafePushClient(JmapPushPresentationClient factory) : IJmapPushPresentationClient
+    {
+        public Task<bool> IsSafeUrlAsync(string url, CancellationToken cancellationToken) => Task.FromResult(true);
+        public ApplicationRequest? CreateVerificationRequest(string url, string? keysJson, DateTime expiresAt, JmapPushMessage payload) =>
+            factory.CreateVerificationRequest(url, keysJson, expiresAt, payload);
+        public Task EnqueueVerificationAsync(string url, string? keysJson, DateTime expiresAt, JmapPushMessage payload, CancellationToken cancellationToken) =>
+            throw new AssertFailedException("Relational verification must use its committed outbox intent.");
+        public Task<WebPushSendOutcome> SendAsync(string url, string? keysJson, DateTime expiresAt, JmapPushMessage payload, CancellationToken cancellationToken) =>
+            throw new AssertFailedException("This test does not send Web Push directly.");
+    }
+    private sealed class EffectSink(PostgresPresentationBus bus) : IDurablePresentationEffectSink
+    {
+        public bool FailAfterEnqueue { get; set; }
+        public async Task EnqueueAsync(ApplicationRequest request, CancellationToken cancellationToken)
+        {
+            await bus.EnqueueAsync(request, cancellationToken);
+            if (FailAfterEnqueue) throw new TimeoutException("Simulated lost enqueue acknowledgement.");
+        }
+    }
+    private sealed class ReceiptPause : SaveChangesInterceptor
+    {
+        private int _paused;
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData data, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            if (data.Context!.ChangeTracker.Entries<ApplicationOperationReceiptDB>().Any(entry => entry.State == EntityState.Added)
+                && Interlocked.CompareExchange(ref _paused, 1, 0) == 0)
+            {
+                Entered.TrySetResult();
+                await Release.Task.WaitAsync(cancellationToken);
+            }
+            return result;
+        }
+    }
+    private sealed class CancelReceipt(CancellationTokenSource cancellation) : SaveChangesInterceptor
+    {
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData data, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            if (data.Context!.ChangeTracker.Entries<ApplicationOperationReceiptDB>().Any(entry => entry.State == EntityState.Added))
+            {
+                cancellation.Cancel();
+                throw new OperationCanceledException(cancellation.Token);
+            }
+            return ValueTask.FromResult(result);
+        }
+    }
+    private sealed class CancelBeforePublication(IApplicationRequestConsumer consumer, CancellationTokenSource stop) : IApplicationRequestConsumer
+    {
+        public Task<ApplicationRequestLease> WaitForRequestAsync(string workerId, CancellationToken cancellationToken = default) => consumer.WaitForRequestAsync(workerId, cancellationToken);
+        public Task<ApplicationRequestLease?> TryClaimAsync(string workerId, CancellationToken cancellationToken = default) => consumer.TryClaimAsync(workerId, cancellationToken);
+        public Task<bool> RenewLeaseAsync(ApplicationRequestLease lease, CancellationToken cancellationToken = default) => consumer.RenewLeaseAsync(lease, cancellationToken);
+        public Task FailAsync(ApplicationRequestLease lease, string errorCode, string errorDetail, CancellationToken cancellationToken = default) =>
+            throw new AssertFailedException("Host cancellation must leave the original lease retryable.");
+        public Task CompleteAsync(ApplicationRequestLease lease, ApplicationResponse response, CancellationToken cancellationToken = default)
+        {
+            stop.Cancel();
+            throw new OperationCanceledException(stop.Token);
+        }
+    }
+}

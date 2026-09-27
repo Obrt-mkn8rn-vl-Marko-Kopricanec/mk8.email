@@ -4946,6 +4946,9 @@ public sealed class JmapProtocolTests
 
     private sealed class RecordingPushPresentationClient : IJmapPushPresentationClient
     {
+        public ApplicationRequest? CreateVerificationRequest(string url, string? keysJson, DateTime expiresAt, JmapPushMessage payload) =>
+            throw new AssertFailedException("The InMemory fixture uses its post-commit test callback.");
+
         public int VerificationPayloadLength { get; private set; }
 
         public Task<bool> IsSafeUrlAsync(string url, CancellationToken cancellationToken) =>

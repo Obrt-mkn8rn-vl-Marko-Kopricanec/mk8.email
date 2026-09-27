@@ -250,6 +250,7 @@ public sealed class ApplicationRequestDispatcherTests
 
         public Task<JmapApplicationResult> ExecuteBatchAsync(
             JmapBatchApplicationRequest request,
+            Guid operationId,
             CancellationToken cancellationToken = default)
         {
             Request = request;

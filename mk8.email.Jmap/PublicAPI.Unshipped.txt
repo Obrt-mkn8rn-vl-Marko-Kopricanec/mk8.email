@@ -1,2 +1,4 @@
 #nullable enable
+mk8.email.Jmap.JmapRequestProcessor.ProcessAsync(mk8.email.Contracts.Messaging.JmapApplicationBatch! batch, mk8.email.Application.Interfaces.AuthenticatedMailUser! user, System.Guid? operationId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Messaging.JmapApplicationBatchResult!>!
+mk8.email.Jmap.IJmapPushPresentationClient.CreateVerificationRequest(string! url, string? keysJson, System.DateTime expiresAt, mk8.email.Contracts.Messaging.JmapPushMessage! payload) -> mk8.email.Contracts.Messaging.ApplicationRequest?
 mk8.email.Jmap.JmapAccountProfileService.GetProfileAsync(mk8.email.Application.Interfaces.AuthenticatedMailUser! user, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Messaging.JmapApplicationProfile!>!

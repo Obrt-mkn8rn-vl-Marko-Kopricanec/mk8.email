@@ -124,7 +124,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
         foreach (var reference in blobReferences)
         {
             var resolved = context.ResolveId(reference)!;
-            if (await blobs.GetAsync(accountId, resolved, cancellationToken) is null)
+            if (await blobs.GetAsync(accountId, resolved, cancellationToken).ConfigureAwait(false) is null)
                 missingBlobs.Add(resolved);
         }
         if (missingBlobs.Count > 0)
@@ -154,7 +154,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
                 bodyValues,
                 partIds,
                 cancellationToken,
-                rootForbiddenHeaders);
+                rootForbiddenHeaders).ConfigureAwait(false);
             if (built.Error is not null)
             {
                 message.Dispose();
@@ -170,7 +170,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
                 value,
                 bodyValues,
                 partIds,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             if (flat.Error is not null)
             {
                 message.Dispose();
@@ -254,7 +254,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
                 textParts[0],
                 bodyValues,
                 partIds,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             if (built.Error is not null) return built;
             text = built.Entity;
         }
@@ -268,7 +268,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
                 htmlParts[0],
                 bodyValues,
                 partIds,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             if (built.Error is not null) return built;
             html = built.Entity;
         }
@@ -297,7 +297,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
                     attachment,
                     bodyValues,
                     partIds,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 if (built.Error is not null) return built;
                 mixed.Add(built.Entity!);
             }
@@ -353,7 +353,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
                     child,
                     bodyValues,
                     partIds,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 if (built.Error is not null)
                     return built;
                 multipart.Add(built.Entity!);
@@ -397,7 +397,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
             var resolvedBlobId = context.ResolveId(blobId);
             if (resolvedBlobId is null)
                 return PartBuildResult.Failed("blobNotFound");
-            var blob = await blobs.GetAsync(accountId, resolvedBlobId, cancellationToken);
+            var blob = await blobs.GetAsync(accountId, resolvedBlobId, cancellationToken).ConfigureAwait(false);
             if (blob is null)
                 return PartBuildResult.Failed("blobNotFound");
             part = new MimePart(mediaType, mediaSubtype)

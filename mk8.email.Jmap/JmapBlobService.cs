@@ -43,11 +43,11 @@ public sealed class JmapBlobService(
                 .SingleOrDefaultAsync(blob => blob.Id == uploadedId
                     && blob.AccountId == accountId
                     && blob.ExpiresAt > DateTime.UtcNow,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
             return uploaded is null
                 ? null
                 : new JmapBlobContent(
-                    await ReadContentAsync(uploaded, cancellationToken),
+                    await ReadContentAsync(uploaded, cancellationToken).ConfigureAwait(false),
                     uploaded.ContentType,
                     uploaded.Name,
                     uploaded.Id,
@@ -56,11 +56,11 @@ public sealed class JmapBlobService(
 
         if (JmapId.TryParseRawBlob(blobId, out var emailId))
         {
-            var email = await FindEmailAsync(accountId, emailId, cancellationToken);
+            var email = await FindEmailAsync(accountId, emailId, cancellationToken).ConfigureAwait(false);
             return email is null
                 ? null
                 : new JmapBlobContent(
-                    await mailboxContent.ReadAsync(email, cancellationToken),
+                    await mailboxContent.ReadAsync(email, cancellationToken).ConfigureAwait(false),
                     "message/rfc822",
                     null,
                     emailId,
@@ -78,10 +78,10 @@ public sealed class JmapBlobService(
         if (!isPath && !isHash)
             return null;
 
-        var sourceEmail = await FindEmailAsync(accountId, sourceId, cancellationToken);
+        var sourceEmail = await FindEmailAsync(accountId, sourceId, cancellationToken).ConfigureAwait(false);
         if (sourceEmail is not null)
         {
-            var rawMessage = await mailboxContent.ReadAsync(sourceEmail, cancellationToken);
+            var rawMessage = await mailboxContent.ReadAsync(sourceEmail, cancellationToken).ConfigureAwait(false);
             using var message = JmapEmailCodec.Parse(rawMessage);
             return ResolveBodyPart(
                 message,
@@ -96,12 +96,12 @@ public sealed class JmapBlobService(
             .SingleOrDefaultAsync(blob => blob.Id == sourceId
                 && blob.AccountId == accountId
                 && blob.ExpiresAt > DateTime.UtcNow,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         if (sourceBlob is null)
             return null;
         try
         {
-            var sourceContent = await ReadContentAsync(sourceBlob, cancellationToken);
+            var sourceContent = await ReadContentAsync(sourceBlob, cancellationToken).ConfigureAwait(false);
             using var message = JmapEmailCodec.Parse(sourceContent);
             return ResolveBodyPart(
                 message,
@@ -163,21 +163,22 @@ public sealed class JmapBlobService(
         if (!IsPostgreSql())
         {
             accountLock = AccountLocks.GetOrAdd(accountId, static _ => new SemaphoreSlim(1, 1));
-            await accountLock.WaitAsync(cancellationToken);
+            await accountLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
         try
         {
             var hasCallerTransaction = database.Database.CurrentTransaction is not null;
             var id = Guid.CreateVersion7();
             var hash = Convert.ToHexStringLower(SHA256.HashData(content));
-            await using var source = new MemoryStream(content, writable: false);
+            var source = new MemoryStream(content, writable: false);
+            await using var sourceLifetime = source.ConfigureAwait(false);
             var written = await objects.PutIfAbsentAsync(
                 JmapBlobLargeObjectMigrationService.BuildObjectName(accountId, id),
                 source,
                 content.LongLength,
                 hash,
                 contentType,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             try
             {
                 var stored = await StoreLockedAsync(
@@ -187,7 +188,7 @@ public sealed class JmapBlobService(
                     contentType,
                     name,
                     hasCallerTransaction,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 if (hasCallerTransaction && written.Created)
                     transactionEffects.DeleteOnRollback(written.Reference);
                 return stored;
@@ -199,7 +200,7 @@ public sealed class JmapBlobService(
             catch
             {
                 if (written.Created)
-                    await DeleteBestEffortAsync(written.Reference);
+                    await DeleteBestEffortAsync(written.Reference).ConfigureAwait(false);
                 throw;
             }
         }
@@ -227,16 +228,16 @@ public sealed class JmapBlobService(
 
         IDbContextTransaction? ownedTransaction = null;
         if (database.Database.IsRelational() && database.Database.CurrentTransaction is null)
-            ownedTransaction = await database.Database.BeginTransactionAsync(cancellationToken);
+            ownedTransaction = await database.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         var removedReferences = new List<LargeObjectReference>();
         var commitAttempted = false;
         try
         {
-            await AcquireAccountLockAsync(accountId, cancellationToken);
+            await AcquireAccountLockAsync(accountId, cancellationToken).ConfigureAwait(false);
             var now = DateTime.UtcNow;
             var expired = await database.JmapBlobs
                 .Where(blob => blob.AccountId == accountId && blob.ExpiresAt <= now)
-                .ToListAsync(cancellationToken);
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
             if (expired.Count > 0)
             {
                 removedReferences.AddRange(expired
@@ -249,7 +250,7 @@ public sealed class JmapBlobService(
                 .Where(blob => blob.AccountId == accountId && blob.ExpiresAt > now)
                 .OrderBy(blob => blob.CreatedAt)
                 .ThenBy(blob => blob.Id)
-                .ToListAsync(cancellationToken);
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
             var usedBytes = accountBlobs.Sum(blob => blob.SizeBytes);
             foreach (var existing in accountBlobs)
             {
@@ -277,11 +278,11 @@ public sealed class JmapBlobService(
             };
             JmapBlobLargeObjectMigrationService.ApplyReference(blob, reference);
             database.JmapBlobs.Add(blob);
-            await database.SaveChangesAsync(cancellationToken);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             if (ownedTransaction is not null)
             {
                 commitAttempted = true;
-                await ownedTransaction.CommitAsync(cancellationToken);
+                await ownedTransaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             }
 
             if (hasCallerTransaction)
@@ -292,7 +293,7 @@ public sealed class JmapBlobService(
             else
             {
                 foreach (var removedReference in removedReferences)
-                    await DeleteBestEffortAsync(removedReference);
+                    await DeleteBestEffortAsync(removedReference).ConfigureAwait(false);
             }
             return blob;
         }
@@ -302,7 +303,7 @@ public sealed class JmapBlobService(
             {
                 try
                 {
-                    await ownedTransaction.RollbackAsync(CancellationToken.None);
+                    await ownedTransaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
                 }
                 catch (Exception rollbackException)
                 {
@@ -321,7 +322,7 @@ public sealed class JmapBlobService(
             {
                 try
                 {
-                    await ownedTransaction.DisposeAsync();
+                    await ownedTransaction.DisposeAsync().ConfigureAwait(false);
                 }
                 catch (Exception disposeException)
                 {
@@ -341,8 +342,9 @@ public sealed class JmapBlobService(
             return blob.Content;
         var reference = TryGetReference(blob)
             ?? throw new InvalidOperationException("The JMAP blob has no valid storage reference.");
-        await using var destination = new MemoryStream();
-        await objects.CopyToAsync(reference, destination, cancellationToken);
+        var destination = new MemoryStream();
+        await using var destinationLifetime = destination.ConfigureAwait(false);
+        await objects.CopyToAsync(reference, destination, cancellationToken).ConfigureAwait(false);
         return destination.ToArray();
     }
 
@@ -381,7 +383,7 @@ public sealed class JmapBlobService(
         var key = BinaryPrimitives.ReadInt64BigEndian(digest);
         await database.Database.ExecuteSqlInterpolatedAsync(
             $"SELECT pg_advisory_xact_lock({key})",
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
     }
 
     private bool IsPostgreSql() => string.Equals(
@@ -393,7 +395,7 @@ public sealed class JmapBlobService(
     {
         try
         {
-            await objects.DeleteIfMatchAsync(reference, CancellationToken.None);
+            await objects.DeleteIfMatchAsync(reference, CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception exception)
         {
@@ -443,10 +445,10 @@ internal sealed class BlobCopyMethod(
         }
         if (blobIds.Count > environment.Jmap.MaxObjectsInSet)
             return JmapMethodResponse.Error("requestTooLarge");
-        var sourceAccount = await accounts.GetAccountAsync(context.User, fromAccountId, cancellationToken);
+        var sourceAccount = await accounts.GetAccountAsync(context.User, fromAccountId, cancellationToken).ConfigureAwait(false);
         if (sourceAccount is null)
             return JmapMethodResponse.Error("fromAccountNotFound");
-        var targetAccount = await accounts.GetAccountAsync(context.User, accountId, cancellationToken);
+        var targetAccount = await accounts.GetAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (targetAccount is null)
             return JmapMethodResponse.Error("accountNotFound");
 
@@ -454,7 +456,7 @@ internal sealed class BlobCopyMethod(
         var notCopied = new JsonObject();
         foreach (var blobId in blobIds.Distinct(StringComparer.Ordinal))
         {
-            var source = await blobs.GetAsync(sourceAccount.InboxId, blobId, cancellationToken);
+            var source = await blobs.GetAsync(sourceAccount.InboxId, blobId, cancellationToken).ConfigureAwait(false);
             if (source is null)
             {
                 notCopied[blobId] = JmapMethodHelpers.SetError("notFound");
@@ -470,7 +472,7 @@ internal sealed class BlobCopyMethod(
                 source.Content,
                 source.ContentType,
                 source.Name,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             copied[blobId] = stored.BlobId;
         }
         return new JmapMethodResponse(Name, new JsonObject

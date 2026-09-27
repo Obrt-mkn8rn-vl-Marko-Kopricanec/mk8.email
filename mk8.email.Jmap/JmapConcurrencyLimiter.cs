@@ -35,7 +35,7 @@ internal sealed class JmapConcurrencyLimiter : IDisposable
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (!await semaphore.WaitAsync(TimeSpan.Zero, cancellationToken))
+        if (!await semaphore.WaitAsync(TimeSpan.Zero, cancellationToken).ConfigureAwait(false))
         {
             throw new JmapRequestException(
                 "urn:ietf:params:jmap:error:limit",

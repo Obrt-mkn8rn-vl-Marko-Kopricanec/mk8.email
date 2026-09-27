@@ -31,7 +31,7 @@ public sealed class JmapBlobLargeObjectMigrationService(
 
         if (!IsPostgreSql())
         {
-            await MigrateRowsAsync(cancellationToken);
+            await MigrateRowsAsync(cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -41,13 +41,13 @@ public sealed class JmapBlobLargeObjectMigrationService(
         try
         {
             if (closeConnection)
-                await database.Database.OpenConnectionAsync(cancellationToken);
+                await database.Database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
             await database.Database.ExecuteSqlInterpolatedAsync(
                 $"SELECT pg_advisory_lock({MigrationLockKey})",
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             lockTaken = true;
-            await MigrateRowsAsync(cancellationToken);
-            await EnforceExternalStorageAsync(cancellationToken);
+            await MigrateRowsAsync(cancellationToken).ConfigureAwait(false);
+            await EnforceExternalStorageAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -57,13 +57,13 @@ public sealed class JmapBlobLargeObjectMigrationService(
                 {
                     await database.Database.ExecuteSqlInterpolatedAsync(
                         $"SELECT pg_advisory_unlock({MigrationLockKey})",
-                        CancellationToken.None);
+                        CancellationToken.None).ConfigureAwait(false);
                 }
             }
             finally
             {
                 if (closeConnection)
-                    await database.Database.CloseConnectionAsync();
+                    await database.Database.CloseConnectionAsync().ConfigureAwait(false);
             }
         }
     }
@@ -77,12 +77,12 @@ public sealed class JmapBlobLargeObjectMigrationService(
                 .OrderBy(blob => blob.CreatedAt)
                 .ThenBy(blob => blob.Id)
                 .Take(BatchSize)
-                .ToListAsync(cancellationToken);
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
             if (legacy.Count == 0)
                 break;
 
             foreach (var blob in legacy)
-                await MigrateAsync(blob, cancellationToken);
+                await MigrateAsync(blob, cancellationToken).ConfigureAwait(false);
             database.ChangeTracker.Clear();
         }
     }
@@ -90,8 +90,8 @@ public sealed class JmapBlobLargeObjectMigrationService(
     private async Task EnforceExternalStorageAsync(CancellationToken cancellationToken)
     {
         var ownsTransaction = database.Database.CurrentTransaction is null;
-        await using var transaction = ownsTransaction
-            ? await database.Database.BeginTransactionAsync(cancellationToken)
+        var transaction = ownsTransaction
+            ? await database.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false)
             : null;
         try
         {
@@ -118,15 +118,20 @@ public sealed class JmapBlobLargeObjectMigrationService(
                 ALTER TABLE jmap_blobs
                     VALIDATE CONSTRAINT ck_jmap_blobs_external_storage;
                 """,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             if (transaction is not null)
-                await transaction.CommitAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
         catch
         {
             if (transaction is not null)
-                await transaction.RollbackAsync(CancellationToken.None);
+                await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
             throw;
+        }
+        finally
+        {
+            if (transaction is not null)
+                await transaction.DisposeAsync().ConfigureAwait(false);
         }
     }
 
@@ -145,27 +150,28 @@ public sealed class JmapBlobLargeObjectMigrationService(
         var hash = Convert.ToHexStringLower(SHA256.HashData(content));
         var objectName = BuildObjectName(blob.AccountId, blob.Id);
         var ownsTransaction = database.Database.IsRelational();
-        await using var transaction = ownsTransaction
-            ? await database.Database.BeginTransactionAsync(cancellationToken)
+        var transaction = ownsTransaction
+            ? await database.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false)
             : null;
         LargeObjectWriteResult? written = null;
         var commitAttempted = false;
         try
         {
-            await using var source = new MemoryStream(content, writable: false);
+            var source = new MemoryStream(content, writable: false);
+            await using var sourceLifetime = source.ConfigureAwait(false);
             written = await objects.PutIfAbsentAsync(
                 objectName,
                 source,
                 content.LongLength,
                 hash,
                 blob.ContentType,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             ApplyReference(blob, written.Reference);
-            await database.SaveChangesAsync(cancellationToken);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             if (transaction is not null)
             {
                 commitAttempted = true;
-                await transaction.CommitAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             }
         }
         catch
@@ -174,7 +180,7 @@ public sealed class JmapBlobLargeObjectMigrationService(
             {
                 try
                 {
-                    await transaction.RollbackAsync(CancellationToken.None);
+                    await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
                 }
                 catch (Exception rollbackException)
                 {
@@ -188,7 +194,7 @@ public sealed class JmapBlobLargeObjectMigrationService(
             {
                 try
                 {
-                    await objects.DeleteIfMatchAsync(written.Reference, CancellationToken.None);
+                    await objects.DeleteIfMatchAsync(written.Reference, CancellationToken.None).ConfigureAwait(false);
                 }
                 catch (Exception cleanupException)
                 {
@@ -199,6 +205,11 @@ public sealed class JmapBlobLargeObjectMigrationService(
                 }
             }
             throw;
+        }
+        finally
+        {
+            if (transaction is not null)
+                await transaction.DisposeAsync().ConfigureAwait(false);
         }
     }
 

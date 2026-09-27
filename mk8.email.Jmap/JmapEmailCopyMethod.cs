@@ -55,21 +55,21 @@ internal sealed class EmailCopyMethod(
         }
         if (create.Count > environment.Jmap.MaxObjectsInSet)
             return JmapMethodResponse.Error("requestTooLarge");
-        var sourceAccount = await accounts.GetAccountAsync(context.User, fromAccountId, cancellationToken);
+        var sourceAccount = await accounts.GetAccountAsync(context.User, fromAccountId, cancellationToken).ConfigureAwait(false);
         if (sourceAccount is null)
             return JmapMethodResponse.Error("fromAccountNotFound");
-        var targetAccount = await accounts.GetAccountAsync(context.User, accountId, cancellationToken);
+        var targetAccount = await accounts.GetAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (targetAccount is null)
             return JmapMethodResponse.Error("accountNotFound");
 
         var sourceState = await states.GetStateAsync(
             sourceAccount.InboxId,
             JmapConstants.EmailDataType,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         var oldTargetState = await states.GetStateAsync(
             targetAccount.InboxId,
             JmapConstants.EmailDataType,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (ifFromInState is not null && !string.Equals(ifFromInState, sourceState, StringComparison.Ordinal)
             || ifInState is not null && !string.Equals(ifInState, oldTargetState, StringComparison.Ordinal))
         {
@@ -94,7 +94,7 @@ internal sealed class EmailCopyMethod(
                 .SingleOrDefaultAsync(email => email.Id == sourceId
                     && email.Folder.InboxId == sourceAccount.InboxId
                     && !email.IsDeleted,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
             if (source is null)
             {
                 notCreated[item.Key] = JmapMethodHelpers.SetError("notFound");
@@ -105,7 +105,7 @@ internal sealed class EmailCopyMethod(
                 targetAccount.InboxId,
                 item.Value["mailboxIds"],
                 context,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             if (mailbox.Error is not null)
             {
                 notCreated[item.Key] = mailbox.Error;
@@ -141,14 +141,14 @@ internal sealed class EmailCopyMethod(
                     properties: ["receivedAt"]);
                 continue;
             }
-            var rawMessage = await content.ReadAsync(source, cancellationToken);
+            var rawMessage = await content.ReadAsync(source, cancellationToken).ConfigureAwait(false);
             var stored = await store.StoreAsync(
                 targetAccount,
                 mailbox.Folder!,
                 rawMessage,
                 keywords,
                 receivedAt,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             if (stored.Error is not null)
             {
                 notCreated[item.Key] = stored.Error;
@@ -168,7 +168,7 @@ internal sealed class EmailCopyMethod(
             ["newState"] = await states.GetStateAsync(
                 targetAccount.InboxId,
                 JmapConstants.EmailDataType,
-                cancellationToken),
+                cancellationToken).ConfigureAwait(false),
             ["created"] = created.Count == 0 ? null : created,
             ["notCreated"] = notCreated.Count == 0 ? null : notCreated,
         };
@@ -178,7 +178,7 @@ internal sealed class EmailCopyMethod(
         var currentSourceState = await states.GetStateAsync(
             sourceAccount.InboxId,
             JmapConstants.EmailDataType,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (destroyFromIfInState is not null
             && !string.Equals(destroyFromIfInState, currentSourceState, StringComparison.Ordinal))
         {
@@ -197,7 +197,7 @@ internal sealed class EmailCopyMethod(
                 .SingleOrDefaultAsync(email => email.Id == sourceId
                     && email.Folder.InboxId == sourceAccount.InboxId
                     && !email.IsDeleted,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
             var wireId = JmapId.Email(sourceId);
             if (source is null)
             {
@@ -213,7 +213,7 @@ internal sealed class EmailCopyMethod(
             });
             content.DeleteOnCommit(source);
             database.Emails.Remove(source);
-            await database.SaveChangesAsync(cancellationToken);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             destroyed.Add(wireId);
         }
         var setResponse = new JmapMethodResponse("Email/set", new JsonObject
@@ -223,7 +223,7 @@ internal sealed class EmailCopyMethod(
             ["newState"] = await states.GetStateAsync(
                 sourceAccount.InboxId,
                 JmapConstants.EmailDataType,
-                cancellationToken),
+                cancellationToken).ConfigureAwait(false),
             ["created"] = null,
             ["updated"] = null,
             ["destroyed"] = destroyed.Count == 0 ? null : destroyed,

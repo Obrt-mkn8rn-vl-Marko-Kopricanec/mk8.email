@@ -101,7 +101,7 @@ internal sealed class EmailGetMethod(
         if (requestedIds is { Count: > 0 } && requestedIds.Count > environment.Jmap.MaxObjectsInGet)
             return JmapMethodResponse.Error("requestTooLarge");
 
-        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken);
+        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (account is null)
             return JmapMethodResponse.Error("accountNotFound");
 
@@ -119,7 +119,7 @@ internal sealed class EmailGetMethod(
             query = query.Where(email => parsedIds.Contains(email.Id));
         }
 
-        var emails = await query.ToListAsync(cancellationToken);
+        var emails = await query.ToListAsync(cancellationToken).ConfigureAwait(false);
         if (requestedIds is null && emails.Count > environment.Jmap.MaxObjectsInGet)
             return JmapMethodResponse.Error("requestTooLarge");
         var byId = emails.ToDictionary(email => JmapId.Email(email.Id), StringComparer.Ordinal);
@@ -133,7 +133,7 @@ internal sealed class EmailGetMethod(
                 continue;
             }
 
-            var rawMessage = await content.ReadAsync(email, cancellationToken);
+            var rawMessage = await content.ReadAsync(email, cancellationToken).ConfigureAwait(false);
             using var message = JmapEmailCodec.Parse(rawMessage);
             responseList.Add(JmapEmailCodec.BuildEmail(
                 message,
@@ -148,7 +148,7 @@ internal sealed class EmailGetMethod(
             ["state"] = await states.GetStateAsync(
                 account.InboxId,
                 JmapConstants.EmailDataType,
-                cancellationToken),
+                cancellationToken).ConfigureAwait(false),
             ["list"] = responseList,
             ["notFound"] = notFound,
         });
@@ -176,7 +176,7 @@ internal sealed class EmailChangesMethod(
         {
             return JmapMethodResponse.Error("invalidArguments");
         }
-        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken);
+        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (account is null)
             return JmapMethodResponse.Error("accountNotFound");
         var changes = await states.GetChangesAsync(
@@ -185,7 +185,7 @@ internal sealed class EmailChangesMethod(
             sinceState,
             maxChanges,
             environment.Jmap.MaxObjectsInGet,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (changes is null)
             return JmapMethodResponse.Error("cannotCalculateChanges");
         return new JmapMethodResponse(Name, new JsonObject

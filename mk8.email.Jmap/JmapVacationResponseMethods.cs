@@ -28,7 +28,7 @@ internal sealed class JmapVacationResponseService(
     {
         var response = await database.JmapVacationResponses.SingleOrDefaultAsync(
             item => item.AccountId == accountId,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (response is not null)
             return response;
 
@@ -44,7 +44,7 @@ internal sealed class JmapVacationResponseService(
         database.JmapVacationResponses.Add(response);
         try
         {
-            await database.SaveChangesAsync(cancellationToken);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             return response;
         }
         catch (DbUpdateException)
@@ -58,7 +58,7 @@ internal sealed class JmapVacationResponseService(
             }
             var stored = await database.JmapVacationResponses.SingleOrDefaultAsync(
                 item => item.AccountId == accountId,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             if (stored is null)
                 throw;
             return stored;
@@ -190,12 +190,12 @@ internal sealed class VacationResponseGetMethod(
         {
             return JmapMethodResponse.Error("requestTooLarge");
         }
-        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken);
+        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (account is null) return JmapMethodResponse.Error("accountNotFound");
-        var response = await vacations.GetOrCreateAsync(account.InboxId, cancellationToken);
+        var response = await vacations.GetOrCreateAsync(account.InboxId, cancellationToken).ConfigureAwait(false);
         var include = requestedIds is null || requestedIds.Contains("singleton", StringComparer.Ordinal);
         var list = new JsonArray();
-        if (include) list.Add(await vacations.ToJsonAsync(response, properties, cancellationToken));
+        if (include) list.Add(await vacations.ToJsonAsync(response, properties, cancellationToken).ConfigureAwait(false));
         var notFound = new JsonArray();
         if (requestedIds is not null)
         {
@@ -208,7 +208,7 @@ internal sealed class VacationResponseGetMethod(
             ["state"] = await states.GetStateAsync(
                 account.InboxId,
                 JmapConstants.VacationResponseDataType,
-                cancellationToken),
+                cancellationToken).ConfigureAwait(false),
             ["list"] = list,
             ["notFound"] = notFound,
         });
@@ -252,13 +252,13 @@ internal sealed class VacationResponseSetMethod(
         var operationCount = (create?.Count ?? 0) + (update?.Count ?? 0) + (destroy?.Count ?? 0);
         if (operationCount > environment.Jmap.MaxObjectsInSet)
             return JmapMethodResponse.Error("requestTooLarge");
-        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken);
+        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (account is null) return JmapMethodResponse.Error("accountNotFound");
-        var response = await vacations.GetOrCreateAsync(account.InboxId, cancellationToken);
+        var response = await vacations.GetOrCreateAsync(account.InboxId, cancellationToken).ConfigureAwait(false);
         var oldState = await states.GetStateAsync(
             account.InboxId,
             JmapConstants.VacationResponseDataType,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (ifInState is not null && !string.Equals(ifInState, oldState, StringComparison.Ordinal))
             return JmapMethodResponse.Error("stateMismatch");
 
@@ -280,7 +280,7 @@ internal sealed class VacationResponseSetMethod(
                     notUpdated[item.Key] = JmapMethodHelpers.SetError("notFound");
                     continue;
                 }
-                var current = await vacations.ToJsonAsync(response, null, cancellationToken);
+                var current = await vacations.ToJsonAsync(response, null, cancellationToken).ConfigureAwait(false);
                 if (!JmapMethodHelpers.TryApplyPatchAllowingUnchangedProperties(
                         current,
                         item.Value,
@@ -314,9 +314,9 @@ internal sealed class VacationResponseSetMethod(
                 response.ToDate = values.ToDate;
                 response.Subject = values.Subject;
                 await vacations.SetBodiesAsync(
-                    response, values.TextBody, values.HtmlBody, cancellationToken);
+                    response, values.TextBody, values.HtmlBody, cancellationToken).ConfigureAwait(false);
                 response.UpdatedAt = DateTime.UtcNow;
-                await vacations.SaveAsync(cancellationToken);
+                await vacations.SaveAsync(cancellationToken).ConfigureAwait(false);
                 updated["singleton"] = null;
             }
         }
@@ -334,7 +334,7 @@ internal sealed class VacationResponseSetMethod(
             ["newState"] = await states.GetStateAsync(
                 account.InboxId,
                 JmapConstants.VacationResponseDataType,
-                cancellationToken),
+                cancellationToken).ConfigureAwait(false),
             ["created"] = null,
             ["updated"] = updated.Count == 0 ? null : updated,
             ["destroyed"] = null,

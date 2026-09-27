@@ -70,13 +70,13 @@ internal static partial class JmapEmailQueryEngine
         var emails = await database.Emails
             .AsNoTracking()
             .Where(email => email.Folder.InboxId == accountId && !email.IsDeleted)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         var result = new List<JmapEmailQueryItem>(emails.Count);
         try
         {
             foreach (var email in emails)
             {
-                var rawMessage = await content.ReadAsync(email, cancellationToken);
+                var rawMessage = await content.ReadAsync(email, cancellationToken).ConfigureAwait(false);
                 var message = JmapEmailCodec.Parse(rawMessage);
                 var keywords = JmapEmailCodec.BuildKeywords(email)
                     .Select(item => item.Key)
@@ -584,7 +584,7 @@ internal sealed class EmailQueryMethod(
         {
             return JmapMethodResponse.Error("invalidArguments");
         }
-        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken);
+        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (account is null)
             return JmapMethodResponse.Error("accountNotFound");
 
@@ -592,7 +592,7 @@ internal sealed class EmailQueryMethod(
             database,
             content,
             account.InboxId,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         try
         {
             if (!JmapEmailQueryEngine.TryFilter(all, arguments["filter"], out var filtered, out var filterError))
@@ -631,7 +631,7 @@ internal sealed class EmailQueryMethod(
                 ["queryState"] = await states.GetStateAsync(
                     account.InboxId,
                     JmapConstants.EmailDataType,
-                    cancellationToken),
+                    cancellationToken).ConfigureAwait(false),
                 ["canCalculateChanges"] = true,
                 ["position"] = position,
                 ["ids"] = JmapMethodHelpers.ToJsonArray(page),
@@ -683,14 +683,14 @@ internal sealed class EmailQueryChangesMethod(
         {
             return JmapMethodResponse.Error("invalidArguments");
         }
-        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken);
+        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (account is null)
             return JmapMethodResponse.Error("accountNotFound");
         var all = await JmapEmailQueryEngine.LoadAsync(
             database,
             content,
             account.InboxId,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         try
         {
             if (!JmapEmailQueryEngine.TryFilter(all, arguments["filter"], out var filtered, out var filterError))
@@ -703,7 +703,7 @@ internal sealed class EmailQueryChangesMethod(
                 sinceState,
                 null,
                 int.MaxValue,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             if (changes is null)
                 return JmapMethodResponse.Error("cannotCalculateChanges");
 

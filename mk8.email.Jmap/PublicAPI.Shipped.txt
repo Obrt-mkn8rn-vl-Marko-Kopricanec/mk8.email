@@ -1,0 +1,177 @@
+#nullable enable
+const mk8.email.Jmap.JmapConstants.AddressBookDataType = "AddressBook" -> string!
+const mk8.email.Jmap.JmapConstants.ContactCardDataType = "ContactCard" -> string!
+const mk8.email.Jmap.JmapConstants.ContactsCapability = "urn:ietf:params:jmap:contacts" -> string!
+const mk8.email.Jmap.JmapConstants.CoreCapability = "urn:ietf:params:jmap:core" -> string!
+const mk8.email.Jmap.JmapConstants.CreatedChange = "created" -> string!
+const mk8.email.Jmap.JmapConstants.DestroyedChange = "destroyed" -> string!
+const mk8.email.Jmap.JmapConstants.EmailDataType = "Email" -> string!
+const mk8.email.Jmap.JmapConstants.EmailDeliveryDataType = "EmailDelivery" -> string!
+const mk8.email.Jmap.JmapConstants.EmailSubmissionDataType = "EmailSubmission" -> string!
+const mk8.email.Jmap.JmapConstants.IdentityDataType = "Identity" -> string!
+const mk8.email.Jmap.JmapConstants.MailboxDataType = "Mailbox" -> string!
+const mk8.email.Jmap.JmapConstants.MailCapability = "urn:ietf:params:jmap:mail" -> string!
+const mk8.email.Jmap.JmapConstants.PushSubscriptionDataType = "PushSubscription" -> string!
+const mk8.email.Jmap.JmapConstants.SubmissionCapability = "urn:ietf:params:jmap:submission" -> string!
+const mk8.email.Jmap.JmapConstants.ThreadDataType = "Thread" -> string!
+const mk8.email.Jmap.JmapConstants.UpdatedChange = "updated" -> string!
+const mk8.email.Jmap.JmapConstants.VacationResponseCapability = "urn:ietf:params:jmap:vacationresponse" -> string!
+const mk8.email.Jmap.JmapConstants.VacationResponseDataType = "VacationResponse" -> string!
+mk8.email.Jmap.CoreEchoMethod
+mk8.email.Jmap.CoreEchoMethod.Capability.get -> string!
+mk8.email.Jmap.CoreEchoMethod.CoreEchoMethod() -> void
+mk8.email.Jmap.CoreEchoMethod.InvokeAsync(mk8.email.Jmap.JmapInvocationContext! context, System.Text.Json.Nodes.JsonObject! arguments, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<mk8.email.Jmap.JmapMethodResponse!>!
+mk8.email.Jmap.CoreEchoMethod.Name.get -> string!
+mk8.email.Jmap.IJmapMethod
+mk8.email.Jmap.IJmapMethod.Capability.get -> string!
+mk8.email.Jmap.IJmapMethod.InvokeAsync(mk8.email.Jmap.JmapInvocationContext! context, System.Text.Json.Nodes.JsonObject! arguments, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<mk8.email.Jmap.JmapMethodResponse!>!
+mk8.email.Jmap.IJmapMethod.Name.get -> string!
+mk8.email.Jmap.IJmapPushPresentationClient
+mk8.email.Jmap.IJmapPushPresentationClient.EnqueueVerificationAsync(string! url, string? keysJson, System.DateTime expiresAt, byte[]! payload, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+mk8.email.Jmap.IJmapPushPresentationClient.IsSafeUrlAsync(string! url, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<bool>!
+mk8.email.Jmap.IJmapPushPresentationClient.SendAsync(string! url, string? keysJson, System.DateTime expiresAt, byte[]! payload, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<mk8.email.Contracts.Messaging.WebPushSendOutcome>!
+mk8.email.Jmap.IJmapPushWork
+mk8.email.Jmap.IJmapPushWork.ProcessDueAsync(System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+mk8.email.Jmap.JmapAccount
+mk8.email.Jmap.JmapAccount.<Clone>$() -> mk8.email.Jmap.JmapAccount!
+mk8.email.Jmap.JmapAccount.Address.get -> string!
+mk8.email.Jmap.JmapAccount.Address.init -> void
+mk8.email.Jmap.JmapAccount.Deconstruct(out System.Guid InboxId, out System.Guid UserId, out string! Username, out string! Address, out long QuotaBytes) -> void
+mk8.email.Jmap.JmapAccount.Equals(mk8.email.Jmap.JmapAccount? other) -> bool
+mk8.email.Jmap.JmapAccount.InboxId.get -> System.Guid
+mk8.email.Jmap.JmapAccount.InboxId.init -> void
+mk8.email.Jmap.JmapAccount.JmapAccount(System.Guid InboxId, System.Guid UserId, string! Username, string! Address, long QuotaBytes) -> void
+mk8.email.Jmap.JmapAccount.QuotaBytes.get -> long
+mk8.email.Jmap.JmapAccount.QuotaBytes.init -> void
+mk8.email.Jmap.JmapAccount.UserId.get -> System.Guid
+mk8.email.Jmap.JmapAccount.UserId.init -> void
+mk8.email.Jmap.JmapAccount.Username.get -> string!
+mk8.email.Jmap.JmapAccount.Username.init -> void
+mk8.email.Jmap.JmapAccountService
+mk8.email.Jmap.JmapAccountService.GetAccountAsync(mk8.email.Application.Interfaces.AuthenticatedMailUser! user, string? accountId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Jmap.JmapAccount?>!
+mk8.email.Jmap.JmapAccountService.GetAccountsAsync(mk8.email.Application.Interfaces.AuthenticatedMailUser! user, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<mk8.email.Jmap.JmapAccount!>!>!
+mk8.email.Jmap.JmapAccountService.GetContactAccountAsync(mk8.email.Application.Interfaces.AuthenticatedMailUser! user, string? accountId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Jmap.JmapAccount?>!
+mk8.email.Jmap.JmapAccountService.GetContactAccountErrorAsync(mk8.email.Application.Interfaces.AuthenticatedMailUser! user, string? accountId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<string!>!
+mk8.email.Jmap.JmapAccountService.JmapAccountService(mk8.email.Infrastructure.Data.EmailDbContext! database) -> void
+mk8.email.Jmap.JmapBlobLargeObjectMigrationService
+mk8.email.Jmap.JmapBlobLargeObjectMigrationService.JmapBlobLargeObjectMigrationService(mk8.email.Infrastructure.Data.EmailDbContext! database, mk8.email.Contracts.Storage.ILargeObjectStore! objects, Microsoft.Extensions.Logging.ILogger<mk8.email.Jmap.JmapBlobLargeObjectMigrationService!>! logger) -> void
+mk8.email.Jmap.JmapBlobLargeObjectMigrationService.MigrateAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+mk8.email.Jmap.JmapBlobService
+mk8.email.Jmap.JmapBlobService.JmapBlobService(mk8.email.Infrastructure.Data.EmailDbContext! database, mk8.email.Configuration.EnvironmentConfig! environment, mk8.email.Contracts.Storage.ILargeObjectStore! objects, mk8.email.Application.Services.LargeObjectTransactionEffects! transactionEffects, mk8.email.Application.Services.MailboxMessageContentService! mailboxContent, Microsoft.Extensions.Logging.ILogger<mk8.email.Jmap.JmapBlobService!>! logger) -> void
+mk8.email.Jmap.JmapChangesResult
+mk8.email.Jmap.JmapChangesResult.<Clone>$() -> mk8.email.Jmap.JmapChangesResult!
+mk8.email.Jmap.JmapChangesResult.Created.get -> System.Collections.Generic.IReadOnlyList<string!>!
+mk8.email.Jmap.JmapChangesResult.Created.init -> void
+mk8.email.Jmap.JmapChangesResult.Deconstruct(out string! OldState, out string! NewState, out bool HasMoreChanges, out System.Collections.Generic.IReadOnlyList<string!>! Created, out System.Collections.Generic.IReadOnlyList<string!>! Updated, out System.Collections.Generic.IReadOnlyList<string!>! Destroyed) -> void
+mk8.email.Jmap.JmapChangesResult.Destroyed.get -> System.Collections.Generic.IReadOnlyList<string!>!
+mk8.email.Jmap.JmapChangesResult.Destroyed.init -> void
+mk8.email.Jmap.JmapChangesResult.Equals(mk8.email.Jmap.JmapChangesResult? other) -> bool
+mk8.email.Jmap.JmapChangesResult.HasMoreChanges.get -> bool
+mk8.email.Jmap.JmapChangesResult.HasMoreChanges.init -> void
+mk8.email.Jmap.JmapChangesResult.JmapChangesResult(string! OldState, string! NewState, bool HasMoreChanges, System.Collections.Generic.IReadOnlyList<string!>! Created, System.Collections.Generic.IReadOnlyList<string!>! Updated, System.Collections.Generic.IReadOnlyList<string!>! Destroyed) -> void
+mk8.email.Jmap.JmapChangesResult.NewState.get -> string!
+mk8.email.Jmap.JmapChangesResult.NewState.init -> void
+mk8.email.Jmap.JmapChangesResult.OldState.get -> string!
+mk8.email.Jmap.JmapChangesResult.OldState.init -> void
+mk8.email.Jmap.JmapChangesResult.Updated.get -> System.Collections.Generic.IReadOnlyList<string!>!
+mk8.email.Jmap.JmapChangesResult.Updated.init -> void
+mk8.email.Jmap.JmapConstants
+mk8.email.Jmap.JmapContactStore
+mk8.email.Jmap.JmapContactStore.EnsureDefaultAddressBookAsync(mk8.email.Application.Interfaces.AuthenticatedMailUser! user, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+mk8.email.Jmap.JmapContactStore.JmapContactStore(mk8.email.Infrastructure.Data.EmailDbContext! database, mk8.email.Configuration.EnvironmentConfig! environment, mk8.email.Jmap.JmapBlobService! blobs, mk8.email.Application.Services.DavResourceContentService! resourceContent) -> void
+mk8.email.Jmap.JmapId
+mk8.email.Jmap.JmapInvocationContext
+mk8.email.Jmap.JmapInvocationContext.Capabilities.get -> System.Collections.Generic.IReadOnlySet<string!>!
+mk8.email.Jmap.JmapInvocationContext.CreatedIds.get -> System.Collections.Generic.IDictionary<string!, string!>!
+mk8.email.Jmap.JmapInvocationContext.JmapInvocationContext(mk8.email.Application.Interfaces.AuthenticatedMailUser! user, System.Collections.Generic.IReadOnlySet<string!>! capabilities, System.Collections.Generic.IDictionary<string!, string!>! createdIds) -> void
+mk8.email.Jmap.JmapInvocationContext.ResolveId(string? id) -> string?
+mk8.email.Jmap.JmapInvocationContext.User.get -> mk8.email.Application.Interfaces.AuthenticatedMailUser!
+mk8.email.Jmap.JmapMethodResponse
+mk8.email.Jmap.JmapMethodResponse.<Clone>$() -> mk8.email.Jmap.JmapMethodResponse!
+mk8.email.Jmap.JmapMethodResponse.AdditionalResponses.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Jmap.JmapMethodResponse!>?
+mk8.email.Jmap.JmapMethodResponse.AdditionalResponses.init -> void
+mk8.email.Jmap.JmapMethodResponse.Arguments.get -> System.Text.Json.Nodes.JsonObject!
+mk8.email.Jmap.JmapMethodResponse.Arguments.init -> void
+mk8.email.Jmap.JmapMethodResponse.Deconstruct(out string! Name, out System.Text.Json.Nodes.JsonObject! Arguments, out System.Collections.Generic.IReadOnlyList<mk8.email.Jmap.JmapMethodResponse!>? AdditionalResponses) -> void
+mk8.email.Jmap.JmapMethodResponse.Equals(mk8.email.Jmap.JmapMethodResponse? other) -> bool
+mk8.email.Jmap.JmapMethodResponse.JmapMethodResponse(string! Name, System.Text.Json.Nodes.JsonObject! Arguments, System.Collections.Generic.IReadOnlyList<mk8.email.Jmap.JmapMethodResponse!>? AdditionalResponses = null) -> void
+mk8.email.Jmap.JmapMethodResponse.Name.get -> string!
+mk8.email.Jmap.JmapMethodResponse.Name.init -> void
+mk8.email.Jmap.JmapRequestException
+mk8.email.Jmap.JmapRequestException.Detail.get -> string?
+mk8.email.Jmap.JmapRequestException.JmapRequestException(string! type, int statusCode, string! title, string? detail = null, string? limit = null) -> void
+mk8.email.Jmap.JmapRequestException.Limit.get -> string?
+mk8.email.Jmap.JmapRequestException.StatusCode.get -> int
+mk8.email.Jmap.JmapRequestException.Title.get -> string!
+mk8.email.Jmap.JmapRequestException.Type.get -> string!
+mk8.email.Jmap.JmapRequestProcessor
+mk8.email.Jmap.JmapRequestProcessor.JmapRequestProcessor(System.Collections.Generic.IEnumerable<mk8.email.Jmap.IJmapMethod!>! methods, mk8.email.Jmap.JmapSessionService! sessions, mk8.email.Infrastructure.Data.EmailDbContext! database, mk8.email.Configuration.EnvironmentConfig! environment, mk8.email.Application.Services.LargeObjectTransactionEffects! blobEffects, Microsoft.Extensions.Logging.ILogger<mk8.email.Jmap.JmapRequestProcessor!>! logger) -> void
+mk8.email.Jmap.JmapRequestProcessor.ProcessAsync(System.Text.Json.Nodes.JsonNode? requestNode, mk8.email.Application.Interfaces.AuthenticatedMailUser! user, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Text.Json.Nodes.JsonObject!>!
+mk8.email.Jmap.JmapServiceExtensions
+mk8.email.Jmap.JmapSessionDocument
+mk8.email.Jmap.JmapSessionDocument.<Clone>$() -> mk8.email.Jmap.JmapSessionDocument!
+mk8.email.Jmap.JmapSessionDocument.Deconstruct(out System.Text.Json.Nodes.JsonObject! Value, out string! State) -> void
+mk8.email.Jmap.JmapSessionDocument.Equals(mk8.email.Jmap.JmapSessionDocument? other) -> bool
+mk8.email.Jmap.JmapSessionDocument.JmapSessionDocument(System.Text.Json.Nodes.JsonObject! Value, string! State) -> void
+mk8.email.Jmap.JmapSessionDocument.State.get -> string!
+mk8.email.Jmap.JmapSessionDocument.State.init -> void
+mk8.email.Jmap.JmapSessionDocument.Value.get -> System.Text.Json.Nodes.JsonObject!
+mk8.email.Jmap.JmapSessionDocument.Value.init -> void
+mk8.email.Jmap.JmapSessionService
+mk8.email.Jmap.JmapSessionService.BuildAsync(mk8.email.Application.Interfaces.AuthenticatedMailUser! user, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Jmap.JmapSessionDocument!>!
+mk8.email.Jmap.JmapSessionService.JmapSessionService(mk8.email.Jmap.JmapAccountService! accounts, mk8.email.Jmap.JmapContactStore! contacts, mk8.email.Configuration.EnvironmentConfig! environment) -> void
+mk8.email.Jmap.JmapStateService
+mk8.email.Jmap.JmapStateService.GetChangesAsync(System.Guid accountId, string! dataType, string! sinceState, long? maximumChanges, int serverMaximum, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Jmap.JmapChangesResult?>!
+mk8.email.Jmap.JmapStateService.GetStateAsync(System.Guid accountId, string! dataType, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<string!>!
+mk8.email.Jmap.JmapStateService.GetUserStatesAsync(mk8.email.Application.Interfaces.AuthenticatedMailUser! user, System.Collections.Generic.IReadOnlySet<string!>? requestedTypes, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyDictionary<string!, System.Collections.Generic.IReadOnlyDictionary<string!, string!>!>!>!
+mk8.email.Jmap.JmapStateService.JmapStateService(mk8.email.Infrastructure.Data.EmailDbContext! database, mk8.email.Jmap.JmapAccountService! accounts) -> void
+override mk8.email.Jmap.JmapAccount.Equals(object? obj) -> bool
+override mk8.email.Jmap.JmapAccount.GetHashCode() -> int
+override mk8.email.Jmap.JmapAccount.ToString() -> string!
+override mk8.email.Jmap.JmapChangesResult.Equals(object? obj) -> bool
+override mk8.email.Jmap.JmapChangesResult.GetHashCode() -> int
+override mk8.email.Jmap.JmapChangesResult.ToString() -> string!
+override mk8.email.Jmap.JmapMethodResponse.Equals(object? obj) -> bool
+override mk8.email.Jmap.JmapMethodResponse.GetHashCode() -> int
+override mk8.email.Jmap.JmapMethodResponse.ToString() -> string!
+override mk8.email.Jmap.JmapSessionDocument.Equals(object? obj) -> bool
+override mk8.email.Jmap.JmapSessionDocument.GetHashCode() -> int
+override mk8.email.Jmap.JmapSessionDocument.ToString() -> string!
+static mk8.email.Jmap.JmapAccount.operator !=(mk8.email.Jmap.JmapAccount? left, mk8.email.Jmap.JmapAccount? right) -> bool
+static mk8.email.Jmap.JmapAccount.operator ==(mk8.email.Jmap.JmapAccount? left, mk8.email.Jmap.JmapAccount? right) -> bool
+static mk8.email.Jmap.JmapChangesResult.operator !=(mk8.email.Jmap.JmapChangesResult? left, mk8.email.Jmap.JmapChangesResult? right) -> bool
+static mk8.email.Jmap.JmapChangesResult.operator ==(mk8.email.Jmap.JmapChangesResult? left, mk8.email.Jmap.JmapChangesResult? right) -> bool
+static mk8.email.Jmap.JmapId.Account(System.Guid inboxId) -> string!
+static mk8.email.Jmap.JmapId.AddressBook(System.Guid collectionId) -> string!
+static mk8.email.Jmap.JmapId.BodyPartBlob(System.Guid emailId, string! partId) -> string!
+static mk8.email.Jmap.JmapId.ContactCard(System.Guid resourceId) -> string!
+static mk8.email.Jmap.JmapId.Email(System.Guid emailId) -> string!
+static mk8.email.Jmap.JmapId.Identity(System.Guid inboxId) -> string!
+static mk8.email.Jmap.JmapId.IsValidId(string! value) -> bool
+static mk8.email.Jmap.JmapId.Mailbox(System.Guid folderId) -> string!
+static mk8.email.Jmap.JmapId.PushSubscription(System.Guid subscriptionId) -> string!
+static mk8.email.Jmap.JmapId.RawBlob(System.Guid emailId) -> string!
+static mk8.email.Jmap.JmapId.Submission(System.Guid submissionId) -> string!
+static mk8.email.Jmap.JmapId.Thread(string! storedThreadId) -> string!
+static mk8.email.Jmap.JmapId.TryParseAccount(string? value, out System.Guid id) -> bool
+static mk8.email.Jmap.JmapId.TryParseAddressBook(string? value, out System.Guid id) -> bool
+static mk8.email.Jmap.JmapId.TryParseBodyPartBlob(string? value, out System.Guid emailId, out string! partId) -> bool
+static mk8.email.Jmap.JmapId.TryParseContactCard(string? value, out System.Guid id) -> bool
+static mk8.email.Jmap.JmapId.TryParseEmail(string? value, out System.Guid id) -> bool
+static mk8.email.Jmap.JmapId.TryParseHashedBodyPartBlob(string? value, out System.Guid emailId, out int nestingDepth, out byte[]! pathHash) -> bool
+static mk8.email.Jmap.JmapId.TryParseIdentity(string? value, out System.Guid id) -> bool
+static mk8.email.Jmap.JmapId.TryParseMailbox(string? value, out System.Guid id) -> bool
+static mk8.email.Jmap.JmapId.TryParsePushSubscription(string? value, out System.Guid id) -> bool
+static mk8.email.Jmap.JmapId.TryParseRawBlob(string? value, out System.Guid id) -> bool
+static mk8.email.Jmap.JmapId.TryParseSubmission(string? value, out System.Guid id) -> bool
+static mk8.email.Jmap.JmapId.TryParseThread(string? value, out string! storedThreadId) -> bool
+static mk8.email.Jmap.JmapId.TryParseUploadedBlob(string? value, out System.Guid id) -> bool
+static mk8.email.Jmap.JmapId.UploadedBlob(System.Guid blobId) -> string!
+static mk8.email.Jmap.JmapMethodResponse.Error(string! type, string? description = null) -> mk8.email.Jmap.JmapMethodResponse!
+static mk8.email.Jmap.JmapMethodResponse.operator !=(mk8.email.Jmap.JmapMethodResponse? left, mk8.email.Jmap.JmapMethodResponse? right) -> bool
+static mk8.email.Jmap.JmapMethodResponse.operator ==(mk8.email.Jmap.JmapMethodResponse? left, mk8.email.Jmap.JmapMethodResponse? right) -> bool
+static mk8.email.Jmap.JmapServiceExtensions.AddJmapApplication(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
+static mk8.email.Jmap.JmapSessionDocument.operator !=(mk8.email.Jmap.JmapSessionDocument? left, mk8.email.Jmap.JmapSessionDocument? right) -> bool
+static mk8.email.Jmap.JmapSessionDocument.operator ==(mk8.email.Jmap.JmapSessionDocument? left, mk8.email.Jmap.JmapSessionDocument? right) -> bool
+static mk8.email.Jmap.JmapStateService.FormatState(long sequence) -> string!
+static mk8.email.Jmap.JmapStateService.TryParseState(string? state, out long sequence) -> bool

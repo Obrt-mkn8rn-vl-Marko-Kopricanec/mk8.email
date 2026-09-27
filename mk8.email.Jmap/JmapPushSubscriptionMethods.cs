@@ -44,7 +44,7 @@ internal sealed class PushSubscriptionGetMethod(
         var expired = await database.JmapPushSubscriptions
             .Where(subscription => subscription.UserId == context.User.Id
                 && subscription.ExpiresAt <= now)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         if (expired.Count > 0)
         {
             foreach (var subscription in expired)
@@ -53,13 +53,13 @@ internal sealed class PushSubscriptionGetMethod(
                 subscription.KeysJson = null;
             }
             database.JmapPushSubscriptions.RemoveRange(expired);
-            await database.SaveChangesAsync(cancellationToken);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         }
         var subscriptions = await database.JmapPushSubscriptions
             .AsNoTracking()
             .Where(subscription => subscription.UserId == context.User.Id)
             .OrderBy(subscription => subscription.CreatedAt)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         if (requestedIds is null && subscriptions.Count > environment.Jmap.MaxObjectsInGet)
             return JmapMethodResponse.Error("requestTooLarge");
         var byId = subscriptions.ToDictionary(
@@ -152,7 +152,7 @@ internal sealed class PushSubscriptionSetMethod(
         {
             foreach (var item in create)
             {
-                var result = await CreateAsync(context, item.Key, item.Value, cancellationToken);
+                var result = await CreateAsync(context, item.Key, item.Value, cancellationToken).ConfigureAwait(false);
                 if (result.Error is not null)
                 {
                     notCreated[item.Key] = result.Error;
@@ -177,7 +177,7 @@ internal sealed class PushSubscriptionSetMethod(
                             subscription.KeysJson,
                             subscription.ExpiresAt,
                             JmapPushPresentationPayload.Serialize(verification),
-                            postCommitCancellationToken);
+                            postCommitCancellationToken).ConfigureAwait(false);
                     }
                     catch (Exception exception) when (exception is not OperationCanceledException)
                     {
@@ -203,7 +203,7 @@ internal sealed class PushSubscriptionSetMethod(
                 }
                 var subscription = await database.JmapPushSubscriptions.SingleOrDefaultAsync(
                     candidate => candidate.Id == id && candidate.UserId == context.User.Id,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 if (subscription is null || subscription.ExpiresAt <= DateTime.UtcNow)
                 {
                     notUpdated[requestedId] = JmapMethodHelpers.SetError("notFound");
@@ -250,7 +250,7 @@ internal sealed class PushSubscriptionSetMethod(
                     continue;
                 }
                 subscription.UpdatedAt = DateTime.UtcNow;
-                await database.SaveChangesAsync(cancellationToken);
+                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
                 updated[resolvedId!] = revised.Count == 0 ? null : revised;
             }
         }
@@ -267,7 +267,7 @@ internal sealed class PushSubscriptionSetMethod(
                 }
                 var subscription = await database.JmapPushSubscriptions.SingleOrDefaultAsync(
                     candidate => candidate.Id == id && candidate.UserId == context.User.Id,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 if (subscription is null)
                 {
                     notDestroyed[requestedId] = JmapMethodHelpers.SetError("notFound");
@@ -276,7 +276,7 @@ internal sealed class PushSubscriptionSetMethod(
                 subscription.Url = string.Empty;
                 subscription.KeysJson = null;
                 database.JmapPushSubscriptions.Remove(subscription);
-                await database.SaveChangesAsync(cancellationToken);
+                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
                 destroyed.Add(resolvedId);
             }
         }
@@ -343,7 +343,7 @@ internal sealed class PushSubscriptionSetMethod(
             || !TryExpiry(value, out var expiry)
             || !TryKeys(value, out var keysJson))
             return PushCreateResult.Failed("invalidProperties");
-        if (!await delivery.IsSafeUrlAsync(url, cancellationToken))
+        if (!await delivery.IsSafeUrlAsync(url, cancellationToken).ConfigureAwait(false))
             return PushCreateResult.Failed("invalidProperties");
 
         var now = DateTime.UtcNow;
@@ -352,12 +352,12 @@ internal sealed class PushSubscriptionSetMethod(
         var existingCount = await database.JmapPushSubscriptions.CountAsync(
             subscription => subscription.UserId == context.User.Id
                 && subscription.ExpiresAt > now,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (existingCount >= MaximumSubscriptionsPerUser)
             return PushCreateResult.Failed("overQuota");
         var mostRecent = await database.JmapPushSubscriptions
             .Where(subscription => subscription.UserId == context.User.Id)
-            .MaxAsync(subscription => (DateTime?)subscription.CreatedAt, cancellationToken);
+            .MaxAsync(subscription => (DateTime?)subscription.CreatedAt, cancellationToken).ConfigureAwait(false);
         if (mostRecent is not null && mostRecent > now.AddSeconds(-1))
             return PushCreateResult.Failed("rateLimit");
 
@@ -376,10 +376,10 @@ internal sealed class PushSubscriptionSetMethod(
             ExpiresAt = LimitExpiry(expiry, now),
             CreatedAt = now,
             UpdatedAt = now,
-            LastPushedChange = await stateChanges.GetCursorAsync(context.User, cancellationToken),
+            LastPushedChange = await stateChanges.GetCursorAsync(context.User, cancellationToken).ConfigureAwait(false),
         };
         database.JmapPushSubscriptions.Add(subscription);
-        await database.SaveChangesAsync(cancellationToken);
+        await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return new PushCreateResult(subscription, null);
     }
 

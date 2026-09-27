@@ -41,7 +41,7 @@ internal sealed class ThreadGetMethod(
         if (requestedIds is { Count: > 0 } && requestedIds.Count > environment.Jmap.MaxObjectsInGet)
             return JmapMethodResponse.Error("requestTooLarge");
 
-        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken);
+        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (account is null)
             return JmapMethodResponse.Error("accountNotFound");
         var emails = await database.Emails
@@ -54,7 +54,7 @@ internal sealed class ThreadGetMethod(
                 email.Id,
                 email.ThreadObjectId,
             })
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         var threads = emails
             .GroupBy(
                 email => JmapId.Thread(email.ThreadObjectId ?? email.Id.ToString("N")),
@@ -87,7 +87,7 @@ internal sealed class ThreadGetMethod(
             ["state"] = await states.GetStateAsync(
                 account.InboxId,
                 JmapConstants.ThreadDataType,
-                cancellationToken),
+                cancellationToken).ConfigureAwait(false),
             ["list"] = list,
             ["notFound"] = notFound,
         });
@@ -116,7 +116,7 @@ internal sealed class ThreadChangesMethod(
         {
             return JmapMethodResponse.Error("invalidArguments");
         }
-        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken);
+        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (account is null)
             return JmapMethodResponse.Error("accountNotFound");
         var changes = await states.GetChangesAsync(
@@ -125,7 +125,7 @@ internal sealed class ThreadChangesMethod(
             sinceState,
             maxChanges,
             environment.Jmap.MaxObjectsInGet,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (changes is null)
             return JmapMethodResponse.Error("cannotCalculateChanges");
         return new JmapMethodResponse(Name, new JsonObject

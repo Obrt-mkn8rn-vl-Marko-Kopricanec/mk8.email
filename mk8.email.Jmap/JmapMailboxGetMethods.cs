@@ -75,7 +75,7 @@ internal sealed class MailboxGetMethod(
         if (!JmapMethodHelpers.HasOnlyProperties(arguments, "accountId", "ids", "properties")
             || !JmapMethodHelpers.TryGetRequiredString(arguments, "accountId", out var accountId))
             return JmapMethodResponse.Error("invalidArguments");
-        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken);
+        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (account is null)
             return JmapMethodResponse.Error("accountNotFound");
 
@@ -97,7 +97,7 @@ internal sealed class MailboxGetMethod(
             return JmapMethodResponse.Error("requestTooLarge");
         }
 
-        var allMailboxes = await mailboxes.LoadAsync(account.InboxId, cancellationToken);
+        var allMailboxes = await mailboxes.LoadAsync(account.InboxId, cancellationToken).ConfigureAwait(false);
         if (requestedIds is null && allMailboxes.Count > environment.Jmap.MaxObjectsInGet)
             return JmapMethodResponse.Error("requestTooLarge");
 
@@ -119,7 +119,7 @@ internal sealed class MailboxGetMethod(
             ["state"] = await states.GetStateAsync(
                 account.InboxId,
                 JmapConstants.MailboxDataType,
-                cancellationToken),
+                cancellationToken).ConfigureAwait(false),
             ["list"] = list,
             ["notFound"] = notFound,
         });
@@ -149,7 +149,7 @@ internal sealed class MailboxChangesMethod(
             return JmapMethodResponse.Error("invalidArguments");
         }
 
-        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken);
+        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (account is null)
             return JmapMethodResponse.Error("accountNotFound");
         var changes = await states.GetChangesAsync(
@@ -158,7 +158,7 @@ internal sealed class MailboxChangesMethod(
             sinceState,
             maxChanges,
             environment.Jmap.MaxObjectsInGet,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (changes is null)
             return JmapMethodResponse.Error("cannotCalculateChanges");
 

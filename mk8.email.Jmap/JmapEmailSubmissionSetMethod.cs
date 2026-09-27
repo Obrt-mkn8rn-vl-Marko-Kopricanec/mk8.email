@@ -109,13 +109,13 @@ internal sealed class EmailSubmissionSetMethod(
         var operationCount = (create?.Count ?? 0) + (update?.Count ?? 0) + (destroy?.Count ?? 0);
         if (operationCount > environment.Jmap.MaxObjectsInSet)
             return JmapMethodResponse.Error("requestTooLarge");
-        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken);
+        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (account is null) return JmapMethodResponse.Error("accountNotFound");
-        await identities.EnsureDefaultAsync(account, cancellationToken);
+        await identities.EnsureDefaultAsync(account, cancellationToken).ConfigureAwait(false);
         var oldState = await states.GetStateAsync(
             account.InboxId,
             JmapConstants.EmailSubmissionDataType,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (ifInState is not null && !string.Equals(ifInState, oldState, StringComparison.Ordinal))
             return JmapMethodResponse.Error("stateMismatch");
 
@@ -136,7 +136,7 @@ internal sealed class EmailSubmissionSetMethod(
                     context,
                     item.Key,
                     item.Value,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 if (result.Error is not null)
                 {
                     notCreated[item.Key] = result.Error;
@@ -147,7 +147,7 @@ internal sealed class EmailSubmissionSetMethod(
                 created[item.Key] = await BuildCreatedResponseAsync(
                     item.Value,
                     result.Submission,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 successful[submissionId] = result.Submission.EmailId;
             }
         }
@@ -164,7 +164,7 @@ internal sealed class EmailSubmissionSetMethod(
                 }
                 var submission = await database.JmapEmailSubmissions.SingleOrDefaultAsync(
                     candidate => candidate.Id == id && candidate.AccountId == account.InboxId,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 if (submission is null)
                 {
                     notUpdated[item.Key] = JmapMethodHelpers.SetError("notFound");
@@ -174,7 +174,7 @@ internal sealed class EmailSubmissionSetMethod(
                     database,
                     submission,
                     null,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 if (!JmapMethodHelpers.TryApplyPatchAllowingUnchangedProperties(
                         current,
                         item.Value,
@@ -226,7 +226,7 @@ internal sealed class EmailSubmissionSetMethod(
                 }
                 var submission = await database.JmapEmailSubmissions.SingleOrDefaultAsync(
                     candidate => candidate.Id == id && candidate.AccountId == account.InboxId,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 if (submission is null)
                 {
                     notDestroyed[requestedId] = JmapMethodHelpers.SetError("notFound");
@@ -234,7 +234,7 @@ internal sealed class EmailSubmissionSetMethod(
                 }
                 successful[resolvedId!] = submission.EmailId;
                 database.JmapEmailSubmissions.Remove(submission);
-                await database.SaveChangesAsync(cancellationToken);
+                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
                 destroyed.Add(resolvedId);
             }
         }
@@ -246,7 +246,7 @@ internal sealed class EmailSubmissionSetMethod(
             ["newState"] = await states.GetStateAsync(
                 account.InboxId,
                 JmapConstants.EmailSubmissionDataType,
-                cancellationToken),
+                cancellationToken).ConfigureAwait(false),
             ["created"] = created.Count == 0 ? null : created,
             ["updated"] = updated.Count == 0 ? null : updated,
             ["destroyed"] = destroyed.Count == 0 ? null : destroyed,
@@ -263,7 +263,7 @@ internal sealed class EmailSubmissionSetMethod(
             onSuccessDestroy);
         if (implicitArguments is null)
             return new JmapMethodResponse(Name, response);
-        var implicitResponse = await emailSet.InvokeAsync(context, implicitArguments, cancellationToken);
+        var implicitResponse = await emailSet.InvokeAsync(context, implicitArguments, cancellationToken).ConfigureAwait(false);
         return new JmapMethodResponse(Name, response, [implicitResponse]);
     }
 
@@ -276,7 +276,7 @@ internal sealed class EmailSubmissionSetMethod(
             database,
             submission,
             null,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
 
         response.Remove("identityId");
         response.Remove("emailId");
@@ -306,15 +306,15 @@ internal sealed class EmailSubmissionSetMethod(
         }
         var identity = await database.JmapIdentities.AsNoTracking().SingleOrDefaultAsync(
             candidate => candidate.Id == identityId && candidate.AccountId == account.InboxId,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         var email = await database.Emails.AsNoTracking().SingleOrDefaultAsync(
             candidate => candidate.Id == emailId
                 && candidate.Folder.InboxId == account.InboxId
                 && !candidate.IsDeleted,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (identity is null || email is null)
             return SubmissionCreateResult.Failed("invalidProperties");
-        var rawBytes = await mailboxContent.ReadAsync(email, cancellationToken);
+        var rawBytes = await mailboxContent.ReadAsync(email, cancellationToken).ConfigureAwait(false);
         if (rawBytes.LongLength > environment.Limits.MaxMessageSizeBytes)
         {
             var error = JmapMethodHelpers.SetError("tooLarge");
@@ -343,7 +343,7 @@ internal sealed class EmailSubmissionSetMethod(
                 out var envelopeJson,
                 out var envelopeError))
             return new SubmissionCreateResult(null, envelopeError);
-        if (!await senderAuthorization.CanSendAsAsync(context.User.Username, sender, cancellationToken))
+        if (!await senderAuthorization.CanSendAsAsync(context.User.Username, sender, cancellationToken).ConfigureAwait(false))
             return SubmissionCreateResult.Failed("forbiddenMailFrom");
         if (recipients.Count == 0)
             return SubmissionCreateResult.Failed("noRecipients");
@@ -358,7 +358,7 @@ internal sealed class EmailSubmissionSetMethod(
         var forbiddenRecipients = new List<string>();
         foreach (var recipient in recipients)
         {
-            var isLocal = await emailService.CanReceiveAsync(recipient, cancellationToken);
+            var isLocal = await emailService.CanReceiveAsync(recipient, cancellationToken).ConfigureAwait(false);
             if (!isLocal && !environment.Smtp.AllowRelay)
                 forbiddenRecipients.Add(recipient);
             envelopeRecipients.Add(new MailEnvelopeRecipient(recipient, isLocal));
@@ -386,7 +386,7 @@ internal sealed class EmailSubmissionSetMethod(
             NextAttemptAt = now,
             SentCopyCreated = true,
         };
-        await queueContent.SetAsync(queue, deliveryMessage, cancellationToken);
+        await queueContent.SetAsync(queue, deliveryMessage, cancellationToken).ConfigureAwait(false);
         foreach (var recipient in envelopeRecipients)
         {
             queue.Recipients.Add(new MailQueueRecipientDB
@@ -418,7 +418,7 @@ internal sealed class EmailSubmissionSetMethod(
         };
         database.MailQueueMessages.Add(queue);
         database.JmapEmailSubmissions.Add(submission);
-        await database.SaveChangesAsync(cancellationToken);
+        await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return new SubmissionCreateResult(submission, null);
     }
 

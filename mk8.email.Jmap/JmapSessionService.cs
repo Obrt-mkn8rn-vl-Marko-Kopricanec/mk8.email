@@ -17,8 +17,8 @@ public sealed class JmapSessionService(
         AuthenticatedMailUser user,
         CancellationToken cancellationToken = default)
     {
-        await contacts.EnsureDefaultAddressBookAsync(user, cancellationToken);
-        var accessibleAccounts = await accounts.GetAccountsAsync(user, cancellationToken);
+        await contacts.EnsureDefaultAddressBookAsync(user, cancellationToken).ConfigureAwait(false);
+        var accessibleAccounts = await accounts.GetAccountsAsync(user, cancellationToken).ConfigureAwait(false);
         var baseUrl = environment.Jmap.GetPublicBaseUri(environment.Smtp.Hostname)
             .AbsoluteUri
             .TrimEnd('/');

@@ -34,7 +34,7 @@ public sealed class JmapContactStore(
             .ThenBy(collection => collection.Slug == "default" ? 0 : 1)
             .ThenBy(collection => collection.CreatedAt)
             .ThenBy(collection => collection.Id)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         if (existing.Count > 0)
         {
             var selected = existing[0];
@@ -52,7 +52,7 @@ public sealed class JmapContactStore(
                 changed = true;
             }
             if (changed)
-                await database.SaveChangesAsync(cancellationToken);
+                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -73,7 +73,7 @@ public sealed class JmapContactStore(
         database.DavCollections.Add(collection);
         try
         {
-            await database.SaveChangesAsync(cancellationToken);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (DbUpdateException)
         {
@@ -81,7 +81,7 @@ public sealed class JmapContactStore(
             if (!await database.DavCollections.AsNoTracking().AnyAsync(candidate =>
                     candidate.UserId == user.Id
                     && candidate.CollectionType == DavCollectionDB.AddressBookType,
-                cancellationToken))
+                cancellationToken).ConfigureAwait(false))
             {
                 throw;
             }
@@ -112,11 +112,11 @@ public sealed class JmapContactStore(
             .Where(resource => resource.Collection.UserId == userId
                 && resource.Collection.CollectionType == DavCollectionDB.AddressBookType)
             .OrderBy(resource => resource.Id);
-        var resources = await (tracked ? query : query.AsNoTracking()).ToListAsync(cancellationToken);
+        var resources = await (tracked ? query : query.AsNoTracking()).ToListAsync(cancellationToken).ConfigureAwait(false);
         var cards = new List<JmapContactCardView>(resources.Count);
         foreach (var resource in resources)
         {
-            var content = await resourceContent.ReadAsync(resource, cancellationToken);
+            var content = await resourceContent.ReadAsync(resource, cancellationToken).ConfigureAwait(false);
             cards.Add(new JmapContactCardView(
                 resource,
                 JmapContactCodec.Decode(resource, content)));
@@ -143,7 +143,7 @@ public sealed class JmapContactStore(
         }
 
         if (invalid.Count == 0)
-            await NormalizeMediaAsync(accountId, card, "media", invalid, cancellationToken);
+            await NormalizeMediaAsync(accountId, card, "media", invalid, cancellationToken).ConfigureAwait(false);
 
         if (invalid.Count == 0 && localizedCards.Count > 0)
         {
@@ -154,7 +154,7 @@ public sealed class JmapContactStore(
                     localized.Value,
                     $"localizations/{EscapePatchToken(localized.Key)}/media",
                     invalid,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -206,7 +206,7 @@ public sealed class JmapContactStore(
                 invalid.Add(invalidPath);
                 continue;
             }
-            var blob = await blobs.GetAsync(accountId, blobId, cancellationToken);
+            var blob = await blobs.GetAsync(accountId, blobId, cancellationToken).ConfigureAwait(false);
             if (blob is null || !IsRecognizedMedia(value, blob.ContentType))
             {
                 invalid.Add(invalidPath);
@@ -319,7 +319,7 @@ public sealed class JmapContactStore(
             CreatedAt = now,
             UpdatedAt = now,
         };
-        await resourceContent.SetAsync(resource, content, cancellationToken);
+        await resourceContent.SetAsync(resource, content, cancellationToken).ConfigureAwait(false);
         collection.UpdatedAt = now;
         database.DavResources.Add(resource);
         AddDavChange(database, collection, resourceName, false, resource.Etag, sequence, now);
@@ -351,7 +351,7 @@ public sealed class JmapContactStore(
         resource.Etag = Convert.ToHexStringLower(SHA256.HashData(content));
         resource.ChangeSequence = sequence;
         resource.UpdatedAt = now;
-        await resourceContent.SetAsync(resource, content, cancellationToken);
+        await resourceContent.SetAsync(resource, content, cancellationToken).ConfigureAwait(false);
         AddDavChange(database, newCollection, resource.ResourceName, false, resource.Etag, sequence, now);
     }
 

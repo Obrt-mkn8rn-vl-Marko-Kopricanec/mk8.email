@@ -23,11 +23,11 @@ public sealed class JmapStateService(
         string dataType,
         CancellationToken cancellationToken = default)
     {
-        await EnsureBaselineAsync(accountId, cancellationToken);
+        await EnsureBaselineAsync(accountId, cancellationToken).ConfigureAwait(false);
         var sequence = await database.JmapChanges
             .AsNoTracking()
             .Where(change => change.AccountId == accountId && change.DataType == dataType)
-            .MaxAsync(change => (long?)change.Sequence, cancellationToken)
+            .MaxAsync(change => (long?)change.Sequence, cancellationToken).ConfigureAwait(false)
             ?? 0;
         return FormatState(sequence);
     }
@@ -40,14 +40,14 @@ public sealed class JmapStateService(
         int serverMaximum,
         CancellationToken cancellationToken = default)
     {
-        await EnsureBaselineAsync(accountId, cancellationToken);
+        await EnsureBaselineAsync(accountId, cancellationToken).ConfigureAwait(false);
         if (!TryParseState(sinceState, out var sinceSequence))
             return null;
 
         var currentSequence = await database.JmapChanges
             .AsNoTracking()
             .Where(change => change.AccountId == accountId && change.DataType == dataType)
-            .MaxAsync(change => (long?)change.Sequence, cancellationToken)
+            .MaxAsync(change => (long?)change.Sequence, cancellationToken).ConfigureAwait(false)
             ?? 0;
         if (sinceSequence > currentSequence)
             return null;
@@ -56,7 +56,7 @@ public sealed class JmapStateService(
                 change => change.Sequence == sinceSequence
                     && change.AccountId == accountId
                     && change.DataType == dataType,
-                cancellationToken))
+                cancellationToken).ConfigureAwait(false))
         {
             return null;
         }
@@ -83,7 +83,7 @@ public sealed class JmapStateService(
         var folded = new Dictionary<string, string>(StringComparer.Ordinal);
         var newSequence = sinceSequence;
         var hasMoreChanges = false;
-        await foreach (var row in rows.WithCancellation(cancellationToken))
+        await foreach (var row in rows.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             var hadExisting = folded.TryGetValue(row.ObjectId, out var existingKind);
             FoldChange(folded, row.ObjectId, row.ChangeKind);
@@ -108,7 +108,7 @@ public sealed class JmapStateService(
                 newSequence,
                 currentSequence,
                 folded,
-                cancellationToken))
+                cancellationToken).ConfigureAwait(false))
         {
             return null;
         }
@@ -163,9 +163,9 @@ public sealed class JmapStateService(
         CancellationToken cancellationToken = default)
     {
         var result = new Dictionary<string, IReadOnlyDictionary<string, string>>(StringComparer.Ordinal);
-        foreach (var account in await accounts.GetAccountsAsync(user, cancellationToken))
+        foreach (var account in await accounts.GetAccountsAsync(user, cancellationToken).ConfigureAwait(false))
         {
-            await EnsureBaselineAsync(account.InboxId, cancellationToken);
+            await EnsureBaselineAsync(account.InboxId, cancellationToken).ConfigureAwait(false);
             var query = database.JmapChanges
                 .AsNoTracking()
                 .Where(change => change.AccountId == account.InboxId
@@ -186,7 +186,7 @@ public sealed class JmapStateService(
                     item => item.DataType,
                     item => FormatState(item.Sequence),
                     StringComparer.Ordinal,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
             result[JmapId.Account(account.InboxId)] = states;
         }
         return result;
@@ -213,14 +213,14 @@ public sealed class JmapStateService(
     {
         if (await database.JmapChanges.AsNoTracking().AnyAsync(
             change => change.AccountId == accountId && change.DataType == BaselineDataType,
-            cancellationToken))
+            cancellationToken).ConfigureAwait(false))
         {
             return;
         }
 
         var accountExists = await database.Inboxes.AsNoTracking().AnyAsync(
             inbox => inbox.Id == accountId && inbox.AliasForInboxId == null && inbox.Name != "*",
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (!accountExists)
             return;
 
@@ -238,7 +238,7 @@ public sealed class JmapStateService(
             .AsNoTracking()
             .Where(folder => folder.InboxId == accountId)
             .Select(folder => folder.Id)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         foreach (var mailboxId in mailboxIds)
         {
             AddBaselineChange(
@@ -256,7 +256,7 @@ public sealed class JmapStateService(
                 inbox.OwnerId,
                 inbox.Owner.Username,
             })
-            .SingleOrDefaultAsync(cancellationToken);
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
         if (accountOwner is not null)
         {
             var ownerAccounts = await database.Inboxes
@@ -273,7 +273,7 @@ public sealed class JmapStateService(
                     inbox.Name,
                     inbox.Address.Domain,
                 })
-                .ToListAsync(cancellationToken);
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
             var primaryAccountId = ownerAccounts
                 .OrderBy(inbox => string.Equals(
                     inbox.Name + "@" + inbox.Domain,
@@ -290,7 +290,7 @@ public sealed class JmapStateService(
                     .Where(collection => collection.UserId == accountOwner.OwnerId
                         && collection.CollectionType == DavCollectionDB.AddressBookType)
                     .Select(collection => collection.Id)
-                    .ToListAsync(cancellationToken);
+                    .ToListAsync(cancellationToken).ConfigureAwait(false);
                 foreach (var addressBookId in addressBookIds)
                 {
                     AddBaselineChange(
@@ -305,7 +305,7 @@ public sealed class JmapStateService(
                     .Where(resource => resource.Collection.UserId == accountOwner.OwnerId
                         && resource.Collection.CollectionType == DavCollectionDB.AddressBookType)
                     .Select(resource => resource.Id)
-                    .ToListAsync(cancellationToken);
+                    .ToListAsync(cancellationToken).ConfigureAwait(false);
                 foreach (var contactCardId in contactCardIds)
                 {
                     AddBaselineChange(
@@ -325,7 +325,7 @@ public sealed class JmapStateService(
                 email.Id,
                 email.ThreadObjectId,
             })
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         foreach (var email in emails)
             AddBaselineChange(accountId, JmapConstants.EmailDataType, JmapId.Email(email.Id), now);
         foreach (var threadId in emails
@@ -339,7 +339,7 @@ public sealed class JmapStateService(
             .AsNoTracking()
             .Where(identity => identity.AccountId == accountId)
             .Select(identity => identity.Id)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         foreach (var identityId in identityIds)
         {
             AddBaselineChange(
@@ -353,7 +353,7 @@ public sealed class JmapStateService(
             .AsNoTracking()
             .Where(submission => submission.AccountId == accountId)
             .Select(submission => submission.Id)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         foreach (var submissionId in submissionIds)
         {
             AddBaselineChange(
@@ -364,7 +364,7 @@ public sealed class JmapStateService(
         }
         if (await database.JmapVacationResponses.AsNoTracking().AnyAsync(
             response => response.AccountId == accountId,
-            cancellationToken))
+            cancellationToken).ConfigureAwait(false))
         {
             AddBaselineChange(
                 accountId,
@@ -375,7 +375,7 @@ public sealed class JmapStateService(
 
         try
         {
-            await database.SaveChangesAsync(cancellationToken);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (DbUpdateException)
         {
@@ -384,7 +384,7 @@ public sealed class JmapStateService(
                 .AnyAsync(
                     change => change.AccountId == accountId
                         && change.DataType == BaselineDataType,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
             if (!baselineExists)
                 throw;
 

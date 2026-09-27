@@ -32,8 +32,8 @@ internal sealed class JmapStateChangeService(
         AuthenticatedMailUser user,
         CancellationToken cancellationToken)
     {
-        _ = await states.GetUserStatesAsync(user, null, cancellationToken);
-        var accountIds = (await accounts.GetAccountsAsync(user, cancellationToken))
+        _ = await states.GetUserStatesAsync(user, null, cancellationToken).ConfigureAwait(false);
+        var accountIds = (await accounts.GetAccountsAsync(user, cancellationToken).ConfigureAwait(false))
             .Select(account => account.InboxId)
             .ToArray();
         if (accountIds.Length == 0)
@@ -41,7 +41,7 @@ internal sealed class JmapStateChangeService(
         return await database.JmapChanges
             .AsNoTracking()
             .Where(change => accountIds.Contains(change.AccountId))
-            .MaxAsync(change => (long?)change.Sequence, cancellationToken)
+            .MaxAsync(change => (long?)change.Sequence, cancellationToken).ConfigureAwait(false)
             ?? 0;
     }
 
@@ -51,8 +51,8 @@ internal sealed class JmapStateChangeService(
         IReadOnlySet<string>? requestedTypes,
         CancellationToken cancellationToken)
     {
-        _ = await states.GetUserStatesAsync(user, null, cancellationToken);
-        var accountIds = (await accounts.GetAccountsAsync(user, cancellationToken))
+        _ = await states.GetUserStatesAsync(user, null, cancellationToken).ConfigureAwait(false);
+        var accountIds = (await accounts.GetAccountsAsync(user, cancellationToken).ConfigureAwait(false))
             .Select(account => account.InboxId)
             .ToArray();
         if (accountIds.Length == 0)
@@ -61,7 +61,7 @@ internal sealed class JmapStateChangeService(
         var currentCursor = await database.JmapChanges
             .AsNoTracking()
             .Where(change => accountIds.Contains(change.AccountId))
-            .MaxAsync(change => (long?)change.Sequence, cancellationToken)
+            .MaxAsync(change => (long?)change.Sequence, cancellationToken).ConfigureAwait(false)
             ?? 0;
         if (currentCursor == afterCursor)
             return new JmapStateChangePoll(currentCursor, null);
@@ -74,7 +74,7 @@ internal sealed class JmapStateChangeService(
                 && change.Sequence <= currentCursor)
             .Select(change => new { change.AccountId, change.DataType })
             .Distinct()
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         changedKeys = changedKeys
             .Where(key => key.DataType != "_Account"
                 && (requestedTypes is null || requestedTypes.Contains(key.DataType)))
@@ -91,7 +91,7 @@ internal sealed class JmapStateChangeService(
                 typeStates[dataType] = await states.GetStateAsync(
                     group.Key,
                     dataType,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
             }
             changed[JmapId.Account(group.Key)] = typeStates;
         }

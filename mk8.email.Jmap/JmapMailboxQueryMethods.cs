@@ -345,10 +345,10 @@ internal sealed class MailboxQueryMethod(
             return JmapMethodResponse.Error("invalidArguments");
         }
 
-        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken);
+        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (account is null)
             return JmapMethodResponse.Error("accountNotFound");
-        var allMailboxes = await mailboxes.LoadAsync(account.InboxId, cancellationToken);
+        var allMailboxes = await mailboxes.LoadAsync(account.InboxId, cancellationToken).ConfigureAwait(false);
         if (!JmapMailboxQueryEngine.TryFilter(
                 allMailboxes,
                 arguments["filter"],
@@ -395,7 +395,7 @@ internal sealed class MailboxQueryMethod(
             ["queryState"] = await states.GetStateAsync(
                 account.InboxId,
                 JmapConstants.MailboxDataType,
-                cancellationToken),
+                cancellationToken).ConfigureAwait(false),
             ["canCalculateChanges"] = !sortAsTree && !filterAsTree,
             ["position"] = position,
             ["ids"] = JmapMethodHelpers.ToJsonArray(page),
@@ -439,10 +439,10 @@ internal sealed class MailboxQueryChangesMethod(
             return JmapMethodResponse.Error("invalidArguments");
         }
 
-        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken);
+        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (account is null)
             return JmapMethodResponse.Error("accountNotFound");
-        var allMailboxes = await mailboxes.LoadAsync(account.InboxId, cancellationToken);
+        var allMailboxes = await mailboxes.LoadAsync(account.InboxId, cancellationToken).ConfigureAwait(false);
         if (!JmapMailboxQueryEngine.TryFilter(
                 allMailboxes,
                 arguments["filter"],
@@ -466,7 +466,7 @@ internal sealed class MailboxQueryChangesMethod(
             sinceState,
             null,
             int.MaxValue,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (changes is null)
             return JmapMethodResponse.Error("cannotCalculateChanges");
 

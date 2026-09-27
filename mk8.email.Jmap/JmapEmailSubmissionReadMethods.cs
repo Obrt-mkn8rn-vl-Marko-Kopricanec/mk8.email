@@ -31,7 +31,7 @@ internal static class JmapEmailSubmissionJson
         if (Wants("sendAt")) result["sendAt"] = JmapEmailCodec.FormatUtcDate(submission.SendAt);
         if (Wants("undoStatus")) result["undoStatus"] = submission.UndoStatus;
         if (Wants("deliveryStatus"))
-            result["deliveryStatus"] = await DeliveryStatusAsync(database, submission, cancellationToken);
+            result["deliveryStatus"] = await DeliveryStatusAsync(database, submission, cancellationToken).ConfigureAwait(false);
         if (Wants("dsnBlobIds")) result["dsnBlobIds"] = new JsonArray();
         if (Wants("mdnBlobIds")) result["mdnBlobIds"] = new JsonArray();
         return result;
@@ -83,7 +83,7 @@ internal static class JmapEmailSubmissionJson
         var recipients = await database.MailQueueRecipients
             .AsNoTracking()
             .Where(recipient => recipient.MessageId == submission.QueueId)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         if (recipients.Count == 0)
             return null;
         var result = new JsonObject();
@@ -143,13 +143,13 @@ internal sealed class EmailSubmissionGetMethod(
             return JmapMethodResponse.Error("invalidArguments");
         if (requestedIds is { Count: > 0 } && requestedIds.Count > environment.Jmap.MaxObjectsInGet)
             return JmapMethodResponse.Error("requestTooLarge");
-        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken);
+        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (account is null) return JmapMethodResponse.Error("accountNotFound");
         var all = await database.JmapEmailSubmissions
             .AsNoTracking()
             .Where(submission => submission.AccountId == account.InboxId)
             .OrderBy(submission => submission.CreatedAt)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         if (requestedIds is null && all.Count > environment.Jmap.MaxObjectsInGet)
             return JmapMethodResponse.Error("requestTooLarge");
         var byId = all.ToDictionary(submission => JmapId.Submission(submission.Id), StringComparer.Ordinal);
@@ -158,14 +158,14 @@ internal sealed class EmailSubmissionGetMethod(
         foreach (var id in (requestedIds ?? byId.Keys.ToArray()).Distinct(StringComparer.Ordinal))
         {
             if (byId.TryGetValue(id, out var submission))
-                list.Add(await JmapEmailSubmissionJson.BuildAsync(database, submission, properties, cancellationToken));
+                list.Add(await JmapEmailSubmissionJson.BuildAsync(database, submission, properties, cancellationToken).ConfigureAwait(false));
             else
                 notFound.Add(id);
         }
         return new JmapMethodResponse(Name, new JsonObject
         {
             ["accountId"] = accountId,
-            ["state"] = await states.GetStateAsync(account.InboxId, JmapConstants.EmailSubmissionDataType, cancellationToken),
+            ["state"] = await states.GetStateAsync(account.InboxId, JmapConstants.EmailSubmissionDataType, cancellationToken).ConfigureAwait(false),
             ["list"] = list,
             ["notFound"] = notFound,
         });
@@ -191,7 +191,7 @@ internal sealed class EmailSubmissionChangesMethod(
             || !JmapMethodHelpers.TryGetOptionalUnsignedInt(arguments, "maxChanges", out var maxChanges)
             || maxChanges == 0)
             return JmapMethodResponse.Error("invalidArguments");
-        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken);
+        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (account is null) return JmapMethodResponse.Error("accountNotFound");
         var changes = await states.GetChangesAsync(
             account.InboxId,
@@ -199,7 +199,7 @@ internal sealed class EmailSubmissionChangesMethod(
             sinceState,
             maxChanges,
             environment.Jmap.MaxObjectsInGet,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (changes is null) return JmapMethodResponse.Error("cannotCalculateChanges");
         return new JmapMethodResponse(Name, new JsonObject
         {

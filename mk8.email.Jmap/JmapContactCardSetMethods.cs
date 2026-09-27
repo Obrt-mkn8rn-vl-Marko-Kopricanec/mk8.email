@@ -38,24 +38,24 @@ internal sealed class ContactCardSetMethod(
         if (operationCount > environment.Jmap.MaxObjectsInSet)
             return JmapMethodResponse.Error("requestTooLarge");
 
-        var account = await accounts.GetContactAccountAsync(context.User, accountId, cancellationToken);
+        var account = await accounts.GetContactAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (account is null)
             return JmapMethodResponse.Error(await accounts.GetContactAccountErrorAsync(
-                context.User, accountId, cancellationToken));
-        await contacts.EnsureDefaultAddressBookAsync(context.User, cancellationToken);
+                context.User, accountId, cancellationToken).ConfigureAwait(false));
+        await contacts.EnsureDefaultAddressBookAsync(context.User, cancellationToken).ConfigureAwait(false);
         await DavContactUidInvariant.AcquireAccountLockAsync(
             database,
             account.UserId,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         var oldState = await states.GetStateAsync(
             account.InboxId,
             JmapConstants.ContactCardDataType,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (ifInState is not null && !string.Equals(ifInState, oldState, StringComparison.Ordinal))
             return JmapMethodResponse.Error("stateMismatch");
 
-        var books = await contacts.LoadAddressBooksAsync(account.UserId, true, cancellationToken);
-        var cards = await contacts.LoadCardsAsync(account.UserId, true, cancellationToken);
+        var books = await contacts.LoadAddressBooksAsync(account.UserId, true, cancellationToken).ConfigureAwait(false);
+        var cards = await contacts.LoadCardsAsync(account.UserId, true, cancellationToken).ConfigureAwait(false);
         var booksById = books.ToDictionary(book => JmapId.AddressBook(book.Id), StringComparer.Ordinal);
         var cardsById = cards.ToDictionary(card => card.Id, StringComparer.Ordinal);
         var cardCountsByUid = cards
@@ -103,7 +103,7 @@ internal sealed class ContactCardSetMethod(
                 var prepared = await contacts.PrepareCardAsync(
                     account.InboxId,
                     storedRequest,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 if (prepared.Card is null)
                 {
                     notCreated[item.Key] = Invalid(prepared.InvalidProperties);
@@ -123,7 +123,7 @@ internal sealed class ContactCardSetMethod(
                     id,
                     prepared.Card,
                     now,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 var view = new JmapContactCardView(resource, prepared.Card);
                 var idString = view.Id;
                 cardsById[idString] = view;
@@ -187,7 +187,7 @@ internal sealed class ContactCardSetMethod(
                 var prepared = await contacts.PrepareCardAsync(
                     account.InboxId,
                     storedRequest,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 if (prepared.Card is null)
                 {
                     notUpdated[item.Key] = Invalid(prepared.InvalidProperties);
@@ -208,7 +208,7 @@ internal sealed class ContactCardSetMethod(
                     targetBook,
                     prepared.Card,
                     DateTime.UtcNow,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 if (oldBook.Id != targetBook.Id)
                 {
                     counts[oldBook.Id] = counts.GetValueOrDefault(oldBook.Id) - 1;
@@ -244,7 +244,7 @@ internal sealed class ContactCardSetMethod(
             }
         }
 
-        await database.SaveChangesAsync(cancellationToken);
+        await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return new JmapMethodResponse(Name, new JsonObject
         {
             ["accountId"] = accountId,
@@ -252,7 +252,7 @@ internal sealed class ContactCardSetMethod(
             ["newState"] = await states.GetStateAsync(
                 account.InboxId,
                 JmapConstants.ContactCardDataType,
-                cancellationToken),
+                cancellationToken).ConfigureAwait(false),
             ["created"] = created.Count == 0 ? null : created,
             ["updated"] = updated.Count == 0 ? null : updated,
             ["destroyed"] = destroyed.Count == 0 ? null : destroyed,
@@ -353,22 +353,22 @@ internal sealed class ContactCardCopyMethod(
         if (create.Count > environment.Jmap.MaxObjectsInSet)
             return JmapMethodResponse.Error("requestTooLarge");
 
-        var sourceGeneric = await accounts.GetAccountAsync(context.User, fromAccountId, cancellationToken);
+        var sourceGeneric = await accounts.GetAccountAsync(context.User, fromAccountId, cancellationToken).ConfigureAwait(false);
         if (sourceGeneric is null)
             return JmapMethodResponse.Error("fromAccountNotFound");
-        var source = await accounts.GetContactAccountAsync(context.User, fromAccountId, cancellationToken);
+        var source = await accounts.GetContactAccountAsync(context.User, fromAccountId, cancellationToken).ConfigureAwait(false);
         if (source is null)
             return JmapMethodResponse.Error("fromAccountNotSupportedByMethod");
-        var target = await accounts.GetContactAccountAsync(context.User, accountId, cancellationToken);
+        var target = await accounts.GetContactAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (target is null)
             return JmapMethodResponse.Error(await accounts.GetContactAccountErrorAsync(
-                context.User, accountId, cancellationToken));
+                context.User, accountId, cancellationToken).ConfigureAwait(false));
 
-        await contacts.EnsureDefaultAddressBookAsync(context.User, cancellationToken);
+        await contacts.EnsureDefaultAddressBookAsync(context.User, cancellationToken).ConfigureAwait(false);
         var sourceState = await states.GetStateAsync(
-            source.InboxId, JmapConstants.ContactCardDataType, cancellationToken);
+            source.InboxId, JmapConstants.ContactCardDataType, cancellationToken).ConfigureAwait(false);
         var targetState = await states.GetStateAsync(
-            target.InboxId, JmapConstants.ContactCardDataType, cancellationToken);
+            target.InboxId, JmapConstants.ContactCardDataType, cancellationToken).ConfigureAwait(false);
         if (ifFromInState is not null && ifFromInState != sourceState
             || ifInState is not null && ifInState != targetState)
         {

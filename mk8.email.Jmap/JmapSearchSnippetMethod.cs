@@ -183,7 +183,7 @@ internal sealed class SearchSnippetGetMethod(
         }
         if (emailIds.Count > environment.Jmap.MaxObjectsInGet)
             return JmapMethodResponse.Error("requestTooLarge");
-        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken);
+        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (account is null)
             return JmapMethodResponse.Error("accountNotFound");
 
@@ -191,7 +191,7 @@ internal sealed class SearchSnippetGetMethod(
             database,
             content,
             account.InboxId,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         try
         {
             if (!JmapEmailQueryEngine.TryFilter(

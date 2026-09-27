@@ -39,7 +39,7 @@ internal sealed class JmapMailboxStore(EmailDbContext database)
                 folder.SortOrder,
                 folder.IsSubscribed,
             })
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
 
         var messages = await database.Emails
             .AsNoTracking()
@@ -50,7 +50,7 @@ internal sealed class JmapMailboxStore(EmailDbContext database)
                 email.IsRead,
                 email.IsDraft,
                 email.ThreadObjectId))
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
 
         var idByName = folders.ToDictionary(
             folder => folder.Name,

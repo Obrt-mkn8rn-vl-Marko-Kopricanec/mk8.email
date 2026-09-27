@@ -21,11 +21,11 @@ internal sealed class JmapApplicationService(
         JmapSessionApplicationRequest request,
         CancellationToken cancellationToken = default)
     {
-        var user = await AuthenticateAsync(request.Authentication, cancellationToken);
+        var user = await AuthenticateAsync(request.Authentication, cancellationToken).ConfigureAwait(false);
         if (user is null)
             return Unauthorized();
 
-        var session = await sessions.BuildAsync(user, cancellationToken);
+        var session = await sessions.BuildAsync(user, cancellationToken).ConfigureAwait(false);
         return Json(session.Value.ToJsonString(JmapJson.SerializerOptions));
     }
 
@@ -33,15 +33,15 @@ internal sealed class JmapApplicationService(
         JmapApiApplicationRequest request,
         CancellationToken cancellationToken = default)
     {
-        var user = await AuthenticateAsync(request.Authentication, cancellationToken);
+        var user = await AuthenticateAsync(request.Authentication, cancellationToken).ConfigureAwait(false);
         if (user is null)
             return Unauthorized();
 
         try
         {
-            using var lease = await concurrency.AcquireRequestAsync(cancellationToken);
+            using var lease = await concurrency.AcquireRequestAsync(cancellationToken).ConfigureAwait(false);
             var document = JmapJson.ParseRequest(request.Document, environment.Jmap);
-            var response = await processor.ProcessAsync(document, user, cancellationToken);
+            var response = await processor.ProcessAsync(document, user, cancellationToken).ConfigureAwait(false);
             return Json(response.ToJsonString(JmapJson.SerializerOptions));
         }
         catch (JmapRequestException exception)
@@ -60,7 +60,7 @@ internal sealed class JmapApplicationService(
         JmapUploadApplicationRequest request,
         CancellationToken cancellationToken = default)
     {
-        var user = await AuthenticateAsync(request.Authentication, cancellationToken);
+        var user = await AuthenticateAsync(request.Authentication, cancellationToken).ConfigureAwait(false);
         if (user is null)
             return Unauthorized();
         if (request.Content.LongLength > environment.Jmap.MaxUploadSizeBytes)
@@ -74,13 +74,13 @@ internal sealed class JmapApplicationService(
                     "maxSizeUpload"));
         }
 
-        var account = await accounts.GetAccountAsync(user, request.AccountId, cancellationToken);
+        var account = await accounts.GetAccountAsync(user, request.AccountId, cancellationToken).ConfigureAwait(false);
         if (account is null)
             return NotFound();
 
         try
         {
-            using var lease = await concurrency.AcquireUploadAsync(cancellationToken);
+            using var lease = await concurrency.AcquireUploadAsync(cancellationToken).ConfigureAwait(false);
             var contentType = JmapMediaType.TryNormalize(request.ContentType, out var normalized)
                 ? normalized
                 : "application/octet-stream";
@@ -89,7 +89,7 @@ internal sealed class JmapApplicationService(
                 request.Content,
                 contentType,
                 null,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             return new JmapApplicationResult(
                 JmapApplicationOutcomes.Ok,
                 ContentType: contentType,
@@ -112,13 +112,13 @@ internal sealed class JmapApplicationService(
         JmapDownloadApplicationRequest request,
         CancellationToken cancellationToken = default)
     {
-        var user = await AuthenticateAsync(request.Authentication, cancellationToken);
+        var user = await AuthenticateAsync(request.Authentication, cancellationToken).ConfigureAwait(false);
         if (user is null)
             return Unauthorized();
-        var account = await accounts.GetAccountAsync(user, request.AccountId, cancellationToken);
+        var account = await accounts.GetAccountAsync(user, request.AccountId, cancellationToken).ConfigureAwait(false);
         if (account is null)
             return NotFound();
-        var blob = await blobs.GetAsync(account.InboxId, request.BlobId, cancellationToken);
+        var blob = await blobs.GetAsync(account.InboxId, request.BlobId, cancellationToken).ConfigureAwait(false);
         return blob is null
             ? NotFound()
             : new JmapApplicationResult(
@@ -132,7 +132,7 @@ internal sealed class JmapApplicationService(
         JmapEventApplicationRequest request,
         CancellationToken cancellationToken = default)
     {
-        var user = await AuthenticateAsync(request.Authentication, cancellationToken);
+        var user = await AuthenticateAsync(request.Authentication, cancellationToken).ConfigureAwait(false);
         if (user is null)
             return Unauthorized();
 
@@ -154,7 +154,7 @@ internal sealed class JmapApplicationService(
 
         if (request.AfterCursor is null)
         {
-            var cursor = await stateChanges.GetCursorAsync(user, cancellationToken);
+            var cursor = await stateChanges.GetCursorAsync(user, cancellationToken).ConfigureAwait(false);
             return new JmapApplicationResult(JmapApplicationOutcomes.Ok, Cursor: cursor);
         }
 
@@ -162,7 +162,7 @@ internal sealed class JmapApplicationService(
             user,
             request.AfterCursor.Value,
             types,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         return new JmapApplicationResult(
             JmapApplicationOutcomes.Ok,
             poll.StateChange is null
@@ -183,7 +183,7 @@ internal sealed class JmapApplicationService(
             return await mailAuthenticator.AuthenticateAsync(
                 authentication.Username,
                 authentication.Secret,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         }
 
         if (authentication.Kind == ProtocolAuthenticationKinds.BearerToken
@@ -193,7 +193,7 @@ internal sealed class JmapApplicationService(
                 .AuthenticateAccessTokenAsync(
                 authentication.Secret,
                 "jmap",
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         }
 
         return null;

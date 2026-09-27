@@ -34,7 +34,7 @@ public sealed class JmapAccountService(EmailDbContext database)
                 inbox.Owner.Username,
                 inbox.Name + "@" + inbox.Address.Domain,
                 inbox.Owner.QuotaBytes))
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<JmapAccount?> GetAccountAsync(
@@ -60,7 +60,7 @@ public sealed class JmapAccountService(EmailDbContext database)
                 inbox.Owner.Username,
                 inbox.Name + "@" + inbox.Address.Domain,
                 inbox.Owner.QuotaBytes))
-            .SingleOrDefaultAsync(cancellationToken);
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<JmapAccount?> GetContactAccountAsync(
@@ -68,7 +68,7 @@ public sealed class JmapAccountService(EmailDbContext database)
         string? accountId,
         CancellationToken cancellationToken = default)
     {
-        var primary = (await GetAccountsAsync(user, cancellationToken)).FirstOrDefault();
+        var primary = (await GetAccountsAsync(user, cancellationToken).ConfigureAwait(false)).FirstOrDefault();
         return primary is not null
             && string.Equals(JmapId.Account(primary.InboxId), accountId, StringComparison.Ordinal)
                 ? primary
@@ -79,7 +79,7 @@ public sealed class JmapAccountService(EmailDbContext database)
         AuthenticatedMailUser user,
         string? accountId,
         CancellationToken cancellationToken = default) =>
-        await GetAccountAsync(user, accountId, cancellationToken) is null
+        await GetAccountAsync(user, accountId, cancellationToken).ConfigureAwait(false) is null
             ? "accountNotFound"
             : "accountNotSupportedByMethod";
 }

@@ -20,11 +20,11 @@ internal sealed class JmapPushWorker(
     {
         if (IsPostgreSql())
         {
-            await RunNotificationLoopAsync(stoppingToken);
+            await RunNotificationLoopAsync(stoppingToken).ConfigureAwait(false);
             return;
         }
 
-        await RunPollingLoopAsync(stoppingToken);
+        await RunPollingLoopAsync(stoppingToken).ConfigureAwait(false);
     }
 
     private async Task RunPollingLoopAsync(CancellationToken stoppingToken)
@@ -33,7 +33,7 @@ internal sealed class JmapPushWorker(
         {
             try
             {
-                await ProcessDueAsync(stoppingToken);
+                await ProcessDueAsync(stoppingToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -46,7 +46,7 @@ internal sealed class JmapPushWorker(
 
             try
             {
-                await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+                await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -61,21 +61,23 @@ internal sealed class JmapPushWorker(
         {
             try
             {
-                await using var listener = new NpgsqlConnection(environment.BuildConnectionString());
-                await listener.OpenAsync(stoppingToken);
-                await using (var command = listener.CreateCommand())
+                var listener = new NpgsqlConnection(environment.BuildConnectionString());
+                await using var listenerLifetime = listener.ConfigureAwait(false);
+                await listener.OpenAsync(stoppingToken).ConfigureAwait(false);
+                var command = listener.CreateCommand();
+                await using (command.ConfigureAwait(false))
                 {
                     command.CommandText = "LISTEN mk8_jmap_push_ready";
-                    await command.ExecuteNonQueryAsync(stoppingToken);
+                    await command.ExecuteNonQueryAsync(stoppingToken).ConfigureAwait(false);
                 }
 
                 while (!stoppingToken.IsCancellationRequested)
                 {
-                    await ProcessDueAsync(stoppingToken);
-                    var delay = await GetNextWakeDelayAsync(stoppingToken);
+                    await ProcessDueAsync(stoppingToken).ConfigureAwait(false);
+                    var delay = await GetNextWakeDelayAsync(stoppingToken).ConfigureAwait(false);
                     await listener.WaitAsync(
                         Math.Max(1, checked((int)delay.TotalMilliseconds)),
-                        stoppingToken);
+                        stoppingToken).ConfigureAwait(false);
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -85,14 +87,14 @@ internal sealed class JmapPushWorker(
             catch (Exception exception)
             {
                 logger.LogError(exception, "The JMAP push notification listener failed");
-                await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+                await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken).ConfigureAwait(false);
             }
         }
     }
 
     public async Task ProcessDueAsync(CancellationToken cancellationToken)
     {
-        var subscriptionIds = await GetBatchAsync(cancellationToken);
+        var subscriptionIds = await GetBatchAsync(cancellationToken).ConfigureAwait(false);
         await Parallel.ForEachAsync(
             subscriptionIds,
             new ParallelOptions
@@ -100,18 +102,19 @@ internal sealed class JmapPushWorker(
                 CancellationToken = cancellationToken,
                 MaxDegreeOfParallelism = 4,
             },
-            ProcessAsync);
+            ProcessAsync).ConfigureAwait(false);
     }
 
     private async Task<TimeSpan> GetNextWakeDelayAsync(CancellationToken cancellationToken)
     {
-        await using var scope = scopeFactory.CreateAsyncScope();
+        var scope = scopeFactory.CreateAsyncScope();
+        await using var scopeLifetime = scope.ConfigureAwait(false);
         var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
         var nextRetry = await database.JmapPushSubscriptions
             .Where(subscription => subscription.IsVerified && subscription.NextPushAt != null)
-            .MinAsync(subscription => subscription.NextPushAt, cancellationToken);
+            .MinAsync(subscription => subscription.NextPushAt, cancellationToken).ConfigureAwait(false);
         var nextExpiry = await database.JmapPushSubscriptions
-            .MinAsync(subscription => (DateTime?)subscription.ExpiresAt, cancellationToken);
+            .MinAsync(subscription => (DateTime?)subscription.ExpiresAt, cancellationToken).ConfigureAwait(false);
         var next = new[] { nextRetry, nextExpiry }
             .Where(candidate => candidate is not null)
             .Min();
@@ -136,12 +139,13 @@ internal sealed class JmapPushWorker(
 
     private async Task<IReadOnlyList<Guid>> GetBatchAsync(CancellationToken cancellationToken)
     {
-        await using var scope = scopeFactory.CreateAsyncScope();
+        var scope = scopeFactory.CreateAsyncScope();
+        await using var scopeLifetime = scope.ConfigureAwait(false);
         var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
         var now = DateTime.UtcNow;
         var expired = await database.JmapPushSubscriptions
             .Where(subscription => subscription.ExpiresAt <= now)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         if (expired.Count > 0)
         {
             foreach (var subscription in expired)
@@ -150,7 +154,7 @@ internal sealed class JmapPushWorker(
                 subscription.KeysJson = null;
             }
             database.JmapPushSubscriptions.RemoveRange(expired);
-            await database.SaveChangesAsync(cancellationToken);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         }
         return await database.JmapPushSubscriptions
             .AsNoTracking()
@@ -160,17 +164,18 @@ internal sealed class JmapPushWorker(
             .OrderBy(subscription => subscription.NextPushAt)
             .ThenBy(subscription => subscription.UpdatedAt)
             .Select(subscription => subscription.Id)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask ProcessAsync(Guid id, CancellationToken cancellationToken)
     {
-        await using var scope = scopeFactory.CreateAsyncScope();
+        var scope = scopeFactory.CreateAsyncScope();
+        await using var scopeLifetime = scope.ConfigureAwait(false);
         var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
         var stateChanges = scope.ServiceProvider.GetRequiredService<JmapStateChangeService>();
         var subscription = await database.JmapPushSubscriptions.SingleOrDefaultAsync(
             candidate => candidate.Id == id,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (subscription is null
             || !subscription.IsVerified
             || subscription.ExpiresAt <= DateTime.UtcNow
@@ -180,13 +185,13 @@ internal sealed class JmapPushWorker(
             .AsNoTracking()
             .Where(candidate => candidate.Id == subscription.UserId && candidate.IsActive)
             .Select(candidate => new AuthenticatedMailUser(candidate.Id, candidate.Username))
-            .SingleOrDefaultAsync(cancellationToken);
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
         if (user is null)
         {
             subscription.Url = string.Empty;
             subscription.KeysJson = null;
             database.JmapPushSubscriptions.Remove(subscription);
-            await database.SaveChangesAsync(cancellationToken);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -195,14 +200,14 @@ internal sealed class JmapPushWorker(
             user,
             subscription.LastPushedChange,
             requestedTypes,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (poll.Cursor == subscription.LastPushedChange)
         {
             if (subscription.NextPushAt is not null)
             {
                 subscription.NextPushAt = null;
                 subscription.UpdatedAt = DateTime.UtcNow;
-                await database.SaveChangesAsync(cancellationToken);
+                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             }
             return;
         }
@@ -212,7 +217,7 @@ internal sealed class JmapPushWorker(
             subscription.FailureCount = 0;
             subscription.NextPushAt = null;
             subscription.UpdatedAt = DateTime.UtcNow;
-            await database.SaveChangesAsync(cancellationToken);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -224,7 +229,7 @@ internal sealed class JmapPushWorker(
                 subscription.KeysJson,
                 subscription.ExpiresAt,
                 JmapPushPresentationPayload.Serialize(poll.StateChange),
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -261,6 +266,6 @@ internal sealed class JmapPushWorker(
                 subscription.UpdatedAt = now;
                 break;
         }
-        await database.SaveChangesAsync(cancellationToken);
+        await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 }

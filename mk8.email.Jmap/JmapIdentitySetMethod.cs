@@ -47,10 +47,10 @@ internal sealed class IdentitySetMethod(
         var operationCount = (create?.Count ?? 0) + (update?.Count ?? 0) + (destroy?.Count ?? 0);
         if (operationCount > environment.Jmap.MaxObjectsInSet)
             return JmapMethodResponse.Error("requestTooLarge");
-        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken);
+        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (account is null) return JmapMethodResponse.Error("accountNotFound");
-        await identities.EnsureDefaultAsync(account, cancellationToken);
-        var oldState = await states.GetStateAsync(account.InboxId, JmapConstants.IdentityDataType, cancellationToken);
+        await identities.EnsureDefaultAsync(account, cancellationToken).ConfigureAwait(false);
+        var oldState = await states.GetStateAsync(account.InboxId, JmapConstants.IdentityDataType, cancellationToken).ConfigureAwait(false);
         if (ifInState is not null && !string.Equals(ifInState, oldState, StringComparison.Ordinal))
             return JmapMethodResponse.Error("stateMismatch");
 
@@ -77,7 +77,7 @@ internal sealed class IdentitySetMethod(
                     notCreated[item.Key] = parseError ?? JmapMethodHelpers.SetError("invalidProperties");
                     continue;
                 }
-                if (!await identities.CanUseAddressAsync(context, values.Email!, cancellationToken))
+                if (!await identities.CanUseAddressAsync(context, values.Email!, cancellationToken).ConfigureAwait(false))
                 {
                     notCreated[item.Key] = JmapMethodHelpers.SetError("forbiddenFrom");
                     continue;
@@ -97,7 +97,7 @@ internal sealed class IdentitySetMethod(
                     MayDelete = true,
                 };
                 database.JmapIdentities.Add(identity);
-                await database.SaveChangesAsync(cancellationToken);
+                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
                 var wireId = JmapId.Identity(id);
                 context.CreatedIds[item.Key] = wireId;
                 var createdIdentity = new JsonObject
@@ -130,7 +130,7 @@ internal sealed class IdentitySetMethod(
                 }
                 var identity = await database.JmapIdentities.SingleOrDefaultAsync(
                     candidate => candidate.Id == id && candidate.AccountId == account.InboxId,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 if (identity is null)
                 {
                     notUpdated[item.Key] = JmapMethodHelpers.SetError("notFound");
@@ -171,7 +171,7 @@ internal sealed class IdentitySetMethod(
                 identity.TextSignature = values.TextSignature;
                 identity.HtmlSignature = values.HtmlSignature;
                 identity.UpdatedAt = DateTime.UtcNow;
-                await database.SaveChangesAsync(cancellationToken);
+                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
                 updated[resolvedId!] = null;
             }
         }
@@ -187,7 +187,7 @@ internal sealed class IdentitySetMethod(
                 }
                 var identity = await database.JmapIdentities.SingleOrDefaultAsync(
                     candidate => candidate.Id == id && candidate.AccountId == account.InboxId,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 if (identity is null)
                     notDestroyed[requestedId] = JmapMethodHelpers.SetError("notFound");
                 else if (!identity.MayDelete)
@@ -195,7 +195,7 @@ internal sealed class IdentitySetMethod(
                 else
                 {
                     database.JmapIdentities.Remove(identity);
-                    await database.SaveChangesAsync(cancellationToken);
+                    await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
                     destroyed.Add(resolvedId);
                 }
             }
@@ -204,7 +204,7 @@ internal sealed class IdentitySetMethod(
         {
             ["accountId"] = accountId,
             ["oldState"] = oldState,
-            ["newState"] = await states.GetStateAsync(account.InboxId, JmapConstants.IdentityDataType, cancellationToken),
+            ["newState"] = await states.GetStateAsync(account.InboxId, JmapConstants.IdentityDataType, cancellationToken).ConfigureAwait(false),
             ["created"] = created.Count == 0 ? null : created,
             ["updated"] = updated.Count == 0 ? null : updated,
             ["destroyed"] = destroyed.Count == 0 ? null : destroyed,

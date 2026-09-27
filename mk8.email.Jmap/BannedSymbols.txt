@@ -1,0 +1,7 @@
+T:Microsoft.AspNetCore.Http.HttpContext; JMAP application logic must not depend on ASP.NET request hosting
+T:Microsoft.AspNetCore.Builder.WebApplication; JMAP application logic must not construct presentation endpoints
+T:System.Net.Sockets.TcpListener; JMAP application logic must not accept public protocol connections
+T:System.Net.Http.HttpClient; JMAP application logic must use the durable presentation-operation client
+T:System.Net.Mail.SmtpClient; JMAP application logic must not send via presentation client APIs
+T:Azure.Storage.Blobs.BlobServiceClient; JMAP application logic must use the large-object storage abstraction
+T:System.IO.File; JMAP application logic must not depend on host-local files

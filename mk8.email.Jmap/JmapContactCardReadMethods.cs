@@ -32,12 +32,12 @@ internal sealed class ContactCardGetMethod(
         {
             return JmapMethodResponse.Error("invalidArguments");
         }
-        var account = await accounts.GetContactAccountAsync(context.User, accountId, cancellationToken);
+        var account = await accounts.GetContactAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (account is null)
             return JmapMethodResponse.Error(await accounts.GetContactAccountErrorAsync(
-                context.User, accountId, cancellationToken));
-        await contacts.EnsureDefaultAddressBookAsync(context.User, cancellationToken);
-        var cards = await contacts.LoadCardsAsync(account.UserId, false, cancellationToken);
+                context.User, accountId, cancellationToken).ConfigureAwait(false));
+        await contacts.EnsureDefaultAddressBookAsync(context.User, cancellationToken).ConfigureAwait(false);
+        var cards = await contacts.LoadCardsAsync(account.UserId, false, cancellationToken).ConfigureAwait(false);
         if (requestedIds is null && cards.Count > environment.Jmap.MaxObjectsInGet)
             return JmapMethodResponse.Error("requestTooLarge");
         var byId = cards.ToDictionary(card => card.Id, StringComparer.Ordinal);
@@ -57,7 +57,7 @@ internal sealed class ContactCardGetMethod(
             ["state"] = await states.GetStateAsync(
                 account.InboxId,
                 JmapConstants.ContactCardDataType,
-                cancellationToken),
+                cancellationToken).ConfigureAwait(false),
             ["list"] = list,
             ["notFound"] = notFound,
         });
@@ -86,18 +86,18 @@ internal sealed class ContactCardChangesMethod(
         {
             return JmapMethodResponse.Error("invalidArguments");
         }
-        var account = await accounts.GetContactAccountAsync(context.User, accountId, cancellationToken);
+        var account = await accounts.GetContactAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (account is null)
             return JmapMethodResponse.Error(await accounts.GetContactAccountErrorAsync(
-                context.User, accountId, cancellationToken));
-        await contacts.EnsureDefaultAddressBookAsync(context.User, cancellationToken);
+                context.User, accountId, cancellationToken).ConfigureAwait(false));
+        await contacts.EnsureDefaultAddressBookAsync(context.User, cancellationToken).ConfigureAwait(false);
         var changes = await states.GetChangesAsync(
             account.InboxId,
             JmapConstants.ContactCardDataType,
             sinceState,
             maxChanges,
             environment.Jmap.MaxObjectsInGet,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (changes is null)
             return JmapMethodResponse.Error("cannotCalculateChanges");
         return new JmapMethodResponse(Name, new JsonObject
@@ -509,12 +509,12 @@ internal sealed class ContactCardQueryMethod(
         {
             return JmapMethodResponse.Error("invalidArguments");
         }
-        var account = await accounts.GetContactAccountAsync(context.User, accountId, cancellationToken);
+        var account = await accounts.GetContactAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (account is null)
             return JmapMethodResponse.Error(await accounts.GetContactAccountErrorAsync(
-                context.User, accountId, cancellationToken));
-        await contacts.EnsureDefaultAddressBookAsync(context.User, cancellationToken);
-        var cards = await contacts.LoadCardsAsync(account.UserId, false, cancellationToken);
+                context.User, accountId, cancellationToken).ConfigureAwait(false));
+        await contacts.EnsureDefaultAddressBookAsync(context.User, cancellationToken).ConfigureAwait(false);
+        var cards = await contacts.LoadCardsAsync(account.UserId, false, cancellationToken).ConfigureAwait(false);
         if (!JmapContactQueryEngine.TryFilter(cards, arguments["filter"], out var filtered, out var filterError))
             return JmapMethodResponse.Error(filterError);
         if (!JmapContactQueryEngine.TryParseSort(arguments["sort"], out var comparators, out var sortError))
@@ -540,7 +540,7 @@ internal sealed class ContactCardQueryMethod(
             ["queryState"] = await states.GetStateAsync(
                 account.InboxId,
                 JmapConstants.ContactCardDataType,
-                cancellationToken),
+                cancellationToken).ConfigureAwait(false),
             ["canCalculateChanges"] = true,
             ["position"] = position,
             ["ids"] = JmapMethodHelpers.ToJsonArray(page),
@@ -575,12 +575,12 @@ internal sealed class ContactCardQueryChangesMethod(
         {
             return JmapMethodResponse.Error("invalidArguments");
         }
-        var account = await accounts.GetContactAccountAsync(context.User, accountId, cancellationToken);
+        var account = await accounts.GetContactAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (account is null)
             return JmapMethodResponse.Error(await accounts.GetContactAccountErrorAsync(
-                context.User, accountId, cancellationToken));
-        await contacts.EnsureDefaultAddressBookAsync(context.User, cancellationToken);
-        var cards = await contacts.LoadCardsAsync(account.UserId, false, cancellationToken);
+                context.User, accountId, cancellationToken).ConfigureAwait(false));
+        await contacts.EnsureDefaultAddressBookAsync(context.User, cancellationToken).ConfigureAwait(false);
+        var cards = await contacts.LoadCardsAsync(account.UserId, false, cancellationToken).ConfigureAwait(false);
         if (!JmapContactQueryEngine.TryFilter(cards, arguments["filter"], out var filtered, out var filterError))
             return JmapMethodResponse.Error(filterError);
         if (!JmapContactQueryEngine.TryParseSort(arguments["sort"], out var comparators, out var sortError))
@@ -591,7 +591,7 @@ internal sealed class ContactCardQueryChangesMethod(
             sinceState,
             null,
             int.MaxValue,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (changes is null)
             return JmapMethodResponse.Error("cannotCalculateChanges");
         var currentIds = JmapContactQueryEngine.Sort(filtered, comparators)

@@ -91,12 +91,12 @@ internal sealed class AddressBookGetMethod(
         if (properties is not null && properties.Any(property => !JmapAddressBookJson.Properties.Contains(property)))
             return JmapMethodResponse.Error("invalidArguments");
 
-        var account = await accounts.GetContactAccountAsync(context.User, accountId, cancellationToken);
+        var account = await accounts.GetContactAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (account is null)
             return JmapMethodResponse.Error(await accounts.GetContactAccountErrorAsync(
-                context.User, accountId, cancellationToken));
-        await contacts.EnsureDefaultAddressBookAsync(context.User, cancellationToken);
-        var books = await contacts.LoadAddressBooksAsync(account.UserId, false, cancellationToken);
+                context.User, accountId, cancellationToken).ConfigureAwait(false));
+        await contacts.EnsureDefaultAddressBookAsync(context.User, cancellationToken).ConfigureAwait(false);
+        var books = await contacts.LoadAddressBooksAsync(account.UserId, false, cancellationToken).ConfigureAwait(false);
         if (requestedIds is null && books.Count > environment.Jmap.MaxObjectsInGet)
             return JmapMethodResponse.Error("requestTooLarge");
         var byId = books.ToDictionary(book => JmapId.AddressBook(book.Id), StringComparer.Ordinal);
@@ -115,7 +115,7 @@ internal sealed class AddressBookGetMethod(
             ["state"] = await states.GetStateAsync(
                 account.InboxId,
                 JmapConstants.AddressBookDataType,
-                cancellationToken),
+                cancellationToken).ConfigureAwait(false),
             ["list"] = list,
             ["notFound"] = notFound,
         });
@@ -144,18 +144,18 @@ internal sealed class AddressBookChangesMethod(
         {
             return JmapMethodResponse.Error("invalidArguments");
         }
-        var account = await accounts.GetContactAccountAsync(context.User, accountId, cancellationToken);
+        var account = await accounts.GetContactAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (account is null)
             return JmapMethodResponse.Error(await accounts.GetContactAccountErrorAsync(
-                context.User, accountId, cancellationToken));
-        await contacts.EnsureDefaultAddressBookAsync(context.User, cancellationToken);
+                context.User, accountId, cancellationToken).ConfigureAwait(false));
+        await contacts.EnsureDefaultAddressBookAsync(context.User, cancellationToken).ConfigureAwait(false);
         var changes = await states.GetChangesAsync(
             account.InboxId,
             JmapConstants.AddressBookDataType,
             sinceState,
             maxChanges,
             environment.Jmap.MaxObjectsInGet,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (changes is null)
             return JmapMethodResponse.Error("cannotCalculateChanges");
         return new JmapMethodResponse(Name, new JsonObject
@@ -222,19 +222,19 @@ internal sealed class AddressBookSetMethod(
         var operationCount = (creates?.Count ?? 0) + (updates?.Count ?? 0) + (destroys?.Count ?? 0);
         if (operationCount > environment.Jmap.MaxObjectsInSet)
             return JmapMethodResponse.Error("requestTooLarge");
-        var account = await accounts.GetContactAccountAsync(context.User, accountId, cancellationToken);
+        var account = await accounts.GetContactAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (account is null)
             return JmapMethodResponse.Error(await accounts.GetContactAccountErrorAsync(
-                context.User, accountId, cancellationToken));
-        await contacts.EnsureDefaultAddressBookAsync(context.User, cancellationToken);
+                context.User, accountId, cancellationToken).ConfigureAwait(false));
+        await contacts.EnsureDefaultAddressBookAsync(context.User, cancellationToken).ConfigureAwait(false);
         var oldState = await states.GetStateAsync(
             account.InboxId,
             JmapConstants.AddressBookDataType,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (ifInState is not null && !string.Equals(ifInState, oldState, StringComparison.Ordinal))
             return JmapMethodResponse.Error("stateMismatch");
 
-        var books = await contacts.LoadAddressBooksAsync(account.UserId, true, cancellationToken);
+        var books = await contacts.LoadAddressBooksAsync(account.UserId, true, cancellationToken).ConfigureAwait(false);
         var byId = books.ToDictionary(book => JmapId.AddressBook(book.Id), StringComparer.Ordinal);
         var created = new JsonObject();
         var updated = new JsonObject();
@@ -248,7 +248,7 @@ internal sealed class AddressBookSetMethod(
             collection.UserId == account.UserId
             && collection.Slug != "schedule-inbox"
             && collection.Slug != "schedule-outbox",
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         var remainingCapacity = Math.Max(
             0,
             environment.Dav.MaxCollectionsPerUser - collectionCount);
@@ -367,7 +367,7 @@ internal sealed class AddressBookSetMethod(
                 }
                 var resources = await database.DavResources
                     .Where(resource => resource.CollectionId == book.Id)
-                    .ToListAsync(cancellationToken);
+                    .ToListAsync(cancellationToken).ConfigureAwait(false);
                 if (resources.Count > 0 && !removeContents)
                 {
                     notDestroyed[requested] = JmapMethodHelpers.SetError("addressBookHasContents");
@@ -437,7 +437,7 @@ internal sealed class AddressBookSetMethod(
             }
         }
 
-        await database.SaveChangesAsync(cancellationToken);
+        await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return new JmapMethodResponse(Name, new JsonObject
         {
             ["accountId"] = accountId,
@@ -445,7 +445,7 @@ internal sealed class AddressBookSetMethod(
             ["newState"] = await states.GetStateAsync(
                 account.InboxId,
                 JmapConstants.AddressBookDataType,
-                cancellationToken),
+                cancellationToken).ConfigureAwait(false),
             ["created"] = created.Count == 0 ? null : created,
             ["updated"] = updated.Count == 0 ? null : updated,
             ["destroyed"] = destroyed.Count == 0 ? null : destroyed,

@@ -111,7 +111,7 @@ public sealed class JmapRequestProcessor
                     method,
                     context,
                     resolvedArguments,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
             }
 
             AddResponse(response);
@@ -136,7 +136,7 @@ public sealed class JmapRequestProcessor
             }
         }
 
-        var session = await _sessions.BuildAsync(user, cancellationToken);
+        var session = await _sessions.BuildAsync(user, cancellationToken).ConfigureAwait(false);
         var result = new JsonObject
         {
             ["methodResponses"] = methodResponses,
@@ -167,13 +167,13 @@ public sealed class JmapRequestProcessor
         try
         {
             if (_database.Database.IsRelational())
-                transaction = await _database.Database.BeginTransactionAsync(cancellationToken);
+                transaction = await _database.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
 
-            var response = await method.InvokeAsync(context, arguments, cancellationToken);
+            var response = await method.InvokeAsync(context, arguments, cancellationToken).ConfigureAwait(false);
             if (MustRollBack(response))
             {
-                await RollBackAsync(transaction);
-                await _blobEffects.RollbackAsync(blobEffectMarker);
+                await RollBackAsync(transaction).ConfigureAwait(false);
+                await _blobEffects.RollbackAsync(blobEffectMarker).ConfigureAwait(false);
                 RestoreInvocationState(context, createdIds, postCommitMarker);
                 return response;
             }
@@ -181,9 +181,9 @@ public sealed class JmapRequestProcessor
             if (transaction is not null)
             {
                 commitAttempted = true;
-                await transaction.CommitAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             }
-            await _blobEffects.CommitAsync(blobEffectMarker);
+            await _blobEffects.CommitAsync(blobEffectMarker).ConfigureAwait(false);
             var actions = context.TakePostCommitActions(postCommitMarker);
             foreach (var action in actions)
             {
@@ -192,7 +192,7 @@ public sealed class JmapRequestProcessor
                     // The database commit makes these actions durable work.
                     // A client disconnect must not prevent push verification
                     // (or any future committed external effect) from running.
-                    await action(CancellationToken.None);
+                    await action(CancellationToken.None).ConfigureAwait(false);
                 }
                 catch (Exception exception)
                 {
@@ -203,15 +203,15 @@ public sealed class JmapRequestProcessor
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            await RollBackAsync(transaction);
-            await CompleteBlobRollbackAsync(blobEffectMarker, commitAttempted);
+            await RollBackAsync(transaction).ConfigureAwait(false);
+            await CompleteBlobRollbackAsync(blobEffectMarker, commitAttempted).ConfigureAwait(false);
             RestoreInvocationState(context, createdIds, postCommitMarker);
             throw;
         }
         catch (Exception exception)
         {
-            await RollBackAsync(transaction);
-            await CompleteBlobRollbackAsync(blobEffectMarker, commitAttempted);
+            await RollBackAsync(transaction).ConfigureAwait(false);
+            await CompleteBlobRollbackAsync(blobEffectMarker, commitAttempted).ConfigureAwait(false);
             RestoreInvocationState(context, createdIds, postCommitMarker);
             _logger.LogError(exception, "JMAP method {MethodName} failed", method.Name);
             return JmapMethodResponse.Error("serverFail");
@@ -219,7 +219,7 @@ public sealed class JmapRequestProcessor
         finally
         {
             if (transaction is not null)
-                await transaction.DisposeAsync();
+                await transaction.DisposeAsync().ConfigureAwait(false);
         }
     }
 
@@ -232,7 +232,7 @@ public sealed class JmapRequestProcessor
             _blobEffects.Discard(marker);
             return;
         }
-        await _blobEffects.RollbackAsync(marker);
+        await _blobEffects.RollbackAsync(marker).ConfigureAwait(false);
     }
 
     private static bool MustRollBack(JmapMethodResponse response) =>
@@ -248,7 +248,7 @@ public sealed class JmapRequestProcessor
             return;
         try
         {
-            await transaction.RollbackAsync(CancellationToken.None);
+            await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception exception)
         {

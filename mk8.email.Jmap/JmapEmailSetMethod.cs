@@ -51,13 +51,13 @@ internal sealed class EmailSetMethod(
         if (operationCount > environment.Jmap.MaxObjectsInSet)
             return JmapMethodResponse.Error("requestTooLarge");
 
-        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken);
+        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (account is null)
             return JmapMethodResponse.Error("accountNotFound");
         var oldState = await states.GetStateAsync(
             account.InboxId,
             JmapConstants.EmailDataType,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (ifInState is not null && !string.Equals(ifInState, oldState, StringComparison.Ordinal))
             return JmapMethodResponse.Error("stateMismatch");
 
@@ -81,7 +81,7 @@ internal sealed class EmailSetMethod(
                     account.InboxId,
                     item.Value["mailboxIds"],
                     context,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 if (mailbox.Error is not null)
                 {
                     notCreated[item.Key] = mailbox.Error;
@@ -111,7 +111,7 @@ internal sealed class EmailSetMethod(
                     account.Address,
                     context,
                     item.Value,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 if (built.Error is not null)
                 {
                     notCreated[item.Key] = built.Error;
@@ -124,7 +124,7 @@ internal sealed class EmailSetMethod(
                     built.Value.RawBytes,
                     keywords,
                     receivedAt,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 if (stored.Error is not null)
                 {
                     notCreated[item.Key] = stored.Error;
@@ -152,7 +152,7 @@ internal sealed class EmailSetMethod(
                     emailId,
                     context,
                     item.Value,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 if (error is null)
                     updated[resolvedId!] = null;
                 else
@@ -170,7 +170,7 @@ internal sealed class EmailSetMethod(
                     notDestroyed[requestedId] = JmapMethodHelpers.SetError("notFound");
                     continue;
                 }
-                var error = await DestroyAsync(account.InboxId, emailId, cancellationToken);
+                var error = await DestroyAsync(account.InboxId, emailId, cancellationToken).ConfigureAwait(false);
                 if (error is null)
                     destroyed.Add(resolvedId);
                 else
@@ -181,7 +181,7 @@ internal sealed class EmailSetMethod(
         var newState = await states.GetStateAsync(
             account.InboxId,
             JmapConstants.EmailDataType,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         return new JmapMethodResponse(Name, new JsonObject
         {
             ["accountId"] = accountId,
@@ -208,7 +208,7 @@ internal sealed class EmailSetMethod(
             .SingleOrDefaultAsync(item => item.Id == emailId
                 && item.Folder.InboxId == accountId
                 && !item.IsDeleted,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         if (email is null)
             return JmapMethodHelpers.SetError("notFound");
 
@@ -227,7 +227,7 @@ internal sealed class EmailSetMethod(
         {
             try
             {
-                var rawMessage = await content.ReadAsync(email, cancellationToken);
+                var rawMessage = await content.ReadAsync(email, cancellationToken).ConfigureAwait(false);
                 using var message = JmapEmailCodec.Parse(rawMessage);
                 if (!TryBuildUpdateSource(
                         message,
@@ -261,7 +261,7 @@ internal sealed class EmailSetMethod(
             accountId,
             result["mailboxIds"],
             context,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (mailbox.Error is not null)
             return mailbox.Error;
         if (!JmapEmailStore.TryParseKeywords(
@@ -298,7 +298,7 @@ internal sealed class EmailSetMethod(
             email.ModSeq = ++email.Folder.HighestModSeq;
         }
         JmapEmailStore.ApplyKeywords(email, keywords);
-        await database.SaveChangesAsync(cancellationToken);
+        await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return null;
     }
 
@@ -519,7 +519,7 @@ internal sealed class EmailSetMethod(
             .SingleOrDefaultAsync(item => item.Id == emailId
                 && item.Folder.InboxId == accountId
                 && !item.IsDeleted,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         if (email is null)
             return JmapMethodHelpers.SetError("notFound");
         database.ExpungedUids.Add(new ExpungedUidDB
@@ -531,7 +531,7 @@ internal sealed class EmailSetMethod(
         });
         content.DeleteOnCommit(email);
         database.Emails.Remove(email);
-        await database.SaveChangesAsync(cancellationToken);
+        await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return null;
     }
 
@@ -560,7 +560,7 @@ internal sealed class EmailSetMethod(
         var folder = await database.Folders
             .SingleOrDefaultAsync(candidate => candidate.Id == folderId
                 && candidate.InboxId == accountId,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         return folder is null
             ? MailboxResult.Failed("invalidProperties")
             : new MailboxResult(folder, null);

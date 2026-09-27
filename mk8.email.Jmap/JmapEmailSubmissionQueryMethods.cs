@@ -238,11 +238,11 @@ internal sealed class EmailSubmissionQueryMethod(
             || !JmapMethodHelpers.TryGetOptionalUnsignedInt(arguments, "limit", out var requestedLimit)
             || !JmapMethodHelpers.TryGetOptionalBoolean(arguments, "calculateTotal", false, out var calculateTotal))
             return JmapMethodResponse.Error("invalidArguments");
-        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken);
+        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (account is null) return JmapMethodResponse.Error("accountNotFound");
         var all = await database.JmapEmailSubmissions.AsNoTracking()
             .Where(item => item.AccountId == account.InboxId)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         if (!JmapEmailSubmissionQueryEngine.TryFilter(all, arguments["filter"], out var filtered, out var filterError))
             return JmapMethodResponse.Error(filterError);
         if (!JmapEmailSubmissionQueryEngine.TrySort(arguments["sort"], out var sort, out var sortError))
@@ -266,7 +266,7 @@ internal sealed class EmailSubmissionQueryMethod(
         var response = new JsonObject
         {
             ["accountId"] = accountId,
-            ["queryState"] = await states.GetStateAsync(account.InboxId, JmapConstants.EmailSubmissionDataType, cancellationToken),
+            ["queryState"] = await states.GetStateAsync(account.InboxId, JmapConstants.EmailSubmissionDataType, cancellationToken).ConfigureAwait(false),
             ["canCalculateChanges"] = true,
             ["position"] = position,
             ["ids"] = JmapMethodHelpers.ToJsonArray(page),
@@ -305,10 +305,10 @@ internal sealed class EmailSubmissionQueryChangesMethod(
             || !JmapMethodHelpers.TryGetOptionalId(arguments, "upToId", out _)
             || !JmapMethodHelpers.TryGetOptionalBoolean(arguments, "calculateTotal", false, out var calculateTotal))
             return JmapMethodResponse.Error("invalidArguments");
-        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken);
+        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (account is null) return JmapMethodResponse.Error("accountNotFound");
         var all = await database.JmapEmailSubmissions.AsNoTracking()
-            .Where(item => item.AccountId == account.InboxId).ToListAsync(cancellationToken);
+            .Where(item => item.AccountId == account.InboxId).ToListAsync(cancellationToken).ConfigureAwait(false);
         if (!JmapEmailSubmissionQueryEngine.TryFilter(all, arguments["filter"], out var filtered, out var filterError))
             return JmapMethodResponse.Error(filterError);
         if (!JmapEmailSubmissionQueryEngine.TrySort(arguments["sort"], out var sort, out var sortError))
@@ -319,7 +319,7 @@ internal sealed class EmailSubmissionQueryChangesMethod(
             sinceState,
             null,
             int.MaxValue,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (changes is null)
             return JmapMethodResponse.Error("cannotCalculateChanges");
         var currentIds = JmapEmailSubmissionQueryEngine.Sort(filtered, sort)

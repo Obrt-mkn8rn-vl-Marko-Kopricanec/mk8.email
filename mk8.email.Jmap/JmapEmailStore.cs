@@ -27,7 +27,7 @@ internal sealed class JmapEmailStore(
     {
         if (raw.LongLength > environment.Limits.MaxMessageSizeBytes)
             return new JmapStoredEmailResult(null, JmapMethodHelpers.SetError("tooLarge"));
-        var used = await GetUsedStorageAsync(account.UserId, cancellationToken);
+        var used = await GetUsedStorageAsync(account.UserId, cancellationToken).ConfigureAwait(false);
         if (account.QuotaBytes > 0
             && (used >= account.QuotaBytes || raw.LongLength > account.QuotaBytes - used))
         {
@@ -55,7 +55,7 @@ internal sealed class JmapEmailStore(
                 account.InboxId,
                 inReplyTo,
                 messageId,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             var rawText = Encoding.Latin1.GetString(raw);
             var separator = rawText.IndexOf("\r\n\r\n", StringComparison.Ordinal);
             var separatorLength = 4;
@@ -93,9 +93,9 @@ internal sealed class JmapEmailStore(
                 ModSeq = ++folder.HighestModSeq,
             };
             ApplyKeywords(email, keywords);
-            await content.SetAsync(email, raw, cancellationToken);
+            await content.SetAsync(email, raw, cancellationToken).ConfigureAwait(false);
             database.Emails.Add(email);
-            await database.SaveChangesAsync(cancellationToken);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             return new JmapStoredEmailResult(email, null);
         }
     }
@@ -169,16 +169,16 @@ internal sealed class JmapEmailStore(
         var knownSize = await database.Emails
             .AsNoTracking()
             .Where(email => email.Folder.Inbox.OwnerId == userId && email.SizeBytes > 0)
-            .SumAsync(email => (long?)email.SizeBytes, cancellationToken)
+            .SumAsync(email => (long?)email.SizeBytes, cancellationToken).ConfigureAwait(false)
             ?? 0;
         var unknownSize = await database.Emails
             .AsNoTracking()
             .Where(email => email.Folder.Inbox.OwnerId == userId && email.SizeBytes <= 0)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         var used = knownSize;
         foreach (var email in unknownSize)
         {
-            var size = (await content.ReadAsync(email, cancellationToken)).LongLength;
+            var size = (await content.ReadAsync(email, cancellationToken).ConfigureAwait(false)).LongLength;
             used = size > long.MaxValue - used ? long.MaxValue : used + size;
         }
         return used;
@@ -197,7 +197,7 @@ internal sealed class JmapEmailStore(
                 .FirstOrDefaultAsync(email => email.Folder.InboxId == accountId
                     && email.MessageId == inReplyTo
                     && email.ThreadObjectId != null,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
             if (parent?.ThreadObjectId is not null)
                 return parent.ThreadObjectId;
         }
@@ -206,7 +206,7 @@ internal sealed class JmapEmailStore(
             .FirstOrDefaultAsync(email => email.Folder.InboxId == accountId
                 && email.InReplyTo == messageId
                 && email.ThreadObjectId != null,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         return child?.ThreadObjectId ?? Guid.CreateVersion7().ToString("N");
     }
 }

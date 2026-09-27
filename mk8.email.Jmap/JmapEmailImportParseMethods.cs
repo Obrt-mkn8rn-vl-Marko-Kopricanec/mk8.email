@@ -33,7 +33,7 @@ internal static class JmapEmailMutationHelpers
         var folder = await database.Folders
             .SingleOrDefaultAsync(candidate => candidate.Id == folderId
                 && candidate.InboxId == accountId,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         return folder is null
             ? (null, JmapMethodHelpers.SetError("invalidProperties", properties: ["mailboxIds"]))
             : (folder, null);
@@ -126,13 +126,13 @@ internal sealed class EmailImportMethod(
         }
         if (imports.Count > environment.Jmap.MaxObjectsInSet)
             return JmapMethodResponse.Error("requestTooLarge");
-        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken);
+        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (account is null)
             return JmapMethodResponse.Error("accountNotFound");
         var oldState = await states.GetStateAsync(
             account.InboxId,
             JmapConstants.EmailDataType,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (ifInState is not null && !string.Equals(ifInState, oldState, StringComparison.Ordinal))
             return JmapMethodResponse.Error("stateMismatch");
 
@@ -150,7 +150,7 @@ internal sealed class EmailImportMethod(
             var blobId = context.ResolveId(requestedBlobId);
             var blob = blobId is null
                 ? null
-                : await blobs.GetAsync(account.InboxId, blobId, cancellationToken);
+                : await blobs.GetAsync(account.InboxId, blobId, cancellationToken).ConfigureAwait(false);
             if (blob is null)
             {
                 notCreated[item.Key] = JmapMethodHelpers.SetError(
@@ -163,7 +163,7 @@ internal sealed class EmailImportMethod(
                 account.InboxId,
                 item.Value["mailboxIds"],
                 context,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             if (mailbox.Error is not null)
             {
                 notCreated[item.Key] = mailbox.Error;
@@ -195,7 +195,7 @@ internal sealed class EmailImportMethod(
                 blob.Content,
                 keywords,
                 receivedAt,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             if (stored.Error is not null)
             {
                 notCreated[item.Key] = stored.Error;
@@ -213,7 +213,7 @@ internal sealed class EmailImportMethod(
             ["newState"] = await states.GetStateAsync(
                 account.InboxId,
                 JmapConstants.EmailDataType,
-                cancellationToken),
+                cancellationToken).ConfigureAwait(false),
             ["created"] = created.Count == 0 ? null : created,
             ["notCreated"] = notCreated.Count == 0 ? null : notCreated,
         });
@@ -256,7 +256,7 @@ internal sealed class EmailParseMethod(
         }
         if (blobIds.Count > environment.Jmap.MaxObjectsInGet)
             return JmapMethodResponse.Error("requestTooLarge");
-        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken);
+        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (account is null)
             return JmapMethodResponse.Error("accountNotFound");
 
@@ -265,7 +265,7 @@ internal sealed class EmailParseMethod(
         var notFound = new JsonArray();
         foreach (var blobId in blobIds.Distinct(StringComparer.Ordinal))
         {
-            var blob = await blobs.GetAsync(account.InboxId, blobId, cancellationToken);
+            var blob = await blobs.GetAsync(account.InboxId, blobId, cancellationToken).ConfigureAwait(false);
             if (blob is null)
             {
                 notFound.Add(blobId);

@@ -64,13 +64,13 @@ internal sealed class MailboxSetMethod(
         if (operationCount > environment.Jmap.MaxObjectsInSet)
             return JmapMethodResponse.Error("requestTooLarge");
 
-        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken);
+        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
         if (account is null)
             return JmapMethodResponse.Error("accountNotFound");
         var oldState = await states.GetStateAsync(
             account.InboxId,
             JmapConstants.MailboxDataType,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         if (ifInState is not null && !string.Equals(ifInState, oldState, StringComparison.Ordinal))
             return JmapMethodResponse.Error("stateMismatch");
 
@@ -91,7 +91,7 @@ internal sealed class MailboxSetMethod(
             created,
             updated,
             destroyed,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
 
         if (!appliedAsWholeSet && create is not null)
         {
@@ -117,7 +117,7 @@ internal sealed class MailboxSetMethod(
                         account.InboxId,
                         context,
                         item.Value,
-                        cancellationToken);
+                        cancellationToken).ConfigureAwait(false);
                     if (result.Error is not null)
                     {
                         notCreated[item.Key] = result.Error;
@@ -160,7 +160,7 @@ internal sealed class MailboxSetMethod(
                 context,
                 update,
                 updated,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             if (!appliedAsBatch)
             {
                 foreach (var item in update)
@@ -177,7 +177,7 @@ internal sealed class MailboxSetMethod(
                         folderId,
                         context,
                         item.Value,
-                        cancellationToken);
+                        cancellationToken).ConfigureAwait(false);
                     if (error is null)
                         updated[resolvedId!] = null;
                     else
@@ -192,7 +192,7 @@ internal sealed class MailboxSetMethod(
                 .AsNoTracking()
                 .Where(folder => folder.InboxId == account.InboxId)
                 .Select(folder => new { folder.Id, folder.Name })
-                .ToDictionaryAsync(folder => folder.Id, cancellationToken);
+                .ToDictionaryAsync(folder => folder.Id, cancellationToken).ConfigureAwait(false);
             var pendingDestroys = new List<(string RequestedId, string ResolvedId, Guid Id, int Depth)>();
             var seenIds = new HashSet<Guid>();
             foreach (var requestedId in destroy.Distinct(StringComparer.Ordinal))
@@ -227,7 +227,7 @@ internal sealed class MailboxSetMethod(
                     account.InboxId,
                     pending.Id,
                     onDestroyRemoveEmails,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
                 if (error is null)
                     destroyed.Add(pending.ResolvedId);
                 else
@@ -238,7 +238,7 @@ internal sealed class MailboxSetMethod(
         var newState = await states.GetStateAsync(
             account.InboxId,
             JmapConstants.MailboxDataType,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         return new JmapMethodResponse(Name, new JsonObject
         {
             ["accountId"] = accountId,
@@ -281,7 +281,7 @@ internal sealed class MailboxSetMethod(
 
         var folders = await database.Folders
             .Where(folder => folder.InboxId == accountId)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         var parent = parentId is null
             ? null
             : folders.SingleOrDefault(folder => folder.Id == parentId.Value);
@@ -317,7 +317,7 @@ internal sealed class MailboxSetMethod(
             IsSubscribed = isSubscribed,
         };
         database.Folders.Add(folder);
-        await database.SaveChangesAsync(cancellationToken);
+        await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return new CreateResult(folder, parentId, null);
     }
 
@@ -330,7 +330,7 @@ internal sealed class MailboxSetMethod(
     {
         var folders = await database.Folders
             .Where(folder => folder.InboxId == accountId)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         var folder = folders.SingleOrDefault(candidate => candidate.Id == folderId);
         if (folder is null)
             return JmapMethodHelpers.SetError("notFound");
@@ -342,7 +342,7 @@ internal sealed class MailboxSetMethod(
                 candidate.Name,
                 parentName,
                 StringComparison.OrdinalIgnoreCase));
-        var currentView = (await mailboxes.LoadAsync(accountId, cancellationToken))
+        var currentView = (await mailboxes.LoadAsync(accountId, cancellationToken).ConfigureAwait(false))
             .Single(candidate => candidate.Id == folderId);
         var current = JmapMailboxJson.Build(currentView);
         if (!JmapMethodHelpers.TryApplyPatchAllowingUnchangedProperties(
@@ -421,7 +421,7 @@ internal sealed class MailboxSetMethod(
         folder.SuppressDefaultJmapRole = true;
         folder.SortOrder = sortOrder;
         folder.IsSubscribed = isSubscribed;
-        await database.SaveChangesAsync(cancellationToken);
+        await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return null;
     }
 
@@ -446,11 +446,11 @@ internal sealed class MailboxSetMethod(
         IReadOnlyDictionary<string, JsonObject> requestedCreates = creates
             ?? new Dictionary<string, JsonObject>(StringComparer.Ordinal);
 
-        var views = await mailboxes.LoadAsync(accountId, cancellationToken);
+        var views = await mailboxes.LoadAsync(accountId, cancellationToken).ConfigureAwait(false);
         var viewsById = views.ToDictionary(view => view.Id);
         var folders = await database.Folders
             .Where(folder => folder.InboxId == accountId)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         var foldersById = folders.ToDictionary(folder => folder.Id);
         var nodes = views.ToDictionary(
             view => view.Id,
@@ -634,7 +634,7 @@ internal sealed class MailboxSetMethod(
             ? []
             : await database.Emails
                 .Where(email => destroyedStoredIds.Contains(email.FolderId))
-                .ToListAsync(cancellationToken);
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
         if (destroyedEmails.Count > 0 && !onDestroyRemoveEmails)
             return false;
 
@@ -644,7 +644,7 @@ internal sealed class MailboxSetMethod(
             if (database.Database.IsRelational())
             {
                 if (database.Database.CurrentTransaction is null)
-                    transaction = await database.Database.BeginTransactionAsync(cancellationToken);
+                    transaction = await database.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
                 foreach (var folder in folders.Where(folder => destroyedIds.Contains(folder.Id)
                              || !string.Equals(
                                  folder.Name,
@@ -654,7 +654,7 @@ internal sealed class MailboxSetMethod(
                     var temporaryName = $"__jmap_tmp_{folder.Id:N}";
                     await database.Database.ExecuteSqlInterpolatedAsync(
                         $"UPDATE folders SET name = {temporaryName} WHERE id = {folder.Id} AND inbox_id = {accountId}",
-                        cancellationToken);
+                        cancellationToken).ConfigureAwait(false);
                 }
                 foreach (var folder in folders.Where(folder => destroyedIds.Contains(folder.Id)
                              || explicitlyUpdated.Contains(folder.Id)
@@ -665,7 +665,7 @@ internal sealed class MailboxSetMethod(
                 {
                     await database.Database.ExecuteSqlInterpolatedAsync(
                         $"UPDATE folders SET jmap_role = NULL WHERE id = {folder.Id} AND inbox_id = {accountId}",
-                        cancellationToken);
+                        cancellationToken).ConfigureAwait(false);
                 }
             }
 
@@ -705,14 +705,14 @@ internal sealed class MailboxSetMethod(
                     destroyedStoredIds.Select(id => foldersById[id]));
             }
 
-            await database.SaveChangesAsync(cancellationToken);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             if (transaction is not null)
-                await transaction.CommitAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
         {
             if (transaction is not null)
-                await transaction.DisposeAsync();
+                await transaction.DisposeAsync().ConfigureAwait(false);
         }
 
         foreach (var plan in createPlans)
@@ -762,11 +762,11 @@ internal sealed class MailboxSetMethod(
         if (updates.Count < 2)
             return false;
 
-        var views = await mailboxes.LoadAsync(accountId, cancellationToken);
+        var views = await mailboxes.LoadAsync(accountId, cancellationToken).ConfigureAwait(false);
         var viewsById = views.ToDictionary(view => view.Id);
         var folders = await database.Folders
             .Where(folder => folder.InboxId == accountId)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         var foldersById = folders.ToDictionary(folder => folder.Id);
         var plans = new Dictionary<Guid, MailboxUpdatePlan>();
         var responseIds = new List<string>(updates.Count);
@@ -878,19 +878,19 @@ internal sealed class MailboxSetMethod(
             if (database.Database.IsRelational())
             {
                 if (database.Database.CurrentTransaction is null)
-                    transaction = await database.Database.BeginTransactionAsync(cancellationToken);
+                    transaction = await database.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
                 foreach (var folder in changedNames)
                 {
                     var temporaryName = $"__jmap_tmp_{folder.Id:N}";
                     await database.Database.ExecuteSqlInterpolatedAsync(
                         $"UPDATE folders SET name = {temporaryName} WHERE id = {folder.Id} AND inbox_id = {accountId}",
-                        cancellationToken);
+                        cancellationToken).ConfigureAwait(false);
                 }
                 foreach (var folder in changedRoles)
                 {
                     await database.Database.ExecuteSqlInterpolatedAsync(
                         $"UPDATE folders SET jmap_role = NULL WHERE id = {folder.Id} AND inbox_id = {accountId}",
-                        cancellationToken);
+                        cancellationToken).ConfigureAwait(false);
                 }
             }
 
@@ -904,14 +904,14 @@ internal sealed class MailboxSetMethod(
                 folder.SortOrder = plan.Value.SortOrder;
                 folder.IsSubscribed = plan.Value.IsSubscribed;
             }
-            await database.SaveChangesAsync(cancellationToken);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             if (transaction is not null)
-                await transaction.CommitAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
         {
             if (transaction is not null)
-                await transaction.DisposeAsync();
+                await transaction.DisposeAsync().ConfigureAwait(false);
         }
 
         foreach (var responseId in responseIds)
@@ -966,7 +966,7 @@ internal sealed class MailboxSetMethod(
     {
         var folders = await database.Folders
             .Where(folder => folder.InboxId == accountId)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         var folder = folders.SingleOrDefault(candidate => candidate.Id == folderId);
         if (folder is null)
             return JmapMethodHelpers.SetError("notFound");
@@ -981,7 +981,7 @@ internal sealed class MailboxSetMethod(
 
         var messages = await database.Emails
             .Where(email => email.FolderId == folder.Id)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         if (messages.Count > 0 && !onDestroyRemoveEmails)
             return JmapMethodHelpers.SetError("mailboxHasEmail");
         foreach (var message in messages)
@@ -989,7 +989,7 @@ internal sealed class MailboxSetMethod(
         if (messages.Count > 0)
             database.Emails.RemoveRange(messages);
         database.Folders.Remove(folder);
-        await database.SaveChangesAsync(cancellationToken);
+        await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return null;
     }
 

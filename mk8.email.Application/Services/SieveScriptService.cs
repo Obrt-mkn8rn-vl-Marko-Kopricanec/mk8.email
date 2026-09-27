@@ -92,20 +92,9 @@ internal sealed class SieveScriptService(
     {
         if (!TryNormalizeName(name, out var normalized))
             return Failure("The script name is invalid.");
-        int contentSize;
-        try
-        {
-            contentSize = StrictUtf8.GetByteCount(content);
-        }
-        catch (EncoderFallbackException)
-        {
-            return Failure("The script contains invalid Unicode.");
-        }
-        if (contentSize is 0 or > SieveScript.MaximumScriptBytes)
-            return Failure("The script must contain from 1 through 1048576 bytes.", "QUOTA/MAXSIZE");
-        var compilation = Validate(content);
-        if (!compilation.Succeeded)
-            return Failure(FormatDiagnostic(compilation.Diagnostics[0]));
+        var contentFailure = ValidatePutContent(content);
+        if (contentFailure is not null)
+            return contentFailure;
         if (!await database.Users.AsNoTracking().AnyAsync(user => user.Id == userId, cancellationToken).ConfigureAwait(false))
             return Failure("The user does not exist.");
 
@@ -121,35 +110,14 @@ internal sealed class SieveScriptService(
             var commitAttempted = false;
             try
             {
-                var now = DateTime.UtcNow;
-                var script = await database.SieveScripts.FirstOrDefaultAsync(
-                    item => item.UserId == userId && item.Name == normalized,
-                    cancellationToken).ConfigureAwait(false);
+                var script = await PrepareScriptForWriteAsync(
+                    userId, normalized, maximumScripts, cancellationToken).ConfigureAwait(false);
                 if (script is null)
                 {
-                    var scriptCount = await database.SieveScripts.CountAsync(
-                        item => item.UserId == userId,
-                        cancellationToken).ConfigureAwait(false);
-                    if (scriptCount >= maximumScripts)
-                    {
-                        if (transaction is not null)
-                            await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
-                        transactionEffects.Discard(marker);
-                        return Failure("The maximum number of scripts has been reached.", "QUOTA/MAXSCRIPTS");
-                    }
-                    script = new SieveScriptDB
-                    {
-                        Id = Guid.CreateVersion7(),
-                        UserId = userId,
-                        Name = normalized,
-                        CreatedAt = now,
-                        UpdatedAt = now,
-                    };
-                    await database.SieveScripts.AddAsync(script, cancellationToken).ConfigureAwait(false);
-                }
-                else
-                {
-                    script.UpdatedAt = now;
+                    if (transaction is not null)
+                        await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
+                    transactionEffects.Discard(marker);
+                    return Failure("The maximum number of scripts has been reached.", "QUOTA/MAXSCRIPTS");
                 }
 
                 await contentService.SetAsync(script, content, cancellationToken).ConfigureAwait(false);
@@ -172,6 +140,58 @@ internal sealed class SieveScriptService(
                 throw;
             }
         }
+    }
+
+    private SieveScriptOperationResult? ValidatePutContent(string content)
+    {
+        int contentSize;
+        try
+        {
+            contentSize = StrictUtf8.GetByteCount(content);
+        }
+        catch (EncoderFallbackException)
+        {
+            return Failure("The script contains invalid Unicode.");
+        }
+        if (contentSize is 0 or > SieveScript.MaximumScriptBytes)
+            return Failure("The script must contain from 1 through 1048576 bytes.", "QUOTA/MAXSIZE");
+        var compilation = Validate(content);
+        return compilation.Succeeded
+            ? null
+            : Failure(FormatDiagnostic(compilation.Diagnostics[0]));
+    }
+
+    private async Task<SieveScriptDB?> PrepareScriptForWriteAsync(
+        Guid userId,
+        string normalizedName,
+        int maximumScripts,
+        CancellationToken cancellationToken)
+    {
+        var now = DateTime.UtcNow;
+        var script = await database.SieveScripts.FirstOrDefaultAsync(
+            item => item.UserId == userId && item.Name == normalizedName,
+            cancellationToken).ConfigureAwait(false);
+        if (script is not null)
+        {
+            script.UpdatedAt = now;
+            return script;
+        }
+
+        var scriptCount = await database.SieveScripts.CountAsync(
+            item => item.UserId == userId,
+            cancellationToken).ConfigureAwait(false);
+        if (scriptCount >= maximumScripts)
+            return null;
+        script = new SieveScriptDB
+        {
+            Id = Guid.CreateVersion7(),
+            UserId = userId,
+            Name = normalizedName,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        await database.SieveScripts.AddAsync(script, cancellationToken).ConfigureAwait(false);
+        return script;
     }
 
     public async Task<SieveScriptOperationResult> SetActiveAsync(

@@ -87,6 +87,48 @@ public sealed class Pop3ApplicationServiceTests
         Assert.AreEqual("request", exception.ParamName);
     }
 
+    [TestMethod]
+    public async Task DeleteBatchUsesUidOrderAndDoesNotRepeatExpungeChanges()
+    {
+        var options = new DbContextOptionsBuilder<EmailDbContext>()
+            .UseInMemoryDatabase($"pop3-delete-batch-{Guid.NewGuid():N}")
+            .ConfigureWarnings(warnings => warnings.Ignore(InMemoryEventId.TransactionIgnoredWarning))
+            .Options;
+        await using var database = new EmailDbContext(options);
+        await database.Database.EnsureCreatedAsync();
+        var owner = SeedAccount(database, "owner", 1);
+        owner.Folder.HighestModSeq = 50;
+        var first = AddMessage(database, owner.Folder, 10, "First message\r\n"u8.ToArray());
+        var second = AddMessage(database, owner.Folder, 20, "Second message\r\n"u8.ToArray());
+        await database.SaveChangesAsync();
+        var store = new InMemoryLargeObjectStore();
+        var effects = new LargeObjectTransactionEffects(
+            store,
+            NullLogger<LargeObjectTransactionEffects>.Instance);
+        var service = new Pop3ApplicationService(
+            null!,
+            null!,
+            database,
+            new MailboxMessageContentService(store, effects),
+            effects,
+            NullLogger<Pop3ApplicationService>.Instance);
+        var request = new Pop3DeleteRequest(owner.User.Id, [second.Id, first.Id, second.Id]);
+
+        Assert.AreEqual(2, (await service.CommitDeletesAsync(request)).DeletedCount);
+        var expunged = await database.ExpungedUids.OrderBy(item => item.Uid).ToListAsync();
+        Assert.HasCount(2, expunged);
+        Assert.AreEqual(10, expunged[0].Uid);
+        Assert.AreEqual(51, expunged[0].ModSeq);
+        Assert.AreEqual(20, expunged[1].Uid);
+        Assert.AreEqual(52, expunged[1].ModSeq);
+        Assert.AreEqual(52, owner.Folder.HighestModSeq);
+        Assert.AreEqual(0, await database.Emails.CountAsync());
+
+        Assert.AreEqual(0, (await service.CommitDeletesAsync(request)).DeletedCount);
+        Assert.AreEqual(2, await database.ExpungedUids.CountAsync());
+        Assert.AreEqual(52, owner.Folder.HighestModSeq);
+    }
+
     private static (UserDB User, FolderDB Folder) SeedAccount(
         EmailDbContext database,
         string localPart,

@@ -115,32 +115,7 @@ internal sealed class Pop3ApplicationService(
 #pragma warning restore CA2007, MA0004
             try
             {
-                var emails = await database.Emails
-                    .Where(email => messageIds.Contains(email.Id)
-                        && email.FolderId == folderId)
-                    .OrderBy(email => email.FolderId)
-                    .ThenBy(email => email.Uid)
-                    .ToListAsync(cancellationToken).ConfigureAwait(false);
-                var folderIds = emails.Select(email => email.FolderId).Distinct().ToArray();
-                var folders = await database.Folders
-                    .Where(folder => folderIds.Contains(folder.Id))
-                    .ToDictionaryAsync(folder => folder.Id, cancellationToken).ConfigureAwait(false);
-
-                for (var index = 0; index < emails.Count; index++)
-                {
-                    var email = emails[index];
-                    var folder = folders[email.FolderId];
-                    await database.ExpungedUids.AddAsync(new ExpungedUidDB
-                    {
-                        Id = Guid.CreateVersion7(),
-                        Uid = email.Uid,
-                        ModSeq = ++folder.HighestModSeq,
-                        FolderId = folder.Id,
-                    }, cancellationToken).ConfigureAwait(false);
-                    content.DeleteOnCommit(email);
-                    database.Emails.Remove(email);
-                }
-
+                var deletedCount = await StageDeletesAsync(messageIds, folderId, cancellationToken).ConfigureAwait(false);
                 await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
                 if (transaction is not null)
                 {
@@ -148,7 +123,7 @@ internal sealed class Pop3ApplicationService(
                     await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
                 }
                 await transactionEffects.CommitAsync(marker).ConfigureAwait(false);
-                return new Pop3DeleteResult(emails.Count);
+                return new Pop3DeleteResult(deletedCount);
             }
             catch
             {
@@ -173,6 +148,39 @@ internal sealed class Pop3ApplicationService(
                 throw;
             }
         }
+    }
+
+    private async Task<int> StageDeletesAsync(
+        Guid[] messageIds,
+        Guid folderId,
+        CancellationToken cancellationToken)
+    {
+        var emails = await database.Emails
+            .Where(email => messageIds.Contains(email.Id)
+                && email.FolderId == folderId)
+            .OrderBy(email => email.FolderId)
+            .ThenBy(email => email.Uid)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        var folderIds = emails.Select(email => email.FolderId).Distinct().ToArray();
+        var folders = await database.Folders
+            .Where(folder => folderIds.Contains(folder.Id))
+            .ToDictionaryAsync(folder => folder.Id, cancellationToken).ConfigureAwait(false);
+
+        for (var index = 0; index < emails.Count; index++)
+        {
+            var email = emails[index];
+            var folder = folders[email.FolderId];
+            await database.ExpungedUids.AddAsync(new ExpungedUidDB
+            {
+                Id = Guid.CreateVersion7(),
+                Uid = email.Uid,
+                ModSeq = ++folder.HighestModSeq,
+                FolderId = folder.Id,
+            }, cancellationToken).ConfigureAwait(false);
+            content.DeleteOnCommit(email);
+            database.Emails.Remove(email);
+        }
+        return emails.Count;
     }
 
     private async Task<Guid> GetPrimaryInboxFolderIdAsync(

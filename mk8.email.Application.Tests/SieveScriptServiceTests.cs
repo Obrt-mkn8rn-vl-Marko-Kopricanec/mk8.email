@@ -96,10 +96,42 @@ public sealed class SieveScriptServiceTests
         var service = CreateService(database);
 
         Assert.IsTrue((await service.PutAsync(userId, "first", "keep;", 1)).Succeeded);
+        var original = await service.GetAsync(userId, "first");
+        Assert.IsNotNull(original);
+        Assert.IsTrue((await service.SetActiveAsync(userId, "first")).Succeeded);
         Assert.IsTrue((await service.PutAsync(userId, "first", "discard;", 1)).Succeeded);
+        var replacement = await service.GetAsync(userId, "first");
+        Assert.IsNotNull(replacement);
+        Assert.AreEqual(original.CreatedAt, replacement.CreatedAt);
+        Assert.AreEqual("discard;", replacement.Content);
+        Assert.IsTrue(replacement.IsActive);
         var rejected = await service.PutAsync(userId, "second", "keep;", 1);
         Assert.IsFalse(rejected.Succeeded);
         Assert.AreEqual("QUOTA/MAXSCRIPTS", rejected.ResponseCode);
+        Assert.IsNull(await service.GetAsync(userId, "second"));
+        Assert.HasCount(1, await service.ListAsync(userId));
+    }
+
+    [TestMethod]
+    public async Task PutValidatesContentBeforeCheckingUnknownUser()
+    {
+        await using var database = CreateDatabase();
+        await database.Database.EnsureCreatedAsync();
+        var service = CreateService(database);
+        var userId = Guid.CreateVersion7();
+
+        var empty = await service.PutAsync(userId, "first", string.Empty);
+        Assert.IsFalse(empty.Succeeded);
+        Assert.AreEqual("QUOTA/MAXSIZE", empty.ResponseCode);
+
+        var invalidUnicode = await service.PutAsync(userId, "first", "keep;\ud800");
+        Assert.IsFalse(invalidUnicode.Succeeded);
+        Assert.AreEqual("The script contains invalid Unicode.", invalidUnicode.Error);
+
+        var unknownUser = await service.PutAsync(userId, "first", "keep;");
+        Assert.IsFalse(unknownUser.Succeeded);
+        Assert.AreEqual("The user does not exist.", unknownUser.Error);
+        Assert.AreEqual(0, await database.SieveScripts.CountAsync());
     }
 
     private static EmailDbContext CreateDatabase()

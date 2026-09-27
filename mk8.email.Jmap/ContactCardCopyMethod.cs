@@ -1,3 +1,4 @@
+using mk8.email.Contracts.Messaging;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using mk8.email.Infrastructure.Data;
@@ -12,7 +13,7 @@ internal sealed class ContactCardCopyMethod(
     JmapStateService states,
     EnvironmentConfig environment) : IJmapMethod
 {
-    public string Name => "ContactCard/copy";
+    public MailOperationKind Operation => MailOperationKind.CopyContacts;
     public string Capability => JmapConstants.ContactsCapability;
 
     public async Task<JmapMethodResponse> InvokeAsync(
@@ -68,7 +69,7 @@ internal sealed class ContactCardCopyMethod(
         // in future, this method is already registered and validates the
         // standard copy shape; today no authenticated session can have two
         // distinct supported contact accounts.
-        return new JmapMethodResponse(Name, new JsonObject
+        return new JmapMethodResponse(Operation, new JsonObject
         {
             ["fromAccountId"] = fromAccountId,
             ["accountId"] = accountId,

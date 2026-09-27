@@ -27,7 +27,7 @@ internal static class ApplicationArgumentBindingResolver
             }
             // Preserve first-completed-result semantics, including additional results.
             var source = completed.FirstOrDefault(item => string.Equals(item.CorrelationId, binding.SourceCorrelationId, StringComparison.Ordinal));
-            if (source is null || !string.Equals(source.Name, binding.SourceName, StringComparison.Ordinal)
+            if (source is null || source.Operation != binding.SourceOperation
                 || !TrySelect(source.Arguments, binding.Path, 0, out var value))
             {
                 failure = ApplicationBindingFailure.InvalidSource;

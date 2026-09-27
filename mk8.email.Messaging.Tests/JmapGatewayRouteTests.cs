@@ -148,7 +148,7 @@ public sealed class JmapGatewayRouteTests
             Assert.IsNotNull(jmap.Request?.Batch);
             CollectionAssert.AreEqual(new[] { "urn:ietf:params:jmap:core" }, jmap.Request.Batch.Capabilities);
             Assert.AreEqual(2, jmap.Request.Batch.Invocations.Length);
-            Assert.AreEqual("Core/echo", jmap.Request.Batch.Invocations[0].Name);
+            Assert.AreEqual(MailOperationKind.Echo, jmap.Request.Batch.Invocations[0].Operation);
             Assert.AreEqual("call-1", jmap.Request.Batch.Invocations[0].CorrelationId);
             Assert.AreEqual("text", jmap.Request.Batch.Invocations[0].Arguments["nested"]?["items"]?[2]?.GetValue<string>());
             Assert.AreEqual(1, jmap.Request.Batch.Invocations[0].Arguments["x"]!.GetValue<int>());
@@ -159,7 +159,7 @@ public sealed class JmapGatewayRouteTests
             var binding = jmap.Request.Batch.Invocations[1].Bindings!.Single();
             Assert.AreEqual("copied", binding.Target);
             Assert.AreEqual("call-1", binding.SourceCorrelationId);
-            Assert.AreEqual("Core/echo", binding.SourceName);
+            Assert.AreEqual(MailOperationKind.Echo, binding.SourceOperation);
             CollectionAssert.AreEqual(new[] { "nested", "items", "2" }, binding.Path.Select(part => part.Property).ToArray());
             Assert.AreEqual(2, binding.Path[2].ArrayIndex);
             Assert.AreEqual("object-id", jmap.Request.Batch.CreatedIds?["made"]);
@@ -246,7 +246,7 @@ public sealed class JmapGatewayRouteTests
             foreach (var call in request.Batch!.Invocations)
             {
                 Assert.IsTrue(ApplicationArgumentBindingResolver.TryResolve(call, results, out var arguments, out _));
-                results.Add(new JmapApplicationInvocation(call.Name, JmapJson.SanitizeResponse(arguments), call.CorrelationId));
+                results.Add(new JmapApplicationInvocation(call.Operation, JmapJson.SanitizeResponse(arguments), call.CorrelationId));
             }
             return Task.FromResult(new JmapApplicationResult(
                 JmapApplicationOutcomes.Ok,

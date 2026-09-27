@@ -1,3 +1,4 @@
+using mk8.email.Contracts.Messaging;
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
@@ -19,7 +20,7 @@ internal sealed class BlobCopyMethod(
     JmapBlobService blobs,
     EnvironmentConfig environment) : IJmapMethod
 {
-    public string Name => "Blob/copy";
+    public MailOperationKind Operation => MailOperationKind.CopyBinaryObjects;
     public string Capability => JmapConstants.CoreCapability;
 
     public async Task<JmapMethodResponse> InvokeAsync(
@@ -68,7 +69,7 @@ internal sealed class BlobCopyMethod(
                 cancellationToken).ConfigureAwait(false);
             copied[blobId] = stored.BlobId;
         }
-        return new JmapMethodResponse(Name, new JsonObject
+        return new JmapMethodResponse(Operation, new JsonObject
         {
             ["fromAccountId"] = fromAccountId,
             ["accountId"] = accountId,

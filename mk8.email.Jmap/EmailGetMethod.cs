@@ -1,3 +1,4 @@
+using mk8.email.Contracts.Messaging;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using mk8.email.Application.Services;
@@ -13,7 +14,7 @@ internal sealed class EmailGetMethod(
     MailboxMessageContentService content,
     EnvironmentConfig environment) : IJmapMethod
 {
-    public string Name => "Email/get";
+    public MailOperationKind Operation => MailOperationKind.ReadMessages;
     public string Capability => JmapConstants.MailCapability;
 
     public async Task<JmapMethodResponse> InvokeAsync(
@@ -85,7 +86,7 @@ internal sealed class EmailGetMethod(
                 email));
         }
 
-        return new JmapMethodResponse(Name, new JsonObject
+        return new JmapMethodResponse(Operation, new JsonObject
         {
             ["accountId"] = accountId,
             ["state"] = await states.GetStateAsync(

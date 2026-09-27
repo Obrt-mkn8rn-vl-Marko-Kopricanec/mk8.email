@@ -18,7 +18,7 @@ internal static class GatewayJmapArgumentBindingCodec
             else
                 input.Add(property.Key, property.Value?.DeepClone());
         }
-        return new JmapApplicationCall(name, input, correlationId, bindings.Count == 0 ? null : bindings.ToArray());
+        return new JmapApplicationCall(GatewayJmapOperationCodec.DecodeCall(name), input, correlationId, bindings.Count == 0 ? null : bindings.ToArray());
     }
 
     private static ApplicationArgumentBinding ParseBinding(string target, JsonNode? value, JsonObject arguments)
@@ -32,11 +32,11 @@ internal static class GatewayJmapArgumentBindingCodec
             || reference.Any(item => item.Key is not ("resultOf" or "name" or "path"))
             || !TryParsePath(path, out var segments))
             return Failed(target, ApplicationBindingFailure.InvalidSource);
-        return new ApplicationArgumentBinding(target, resultOf, responseName, segments);
+        return new ApplicationArgumentBinding(target, resultOf, GatewayJmapOperationCodec.DecodeReference(responseName), segments);
     }
 
     private static ApplicationArgumentBinding Failed(string target, ApplicationBindingFailure failure) =>
-        new(target, string.Empty, string.Empty, [], failure);
+        new(target, string.Empty, MailOperationKind.None, [], failure);
 
     private static bool TryParsePath(string pointer, out ApplicationValuePathSegment[] segments)
     {

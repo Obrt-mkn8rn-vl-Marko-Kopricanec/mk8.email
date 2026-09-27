@@ -1,3 +1,4 @@
+using mk8.email.Contracts.Messaging;
 using System.Globalization;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
@@ -13,7 +14,7 @@ internal sealed class EmailSubmissionGetMethod(
     JmapStateService states,
     EnvironmentConfig environment) : IJmapMethod
 {
-    public string Name => "EmailSubmission/get";
+    public MailOperationKind Operation => MailOperationKind.ReadSubmissions;
     public string Capability => JmapConstants.SubmissionCapability;
 
     public async Task<JmapMethodResponse> InvokeAsync(
@@ -50,7 +51,7 @@ internal sealed class EmailSubmissionGetMethod(
             else
                 notFound.Add(id);
         }
-        return new JmapMethodResponse(Name, new JsonObject
+        return new JmapMethodResponse(Operation, new JsonObject
         {
             ["accountId"] = accountId,
             ["state"] = await states.GetStateAsync(account.InboxId, JmapConstants.EmailSubmissionDataType, cancellationToken).ConfigureAwait(false),

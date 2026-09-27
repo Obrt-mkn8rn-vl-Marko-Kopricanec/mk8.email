@@ -1,3 +1,4 @@
+using mk8.email.Contracts.Messaging;
 using System.Globalization;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
@@ -12,7 +13,7 @@ internal sealed class EmailSubmissionQueryChangesMethod(
     JmapAccountService accounts,
     JmapStateService states) : IJmapMethod
 {
-    public string Name => "EmailSubmission/queryChanges";
+    public MailOperationKind Operation => MailOperationKind.FindSubmissionChanges;
     public string Capability => JmapConstants.SubmissionCapability;
 
     public async Task<JmapMethodResponse> InvokeAsync(
@@ -78,6 +79,6 @@ internal sealed class EmailSubmissionQueryChangesMethod(
                 .ToArray()),
         };
         if (calculateTotal) response["total"] = currentIds.Count;
-        return new JmapMethodResponse(Name, response);
+        return new JmapMethodResponse(Operation, response);
     }
 }

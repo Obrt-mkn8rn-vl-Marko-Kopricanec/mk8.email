@@ -1,3 +1,4 @@
+using mk8.email.Contracts.Messaging;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using MimeKit;
@@ -12,7 +13,7 @@ internal sealed class EmailParseMethod(
     JmapBlobService blobs,
     EnvironmentConfig environment) : IJmapMethod
 {
-    public string Name => "Email/parse";
+    public MailOperationKind Operation => MailOperationKind.ParseMessages;
     public string Capability => JmapConstants.MailCapability;
 
     public async Task<JmapMethodResponse> InvokeAsync(
@@ -74,7 +75,7 @@ internal sealed class EmailParseMethod(
                 notParsable.Add(blobId);
             }
         }
-        return new JmapMethodResponse(Name, new JsonObject
+        return new JmapMethodResponse(Operation, new JsonObject
         {
             ["accountId"] = accountId,
             ["parsed"] = parsed.Count == 0 ? null : parsed,

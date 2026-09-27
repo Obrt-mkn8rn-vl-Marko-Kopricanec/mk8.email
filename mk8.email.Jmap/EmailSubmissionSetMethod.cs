@@ -1,3 +1,4 @@
+using mk8.email.Contracts.Messaging;
 using System.Text;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
@@ -70,7 +71,7 @@ internal sealed class EmailSubmissionSetMethod(
             ["Resent-Message-ID"] = "header:Resent-Message-ID:asMessageIds:all",
         };
 
-    public string Name => "EmailSubmission/set";
+    public MailOperationKind Operation => MailOperationKind.MutateSubmissions;
     public string Capability => JmapConstants.SubmissionCapability;
 
     public async Task<JmapMethodResponse> InvokeAsync(
@@ -262,9 +263,9 @@ internal sealed class EmailSubmissionSetMethod(
             onSuccessUpdate,
             onSuccessDestroy);
         if (implicitArguments is null)
-            return new JmapMethodResponse(Name, response);
+            return new JmapMethodResponse(Operation, response);
         var implicitResponse = await emailSet.InvokeAsync(context, implicitArguments, cancellationToken).ConfigureAwait(false);
-        return new JmapMethodResponse(Name, response, [implicitResponse]);
+        return new JmapMethodResponse(Operation, response, [implicitResponse]);
     }
 
     private async Task<JsonObject> BuildCreatedResponseAsync(

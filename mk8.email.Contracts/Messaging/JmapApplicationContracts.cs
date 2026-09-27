@@ -1,6 +1,7 @@
 // Protocol request/result types are deliberately grouped in this transport-contract file; array fields are part of the established JSON/public API.
 #pragma warning disable MA0048, CA1819
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 
 namespace mk8.email.Contracts.Messaging;
 
@@ -35,7 +36,7 @@ public sealed record JmapApplicationBatch(
     IReadOnlyDictionary<string, string>? CreatedIds = null);
 
 public sealed record JmapApplicationCall(
-    string Name,
+    [property: JsonRequired] MailOperationKind Operation,
     JsonObject Arguments,
     string CorrelationId,
     ApplicationArgumentBinding[]? Bindings = null);
@@ -52,7 +53,7 @@ public enum ApplicationBindingFailure
 public sealed record ApplicationArgumentBinding(
     string Target,
     string SourceCorrelationId,
-    string SourceName,
+    [property: JsonRequired] MailOperationKind SourceOperation,
     ApplicationValuePathSegment[] Path,
     ApplicationBindingFailure Failure = ApplicationBindingFailure.None);
 
@@ -64,7 +65,7 @@ public sealed record ApplicationValuePathSegment(
     bool AllArrayItems = false);
 
 public sealed record JmapApplicationInvocation(
-    string Name,
+    [property: JsonRequired] MailOperationKind Operation,
     JsonObject Arguments,
     string CorrelationId);
 

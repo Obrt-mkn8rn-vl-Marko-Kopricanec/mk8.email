@@ -359,6 +359,13 @@ public sealed class ArchitectureBoundaryTests
     {
         Assert.AreEqual(typeof(JmapApplicationCall[]), typeof(JmapApplicationBatch).GetProperty("Invocations")?.PropertyType);
         Assert.AreEqual(typeof(ApplicationArgumentBinding[]), typeof(JmapApplicationCall).GetProperty("Bindings")?.PropertyType);
+        Assert.AreEqual(typeof(MailOperationKind), typeof(JmapApplicationCall).GetProperty("Operation")?.PropertyType);
+        Assert.AreEqual(typeof(MailOperationKind), typeof(JmapApplicationInvocation).GetProperty("Operation")?.PropertyType);
+        Assert.AreEqual(typeof(MailOperationKind), typeof(ApplicationArgumentBinding).GetProperty("SourceOperation")?.PropertyType);
+        Assert.IsNull(typeof(JmapApplicationCall).GetProperty("Name"));
+        Assert.IsNull(typeof(JmapApplicationInvocation).GetProperty("Name"));
+        Assert.IsNull(typeof(ApplicationArgumentBinding).GetProperty("SourceName"));
+        Assert.IsNull(typeof(mk8.email.Jmap.IJmapMethod).GetProperty("Name"));
         Assert.AreEqual(typeof(ApplicationValuePathSegment[]), typeof(ApplicationArgumentBinding).GetProperty("Path")?.PropertyType);
         Assert.IsNull(typeof(ApplicationValuePathSegment).GetProperty("Pointer"));
         Assert.AreEqual("mk8.email.Gateway", typeof(

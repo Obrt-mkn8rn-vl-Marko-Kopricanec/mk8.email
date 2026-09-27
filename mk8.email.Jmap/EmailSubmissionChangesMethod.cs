@@ -1,3 +1,4 @@
+using mk8.email.Contracts.Messaging;
 using System.Globalization;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
@@ -12,7 +13,7 @@ internal sealed class EmailSubmissionChangesMethod(
     JmapStateService states,
     EnvironmentConfig environment) : IJmapMethod
 {
-    public string Name => "EmailSubmission/changes";
+    public MailOperationKind Operation => MailOperationKind.ReadSubmissionChanges;
     public string Capability => JmapConstants.SubmissionCapability;
 
     public async Task<JmapMethodResponse> InvokeAsync(
@@ -36,7 +37,7 @@ internal sealed class EmailSubmissionChangesMethod(
             environment.Jmap.MaxObjectsInGet,
             cancellationToken).ConfigureAwait(false);
         if (changes is null) return JmapMethodResponse.Error("cannotCalculateChanges");
-        return new JmapMethodResponse(Name, new JsonObject
+        return new JmapMethodResponse(Operation, new JsonObject
         {
             ["accountId"] = accountId,
             ["oldState"] = changes.OldState,

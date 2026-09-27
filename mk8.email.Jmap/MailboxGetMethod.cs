@@ -1,3 +1,4 @@
+using mk8.email.Contracts.Messaging;
 using System.Text.Json.Nodes;
 using mk8.email.Configuration;
 
@@ -9,7 +10,7 @@ internal sealed class MailboxGetMethod(
     JmapStateService states,
     EnvironmentConfig environment) : IJmapMethod
 {
-    public string Name => "Mailbox/get";
+    public MailOperationKind Operation => MailOperationKind.ReadFolders;
     public string Capability => JmapConstants.MailCapability;
 
     public async Task<JmapMethodResponse> InvokeAsync(
@@ -58,7 +59,7 @@ internal sealed class MailboxGetMethod(
                 notFound.Add(id);
         }
 
-        return new JmapMethodResponse(Name, new JsonObject
+        return new JmapMethodResponse(Operation, new JsonObject
         {
             ["accountId"] = accountId,
             ["state"] = await states.GetStateAsync(

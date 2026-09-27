@@ -1,3 +1,4 @@
+using mk8.email.Contracts.Messaging;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using mk8.email.Infrastructure.Data;
@@ -13,7 +14,7 @@ internal sealed class ContactCardSetMethod(
     JmapStateService states,
     EnvironmentConfig environment) : IJmapMethod
 {
-    public string Name => "ContactCard/set";
+    public MailOperationKind Operation => MailOperationKind.MutateContacts;
     public string Capability => JmapConstants.ContactsCapability;
 
     public async Task<JmapMethodResponse> InvokeAsync(
@@ -245,7 +246,7 @@ internal sealed class ContactCardSetMethod(
         }
 
         await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        return new JmapMethodResponse(Name, new JsonObject
+        return new JmapMethodResponse(Operation, new JsonObject
         {
             ["accountId"] = accountId,
             ["oldState"] = oldState,

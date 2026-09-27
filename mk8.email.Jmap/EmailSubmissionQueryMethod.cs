@@ -1,3 +1,4 @@
+using mk8.email.Contracts.Messaging;
 using System.Globalization;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
@@ -13,7 +14,7 @@ internal sealed class EmailSubmissionQueryMethod(
     JmapStateService states,
     EnvironmentConfig environment) : IJmapMethod
 {
-    public string Name => "EmailSubmission/query";
+    public MailOperationKind Operation => MailOperationKind.FindSubmissions;
     public string Capability => JmapConstants.SubmissionCapability;
 
     public async Task<JmapMethodResponse> InvokeAsync(
@@ -75,6 +76,6 @@ internal sealed class EmailSubmissionQueryMethod(
         };
         if (calculateTotal) response["total"] = ids.Count;
         if (requestedLimit is null || requestedLimit > enforcedLimit) response["limit"] = enforcedLimit;
-        return new JmapMethodResponse(Name, response);
+        return new JmapMethodResponse(Operation, response);
     }
 }

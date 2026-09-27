@@ -2,9 +2,20 @@
 
 Gateway parses and validates I-JSON and the outer JMAP request envelope. It sends
 typed capabilities, invocations, correlation identifiers and creation identifiers
-through `jmap.batch.execute.v4`; Worker returns typed invocation results and an
+through `jmap.batch.execute.v5`; Worker returns typed invocation results and an
 account profile. Gateway renders the JMAP response envelope and HTTP problem status.
 Worker never receives the original API document for this operation.
+
+Gateway translates method names, response names and result-reference names into
+stable protocol-neutral `MailOperationKind` identifiers. Worker dispatches and
+compares dependencies using these identifiers, never JMAP method-name strings.
+Unsupported wire names become a non-executable sentinel; the result-only failure
+identifier remains distinct so references to an error response still work. Missing,
+wrong-case or undefined internal discriminators fail closed before any mutation.
+Handler registration rejects duplicate or invalid identifiers, and primary/additional
+result identifiers are checked before commit and on receipt replay. Opaque business
+values named `name` or `sourceName` are untouched. This is a coordinated contract
+change (`mk8.distributed.v6`), not completion of all JMAP value-shaping extraction.
 
 For a parse failure, Gateway sends only an authentication/capacity check. When the
 capability list and call count were structurally valid, this check also carries
@@ -30,8 +41,8 @@ the backend policy and Gateway's body limit. Gateway frames both event-source
 changes and typed push verification/change notifications before encryption/send.
 
 This changes the durable operation contracts. The old `jmap.api.process`,
-`jmap.batch.execute`, `jmap.batch.execute.v2`, `jmap.batch.execute.v3`, `jmap.session.get`, `jmap.event.poll`
-and `webpush.send` operations are unsupported. The new operations are `jmap.batch.execute.v4`,
+`jmap.batch.execute`, `jmap.batch.execute.v2`, `jmap.batch.execute.v3`, `jmap.batch.execute.v4`, `jmap.session.get`, `jmap.event.poll`
+and `webpush.send` operations are unsupported. The new operations are `jmap.batch.execute.v5`,
 `jmap.profile.get`, `jmap.changes.poll` and `webpush.send.v2`. Old requests must
 not be reinterpreted as new empty or incomplete data.
 Before upgrading an existing distributed installation, stop admission, drain or
@@ -74,7 +85,7 @@ release link. These are root-operator actions; the Wake identity receives neithe
 Worker credentials nor schema-management privileges.
 
 Rollback to a pre-receipt Worker removes the newly introduced receipt table only
-when it is empty and there are no pending/leased v4 JMAP requests, including expired
+when it is empty and there are no pending/leased v4 or v5 JMAP requests, including expired
 ones. It holds the snapshot/deletion barrier and transaction/table locks while deciding.
 A committed receipt or incompatible request refuses legacy rollback, preserves state,
 and leaves the Worker units stopped for explicit reconciliation or verified restore.
@@ -87,7 +98,7 @@ do not delete receipts while their original requests can retry.
 
 This is an intermediate boundary correction, not completion of the API-agnostic
 architecture. Method-response character normalization still requires further
-extraction or a documented application-level representation. Creation-reference
+extraction or a documented application-level representation. Capability URNs, creation-reference
 resolution and per-method value shaping also require the full API-awareness audit;
 typed outer batches alone do not establish the complete boundary. JMAP and the two remaining
 test projects also have unfinished analyzer gates. Full independent review and

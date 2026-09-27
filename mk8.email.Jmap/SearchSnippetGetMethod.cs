@@ -1,3 +1,4 @@
+using mk8.email.Contracts.Messaging;
 using System.Net;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -14,7 +15,7 @@ internal sealed class SearchSnippetGetMethod(
     MailboxMessageContentService content,
     EnvironmentConfig environment) : IJmapMethod
 {
-    public string Name => "SearchSnippet/get";
+    public MailOperationKind Operation => MailOperationKind.ReadSearchSnippets;
     public string Capability => JmapConstants.MailCapability;
 
     public async Task<JmapMethodResponse> InvokeAsync(
@@ -74,7 +75,7 @@ internal sealed class SearchSnippetGetMethod(
                         terms),
                 });
             }
-            return new JmapMethodResponse(Name, new JsonObject
+            return new JmapMethodResponse(Operation, new JsonObject
             {
                 ["accountId"] = accountId,
                 ["list"] = list,

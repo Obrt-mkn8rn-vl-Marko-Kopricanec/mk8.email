@@ -1,3 +1,4 @@
+using mk8.email.Contracts.Messaging;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using MimeKit;
@@ -13,7 +14,7 @@ internal sealed class IdentityChangesMethod(
     JmapStateService states,
     EnvironmentConfig environment) : IJmapMethod
 {
-    public string Name => "Identity/changes";
+    public MailOperationKind Operation => MailOperationKind.ReadSenderIdentityChanges;
     public string Capability => JmapConstants.SubmissionCapability;
 
     public async Task<JmapMethodResponse> InvokeAsync(
@@ -38,7 +39,7 @@ internal sealed class IdentityChangesMethod(
             environment.Jmap.MaxObjectsInGet,
             cancellationToken).ConfigureAwait(false);
         if (changes is null) return JmapMethodResponse.Error("cannotCalculateChanges");
-        return new JmapMethodResponse(Name, new JsonObject
+        return new JmapMethodResponse(Operation, new JsonObject
         {
             ["accountId"] = accountId,
             ["oldState"] = changes.OldState,

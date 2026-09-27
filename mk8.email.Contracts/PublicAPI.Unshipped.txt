@@ -1,9 +1,9 @@
 #nullable enable
-const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v5" -> string!
+const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v6" -> string!
 mk8.email.Contracts.Messaging.ApplicationArgumentBinding
 mk8.email.Contracts.Messaging.ApplicationArgumentBinding.<Clone>$() -> mk8.email.Contracts.Messaging.ApplicationArgumentBinding!
-mk8.email.Contracts.Messaging.ApplicationArgumentBinding.ApplicationArgumentBinding(string! Target, string! SourceCorrelationId, string! SourceName, mk8.email.Contracts.Messaging.ApplicationValuePathSegment![]! Path, mk8.email.Contracts.Messaging.ApplicationBindingFailure Failure = mk8.email.Contracts.Messaging.ApplicationBindingFailure.None) -> void
-mk8.email.Contracts.Messaging.ApplicationArgumentBinding.Deconstruct(out string! Target, out string! SourceCorrelationId, out string! SourceName, out mk8.email.Contracts.Messaging.ApplicationValuePathSegment![]! Path, out mk8.email.Contracts.Messaging.ApplicationBindingFailure Failure) -> void
+mk8.email.Contracts.Messaging.ApplicationArgumentBinding.ApplicationArgumentBinding(string! Target, string! SourceCorrelationId, mk8.email.Contracts.Messaging.MailOperationKind SourceOperation, mk8.email.Contracts.Messaging.ApplicationValuePathSegment![]! Path, mk8.email.Contracts.Messaging.ApplicationBindingFailure Failure = mk8.email.Contracts.Messaging.ApplicationBindingFailure.None) -> void
+mk8.email.Contracts.Messaging.ApplicationArgumentBinding.Deconstruct(out string! Target, out string! SourceCorrelationId, out mk8.email.Contracts.Messaging.MailOperationKind SourceOperation, out mk8.email.Contracts.Messaging.ApplicationValuePathSegment![]! Path, out mk8.email.Contracts.Messaging.ApplicationBindingFailure Failure) -> void
 mk8.email.Contracts.Messaging.ApplicationArgumentBinding.Equals(mk8.email.Contracts.Messaging.ApplicationArgumentBinding? other) -> bool
 mk8.email.Contracts.Messaging.ApplicationArgumentBinding.Failure.get -> mk8.email.Contracts.Messaging.ApplicationBindingFailure
 mk8.email.Contracts.Messaging.ApplicationArgumentBinding.Failure.init -> void
@@ -11,8 +11,8 @@ mk8.email.Contracts.Messaging.ApplicationArgumentBinding.Path.get -> mk8.email.C
 mk8.email.Contracts.Messaging.ApplicationArgumentBinding.Path.init -> void
 mk8.email.Contracts.Messaging.ApplicationArgumentBinding.SourceCorrelationId.get -> string!
 mk8.email.Contracts.Messaging.ApplicationArgumentBinding.SourceCorrelationId.init -> void
-mk8.email.Contracts.Messaging.ApplicationArgumentBinding.SourceName.get -> string!
-mk8.email.Contracts.Messaging.ApplicationArgumentBinding.SourceName.init -> void
+mk8.email.Contracts.Messaging.ApplicationArgumentBinding.SourceOperation.get -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.ApplicationArgumentBinding.SourceOperation.init -> void
 mk8.email.Contracts.Messaging.ApplicationArgumentBinding.Target.get -> string!
 mk8.email.Contracts.Messaging.ApplicationArgumentBinding.Target.init -> void
 mk8.email.Contracts.Messaging.ApplicationBindingFailure
@@ -76,11 +76,11 @@ mk8.email.Contracts.Messaging.JmapApplicationCall.Bindings.get -> mk8.email.Cont
 mk8.email.Contracts.Messaging.JmapApplicationCall.Bindings.init -> void
 mk8.email.Contracts.Messaging.JmapApplicationCall.CorrelationId.get -> string!
 mk8.email.Contracts.Messaging.JmapApplicationCall.CorrelationId.init -> void
-mk8.email.Contracts.Messaging.JmapApplicationCall.Deconstruct(out string! Name, out System.Text.Json.Nodes.JsonObject! Arguments, out string! CorrelationId, out mk8.email.Contracts.Messaging.ApplicationArgumentBinding![]? Bindings) -> void
+mk8.email.Contracts.Messaging.JmapApplicationCall.Deconstruct(out mk8.email.Contracts.Messaging.MailOperationKind Operation, out System.Text.Json.Nodes.JsonObject! Arguments, out string! CorrelationId, out mk8.email.Contracts.Messaging.ApplicationArgumentBinding![]? Bindings) -> void
 mk8.email.Contracts.Messaging.JmapApplicationCall.Equals(mk8.email.Contracts.Messaging.JmapApplicationCall? other) -> bool
-mk8.email.Contracts.Messaging.JmapApplicationCall.JmapApplicationCall(string! Name, System.Text.Json.Nodes.JsonObject! Arguments, string! CorrelationId, mk8.email.Contracts.Messaging.ApplicationArgumentBinding![]? Bindings = null) -> void
-mk8.email.Contracts.Messaging.JmapApplicationCall.Name.get -> string!
-mk8.email.Contracts.Messaging.JmapApplicationCall.Name.init -> void
+mk8.email.Contracts.Messaging.JmapApplicationCall.JmapApplicationCall(mk8.email.Contracts.Messaging.MailOperationKind Operation, System.Text.Json.Nodes.JsonObject! Arguments, string! CorrelationId, mk8.email.Contracts.Messaging.ApplicationArgumentBinding![]? Bindings = null) -> void
+mk8.email.Contracts.Messaging.JmapApplicationCall.Operation.get -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.JmapApplicationCall.Operation.init -> void
 mk8.email.Contracts.Messaging.JmapApplicationChanges
 mk8.email.Contracts.Messaging.JmapApplicationChanges.<Clone>$() -> mk8.email.Contracts.Messaging.JmapApplicationChanges!
 mk8.email.Contracts.Messaging.JmapApplicationChanges.AccountStates.get -> System.Collections.Generic.IReadOnlyDictionary<string!, System.Collections.Generic.IReadOnlyDictionary<string!, string!>!>!
@@ -94,11 +94,11 @@ mk8.email.Contracts.Messaging.JmapApplicationInvocation.Arguments.get -> System.
 mk8.email.Contracts.Messaging.JmapApplicationInvocation.Arguments.init -> void
 mk8.email.Contracts.Messaging.JmapApplicationInvocation.CorrelationId.get -> string!
 mk8.email.Contracts.Messaging.JmapApplicationInvocation.CorrelationId.init -> void
-mk8.email.Contracts.Messaging.JmapApplicationInvocation.Deconstruct(out string! Name, out System.Text.Json.Nodes.JsonObject! Arguments, out string! CorrelationId) -> void
+mk8.email.Contracts.Messaging.JmapApplicationInvocation.Deconstruct(out mk8.email.Contracts.Messaging.MailOperationKind Operation, out System.Text.Json.Nodes.JsonObject! Arguments, out string! CorrelationId) -> void
 mk8.email.Contracts.Messaging.JmapApplicationInvocation.Equals(mk8.email.Contracts.Messaging.JmapApplicationInvocation? other) -> bool
-mk8.email.Contracts.Messaging.JmapApplicationInvocation.JmapApplicationInvocation(string! Name, System.Text.Json.Nodes.JsonObject! Arguments, string! CorrelationId) -> void
-mk8.email.Contracts.Messaging.JmapApplicationInvocation.Name.get -> string!
-mk8.email.Contracts.Messaging.JmapApplicationInvocation.Name.init -> void
+mk8.email.Contracts.Messaging.JmapApplicationInvocation.JmapApplicationInvocation(mk8.email.Contracts.Messaging.MailOperationKind Operation, System.Text.Json.Nodes.JsonObject! Arguments, string! CorrelationId) -> void
+mk8.email.Contracts.Messaging.JmapApplicationInvocation.Operation.get -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.JmapApplicationInvocation.Operation.init -> void
 mk8.email.Contracts.Messaging.JmapApplicationProfile
 mk8.email.Contracts.Messaging.JmapApplicationProfile.<Clone>$() -> mk8.email.Contracts.Messaging.JmapApplicationProfile!
 mk8.email.Contracts.Messaging.JmapApplicationProfile.Accounts.get -> mk8.email.Contracts.Messaging.JmapAccountProfile![]!
@@ -253,3 +253,47 @@ static mk8.email.Contracts.Messaging.JmapPushMessage.operator !=(mk8.email.Contr
 static mk8.email.Contracts.Messaging.JmapPushMessage.operator ==(mk8.email.Contracts.Messaging.JmapPushMessage? left, mk8.email.Contracts.Messaging.JmapPushMessage? right) -> bool
 static mk8.email.Contracts.Messaging.JmapServiceLimits.operator !=(mk8.email.Contracts.Messaging.JmapServiceLimits? left, mk8.email.Contracts.Messaging.JmapServiceLimits? right) -> bool
 static mk8.email.Contracts.Messaging.JmapServiceLimits.operator ==(mk8.email.Contracts.Messaging.JmapServiceLimits? left, mk8.email.Contracts.Messaging.JmapServiceLimits? right) -> bool
+*REMOVED*const mk8.email.Contracts.Messaging.ApplicationOperations.JmapBatchExecute = "jmap.batch.execute.v4" -> string!
+const mk8.email.Contracts.Messaging.ApplicationOperations.JmapBatchExecute = "jmap.batch.execute.v5" -> string!
+mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.None = 0 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.Failure = 1 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.Echo = 2 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.ReadFolders = 10 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.FindFolders = 11 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.ReadFolderChanges = 12 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.FindFolderChanges = 13 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.MutateFolders = 14 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.ReadThreads = 20 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.ReadThreadChanges = 21 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.ReadMessages = 30 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.FindMessages = 31 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.ReadMessageChanges = 32 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.FindMessageChanges = 33 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.MutateMessages = 34 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.ImportMessages = 35 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.CopyMessages = 36 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.ParseMessages = 37 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.ReadSearchSnippets = 38 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.ReadSenderIdentities = 40 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.ReadSenderIdentityChanges = 41 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.MutateSenderIdentities = 42 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.ReadSubmissions = 50 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.FindSubmissions = 51 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.ReadSubmissionChanges = 52 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.FindSubmissionChanges = 53 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.MutateSubmissions = 54 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.ReadVacationSettings = 60 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.MutateVacationSettings = 61 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.ReadNotificationSubscriptions = 70 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.MutateNotificationSubscriptions = 71 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.CopyBinaryObjects = 80 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.ReadAddressBooks = 90 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.ReadAddressBookChanges = 91 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.MutateAddressBooks = 92 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.ReadContacts = 100 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.FindContacts = 101 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.ReadContactChanges = 102 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.FindContactChanges = 103 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.MutateContacts = 104 -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationKind.CopyContacts = 105 -> mk8.email.Contracts.Messaging.MailOperationKind

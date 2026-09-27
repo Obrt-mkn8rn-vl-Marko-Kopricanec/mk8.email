@@ -28,6 +28,8 @@ public sealed class DistributedContractCompatibilityTests
     [DataRow("jmap.batch.execute.v2", false, true)]
     [DataRow("jmap.batch.execute.v3", false, false)]
     [DataRow("jmap.batch.execute.v3", false, true)]
+    [DataRow("jmap.batch.execute.v4", false, false)]
+    [DataRow("jmap.batch.execute.v4", false, true)]
     [DataRow("jmap.session.get", false, false)]
     [DataRow("jmap.session.get", false, true)]
     [DataRow("jmap.event.poll", false, false)]

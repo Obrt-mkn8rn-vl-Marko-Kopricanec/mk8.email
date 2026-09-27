@@ -1,3 +1,4 @@
+using mk8.email.Contracts.Messaging;
 using System.Globalization;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
@@ -18,7 +19,7 @@ internal sealed class VacationResponseSetMethod(
         ["isEnabled", "fromDate", "toDate", "subject", "textBody", "htmlBody"],
         StringComparer.Ordinal);
 
-    public string Name => "VacationResponse/set";
+    public MailOperationKind Operation => MailOperationKind.MutateVacationSettings;
     public string Capability => JmapConstants.VacationResponseCapability;
 
     public async Task<JmapMethodResponse> InvokeAsync(
@@ -120,7 +121,7 @@ internal sealed class VacationResponseSetMethod(
                 notDestroyed[id] = JmapMethodHelpers.SetError(
                     context.ResolveId(id) == "singleton" ? "singleton" : "notFound");
         }
-        return new JmapMethodResponse(Name, new JsonObject
+        return new JmapMethodResponse(Operation, new JsonObject
         {
             ["accountId"] = accountId,
             ["oldState"] = oldState,

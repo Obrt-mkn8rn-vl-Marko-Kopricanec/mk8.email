@@ -1,3 +1,4 @@
+using mk8.email.Contracts.Messaging;
 using System.Globalization;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -18,7 +19,7 @@ internal sealed class EmailQueryChangesMethod(
     JmapStateService states,
     MailboxMessageContentService content) : IJmapMethod
 {
-    public string Name => "Email/queryChanges";
+    public MailOperationKind Operation => MailOperationKind.FindMessageChanges;
     public string Capability => JmapConstants.MailCapability;
 
     public async Task<JmapMethodResponse> InvokeAsync(
@@ -134,7 +135,7 @@ internal sealed class EmailQueryChangesMethod(
             };
             if (calculateTotal)
                 response["total"] = currentIds.Count;
-            return new JmapMethodResponse(Name, response);
+            return new JmapMethodResponse(Operation, response);
         }
         finally
         {

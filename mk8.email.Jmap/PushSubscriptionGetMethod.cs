@@ -1,3 +1,4 @@
+using mk8.email.Contracts.Messaging;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json.Nodes;
@@ -20,7 +21,7 @@ internal sealed class PushSubscriptionGetMethod(
         ["id", "deviceClientId", "url", "keys", "verificationCode", "expires", "types"],
         StringComparer.Ordinal);
 
-    public string Name => "PushSubscription/get";
+    public MailOperationKind Operation => MailOperationKind.ReadNotificationSubscriptions;
     public string Capability => JmapConstants.CoreCapability;
 
     public async Task<JmapMethodResponse> InvokeAsync(
@@ -74,7 +75,7 @@ internal sealed class PushSubscriptionGetMethod(
             else
                 notFound.Add(id);
         }
-        return new JmapMethodResponse(Name, new JsonObject
+        return new JmapMethodResponse(Operation, new JsonObject
         {
             ["list"] = list,
             ["notFound"] = notFound,

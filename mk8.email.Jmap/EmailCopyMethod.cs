@@ -1,3 +1,4 @@
+using mk8.email.Contracts.Messaging;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using mk8.email.Application.Services;
@@ -19,7 +20,7 @@ internal sealed class EmailCopyMethod(
         ["id", "mailboxIds", "keywords", "receivedAt"],
         StringComparer.Ordinal);
 
-    public string Name => "Email/copy";
+    public MailOperationKind Operation => MailOperationKind.CopyMessages;
     public string Capability => JmapConstants.MailCapability;
 
     public async Task<JmapMethodResponse> InvokeAsync(
@@ -173,7 +174,7 @@ internal sealed class EmailCopyMethod(
             ["notCreated"] = notCreated.Count == 0 ? null : notCreated,
         };
         if (!destroyOriginal || copiedSourceIds.Count == 0)
-            return new JmapMethodResponse(Name, copyResponse);
+            return new JmapMethodResponse(Operation, copyResponse);
 
         var currentSourceState = await states.GetStateAsync(
             sourceAccount.InboxId,
@@ -183,7 +184,7 @@ internal sealed class EmailCopyMethod(
             && !string.Equals(destroyFromIfInState, currentSourceState, StringComparison.Ordinal))
         {
             return new JmapMethodResponse(
-                Name,
+                Operation,
                 copyResponse,
                 [JmapMethodResponse.Error("stateMismatch")]);
         }
@@ -216,7 +217,7 @@ internal sealed class EmailCopyMethod(
             await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             destroyed.Add(wireId);
         }
-        var setResponse = new JmapMethodResponse("Email/set", new JsonObject
+        var setResponse = new JmapMethodResponse(MailOperationKind.MutateMessages, new JsonObject
         {
             ["accountId"] = fromAccountId,
             ["oldState"] = currentSourceState,
@@ -231,6 +232,6 @@ internal sealed class EmailCopyMethod(
             ["notUpdated"] = null,
             ["notDestroyed"] = notDestroyed.Count == 0 ? null : notDestroyed,
         });
-        return new JmapMethodResponse(Name, copyResponse, [setResponse]);
+        return new JmapMethodResponse(Operation, copyResponse, [setResponse]);
     }
 }

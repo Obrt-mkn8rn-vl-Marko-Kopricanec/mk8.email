@@ -1,3 +1,4 @@
+using mk8.email.Contracts.Messaging;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using MimeKit;
@@ -19,7 +20,7 @@ internal sealed class EmailImportMethod(
         ["blobId", "mailboxIds", "keywords", "receivedAt"],
         StringComparer.Ordinal);
 
-    public string Name => "Email/import";
+    public MailOperationKind Operation => MailOperationKind.ImportMessages;
     public string Capability => JmapConstants.MailCapability;
 
     public async Task<JmapMethodResponse> InvokeAsync(
@@ -118,7 +119,7 @@ internal sealed class EmailImportMethod(
             created[item.Key] = JmapEmailMutationHelpers.CreatedEmail(stored.Email);
         }
 
-        return new JmapMethodResponse(Name, new JsonObject
+        return new JmapMethodResponse(Operation, new JsonObject
         {
             ["accountId"] = accountId,
             ["oldState"] = oldState,

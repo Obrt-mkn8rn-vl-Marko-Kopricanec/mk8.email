@@ -1,3 +1,4 @@
+using mk8.email.Contracts.Messaging;
 using System.Text.Json.Nodes;
 using mk8.email.Configuration;
 
@@ -9,7 +10,7 @@ internal sealed class MailboxQueryMethod(
     JmapStateService states,
     EnvironmentConfig environment) : IJmapMethod
 {
-    public string Name => "Mailbox/query";
+    public MailOperationKind Operation => MailOperationKind.FindFolders;
     public string Capability => JmapConstants.MailCapability;
 
     public async Task<JmapMethodResponse> InvokeAsync(
@@ -102,6 +103,6 @@ internal sealed class MailboxQueryMethod(
             response["total"] = ids.Count;
         if (requestedLimit is null || requestedLimit > enforcedLimit)
             response["limit"] = enforcedLimit;
-        return new JmapMethodResponse(Name, response);
+        return new JmapMethodResponse(Operation, response);
     }
 }

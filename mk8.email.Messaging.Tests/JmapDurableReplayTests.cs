@@ -35,8 +35,8 @@ public sealed class JmapDurableReplayTests
         await using var rig = await Rig.CreateAsync();
         var operation = Guid.CreateVersion7();
         var original = await rig.InvokeAsync(rig.ContactsBatch(), operation);
-        Assert.AreEqual("AddressBook/set", original.Invocations[0].Name);
-        Assert.AreEqual("ContactCard/set", original.Invocations[1].Name);
+        Assert.AreEqual(MailOperationKind.MutateAddressBooks, original.Invocations[0].Operation);
+        Assert.AreEqual(MailOperationKind.MutateContacts, original.Invocations[1].Operation);
         Assert.IsNotNull(original.CreatedIds?["book"]);
         Assert.IsNotNull(original.CreatedIds?["card"]);
         var replay = await rig.InvokeAsync(rig.ContactsBatch(), operation);
@@ -111,7 +111,7 @@ public sealed class JmapDurableReplayTests
         var changed = rig.ContactsBatch();
         changed.Invocations[0].Arguments["create"]!["book"]!["name"] = "Different book";
         var mismatch = await rig.InvokeAsync(changed, operation);
-        Assert.AreEqual("error", mismatch.Invocations[0].Name);
+        Assert.AreEqual(MailOperationKind.Failure, mismatch.Invocations[0].Operation);
         Assert.AreEqual("serverFail", mismatch.Invocations[0].Arguments["type"]!.GetValue<string>());
         var foreignUser = new AuthenticatedMailUser(Guid.CreateVersion7(), "foreign@example.test");
         await using (var setup = rig.Context())
@@ -128,7 +128,7 @@ public sealed class JmapDurableReplayTests
         using var scope = rig.Services.CreateScope();
         var foreign = await scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>().ProcessAsync(
             rig.ContactsBatch(), foreignUser, operationId: operation);
-        Assert.AreEqual("error", foreign.Invocations[0].Name);
+        Assert.AreEqual(MailOperationKind.Failure, foreign.Invocations[0].Operation);
         await using var database = rig.Context();
         Assert.AreEqual(2, await database.ApplicationOperationReceipts.CountAsync());
         Assert.AreEqual(0, await database.DavCollections.CountAsync(book => book.DisplayName == "Different book"));
@@ -146,7 +146,7 @@ public sealed class JmapDurableReplayTests
             Assert.IsTrue(await rig.Objects.DeleteIfMatchAsync(Reference(receipt)));
         }
         var replay = await rig.InvokeAsync(rig.ContactsBatch(), operation);
-        Assert.AreEqual("error", replay.Invocations[0].Name);
+        Assert.AreEqual(MailOperationKind.Failure, replay.Invocations[0].Operation);
         Assert.AreEqual("serverFail", replay.Invocations[0].Arguments["type"]!.GetValue<string>());
         await using var unchanged = rig.Context();
         Assert.AreEqual(2, await unchanged.ApplicationOperationReceipts.CountAsync());
@@ -190,7 +190,7 @@ public sealed class JmapDurableReplayTests
         var response = await rig.Bus.WaitForResponseAsync(request.Id, request.Deadline);
         Assert.IsFalse(response.IsError);
         using var document = JsonDocument.Parse(response.Payload);
-        Assert.AreEqual("AddressBook/set", document.RootElement.GetProperty("batch").GetProperty("invocations")[0].GetProperty("name").GetString());
+        Assert.AreEqual((int)MailOperationKind.MutateAddressBooks, document.RootElement.GetProperty("batch").GetProperty("invocations")[0].GetProperty("operation").GetInt32());
         await using var database = rig.Context();
         Assert.AreEqual(2, await database.ApplicationOperationReceipts.CountAsync());
         Assert.AreEqual(1, await database.DavCollections.CountAsync(book => book.DisplayName == "Replay book"));
@@ -201,12 +201,12 @@ public sealed class JmapDurableReplayTests
     public async Task VerificationOutboxWakesWorkerAndRetriesTheSameEffectAfterLostEnqueueAcknowledgement()
     {
         await using var rig = await Rig.CreateAsync();
-        var batch = new JmapApplicationBatch([JmapConstants.CoreCapability], [new JmapApplicationCall("PushSubscription/set",
+        var batch = new JmapApplicationBatch([JmapConstants.CoreCapability], [new JmapApplicationCall(MailOperationKind.MutateNotificationSubscriptions,
             new JsonObject { ["create"] = new JsonObject { ["device"] = new JsonObject
             { ["deviceClientId"] = "replay-device", ["url"] = "https://push.example.test/verification" } } }, "push")]);
         var operation = Guid.CreateVersion7();
         var initial = await rig.InvokeAsync(batch, operation);
-        Assert.AreEqual("PushSubscription/set", initial.Invocations[0].Name);
+        Assert.AreEqual(MailOperationKind.MutateNotificationSubscriptions, initial.Invocations[0].Operation);
         Assert.IsNotNull(initial.Invocations[0].Arguments["created"]?["device"]);
         Assert.IsTrue((await new WorkerWakeProbe(rig.Source).ReadAsync()).HasDueWork);
         rig.Sink.FailAfterEnqueue = true;
@@ -281,6 +281,53 @@ public sealed class JmapDurableReplayTests
         {
             await container.DeleteIfExistsAsync();
             temporary.Delete(recursive: true);
+        }
+    }
+
+    [TestMethod]
+    [DataRow(MailOperationKind.None, false)]
+    [DataRow(MailOperationKind.None, true)]
+    [DataRow((MailOperationKind)999, false)]
+    [DataRow((MailOperationKind)999, true)]
+    public async Task UnrenderablePrimaryOrAdditionalResultRollsBackBusinessWritesAndReceipt(MailOperationKind invalid, bool additional)
+    {
+        await using var rig = await Rig.CreateAsync();
+        using var scope = rig.Services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var callbacks = 0;
+        var handler = new InvalidResultMethod(database, invalid, additional, () => callbacks++);
+        var processor = new JmapRequestProcessor([handler],
+            scope.ServiceProvider.GetRequiredService<JmapAccountProfileService>(), database,
+            scope.ServiceProvider.GetRequiredService<EnvironmentConfig>(),
+            scope.ServiceProvider.GetRequiredService<LargeObjectTransactionEffects>(),
+            NullLogger<JmapRequestProcessor>.Instance,
+            scope.ServiceProvider.GetRequiredService<ApplicationOperationReceiptStore>());
+        var result = await processor.ProcessAsync(new JmapApplicationBatch([JmapConstants.CoreCapability],
+            [new(MailOperationKind.MutateContacts, new JsonObject(), "mutation")], new Dictionary<string, string>()),
+            rig.User, Guid.CreateVersion7());
+        Assert.AreEqual(MailOperationKind.Failure, result.Invocations[0].Operation);
+        Assert.AreEqual("serverFail", result.Invocations[0].Arguments["type"]!.GetValue<string>());
+        Assert.IsFalse(result.CreatedIds!.ContainsKey("transient"));
+        Assert.AreEqual(0, callbacks);
+        await using var restored = rig.Context();
+        Assert.AreEqual(rig.User.Username, (await restored.Users.SingleAsync()).Username);
+        Assert.AreEqual(0, await restored.ApplicationOperationReceipts.CountAsync());
+    }
+
+    private sealed class InvalidResultMethod(EmailDbContext database, MailOperationKind invalid, bool additional, Action callback) : IJmapMethod
+    {
+        public MailOperationKind Operation => MailOperationKind.MutateContacts;
+        public string Capability => JmapConstants.CoreCapability;
+        public async Task<JmapMethodResponse> InvokeAsync(JmapInvocationContext context, JsonObject arguments,
+            CancellationToken cancellationToken = default)
+        {
+            var user = await database.Users.SingleAsync(cancellationToken);
+            user.Username = "must-roll-back@example.test";
+            await database.SaveChangesAsync(cancellationToken);
+            context.CreatedIds["transient"] = "object-id";
+            context.AddPostCommitAction(_ => { callback(); return Task.CompletedTask; });
+            var unsupported = new JmapMethodResponse(invalid, new JsonObject());
+            return additional ? new JmapMethodResponse(Operation, new JsonObject(), [unsupported]) : unsupported;
         }
     }
 
@@ -382,9 +429,9 @@ public sealed class JmapDurableReplayTests
         }
         public JmapApplicationBatch ContactsBatch() => new([JmapConstants.CoreCapability, JmapConstants.ContactsCapability],
         [
-            new("AddressBook/set", new JsonObject { ["accountId"] = JmapId.Account(InboxId), ["create"] = new JsonObject
+            new(MailOperationKind.MutateAddressBooks, new JsonObject { ["accountId"] = JmapId.Account(InboxId), ["create"] = new JsonObject
             { ["book"] = new JsonObject { ["name"] = "Replay book" } } }, "book"),
-            new("ContactCard/set", new JsonObject { ["accountId"] = JmapId.Account(InboxId), ["create"] = new JsonObject
+            new(MailOperationKind.MutateContacts, new JsonObject { ["accountId"] = JmapId.Account(InboxId), ["create"] = new JsonObject
             { ["card"] = new JsonObject { ["@type"] = "Card", ["version"] = "1.0", ["uid"] = "replay-card-uid", ["kind"] = "individual",
                 ["name"] = new JsonObject { ["@type"] = "Name", ["full"] = "Replay person" }, ["addressBookIds"] = new JsonObject { ["#book"] = true } } } }, "card"),
         ], new Dictionary<string, string>());

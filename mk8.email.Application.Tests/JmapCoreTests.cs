@@ -11,6 +11,7 @@ using mk8.email.Configuration;
 using mk8.email.Gateway.Protocols.Jmap;
 using mk8.email.Infrastructure.Models;
 using mk8.email.Jmap;
+using mk8.email.Contracts.Messaging;
 
 namespace mk8.email.Application.Tests;
 
@@ -101,7 +102,7 @@ public sealed class JmapCoreTests
     {
         var invocationCount = 0;
         await using var fixture = await JmapFixture.CreateAsync(
-            configureServices: services => services.AddSingleton<IJmapMethod>(
+            configureServices: services => JmapFixture.OverrideMethod(services,
                 new InvocationProbeMethod(() => invocationCount++)));
 
         var exception = await Assert.ThrowsAsync<GatewayJmapBatchCodec.RequestException>(() => fixture.InvokeAsync(
@@ -109,7 +110,7 @@ public sealed class JmapCoreTests
             {
               "using":["urn:ietf:params:jmap:core"],
               "methodCalls":[
-                ["Test/invocationProbe",{},"c1"],
+                ["Mailbox/query",{},"c1"],
                 ["Core/echo",{}]
               ]
             }
@@ -127,14 +128,14 @@ public sealed class JmapCoreTests
         await using var fixture = await JmapFixture.CreateAsync(
             configureServices: services =>
             {
-                services.AddSingleton<IJmapMethod>(new AtomicityProbeMethod(
-                    "Test/fail",
+                JmapFixture.OverrideMethod(services, new AtomicityProbeMethod(
+                    MailOperationKind.FindFolders,
                     "transient",
                     "E11111111111111111111111111111111",
                     () => failedPostCommitCount++,
                     true));
-                services.AddSingleton<IJmapMethod>(new AtomicityProbeMethod(
-                    "Test/succeed",
+                JmapFixture.OverrideMethod(services, new AtomicityProbeMethod(
+                    MailOperationKind.ReadFolders,
                     "kept",
                     "E22222222222222222222222222222222",
                     () => successfulPostCommitCount++,
@@ -147,14 +148,14 @@ public sealed class JmapCoreTests
               "using":["urn:ietf:params:jmap:core"],
               "createdIds":{"existing":"E00000000000000000000000000000000"},
               "methodCalls":[
-                ["Test/fail",{},"f1"],
-                ["Test/succeed",{},"s1"]
+                ["Mailbox/query",{},"f1"],
+                ["Mailbox/get",{},"s1"]
               ]
             }
             """);
 
         Assert.AreEqual("serverFail", response["methodResponses"]![0]![1]!["type"]!.GetValue<string>());
-        Assert.AreEqual("Test/succeed", response["methodResponses"]![1]![0]!.GetValue<string>());
+        Assert.AreEqual("Mailbox/get", response["methodResponses"]![1]![0]!.GetValue<string>());
         var createdIds = response["createdIds"]!.AsObject();
         Assert.IsTrue(createdIds.ContainsKey("existing"));
         Assert.IsFalse(createdIds.ContainsKey("transient"));
@@ -171,7 +172,7 @@ public sealed class JmapCoreTests
         var completed = false;
         using var cancellation = new CancellationTokenSource();
         await using var fixture = await JmapFixture.CreateAsync(
-            configureServices: services => services.AddSingleton<IJmapMethod>(
+            configureServices: services => JmapFixture.OverrideMethod(services,
                 new PostCommitCancellationProbeMethod(
                     cancellation,
                     () => completed = true)));
@@ -181,7 +182,7 @@ public sealed class JmapCoreTests
             """
             {
               "using":["urn:ietf:params:jmap:core"],
-              "methodCalls":[["Test/cancelAfterCommit",{},"c1"]]
+              "methodCalls":[["Mailbox/query",{},"c1"]]
             }
             """);
 
@@ -309,26 +310,26 @@ public sealed class JmapCoreTests
     public async Task ResultReferencesOnlySelectTheFirstResponseForACallId()
     {
         await using var fixture = await JmapFixture.CreateAsync(
-            configureServices: services => services.AddSingleton<IJmapMethod>(
+            configureServices: services => JmapFixture.OverrideMethod(services,
                 new ImplicitResponseMethod()));
         var response = await fixture.InvokeAsync(
             """
             {
               "using":["urn:ietf:params:jmap:core"],
               "methodCalls":[
-                ["Test/implicit",{},"c1"],
+                ["Mailbox/query",{},"c1"],
                 ["Core/echo",{
-                  "#value":{"resultOf":"c1","name":"Test/additional","path":"/value"}
+                  "#value":{"resultOf":"c1","name":"Email/get","path":"/value"}
                 },"c2"]
               ]
             }
             """);
 
         Assert.AreEqual(
-            "Test/implicit",
+            "Mailbox/query",
             response["methodResponses"]?[0]?[0]?.GetValue<string>());
         Assert.AreEqual(
-            "Test/additional",
+            "Email/get",
             response["methodResponses"]?[1]?[0]?.GetValue<string>());
         Assert.AreEqual(
             "invalidResultReference",
@@ -511,16 +512,16 @@ public sealed class JmapCoreTests
     public async Task ResponsesReplaceCharactersForbiddenByIJsonBeforeResultReferences()
     {
         await using var fixture = await JmapFixture.CreateAsync(
-            configureServices: services => services.AddSingleton<IJmapMethod>(
+            configureServices: services => JmapFixture.OverrideMethod(services,
                 new InvalidUnicodeResponseMethod()));
         var response = await fixture.InvokeAsync(
             """
             {
               "using":["urn:ietf:params:jmap:core"],
               "methodCalls":[
-                ["Test/invalidUnicode",{},"c1"],
+                ["Mailbox/query",{},"c1"],
                 ["Core/echo",{
-                  "#copied":{"resultOf":"c1","name":"Test/invalidUnicode","path":"/value"}
+                  "#copied":{"resultOf":"c1","name":"Mailbox/query","path":"/value"}
                 },"c2"]
               ]
             }
@@ -1169,7 +1170,7 @@ public sealed class JmapCoreTests
 
     private sealed class ImplicitResponseMethod : IJmapMethod
     {
-        public string Name => "Test/implicit";
+        public MailOperationKind Operation => MailOperationKind.FindFolders;
         public string Capability => JmapConstants.CoreCapability;
 
         public Task<JmapMethodResponse> InvokeAsync(
@@ -1177,16 +1178,16 @@ public sealed class JmapCoreTests
             JsonObject arguments,
             CancellationToken cancellationToken) =>
             Task.FromResult(new JmapMethodResponse(
-                Name,
+                Operation,
                 new JsonObject { ["value"] = "primary" },
                 [new JmapMethodResponse(
-                    "Test/additional",
+                    MailOperationKind.ReadMessages,
                     new JsonObject { ["value"] = "additional" })]));
     }
 
     private sealed class InvalidUnicodeResponseMethod : IJmapMethod
     {
-        public string Name => "Test/invalidUnicode";
+        public MailOperationKind Operation => MailOperationKind.FindFolders;
         public string Capability => JmapConstants.CoreCapability;
 
         public Task<JmapMethodResponse> InvokeAsync(
@@ -1194,7 +1195,7 @@ public sealed class JmapCoreTests
             JsonObject arguments,
             CancellationToken cancellationToken) =>
             Task.FromResult(new JmapMethodResponse(
-                Name,
+                Operation,
                 new JsonObject
                 {
                     ["value"] = "before\ufdd0middle\U0001fffeafter\ud800",
@@ -1204,7 +1205,7 @@ public sealed class JmapCoreTests
 
     private sealed class InvocationProbeMethod(Action invoked) : IJmapMethod
     {
-        public string Name => "Test/invocationProbe";
+        public MailOperationKind Operation => MailOperationKind.FindFolders;
         public string Capability => JmapConstants.CoreCapability;
 
         public Task<JmapMethodResponse> InvokeAsync(
@@ -1213,18 +1214,18 @@ public sealed class JmapCoreTests
             CancellationToken cancellationToken)
         {
             invoked();
-            return Task.FromResult(new JmapMethodResponse(Name, new JsonObject()));
+            return Task.FromResult(new JmapMethodResponse(Operation, new JsonObject()));
         }
     }
 
     private sealed class AtomicityProbeMethod(
-        string name,
+        MailOperationKind operation,
         string creationId,
         string objectId,
         Action postCommit,
         bool fail) : IJmapMethod
     {
-        public string Name => name;
+        public MailOperationKind Operation => operation;
         public string Capability => JmapConstants.CoreCapability;
 
         public Task<JmapMethodResponse> InvokeAsync(
@@ -1240,7 +1241,7 @@ public sealed class JmapCoreTests
             });
             if (fail)
                 throw new InvalidOperationException("Atomicity probe failure.");
-            return Task.FromResult(new JmapMethodResponse(Name, new JsonObject()));
+            return Task.FromResult(new JmapMethodResponse(Operation, new JsonObject()));
         }
     }
 
@@ -1248,7 +1249,7 @@ public sealed class JmapCoreTests
         CancellationTokenSource cancellation,
         Action completed) : IJmapMethod
     {
-        public string Name => "Test/cancelAfterCommit";
+        public MailOperationKind Operation => MailOperationKind.FindFolders;
         public string Capability => JmapConstants.CoreCapability;
 
         public Task<JmapMethodResponse> InvokeAsync(
@@ -1267,7 +1268,7 @@ public sealed class JmapCoreTests
                 completed();
                 return Task.CompletedTask;
             });
-            return Task.FromResult(new JmapMethodResponse(Name, new JsonObject()));
+            return Task.FromResult(new JmapMethodResponse(Operation, new JsonObject()));
         }
     }
 }

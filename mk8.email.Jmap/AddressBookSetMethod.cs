@@ -1,3 +1,4 @@
+using mk8.email.Contracts.Messaging;
 using System.Globalization;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -19,7 +20,7 @@ internal sealed class AddressBookSetMethod(
         ["name", "description", "sortOrder", "isSubscribed", "shareWith"],
         StringComparer.Ordinal);
 
-    public string Name => "AddressBook/set";
+    public MailOperationKind Operation => MailOperationKind.MutateAddressBooks;
     public string Capability => JmapConstants.ContactsCapability;
 
     public async Task<JmapMethodResponse> InvokeAsync(
@@ -275,7 +276,7 @@ internal sealed class AddressBookSetMethod(
         }
 
         await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        return new JmapMethodResponse(Name, new JsonObject
+        return new JmapMethodResponse(Operation, new JsonObject
         {
             ["accountId"] = accountId,
             ["oldState"] = oldState,

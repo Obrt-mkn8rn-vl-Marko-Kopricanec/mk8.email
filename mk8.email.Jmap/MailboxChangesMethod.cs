@@ -1,3 +1,4 @@
+using mk8.email.Contracts.Messaging;
 using System.Text.Json.Nodes;
 using mk8.email.Configuration;
 
@@ -8,7 +9,7 @@ internal sealed class MailboxChangesMethod(
     JmapStateService states,
     EnvironmentConfig environment) : IJmapMethod
 {
-    public string Name => "Mailbox/changes";
+    public MailOperationKind Operation => MailOperationKind.ReadFolderChanges;
     public string Capability => JmapConstants.MailCapability;
 
     public async Task<JmapMethodResponse> InvokeAsync(
@@ -38,7 +39,7 @@ internal sealed class MailboxChangesMethod(
         if (changes is null)
             return JmapMethodResponse.Error("cannotCalculateChanges");
 
-        return new JmapMethodResponse(Name, new JsonObject
+        return new JmapMethodResponse(Operation, new JsonObject
         {
             ["accountId"] = accountId,
             ["oldState"] = changes.OldState,

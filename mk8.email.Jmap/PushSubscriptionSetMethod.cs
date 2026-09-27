@@ -29,7 +29,7 @@ internal sealed class PushSubscriptionSetMethod(
         ["create", "update", "destroy"],
         StringComparer.Ordinal);
 
-    public string Name => "PushSubscription/set";
+    public MailOperationKind Operation => MailOperationKind.MutateNotificationSubscriptions;
     public string Capability => JmapConstants.CoreCapability;
 
     public async Task<JmapMethodResponse> InvokeAsync(
@@ -190,7 +190,7 @@ internal sealed class PushSubscriptionSetMethod(
             }
         }
 
-        return new JmapMethodResponse(Name, new JsonObject
+        return new JmapMethodResponse(Operation, new JsonObject
         {
             ["created"] = created.Count == 0 ? null : created,
             ["updated"] = updated.Count == 0 ? null : updated,

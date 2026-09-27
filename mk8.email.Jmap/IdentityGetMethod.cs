@@ -1,3 +1,4 @@
+using mk8.email.Contracts.Messaging;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using MimeKit;
@@ -18,7 +19,7 @@ internal sealed class IdentityGetMethod(
         ["id", "name", "email", "replyTo", "bcc", "textSignature", "htmlSignature", "mayDelete"],
         StringComparer.Ordinal);
 
-    public string Name => "Identity/get";
+    public MailOperationKind Operation => MailOperationKind.ReadSenderIdentities;
     public string Capability => JmapConstants.SubmissionCapability;
 
     public async Task<JmapMethodResponse> InvokeAsync(
@@ -59,7 +60,7 @@ internal sealed class IdentityGetMethod(
             else
                 notFound.Add(id);
         }
-        return new JmapMethodResponse(Name, new JsonObject
+        return new JmapMethodResponse(Operation, new JsonObject
         {
             ["accountId"] = accountId,
             ["state"] = await states.GetStateAsync(account.InboxId, JmapConstants.IdentityDataType, cancellationToken).ConfigureAwait(false),

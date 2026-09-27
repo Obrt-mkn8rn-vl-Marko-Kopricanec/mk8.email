@@ -1,3 +1,4 @@
+using mk8.email.Contracts.Messaging;
 using System.Globalization;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -27,7 +28,7 @@ internal sealed class MailboxSetMethod(
         ["name", "parentId", "role", "sortOrder", "isSubscribed"],
         StringComparer.Ordinal);
 
-    public string Name => "Mailbox/set";
+    public MailOperationKind Operation => MailOperationKind.MutateFolders;
     public string Capability => JmapConstants.MailCapability;
 
     public async Task<JmapMethodResponse> InvokeAsync(
@@ -239,7 +240,7 @@ internal sealed class MailboxSetMethod(
             account.InboxId,
             JmapConstants.MailboxDataType,
             cancellationToken).ConfigureAwait(false);
-        return new JmapMethodResponse(Name, new JsonObject
+        return new JmapMethodResponse(Operation, new JsonObject
         {
             ["accountId"] = accountId,
             ["oldState"] = oldState,

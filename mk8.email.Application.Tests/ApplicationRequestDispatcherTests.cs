@@ -145,7 +145,7 @@ public sealed class ApplicationRequestDispatcherTests
                 "person@example.test",
                 "secret"),
             new JmapApplicationBatch(["urn:ietf:params:jmap:core"],
-                [new JmapApplicationCall("Core/echo", new System.Text.Json.Nodes.JsonObject
+                [new JmapApplicationCall(MailOperationKind.Echo, new System.Text.Json.Nodes.JsonObject
                 {
                     ["ok"] = true, ["x"] = 1, ["X"] = 2,
                     ["nested"] = new System.Text.Json.Nodes.JsonObject { ["key"] = 3, ["Key"] = 4 },
@@ -163,7 +163,7 @@ public sealed class ApplicationRequestDispatcherTests
         Assert.AreEqual(value.Authentication.Username, service.Request?.Authentication.Username);
         Assert.IsNotNull(service.Request?.Batch);
         CollectionAssert.AreEqual(value.Batch!.Capabilities, service.Request.Batch.Capabilities);
-        Assert.AreEqual("Core/echo", service.Request.Batch.Invocations[0].Name);
+        Assert.AreEqual(MailOperationKind.Echo, service.Request.Batch.Invocations[0].Operation);
         Assert.AreEqual("c1", service.Request.Batch.Invocations[0].CorrelationId);
         Assert.IsTrue(service.Request.Batch.Invocations[0].Arguments["ok"]!.GetValue<bool>());
         Assert.AreEqual(1, service.Request.Batch.Invocations[0].Arguments["x"]!.GetValue<int>());
@@ -177,7 +177,7 @@ public sealed class ApplicationRequestDispatcherTests
         Assert.AreEqual(JmapApplicationOutcomes.Ok, result?.Outcome);
         Assert.IsNotNull(result?.Batch);
         Assert.AreEqual("worker-person", result.Batch.Profile.Username);
-        Assert.AreEqual("Core/echo", result.Batch.Invocations[0].Name);
+        Assert.AreEqual(MailOperationKind.Echo, result.Batch.Invocations[0].Operation);
         Assert.IsTrue(result.Batch.Invocations[0].Arguments["ok"]!.GetValue<bool>());
         Assert.AreEqual(1, result.Batch.Invocations[0].Arguments["x"]!.GetValue<int>());
         Assert.AreEqual(2, result.Batch.Invocations[0].Arguments["X"]!.GetValue<int>());
@@ -257,7 +257,7 @@ public sealed class ApplicationRequestDispatcherTests
             return Task.FromResult(new JmapApplicationResult(
                 JmapApplicationOutcomes.Ok,
                 Batch: new JmapApplicationBatchResult(request.Batch!.Invocations.Select(call =>
-                    new JmapApplicationInvocation(call.Name, call.Arguments, call.CorrelationId)).ToArray(),
+                    new JmapApplicationInvocation(call.Operation, call.Arguments, call.CorrelationId)).ToArray(),
                     new JmapApplicationProfile("worker-person",
                         new JmapServiceLimits(10000, 1, 10000, 1, 64, 500, 500, 32, 255, 10000,
                             ["i;ascii-numeric"], ["receivedAt"]), []))));

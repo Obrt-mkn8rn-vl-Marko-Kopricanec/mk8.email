@@ -1,3 +1,4 @@
+using mk8.email.Contracts.Messaging;
 using System.Text;
 using System.Text.Json.Nodes;
 using mk8.email.Configuration;
@@ -10,7 +11,7 @@ internal sealed class ContactCardChangesMethod(
     JmapStateService states,
     EnvironmentConfig environment) : IJmapMethod
 {
-    public string Name => "ContactCard/changes";
+    public MailOperationKind Operation => MailOperationKind.ReadContactChanges;
     public string Capability => JmapConstants.ContactsCapability;
 
     public async Task<JmapMethodResponse> InvokeAsync(
@@ -40,7 +41,7 @@ internal sealed class ContactCardChangesMethod(
             cancellationToken).ConfigureAwait(false);
         if (changes is null)
             return JmapMethodResponse.Error("cannotCalculateChanges");
-        return new JmapMethodResponse(Name, new JsonObject
+        return new JmapMethodResponse(Operation, new JsonObject
         {
             ["accountId"] = accountId,
             ["oldState"] = changes.OldState,

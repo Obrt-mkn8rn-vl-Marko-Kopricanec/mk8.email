@@ -14,7 +14,7 @@ namespace mk8.email.Jmap;
 
 public sealed class JmapRequestProcessor
 {
-    private readonly IReadOnlyDictionary<string, IJmapMethod> _methods;
+    private readonly IReadOnlyDictionary<MailOperationKind, IJmapMethod> _methods;
     private readonly JmapAccountProfileService _sessions;
     private readonly EmailDbContext _database;
     private readonly EnvironmentConfig _environment;
@@ -35,7 +35,7 @@ public sealed class JmapRequestProcessor
         ILogger<JmapRequestProcessor> logger,
         ApplicationOperationReceiptStore? receipts = null)
     {
-        _methods = methods.ToDictionary(method => method.Name, StringComparer.Ordinal);
+        _methods = methods.ToDictionary(method => ValidRegisteredOperation(method.Operation));
         _sessions = sessions;
         _database = database;
         _environment = environment;
@@ -85,7 +85,7 @@ public sealed class JmapRequestProcessor
                     out var referenceFailure))
                 response = JmapMethodResponse.Error(referenceFailure == ApplicationBindingFailure.InvalidTarget
                     ? "invalidArguments" : "invalidResultReference");
-            else if (!_methods.TryGetValue(invocation.Name, out var method)
+            else if (!_methods.TryGetValue(invocation.Operation, out var method)
                 || !capabilities.Contains(method.Capability))
                 response = JmapMethodResponse.Error("unknownMethod");
             else
@@ -102,7 +102,7 @@ public sealed class JmapRequestProcessor
             void AddResponse(JmapMethodResponse completed)
             {
                 var arguments = JmapJson.SanitizeResponse(completed.Arguments);
-                responses.Add(new JmapApplicationInvocation(completed.Name, arguments, invocation.CorrelationId));
+                responses.Add(new JmapApplicationInvocation(completed.Operation, arguments, invocation.CorrelationId));
             }
         }
 
@@ -116,7 +116,8 @@ public sealed class JmapRequestProcessor
         var invocations = new List<JmapApplicationCall>(calls.Length);
         foreach (var invocation in calls)
         {
-            if (invocation is null || invocation.Name is null
+            if (invocation is null || !Enum.IsDefined(invocation.Operation)
+                || invocation.Operation == MailOperationKind.Failure
                 || invocation.Arguments is null || invocation.CorrelationId is null)
                 throw NotRequest("An application invocation is incomplete.");
             invocations.Add(invocation with
@@ -200,6 +201,7 @@ public sealed class JmapRequestProcessor
                 {
                     var replay = JsonSerializer.Deserialize<JmapReplayState>(existing.Result.Span, ReceiptJsonOptions)
                         ?? throw new InvalidOperationException("The invocation receipt result is incomplete.");
+                    ValidateResponse(replay.Response);
                     context.CreatedIds.Clear();
                     foreach (var item in replay.CreatedIds)
                         context.CreatedIds[item.Key] = item.Value;
@@ -208,6 +210,7 @@ public sealed class JmapRequestProcessor
             }
 
             var response = await method.InvokeAsync(context, arguments, cancellationToken).ConfigureAwait(false);
+            ValidateResponse(response);
             if (MustRollBack(response))
             {
                 await RollBackAsync(transaction).ConfigureAwait(false);
@@ -264,7 +267,7 @@ public sealed class JmapRequestProcessor
             await CompleteBlobRollbackAsync(blobEffectMarker, commitAttempted).ConfigureAwait(false);
             RestoreInvocationState(context, createdIds, postCommitMarker);
             context.DiscardPresentationEffects(presentationMarker);
-            _logger.LogError(exception, "JMAP method {MethodName} failed", method.Name);
+            _logger.LogError(exception, "Mail operation {Operation} failed", method.Operation);
             return JmapMethodResponse.Error("serverFail");
         }
         finally
@@ -276,7 +279,7 @@ public sealed class JmapRequestProcessor
     }
 
     private static JmapMethodResponse NormalizeForReceipt(JmapMethodResponse response) => new(
-        response.Name, JmapJson.SanitizeResponse(response.Arguments),
+        response.Operation, JmapJson.SanitizeResponse(response.Arguments),
         response.AdditionalResponses?.Select(NormalizeForReceipt).ToArray());
 
     private async Task CompleteBlobRollbackAsync(int marker, bool commitAttempted)
@@ -292,7 +295,7 @@ public sealed class JmapRequestProcessor
     }
 
     private static bool MustRollBack(JmapMethodResponse response) =>
-        response.Name == "error"
+        response.Operation == MailOperationKind.Failure
         && (!response.Arguments.TryGetPropertyValue("type", out var typeNode)
             || typeNode is not JsonValue typeValue
             || !typeValue.TryGetValue<string>(out var type)
@@ -333,7 +336,7 @@ public sealed class JmapRequestProcessor
         {
             var binding = bindings[index];
             if (binding is null || binding.Target is null || binding.SourceCorrelationId is null
-                || binding.SourceName is null || binding.Path is null || !Enum.IsDefined(binding.Failure))
+                || !Enum.IsDefined(binding.SourceOperation) || binding.Path is null || !Enum.IsDefined(binding.Failure))
                 throw NotRequest("An application argument binding is incomplete.");
             var path = new ApplicationValuePathSegment[binding.Path.Length];
             for (var segmentIndex = 0; segmentIndex < path.Length; segmentIndex++)
@@ -347,6 +350,22 @@ public sealed class JmapRequestProcessor
             result[index] = binding with { Path = path };
         }
         return result;
+    }
+
+    private static MailOperationKind ValidRegisteredOperation(MailOperationKind operation) =>
+        Enum.IsDefined(operation) && operation is not (MailOperationKind.None or MailOperationKind.Failure)
+            ? operation : throw new ArgumentException("A handler must register a supported mail operation.", nameof(operation));
+
+    private static void ValidateResponse(JmapMethodResponse response)
+    {
+        if (response is null || response.Arguments is null || !Enum.IsDefined(response.Operation)
+            || response.Operation == MailOperationKind.None)
+            throw new InvalidOperationException("A handler returned an unsupported mail operation result.");
+        if (response.AdditionalResponses is not null)
+        {
+            foreach (var additional in response.AdditionalResponses)
+                ValidateResponse(additional);
+        }
     }
 
     private static JmapRequestException NotRequest(string detail) =>

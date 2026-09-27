@@ -1,3 +1,4 @@
+using mk8.email.Contracts.Messaging;
 using System.Text;
 using System.Text.Json.Nodes;
 using mk8.email.Configuration;
@@ -10,7 +11,7 @@ internal sealed class ContactCardQueryMethod(
     JmapStateService states,
     EnvironmentConfig environment) : IJmapMethod
 {
-    public string Name => "ContactCard/query";
+    public MailOperationKind Operation => MailOperationKind.FindContacts;
     public string Capability => JmapConstants.ContactsCapability;
 
     public async Task<JmapMethodResponse> InvokeAsync(
@@ -66,6 +67,6 @@ internal sealed class ContactCardQueryMethod(
         };
         if (calculateTotal) response["total"] = ids.Count;
         if (requestedLimit is null || requestedLimit > limit) response["limit"] = limit;
-        return new JmapMethodResponse(Name, response);
+        return new JmapMethodResponse(Operation, response);
     }
 }

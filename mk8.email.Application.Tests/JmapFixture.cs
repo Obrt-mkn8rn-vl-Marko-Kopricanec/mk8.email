@@ -136,6 +136,21 @@ internal sealed class JmapFixture : IAsyncDisposable
             sentFolderId);
     }
 
+    internal static void OverrideMethod(IServiceCollection services, IJmapMethod replacement)
+    {
+        var implementation = replacement.Operation switch
+        {
+            MailOperationKind.FindFolders => typeof(MailboxQueryMethod),
+            MailOperationKind.ReadFolders => typeof(MailboxGetMethod),
+            MailOperationKind.MutateFolders => typeof(MailboxSetMethod),
+            _ => throw new ArgumentException("Unsupported test handler replacement.", nameof(replacement)),
+        };
+        var descriptor = services.Single(item => item.ServiceType == typeof(IJmapMethod)
+            && item.ImplementationType == implementation);
+        services.Remove(descriptor);
+        services.AddSingleton(replacement);
+    }
+
     public async Task<JsonObject> InvokeAsync(string requestJson)
     {
         return await InvokeAsync(JsonNode.Parse(requestJson));

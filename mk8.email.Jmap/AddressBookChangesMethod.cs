@@ -1,3 +1,4 @@
+using mk8.email.Contracts.Messaging;
 using System.Globalization;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -14,7 +15,7 @@ internal sealed class AddressBookChangesMethod(
     JmapStateService states,
     EnvironmentConfig environment) : IJmapMethod
 {
-    public string Name => "AddressBook/changes";
+    public MailOperationKind Operation => MailOperationKind.ReadAddressBookChanges;
     public string Capability => JmapConstants.ContactsCapability;
 
     public async Task<JmapMethodResponse> InvokeAsync(
@@ -44,7 +45,7 @@ internal sealed class AddressBookChangesMethod(
             cancellationToken).ConfigureAwait(false);
         if (changes is null)
             return JmapMethodResponse.Error("cannotCalculateChanges");
-        return new JmapMethodResponse(Name, new JsonObject
+        return new JmapMethodResponse(Operation, new JsonObject
         {
             ["accountId"] = accountId,
             ["oldState"] = changes.OldState,

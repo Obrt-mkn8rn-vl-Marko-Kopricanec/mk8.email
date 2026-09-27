@@ -19,12 +19,12 @@ public sealed class JmapPresentationBoundaryTests
     {
         var count = 0;
         await using var fixture = await JmapFixture.CreateAsync(configureServices: services =>
-            services.AddSingleton<IJmapMethod>(new ProbeMethod(() => count++)));
+            JmapFixture.OverrideMethod(services, new ProbeMethod(() => count++)));
         using var scope = fixture.Services.CreateScope();
         var processor = scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>();
         var batch = new JmapApplicationBatch([JmapConstants.CoreCapability],
-            [new JmapApplicationCall("Test/probe", new JsonObject(), "first"),
-             new JmapApplicationCall("Core/echo", null!, "second")]);
+            [new JmapApplicationCall(MailOperationKind.FindFolders, new JsonObject(), "first"),
+             new JmapApplicationCall(MailOperationKind.Echo, null!, "second")]);
         var exception = await Assert.ThrowsAsync<JmapRequestException>(() => processor.ProcessAsync(batch, fixture.User));
 
         Assert.AreEqual("urn:ietf:params:jmap:error:notRequest", exception.Type);
@@ -155,14 +155,14 @@ public sealed class JmapPresentationBoundaryTests
 
     private sealed class ProbeMethod(Action onInvoke) : IJmapMethod
     {
-        public string Name => "Test/probe";
+        public MailOperationKind Operation => MailOperationKind.FindFolders;
         public string Capability => JmapConstants.CoreCapability;
 
         public Task<JmapMethodResponse> InvokeAsync(JmapInvocationContext context, JsonObject arguments,
             CancellationToken cancellationToken = default)
         {
             onInvoke();
-            return Task.FromResult(new JmapMethodResponse(Name, new JsonObject()));
+            return Task.FromResult(new JmapMethodResponse(Operation, new JsonObject()));
         }
     }
 }

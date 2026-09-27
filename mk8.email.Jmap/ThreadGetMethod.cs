@@ -1,3 +1,4 @@
+using mk8.email.Contracts.Messaging;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using mk8.email.Infrastructure.Data;
@@ -15,7 +16,7 @@ internal sealed class ThreadGetMethod(
         ["id", "emailIds"],
         StringComparer.Ordinal);
 
-    public string Name => "Thread/get";
+    public MailOperationKind Operation => MailOperationKind.ReadThreads;
     public string Capability => JmapConstants.MailCapability;
 
     public async Task<JmapMethodResponse> InvokeAsync(
@@ -81,7 +82,7 @@ internal sealed class ThreadGetMethod(
             list.Add(value);
         }
 
-        return new JmapMethodResponse(Name, new JsonObject
+        return new JmapMethodResponse(Operation, new JsonObject
         {
             ["accountId"] = accountId,
             ["state"] = await states.GetStateAsync(

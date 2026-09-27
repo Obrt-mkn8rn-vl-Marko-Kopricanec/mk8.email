@@ -1,3 +1,4 @@
+using mk8.email.Contracts.Messaging;
 using System.Text;
 using System.Text.Json.Nodes;
 using mk8.email.Configuration;
@@ -10,7 +11,7 @@ internal sealed class ContactCardGetMethod(
     JmapStateService states,
     EnvironmentConfig environment) : IJmapMethod
 {
-    public string Name => "ContactCard/get";
+    public MailOperationKind Operation => MailOperationKind.ReadContacts;
     public string Capability => JmapConstants.ContactsCapability;
 
     public async Task<JmapMethodResponse> InvokeAsync(
@@ -51,7 +52,7 @@ internal sealed class ContactCardGetMethod(
             else
                 notFound.Add(id);
         }
-        return new JmapMethodResponse(Name, new JsonObject
+        return new JmapMethodResponse(Operation, new JsonObject
         {
             ["accountId"] = accountId,
             ["state"] = await states.GetStateAsync(

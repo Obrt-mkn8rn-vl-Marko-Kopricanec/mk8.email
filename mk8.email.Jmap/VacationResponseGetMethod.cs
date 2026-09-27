@@ -1,3 +1,4 @@
+using mk8.email.Contracts.Messaging;
 using System.Globalization;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
@@ -18,7 +19,7 @@ internal sealed class VacationResponseGetMethod(
         ["id", "isEnabled", "fromDate", "toDate", "subject", "textBody", "htmlBody"],
         StringComparer.Ordinal);
 
-    public string Name => "VacationResponse/get";
+    public MailOperationKind Operation => MailOperationKind.ReadVacationSettings;
     public string Capability => JmapConstants.VacationResponseCapability;
 
     public async Task<JmapMethodResponse> InvokeAsync(
@@ -51,7 +52,7 @@ internal sealed class VacationResponseGetMethod(
             foreach (var id in requestedIds.Where(id => id != "singleton").Distinct(StringComparer.Ordinal))
                 notFound.Add(id);
         }
-        return new JmapMethodResponse(Name, new JsonObject
+        return new JmapMethodResponse(Operation, new JsonObject
         {
             ["accountId"] = accountId,
             ["state"] = await states.GetStateAsync(

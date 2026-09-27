@@ -1,10 +1,10 @@
 using System.Text.Json.Nodes;
-using mk8.email.Application.Interfaces;
+using mk8.email.Contracts.Messaging;
 
 namespace mk8.email.Jmap;
 
 public sealed record JmapMethodResponse(
-    string Name,
+    MailOperationKind Operation,
     JsonObject Arguments,
     IReadOnlyList<JmapMethodResponse>? AdditionalResponses = null)
 {
@@ -13,6 +13,6 @@ public sealed record JmapMethodResponse(
         var arguments = new JsonObject { ["type"] = type };
         if (!string.IsNullOrEmpty(description))
             arguments["description"] = description;
-        return new JmapMethodResponse("error", arguments);
+        return new JmapMethodResponse(MailOperationKind.Failure, arguments);
     }
 }

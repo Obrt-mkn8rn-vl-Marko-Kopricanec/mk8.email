@@ -66,7 +66,7 @@ internal static class GatewayJmapBatchCodec
     {
         var responses = new JsonArray();
         foreach (var invocation in batch.Invocations)
-            responses.Add(new JsonArray(invocation.Name, invocation.Arguments.DeepClone(), invocation.CorrelationId));
+            responses.Add(new JsonArray(GatewayJmapOperationCodec.Render(invocation.Operation), invocation.Arguments.DeepClone(), invocation.CorrelationId));
         var result = new JsonObject
         {
             ["methodResponses"] = responses,

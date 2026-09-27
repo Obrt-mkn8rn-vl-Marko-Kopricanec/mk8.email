@@ -1,3 +1,4 @@
+using mk8.email.Contracts.Messaging;
 using System.Globalization;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -19,7 +20,7 @@ internal sealed class EmailQueryMethod(
     MailboxMessageContentService content,
     EnvironmentConfig environment) : IJmapMethod
 {
-    public string Name => "Email/query";
+    public MailOperationKind Operation => MailOperationKind.FindMessages;
     public string Capability => JmapConstants.MailCapability;
 
     public async Task<JmapMethodResponse> InvokeAsync(
@@ -106,7 +107,7 @@ internal sealed class EmailQueryMethod(
                 response["total"] = ids.Count;
             if (requestedLimit is null || requestedLimit > enforcedLimit)
                 response["limit"] = enforcedLimit;
-            return new JmapMethodResponse(Name, response);
+            return new JmapMethodResponse(Operation, response);
         }
         finally
         {

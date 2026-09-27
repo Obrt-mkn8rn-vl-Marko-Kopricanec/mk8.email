@@ -1,3 +1,4 @@
+using mk8.email.Contracts.Messaging;
 using System.Text.Json.Nodes;
 using mk8.email.Configuration;
 
@@ -8,7 +9,7 @@ internal sealed class MailboxQueryChangesMethod(
     JmapMailboxStore mailboxes,
     JmapStateService states) : IJmapMethod
 {
-    public string Name => "Mailbox/queryChanges";
+    public MailOperationKind Operation => MailOperationKind.FindFolderChanges;
     public string Capability => JmapConstants.MailCapability;
 
     public async Task<JmapMethodResponse> InvokeAsync(
@@ -100,6 +101,6 @@ internal sealed class MailboxQueryChangesMethod(
         };
         if (calculateTotal)
             response["total"] = filtered.Count;
-        return new JmapMethodResponse(Name, response);
+        return new JmapMethodResponse(Operation, response);
     }
 }

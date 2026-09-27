@@ -1,3 +1,4 @@
+using mk8.email.Contracts.Messaging;
 using System.Text.Json.Nodes;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
@@ -21,7 +22,7 @@ internal sealed class EmailSetMethod(
         ["mailboxIds", "keywords"],
         StringComparer.Ordinal);
 
-    public string Name => "Email/set";
+    public MailOperationKind Operation => MailOperationKind.MutateMessages;
     public string Capability => JmapConstants.MailCapability;
 
     public async Task<JmapMethodResponse> InvokeAsync(
@@ -182,7 +183,7 @@ internal sealed class EmailSetMethod(
             account.InboxId,
             JmapConstants.EmailDataType,
             cancellationToken).ConfigureAwait(false);
-        return new JmapMethodResponse(Name, new JsonObject
+        return new JmapMethodResponse(Operation, new JsonObject
         {
             ["accountId"] = accountId,
             ["oldState"] = oldState,

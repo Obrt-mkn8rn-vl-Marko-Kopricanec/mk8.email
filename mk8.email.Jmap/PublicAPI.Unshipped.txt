@@ -2,3 +2,15 @@
 mk8.email.Jmap.JmapRequestProcessor.ProcessAsync(mk8.email.Contracts.Messaging.JmapApplicationBatch! batch, mk8.email.Application.Interfaces.AuthenticatedMailUser! user, System.Guid? operationId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Messaging.JmapApplicationBatchResult!>!
 mk8.email.Jmap.IJmapPushPresentationClient.CreateVerificationRequest(string! url, string? keysJson, System.DateTime expiresAt, mk8.email.Contracts.Messaging.JmapPushMessage! payload) -> mk8.email.Contracts.Messaging.ApplicationRequest?
 mk8.email.Jmap.JmapAccountProfileService.GetProfileAsync(mk8.email.Application.Interfaces.AuthenticatedMailUser! user, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Messaging.JmapApplicationProfile!>!
+*REMOVED*mk8.email.Jmap.CoreEchoMethod.Name.get -> string!
+*REMOVED*mk8.email.Jmap.IJmapMethod.Name.get -> string!
+*REMOVED*mk8.email.Jmap.JmapMethodResponse.Deconstruct(out string! Name, out System.Text.Json.Nodes.JsonObject! Arguments, out System.Collections.Generic.IReadOnlyList<mk8.email.Jmap.JmapMethodResponse!>? AdditionalResponses) -> void
+*REMOVED*mk8.email.Jmap.JmapMethodResponse.JmapMethodResponse(string! Name, System.Text.Json.Nodes.JsonObject! Arguments, System.Collections.Generic.IReadOnlyList<mk8.email.Jmap.JmapMethodResponse!>? AdditionalResponses = null) -> void
+*REMOVED*mk8.email.Jmap.JmapMethodResponse.Name.get -> string!
+*REMOVED*mk8.email.Jmap.JmapMethodResponse.Name.init -> void
+mk8.email.Jmap.CoreEchoMethod.Operation.get -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Jmap.IJmapMethod.Operation.get -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Jmap.JmapMethodResponse.Operation.get -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Jmap.JmapMethodResponse.Operation.init -> void
+mk8.email.Jmap.JmapMethodResponse.Deconstruct(out mk8.email.Contracts.Messaging.MailOperationKind Operation, out System.Text.Json.Nodes.JsonObject! Arguments, out System.Collections.Generic.IReadOnlyList<mk8.email.Jmap.JmapMethodResponse!>? AdditionalResponses) -> void
+mk8.email.Jmap.JmapMethodResponse.JmapMethodResponse(mk8.email.Contracts.Messaging.MailOperationKind Operation, System.Text.Json.Nodes.JsonObject! Arguments, System.Collections.Generic.IReadOnlyList<mk8.email.Jmap.JmapMethodResponse!>? AdditionalResponses = null) -> void

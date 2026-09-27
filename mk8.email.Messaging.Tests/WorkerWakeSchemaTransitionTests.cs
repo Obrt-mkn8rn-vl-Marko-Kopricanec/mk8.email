@@ -102,11 +102,15 @@ public sealed class WorkerWakeSchemaTransitionTests
     }
 
     [TestMethod]
-    [DataRow(false, false)]
-    [DataRow(true, false)]
-    [DataRow(false, true)]
-    [DataRow(true, true)]
-    public async Task PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(bool leased, bool expired)
+    [DataRow("jmap.batch.execute.v4", false, false)]
+    [DataRow("jmap.batch.execute.v4", true, false)]
+    [DataRow("jmap.batch.execute.v4", false, true)]
+    [DataRow("jmap.batch.execute.v4", true, true)]
+    [DataRow(ApplicationOperations.JmapBatchExecute, false, false)]
+    [DataRow(ApplicationOperations.JmapBatchExecute, true, false)]
+    [DataRow(ApplicationOperations.JmapBatchExecute, false, true)]
+    [DataRow(ApplicationOperations.JmapBatchExecute, true, true)]
+    public async Task PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(string operation, bool leased, bool expired)
     {
         await using var fixture = await Fixture.CreateAsync();
         await fixture.EnableAsync();
@@ -114,7 +118,7 @@ public sealed class WorkerWakeSchemaTransitionTests
         var bus = new PostgresApplicationBus(fixture.Source, protector);
         var now = DateTimeOffset.UtcNow;
         var request = new ApplicationRequest(Guid.CreateVersion7(), Guid.CreateVersion7(), 0, "jmap",
-            ApplicationOperations.JmapBatchExecute, "application/json", "{}"u8.ToArray(),
+            operation, "application/json", "{}"u8.ToArray(),
             new Dictionary<string, string>(), now.AddMinutes(-3), now.AddMinutes(2));
         await bus.EnqueueAsync(request);
         if (leased) Assert.IsNotNull(await bus.TryClaimAsync("transition-worker"));

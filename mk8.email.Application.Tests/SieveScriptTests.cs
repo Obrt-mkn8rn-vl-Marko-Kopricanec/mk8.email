@@ -201,6 +201,148 @@ public sealed class SieveScriptTests
         Assert.IsTrue(EvaluateMessage(wildcard, message).Discarded);
     }
 
+    [TestMethod]
+    [DataRow("IS", "Queue test", true)]
+    [DataRow("IS", "Queue", false)]
+    [DataRow("CONTAINS", "ueue", true)]
+    [DataRow("CONTAINS", "missing", false)]
+    [DataRow("MATCHES", "Q* t?st", true)]
+    [DataRow("MATCHES", "Queue?", false)]
+    public void MatchTagsSelectTheirOwnCaseInsensitiveSemantics(
+        string tag,
+        string pattern,
+        bool matches)
+    {
+        var compilation = SieveScript.Compile(
+            $"if header :{tag} \"Subject\" \"{pattern}\" {{ discard; }} else {{ keep; }}");
+
+        Assert.IsTrue(compilation.Succeeded, Format(compilation));
+        Assert.AreEqual(matches, Evaluate(compilation).Discarded);
+    }
+
+    [TestMethod]
+    [DataRow("ALL", "sender@example.net")]
+    [DataRow("LOCALPART", "sender")]
+    [DataRow("DOMAIN", "example.net")]
+    public void AddressPartTagsSelectTheExpectedPart(string tag, string expectedPart)
+    {
+        var compilation = SieveScript.Compile(
+            $"if address :{tag} :is \"From\" \"{expectedPart}\" {{ discard; }}");
+
+        Assert.IsTrue(compilation.Succeeded, Format(compilation));
+        Assert.IsTrue(Evaluate(compilation).Discarded);
+    }
+
+    [TestMethod]
+    [DataRow(":is :contains")]
+    [DataRow(":matches :MATCHES")]
+    [DataRow(":contains :is")]
+    public void CompilerRejectsDuplicateOrConflictingMatchTags(string tags)
+    {
+        var compilation = SieveScript.Compile(
+            $"if header {tags} \"Subject\" \"Queue test\" {{ discard; }}");
+
+        Assert.IsFalse(compilation.Succeeded);
+        StringAssert.Contains(compilation.Diagnostics[0].Message, "Duplicate or conflicting");
+    }
+
+    [TestMethod]
+    [DataRow(""":copy :create :flags ["\\Seen", "tag"]""")]
+    [DataRow(""":FLAGS ["\\Seen", "tag"] :CREATE :COPY""")]
+    public void FileIntoTagOrderPreservesCopyCreateAndFlags(string tags)
+    {
+        var compilation = SieveScript.Compile(
+            $$"""
+            require ["fileinto", "copy", "mailbox", "imap4flags"];
+            fileinto {{tags}} "Archive";
+            """);
+
+        Assert.IsTrue(compilation.Succeeded, Format(compilation));
+        var result = Evaluate(compilation);
+        Assert.AreEqual(2, result.Deliveries.Count);
+        var archive = result.Deliveries.Single(delivery => delivery.Folder == "Archive");
+        Assert.IsTrue(archive.Create);
+        CollectionAssert.AreEquivalent(new[] { "\\Seen", "tag" }, archive.Flags.ToArray());
+        Assert.IsTrue(result.Deliveries.Any(delivery => delivery.Folder == DefaultFolders.Inbox));
+    }
+
+    [TestMethod]
+    [DataRow(":copy :copy")]
+    [DataRow(":create :CREATE")]
+    [DataRow(""":flags ["tag"] :FLAGS ["other"]""")]
+    public void CompilerRejectsCaseInsensitiveDuplicateFileIntoTags(string tags)
+    {
+        var compilation = SieveScript.Compile(
+            $$"""
+            require ["fileinto", "copy", "mailbox", "imap4flags"];
+            fileinto {{tags}} "Archive";
+            """);
+
+        Assert.IsFalse(compilation.Succeeded);
+        StringAssert.Contains(compilation.Diagnostics[0].Message, "Duplicate fileinto");
+    }
+
+    [TestMethod]
+    public void RepeatedAndFoldedMimeHeadersRetainAllValues()
+    {
+        const string message =
+            "From: sender@example.net\r\n" +
+            "To: admin@mk8n.com\r\n" +
+            "X-Route: first\r\n" +
+            "X-Route: second\r\n\tcontinued\r\n" +
+            "Content-Type: text/plain\r\n\r\nbody marker\r\n";
+        var compilation = SieveScript.Compile(
+            """
+            require "body";
+            if allof (
+                header :is "X-Route" "first",
+                header :contains "X-Route" "continued",
+                body :contains "body marker"
+            ) { discard; }
+            """);
+
+        Assert.IsTrue(compilation.Succeeded, Format(compilation));
+        Assert.IsTrue(EvaluateMessage(compilation, message).Discarded);
+    }
+
+    [TestMethod]
+    [DataRow(2048, true)]
+    [DataRow(2049, false)]
+    public void MimeBodyPartLimitRejectsOnlyMessagesAboveTheBoundary(int count, bool allowed)
+    {
+        const string part = "--parts\r\nContent-Type: text/plain\r\n\r\nbody\r\n";
+        var message = "From: sender@example.net\r\n" +
+            "To: admin@mk8n.com\r\n" +
+            "Content-Type: multipart/mixed; boundary=parts\r\n\r\n" +
+            string.Concat(Enumerable.Repeat(part, count)) + "--parts--\r\n";
+        var compilation = SieveScript.Compile("keep;");
+
+        Assert.IsTrue(compilation.Succeeded, Format(compilation));
+        if (allowed)
+        {
+            Assert.AreEqual(DefaultFolders.Inbox, EvaluateMessage(compilation, message).Deliveries.Single().Folder);
+        }
+        else
+        {
+            var exception = Assert.ThrowsExactly<InvalidOperationException>(
+                () => EvaluateMessage(compilation, message));
+            StringAssert.Contains(exception.Message, "MIME body part limit");
+        }
+    }
+
+    [TestMethod]
+    [DataRow("keep;\n  @", 2, 3)]
+    [DataRow("keep;\r\n@", 2, 1)]
+    public void UnexpectedCharactersRetainTheirExactSourceLocation(string script, int line, int column)
+    {
+        var compilation = SieveScript.Compile(script);
+
+        Assert.IsFalse(compilation.Succeeded);
+        Assert.AreEqual(line, compilation.Diagnostics[0].Line);
+        Assert.AreEqual(column, compilation.Diagnostics[0].Column);
+        StringAssert.Contains(compilation.Diagnostics[0].Message, "Unexpected character '@'");
+    }
+
     private static SieveEvaluationResult Evaluate(
         SieveCompilationResult compilation,
         IReadOnlySet<string>? mailboxes = null) =>

@@ -458,62 +458,69 @@ internal static class SieveScript
                 using var stream = new MemoryStream(MailWireEncoding.Instance.GetBytes(context.RawMessage));
                 using var message = MimeMessage.Load(stream);
                 foreach (var header in message.Headers)
-                {
-                    if (!_headers.TryGetValue(header.Field, out var values))
-                    {
-                        values = [];
-                        _headers.Add(header.Field, values);
-                    }
-                    values.Add(header.Value);
-                }
-                var decodedCharacters = 0;
-                var partCount = 0;
-                foreach (var part in message.BodyParts)
-                {
-                    if (++partCount > MaximumBodyParts)
-                        throw new InvalidOperationException("The MIME body part limit was exceeded.");
-                    string content;
-                    if (part is TextPart textPart)
-                    {
-                        content = textPart.Text;
-                    }
-                    else if (part is MimePart mimePart && mimePart.Content is not null)
-                    {
-                        using var decoded = new MemoryStream();
-                        mimePart.Content.DecodeTo(decoded);
-                        content = MailWireEncoding.Instance.GetString(decoded.ToArray());
-                    }
-                    else
-                    {
-                        continue;
-                    }
-
-                    decodedCharacters += content.Length;
-                    if (decodedCharacters > MaximumDecodedBodyCharacters)
-                        throw new InvalidOperationException("The decoded MIME body limit was exceeded.");
-                    _bodyValues.Add(new BodyValue(part.ContentType.MimeType, content));
-                }
+                    AddHeader(header.Field, header.Value);
+                ReadMimeBodyValues(message);
             }
             catch (FormatException)
             {
-                var parsed = MailMessageParser.Parse(context.RawMessage);
-                foreach (var line in UnfoldHeaders(parsed.Headers))
-                {
-                    var separator = line.IndexOf(':', StringComparison.Ordinal);
-                    if (separator <= 0)
-                        continue;
-                    var name = line[..separator];
-                    if (!_headers.TryGetValue(name, out var values))
-                    {
-                        values = [];
-                        _headers.Add(name, values);
-                    }
-                    values.Add(line[(separator + 1)..].Trim());
-                }
+                ReadFallbackHeaders(context.RawMessage);
             }
 
             if (_bodyValues.Count == 0)
                 _bodyValues.Add(new BodyValue("text/plain", RawBody));
+        }
+
+        private void AddHeader(string name, string value)
+        {
+            if (!_headers.TryGetValue(name, out var values))
+            {
+                values = [];
+                _headers.Add(name, values);
+            }
+            values.Add(value);
+        }
+
+        private void ReadMimeBodyValues(MimeMessage message)
+        {
+            var decodedCharacters = 0;
+            var partCount = 0;
+            foreach (var part in message.BodyParts)
+            {
+                if (++partCount > MaximumBodyParts)
+                    throw new InvalidOperationException("The MIME body part limit was exceeded.");
+                string content;
+                if (part is TextPart textPart)
+                {
+                    content = textPart.Text;
+                }
+                else if (part is MimePart mimePart && mimePart.Content is not null)
+                {
+                    using var decoded = new MemoryStream();
+                    mimePart.Content.DecodeTo(decoded);
+                    content = MailWireEncoding.Instance.GetString(decoded.ToArray());
+                }
+                else
+                {
+                    continue;
+                }
+
+                decodedCharacters += content.Length;
+                if (decodedCharacters > MaximumDecodedBodyCharacters)
+                    throw new InvalidOperationException("The decoded MIME body limit was exceeded.");
+                _bodyValues.Add(new BodyValue(part.ContentType.MimeType, content));
+            }
+        }
+
+        private void ReadFallbackHeaders(string rawMessage)
+        {
+            var parsed = MailMessageParser.Parse(rawMessage);
+            foreach (var line in UnfoldHeaders(parsed.Headers))
+            {
+                var separator = line.IndexOf(':', StringComparison.Ordinal);
+                if (separator <= 0)
+                    continue;
+                AddHeader(line[..separator], line[(separator + 1)..].Trim());
+            }
         }
 
         public string EnvelopeSender { get; }
@@ -596,46 +603,54 @@ internal static class SieveScript
                 if (_tokens.Count >= MaximumTokens)
                     Throw("The script contains too many tokens.");
 
-                var line = _line;
-                var column = _column;
-                var value = Peek();
-                switch (value)
-                {
-                    case '[': Add(TokenKind.LeftBracket, "[", line, column); Advance(); break;
-                    case ']': Add(TokenKind.RightBracket, "]", line, column); Advance(); break;
-                    case '(': Add(TokenKind.LeftParenthesis, "(", line, column); Advance(); break;
-                    case ')': Add(TokenKind.RightParenthesis, ")", line, column); Advance(); break;
-                    case '{': Add(TokenKind.LeftBrace, "{", line, column); Advance(); break;
-                    case '}': Add(TokenKind.RightBrace, "}", line, column); Advance(); break;
-                    case ';': Add(TokenKind.Semicolon, ";", line, column); Advance(); break;
-                    case ',': Add(TokenKind.Comma, ",", line, column); Advance(); break;
-                    case '"': Add(TokenKind.String, ReadQuotedString(), line, column); break;
-                    case ':': Add(TokenKind.Tag, ReadTag(), line, column); break;
-                    default:
-                        if (char.IsAsciiDigit(value))
-                            Add(TokenKind.Number, ReadNumber(), line, column);
-                        else if (IsIdentifierStart(value))
-                        {
-                            var identifier = ReadIdentifier();
-                            if (identifier.Equals("text", StringComparison.OrdinalIgnoreCase)
-                                && PeekOrDefault() == ':')
-                            {
-                                Advance();
-                                Add(TokenKind.String, ReadMultiline(), line, column);
-                            }
-                            else
-                            {
-                                Add(TokenKind.Identifier, identifier, line, column);
-                            }
-                        }
-                        else
-                            Throw($"Unexpected character '{value}'.");
-                        break;
-                }
+                ReadToken();
             }
 
             _tokens.Add(new Token(TokenKind.End, string.Empty, _line, _column));
             return _tokens;
+        }
+
+        private void ReadToken()
+        {
+            var line = _line;
+            var column = _column;
+            var value = Peek();
+            switch (value)
+            {
+                case '[': Add(TokenKind.LeftBracket, "[", line, column); Advance(); break;
+                case ']': Add(TokenKind.RightBracket, "]", line, column); Advance(); break;
+                case '(': Add(TokenKind.LeftParenthesis, "(", line, column); Advance(); break;
+                case ')': Add(TokenKind.RightParenthesis, ")", line, column); Advance(); break;
+                case '{': Add(TokenKind.LeftBrace, "{", line, column); Advance(); break;
+                case '}': Add(TokenKind.RightBrace, "}", line, column); Advance(); break;
+                case ';': Add(TokenKind.Semicolon, ";", line, column); Advance(); break;
+                case ',': Add(TokenKind.Comma, ",", line, column); Advance(); break;
+                case '"': Add(TokenKind.String, ReadQuotedString(), line, column); break;
+                case ':': Add(TokenKind.Tag, ReadTag(), line, column); break;
+                default: ReadWordOrNumber(value, line, column); break;
+            }
+        }
+
+        private void ReadWordOrNumber(char value, int line, int column)
+        {
+            if (char.IsAsciiDigit(value))
+                Add(TokenKind.Number, ReadNumber(), line, column);
+            else if (IsIdentifierStart(value))
+            {
+                var identifier = ReadIdentifier();
+                if (identifier.Equals("text", StringComparison.OrdinalIgnoreCase)
+                    && PeekOrDefault() == ':')
+                {
+                    Advance();
+                    Add(TokenKind.String, ReadMultiline(), line, column);
+                }
+                else
+                {
+                    Add(TokenKind.Identifier, identifier, line, column);
+                }
+            }
+            else
+                Throw($"Unexpected character '{value}'.");
         }
 
         private void SkipWhitespaceAndComments()
@@ -833,36 +848,7 @@ internal static class SieveScript
                         ExpectSemicolon(command);
                         return new SieveKeep(flags);
                     }
-                case "fileinto":
-                    {
-                        Require("fileinto", command);
-                        var copy = false;
-                        var create = false;
-                        IReadOnlyList<string>? flags = null;
-                        var seenTags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                        while (At(TokenKind.Tag))
-                        {
-                            var tag = Consume();
-                            if (!seenTags.Add(tag.Value))
-                                Throw(tag, $"Duplicate fileinto tag ':{tag.Value}'.");
-                            switch (tag.Value.ToMailLowerInvariant())
-                            {
-                                case "copy": Require("copy", tag); copy = true; break;
-                                case "create": Require("mailbox", tag); create = true; break;
-                                case "flags":
-                                    Require("imap4flags", tag);
-                                    flags = ParseStringList();
-                                    ValidateFlags(command, flags);
-                                    break;
-                                default: Throw(tag, $"Unknown fileinto tag ':{tag.Value}'."); break;
-                            }
-                        }
-                        var folder = Expect(TokenKind.String, "Expected a mailbox name.").Value;
-                        if (!MailboxName.IsValid(folder))
-                            Throw(command, "The mailbox name is invalid.");
-                        ExpectSemicolon(command);
-                        return new SieveFileInto(folder, copy, create, flags);
-                    }
+                case "fileinto": return ParseFileInto(command);
                 case "redirect":
                     {
                         var copy = false;
@@ -907,6 +893,37 @@ internal static class SieveScript
                     Throw(command, $"Unknown Sieve command '{command.Value}'.");
                     return null!;
             }
+        }
+
+        private SieveFileInto ParseFileInto(Token command)
+        {
+            Require("fileinto", command);
+            var copy = false;
+            var create = false;
+            IReadOnlyList<string>? flags = null;
+            var seenTags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            while (At(TokenKind.Tag))
+            {
+                var tag = Consume();
+                if (!seenTags.Add(tag.Value))
+                    Throw(tag, $"Duplicate fileinto tag ':{tag.Value}'.");
+                switch (tag.Value.ToMailLowerInvariant())
+                {
+                    case "copy": Require("copy", tag); copy = true; break;
+                    case "create": Require("mailbox", tag); create = true; break;
+                    case "flags":
+                        Require("imap4flags", tag);
+                        flags = ParseStringList();
+                        ValidateFlags(command, flags);
+                        break;
+                    default: Throw(tag, $"Unknown fileinto tag ':{tag.Value}'."); break;
+                }
+            }
+            var folder = Expect(TokenKind.String, "Expected a mailbox name.").Value;
+            if (!MailboxName.IsValid(folder))
+                Throw(command, "The mailbox name is invalid.");
+            ExpectSemicolon(command);
+            return new SieveFileInto(folder, copy, create, flags);
         }
 
         private SieveIf ParseIf(int depth)
@@ -1040,19 +1057,14 @@ internal static class SieveScript
             while (At(TokenKind.Tag))
             {
                 var tag = Consume();
-                switch (tag.Value.ToMailLowerInvariant())
+                var tagName = tag.Value.ToMailLowerInvariant();
+                switch (tagName)
                 {
                     case "is":
-                        RejectDuplicateTag(ref hasMatchType, tag);
-                        matchType = SieveMatchType.Is;
-                        break;
                     case "contains":
-                        RejectDuplicateTag(ref hasMatchType, tag);
-                        matchType = SieveMatchType.Contains;
-                        break;
                     case "matches":
                         RejectDuplicateTag(ref hasMatchType, tag);
-                        matchType = SieveMatchType.Matches;
+                        matchType = MatchTypeForTag(tagName);
                         break;
                     case "comparator":
                         RejectDuplicateTag(ref hasComparator, tag);
@@ -1062,16 +1074,10 @@ internal static class SieveScript
                             Throw(tag, $"Comparator '{comparator}' is not supported.");
                         break;
                     case "all" when allowAddressPart:
-                        RejectDuplicateTag(ref hasAddressPart, tag);
-                        addressPart = SieveAddressPart.All;
-                        break;
                     case "localpart" when allowAddressPart:
-                        RejectDuplicateTag(ref hasAddressPart, tag);
-                        addressPart = SieveAddressPart.LocalPart;
-                        break;
                     case "domain" when allowAddressPart:
                         RejectDuplicateTag(ref hasAddressPart, tag);
-                        addressPart = SieveAddressPart.Domain;
+                        addressPart = AddressPartForTag(tagName);
                         break;
                     case "raw" when allowBodyTransform:
                         RejectDuplicateTag(ref hasBodyTransform, tag);
@@ -1093,6 +1099,22 @@ internal static class SieveScript
             }
             return new MatchOptions(matchType, comparator);
         }
+
+        private static SieveMatchType MatchTypeForTag(string tagName) => tagName switch
+        {
+            "is" => SieveMatchType.Is,
+            "contains" => SieveMatchType.Contains,
+            "matches" => SieveMatchType.Matches,
+            _ => throw new InvalidOperationException("The match type tag is invalid."),
+        };
+
+        private static SieveAddressPart AddressPartForTag(string tagName) => tagName switch
+        {
+            "all" => SieveAddressPart.All,
+            "localpart" => SieveAddressPart.LocalPart,
+            "domain" => SieveAddressPart.Domain,
+            _ => throw new InvalidOperationException("The address part tag is invalid."),
+        };
 
         private static void RejectDuplicateTag(ref bool seen, Token tag)
         {

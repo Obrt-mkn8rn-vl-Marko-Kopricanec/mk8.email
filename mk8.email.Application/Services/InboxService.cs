@@ -20,44 +20,10 @@ public class InboxService(EmailDbContext db) : IInboxService
         if (address is null)
             return null;
 
-        var role = Enum.Parse<UserRole>(user.Role);
         var targetOwnerId = request.ForUserId ?? userId;
-
-        switch (role)
-        {
-            case UserRole.SuperAdmin:
-                break;
-
-            case UserRole.CompanyAdmin:
-                if (user.CompanyId is null || address.CompanyId != user.CompanyId)
-                    return null;
-                break;
-
-            case UserRole.User:
-                if (request.ForUserId is not null && request.ForUserId != userId)
-                    return null;
-                if (user.CompanyId is null || address.CompanyId != user.CompanyId)
-                    return null;
-                if (await db.Inboxes.CountAsync(i => i.OwnerId == userId).ConfigureAwait(false) >= 1)
-                    return null;
-                break;
-
-            default:
-                return null;
-        }
-
-        var companyLimits = await db.CompanyLimits.AsNoTracking()
-            .FirstOrDefaultAsync(l => l.CompanyId == address.CompanyId).ConfigureAwait(false);
-        var globalLimits = await db.GlobalLimits.AsNoTracking().SingleAsync().ConfigureAwait(false);
-
-        var maxPerCompany = companyLimits?.MaxInboxes ?? globalLimits.DefaultMaxInboxesPerCompany;
-        if (maxPerCompany > 0 &&
-            await db.Inboxes.CountAsync(i => i.Address.CompanyId == address.CompanyId).ConfigureAwait(false) >= maxPerCompany)
+        if (!await CanCreateInboxAsync(user, address, request).ConfigureAwait(false))
             return null;
-
-        var maxPerDomain = companyLimits?.MaxInboxesPerDomain ?? globalLimits.DefaultMaxInboxesPerDomain;
-        if (maxPerDomain > 0 &&
-            await db.Inboxes.CountAsync(i => i.AddressId == request.AddressId).ConfigureAwait(false) >= maxPerDomain)
+        if (!await HasInboxCapacityAsync(address).ConfigureAwait(false))
             return null;
 
         var inbox = new InboxDB
@@ -89,6 +55,42 @@ public class InboxService(EmailDbContext db) : IInboxService
         return new InboxDTO(
             inbox.Id, inbox.Name, inbox.AddressId, address.Domain,
             inbox.OwnerId, inbox.AliasForInboxId, inbox.CreatedAt);
+    }
+
+    private async Task<bool> CanCreateInboxAsync(UserDB user, AddressDB address, CreateInboxRequestDTO request)
+    {
+        switch (Enum.Parse<UserRole>(user.Role))
+        {
+            case UserRole.SuperAdmin:
+                return true;
+
+            case UserRole.CompanyAdmin:
+                return user.CompanyId is not null && address.CompanyId == user.CompanyId;
+
+            case UserRole.User:
+                if (request.ForUserId is not null && request.ForUserId != user.Id)
+                    return false;
+                if (user.CompanyId is null || address.CompanyId != user.CompanyId)
+                    return false;
+                return await db.Inboxes.CountAsync(i => i.OwnerId == user.Id).ConfigureAwait(false) < 1;
+
+            default:
+                return false;
+        }
+    }
+
+    private async Task<bool> HasInboxCapacityAsync(AddressDB address)
+    {
+        var companyLimits = await db.CompanyLimits.AsNoTracking()
+            .FirstOrDefaultAsync(l => l.CompanyId == address.CompanyId).ConfigureAwait(false);
+        var globalLimits = await db.GlobalLimits.AsNoTracking().SingleAsync().ConfigureAwait(false);
+        var maxPerCompany = companyLimits?.MaxInboxes ?? globalLimits.DefaultMaxInboxesPerCompany;
+        if (maxPerCompany > 0 &&
+            await db.Inboxes.CountAsync(i => i.Address.CompanyId == address.CompanyId).ConfigureAwait(false) >= maxPerCompany)
+            return false;
+        var maxPerDomain = companyLimits?.MaxInboxesPerDomain ?? globalLimits.DefaultMaxInboxesPerDomain;
+        return maxPerDomain <= 0 ||
+            await db.Inboxes.CountAsync(i => i.AddressId == address.Id).ConfigureAwait(false) < maxPerDomain;
     }
 
     public async Task<IReadOnlyList<InboxDTO>> GetUserInboxesAsync(Guid userId)

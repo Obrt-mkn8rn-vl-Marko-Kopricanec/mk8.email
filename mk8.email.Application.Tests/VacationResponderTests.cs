@@ -19,6 +19,93 @@ public sealed class VacationResponderTests
     private const string AccountAddress = "admin@mk8n.com";
     private const string AliasAddress = "support@mk8n.com";
     private const string SenderAddress = "sender@example.net";
+    private const string DeliverableMessage =
+        "From: sender@example.net\r\nTo: admin@mk8n.com\r\nSubject: Away\r\n\r\nbody\r\n";
+    private static readonly DateTimeOffset Now = new(2026, 9, 20, 12, 0, 0, TimeSpan.Zero);
+
+    [TestMethod]
+    [DataRow(8, true, false)]
+    [DataRow(6, false, false)]
+    [DataRow(7, false, true)]
+    [DataRow(8, false, true)]
+    public async Task RepeatSuppressionRetainsDeliveryAndSevenDayBoundaries(int days, bool replay, bool queued)
+    {
+        await using var fixture = await VacationFixture.CreateAsync(includeAlias: false).ConfigureAwait(false);
+        var accountId = (await fixture.Database.JmapVacationResponses.SingleAsync().ConfigureAwait(false)).AccountId;
+        var previousId = Guid.CreateVersion7();
+        var previousTime = Now.UtcDateTime.AddDays(-days);
+        var reply = new JmapVacationReplyDB
+        {
+            Id = Guid.CreateVersion7(),
+            AccountId = accountId,
+            SenderAddress = SenderAddress,
+            LastDeliveryId = previousId,
+            LastSentAt = previousTime,
+        };
+        fixture.Database.JmapVacationReplies.Add(reply);
+        await fixture.Database.SaveChangesAsync().ConfigureAwait(false);
+        var deliveryId = replay ? previousId : Guid.CreateVersion7();
+        Assert.IsTrue(await fixture.Responder.QueueResponseAsync(
+            SenderAddress, AccountAddress, DeliverableMessage, DefaultFolders.Inbox, deliveryId).ConfigureAwait(false));
+        Assert.AreEqual(queued ? 1 : 0, fixture.Queue.EnqueueCalls);
+        Assert.AreEqual(queued ? deliveryId : previousId, reply.LastDeliveryId);
+        Assert.AreEqual(queued ? Now.UtcDateTime : previousTime, reply.LastSentAt);
+    }
+
+    [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task OversizedResponseDoesNotCreateOrChangeReplyHistory(bool existingReply)
+    {
+        await using var fixture = await VacationFixture.CreateAsync(
+            includeAlias: false, maxMessageSizeBytes: 1).ConfigureAwait(false);
+        var accountId = (await fixture.Database.JmapVacationResponses.SingleAsync().ConfigureAwait(false)).AccountId;
+        var previousId = Guid.CreateVersion7();
+        var previousTime = Now.UtcDateTime.AddDays(-8);
+        if (existingReply)
+        {
+            fixture.Database.JmapVacationReplies.Add(new JmapVacationReplyDB
+            {
+                Id = Guid.CreateVersion7(),
+                AccountId = accountId,
+                SenderAddress = SenderAddress,
+                LastDeliveryId = previousId,
+                LastSentAt = previousTime,
+            });
+            await fixture.Database.SaveChangesAsync().ConfigureAwait(false);
+        }
+        Assert.IsTrue(await fixture.Responder.QueueResponseAsync(SenderAddress, AccountAddress,
+            DeliverableMessage, DefaultFolders.Inbox, Guid.CreateVersion7()).ConfigureAwait(false));
+        Assert.AreEqual(0, fixture.Queue.EnqueueCalls);
+        Assert.AreEqual(existingReply ? 1 : 0, fixture.Database.JmapVacationReplies.Local.Count);
+        if (existingReply)
+        {
+            var reply = fixture.Database.JmapVacationReplies.Local.Single();
+            Assert.AreEqual(previousId, reply.LastDeliveryId);
+            Assert.AreEqual(previousTime, reply.LastSentAt);
+        }
+    }
+
+    [TestMethod]
+    [DataRow(1, null, true, false)]
+    [DataRow(0, null, true, true)]
+    [DataRow(null, 0, true, false)]
+    [DataRow(null, 1, true, true)]
+    [DataRow(null, null, false, false)]
+    public async Task ResponseRetainsEnablementAndHalfOpenDateWindow(
+        int? fromMinutes, int? toMinutes, bool enabled, bool queued)
+    {
+        await using var fixture = await VacationFixture.CreateAsync(includeAlias: false).ConfigureAwait(false);
+        var settings = await fixture.Database.JmapVacationResponses.SingleAsync().ConfigureAwait(false);
+        settings.IsEnabled = enabled;
+        settings.FromDate = fromMinutes is null ? null : Now.UtcDateTime.AddMinutes(fromMinutes.Value);
+        settings.ToDate = toMinutes is null ? null : Now.UtcDateTime.AddMinutes(toMinutes.Value);
+        await fixture.Database.SaveChangesAsync().ConfigureAwait(false);
+        Assert.IsTrue(await fixture.Responder.QueueResponseAsync(SenderAddress, AccountAddress,
+            DeliverableMessage, DefaultFolders.Inbox, Guid.CreateVersion7()).ConfigureAwait(false));
+        Assert.AreEqual(queued ? 1 : 0, fixture.Queue.EnqueueCalls);
+        Assert.AreEqual(queued ? 1 : 0, fixture.Database.JmapVacationReplies.Local.Count);
+    }
 
     [TestMethod]
     public async Task ResponseIsSuppressedWhenTheRecipientIsNotNamed()
@@ -225,7 +312,7 @@ public sealed class VacationResponderTests
         public VacationResponseContentService Content { get; } = content;
         public LargeObjectTransactionEffects Effects { get; } = effects;
 
-        public static async Task<VacationFixture> CreateAsync(bool includeAlias)
+        public static async Task<VacationFixture> CreateAsync(bool includeAlias, int maxMessageSizeBytes = 1024 * 1024)
         {
             var options = new DbContextOptionsBuilder<EmailDbContext>()
                 .UseInMemoryDatabase($"vacation-{Guid.NewGuid():N}")
@@ -286,7 +373,7 @@ public sealed class VacationResponderTests
                 Smtp = new SmtpConfig { Hostname = "email.mk8n.com" },
                 Limits = new LimitsConfig
                 {
-                    MaxMessageSizeBytes = 1024 * 1024,
+                    MaxMessageSizeBytes = maxMessageSizeBytes,
                     MaxRecipientsPerMessage = 10,
                 },
             };
@@ -304,7 +391,7 @@ public sealed class VacationResponderTests
                 queue,
                 content,
                 environment,
-                new FixedTimeProvider(new DateTimeOffset(2026, 9, 20, 12, 0, 0, TimeSpan.Zero)));
+                new FixedTimeProvider(Now));
             return new VacationFixture(database, queue, responder, content, effects);
         }
 
@@ -314,11 +401,13 @@ public sealed class VacationResponderTests
     private sealed class CapturingQueue : IMailSubmissionQueue
     {
         public MailSubmission? Submission { get; private set; }
+        public int EnqueueCalls { get; private set; }
 
         public Task<Guid> EnqueueAsync(
             MailSubmission submission,
             CancellationToken cancellationToken = default)
         {
+            EnqueueCalls++;
             Submission = submission;
             return Task.FromResult(submission.QueueId);
         }

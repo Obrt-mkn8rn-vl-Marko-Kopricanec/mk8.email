@@ -1,6 +1,7 @@
 using System.Data;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using MimeKit;
 using MimeKit.Utils;
 using mk8.email.Application.Interfaces;
@@ -85,58 +86,84 @@ public sealed class VacationResponder(
             await using (transaction)
             {
 #pragma warning restore CA2007, MA0004
-                var sent = await database.JmapVacationReplies.FirstOrDefaultAsync(
+                return await QueueResponseInTransactionAsync(
+                    route, vacation, original, senderMailbox, now, deliveryId,
+                    transaction, cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private async Task<bool> QueueResponseInTransactionAsync(
+        VacationRoute route,
+        JmapVacationResponseDB vacation,
+        MimeMessage original,
+        MailboxAddress senderMailbox,
+        DateTime now,
+        Guid deliveryId,
+        IDbContextTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        var sent = await database.JmapVacationReplies.FirstOrDefaultAsync(
                 reply => reply.AccountId == route.AccountId
                     && reply.SenderAddress == senderMailbox.Address.ToMailLowerInvariant(),
                 cancellationToken).ConfigureAwait(false);
-                if (sent?.LastDeliveryId == deliveryId
-                    || sent is not null && now - sent.LastSentAt < RepeatInterval)
-                {
-                    await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-                    return true;
-                }
-
-                var bodies = await content.ReadAsync(vacation, cancellationToken).ConfigureAwait(false);
-                using var response = BuildResponse(route.Address, senderMailbox, original, vacation, bodies, now);
-                var format = FormatOptions.Default.Clone();
-                format.NewLineFormat = NewLineFormat.Dos;
-                var stream = new MemoryStream();
-                await using var streamLifetime = stream.ConfigureAwait(false);
-                await response.WriteToAsync(format, stream, cancellationToken).ConfigureAwait(false);
-                var responseBytes = stream.ToArray();
-                if (responseBytes.Length > environment.Limits.MaxMessageSizeBytes)
-                {
-                    await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
-                    return true;
-                }
-                var recipientIsLocal = await emailService.CanReceiveAsync(
-                    senderMailbox.Address,
-                    cancellationToken).ConfigureAwait(false);
-
-                if (sent is null)
-                {
-                    sent = new JmapVacationReplyDB
-                    {
-                        Id = Guid.CreateVersion7(),
-                        AccountId = route.AccountId,
-                        SenderAddress = senderMailbox.Address.ToMailLowerInvariant(),
-                    };
-                    await database.JmapVacationReplies.AddAsync(sent, cancellationToken).ConfigureAwait(false);
-                }
-                sent.LastDeliveryId = deliveryId;
-                sent.LastSentAt = now;
-                _ = await queue.EnqueueAsync(new MailSubmission(
-                    Guid.CreateVersion7(),
-                    string.Empty,
-                    [new MailEnvelopeRecipient(senderMailbox.Address, recipientIsLocal)],
-                    Encoding.Latin1.GetString(responseBytes),
-                    null,
-                    environment.Smtp.Hostname,
-                    null), cancellationToken).ConfigureAwait(false);
-                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-                return true;
-            }
+        if (sent?.LastDeliveryId == deliveryId
+            || sent is not null && now - sent.LastSentAt < RepeatInterval)
+        {
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return true;
         }
+
+        var responseBytes = await SerializeResponseAsync(
+            route, vacation, original, senderMailbox, now, cancellationToken).ConfigureAwait(false);
+        if (responseBytes.Length > environment.Limits.MaxMessageSizeBytes)
+        {
+            await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        var recipientIsLocal = await emailService.CanReceiveAsync(
+            senderMailbox.Address,
+            cancellationToken).ConfigureAwait(false);
+        if (sent is null)
+        {
+            sent = new JmapVacationReplyDB
+            {
+                Id = Guid.CreateVersion7(),
+                AccountId = route.AccountId,
+                SenderAddress = senderMailbox.Address.ToMailLowerInvariant(),
+            };
+            await database.JmapVacationReplies.AddAsync(sent, cancellationToken).ConfigureAwait(false);
+        }
+        sent.LastDeliveryId = deliveryId;
+        sent.LastSentAt = now;
+        _ = await queue.EnqueueAsync(new MailSubmission(
+            Guid.CreateVersion7(),
+            string.Empty,
+            [new MailEnvelopeRecipient(senderMailbox.Address, recipientIsLocal)],
+            Encoding.Latin1.GetString(responseBytes),
+            null,
+            environment.Smtp.Hostname,
+            null), cancellationToken).ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
+    private async Task<byte[]> SerializeResponseAsync(
+        VacationRoute route,
+        JmapVacationResponseDB vacation,
+        MimeMessage original,
+        MailboxAddress senderMailbox,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var bodies = await content.ReadAsync(vacation, cancellationToken).ConfigureAwait(false);
+        using var response = BuildResponse(route.Address, senderMailbox, original, vacation, bodies, now);
+        var format = FormatOptions.Default.Clone();
+        format.NewLineFormat = NewLineFormat.Dos;
+        var stream = new MemoryStream();
+        await using var streamLifetime = stream.ConfigureAwait(false);
+        await response.WriteToAsync(format, stream, cancellationToken).ConfigureAwait(false);
+        return stream.ToArray();
     }
 
     private async Task<VacationRoute?> ResolveVacationRouteAsync(

@@ -95,6 +95,18 @@ public sealed class ImapMailboxSelectPostgresTests
             Assert.AreEqual(2, selected.ChangedMessages[1].Sequence);
             Assert.IsFalse(selected.ChangedMessages[0].IsRead);
             Assert.IsTrue(selected.ChangedMessages[1].IsRead);
+            var sinceFirstMessage = (await application.SelectMailboxAsync(
+                new ImapMailboxSelectRequest(ownerId, "INBOX", 23, 5))).Mailbox;
+            Assert.IsNotNull(sinceFirstMessage);
+            Assert.HasCount(1, sinceFirstMessage.ChangedMessages);
+            Assert.AreEqual(2, sinceFirstMessage.ChangedMessages[0].Uid);
+            Assert.AreEqual(2, sinceFirstMessage.ChangedMessages[0].Sequence);
+            CollectionAssert.AreEqual(new[] { 77 }, sinceFirstMessage.VanishedUids);
+            var sinceExpunge = (await application.SelectMailboxAsync(
+                new ImapMailboxSelectRequest(ownerId, "INBOX", 23, 7))).Mailbox;
+            Assert.IsNotNull(sinceExpunge);
+            Assert.IsEmpty(sinceExpunge.VanishedUids);
+            Assert.IsEmpty(sinceExpunge.ChangedMessages);
             Assert.IsNull((await application.SelectMailboxAsync(
                 new ImapMailboxSelectRequest(ownerId,
                     "other/example.test/Inbox", null, null))).Mailbox);

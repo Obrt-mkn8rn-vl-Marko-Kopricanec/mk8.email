@@ -2,6 +2,7 @@ using System.Data;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
 using mk8.email.Application.Interfaces;
 using mk8.email.Application.Protocol;
@@ -258,14 +259,8 @@ internal sealed class ImapApplicationService(
                 return new ImapMailboxRenameResult(ImapMailboxRenameDisposition.InvalidDestination);
 
             var renamedNames = renamed.Values.ToHashSet(StringComparer.Ordinal);
-            var affectedIds = affected.Select(candidate => candidate.Id).ToHashSet();
-            var existingNames = await database.Folders
-                .AsNoTracking()
-                .Where(candidate => candidate.InboxId == folder.InboxId
-                    && !affectedIds.Contains(candidate.Id))
-                .Select(candidate => candidate.Name)
-                .ToListAsync(cancellationToken).ConfigureAwait(false);
-            if (existingNames.Any(renamedNames.Contains))
+            if (await HasMailboxRenameCollisionAsync(
+                    folder.InboxId, affected, renamedNames, cancellationToken).ConfigureAwait(false))
                 return new ImapMailboxRenameResult(ImapMailboxRenameDisposition.AlreadyExists);
 
             foreach (ref readonly var candidate in CollectionsMarshal.AsSpan(affected))
@@ -275,6 +270,22 @@ internal sealed class ImapApplicationService(
                 await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             return new ImapMailboxRenameResult(ImapMailboxRenameDisposition.Renamed);
         }
+    }
+
+    private async Task<bool> HasMailboxRenameCollisionAsync(
+        Guid inboxId,
+        List<FolderDB> affected,
+        HashSet<string> renamedNames,
+        CancellationToken cancellationToken)
+    {
+        var affectedIds = affected.Select(candidate => candidate.Id).ToHashSet();
+        var existingNames = await database.Folders
+            .AsNoTracking()
+            .Where(candidate => candidate.InboxId == inboxId
+                && !affectedIds.Contains(candidate.Id))
+            .Select(candidate => candidate.Name)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        return existingNames.Any(renamedNames.Contains);
     }
 
     public async Task<ImapMailboxDeleteResult> DeleteMailboxAsync(
@@ -319,28 +330,36 @@ internal sealed class ImapApplicationService(
         }
         catch
         {
-            if (transaction is not null)
-            {
-                try
-                {
-                    await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
-                }
-                // Preserve the original mailbox-deletion failure if rollback also fails.
-#pragma warning disable CA1031
-                catch (Exception rollbackException)
-                {
-                    ApplicationServiceLog.ImapMailboxDeletionRollbackFailed(logger, rollbackException);
-                }
-#pragma warning restore CA1031
-            }
-            if (commitAttempted)
-                effects.Discard(marker);
-            else
-                await effects.RollbackAsync(marker).ConfigureAwait(false);
+            await RecoverMailboxDeletionAsync(transaction, marker, commitAttempted).ConfigureAwait(false);
             throw;
         }
 
         return new ImapMailboxDeleteResult(ImapMailboxDeleteDisposition.Deleted, folder.Id);
+    }
+
+    private async Task RecoverMailboxDeletionAsync(
+        IDbContextTransaction? transaction,
+        int marker,
+        bool commitAttempted)
+    {
+        if (transaction is not null)
+        {
+            try
+            {
+                await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            // Preserve the original mailbox-deletion failure if rollback also fails.
+#pragma warning disable CA1031
+            catch (Exception rollbackException)
+            {
+                ApplicationServiceLog.ImapMailboxDeletionRollbackFailed(logger, rollbackException);
+            }
+#pragma warning restore CA1031
+        }
+        if (commitAttempted)
+            effects.Discard(marker);
+        else
+            await effects.RollbackAsync(marker).ConfigureAwait(false);
     }
 
     public async Task<ImapMailboxSelectResult> SelectMailboxAsync(
@@ -363,6 +382,17 @@ internal sealed class ImapApplicationService(
         if (folder is null)
             return new ImapMailboxSelectResult(null);
 
+        var selected = await ReadSelectionSnapshotAsync(folder, request, cancellationToken).ConfigureAwait(false);
+        if (transaction is not null)
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return new ImapMailboxSelectResult(selected);
+    }
+
+    private async Task<ImapSelectedMailbox> ReadSelectionSnapshotAsync(
+        FolderDB folder,
+        ImapMailboxSelectRequest request,
+        CancellationToken cancellationToken)
+    {
         var messages = await database.Emails
             .AsNoTracking()
             .Where(email => email.FolderId == folder.Id)
@@ -390,13 +420,8 @@ internal sealed class ImapApplicationService(
         if (request.QresyncUidValidity == folder.UidValidity
             && request.QresyncModSeq is not null)
         {
-            vanishedUids = await database.ExpungedUids
-                .AsNoTracking()
-                .Where(expunged => expunged.FolderId == folder.Id
-                    && expunged.ModSeq > request.QresyncModSeq.Value)
-                .OrderBy(expunged => expunged.Uid)
-                .Select(expunged => expunged.Uid)
-                .ToListAsync(cancellationToken).ConfigureAwait(false);
+            vanishedUids = await ReadVanishedUidsAsync(
+                folder.Id, request.QresyncModSeq.Value, cancellationToken).ConfigureAwait(false);
             for (var index = 0; index < messages.Count; index++)
             {
                 var message = messages[index];
@@ -415,9 +440,7 @@ internal sealed class ImapApplicationService(
             }
         }
 
-        if (transaction is not null)
-            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        return new ImapMailboxSelectResult(new ImapSelectedMailbox(
+        return new ImapSelectedMailbox(
             folder.Id,
             folder.UidValidity,
             folder.NextUid,
@@ -427,8 +450,20 @@ internal sealed class ImapApplicationService(
             firstUnseenIndex < 0 ? null : firstUnseenIndex + 1,
             keywords,
             vanishedUids,
-            changedMessages));
+            changedMessages);
     }
+
+    private async Task<List<int>> ReadVanishedUidsAsync(
+        Guid folderId,
+        long minimumModSeq,
+        CancellationToken cancellationToken) =>
+        await database.ExpungedUids
+            .AsNoTracking()
+            .Where(expunged => expunged.FolderId == folderId
+                && expunged.ModSeq > minimumModSeq)
+            .OrderBy(expunged => expunged.Uid)
+            .Select(expunged => expunged.Uid)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
 
     public async Task<ImapExpungeResult> ExpungeDeletedAsync(
         ImapExpungeRequest request,

@@ -87,6 +87,9 @@ public sealed class ImapMailboxRenamePostgresTests
             var collision = await application.RenameMailboxAsync(
                 new ImapMailboxRenameRequest(userId, "Projects", "Archive"));
             Assert.AreEqual(ImapMailboxRenameDisposition.AlreadyExists, collision.Disposition);
+            var unchanged = await application.RenameMailboxAsync(
+                new ImapMailboxRenameRequest(userId, "Projects", "Projects"));
+            Assert.AreEqual(ImapMailboxRenameDisposition.Renamed, unchanged.Disposition);
             var renamed = await application.RenameMailboxAsync(
                 new ImapMailboxRenameRequest(userId, "Projects", "Work"));
             Assert.AreEqual(ImapMailboxRenameDisposition.Renamed, renamed.Disposition);

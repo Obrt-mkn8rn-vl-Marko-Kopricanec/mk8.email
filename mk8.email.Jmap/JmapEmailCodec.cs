@@ -9,14 +9,6 @@ using mk8.email.Infrastructure.Models;
 
 namespace mk8.email.Jmap;
 
-internal sealed record JmapEmailProjectionOptions(
-    IReadOnlyList<string> Properties,
-    IReadOnlyList<string> BodyProperties,
-    bool FetchTextBodyValues,
-    bool FetchHtmlBodyValues,
-    bool FetchAllBodyValues,
-    int MaxBodyValueBytes);
-
 internal static partial class JmapEmailCodec
 {
     public static readonly IReadOnlyList<string> DefaultProperties =
@@ -41,11 +33,11 @@ internal static partial class JmapEmailCodec
         "disposition", "cid", "language", "location",
     ];
 
-    private static readonly IReadOnlySet<string> FixedProperties = new HashSet<string>(
+    private static readonly HashSet<string> FixedProperties = new HashSet<string>(
         DefaultProperties.Concat(["headers", "bodyStructure"]),
         StringComparer.Ordinal);
 
-    private static readonly IReadOnlySet<string> FixedBodyProperties = new HashSet<string>(
+    private static readonly HashSet<string> FixedBodyProperties = new HashSet<string>(
         DefaultBodyProperties.Concat(["headers", "subParts"]),
         StringComparer.Ordinal);
 
@@ -182,7 +174,7 @@ internal static partial class JmapEmailCodec
         return false;
     }
 
-    private static IReadOnlyList<(MimeEntity Entity, string Path)> EnumerateLeafEntities(
+    private static List<(MimeEntity Entity, string Path)> EnumerateLeafEntities(
         MimeEntity? root)
     {
         if (root is null)
@@ -662,8 +654,8 @@ internal static partial class JmapEmailCodec
 
     private static bool IsAttachment(
         PartDescriptor part,
-        IReadOnlySet<string> bodyIds,
-        IReadOnlySet<string> commonBodyIds) =>
+        HashSet<string> bodyIds,
+        HashSet<string> commonBodyIds) =>
         !bodyIds.Contains(part.PartId!)
         || IsInlineMedia(part.Type) && !commonBodyIds.Contains(part.PartId!);
 
@@ -1206,7 +1198,7 @@ internal static partial class JmapEmailCodec
         return value;
     }
 
-    private static JsonNode? ParseAddresses(Header header, bool grouped)
+    private static JsonArray? ParseAddresses(Header header, bool grouped)
     {
         var (value, rawTabMarker) = ProtectRawHeaderTabs(header);
         value = NormalizeDecodedHeaderText(value);
@@ -1302,7 +1294,7 @@ internal static partial class JmapEmailCodec
         return result.ToString();
     }
 
-    private static JsonNode? ParseMessageIds(string value)
+    private static JsonArray? ParseMessageIds(string value)
     {
         var result = new JsonArray();
         var index = 0;
@@ -1356,7 +1348,7 @@ internal static partial class JmapEmailCodec
         return false;
     }
 
-    private static JsonNode? ParseUrls(string value)
+    private static JsonArray? ParseUrls(string value)
     {
         var result = new JsonArray();
         var index = 0;
@@ -1500,7 +1492,7 @@ internal static partial class JmapEmailCodec
         };
     }
 
-    private static readonly IReadOnlySet<string> KnownHeaderNames = new HashSet<string>(
+    private static readonly HashSet<string> KnownHeaderNames = new HashSet<string>(
         [
             "DATE", "FROM", "SENDER", "REPLY-TO", "TO", "CC", "BCC",
             "MESSAGE-ID", "IN-REPLY-TO", "REFERENCES", "SUBJECT", "COMMENTS",

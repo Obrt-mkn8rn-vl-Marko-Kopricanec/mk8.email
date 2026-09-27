@@ -8,7 +8,7 @@ namespace mk8.email.Jmap;
 
 internal static class JmapContactValidator
 {
-    private static readonly IReadOnlySet<string> CardProperties = Set(
+    private static readonly HashSet<string> CardProperties = Set(
         "@type", "version", "created", "kind", "language", "members", "prodId",
         "relatedTo", "uid", "updated", "name", "nicknames", "organizations",
         "speakToAs", "titles", "emails", "onlineServices", "phones",
@@ -16,58 +16,58 @@ internal static class JmapContactValidator
         "cryptoKeys", "directories", "links", "media", "localizations",
         "anniversaries", "keywords", "notes", "personalInfo");
 
-    private static readonly IReadOnlySet<string> RelationProperties = Set("@type", "relation");
-    private static readonly IReadOnlySet<string> NameProperties = Set(
+    private static readonly HashSet<string> RelationProperties = Set("@type", "relation");
+    private static readonly HashSet<string> NameProperties = Set(
         "@type", "components", "isOrdered", "defaultSeparator", "full", "sortAs",
         "phoneticScript", "phoneticSystem");
-    private static readonly IReadOnlySet<string> ComponentProperties = Set(
+    private static readonly HashSet<string> ComponentProperties = Set(
         "@type", "value", "kind", "phonetic");
-    private static readonly IReadOnlySet<string> NicknameProperties = Set(
+    private static readonly HashSet<string> NicknameProperties = Set(
         "@type", "name", "contexts", "pref");
-    private static readonly IReadOnlySet<string> OrganizationProperties = Set(
+    private static readonly HashSet<string> OrganizationProperties = Set(
         "@type", "name", "units", "sortAs", "contexts");
-    private static readonly IReadOnlySet<string> OrgUnitProperties = Set("@type", "name", "sortAs");
-    private static readonly IReadOnlySet<string> SpeakToAsProperties = Set(
+    private static readonly HashSet<string> OrgUnitProperties = Set("@type", "name", "sortAs");
+    private static readonly HashSet<string> SpeakToAsProperties = Set(
         "@type", "grammaticalGender", "pronouns");
-    private static readonly IReadOnlySet<string> PronounsProperties = Set(
+    private static readonly HashSet<string> PronounsProperties = Set(
         "@type", "pronouns", "contexts", "pref");
-    private static readonly IReadOnlySet<string> TitleProperties = Set(
+    private static readonly HashSet<string> TitleProperties = Set(
         "@type", "name", "kind", "organizationId");
-    private static readonly IReadOnlySet<string> EmailProperties = Set(
+    private static readonly HashSet<string> EmailProperties = Set(
         "@type", "address", "contexts", "pref", "label");
-    private static readonly IReadOnlySet<string> OnlineServiceProperties = Set(
+    private static readonly HashSet<string> OnlineServiceProperties = Set(
         "@type", "service", "uri", "user", "contexts", "pref", "label");
-    private static readonly IReadOnlySet<string> PhoneProperties = Set(
+    private static readonly HashSet<string> PhoneProperties = Set(
         "@type", "number", "features", "contexts", "pref", "label");
-    private static readonly IReadOnlySet<string> LanguagePrefProperties = Set(
+    private static readonly HashSet<string> LanguagePrefProperties = Set(
         "@type", "language", "contexts", "pref");
-    private static readonly IReadOnlySet<string> ResourceProperties = Set(
+    private static readonly HashSet<string> ResourceProperties = Set(
         "@type", "kind", "uri", "mediaType", "contexts", "pref", "label");
-    private static readonly IReadOnlySet<string> CalendarProperties = Set(
+    private static readonly HashSet<string> CalendarProperties = Set(
         "@type", "kind", "uri", "mediaType", "contexts", "pref", "label");
-    private static readonly IReadOnlySet<string> DirectoryProperties = Set(
+    private static readonly HashSet<string> DirectoryProperties = Set(
         "@type", "kind", "uri", "mediaType", "contexts", "pref", "label", "listAs");
-    private static readonly IReadOnlySet<string> LinkProperties = Set(
+    private static readonly HashSet<string> LinkProperties = Set(
         "@type", "kind", "uri", "mediaType", "contexts", "pref", "label");
-    private static readonly IReadOnlySet<string> MediaProperties = Set(
+    private static readonly HashSet<string> MediaProperties = Set(
         "@type", "kind", "uri", "mediaType", "contexts", "pref", "label", "blobId");
-    private static readonly IReadOnlySet<string> SchedulingAddressProperties = Set(
+    private static readonly HashSet<string> SchedulingAddressProperties = Set(
         "@type", "uri", "contexts", "pref", "label");
-    private static readonly IReadOnlySet<string> AddressProperties = Set(
+    private static readonly HashSet<string> AddressProperties = Set(
         "@type", "components", "isOrdered", "countryCode", "coordinates", "timeZone",
         "contexts", "full", "defaultSeparator", "pref", "phoneticScript", "phoneticSystem");
-    private static readonly IReadOnlySet<string> AnniversaryProperties = Set(
+    private static readonly HashSet<string> AnniversaryProperties = Set(
         "@type", "kind", "date", "place");
-    private static readonly IReadOnlySet<string> PartialDateProperties = Set(
+    private static readonly HashSet<string> PartialDateProperties = Set(
         "@type", "year", "month", "day", "calendarScale");
-    private static readonly IReadOnlySet<string> TimestampProperties = Set("@type", "utc");
-    private static readonly IReadOnlySet<string> NoteProperties = Set(
+    private static readonly HashSet<string> TimestampProperties = Set("@type", "utc");
+    private static readonly HashSet<string> NoteProperties = Set(
         "@type", "note", "created", "author");
-    private static readonly IReadOnlySet<string> AuthorProperties = Set("@type", "name", "uri");
-    private static readonly IReadOnlySet<string> PersonalInfoProperties = Set(
+    private static readonly HashSet<string> AuthorProperties = Set("@type", "name", "uri");
+    private static readonly HashSet<string> PersonalInfoProperties = Set(
         "@type", "kind", "value", "level", "listAs", "label");
 
-    private static readonly IReadOnlySet<string> KnownProperties = Set(
+    private static readonly HashSet<string> KnownProperties = Set(
         "@type", "address", "addresses", "anniversaries", "author", "calendarScale",
         "calendars", "components", "contexts", "coordinates", "countryCode", "created",
         "cryptoKeys", "date", "day", "defaultSeparator", "directories", "emails",
@@ -81,39 +81,39 @@ internal static class JmapContactValidator
         "uid", "units", "updated", "uri", "user", "utc", "value", "version", "year",
         "id", "addressBookIds", "blobId", "extra");
 
-    private static readonly IReadOnlySet<string> CardKinds = Set(
+    private static readonly HashSet<string> CardKinds = Set(
         "application", "device", "group", "individual", "location", "org");
-    private static readonly IReadOnlySet<string> NameComponentKinds = Set(
+    private static readonly HashSet<string> NameComponentKinds = Set(
         "credential", "generation", "given", "given2", "separator", "surname", "surname2", "title");
-    private static readonly IReadOnlySet<string> AddressComponentKinds = Set(
+    private static readonly HashSet<string> AddressComponentKinds = Set(
         "apartment", "block", "building", "country", "direction", "district", "floor",
         "landmark", "locality", "name", "number", "postOfficeBox", "postcode", "region",
         "room", "separator", "subdistrict");
-    private static readonly IReadOnlySet<string> CommonContexts = Set("private", "work");
-    private static readonly IReadOnlySet<string> AddressContexts = Set(
+    private static readonly HashSet<string> CommonContexts = Set("private", "work");
+    private static readonly HashSet<string> AddressContexts = Set(
         "billing", "delivery", "private", "work");
-    private static readonly IReadOnlySet<string> PhoneFeatures = Set(
+    private static readonly HashSet<string> PhoneFeatures = Set(
         "fax", "main-number", "mobile", "pager", "text", "textphone", "video", "voice");
-    private static readonly IReadOnlySet<string> GrammaticalGenders = Set(
+    private static readonly HashSet<string> GrammaticalGenders = Set(
         "animate", "common", "feminine", "inanimate", "masculine", "neuter");
-    private static readonly IReadOnlySet<string> RelationKinds = Set(
+    private static readonly HashSet<string> RelationKinds = Set(
         "acquaintance", "agent", "child", "co-resident", "co-worker", "colleague", "contact",
         "crush", "date", "emergency", "friend", "kin", "me", "met", "muse", "neighbor",
         "parent", "sibling", "spouse", "sweetheart");
-    private static readonly IReadOnlySet<string> PhoneticSystems = Set("ipa", "jyut", "piny");
-    private static readonly IReadOnlySet<string> TitleKinds = Set("role", "title");
-    private static readonly IReadOnlySet<string> CalendarKinds = Set("calendar", "freeBusy");
-    private static readonly IReadOnlySet<string> DirectoryKinds = Set("directory", "entry");
-    private static readonly IReadOnlySet<string> LinkKinds = Set("contact");
-    private static readonly IReadOnlySet<string> MediaKinds = Set("logo", "photo", "sound");
-    private static readonly IReadOnlySet<string> AnniversaryKinds = Set("birth", "death", "wedding");
-    private static readonly IReadOnlySet<string> PersonalInfoKinds = Set("expertise", "hobby", "interest");
-    private static readonly IReadOnlySet<string> PersonalInfoLevels = Set("high", "low", "medium");
-    private static readonly IReadOnlySet<string> CalendarScales = Set(
+    private static readonly HashSet<string> PhoneticSystems = Set("ipa", "jyut", "piny");
+    private static readonly HashSet<string> TitleKinds = Set("role", "title");
+    private static readonly HashSet<string> CalendarKinds = Set("calendar", "freeBusy");
+    private static readonly HashSet<string> DirectoryKinds = Set("directory", "entry");
+    private static readonly HashSet<string> LinkKinds = Set("contact");
+    private static readonly HashSet<string> MediaKinds = Set("logo", "photo", "sound");
+    private static readonly HashSet<string> AnniversaryKinds = Set("birth", "death", "wedding");
+    private static readonly HashSet<string> PersonalInfoKinds = Set("expertise", "hobby", "interest");
+    private static readonly HashSet<string> PersonalInfoLevels = Set("high", "low", "medium");
+    private static readonly HashSet<string> CalendarScales = Set(
         "buddhist", "chinese", "coptic", "dangi", "ethioaa", "ethiopic", "gregory", "hebrew",
         "indian", "islamic", "islamic-civil", "islamic-rgsa", "islamic-tbla",
         "islamic-umalqura", "iso8601", "japanese", "persian", "roc");
-    private static readonly IReadOnlySet<string> GrandfatheredLanguageTags = new HashSet<string>(
+    private static readonly HashSet<string> GrandfatheredLanguageTags = new HashSet<string>(
         [
             "art-lojban", "cel-gaulish", "en-GB-oed", "i-ami", "i-bnn", "i-default",
             "i-enochian", "i-hak", "i-klingon", "i-lux", "i-mingo", "i-navajo", "i-pwn",
@@ -184,7 +184,7 @@ internal static class JmapContactValidator
 
     private static void ValidateCard(
         JsonObject card,
-        ISet<string> invalid,
+        HashSet<string> invalid,
         bool validateLocalizations)
     {
         ValidatePropertyNames(card, CardProperties, invalid);
@@ -540,7 +540,7 @@ internal static class JmapContactValidator
     private static bool ValidateResource(
         JsonObject value,
         string expectedType,
-        IReadOnlySet<string> properties) =>
+        HashSet<string> properties) =>
         HasExpectedType(value, expectedType)
         && HasValidProperties(value, properties)
         && TryAbsoluteUri(value["uri"], out _)
@@ -665,7 +665,7 @@ internal static class JmapContactValidator
             || TryUnsigned(listAs, out var position) && position > 0)
         && ValidateLabel(value);
 
-    private static void ValidateLocalizations(JsonObject card, ISet<string> invalid)
+    private static void ValidateLocalizations(JsonObject card, HashSet<string> invalid)
     {
         if (!card.TryGetPropertyValue("localizations", out var node))
             return;
@@ -835,8 +835,8 @@ internal static class JmapContactValidator
 
     private static void ValidatePropertyNames(
         JsonObject value,
-        IReadOnlySet<string> allowed,
-        ISet<string> invalid)
+        HashSet<string> allowed,
+        HashSet<string> invalid)
     {
         foreach (var property in value.Select(item => item.Key))
         {
@@ -845,10 +845,10 @@ internal static class JmapContactValidator
         }
     }
 
-    private static bool HasValidProperties(JsonObject value, IReadOnlySet<string> allowed) =>
+    private static bool HasValidProperties(JsonObject value, HashSet<string> allowed) =>
         value.All(item => IsAllowedPropertyName(item.Key, allowed));
 
-    private static bool IsAllowedPropertyName(string property, IReadOnlySet<string> allowed) =>
+    private static bool IsAllowedPropertyName(string property, HashSet<string> allowed) =>
         allowed.Contains(property)
         || !KnownProperties.Contains(property)
             && !KnownProperties.Any(known => string.Equals(
@@ -886,20 +886,20 @@ internal static class JmapContactValidator
     private static bool IsVendorAlphaNumeric(char value) =>
         char.IsAsciiLetterOrDigit(value) || value > 0x7f;
 
-    private static bool IsEnumValue(string value, IReadOnlySet<string> registered) =>
+    private static bool IsEnumValue(string value, HashSet<string> registered) =>
         registered.Contains(value) || IsVendorValue(value);
 
     private static bool IsVendorValue(string value) =>
         value.Contains(':', StringComparison.Ordinal) && IsValidExtensionProperty(value);
 
-    private static bool IsEnumTrueSet(JsonNode? node, IReadOnlySet<string> registered) =>
+    private static bool IsEnumTrueSet(JsonNode? node, HashSet<string> registered) =>
         node is JsonObject map
         && map.All(item => IsEnumValue(item.Key, registered)
             && item.Value is JsonValue value
             && value.TryGetValue<bool>(out var included)
             && included);
 
-    private static bool ValidateContexts(JsonObject value, IReadOnlySet<string> registered) =>
+    private static bool ValidateContexts(JsonObject value, HashSet<string> registered) =>
         !value.TryGetPropertyValue("contexts", out var contexts)
         || IsEnumTrueSet(contexts, registered);
 
@@ -1055,7 +1055,7 @@ internal static class JmapContactValidator
         JsonObject card,
         string property,
         Func<JsonObject, bool> validator,
-        ISet<string> invalid)
+        HashSet<string> invalid)
     {
         if (card.TryGetPropertyValue(property, out var node)
             && (node is not JsonObject value || !validator(value)))
@@ -1068,7 +1068,7 @@ internal static class JmapContactValidator
         JsonObject card,
         string property,
         Func<JsonObject, bool> validator,
-        ISet<string> invalid)
+        HashSet<string> invalid)
     {
         if (card.TryGetPropertyValue(property, out var node)
             && !ValidateIdMapNode(node, validator))
@@ -1087,7 +1087,7 @@ internal static class JmapContactValidator
         JsonObject card,
         string property,
         Func<JsonObject, bool> validator,
-        ISet<string> invalid)
+        HashSet<string> invalid)
     {
         if (card.TryGetPropertyValue(property, out var node)
             && (node is not JsonObject map
@@ -1097,7 +1097,7 @@ internal static class JmapContactValidator
         }
     }
 
-    private static void ValidateUtcDate(JsonObject card, string property, ISet<string> invalid)
+    private static void ValidateUtcDate(JsonObject card, string property, HashSet<string> invalid)
     {
         if (card.TryGetPropertyValue(property, out var node)
             && (!TryString(node, out var text) || !IsUtcDateTime(text)))
@@ -1106,7 +1106,7 @@ internal static class JmapContactValidator
         }
     }
 
-    private static void ValidateTrueSet(JsonObject card, string property, ISet<string> invalid)
+    private static void ValidateTrueSet(JsonObject card, string property, HashSet<string> invalid)
     {
         if (card.TryGetPropertyValue(property, out var node) && !IsTrueSet(node))
             invalid.Add(property);

@@ -9,14 +9,6 @@ using mk8.email.Infrastructure.Models;
 
 namespace mk8.email.Jmap;
 
-internal sealed record JmapContactCardView(
-    DavResourceDB Resource,
-    JsonObject Card)
-{
-    public string Id => JmapId.ContactCard(Resource.Id);
-    public string AddressBookId => JmapId.AddressBook(Resource.CollectionId);
-}
-
 public sealed class JmapContactStore(
     EmailDbContext database,
     EnvironmentConfig environment,
@@ -186,7 +178,7 @@ public sealed class JmapContactStore(
         Guid accountId,
         JsonObject card,
         string path,
-        ISet<string> invalid,
+        HashSet<string> invalid,
         CancellationToken cancellationToken)
     {
         if (card["media"] is not JsonObject media)

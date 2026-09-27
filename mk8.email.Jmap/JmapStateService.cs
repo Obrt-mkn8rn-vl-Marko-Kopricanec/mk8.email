@@ -4,14 +4,6 @@ using mk8.email.Infrastructure.Models;
 
 namespace mk8.email.Jmap;
 
-public sealed record JmapChangesResult(
-    string OldState,
-    string NewState,
-    bool HasMoreChanges,
-    IReadOnlyList<string> Created,
-    IReadOnlyList<string> Updated,
-    IReadOnlyList<string> Destroyed);
-
 public sealed class JmapStateService(
     EmailDbContext database,
     JmapAccountService accounts)
@@ -415,7 +407,7 @@ public sealed class JmapStateService(
     }
 
     private static void FoldChange(
-        IDictionary<string, string> changes,
+        Dictionary<string, string> changes,
         string objectId,
         string kind)
     {

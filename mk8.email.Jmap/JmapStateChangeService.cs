@@ -5,16 +5,12 @@ using mk8.email.Infrastructure.Data;
 
 namespace mk8.email.Jmap;
 
-internal sealed record JmapStateChangePoll(
-    long Cursor,
-    JsonObject? StateChange);
-
 internal sealed class JmapStateChangeService(
     EmailDbContext database,
     JmapAccountService accounts,
     JmapStateService states)
 {
-    public static readonly IReadOnlySet<string> SupportedTypes = new HashSet<string>(
+    public static readonly HashSet<string> SupportedTypes = new HashSet<string>(
         [
             JmapConstants.MailboxDataType,
             JmapConstants.ThreadDataType,

@@ -6,8 +6,6 @@ using mk8.email.Infrastructure.Models;
 
 namespace mk8.email.Jmap;
 
-public sealed record JmapSessionDocument(JsonObject Value, string State);
-
 public sealed class JmapSessionService(
     JmapAccountService accounts,
     JmapContactStore contacts,

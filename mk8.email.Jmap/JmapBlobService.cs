@@ -14,13 +14,6 @@ using mk8.email.Infrastructure.Models;
 
 namespace mk8.email.Jmap;
 
-internal sealed record JmapBlobContent(
-    byte[] Content,
-    string ContentType,
-    string? Name,
-    Guid SourceId,
-    string? PartPrefix);
-
 public sealed class JmapBlobService(
     EmailDbContext database,
     EnvironmentConfig environment,
@@ -419,68 +412,4 @@ public sealed class JmapBlobService(
 
     private sealed class JmapBlobCommitOutcomeUnknownException(Exception innerException)
         : Exception("The JMAP blob database commit outcome is unknown.", innerException);
-}
-
-internal sealed class BlobCopyMethod(
-    JmapAccountService accounts,
-    JmapBlobService blobs,
-    EnvironmentConfig environment) : IJmapMethod
-{
-    public string Name => "Blob/copy";
-    public string Capability => JmapConstants.CoreCapability;
-
-    public async Task<JmapMethodResponse> InvokeAsync(
-        JmapInvocationContext context,
-        JsonObject arguments,
-        CancellationToken cancellationToken)
-    {
-        if (!JmapMethodHelpers.HasOnlyProperties(arguments, "fromAccountId", "accountId", "blobIds")
-            || !JmapMethodHelpers.TryGetRequiredString(arguments, "fromAccountId", out var fromAccountId)
-            || !JmapMethodHelpers.TryGetRequiredString(arguments, "accountId", out var accountId)
-            || string.Equals(fromAccountId, accountId, StringComparison.Ordinal)
-            || !JmapEmailArguments.TryGetIds(arguments, "blobIds", false, out var blobIds)
-            || blobIds is null)
-        {
-            return JmapMethodResponse.Error("invalidArguments");
-        }
-        if (blobIds.Count > environment.Jmap.MaxObjectsInSet)
-            return JmapMethodResponse.Error("requestTooLarge");
-        var sourceAccount = await accounts.GetAccountAsync(context.User, fromAccountId, cancellationToken).ConfigureAwait(false);
-        if (sourceAccount is null)
-            return JmapMethodResponse.Error("fromAccountNotFound");
-        var targetAccount = await accounts.GetAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
-        if (targetAccount is null)
-            return JmapMethodResponse.Error("accountNotFound");
-
-        var copied = new JsonObject();
-        var notCopied = new JsonObject();
-        foreach (var blobId in blobIds.Distinct(StringComparer.Ordinal))
-        {
-            var source = await blobs.GetAsync(sourceAccount.InboxId, blobId, cancellationToken).ConfigureAwait(false);
-            if (source is null)
-            {
-                notCopied[blobId] = JmapMethodHelpers.SetError("notFound");
-                continue;
-            }
-            if (source.Content.LongLength > environment.Jmap.MaxUploadSizeBytes)
-            {
-                notCopied[blobId] = JmapMethodHelpers.SetError("tooLarge");
-                continue;
-            }
-            var stored = await blobs.StoreAsync(
-                targetAccount.InboxId,
-                source.Content,
-                source.ContentType,
-                source.Name,
-                cancellationToken).ConfigureAwait(false);
-            copied[blobId] = stored.BlobId;
-        }
-        return new JmapMethodResponse(Name, new JsonObject
-        {
-            ["fromAccountId"] = fromAccountId,
-            ["accountId"] = accountId,
-            ["copied"] = copied.Count == 0 ? null : copied,
-            ["notCopied"] = notCopied.Count == 0 ? null : notCopied,
-        });
-    }
 }

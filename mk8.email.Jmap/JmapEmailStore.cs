@@ -10,8 +10,6 @@ using mk8.email.Infrastructure.Models;
 
 namespace mk8.email.Jmap;
 
-internal sealed record JmapStoredEmailResult(EmailDB? Email, JsonObject? Error);
-
 internal sealed class JmapEmailStore(
     EmailDbContext database,
     EnvironmentConfig environment,

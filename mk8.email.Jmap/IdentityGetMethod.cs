@@ -1,0 +1,70 @@
+using System.Text.Json.Nodes;
+using Microsoft.EntityFrameworkCore;
+using MimeKit;
+using mk8.email.Infrastructure.Data;
+using mk8.email.Configuration;
+using mk8.email.Infrastructure.Models;
+
+namespace mk8.email.Jmap;
+
+internal sealed class IdentityGetMethod(
+    EmailDbContext database,
+    JmapAccountService accounts,
+    JmapIdentityService identities,
+    JmapStateService states,
+    EnvironmentConfig environment) : IJmapMethod
+{
+    private static readonly HashSet<string> Properties = new HashSet<string>(
+        ["id", "name", "email", "replyTo", "bcc", "textSignature", "htmlSignature", "mayDelete"],
+        StringComparer.Ordinal);
+
+    public string Name => "Identity/get";
+    public string Capability => JmapConstants.SubmissionCapability;
+
+    public async Task<JmapMethodResponse> InvokeAsync(
+        JmapInvocationContext context,
+        JsonObject arguments,
+        CancellationToken cancellationToken)
+    {
+        if (!JmapMethodHelpers.HasOnlyProperties(arguments, "accountId", "ids", "properties")
+            || !JmapMethodHelpers.TryGetRequiredString(arguments, "accountId", out var accountId)
+            || !JmapMethodHelpers.TryGetStringArray(arguments, "properties", true, out var requestedProperties)
+            || !JmapEmailArguments.TryGetIds(arguments, "ids", true, out var requestedIds))
+        {
+            return JmapMethodResponse.Error("invalidArguments");
+        }
+        var properties = requestedProperties?.ToHashSet(StringComparer.Ordinal);
+        if (properties is not null && properties.Any(property => !Properties.Contains(property)))
+            return JmapMethodResponse.Error("invalidArguments");
+        if (requestedIds is { Count: > 0 } && requestedIds.Count > environment.Jmap.MaxObjectsInGet)
+            return JmapMethodResponse.Error("requestTooLarge");
+        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
+        if (account is null)
+            return JmapMethodResponse.Error("accountNotFound");
+        await identities.EnsureDefaultAsync(account, cancellationToken).ConfigureAwait(false);
+        var all = await database.JmapIdentities
+            .AsNoTracking()
+            .Where(identity => identity.AccountId == account.InboxId)
+            .OrderBy(identity => identity.CreatedAt)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        if (requestedIds is null && all.Count > environment.Jmap.MaxObjectsInGet)
+            return JmapMethodResponse.Error("requestTooLarge");
+        var byId = all.ToDictionary(identity => JmapId.Identity(identity.Id), StringComparer.Ordinal);
+        var list = new JsonArray();
+        var notFound = new JsonArray();
+        foreach (var id in (requestedIds ?? byId.Keys.ToArray()).Distinct(StringComparer.Ordinal))
+        {
+            if (byId.TryGetValue(id, out var identity))
+                list.Add(JmapIdentityService.ToJson(identity, properties));
+            else
+                notFound.Add(id);
+        }
+        return new JmapMethodResponse(Name, new JsonObject
+        {
+            ["accountId"] = accountId,
+            ["state"] = await states.GetStateAsync(account.InboxId, JmapConstants.IdentityDataType, cancellationToken).ConfigureAwait(false),
+            ["list"] = list,
+            ["notFound"] = notFound,
+        });
+    }
+}

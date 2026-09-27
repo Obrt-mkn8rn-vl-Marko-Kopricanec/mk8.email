@@ -960,7 +960,7 @@ internal static class JmapContactCodec
         }
     }
 
-    private static IReadOnlyList<string> Unfold(string text)
+    private static List<string> Unfold(string text)
     {
         var result = new List<string>();
         foreach (var line in text.Replace("\r\n", "\n", StringComparison.Ordinal)
@@ -974,7 +974,7 @@ internal static class JmapContactCodec
         return result;
     }
 
-    private static IReadOnlyList<string> Fold(string line)
+    private static List<string> Fold(string line)
     {
         var result = new List<string>();
         var remaining = line.AsSpan();

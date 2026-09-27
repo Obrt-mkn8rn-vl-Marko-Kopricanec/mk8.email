@@ -6,34 +6,15 @@ using MimeKit.Utils;
 
 namespace mk8.email.Jmap;
 
-internal sealed record JmapBuiltMessage(
-    MimeMessage Message,
-    byte[] RawBytes,
-    string Sender,
-    string Recipient,
-    string? Cc,
-    string Subject,
-    string MessageId,
-    string? InReplyTo);
-
-internal sealed record JmapBuildResult(JmapBuiltMessage? Value, JsonObject? Error)
-{
-    public static JmapBuildResult Failed(
-        string type,
-        string? description = null,
-        IEnumerable<string>? properties = null) =>
-        new(null, JmapMethodHelpers.SetError(type, description, properties));
-}
-
 internal sealed class JmapEmailBuilder(JmapBlobService blobs)
 {
     private const long MaximumUnsignedInt = 9_007_199_254_740_991;
 
-    private static readonly IReadOnlySet<string> MetadataProperties = new HashSet<string>(
+    private static readonly HashSet<string> MetadataProperties = new HashSet<string>(
         ["mailboxIds", "keywords", "receivedAt"],
         StringComparer.Ordinal);
 
-    private static readonly IReadOnlyDictionary<string, string> ConvenienceHeaders =
+    private static readonly Dictionary<string, string> ConvenienceHeaders =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["messageId"] = "Message-ID",
@@ -49,7 +30,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
             ["sentAt"] = "Date",
         };
 
-    private static readonly IReadOnlySet<string> BodyProperties = new HashSet<string>(
+    private static readonly HashSet<string> BodyProperties = new HashSet<string>(
         [
             "partId", "blobId", "size", "name", "type", "charset", "disposition",
             "cid", "language", "location", "subParts",
@@ -996,7 +977,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
         };
     }
 
-    private static readonly IReadOnlySet<string> KnownHeaderNames = new HashSet<string>(
+    private static readonly HashSet<string> KnownHeaderNames = new HashSet<string>(
         [
             "DATE", "FROM", "SENDER", "REPLY-TO", "TO", "CC", "BCC",
             "MESSAGE-ID", "IN-REPLY-TO", "REFERENCES", "SUBJECT", "COMMENTS",

@@ -1203,24 +1203,7 @@ public sealed class MailQueueWorker(
         }
         catch
         {
-            if (transaction is not null)
-            {
-                try
-                {
-                    await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
-                }
-                // Preserve the original retention-cleanup failure if rollback also fails.
-#pragma warning disable CA1031
-                catch (Exception rollbackException)
-                {
-                    ApplicationServiceLog.CompletedQueueCleanupRollbackFailed(logger, rollbackException);
-                }
-#pragma warning restore CA1031
-            }
-            if (commitAttempted)
-                effects.Discard(marker);
-            else
-                await effects.RollbackAsync(marker).ConfigureAwait(false);
+            await RecoverCompletedCleanupAsync(transaction, effects, marker, commitAttempted).ConfigureAwait(false);
             throw;
         }
         finally
@@ -1228,5 +1211,31 @@ public sealed class MailQueueWorker(
             if (transaction is not null)
                 await transaction.DisposeAsync().ConfigureAwait(false);
         }
+    }
+
+    private async Task RecoverCompletedCleanupAsync(
+        IDbContextTransaction? transaction,
+        LargeObjectTransactionEffects effects,
+        int marker,
+        bool commitAttempted)
+    {
+        if (transaction is not null)
+        {
+            try
+            {
+                await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            // Preserve the original retention-cleanup failure if rollback also fails.
+#pragma warning disable CA1031
+            catch (Exception rollbackException)
+            {
+                ApplicationServiceLog.CompletedQueueCleanupRollbackFailed(logger, rollbackException);
+            }
+#pragma warning restore CA1031
+        }
+        if (commitAttempted)
+            effects.Discard(marker);
+        else
+            await effects.RollbackAsync(marker).ConfigureAwait(false);
     }
 }

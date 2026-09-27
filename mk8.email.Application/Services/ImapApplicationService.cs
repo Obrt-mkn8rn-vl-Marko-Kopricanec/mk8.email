@@ -469,6 +469,53 @@ internal sealed class ImapApplicationService(
         ImapExpungeRequest request,
         CancellationToken cancellationToken = default)
     {
+        var selection = ValidateExpungeRequest(request);
+        var transaction = database.Database.IsRelational()
+            ? await database.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken).ConfigureAwait(false)
+            : null;
+        // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+        await using var transactionLifetime = transaction;
+#pragma warning restore CA2007, MA0004
+        var folder = await database.Folders.FirstOrDefaultAsync(
+            candidate => candidate.Id == request.FolderId
+                && candidate.Inbox.OwnerId == request.UserId,
+            cancellationToken).ConfigureAwait(false);
+        if (folder is null)
+            return new ImapExpungeResult(false, []);
+
+        var messages = await ReadExpungeMetadataAsync(folder.Id, cancellationToken).ConfigureAwait(false);
+        var maximumUid = messages.Count > 0 ? messages[^1].Uid : 0;
+        var resolvedRanges = selection?.Ranges is { } ranges
+            ? ResolveMessageRanges(ranges.Select(range => (range.Start, range.End)), maximumUid)
+            : null;
+        var savedSearchUids = selection?.SavedSearchUids?.ToHashSet();
+        List<ImapExpungedMessage> expunged;
+        var marker = effects.Mark();
+        var commitAttempted = false;
+        try
+        {
+            expunged = await StageExpungesAsync(
+                folder, messages, resolvedRanges, savedSearchUids, cancellationToken).ConfigureAwait(false);
+            if (expunged.Count > 0)
+                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            if (transaction is not null)
+            {
+                commitAttempted = true;
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            await effects.CommitAsync(marker).ConfigureAwait(false);
+        }
+        catch
+        {
+            await RecoverExpungeAsync(transaction, marker, commitAttempted).ConfigureAwait(false);
+            throw;
+        }
+        return new ImapExpungeResult(true, expunged);
+    }
+
+    private static ImapUidSelection? ValidateExpungeRequest(ImapExpungeRequest request)
+    {
         ArgumentNullException.ThrowIfNull(request);
         if (request.UserId == Guid.Empty || request.FolderId == Guid.Empty)
             throw new ArgumentException("The IMAP expunge request is invalid.", nameof(request));
@@ -487,24 +534,14 @@ internal sealed class ImapApplicationService(
         {
             throw new ArgumentException("The IMAP UID selection is invalid.", nameof(request));
         }
+        return selection;
+    }
 
-        var transaction = database.Database.IsRelational()
-            ? await database.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken).ConfigureAwait(false)
-            : null;
-        // A null transaction is intentional for non-relational test providers.
-#pragma warning disable CA2007, MA0004
-        await using var transactionLifetime = transaction;
-#pragma warning restore CA2007, MA0004
-        var folder = await database.Folders.FirstOrDefaultAsync(
-            candidate => candidate.Id == request.FolderId
-                && candidate.Inbox.OwnerId == request.UserId,
-            cancellationToken).ConfigureAwait(false);
-        if (folder is null)
-            return new ImapExpungeResult(false, []);
-
-        var messages = await database.Emails
+    private async Task<List<EmailDB>> ReadExpungeMetadataAsync(Guid folderId, CancellationToken cancellationToken)
+    {
+        return await database.Emails
             .AsNoTracking()
-            .Where(email => email.FolderId == folder.Id)
+            .Where(email => email.FolderId == folderId)
             .OrderBy(email => email.Uid)
             .Select(email => new EmailDB
             {
@@ -518,85 +555,74 @@ internal sealed class ImapApplicationService(
                 RawMessageObjectEntityTag = email.RawMessageObjectEntityTag,
             })
             .ToListAsync(cancellationToken).ConfigureAwait(false);
-        var maximumUid = messages.Count > 0 ? messages[^1].Uid : 0;
-        var resolvedRanges = selection?.Ranges is { } ranges
-            ? ResolveMessageRanges(ranges.Select(range => (range.Start, range.End)), maximumUid)
-            : null;
-        var savedSearchUids = selection?.SavedSearchUids?.ToHashSet();
+    }
+
+    private async Task<List<ImapExpungedMessage>> StageExpungesAsync(
+        FolderDB folder,
+        List<EmailDB> messages,
+        List<(int Start, int End)>? resolvedRanges,
+        HashSet<int>? savedSearchUids,
+        CancellationToken cancellationToken)
+    {
         var rangeIndex = 0;
         var expunged = new List<ImapExpungedMessage>();
-        var marker = effects.Mark();
-        var commitAttempted = false;
-        try
+        for (var index = 0; index < messages.Count; index++)
         {
-            for (var index = 0; index < messages.Count; index++)
+            var message = messages[index];
+            if (!message.IsDeleted)
+                continue;
+            if (savedSearchUids is not null && !savedSearchUids.Contains(message.Uid))
+                continue;
+            if (resolvedRanges is not null)
             {
-                var message = messages[index];
-                if (!message.IsDeleted)
-                    continue;
-                if (savedSearchUids is not null && !savedSearchUids.Contains(message.Uid))
-                    continue;
-                if (resolvedRanges is not null)
+                while (rangeIndex < resolvedRanges.Count
+                    && resolvedRanges[rangeIndex].End < message.Uid)
                 {
-                    while (rangeIndex < resolvedRanges.Count
-                        && resolvedRanges[rangeIndex].End < message.Uid)
-                    {
-                        rangeIndex++;
-                    }
-                    if (rangeIndex == resolvedRanges.Count
-                        || resolvedRanges[rangeIndex].Start > message.Uid)
-                    {
-                        continue;
-                    }
+                    rangeIndex++;
                 }
-
-                folder.HighestModSeq++;
-                await database.ExpungedUids.AddAsync(new ExpungedUidDB
+                if (rangeIndex == resolvedRanges.Count
+                    || resolvedRanges[rangeIndex].Start > message.Uid)
                 {
-                    Id = Guid.CreateVersion7(),
-                    Uid = message.Uid,
-                    ModSeq = folder.HighestModSeq,
-                    FolderId = folder.Id,
-                }, cancellationToken).ConfigureAwait(false);
-                content.DeleteOnCommit(message);
-                database.Emails.Remove(new EmailDB { Id = message.Id });
-                expunged.Add(new ImapExpungedMessage(
-                    index + 1 - expunged.Count, message.Uid));
+                    continue;
+                }
             }
 
-            if (expunged.Count > 0)
-                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-            if (transaction is not null)
+            folder.HighestModSeq++;
+            await database.ExpungedUids.AddAsync(new ExpungedUidDB
             {
-                commitAttempted = true;
-                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            }
-            await effects.CommitAsync(marker).ConfigureAwait(false);
+                Id = Guid.CreateVersion7(),
+                Uid = message.Uid,
+                ModSeq = folder.HighestModSeq,
+                FolderId = folder.Id,
+            }, cancellationToken).ConfigureAwait(false);
+            content.DeleteOnCommit(message);
+            database.Emails.Remove(new EmailDB { Id = message.Id });
+            expunged.Add(new ImapExpungedMessage(
+                index + 1 - expunged.Count, message.Uid));
         }
-        catch
+        return expunged;
+    }
+
+    private async Task RecoverExpungeAsync(IDbContextTransaction? transaction, int marker, bool commitAttempted)
+    {
+        if (transaction is not null)
         {
-            if (transaction is not null)
+            try
             {
-                try
-                {
-                    await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
-                }
-                // Preserve the original expunge failure if rollback also fails.
+                await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            // Preserve the original expunge failure if rollback also fails.
 #pragma warning disable CA1031
-                catch (Exception rollbackException)
-                {
-                    ApplicationServiceLog.ImapExpungeRollbackFailed(logger, rollbackException);
-                }
-#pragma warning restore CA1031
+            catch (Exception rollbackException)
+            {
+                ApplicationServiceLog.ImapExpungeRollbackFailed(logger, rollbackException);
             }
-            if (commitAttempted)
-                effects.Discard(marker);
-            else
-                await effects.RollbackAsync(marker).ConfigureAwait(false);
-            throw;
+#pragma warning restore CA1031
         }
-
-        return new ImapExpungeResult(true, expunged);
+        if (commitAttempted)
+            effects.Discard(marker);
+        else
+            await effects.RollbackAsync(marker).ConfigureAwait(false);
     }
 
     private static List<(int Start, int End)> ResolveMessageRanges(

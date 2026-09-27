@@ -363,6 +363,25 @@ public sealed class MailQueueAzureBlobPersistenceTests
                 completed.State = MailQueueStates.Completed;
                 completed.CompletedAt = DateTime.UtcNow.AddDays(-2);
                 await completion.SaveChangesAsync();
+                await completion.Database.ExecuteSqlRawAsync(
+                    """
+                    CREATE FUNCTION reject_queue_retention() RETURNS trigger AS $$
+                    BEGIN
+                        RAISE EXCEPTION 'test rollback of queue retention';
+                    END;
+                    $$ LANGUAGE plpgsql;
+                    CREATE TRIGGER reject_queue_retention
+                    BEFORE DELETE ON mail_queue_messages
+                    FOR EACH ROW EXECUTE FUNCTION reject_queue_retention();
+                    """);
+            }
+            await Assert.ThrowsExactlyAsync<DbUpdateException>(() => worker.CleanupCompletedAsync(CancellationToken.None));
+            await using (var failedCleanup = CreateContext(databaseServer.ConnectionString))
+            {
+                Assert.AreEqual(1, await failedCleanup.MailQueueMessages.CountAsync());
+                Assert.HasCount(1, await GetBlobNamesAsync(container, queueId));
+                await failedCleanup.Database.ExecuteSqlRawAsync(
+                    "DROP TRIGGER reject_queue_retention ON mail_queue_messages; DROP FUNCTION reject_queue_retention();");
             }
             await worker.CleanupCompletedAsync(CancellationToken.None);
             await using var cleanupVerification = CreateContext(databaseServer.ConnectionString);

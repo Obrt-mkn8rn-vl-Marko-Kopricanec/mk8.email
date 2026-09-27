@@ -120,6 +120,20 @@ public sealed class ImapExpungePostgresTests
             await Assert.ThrowsAsync<ArgumentException>(() => application.ExpungeDeletedAsync(
                 new ImapExpungeRequest(userId, folderId,
                     new ImapUidSelection([new ImapUidRange(0, 1)], null))));
+            await Assert.ThrowsExactlyAsync<ArgumentException>(() => application.ExpungeDeletedAsync(
+                new ImapExpungeRequest(userId, folderId, new ImapUidSelection([], []))));
+            await Assert.ThrowsExactlyAsync<ArgumentException>(() => application.ExpungeDeletedAsync(
+                new ImapExpungeRequest(userId, folderId, new ImapUidSelection(null, [0]))));
+            var empty = await application.ExpungeDeletedAsync(
+                new ImapExpungeRequest(userId, folderId, new ImapUidSelection(null, [])));
+            Assert.IsTrue(empty.FolderFound);
+            Assert.IsEmpty(empty.Messages);
+            Assert.AreEqual(4, await database.Emails.CountAsync());
+            Assert.AreEqual(0, await database.ExpungedUids.CountAsync());
+            Assert.AreEqual(4L, await database.Folders.AsNoTracking()
+                .Where(folder => folder.Id == folderId).Select(folder => folder.HighestModSeq).SingleAsync());
+            Assert.AreEqual(4, objects.ObjectCount);
+            Assert.AreEqual(0, objects.DeleteCount);
             await database.Database.ExecuteSqlRawAsync(
                 """
                 CREATE FUNCTION reject_imap_expunge() RETURNS trigger AS $$
@@ -161,12 +175,13 @@ public sealed class ImapExpungePostgresTests
             var application = CreateApplication(database, objects, effects);
             var highest = await application.ExpungeDeletedAsync(
                 new ImapExpungeRequest(userId, folderId,
-                    new ImapUidSelection([new ImapUidRange(null, null)], null)));
+                    new ImapUidSelection(
+                        [new ImapUidRange(null, null), new ImapUidRange(4, 4), new ImapUidRange(100, 200)], null)));
             CollectionAssert.AreEqual(
                 new[] { new ImapExpungedMessage(4, 4) }, highest.Messages);
             var saved = await application.ExpungeDeletedAsync(
                 new ImapExpungeRequest(userId, folderId,
-                    new ImapUidSelection(null, [3])));
+                    new ImapUidSelection(null, [3, 3, 999])));
             CollectionAssert.AreEqual(
                 new[] { new ImapExpungedMessage(3, 3) }, saved.Messages);
             var remaining = await application.ExpungeDeletedAsync(

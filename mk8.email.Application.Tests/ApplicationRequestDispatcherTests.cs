@@ -121,6 +121,7 @@ public sealed class ApplicationRequestDispatcherTests
     [DataRow("jmap.session.get")]
     [DataRow("jmap.event.poll")]
     [DataRow("jmap.batch.execute")]
+    [DataRow("jmap.batch.execute.v2")]
     public async Task SupersededPresentationContractsFailClosed(string operation)
     {
         await using var services = new ServiceCollection().BuildServiceProvider();
@@ -143,7 +144,11 @@ public sealed class ApplicationRequestDispatcherTests
                 "person@example.test",
                 "secret"),
             new JmapApplicationBatch(["urn:ietf:params:jmap:core"],
-                [new JmapApplicationInvocation("Core/echo", new System.Text.Json.Nodes.JsonObject { ["ok"] = true }, "c1")],
+                [new JmapApplicationCall("Core/echo", new System.Text.Json.Nodes.JsonObject
+                {
+                    ["ok"] = true, ["x"] = 1, ["X"] = 2,
+                    ["nested"] = new System.Text.Json.Nodes.JsonObject { ["key"] = 3, ["Key"] = 4 },
+                }, "c1")],
                 new Dictionary<string, string> { ["created"] = "object-id" }));
         var request = NewRequest(
             ApplicationOperations.JmapBatchExecute,
@@ -160,15 +165,21 @@ public sealed class ApplicationRequestDispatcherTests
         Assert.AreEqual("Core/echo", service.Request.Batch.Invocations[0].Name);
         Assert.AreEqual("c1", service.Request.Batch.Invocations[0].CorrelationId);
         Assert.IsTrue(service.Request.Batch.Invocations[0].Arguments["ok"]!.GetValue<bool>());
+        Assert.AreEqual(1, service.Request.Batch.Invocations[0].Arguments["x"]!.GetValue<int>());
+        Assert.AreEqual(2, service.Request.Batch.Invocations[0].Arguments["X"]!.GetValue<int>());
+        Assert.AreEqual(3, service.Request.Batch.Invocations[0].Arguments["nested"]!["key"]!.GetValue<int>());
+        Assert.AreEqual(4, service.Request.Batch.Invocations[0].Arguments["nested"]!["Key"]!.GetValue<int>());
         Assert.AreEqual("object-id", service.Request.Batch.CreatedIds?["created"]);
         var result = JsonSerializer.Deserialize<JmapApplicationResult>(
             response.Payload,
-            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = false });
         Assert.AreEqual(JmapApplicationOutcomes.Ok, result?.Outcome);
         Assert.IsNotNull(result?.Batch);
         Assert.AreEqual("worker-person", result.Batch.Profile.Username);
         Assert.AreEqual("Core/echo", result.Batch.Invocations[0].Name);
         Assert.IsTrue(result.Batch.Invocations[0].Arguments["ok"]!.GetValue<bool>());
+        Assert.AreEqual(1, result.Batch.Invocations[0].Arguments["x"]!.GetValue<int>());
+        Assert.AreEqual(2, result.Batch.Invocations[0].Arguments["X"]!.GetValue<int>());
         Assert.IsNull(result.Content);
     }
 
@@ -243,7 +254,8 @@ public sealed class ApplicationRequestDispatcherTests
             Request = request;
             return Task.FromResult(new JmapApplicationResult(
                 JmapApplicationOutcomes.Ok,
-                Batch: new JmapApplicationBatchResult(request.Batch!.Invocations,
+                Batch: new JmapApplicationBatchResult(request.Batch!.Invocations.Select(call =>
+                    new JmapApplicationInvocation(call.Name, call.Arguments, call.CorrelationId)).ToArray(),
                     new JmapApplicationProfile("worker-person",
                         new JmapServiceLimits(10000, 1, 10000, 1, 64, 500, 500, 32, 255, 10000,
                             ["i;ascii-numeric"], ["receivedAt"]), []))));

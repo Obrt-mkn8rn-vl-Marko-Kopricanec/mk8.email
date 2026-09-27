@@ -38,7 +38,7 @@ public sealed class JmapProfileBoundaryTests
         var session = GatewayJmapProfileCodec.Render(profile, gateway);
         var batch = await scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>().ProcessAsync(
             new JmapApplicationBatch([JmapConstants.CoreCapability],
-                [new JmapApplicationInvocation("Core/echo", new JsonObject { ["ok"] = true }, "one")]), fixture.User);
+                [new JmapApplicationCall("Core/echo", new JsonObject { ["ok"] = true }, "one")]), fixture.User);
         var response = GatewayJmapBatchCodec.Render(batch, gateway);
 
         Assert.AreEqual("https://edge.example.test/mail/jmap/api", session["apiUrl"]!.GetValue<string>());

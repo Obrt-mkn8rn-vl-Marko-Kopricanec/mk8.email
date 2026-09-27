@@ -336,6 +336,20 @@ public sealed class ArchitectureBoundaryTests
     }
 
     [TestMethod]
+    public void ArgumentBindingSyntaxIsOwnedByGatewayAndWorkerReceivesTypedSelectors()
+    {
+        Assert.AreEqual(typeof(JmapApplicationCall[]), typeof(JmapApplicationBatch).GetProperty("Invocations")?.PropertyType);
+        Assert.AreEqual(typeof(ApplicationArgumentBinding[]), typeof(JmapApplicationCall).GetProperty("Bindings")?.PropertyType);
+        Assert.AreEqual(typeof(ApplicationValuePathSegment[]), typeof(ApplicationArgumentBinding).GetProperty("Path")?.PropertyType);
+        Assert.IsNull(typeof(ApplicationValuePathSegment).GetProperty("Pointer"));
+        Assert.AreEqual("mk8.email.Gateway", typeof(
+            mk8.email.Gateway.Protocols.Jmap.GatewayJmapArgumentBindingCodec).Assembly.GetName().Name);
+        Assert.IsFalse(typeof(mk8.email.Jmap.JmapRequestProcessor)
+            .GetMethods(System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+            .Any(method => method.Name is "TryResolveResultReferences" or "TryApplyJsonPointer" or "TryDecodePointerToken"));
+    }
+
+    [TestMethod]
     public void GatewayOwnsDavPresentationWithoutDependingOnDavApplicationLogic()
     {
         var endpointAssembly = typeof(

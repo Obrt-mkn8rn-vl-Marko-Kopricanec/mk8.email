@@ -27,7 +27,7 @@ internal static class GatewayJmapBatchCodec
         // before Gateway reveals a later malformed-invocation/createdIds error.
         preflight = new JmapBatchPreflight(capabilities, calls.Count);
 
-        var invocations = new JmapApplicationInvocation[calls.Count];
+        var invocations = new JmapApplicationCall[calls.Count];
         for (var index = 0; index < calls.Count; index++)
         {
             if (calls[index] is not JsonArray { Count: 3 } invocation
@@ -39,8 +39,7 @@ internal static class GatewayJmapBatchCodec
                 || !correlationValue.TryGetValue<string>(out var correlationId)
                 || correlationId is null)
                 throw NotRequest("A methodCalls entry is not a valid Invocation object.");
-            invocations[index] = new JmapApplicationInvocation(
-                name, (JsonObject)arguments.DeepClone(), correlationId);
+            invocations[index] = GatewayJmapArgumentBindingCodec.ParseCall(name, arguments, correlationId);
         }
 
         Dictionary<string, string>? createdIds = null;

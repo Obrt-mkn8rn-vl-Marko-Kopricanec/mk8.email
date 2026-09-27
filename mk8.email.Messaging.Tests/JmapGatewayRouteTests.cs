@@ -16,6 +16,7 @@ using mk8.email.Contracts.Messaging;
 using mk8.email.Gateway.ApplicationBridge;
 using mk8.email.Gateway.Protocols;
 using mk8.email.Gateway.Protocols.Jmap;
+using mk8.email.Jmap;
 using Npgsql;
 
 namespace mk8.email.Messaging.Tests;
@@ -107,7 +108,8 @@ public sealed class JmapGatewayRouteTests
             const string requestDocument =
                 """
                 {"using":["urn:ietf:params:jmap:core"],
-                 "methodCalls":[["Core/echo",{"nested":{"items":[1,null,"text"]}},"call-1"]],
+                 "methodCalls":[["Core/echo",{"x":1,"X":2,"nested":{"items":[1,null,"text"],"key":3,"Key":4}},"call-1"],
+                   ["Core/echo",{"#copied":{"resultOf":"call-1","name":"Core/echo","path":"/nested/items/2"}},"call-2"]],
                  "createdIds":{"made":"object-id"}}
                 """;
             using var request = new HttpRequestMessage(HttpMethod.Post, "/jmap/api")
@@ -145,15 +147,32 @@ public sealed class JmapGatewayRouteTests
             Assert.AreEqual("route-password-secret", jmap.Request?.Authentication.Secret);
             Assert.IsNotNull(jmap.Request?.Batch);
             CollectionAssert.AreEqual(new[] { "urn:ietf:params:jmap:core" }, jmap.Request.Batch.Capabilities);
-            Assert.AreEqual(1, jmap.Request.Batch.Invocations.Length);
+            Assert.AreEqual(2, jmap.Request.Batch.Invocations.Length);
             Assert.AreEqual("Core/echo", jmap.Request.Batch.Invocations[0].Name);
             Assert.AreEqual("call-1", jmap.Request.Batch.Invocations[0].CorrelationId);
             Assert.AreEqual("text", jmap.Request.Batch.Invocations[0].Arguments["nested"]?["items"]?[2]?.GetValue<string>());
+            Assert.AreEqual(1, jmap.Request.Batch.Invocations[0].Arguments["x"]!.GetValue<int>());
+            Assert.AreEqual(2, jmap.Request.Batch.Invocations[0].Arguments["X"]!.GetValue<int>());
+            Assert.AreEqual(3, jmap.Request.Batch.Invocations[0].Arguments["nested"]!["key"]!.GetValue<int>());
+            Assert.AreEqual(4, jmap.Request.Batch.Invocations[0].Arguments["nested"]!["Key"]!.GetValue<int>());
+            Assert.IsFalse(jmap.Request.Batch.Invocations[1].Arguments.ContainsKey("#copied"));
+            var binding = jmap.Request.Batch.Invocations[1].Bindings!.Single();
+            Assert.AreEqual("copied", binding.Target);
+            Assert.AreEqual("call-1", binding.SourceCorrelationId);
+            Assert.AreEqual("Core/echo", binding.SourceName);
+            CollectionAssert.AreEqual(new[] { "nested", "items", "2" }, binding.Path.Select(part => part.Property).ToArray());
+            Assert.AreEqual(2, binding.Path[2].ArrayIndex);
             Assert.AreEqual("object-id", jmap.Request.Batch.CreatedIds?["made"]);
             var invocation = json.RootElement.GetProperty("methodResponses")[0];
             Assert.AreEqual("Core/echo", invocation[0].GetString());
             Assert.AreEqual("call-1", invocation[2].GetString());
             Assert.AreEqual(JsonValueKind.Null, invocation[1].GetProperty("nested").GetProperty("items")[1].ValueKind);
+            Assert.AreEqual(1, invocation[1].GetProperty("x").GetInt32());
+            Assert.AreEqual(2, invocation[1].GetProperty("X").GetInt32());
+            Assert.AreEqual(3, invocation[1].GetProperty("nested").GetProperty("key").GetInt32());
+            Assert.AreEqual(4, invocation[1].GetProperty("nested").GetProperty("Key").GetInt32());
+            Assert.AreEqual("text", json.RootElement.GetProperty("methodResponses")[1][1].GetProperty("copied").GetString());
+            Assert.AreEqual("call-2", json.RootElement.GetProperty("methodResponses")[1][2].GetString());
             Assert.AreEqual("object-id", json.RootElement.GetProperty("createdIds").GetProperty("made").GetString());
 
             await using var countCommand = gatewayDataSource.CreateCommand(
@@ -167,7 +186,7 @@ public sealed class JmapGatewayRouteTests
             Assert.AreEqual(7L, countReader.GetInt64(1));
 
             await using var operationCommand = gatewayDataSource.CreateCommand(
-                "SELECT operation FROM application_requests WHERE operation = 'jmap.batch.execute.v2' LIMIT 1");
+                "SELECT operation FROM application_requests WHERE operation = 'jmap.batch.execute.v3' LIMIT 1");
             Assert.AreEqual(
                 ApplicationOperations.JmapBatchExecute,
                 await operationCommand.ExecuteScalarAsync(timeout.Token));
@@ -221,9 +240,15 @@ public sealed class JmapGatewayRouteTests
             CancellationToken cancellationToken = default)
         {
             Request = request;
+            var results = new List<JmapApplicationInvocation>();
+            foreach (var call in request.Batch!.Invocations)
+            {
+                Assert.IsTrue(ApplicationArgumentBindingResolver.TryResolve(call, results, out var arguments, out _));
+                results.Add(new JmapApplicationInvocation(call.Name, JmapJson.SanitizeResponse(arguments), call.CorrelationId));
+            }
             return Task.FromResult(new JmapApplicationResult(
                 JmapApplicationOutcomes.Ok,
-                Batch: new JmapApplicationBatchResult(request.Batch!.Invocations, Profile, request.Batch.CreatedIds)));
+                Batch: new JmapApplicationBatchResult(results.ToArray(), Profile, request.Batch.CreatedIds)));
         }
 
         public Task<JmapApplicationResult> UploadAsync(

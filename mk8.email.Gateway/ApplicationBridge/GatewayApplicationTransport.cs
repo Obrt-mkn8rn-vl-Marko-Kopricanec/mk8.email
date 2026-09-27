@@ -10,7 +10,12 @@ public sealed class GatewayApplicationTransport(
     GatewayApplicationOptions options) : IGatewayApplicationTransport
 {
     private const string JsonContentType = "application/json";
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    // Internal envelopes use canonical camelCase; opaque argument/result keys
+    // must retain ordinal identity, including legal case-distinct properties.
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        PropertyNameCaseInsensitive = false,
+    };
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The durable presentation boundary keeps its ordered validation, journaling and failure handling together.")]
     public async Task<TResponse> SendAsync<TRequest, TResponse>(

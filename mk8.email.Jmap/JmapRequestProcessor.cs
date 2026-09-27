@@ -44,13 +44,17 @@ public sealed class JmapRequestProcessor
         if (batch.Invocations is null)
             throw NotRequest("The application batch must contain invocations.");
         var capabilities = ValidateHeader(batch.Capabilities, batch.Invocations.Length);
-        var invocations = new List<JmapApplicationInvocation>(batch.Invocations.Length);
+        var invocations = new List<JmapApplicationCall>(batch.Invocations.Length);
         foreach (var invocation in batch.Invocations)
         {
             if (invocation is null || invocation.Name is null
                 || invocation.Arguments is null || invocation.CorrelationId is null)
                 throw NotRequest("An application invocation is incomplete.");
-            invocations.Add(invocation with { Arguments = (JsonObject)invocation.Arguments.DeepClone() });
+            invocations.Add(invocation with
+            {
+                Arguments = (JsonObject)invocation.Arguments.DeepClone(),
+                Bindings = CloneBindings(invocation.Bindings),
+            });
         }
 
         var createdIds = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -65,17 +69,17 @@ public sealed class JmapRequestProcessor
         }
         var context = new JmapInvocationContext(user, capabilities, createdIds);
         var responses = new List<JmapApplicationInvocation>();
-        var previousResponses = new List<CompletedInvocation>();
 
         foreach (var invocation in invocations)
         {
             JmapMethodResponse response;
-            if (!TryResolveResultReferences(
-                    invocation.Arguments,
-                    previousResponses,
+            if (!ApplicationArgumentBindingResolver.TryResolve(
+                    invocation,
+                    responses,
                     out var resolvedArguments,
                     out var referenceFailure))
-                response = JmapMethodResponse.Error(referenceFailure);
+                response = JmapMethodResponse.Error(referenceFailure == ApplicationBindingFailure.InvalidTarget
+                    ? "invalidArguments" : "invalidResultReference");
             else if (!_methods.TryGetValue(invocation.Name, out var method)
                 || !capabilities.Contains(method.Capability))
                 response = JmapMethodResponse.Error("unknownMethod");
@@ -94,7 +98,6 @@ public sealed class JmapRequestProcessor
             {
                 var arguments = JmapJson.SanitizeResponse(completed.Arguments);
                 responses.Add(new JmapApplicationInvocation(completed.Name, arguments, invocation.CorrelationId));
-                previousResponses.Add(new CompletedInvocation(invocation.CorrelationId, completed.Name, arguments));
             }
         }
 
@@ -250,172 +253,29 @@ public sealed class JmapRequestProcessor
         _database.ChangeTracker.Clear();
     }
 
-    private static bool TryResolveResultReferences(
-        JsonObject arguments,
-        IReadOnlyList<CompletedInvocation> previousResponses,
-        out JsonObject resolvedArguments,
-        out string failure)
+    private static ApplicationArgumentBinding[]? CloneBindings(ApplicationArgumentBinding[]? bindings)
     {
-        resolvedArguments = (JsonObject)arguments.DeepClone();
-        failure = "invalidResultReference";
-        foreach (var property in arguments.ToList())
+        if (bindings is null)
+            return null;
+        var result = new ApplicationArgumentBinding[bindings.Length];
+        for (var index = 0; index < bindings.Length; index++)
         {
-            if (!property.Key.StartsWith('#'))
-                continue;
-
-            var targetName = property.Key[1..];
-            if (targetName.Length == 0 || arguments.ContainsKey(targetName))
+            var binding = bindings[index];
+            if (binding is null || binding.Target is null || binding.SourceCorrelationId is null
+                || binding.SourceName is null || binding.Path is null || !Enum.IsDefined(binding.Failure))
+                throw NotRequest("An application argument binding is incomplete.");
+            var path = new ApplicationValuePathSegment[binding.Path.Length];
+            for (var segmentIndex = 0; segmentIndex < path.Length; segmentIndex++)
             {
-                failure = "invalidArguments";
-                return false;
+                var segment = binding.Path[segmentIndex];
+                if (segment is null || segment.Property is null || segment.ArrayIndex is < 0
+                    || segment.ArrayIndex is not null && segment.AllArrayItems)
+                    throw NotRequest("An application value selector is incomplete or ambiguous.");
+                path[segmentIndex] = segment;
             }
-            if (property.Value is not JsonObject reference
-                || !TryGetRequiredString(reference, "resultOf", out var resultOf)
-                || !TryGetRequiredString(reference, "name", out var responseName)
-                || !TryGetRequiredString(reference, "path", out var path)
-                || reference.Any(item => item.Key is not ("resultOf" or "name" or "path")))
-            {
-                return false;
-            }
-
-            var response = previousResponses.FirstOrDefault(item => item.CallId == resultOf);
-            if (response is null
-                || response.Name != responseName
-                || !TryApplyJsonPointer(response.Arguments, path, out var referencedValue))
-            {
-                return false;
-            }
-
-            resolvedArguments.Remove(property.Key);
-            resolvedArguments[targetName] = referencedValue;
+            result[index] = binding with { Path = path };
         }
-
-        failure = string.Empty;
-        return true;
-    }
-
-    private static bool TryApplyJsonPointer(JsonNode root, string pointer, out JsonNode? value)
-    {
-        value = null;
-        if (pointer.Length == 0)
-        {
-            value = root.DeepClone();
-            return true;
-        }
-        if (pointer[0] != '/')
-            return false;
-
-        var tokens = pointer[1..].Split('/');
-        var decoded = new List<string>(tokens.Length);
-        foreach (var token in tokens)
-        {
-            if (!TryDecodePointerToken(token, out var decodedToken))
-                return false;
-            decoded.Add(decodedToken);
-        }
-
-        return TryApplyPointerTokens(root, decoded, 0, out value);
-    }
-
-    private static bool TryApplyPointerTokens(
-        JsonNode? current,
-        IReadOnlyList<string> tokens,
-        int index,
-        out JsonNode? value)
-    {
-        value = null;
-        if (index == tokens.Count)
-        {
-            value = current?.DeepClone();
-            return true;
-        }
-
-        var token = tokens[index];
-        if (current is JsonArray array && token == "*")
-        {
-            var mapped = new JsonArray();
-            foreach (var item in array)
-            {
-                if (!TryApplyPointerTokens(item, tokens, index + 1, out var mappedItem))
-                    return false;
-                if (mappedItem is JsonArray mappedArray)
-                {
-                    foreach (var nested in mappedArray)
-                        mapped.Add(nested?.DeepClone());
-                }
-                else
-                {
-                    mapped.Add(mappedItem);
-                }
-            }
-            value = mapped;
-            return true;
-        }
-
-        if (current is JsonObject jsonObject
-            && jsonObject.TryGetPropertyValue(token, out var propertyValue))
-        {
-            return TryApplyPointerTokens(propertyValue, tokens, index + 1, out value);
-        }
-
-        if (current is JsonArray jsonArray
-            && int.TryParse(token, System.Globalization.NumberStyles.None, null, out var arrayIndex)
-            && (token == "0" || token.Length > 0 && token[0] != '0')
-            && arrayIndex >= 0
-            && arrayIndex < jsonArray.Count)
-        {
-            return TryApplyPointerTokens(jsonArray[arrayIndex], tokens, index + 1, out value);
-        }
-
-        return false;
-    }
-
-    private static bool TryDecodePointerToken(string token, out string decoded)
-    {
-        var builder = new System.Text.StringBuilder(token.Length);
-        for (var index = 0; index < token.Length; index++)
-        {
-            var character = token[index];
-            if (character != '~')
-            {
-                builder.Append(character);
-                continue;
-            }
-
-            if (++index >= token.Length)
-            {
-                decoded = string.Empty;
-                return false;
-            }
-            builder.Append(token[index] switch
-            {
-                '0' => '~',
-                '1' => '/',
-                _ => '\0',
-            });
-            if (builder[^1] == '\0')
-            {
-                decoded = string.Empty;
-                return false;
-            }
-        }
-
-        decoded = builder.ToString();
-        return true;
-    }
-
-    private static bool TryGetRequiredString(JsonObject value, string name, out string result)
-    {
-        result = string.Empty;
-        if (value[name] is not JsonValue jsonValue
-            || !jsonValue.TryGetValue<string>(out var parsed)
-            || parsed is null)
-        {
-            return false;
-        }
-
-        result = parsed;
-        return true;
+        return result;
     }
 
     private static JmapRequestException NotRequest(string detail) =>
@@ -424,5 +284,4 @@ public sealed class JmapRequestProcessor
             "Invalid JMAP request",
             detail);
 
-    private sealed record CompletedInvocation(string CallId, string Name, JsonObject Arguments);
 }

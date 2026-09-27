@@ -14,7 +14,12 @@ namespace mk8.email.Application.Services;
 public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IApplicationRequestDispatcher
 {
     private const string JsonContentType = "application/json";
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    // Internal envelopes use canonical camelCase; opaque argument/result keys
+    // must retain ordinal identity, including legal case-distinct properties.
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        PropertyNameCaseInsensitive = false,
+    };
     private IDavApplicationService Dav => services.GetRequiredService<IDavApplicationService>();
 
     public async Task<ApplicationResponse> DispatchAsync(

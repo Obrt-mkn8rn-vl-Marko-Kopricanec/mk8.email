@@ -23,8 +23,8 @@ public sealed class JmapPresentationBoundaryTests
         using var scope = fixture.Services.CreateScope();
         var processor = scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>();
         var batch = new JmapApplicationBatch([JmapConstants.CoreCapability],
-            [new JmapApplicationInvocation("Test/probe", new JsonObject(), "first"),
-             new JmapApplicationInvocation("Core/echo", null!, "second")]);
+            [new JmapApplicationCall("Test/probe", new JsonObject(), "first"),
+             new JmapApplicationCall("Core/echo", null!, "second")]);
         var exception = await Assert.ThrowsAsync<JmapRequestException>(() => processor.ProcessAsync(batch, fixture.User));
 
         Assert.AreEqual("urn:ietf:params:jmap:error:notRequest", exception.Type);

@@ -31,8 +31,37 @@ public sealed record JmapBatchPreflight(
 
 public sealed record JmapApplicationBatch(
     string[] Capabilities,
-    JmapApplicationInvocation[] Invocations,
+    JmapApplicationCall[] Invocations,
     IReadOnlyDictionary<string, string>? CreatedIds = null);
+
+public sealed record JmapApplicationCall(
+    string Name,
+    JsonObject Arguments,
+    string CorrelationId,
+    ApplicationArgumentBinding[]? Bindings = null);
+
+// Gateway translates wire syntax into ordered application data dependencies.
+// A deferred preparation failure stays at its original dependency position.
+public enum ApplicationBindingFailure
+{
+    None,
+    InvalidTarget,
+    InvalidSource,
+}
+
+public sealed record ApplicationArgumentBinding(
+    string Target,
+    string SourceCorrelationId,
+    string SourceName,
+    ApplicationValuePathSegment[] Path,
+    ApplicationBindingFailure Failure = ApplicationBindingFailure.None);
+
+// A result's shape determines whether a segment selects an object property,
+// one array item, or every array item. No wire pointer is interpreted by Worker.
+public sealed record ApplicationValuePathSegment(
+    string Property,
+    int? ArrayIndex = null,
+    bool AllArrayItems = false);
 
 public sealed record JmapApplicationInvocation(
     string Name,

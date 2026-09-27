@@ -105,7 +105,11 @@ public sealed class JmapGatewayRouteTests
                 Timeout = TimeSpan.FromSeconds(10),
             };
             const string requestDocument =
-                "{\"using\":[\"urn:ietf:params:jmap:core\"],\"methodCalls\":[]}";
+                """
+                {"using":["urn:ietf:params:jmap:core"],
+                 "methodCalls":[["Core/echo",{"nested":{"items":[1,null,"text"]}},"call-1"]],
+                 "createdIds":{"made":"object-id"}}
+                """;
             using var request = new HttpRequestMessage(HttpMethod.Post, "/jmap/api")
             {
                 Content = new StringContent(requestDocument, Encoding.UTF8, "application/json"),
@@ -123,9 +127,18 @@ public sealed class JmapGatewayRouteTests
                 json.RootElement.GetProperty("sessionState").GetString());
             Assert.AreEqual("person@example.test", jmap.Request?.Authentication.Username);
             Assert.AreEqual("route-password-secret", jmap.Request?.Authentication.Secret);
-            Assert.AreEqual(
-                requestDocument,
-                Encoding.UTF8.GetString(jmap.Request?.Document ?? []));
+            Assert.IsNotNull(jmap.Request?.Batch);
+            CollectionAssert.AreEqual(new[] { "urn:ietf:params:jmap:core" }, jmap.Request.Batch.Capabilities);
+            Assert.AreEqual(1, jmap.Request.Batch.Invocations.Length);
+            Assert.AreEqual("Core/echo", jmap.Request.Batch.Invocations[0].Name);
+            Assert.AreEqual("call-1", jmap.Request.Batch.Invocations[0].CorrelationId);
+            Assert.AreEqual("text", jmap.Request.Batch.Invocations[0].Arguments["nested"]?["items"]?[2]?.GetValue<string>());
+            Assert.AreEqual("object-id", jmap.Request.Batch.CreatedIds?["made"]);
+            var invocation = json.RootElement.GetProperty("methodResponses")[0];
+            Assert.AreEqual("Core/echo", invocation[0].GetString());
+            Assert.AreEqual("call-1", invocation[2].GetString());
+            Assert.AreEqual(JsonValueKind.Null, invocation[1].GetProperty("nested").GetProperty("items")[1].ValueKind);
+            Assert.AreEqual("object-id", json.RootElement.GetProperty("createdIds").GetProperty("made").GetString());
 
             await using var countCommand = gatewayDataSource.CreateCommand(
                 "SELECT count(*), count(*) FILTER (WHERE metadata ->> 'layer' = 'presentation') "
@@ -138,7 +151,7 @@ public sealed class JmapGatewayRouteTests
             await using var operationCommand = gatewayDataSource.CreateCommand(
                 "SELECT operation FROM application_requests LIMIT 1");
             Assert.AreEqual(
-                ApplicationOperations.JmapApiProcess,
+                ApplicationOperations.JmapBatchExecute,
                 await operationCommand.ExecuteScalarAsync(timeout.Token));
             await using var ciphertextCommand = gatewayDataSource.CreateCommand(
                 "SELECT payload_inline FROM gateway_traffic_records WHERE payload_inline IS NOT NULL");
@@ -174,22 +187,21 @@ public sealed class JmapGatewayRouteTests
 
     private sealed class StubJmapApplicationService : IJmapApplicationService
     {
-        public JmapApiApplicationRequest? Request { get; private set; }
+        public JmapBatchApplicationRequest? Request { get; private set; }
 
         public Task<JmapApplicationResult> GetSessionAsync(
             JmapSessionApplicationRequest request,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
 
-        public Task<JmapApplicationResult> ProcessApiRequestAsync(
-            JmapApiApplicationRequest request,
+        public Task<JmapApplicationResult> ExecuteBatchAsync(
+            JmapBatchApplicationRequest request,
             CancellationToken cancellationToken = default)
         {
             Request = request;
             return Task.FromResult(new JmapApplicationResult(
                 JmapApplicationOutcomes.Ok,
-                "{\"methodResponses\":[],\"sessionState\":\"remote-worker\"}"u8.ToArray(),
-                "application/json"));
+                Batch: new JmapApplicationBatchResult(request.Batch!.Invocations, "remote-worker", request.Batch.CreatedIds)));
         }
 
         public Task<JmapApplicationResult> UploadAsync(

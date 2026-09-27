@@ -1,0 +1,149 @@
+using System.Buffers;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using mk8.email.Configuration;
+
+namespace mk8.email.Gateway.Protocols.Jmap;
+
+internal static class GatewayJmapJson
+{
+    public static JsonNode? ParseRequest(
+        byte[] document,
+        JmapConfig configuration)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        if (document.LongLength > configuration.MaxRequestSizeBytes)
+            throw Limit();
+        if (document.Length == 0)
+            throw NotJson("The request body is empty.");
+
+        try
+        {
+            using var parsedDocument = JsonDocument.Parse(document, new JsonDocumentOptions
+            {
+                AllowTrailingCommas = false,
+                CommentHandling = JsonCommentHandling.Disallow,
+                MaxDepth = 64,
+            });
+            if (!HasUniqueObjectProperties(parsedDocument.RootElement))
+                throw NotJson("JSON objects must not contain duplicate property names.");
+            if (!HasValidNumbers(parsedDocument.RootElement))
+                throw NotJson("JSON numbers must be finite IEEE 754 values.");
+            if (!HasValidUnicode(parsedDocument.RootElement))
+                throw NotJson("JSON strings must contain only I-JSON Unicode characters.");
+
+            return JsonNode.Parse(document, documentOptions: new JsonDocumentOptions
+            {
+                AllowTrailingCommas = false,
+                CommentHandling = JsonCommentHandling.Disallow,
+                MaxDepth = 64,
+            });
+        }
+        catch (GatewayJmapBatchCodec.RequestException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is JsonException or InvalidOperationException)
+        {
+            throw NotJson("The request body is not valid I-JSON.", exception);
+        }
+    }
+
+    private static bool HasUniqueObjectProperties(JsonElement element)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                var names = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var property in element.EnumerateObject())
+                {
+                    if (!names.Add(property.Name) || !HasUniqueObjectProperties(property.Value))
+                        return false;
+                }
+                return true;
+            case JsonValueKind.Array:
+                foreach (var item in element.EnumerateArray())
+                {
+                    if (!HasUniqueObjectProperties(item))
+                        return false;
+                }
+                return true;
+            default:
+                return true;
+        }
+    }
+
+    private static bool HasValidNumbers(JsonElement element)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                return element.EnumerateObject().All(property => HasValidNumbers(property.Value));
+            case JsonValueKind.Array:
+                return element.EnumerateArray().All(HasValidNumbers);
+            case JsonValueKind.Number:
+                return element.TryGetDouble(out var value) && double.IsFinite(value);
+            default:
+                return true;
+        }
+    }
+
+    private static bool HasValidUnicode(JsonElement element)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var property in element.EnumerateObject())
+                {
+                    if (!ContainsOnlyIJsonCharacters(property.Name)
+                        || !HasValidUnicode(property.Value))
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            case JsonValueKind.Array:
+                return element.EnumerateArray().All(HasValidUnicode);
+            case JsonValueKind.String:
+                return ContainsOnlyIJsonCharacters(element.GetString()!);
+            default:
+                return true;
+        }
+    }
+
+    private static bool ContainsOnlyIJsonCharacters(string value)
+    {
+        var remaining = value.AsSpan();
+        while (!remaining.IsEmpty)
+        {
+            var status = Rune.DecodeFromUtf16(remaining, out var rune, out var consumed);
+            if (status != OperationStatus.Done || IsUnicodeNoncharacter(rune.Value))
+                return false;
+            remaining = remaining[consumed..];
+        }
+        return true;
+    }
+
+    private static bool IsUnicodeNoncharacter(int value) =>
+        value is >= 0xFDD0 and <= 0xFDEF
+        || (value & 0xFFFE) == 0xFFFE;
+
+    private static GatewayJmapBatchCodec.RequestException Limit() =>
+        new(
+            "urn:ietf:params:jmap:error:limit",
+            "Request limit exceeded",
+            "The JMAP request is larger than the server limit.",
+            "maxSizeRequest");
+
+    private static GatewayJmapBatchCodec.RequestException NotJson(string detail, Exception? innerException = null)
+    {
+        var exception = new GatewayJmapBatchCodec.RequestException(
+            "urn:ietf:params:jmap:error:notJSON",
+            "Invalid JSON",
+            detail);
+        if (innerException is not null)
+            exception.Data[nameof(innerException)] = innerException.GetType().Name;
+        return exception;
+    }
+}

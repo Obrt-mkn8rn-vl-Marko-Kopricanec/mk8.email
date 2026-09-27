@@ -305,6 +305,21 @@ public sealed class ArchitectureBoundaryTests
     }
 
     [TestMethod]
+    public void JmapBatchBoundaryHasNoRawApiDocumentOrHttpStatus()
+    {
+        Assert.IsNull(typeof(mk8.email.Contracts.Messaging.JmapBatchApplicationRequest).GetProperty("Document"));
+        Assert.AreEqual(
+            typeof(mk8.email.Contracts.Messaging.JmapApplicationBatch),
+            typeof(mk8.email.Contracts.Messaging.JmapBatchApplicationRequest).GetProperty("Batch")?.PropertyType);
+        Assert.IsNull(typeof(mk8.email.Jmap.JmapRequestException).GetProperty("StatusCode"));
+        Assert.IsNull(typeof(mk8.email.Jmap.JmapJson).GetMethod("ParseRequest"));
+        Assert.AreEqual("mk8.email.Gateway", typeof(
+            mk8.email.Gateway.Protocols.Jmap.GatewayJmapJson).Assembly.GetName().Name);
+        Assert.AreEqual("mk8.email.Gateway", typeof(
+            mk8.email.Gateway.Protocols.Jmap.GatewayJmapBatchCodec).Assembly.GetName().Name);
+    }
+
+    [TestMethod]
     public void GatewayOwnsDavPresentationWithoutDependingOnDavApplicationLogic()
     {
         var endpointAssembly = typeof(

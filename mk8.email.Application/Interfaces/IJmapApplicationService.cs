@@ -8,8 +8,8 @@ public interface IJmapApplicationService
         JmapSessionApplicationRequest request,
         CancellationToken cancellationToken = default);
 
-    Task<JmapApplicationResult> ProcessApiRequestAsync(
-        JmapApiApplicationRequest request,
+    Task<JmapApplicationResult> ExecuteBatchAsync(
+        JmapBatchApplicationRequest request,
         CancellationToken cancellationToken = default);
 
     Task<JmapApplicationResult> UploadAsync(

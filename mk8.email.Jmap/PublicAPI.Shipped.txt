@@ -99,14 +99,13 @@ mk8.email.Jmap.JmapMethodResponse.Name.get -> string!
 mk8.email.Jmap.JmapMethodResponse.Name.init -> void
 mk8.email.Jmap.JmapRequestException
 mk8.email.Jmap.JmapRequestException.Detail.get -> string?
-mk8.email.Jmap.JmapRequestException.JmapRequestException(string! type, int statusCode, string! title, string? detail = null, string? limit = null) -> void
+mk8.email.Jmap.JmapRequestException.JmapRequestException(string! type, string! title, string? detail = null, string? limit = null) -> void
 mk8.email.Jmap.JmapRequestException.Limit.get -> string?
-mk8.email.Jmap.JmapRequestException.StatusCode.get -> int
 mk8.email.Jmap.JmapRequestException.Title.get -> string!
 mk8.email.Jmap.JmapRequestException.Type.get -> string!
 mk8.email.Jmap.JmapRequestProcessor
 mk8.email.Jmap.JmapRequestProcessor.JmapRequestProcessor(System.Collections.Generic.IEnumerable<mk8.email.Jmap.IJmapMethod!>! methods, mk8.email.Jmap.JmapSessionService! sessions, mk8.email.Infrastructure.Data.EmailDbContext! database, mk8.email.Configuration.EnvironmentConfig! environment, mk8.email.Application.Services.LargeObjectTransactionEffects! blobEffects, Microsoft.Extensions.Logging.ILogger<mk8.email.Jmap.JmapRequestProcessor!>! logger) -> void
-mk8.email.Jmap.JmapRequestProcessor.ProcessAsync(System.Text.Json.Nodes.JsonNode? requestNode, mk8.email.Application.Interfaces.AuthenticatedMailUser! user, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Text.Json.Nodes.JsonObject!>!
+mk8.email.Jmap.JmapRequestProcessor.ProcessAsync(mk8.email.Contracts.Messaging.JmapApplicationBatch! batch, mk8.email.Application.Interfaces.AuthenticatedMailUser! user, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Contracts.Messaging.JmapApplicationBatchResult!>!
 mk8.email.Jmap.JmapServiceExtensions
 mk8.email.Jmap.JmapSessionDocument
 mk8.email.Jmap.JmapSessionDocument.<Clone>$() -> mk8.email.Jmap.JmapSessionDocument!

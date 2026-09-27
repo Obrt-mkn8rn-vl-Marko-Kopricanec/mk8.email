@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using mk8.email.Contracts.Messaging;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
@@ -34,60 +35,37 @@ public sealed class JmapRequestProcessor
         _logger = logger;
     }
 
-    public async Task<JsonObject> ProcessAsync(
-        JsonNode? requestNode,
+    public async Task<JmapApplicationBatchResult> ProcessAsync(
+        JmapApplicationBatch batch,
         AuthenticatedMailUser user,
         CancellationToken cancellationToken = default)
     {
-        if (requestNode is not JsonObject request
-            || request["using"] is not JsonArray usingNode
-            || request["methodCalls"] is not JsonArray methodCalls)
+        ArgumentNullException.ThrowIfNull(batch);
+        if (batch.Invocations is null)
+            throw NotRequest("The application batch must contain invocations.");
+        var capabilities = ValidateHeader(batch.Capabilities, batch.Invocations.Length);
+        var invocations = new List<JmapApplicationInvocation>(batch.Invocations.Length);
+        foreach (var invocation in batch.Invocations)
         {
-            throw NotRequest("The JSON document is not a valid JMAP Request object.");
+            if (invocation is null || invocation.Name is null
+                || invocation.Arguments is null || invocation.CorrelationId is null)
+                throw NotRequest("An application invocation is incomplete.");
+            invocations.Add(invocation with { Arguments = (JsonObject)invocation.Arguments.DeepClone() });
         }
 
-        var capabilities = ParseCapabilities(usingNode);
-        var supportedCapabilities = _methods.Values
-            .Select(method => method.Capability)
-            .Append(JmapConstants.CoreCapability)
-            .ToHashSet(StringComparer.Ordinal);
-        var unknownCapability = capabilities.FirstOrDefault(capability => !supportedCapabilities.Contains(capability));
-        if (unknownCapability is not null)
+        var createdIds = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (batch.CreatedIds is not null)
         {
-            throw new JmapRequestException(
-                "urn:ietf:params:jmap:error:unknownCapability",
-                400,
-                "Unknown capability",
-                $"The request uses an unsupported capability: {unknownCapability}");
+            foreach (var item in batch.CreatedIds)
+            {
+                if (item.Value is null || !JmapId.IsValidId(item.Key) || !JmapId.IsValidId(item.Value))
+                    throw NotRequest("The createdIds property contains an invalid creation id or object id.");
+                createdIds.Add(item.Key, item.Value);
+            }
         }
-        if (!capabilities.Contains(JmapConstants.CoreCapability))
-            throw NotRequest("The using property must include the JMAP core capability.");
-
-        if (methodCalls.Count > _environment.Jmap.MaxCallsInRequest)
-        {
-            throw new JmapRequestException(
-                "urn:ietf:params:jmap:error:limit",
-                400,
-                "Request limit exceeded",
-                "The request contains too many method calls.",
-                "maxCallsInRequest");
-        }
-
-        var invocations = new List<ParsedInvocation>(methodCalls.Count);
-        foreach (var methodCallNode in methodCalls)
-        {
-            if (!TryParseInvocation(methodCallNode, out var methodName, out var arguments, out var callId))
-                throw NotRequest("A methodCalls entry is not a valid Invocation object.");
-            invocations.Add(new ParsedInvocation(methodName, arguments, callId));
-        }
-
-        var methodResponses = new JsonArray();
-        var previousResponses = new List<CompletedInvocation>();
-        var hasCreatedIds = request.TryGetPropertyValue("createdIds", out var createdIdsNode);
-        if (hasCreatedIds && createdIdsNode is null)
-            throw NotRequest("The createdIds property must be an object when present.");
-        var createdIds = ParseCreatedIds(createdIdsNode);
         var context = new JmapInvocationContext(user, capabilities, createdIds);
+        var responses = new List<JmapApplicationInvocation>();
+        var previousResponses = new List<CompletedInvocation>();
 
         foreach (var invocation in invocations)
         {
@@ -97,22 +75,13 @@ public sealed class JmapRequestProcessor
                     previousResponses,
                     out var resolvedArguments,
                     out var referenceFailure))
-            {
                 response = JmapMethodResponse.Error(referenceFailure);
-            }
-            else if (!_methods.TryGetValue(invocation.MethodName, out var method)
+            else if (!_methods.TryGetValue(invocation.Name, out var method)
                 || !capabilities.Contains(method.Capability))
-            {
                 response = JmapMethodResponse.Error("unknownMethod");
-            }
             else
-            {
                 response = await InvokeAtomicallyAsync(
-                    method,
-                    context,
-                    resolvedArguments,
-                    cancellationToken).ConfigureAwait(false);
-            }
+                    method, context, resolvedArguments, cancellationToken).ConfigureAwait(false);
 
             AddResponse(response);
             if (response.AdditionalResponses is not null)
@@ -124,33 +93,46 @@ public sealed class JmapRequestProcessor
             void AddResponse(JmapMethodResponse completed)
             {
                 var arguments = JmapJson.SanitizeResponse(completed.Arguments);
-                var responseInvocation = new JsonArray(
-                    completed.Name,
-                    arguments.DeepClone(),
-                    invocation.CallId);
-                methodResponses.Add(responseInvocation);
-                previousResponses.Add(new CompletedInvocation(
-                    invocation.CallId,
-                    completed.Name,
-                    arguments));
+                responses.Add(new JmapApplicationInvocation(completed.Name, arguments, invocation.CorrelationId));
+                previousResponses.Add(new CompletedInvocation(invocation.CorrelationId, completed.Name, arguments));
             }
         }
 
         var session = await _sessions.BuildAsync(user, cancellationToken).ConfigureAwait(false);
-        var result = new JsonObject
-        {
-            ["methodResponses"] = methodResponses,
-            ["sessionState"] = session.State,
-        };
-        if (hasCreatedIds)
-        {
-            var created = new JsonObject();
-            foreach (var item in createdIds)
-                created[item.Key] = item.Value;
-            result["createdIds"] = created;
-        }
+        return new JmapApplicationBatchResult(
+            responses.ToArray(), session.State, batch.CreatedIds is null ? null : createdIds);
+    }
 
-        return result;
+    internal void ValidatePreflight(JmapBatchPreflight? preflight)
+    {
+        if (preflight is not null)
+            _ = ValidateHeader(preflight.Capabilities, preflight.InvocationCount);
+    }
+
+    private HashSet<string> ValidateHeader(string[] values, int invocationCount)
+    {
+        if (values is null || values.Any(capability => capability is null))
+            throw NotRequest("The using property must contain capability strings.");
+        var capabilities = values.ToHashSet(StringComparer.Ordinal);
+        var supported = _methods.Values.Select(method => method.Capability)
+            .Append(JmapConstants.CoreCapability).ToHashSet(StringComparer.Ordinal);
+        var unknown = capabilities.FirstOrDefault(capability => !supported.Contains(capability));
+        if (unknown is not null)
+            throw new JmapRequestException(
+                "urn:ietf:params:jmap:error:unknownCapability",
+                "Unknown capability",
+                $"The request uses an unsupported capability: {unknown}");
+        if (!capabilities.Contains(JmapConstants.CoreCapability))
+            throw NotRequest("The using property must include the JMAP core capability.");
+        if (invocationCount < 0)
+            throw NotRequest("The application invocation count cannot be negative.");
+        if (invocationCount > _environment.Jmap.MaxCallsInRequest)
+            throw new JmapRequestException(
+                "urn:ietf:params:jmap:error:limit",
+                "Request limit exceeded",
+                "The request contains too many method calls.",
+                "maxCallsInRequest");
+        return capabilities;
     }
 
     private async Task<JmapMethodResponse> InvokeAtomicallyAsync(
@@ -266,68 +248,6 @@ public sealed class JmapRequestProcessor
             context.CreatedIds[item.Key] = item.Value;
         context.DiscardPostCommitActions(postCommitMarker);
         _database.ChangeTracker.Clear();
-    }
-
-    private static HashSet<string> ParseCapabilities(JsonArray values)
-    {
-        var result = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var value in values)
-        {
-            if (value is not JsonValue jsonValue
-                || !jsonValue.TryGetValue<string>(out var capability)
-                || capability is null)
-            {
-                throw NotRequest("The using property must contain capability strings.");
-            }
-            result.Add(capability);
-        }
-        return result;
-    }
-
-    private static Dictionary<string, string> ParseCreatedIds(JsonNode? node)
-    {
-        var result = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (node is null)
-            return result;
-        if (node is not JsonObject values)
-            throw NotRequest("The createdIds property must be an object or null.");
-        foreach (var item in values)
-        {
-            if (!JmapId.IsValidId(item.Key)
-                || item.Value is not JsonValue value
-                || !value.TryGetValue<string>(out var id)
-                || id is null
-                || !JmapId.IsValidId(id))
-                throw NotRequest("The createdIds property contains an invalid creation id or object id.");
-            result.Add(item.Key, id);
-        }
-        return result;
-    }
-
-    private static bool TryParseInvocation(
-        JsonNode? node,
-        out string methodName,
-        out JsonObject arguments,
-        out string callId)
-    {
-        methodName = string.Empty;
-        arguments = null!;
-        callId = string.Empty;
-        if (node is not JsonArray { Count: 3 } invocation
-            || invocation[0] is not JsonValue methodValue
-            || !methodValue.TryGetValue<string>(out var parsedMethodName)
-                || invocation[1] is not JsonObject argumentValue
-            || invocation[2] is not JsonValue callValue
-            || !callValue.TryGetValue<string>(out var parsedCallId)
-            || parsedCallId is null)
-        {
-            return false;
-        }
-
-        methodName = parsedMethodName;
-        callId = parsedCallId;
-        arguments = (JsonObject)argumentValue.DeepClone();
-        return true;
     }
 
     private static bool TryResolveResultReferences(
@@ -501,13 +421,8 @@ public sealed class JmapRequestProcessor
     private static JmapRequestException NotRequest(string detail) =>
         new(
             "urn:ietf:params:jmap:error:notRequest",
-            400,
             "Invalid JMAP request",
             detail);
 
-    private sealed record ParsedInvocation(
-        string MethodName,
-        JsonObject Arguments,
-        string CallId);
     private sealed record CompletedInvocation(string CallId, string Name, JsonObject Arguments);
 }

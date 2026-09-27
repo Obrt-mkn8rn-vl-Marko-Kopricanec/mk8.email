@@ -283,11 +283,11 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
                     .GetSessionAsync(
                         Deserialize<JmapSessionApplicationRequest>(request),
                         cancellationToken).ConfigureAwait(false)),
-            ApplicationOperations.JmapApiProcess => Success(
+            ApplicationOperations.JmapBatchExecute => Success(
                 request.Id,
                 await services.GetRequiredService<IJmapApplicationService>()
-                    .ProcessApiRequestAsync(
-                        Deserialize<JmapApiApplicationRequest>(request),
+                    .ExecuteBatchAsync(
+                        Deserialize<JmapBatchApplicationRequest>(request),
                         cancellationToken).ConfigureAwait(false)),
             ApplicationOperations.JmapUpload => Success(
                 request.Id,

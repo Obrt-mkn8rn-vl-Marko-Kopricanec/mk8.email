@@ -7,6 +7,8 @@ using mk8.email.Infrastructure.Data;
 using mk8.email.Configuration;
 using mk8.email.Infrastructure.Models;
 using mk8.email.Jmap;
+using mk8.email.Gateway.Protocols.Jmap;
+using mk8.email.Contracts.Messaging;
 
 namespace mk8.email.Application.Tests;
 
@@ -143,7 +145,27 @@ internal sealed class JmapFixture : IAsyncDisposable
     {
         using var scope = Services.CreateScope();
         var processor = scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>();
-        return await processor.ProcessAsync(request, User);
+        return await ProcessAsync(processor, request, User);
+    }
+
+    internal static async Task<JsonObject> ProcessAsync(
+        JmapRequestProcessor processor,
+        JsonNode? request,
+        AuthenticatedMailUser user,
+        CancellationToken cancellationToken = default)
+    {
+        JmapBatchPreflight? preflight = null;
+        JmapApplicationBatch batch;
+        try
+        {
+            batch = GatewayJmapBatchCodec.Parse(request, out preflight);
+        }
+        catch (GatewayJmapBatchCodec.RequestException)
+        {
+            processor.ValidatePreflight(preflight);
+            throw;
+        }
+        return GatewayJmapBatchCodec.Render(await processor.ProcessAsync(batch, user, cancellationToken));
     }
 
     public async Task<string> StoreBlobAsync(byte[] content, string contentType = "message/rfc822")

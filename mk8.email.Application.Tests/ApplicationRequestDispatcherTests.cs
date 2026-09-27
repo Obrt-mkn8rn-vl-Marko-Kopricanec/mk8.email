@@ -60,7 +60,7 @@ public sealed class ApplicationRequestDispatcherTests
             .AddSingleton<IJmapApplicationService>(new StubJmapApplicationService())
             .BuildServiceProvider();
         var dispatcher = new ApplicationRequestDispatcher(services);
-        var request = NewRequest(ApplicationOperations.JmapApiProcess, "{"u8.ToArray());
+        var request = NewRequest(ApplicationOperations.JmapBatchExecute, "{"u8.ToArray());
 
         var response = await dispatcher.DispatchAsync(request);
 
@@ -107,21 +107,34 @@ public sealed class ApplicationRequestDispatcherTests
     }
 
     [TestMethod]
-    public async Task JmapApiDispatchesAsATransportNeutralApplicationOperation()
+    public async Task LegacyRawJmapOperationFailsClosed()
+    {
+        await using var services = new ServiceCollection().BuildServiceProvider();
+        var response = await new ApplicationRequestDispatcher(services).DispatchAsync(
+            NewRequest("jmap.api.process", "{\"document\":\"e30=\"}"u8.ToArray()));
+
+        Assert.IsTrue(response.IsError);
+        Assert.AreEqual("unknown-operation", response.ErrorCode);
+    }
+
+    [TestMethod]
+    public async Task JmapBatchDispatchesTypedInvocationsAndResults()
     {
         var service = new StubJmapApplicationService();
         await using var services = new ServiceCollection()
             .AddSingleton<IJmapApplicationService>(service)
             .BuildServiceProvider();
         var dispatcher = new ApplicationRequestDispatcher(services);
-        var value = new JmapApiApplicationRequest(
+        var value = new JmapBatchApplicationRequest(
             new ProtocolAuthentication(
                 ProtocolAuthenticationKinds.Password,
                 "person@example.test",
                 "secret"),
-            "{\"using\":[],\"methodCalls\":[]}"u8.ToArray());
+            new JmapApplicationBatch(["urn:ietf:params:jmap:core"],
+                [new JmapApplicationInvocation("Core/echo", new System.Text.Json.Nodes.JsonObject { ["ok"] = true }, "c1")],
+                new Dictionary<string, string> { ["created"] = "object-id" }));
         var request = NewRequest(
-            ApplicationOperations.JmapApiProcess,
+            ApplicationOperations.JmapBatchExecute,
             JsonSerializer.SerializeToUtf8Bytes(
                 value,
                 new JsonSerializerOptions(JsonSerializerDefaults.Web)));
@@ -130,12 +143,21 @@ public sealed class ApplicationRequestDispatcherTests
 
         Assert.IsFalse(response.IsError);
         Assert.AreEqual(value.Authentication.Username, service.Request?.Authentication.Username);
-        CollectionAssert.AreEqual(value.Document, service.Request?.Document);
+        Assert.IsNotNull(service.Request?.Batch);
+        CollectionAssert.AreEqual(value.Batch!.Capabilities, service.Request.Batch.Capabilities);
+        Assert.AreEqual("Core/echo", service.Request.Batch.Invocations[0].Name);
+        Assert.AreEqual("c1", service.Request.Batch.Invocations[0].CorrelationId);
+        Assert.IsTrue(service.Request.Batch.Invocations[0].Arguments["ok"]!.GetValue<bool>());
+        Assert.AreEqual("object-id", service.Request.Batch.CreatedIds?["created"]);
         var result = JsonSerializer.Deserialize<JmapApplicationResult>(
             response.Payload,
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
         Assert.AreEqual(JmapApplicationOutcomes.Ok, result?.Outcome);
-        CollectionAssert.AreEqual("{\"methodResponses\":[]}"u8.ToArray(), result?.Content);
+        Assert.IsNotNull(result?.Batch);
+        Assert.AreEqual("worker-revision", result.Batch.Revision);
+        Assert.AreEqual("Core/echo", result.Batch.Invocations[0].Name);
+        Assert.IsTrue(result.Batch.Invocations[0].Arguments["ok"]!.GetValue<bool>());
+        Assert.IsNull(result.Content);
     }
 
     private static ApplicationRequest NewRequest(string operation, byte[] payload)
@@ -195,22 +217,21 @@ public sealed class ApplicationRequestDispatcherTests
 
     private sealed class StubJmapApplicationService : IJmapApplicationService
     {
-        public JmapApiApplicationRequest? Request { get; private set; }
+        public JmapBatchApplicationRequest? Request { get; private set; }
 
         public Task<JmapApplicationResult> GetSessionAsync(
             JmapSessionApplicationRequest request,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
 
-        public Task<JmapApplicationResult> ProcessApiRequestAsync(
-            JmapApiApplicationRequest request,
+        public Task<JmapApplicationResult> ExecuteBatchAsync(
+            JmapBatchApplicationRequest request,
             CancellationToken cancellationToken = default)
         {
             Request = request;
             return Task.FromResult(new JmapApplicationResult(
                 JmapApplicationOutcomes.Ok,
-                "{\"methodResponses\":[]}"u8.ToArray(),
-                "application/json"));
+                Batch: new JmapApplicationBatchResult(request.Batch!.Invocations, "worker-revision")));
         }
 
         public Task<JmapApplicationResult> UploadAsync(

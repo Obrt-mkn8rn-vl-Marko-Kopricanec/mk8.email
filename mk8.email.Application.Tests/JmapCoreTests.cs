@@ -84,7 +84,7 @@ public sealed class JmapCoreTests
             }
             """);
 
-        var response = await processor.ProcessAsync(request, fixture.User);
+        var response = await JmapFixture.ProcessAsync(processor, request, fixture.User);
         var methodResponses = response["methodResponses"]?.AsArray();
         Assert.IsNotNull(methodResponses);
         Assert.AreEqual(2, methodResponses.Count);
@@ -103,7 +103,7 @@ public sealed class JmapCoreTests
             configureServices: services => services.AddSingleton<IJmapMethod>(
                 new InvocationProbeMethod(() => invocationCount++)));
 
-        var exception = await Assert.ThrowsAsync<JmapRequestException>(() => fixture.InvokeAsync(
+        var exception = await Assert.ThrowsAsync<GatewayJmapBatchCodec.RequestException>(() => fixture.InvokeAsync(
             """
             {
               "using":["urn:ietf:params:jmap:core"],
@@ -114,7 +114,7 @@ public sealed class JmapCoreTests
             }
             """));
 
-        Assert.AreEqual("urn:ietf:params:jmap:error:notRequest", exception.Type);
+        Assert.AreEqual("urn:ietf:params:jmap:error:notRequest", exception.Problem.Type);
         Assert.AreEqual(0, invocationCount);
     }
 
@@ -186,7 +186,7 @@ public sealed class JmapCoreTests
 
         try
         {
-            _ = await processor.ProcessAsync(request, fixture.User, cancellation.Token);
+            _ = await JmapFixture.ProcessAsync(processor, request, fixture.User, cancellation.Token);
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
@@ -206,7 +206,7 @@ public sealed class JmapCoreTests
         var unknownCapability = JsonNode.Parse(
             """{"using":["urn:example:unknown"],"methodCalls":[]}""");
         var exception = await Assert.ThrowsAsync<JmapRequestException>(
-            () => processor.ProcessAsync(unknownCapability, fixture.User));
+            () => JmapFixture.ProcessAsync(processor, unknownCapability, fixture.User));
         Assert.AreEqual("urn:ietf:params:jmap:error:unknownCapability", exception.Type);
 
         var invalidReference = JsonNode.Parse(
@@ -218,7 +218,7 @@ public sealed class JmapCoreTests
               }, "c1"]]
             }
             """);
-        var response = await processor.ProcessAsync(invalidReference, fixture.User);
+        var response = await JmapFixture.ProcessAsync(processor, invalidReference, fixture.User);
         Assert.AreEqual(
             "invalidResultReference",
             response["methodResponses"]?[0]?[1]?["type"]?.GetValue<string>());
@@ -245,7 +245,7 @@ public sealed class JmapCoreTests
         var emptyCapability = JsonNode.Parse(
             """{"using":["urn:ietf:params:jmap:core",""],"methodCalls":[]}""");
         var exception = await Assert.ThrowsAsync<JmapRequestException>(
-            () => processor.ProcessAsync(emptyCapability, fixture.User));
+            () => JmapFixture.ProcessAsync(processor, emptyCapability, fixture.User));
         Assert.AreEqual("urn:ietf:params:jmap:error:unknownCapability", exception.Type);
     }
 
@@ -274,9 +274,9 @@ public sealed class JmapCoreTests
         var processor = scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>();
         var nullCreatedIds = JsonNode.Parse(
             """{"using":["urn:ietf:params:jmap:core"],"methodCalls":[],"createdIds":null}""");
-        var exception = await Assert.ThrowsAsync<JmapRequestException>(
-            () => processor.ProcessAsync(nullCreatedIds, fixture.User));
-        Assert.AreEqual("urn:ietf:params:jmap:error:notRequest", exception.Type);
+        var exception = await Assert.ThrowsAsync<GatewayJmapBatchCodec.RequestException>(
+            () => JmapFixture.ProcessAsync(processor, nullCreatedIds, fixture.User));
+        Assert.AreEqual("urn:ietf:params:jmap:error:notRequest", exception.Problem.Type);
     }
 
     [TestMethod]
@@ -344,11 +344,10 @@ public sealed class JmapCoreTests
         Assert.IsFalse(JmapEndpointRouteBuilderExtensions.HasJmapJsonContentType(context.Request));
 
         var configuration = new JmapConfig { MaxRequestSizeBytes = 65_536 };
-        var exception = Assert.ThrowsExactly<JmapRequestException>(
-            () => JmapJson.ParseRequest(new byte[65_537], configuration));
-        Assert.AreEqual("urn:ietf:params:jmap:error:limit", exception.Type);
-        Assert.AreEqual("maxSizeRequest", exception.Limit);
-        Assert.AreEqual(StatusCodes.Status400BadRequest, exception.StatusCode);
+        var exception = Assert.ThrowsExactly<GatewayJmapBatchCodec.RequestException>(
+            () => GatewayJmapJson.ParseRequest(new byte[65_537], configuration));
+        Assert.AreEqual("urn:ietf:params:jmap:error:limit", exception.Problem.Type);
+        Assert.AreEqual("maxSizeRequest", exception.Problem.Limit);
     }
 
     [TestMethod]
@@ -498,12 +497,12 @@ public sealed class JmapCoreTests
         })
         {
             var bytes = Encoding.UTF8.GetBytes(json);
-            var exception = Assert.ThrowsExactly<JmapRequestException>(
-                () => JmapJson.ParseRequest(
+            var exception = Assert.ThrowsExactly<GatewayJmapBatchCodec.RequestException>(
+                () => GatewayJmapJson.ParseRequest(
                     bytes,
                     new JmapConfig { MaxRequestSizeBytes = 65_536 }));
 
-            Assert.AreEqual("urn:ietf:params:jmap:error:notJSON", exception.Type, json);
+            Assert.AreEqual("urn:ietf:params:jmap:error:notJSON", exception.Problem.Type, json);
         }
     }
 

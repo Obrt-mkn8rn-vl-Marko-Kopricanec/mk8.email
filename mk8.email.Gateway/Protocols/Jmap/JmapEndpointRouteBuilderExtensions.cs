@@ -90,12 +90,31 @@ public static class JmapEndpointRouteBuilderExtensions
                 "maxSizeRequest"));
         }
 
-        var result = await application.ProcessApiRequestAsync(
-            new JmapApiApplicationRequest(authentication, document),
+        JmapApplicationBatch? batch = null;
+        JmapBatchPreflight? preflight = null;
+        JmapApplicationProblem? parseProblem = null;
+        try
+        {
+            batch = GatewayJmapBatchCodec.Parse(
+                GatewayJmapJson.ParseRequest(document, environment.Jmap), out preflight);
+        }
+        catch (GatewayJmapBatchCodec.RequestException exception)
+        {
+            parseProblem = exception.Problem;
+        }
+
+        var result = await application.ExecuteBatchAsync(
+            new JmapBatchApplicationRequest(authentication, batch, preflight),
             cancellationToken).ConfigureAwait(false);
         if (string.Equals(result.Outcome, JmapApplicationOutcomes.Unauthorized, StringComparison.Ordinal))
             return GatewayJmapAuthentication.Unauthorized(context, environment);
-        return Result(result);
+        if (result.Problem is not null)
+            return Problem(result.Problem);
+        if (parseProblem is not null)
+            return Problem(parseProblem);
+        if (result.Batch is null)
+            throw new InvalidOperationException("The Application returned an incomplete JMAP batch result.");
+        return Results.Json(GatewayJmapBatchCodec.Render(result.Batch), JsonOptions);
     }
 
     private static async Task<IResult> UploadAsync(

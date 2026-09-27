@@ -54,7 +54,7 @@ const mk8.email.Contracts.Messaging.ApplicationOperations.ImapSetMailboxSubscrip
 const mk8.email.Contracts.Messaging.ApplicationOperations.ImapSortMessages = "imap.messages.sort" -> string!
 const mk8.email.Contracts.Messaging.ApplicationOperations.ImapStoreFlags = "imap.messages.flags.store" -> string!
 const mk8.email.Contracts.Messaging.ApplicationOperations.ImapThreadMessages = "imap.messages.thread" -> string!
-const mk8.email.Contracts.Messaging.ApplicationOperations.JmapApiProcess = "jmap.api.process" -> string!
+const mk8.email.Contracts.Messaging.ApplicationOperations.JmapBatchExecute = "jmap.batch.execute" -> string!
 const mk8.email.Contracts.Messaging.ApplicationOperations.JmapDownload = "jmap.download" -> string!
 const mk8.email.Contracts.Messaging.ApplicationOperations.JmapEventPoll = "jmap.event.poll" -> string!
 const mk8.email.Contracts.Messaging.ApplicationOperations.JmapSessionGet = "jmap.session.get" -> string!
@@ -1548,15 +1548,6 @@ mk8.email.Contracts.Messaging.GatewayTrafficRecord.Sequence.get -> long
 mk8.email.Contracts.Messaging.GatewayTrafficRecord.Sequence.init -> void
 mk8.email.Contracts.Messaging.GatewayTrafficRecord.SessionId.get -> System.Guid
 mk8.email.Contracts.Messaging.GatewayTrafficRecord.SessionId.init -> void
-mk8.email.Contracts.Messaging.JmapApiApplicationRequest
-mk8.email.Contracts.Messaging.JmapApiApplicationRequest.<Clone>$() -> mk8.email.Contracts.Messaging.JmapApiApplicationRequest!
-mk8.email.Contracts.Messaging.JmapApiApplicationRequest.Authentication.get -> mk8.email.Contracts.Messaging.ProtocolAuthentication!
-mk8.email.Contracts.Messaging.JmapApiApplicationRequest.Authentication.init -> void
-mk8.email.Contracts.Messaging.JmapApiApplicationRequest.Deconstruct(out mk8.email.Contracts.Messaging.ProtocolAuthentication! Authentication, out byte[]! Document) -> void
-mk8.email.Contracts.Messaging.JmapApiApplicationRequest.Document.get -> byte[]!
-mk8.email.Contracts.Messaging.JmapApiApplicationRequest.Document.init -> void
-mk8.email.Contracts.Messaging.JmapApiApplicationRequest.Equals(mk8.email.Contracts.Messaging.JmapApiApplicationRequest? other) -> bool
-mk8.email.Contracts.Messaging.JmapApiApplicationRequest.JmapApiApplicationRequest(mk8.email.Contracts.Messaging.ProtocolAuthentication! Authentication, byte[]! Document) -> void
 mk8.email.Contracts.Messaging.JmapApplicationOutcomes
 mk8.email.Contracts.Messaging.JmapApplicationProblem
 mk8.email.Contracts.Messaging.JmapApplicationProblem.<Clone>$() -> mk8.email.Contracts.Messaging.JmapApplicationProblem!
@@ -1581,9 +1572,7 @@ mk8.email.Contracts.Messaging.JmapApplicationResult.ContentType.get -> string?
 mk8.email.Contracts.Messaging.JmapApplicationResult.ContentType.init -> void
 mk8.email.Contracts.Messaging.JmapApplicationResult.Cursor.get -> long?
 mk8.email.Contracts.Messaging.JmapApplicationResult.Cursor.init -> void
-mk8.email.Contracts.Messaging.JmapApplicationResult.Deconstruct(out string! Outcome, out byte[]? Content, out string? ContentType, out string? BlobId, out long? Size, out long? Cursor, out mk8.email.Contracts.Messaging.JmapApplicationProblem? Problem) -> void
 mk8.email.Contracts.Messaging.JmapApplicationResult.Equals(mk8.email.Contracts.Messaging.JmapApplicationResult? other) -> bool
-mk8.email.Contracts.Messaging.JmapApplicationResult.JmapApplicationResult(string! Outcome, byte[]? Content = null, string? ContentType = null, string? BlobId = null, long? Size = null, long? Cursor = null, mk8.email.Contracts.Messaging.JmapApplicationProblem? Problem = null) -> void
 mk8.email.Contracts.Messaging.JmapApplicationResult.Outcome.get -> string!
 mk8.email.Contracts.Messaging.JmapApplicationResult.Outcome.init -> void
 mk8.email.Contracts.Messaging.JmapApplicationResult.Problem.get -> mk8.email.Contracts.Messaging.JmapApplicationProblem?
@@ -2845,9 +2834,6 @@ override mk8.email.Contracts.Messaging.ApplicationResponse.ToString() -> string!
 override mk8.email.Contracts.Messaging.GatewayTrafficRecord.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.GatewayTrafficRecord.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.GatewayTrafficRecord.ToString() -> string!
-override mk8.email.Contracts.Messaging.JmapApiApplicationRequest.Equals(object? obj) -> bool
-override mk8.email.Contracts.Messaging.JmapApiApplicationRequest.GetHashCode() -> int
-override mk8.email.Contracts.Messaging.JmapApiApplicationRequest.ToString() -> string!
 override mk8.email.Contracts.Messaging.JmapApplicationProblem.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.JmapApplicationProblem.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.JmapApplicationProblem.ToString() -> string!
@@ -3306,8 +3292,6 @@ static mk8.email.Contracts.Messaging.ApplicationResponse.operator !=(mk8.email.C
 static mk8.email.Contracts.Messaging.ApplicationResponse.operator ==(mk8.email.Contracts.Messaging.ApplicationResponse? left, mk8.email.Contracts.Messaging.ApplicationResponse? right) -> bool
 static mk8.email.Contracts.Messaging.GatewayTrafficRecord.operator !=(mk8.email.Contracts.Messaging.GatewayTrafficRecord? left, mk8.email.Contracts.Messaging.GatewayTrafficRecord? right) -> bool
 static mk8.email.Contracts.Messaging.GatewayTrafficRecord.operator ==(mk8.email.Contracts.Messaging.GatewayTrafficRecord? left, mk8.email.Contracts.Messaging.GatewayTrafficRecord? right) -> bool
-static mk8.email.Contracts.Messaging.JmapApiApplicationRequest.operator !=(mk8.email.Contracts.Messaging.JmapApiApplicationRequest? left, mk8.email.Contracts.Messaging.JmapApiApplicationRequest? right) -> bool
-static mk8.email.Contracts.Messaging.JmapApiApplicationRequest.operator ==(mk8.email.Contracts.Messaging.JmapApiApplicationRequest? left, mk8.email.Contracts.Messaging.JmapApiApplicationRequest? right) -> bool
 static mk8.email.Contracts.Messaging.JmapApplicationProblem.operator !=(mk8.email.Contracts.Messaging.JmapApplicationProblem? left, mk8.email.Contracts.Messaging.JmapApplicationProblem? right) -> bool
 static mk8.email.Contracts.Messaging.JmapApplicationProblem.operator ==(mk8.email.Contracts.Messaging.JmapApplicationProblem? left, mk8.email.Contracts.Messaging.JmapApplicationProblem? right) -> bool
 static mk8.email.Contracts.Messaging.JmapApplicationResult.operator !=(mk8.email.Contracts.Messaging.JmapApplicationResult? left, mk8.email.Contracts.Messaging.JmapApplicationResult? right) -> bool

@@ -1,5 +1,7 @@
 // Protocol request/result types are deliberately grouped in this transport-contract file; array fields are part of the established JSON/public API.
 #pragma warning disable MA0048, CA1819
+using System.Text.Json.Nodes;
+
 namespace mk8.email.Contracts.Messaging;
 
 public static class ProtocolAuthenticationKinds
@@ -16,9 +18,31 @@ public sealed record ProtocolAuthentication(
 public sealed record JmapSessionApplicationRequest(
     ProtocolAuthentication Authentication);
 
-public sealed record JmapApiApplicationRequest(
+// A null batch is an authentication/resource check for a document rejected by
+// Gateway. No malformed document or presentation exception enters Worker.
+public sealed record JmapBatchApplicationRequest(
     ProtocolAuthentication Authentication,
-    byte[] Document);
+    JmapApplicationBatch? Batch,
+    JmapBatchPreflight? Preflight = null);
+
+public sealed record JmapBatchPreflight(
+    string[] Capabilities,
+    int InvocationCount);
+
+public sealed record JmapApplicationBatch(
+    string[] Capabilities,
+    JmapApplicationInvocation[] Invocations,
+    IReadOnlyDictionary<string, string>? CreatedIds = null);
+
+public sealed record JmapApplicationInvocation(
+    string Name,
+    JsonObject Arguments,
+    string CorrelationId);
+
+public sealed record JmapApplicationBatchResult(
+    JmapApplicationInvocation[] Invocations,
+    string Revision,
+    IReadOnlyDictionary<string, string>? CreatedIds = null);
 
 public sealed record JmapUploadApplicationRequest(
     ProtocolAuthentication Authentication,
@@ -56,4 +80,5 @@ public sealed record JmapApplicationResult(
     string? BlobId = null,
     long? Size = null,
     long? Cursor = null,
-    JmapApplicationProblem? Problem = null);
+    JmapApplicationProblem? Problem = null,
+    JmapApplicationBatchResult? Batch = null);

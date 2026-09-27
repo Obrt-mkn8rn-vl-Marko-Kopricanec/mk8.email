@@ -67,7 +67,7 @@ public static class ApplicationOperations
     public const string OAuthTokenRefresh = "oauth.token.refresh";
     public const string OAuthTokenRevoke = "oauth.token.revoke";
     public const string JmapSessionGet = "jmap.session.get";
-    public const string JmapApiProcess = "jmap.api.process";
+    public const string JmapBatchExecute = "jmap.batch.execute";
     public const string JmapUpload = "jmap.upload";
     public const string JmapDownload = "jmap.download";
     public const string JmapEventPoll = "jmap.event.poll";

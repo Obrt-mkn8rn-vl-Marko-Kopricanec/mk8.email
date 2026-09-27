@@ -1,1 +1,83 @@
 #nullable enable
+mk8.email.Contracts.Messaging.JmapApplicationBatch
+mk8.email.Contracts.Messaging.JmapApplicationBatch.<Clone>$() -> mk8.email.Contracts.Messaging.JmapApplicationBatch!
+mk8.email.Contracts.Messaging.JmapApplicationBatch.Capabilities.get -> string![]!
+mk8.email.Contracts.Messaging.JmapApplicationBatch.Capabilities.init -> void
+mk8.email.Contracts.Messaging.JmapApplicationBatch.CreatedIds.get -> System.Collections.Generic.IReadOnlyDictionary<string!, string!>?
+mk8.email.Contracts.Messaging.JmapApplicationBatch.CreatedIds.init -> void
+mk8.email.Contracts.Messaging.JmapApplicationBatch.Deconstruct(out string![]! Capabilities, out mk8.email.Contracts.Messaging.JmapApplicationInvocation![]! Invocations, out System.Collections.Generic.IReadOnlyDictionary<string!, string!>? CreatedIds) -> void
+mk8.email.Contracts.Messaging.JmapApplicationBatch.Equals(mk8.email.Contracts.Messaging.JmapApplicationBatch? other) -> bool
+mk8.email.Contracts.Messaging.JmapApplicationBatch.Invocations.get -> mk8.email.Contracts.Messaging.JmapApplicationInvocation![]!
+mk8.email.Contracts.Messaging.JmapApplicationBatch.Invocations.init -> void
+mk8.email.Contracts.Messaging.JmapApplicationBatch.JmapApplicationBatch(string![]! Capabilities, mk8.email.Contracts.Messaging.JmapApplicationInvocation![]! Invocations, System.Collections.Generic.IReadOnlyDictionary<string!, string!>? CreatedIds = null) -> void
+mk8.email.Contracts.Messaging.JmapApplicationBatchResult
+mk8.email.Contracts.Messaging.JmapApplicationBatchResult.<Clone>$() -> mk8.email.Contracts.Messaging.JmapApplicationBatchResult!
+mk8.email.Contracts.Messaging.JmapApplicationBatchResult.CreatedIds.get -> System.Collections.Generic.IReadOnlyDictionary<string!, string!>?
+mk8.email.Contracts.Messaging.JmapApplicationBatchResult.CreatedIds.init -> void
+mk8.email.Contracts.Messaging.JmapApplicationBatchResult.Deconstruct(out mk8.email.Contracts.Messaging.JmapApplicationInvocation![]! Invocations, out string! Revision, out System.Collections.Generic.IReadOnlyDictionary<string!, string!>? CreatedIds) -> void
+mk8.email.Contracts.Messaging.JmapApplicationBatchResult.Equals(mk8.email.Contracts.Messaging.JmapApplicationBatchResult? other) -> bool
+mk8.email.Contracts.Messaging.JmapApplicationBatchResult.Invocations.get -> mk8.email.Contracts.Messaging.JmapApplicationInvocation![]!
+mk8.email.Contracts.Messaging.JmapApplicationBatchResult.Invocations.init -> void
+mk8.email.Contracts.Messaging.JmapApplicationBatchResult.JmapApplicationBatchResult(mk8.email.Contracts.Messaging.JmapApplicationInvocation![]! Invocations, string! Revision, System.Collections.Generic.IReadOnlyDictionary<string!, string!>? CreatedIds = null) -> void
+mk8.email.Contracts.Messaging.JmapApplicationBatchResult.Revision.get -> string!
+mk8.email.Contracts.Messaging.JmapApplicationBatchResult.Revision.init -> void
+mk8.email.Contracts.Messaging.JmapApplicationInvocation
+mk8.email.Contracts.Messaging.JmapApplicationInvocation.<Clone>$() -> mk8.email.Contracts.Messaging.JmapApplicationInvocation!
+mk8.email.Contracts.Messaging.JmapApplicationInvocation.Arguments.get -> System.Text.Json.Nodes.JsonObject!
+mk8.email.Contracts.Messaging.JmapApplicationInvocation.Arguments.init -> void
+mk8.email.Contracts.Messaging.JmapApplicationInvocation.CorrelationId.get -> string!
+mk8.email.Contracts.Messaging.JmapApplicationInvocation.CorrelationId.init -> void
+mk8.email.Contracts.Messaging.JmapApplicationInvocation.Deconstruct(out string! Name, out System.Text.Json.Nodes.JsonObject! Arguments, out string! CorrelationId) -> void
+mk8.email.Contracts.Messaging.JmapApplicationInvocation.Equals(mk8.email.Contracts.Messaging.JmapApplicationInvocation? other) -> bool
+mk8.email.Contracts.Messaging.JmapApplicationInvocation.JmapApplicationInvocation(string! Name, System.Text.Json.Nodes.JsonObject! Arguments, string! CorrelationId) -> void
+mk8.email.Contracts.Messaging.JmapApplicationInvocation.Name.get -> string!
+mk8.email.Contracts.Messaging.JmapApplicationInvocation.Name.init -> void
+mk8.email.Contracts.Messaging.JmapApplicationResult.Batch.get -> mk8.email.Contracts.Messaging.JmapApplicationBatchResult?
+mk8.email.Contracts.Messaging.JmapApplicationResult.Batch.init -> void
+mk8.email.Contracts.Messaging.JmapApplicationResult.Deconstruct(out string! Outcome, out byte[]? Content, out string? ContentType, out string? BlobId, out long? Size, out long? Cursor, out mk8.email.Contracts.Messaging.JmapApplicationProblem? Problem, out mk8.email.Contracts.Messaging.JmapApplicationBatchResult? Batch) -> void
+mk8.email.Contracts.Messaging.JmapApplicationResult.JmapApplicationResult(string! Outcome, byte[]? Content = null, string? ContentType = null, string? BlobId = null, long? Size = null, long? Cursor = null, mk8.email.Contracts.Messaging.JmapApplicationProblem? Problem = null, mk8.email.Contracts.Messaging.JmapApplicationBatchResult? Batch = null) -> void
+mk8.email.Contracts.Messaging.JmapBatchApplicationRequest
+mk8.email.Contracts.Messaging.JmapBatchApplicationRequest.<Clone>$() -> mk8.email.Contracts.Messaging.JmapBatchApplicationRequest!
+mk8.email.Contracts.Messaging.JmapBatchApplicationRequest.Authentication.get -> mk8.email.Contracts.Messaging.ProtocolAuthentication!
+mk8.email.Contracts.Messaging.JmapBatchApplicationRequest.Authentication.init -> void
+mk8.email.Contracts.Messaging.JmapBatchApplicationRequest.Batch.get -> mk8.email.Contracts.Messaging.JmapApplicationBatch?
+mk8.email.Contracts.Messaging.JmapBatchApplicationRequest.Batch.init -> void
+mk8.email.Contracts.Messaging.JmapBatchApplicationRequest.Deconstruct(out mk8.email.Contracts.Messaging.ProtocolAuthentication! Authentication, out mk8.email.Contracts.Messaging.JmapApplicationBatch? Batch, out mk8.email.Contracts.Messaging.JmapBatchPreflight? Preflight) -> void
+mk8.email.Contracts.Messaging.JmapBatchApplicationRequest.Equals(mk8.email.Contracts.Messaging.JmapBatchApplicationRequest? other) -> bool
+mk8.email.Contracts.Messaging.JmapBatchApplicationRequest.JmapBatchApplicationRequest(mk8.email.Contracts.Messaging.ProtocolAuthentication! Authentication, mk8.email.Contracts.Messaging.JmapApplicationBatch? Batch, mk8.email.Contracts.Messaging.JmapBatchPreflight? Preflight = null) -> void
+mk8.email.Contracts.Messaging.JmapBatchApplicationRequest.Preflight.get -> mk8.email.Contracts.Messaging.JmapBatchPreflight?
+mk8.email.Contracts.Messaging.JmapBatchApplicationRequest.Preflight.init -> void
+mk8.email.Contracts.Messaging.JmapBatchPreflight
+mk8.email.Contracts.Messaging.JmapBatchPreflight.<Clone>$() -> mk8.email.Contracts.Messaging.JmapBatchPreflight!
+mk8.email.Contracts.Messaging.JmapBatchPreflight.Capabilities.get -> string![]!
+mk8.email.Contracts.Messaging.JmapBatchPreflight.Capabilities.init -> void
+mk8.email.Contracts.Messaging.JmapBatchPreflight.Deconstruct(out string![]! Capabilities, out int InvocationCount) -> void
+mk8.email.Contracts.Messaging.JmapBatchPreflight.Equals(mk8.email.Contracts.Messaging.JmapBatchPreflight? other) -> bool
+mk8.email.Contracts.Messaging.JmapBatchPreflight.InvocationCount.get -> int
+mk8.email.Contracts.Messaging.JmapBatchPreflight.InvocationCount.init -> void
+mk8.email.Contracts.Messaging.JmapBatchPreflight.JmapBatchPreflight(string![]! Capabilities, int InvocationCount) -> void
+override mk8.email.Contracts.Messaging.JmapApplicationBatch.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.JmapApplicationBatch.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.JmapApplicationBatch.ToString() -> string!
+override mk8.email.Contracts.Messaging.JmapApplicationBatchResult.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.JmapApplicationBatchResult.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.JmapApplicationBatchResult.ToString() -> string!
+override mk8.email.Contracts.Messaging.JmapApplicationInvocation.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.JmapApplicationInvocation.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.JmapApplicationInvocation.ToString() -> string!
+override mk8.email.Contracts.Messaging.JmapBatchApplicationRequest.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.JmapBatchApplicationRequest.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.JmapBatchApplicationRequest.ToString() -> string!
+override mk8.email.Contracts.Messaging.JmapBatchPreflight.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.JmapBatchPreflight.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.JmapBatchPreflight.ToString() -> string!
+static mk8.email.Contracts.Messaging.JmapApplicationBatch.operator !=(mk8.email.Contracts.Messaging.JmapApplicationBatch? left, mk8.email.Contracts.Messaging.JmapApplicationBatch? right) -> bool
+static mk8.email.Contracts.Messaging.JmapApplicationBatch.operator ==(mk8.email.Contracts.Messaging.JmapApplicationBatch? left, mk8.email.Contracts.Messaging.JmapApplicationBatch? right) -> bool
+static mk8.email.Contracts.Messaging.JmapApplicationBatchResult.operator !=(mk8.email.Contracts.Messaging.JmapApplicationBatchResult? left, mk8.email.Contracts.Messaging.JmapApplicationBatchResult? right) -> bool
+static mk8.email.Contracts.Messaging.JmapApplicationBatchResult.operator ==(mk8.email.Contracts.Messaging.JmapApplicationBatchResult? left, mk8.email.Contracts.Messaging.JmapApplicationBatchResult? right) -> bool
+static mk8.email.Contracts.Messaging.JmapApplicationInvocation.operator !=(mk8.email.Contracts.Messaging.JmapApplicationInvocation? left, mk8.email.Contracts.Messaging.JmapApplicationInvocation? right) -> bool
+static mk8.email.Contracts.Messaging.JmapApplicationInvocation.operator ==(mk8.email.Contracts.Messaging.JmapApplicationInvocation? left, mk8.email.Contracts.Messaging.JmapApplicationInvocation? right) -> bool
+static mk8.email.Contracts.Messaging.JmapBatchApplicationRequest.operator !=(mk8.email.Contracts.Messaging.JmapBatchApplicationRequest? left, mk8.email.Contracts.Messaging.JmapBatchApplicationRequest? right) -> bool
+static mk8.email.Contracts.Messaging.JmapBatchApplicationRequest.operator ==(mk8.email.Contracts.Messaging.JmapBatchApplicationRequest? left, mk8.email.Contracts.Messaging.JmapBatchApplicationRequest? right) -> bool
+static mk8.email.Contracts.Messaging.JmapBatchPreflight.operator !=(mk8.email.Contracts.Messaging.JmapBatchPreflight? left, mk8.email.Contracts.Messaging.JmapBatchPreflight? right) -> bool
+static mk8.email.Contracts.Messaging.JmapBatchPreflight.operator ==(mk8.email.Contracts.Messaging.JmapBatchPreflight? left, mk8.email.Contracts.Messaging.JmapBatchPreflight? right) -> bool

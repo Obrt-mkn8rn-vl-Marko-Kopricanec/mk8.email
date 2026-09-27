@@ -39,7 +39,6 @@ internal sealed class JmapConcurrencyLimiter : IDisposable
         {
             throw new JmapRequestException(
                 "urn:ietf:params:jmap:error:limit",
-                400,
                 "Request limit exceeded",
                 "The server is already processing the maximum number of concurrent requests.",
                 limit);

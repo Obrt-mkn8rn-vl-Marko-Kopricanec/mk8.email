@@ -29,8 +29,8 @@ internal sealed class JmapApplicationService(
         return Json(session.Value.ToJsonString(JmapJson.SerializerOptions));
     }
 
-    public async Task<JmapApplicationResult> ProcessApiRequestAsync(
-        JmapApiApplicationRequest request,
+    public async Task<JmapApplicationResult> ExecuteBatchAsync(
+        JmapBatchApplicationRequest request,
         CancellationToken cancellationToken = default)
     {
         var user = await AuthenticateAsync(request.Authentication, cancellationToken).ConfigureAwait(false);
@@ -40,9 +40,13 @@ internal sealed class JmapApplicationService(
         try
         {
             using var lease = await concurrency.AcquireRequestAsync(cancellationToken).ConfigureAwait(false);
-            var document = JmapJson.ParseRequest(request.Document, environment.Jmap);
-            var response = await processor.ProcessAsync(document, user, cancellationToken).ConfigureAwait(false);
-            return Json(response.ToJsonString(JmapJson.SerializerOptions));
+            if (request.Batch is null)
+            {
+                processor.ValidatePreflight(request.Preflight);
+                return new JmapApplicationResult(JmapApplicationOutcomes.Ok);
+            }
+            var response = await processor.ProcessAsync(request.Batch, user, cancellationToken).ConfigureAwait(false);
+            return new JmapApplicationResult(JmapApplicationOutcomes.Ok, Batch: response);
         }
         catch (JmapRequestException exception)
         {

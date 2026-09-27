@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+state=$MK8_ON_DEMAND_SMOKE_STATE
+[ "$2" = --prepare-worker-wake ] \
+    && [ -f "$state/prepared_schema" ] \
+    && [ ! -f "$state/active-mk8email-wake.service" ] \
+    && [ ! -f "$state/active-mk8email-worker.path" ] \
+    && [ ! -f "$state/fail_grants" ] || exit 1
+printf '%s\n' 'operator --prepare-worker-wake' >> "$state/events"
+: > "$state/prepared_grants"

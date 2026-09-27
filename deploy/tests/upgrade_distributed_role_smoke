@@ -35,8 +35,7 @@ prepare_case() {
     install -m 0755 "$fixture_root/upgrade-systemctl" "$state/mock/systemctl"
     install -m 0755 "$fixture_root/upgrade-runuser" "$state/mock/runuser"
     install -m 0755 "$fixture_root/upgrade-curl" "$state/mock/curl"
-    : > "$state/mock/dotnet"
-    chmod 0755 "$state/mock/dotnet"
+    install -m 0755 "$fixture_root/upgrade-dotnet" "$state/mock/dotnet"
     ln -s /bin/true "$state/mock/sleep"
 
     for release_id in "$old_id" "$new_id"; do
@@ -174,6 +173,8 @@ grep -Fx 'cli:--probe-worker-backends' "$state/events" >/dev/null
 grep -Fx 'cli:--probe-worker-dispatch' "$state/events" >/dev/null
 grep -Fx 'cli:--prepare' "$state/events" >/dev/null
 grep -Fx 'wake:--probe' "$state/events" >/dev/null
+grep -Fx 'operator:--prepare-worker-wake' "$state/events" >/dev/null
+test -f "$state/receipt_grants"
 
 prepare_case worker_wake_preflight mk8email-worker.path worker/mk8.email.Application.Worker.dll
 : > "$state/fail_wake_preflight"
@@ -215,6 +216,7 @@ test -f "$state/maintenance_active"
 grep -Fx 'cli:--prepare' "$state/events" >/dev/null
 test "$(grep -cx stop "$state/events")" -eq 2
 test "$(grep -cx stop_wake "$state/events")" -eq 2
+test ! -f "$state/receipt_schema"
 
 prepare_case worker_rollback mk8email-worker.path worker/mk8.email.Application.Worker.dll
 : > "$state/fail_new_start"
@@ -253,5 +255,40 @@ test "$(readlink -f "$state/opt/mk8email/current")" \
 test -f "$state/active"
 test -f "$state/wake_active"
 test -f "$state/maintenance_active"
+
+prepare_case worker_grant_rollback mk8email-worker.path worker/mk8.email.Application.Worker.dll
+: > "$state/fail_grants"
+if sh "$state/upgrade" worker "$new_id" >/dev/null 2>&1; then
+    printf '%s\n' 'The Worker accepted failed scheduling grant preparation.' >&2
+    exit 1
+fi
+test "$(readlink -f "$state/opt/mk8email/current")" = "$state/opt/mk8email/releases/$old_id"
+test -f "$state/active"
+test ! -f "$state/receipt_schema"
+
+prepare_case worker_candidate_wake_rollback mk8email-worker.path worker/mk8.email.Application.Worker.dll
+: > "$state/fail_candidate_wake_preflight"
+if sh "$state/upgrade" worker "$new_id" >/dev/null 2>&1; then
+    printf '%s\n' 'The Worker accepted a failed prepared Wake canary.' >&2
+    exit 1
+fi
+test "$(readlink -f "$state/opt/mk8email/current")" = "$state/opt/mk8email/releases/$old_id"
+test -f "$state/active"
+test ! -f "$state/receipt_schema"
+
+for incompatible_state in committed_receipts new_contract_request; do
+    prepare_case "worker_refuse_$incompatible_state" mk8email-worker.path worker/mk8.email.Application.Worker.dll
+    : > "$state/fail_new_health"
+    : > "$state/$incompatible_state"
+    if sh "$state/upgrade" worker "$new_id" >/dev/null 2>&1; then
+        printf '%s\n' 'The Worker reported success after unsafe rollback refusal.' >&2
+        exit 1
+    fi
+    test "$(readlink -f "$state/opt/mk8email/current")" = "$state/opt/mk8email/releases/$new_id"
+    test ! -f "$state/active"
+    test ! -f "$state/wake_active"
+    test -f "$state/receipt_schema"
+    test -f "$state/receipt_grants"
+done
 
 printf '%s\n' "Distributed role upgrade and rollback control-flow smoke passed."

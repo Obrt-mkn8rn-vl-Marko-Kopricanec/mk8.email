@@ -4,5 +4,12 @@ mk8.email.Hosting.MessagingStoredContentProtector
 mk8.email.Hosting.MessagingStoredContentProtector.MessagingStoredContentProtector(mk8.email.Messaging.IMessagingPayloadProtector! protector) -> void
 mk8.email.Hosting.MessagingStoredContentProtector.Protect(System.ReadOnlySpan<byte> content, System.ReadOnlySpan<byte> associatedData) -> System.ReadOnlyMemory<byte>
 mk8.email.Hosting.MessagingStoredContentProtector.Unprotect(System.ReadOnlySpan<byte> envelope, System.ReadOnlySpan<byte> associatedData) -> System.ReadOnlyMemory<byte>
+mk8.email.Hosting.WorkerWakeSchemaState
+mk8.email.Hosting.WorkerWakeSchemaState.Legacy = 0 -> mk8.email.Hosting.WorkerWakeSchemaState
+mk8.email.Hosting.WorkerWakeSchemaState.Receipts = 1 -> mk8.email.Hosting.WorkerWakeSchemaState
+mk8.email.Hosting.WorkerWakeSchemaTransition
 static mk8.email.Hosting.DistributedQueueContractGuard.IsCompatibleAsync(Npgsql.NpgsqlDataSource! dataSource, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
 static mk8.email.Hosting.DistributedQueueContractGuard.RequireCompatibleAsync(Npgsql.NpgsqlDataSource! dataSource, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+static mk8.email.Hosting.WorkerWakeSchemaTransition.EnableAsync(Npgsql.NpgsqlDataSource! source, string! wakeRole, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+static mk8.email.Hosting.WorkerWakeSchemaTransition.ReadAsync(Npgsql.NpgsqlDataSource! source, string! wakeRole, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Hosting.WorkerWakeSchemaState>!
+static mk8.email.Hosting.WorkerWakeSchemaTransition.RestoreAsync(Npgsql.NpgsqlDataSource! source, string! wakeRole, mk8.email.Hosting.WorkerWakeSchemaState prior, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!

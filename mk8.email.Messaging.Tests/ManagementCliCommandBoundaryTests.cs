@@ -1,4 +1,7 @@
 using System.Diagnostics;
+using System.Text.Json;
+using mk8.email.Configuration;
+using Npgsql;
 
 namespace mk8.email.Messaging.Tests;
 
@@ -40,6 +43,9 @@ public sealed class ManagementCliCommandBoundaryTests
             ["--probe-worker-dispatch", missing],
             ["--probe-gateway-dispatch", missing],
             ["--audit-blob-references", missing],
+            ["--worker-wake-schema-state", missing, missing],
+            ["--prepare-worker-wake", missing, missing],
+            ["--restore-worker-wake", missing, missing, "legacy"],
         ];
 
         foreach (var command in recognizedCommands)
@@ -55,6 +61,7 @@ public sealed class ManagementCliCommandBoundaryTests
             ["--serve"],
             ["--ensure-domain", "example.test"],
             ["--unknown"],
+            ["--prepare-worker-wake", missing],
         ];
         foreach (var command in rejectedCommands)
         {
@@ -64,9 +71,81 @@ public sealed class ManagementCliCommandBoundaryTests
         }
     }
 
-    private static async Task<(int ExitCode, string Output)> RunCliAsync(
+    [TestMethod]
+    public async Task WakeOperatorRejectsUnsafeFilesAndEndpointMismatchWithoutEchoingSecrets()
+    {
+        var directory = Directory.CreateTempSubdirectory("mk8-wake-cli-");
+        try
+        {
+            var config = new EnvironmentConfig
+            {
+                Database = new DatabaseConfig { Password = "local-test-only" },
+                Smtp = new SmtpConfig { Hostname = "mail.example.test" },
+                Messaging = new MessagingConfig
+                {
+                    Enabled = true,
+                    EncryptionKey = Convert.ToBase64String(new byte[32]),
+                },
+                ObjectStorage = new ObjectStorageConfig { ConnectionString = "UseDevelopmentStorage=true" },
+            };
+            var errors = config.Validate(true, EnvironmentValidationRole.ApplicationWorker);
+            Assert.HasCount(0, errors, string.Join("; ", errors));
+            var configPath = Path.Combine(directory.FullName, "worker.json");
+            var wakePath = Path.Combine(directory.FullName, "wake.connection");
+            await File.WriteAllTextAsync(configPath, JsonSerializer.Serialize(config));
+            const string secret = "secret-must-not-appear-in-command-output";
+            await File.WriteAllTextAsync(wakePath, secret + "=not-a-connection-string");
+            var malformed = await RunCliAsync(configPath,
+                ["--prepare-worker-wake", configPath, wakePath], development: true);
+            Assert.AreEqual(1, malformed.ExitCode, malformed.Output);
+            StringAssert.Contains(malformed.Output, "not a valid PostgreSQL connection string");
+            Assert.IsFalse(malformed.Output.Contains(secret, StringComparison.Ordinal));
+
+            foreach (var changed in new[] { "host", "port", "database", "role" })
+            {
+                var connection = new NpgsqlConnectionStringBuilder(config.BuildConnectionString())
+                { Username = "mk8wake", Password = secret };
+                switch (changed)
+                {
+                    case "host": connection.Host = "other.example.test"; break;
+                    case "port": connection.Port++; break;
+                    case "database": connection.Database = "other_database"; break;
+                    case "role": connection.Username = config.Database.Username; break;
+                }
+                await File.WriteAllTextAsync(wakePath, connection.ConnectionString);
+                var mismatch = await RunCliAsync(configPath,
+                    ["--prepare-worker-wake", configPath, wakePath], development: true);
+                Assert.AreEqual(1, mismatch.ExitCode, mismatch.Output);
+                StringAssert.Contains(mismatch.Output, "separate roles on the same explicit database endpoint");
+                Assert.IsFalse(mismatch.Output.Contains(secret, StringComparison.Ordinal));
+            }
+            if (OperatingSystem.IsLinux())
+            {
+                var link = Path.Combine(directory.FullName, "wake-link.connection");
+                File.CreateSymbolicLink(link, wakePath);
+                var symlink = await RunCliAsync(configPath,
+                    ["--prepare-worker-wake", configPath, link], development: true);
+                Assert.AreEqual(1, symlink.ExitCode, symlink.Output);
+                StringAssert.Contains(symlink.Output, "missing, oversized or unsafe");
+                if (!string.Equals(Environment.UserName, "root", StringComparison.Ordinal))
+                {
+                    var service = await RunCliAsync(configPath,
+                        ["--prepare-worker-wake", configPath, wakePath]);
+                    Assert.AreEqual(1, service.ExitCode, service.Output);
+                    StringAssert.Contains(service.Output, "require a root operator");
+                }
+            }
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    internal static async Task<(int ExitCode, string Output)> RunCliAsync(
         string missingConfig,
-        IReadOnlyList<string> arguments)
+        IReadOnlyList<string> arguments,
+        bool development = false)
     {
         var host = Environment.GetEnvironmentVariable("MK8_EMAIL_TEST_DOTNET_HOST")
             ?? Environment.GetEnvironmentVariable("DOTNET_HOST_PATH")
@@ -85,6 +164,7 @@ public sealed class ManagementCliCommandBoundaryTests
             UseShellExecute = false,
         };
         start.Environment["MK8EMAIL_CONFIG_FILE"] = missingConfig;
+        start.Environment["DOTNET_ENVIRONMENT"] = development ? "Development" : "Production";
         start.ArgumentList.Add(assembly);
         foreach (var argument in arguments)
             start.ArgumentList.Add(argument);

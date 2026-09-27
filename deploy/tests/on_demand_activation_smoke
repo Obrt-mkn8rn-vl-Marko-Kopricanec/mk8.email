@@ -31,8 +31,7 @@ prepare_case() {
     install -m 0755 "$fixture_root/on-demand-runuser" "$state/mock/runuser"
     install -m 0755 "$fixture_root/on-demand-id" "$state/mock/id"
     ln -s /bin/true "$state/mock/sleep"
-    : > "$state/mock/dotnet"
-    chmod 0755 "$state/mock/dotnet"
+    install -m 0755 "$fixture_root/on-demand-dotnet" "$state/mock/dotnet"
     : > "$state/etc/mk8email/distributed-ready"
     chmod 0600 "$state/etc/mk8email/distributed-ready"
     : > "$state/etc/mk8email/mk8email.worker.config.json"
@@ -93,6 +92,7 @@ test -f "$state/enabled-mk8email-wake.service"
 test -f "$state/enabled-mk8email-worker-maintenance.timer"
 test -f "$state/dispatch_seen"
 grep -Fx 'mk8email --prepare' "$state/events" >/dev/null
+grep -Fx 'operator --prepare-worker-wake' "$state/events" >/dev/null
 test ! -f "$state/active-mk8email-worker.service"
 test ! -f "$state/active-mk8email-worker-drain.service"
 : > "$state/active-mk8email-offsite-backup.timer"
@@ -106,6 +106,18 @@ prepare_case backend_refusal
 : > "$state/fail_backend"
 if sh "$state/activate" worker >/dev/null 2>&1; then
     printf '%s\n' "Activation accepted a failed Worker backend canary." >&2
+    exit 1
+fi
+
+prepare_case grant_refusal
+: > "$state/fail_grants"
+if sh "$state/activate" worker >/dev/null 2>&1; then
+    printf '%s\n' 'Activation accepted failed Wake scheduling grant preparation.' >&2
+    exit 1
+fi
+assert_stopped
+if grep -Eq '^(enable|start) ' "$state/events"; then
+    printf '%s\n' 'A unit started after failed Wake grant preparation.' >&2
     exit 1
 fi
 assert_stopped

@@ -1,0 +1,25 @@
+#!/bin/sh
+set -eu
+
+command=$2
+printf 'operator:%s\n' "$command" >> "$MK8_UPGRADE_SMOKE_STATE/events"
+case "$command" in
+    --worker-wake-schema-state)
+        [ ! -f "$MK8_UPGRADE_SMOKE_STATE/fail_schema_capture" ] || exit 1
+        printf '%s\n' legacy
+        ;;
+    --prepare-worker-wake)
+        [ -f "$MK8_UPGRADE_SMOKE_STATE/receipt_schema" ] \
+            && [ ! -f "$MK8_UPGRADE_SMOKE_STATE/active" ] \
+            && [ ! -f "$MK8_UPGRADE_SMOKE_STATE/wake_active" ] \
+            && [ ! -f "$MK8_UPGRADE_SMOKE_STATE/fail_grants" ] || exit 1
+        : > "$MK8_UPGRADE_SMOKE_STATE/receipt_grants"
+        ;;
+    --restore-worker-wake)
+        [ "$5" = legacy ] \
+            && [ ! -f "$MK8_UPGRADE_SMOKE_STATE/committed_receipts" ] \
+            && [ ! -f "$MK8_UPGRADE_SMOKE_STATE/new_contract_request" ] || exit 1
+        rm -f "$MK8_UPGRADE_SMOKE_STATE/receipt_schema" "$MK8_UPGRADE_SMOKE_STATE/receipt_grants"
+        ;;
+    *) exit 1 ;;
+esac

@@ -66,11 +66,24 @@ Wake reads only the two scheduling columns, not receipt content or Blob referenc
 Backups inventory the encrypted receipt objects and restore rebinds their ETags.
 Older verified v2/v3 snapshots gain an empty receipt table during isolated restore.
 
-This schema/permission change is not yet a deployable upgrade boundary: coordinating
-the new Wake grants with candidate preflight and prior-release rollback remains
-unfinished. Do not activate it on an existing installation using the current upgrade
-script. Receipt retention and shared encryption-key rotation also require explicit
-reconciliation policy; do not delete receipts while their original requests can retry.
+The native upgrade script now captures the prior receipt-schema/permission state
+and probes the prior Wake executable before interruption. With Wake/path/drain stopped,
+it prepares the candidate using the explicit Worker configuration, grants only the
+two receipt scheduling columns, and probes the candidate Wake before switching the
+release link. These are root-operator actions; the Wake identity receives neither
+Worker credentials nor schema-management privileges.
+
+Rollback to a pre-receipt Worker removes the newly introduced receipt table only
+when it is empty and there are no pending/leased v4 JMAP requests, including expired
+ones. It holds the snapshot/deletion barrier and transaction/table locks while deciding.
+A committed receipt or incompatible request refuses legacy rollback, preserves state,
+and leaves the Worker units stopped for explicit reconciliation or verified restore.
+Receipt-aware rollback keeps the schema, grants and rows. This is a narrow schema/grant
+bridge, not reversal of other database or Blob migrations or an admission barrier:
+stop admission and coordinate both roles as required above. Privileged two-host
+upgrade/rollback rehearsals and final review remain outstanding. Receipt retention
+and shared encryption-key rotation also require explicit reconciliation policy;
+do not delete receipts while their original requests can retry.
 
 This is an intermediate boundary correction, not completion of the API-agnostic
 architecture. Method-response character normalization still requires further

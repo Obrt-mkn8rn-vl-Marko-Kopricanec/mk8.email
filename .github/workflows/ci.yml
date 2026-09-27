@@ -131,9 +131,11 @@ jobs:
             deploy/tests/fixtures/distributed-backup-dotnet \
             deploy/tests/fixtures/upgrade-curl \
             deploy/tests/fixtures/upgrade-runuser \
+            deploy/tests/fixtures/upgrade-dotnet \
             deploy/tests/fixtures/upgrade-systemctl \
             deploy/tests/fixtures/on-demand-id \
             deploy/tests/fixtures/on-demand-runuser \
+            deploy/tests/fixtures/on-demand-dotnet \
             deploy/tests/fixtures/on-demand-systemctl \
             deploy/tests/fixtures/container-dotnet \
             deploy/tests/host_hardening_smoke \

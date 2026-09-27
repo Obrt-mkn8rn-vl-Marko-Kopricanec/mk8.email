@@ -14,15 +14,18 @@ case "$operation" in
         [ "$user" = mk8email ] && [ ! -f "$state/fail_backend" ]
         ;;
     --prepare)
+        [ "$MK8EMAIL_CONFIG_FILE" = "$state/etc/mk8email/mk8email.worker.config.json" ] || exit 1
         [ "$user" = mk8email ] \
             && [ ! -f "$state/fail_prepare" ] \
             && [ ! -f "$state/active-mk8email-wake.service" ] \
-            && [ ! -f "$state/active-mk8email-worker.path" ]
+            && [ ! -f "$state/active-mk8email-worker.path" ] || exit 1
+        : > "$state/prepared_schema"
         ;;
     --probe)
         [ "$user" = mk8wake ] \
             && [ -f "$state/active-mk8email-wake.service" ] \
             && [ -f "$7" ] && [ -d "$8" ] \
+            && [ -f "$state/prepared_grants" ] \
             && [ ! -f "$state/fail_wake_probe" ]
         ;;
     --probe-worker-dispatch)

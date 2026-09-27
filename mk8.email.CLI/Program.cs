@@ -14,6 +14,7 @@ using mk8.email.Messaging;
 using Azure;
 using Azure.Storage.Blobs;
 using Npgsql;
+using mk8.email.CLI;
 
 return await RunManagementCommandAsync(args).ConfigureAwait(false);
 
@@ -67,6 +68,11 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
                 Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT"),
                 "Development",
                 StringComparison.Ordinal);
+        if (WorkerWakeOperatorCommand.Matches(arguments))
+        {
+            await WorkerWakeOperatorCommand.ExecuteAsync(arguments, isDevelopment).ConfigureAwait(false);
+            return 0;
+        }
         if (arguments.Length == 2
             && arguments[0] is ("--validate-gateway-config" or "--validate-worker-config"
                 or "--healthcheck-gateway"
@@ -536,6 +542,8 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
 #pragma warning restore MA0051
 
 static bool IsSupportedCommand(string[] arguments) =>
+    WorkerWakeOperatorCommand.Matches(arguments)
+    ||
     arguments.SequenceEqual(["--healthcheck"])
     || arguments.SequenceEqual(["--initialize-empty-database"])
     || arguments.SequenceEqual(["--ensure-runtime-schema"])

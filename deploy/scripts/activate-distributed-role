@@ -102,8 +102,11 @@ timeout 45s runuser -u mk8email -- /usr/bin/dotnet "$cli" "$validate" "$config" 
 timeout 45s runuser -u mk8email -- /usr/bin/dotnet "$cli" "$probe" "$config" \
     || fail "The role PostgreSQL or Azure Blob backend failed its canary."
 if [ "$role" = worker ]; then
-    timeout 30m runuser -u mk8email -- /usr/bin/dotnet "$executable" --prepare \
+    MK8EMAIL_CONFIG_FILE="$config" timeout 30m runuser -u mk8email -- /usr/bin/dotnet "$executable" --prepare \
         || fail "The Application Worker schema or Azure Blob migration failed."
+    timeout 45s /usr/bin/dotnet "$cli" --prepare-worker-wake \
+        "$config" "$wake_connection" \
+        || fail "The Wake scheduling grant preparation failed."
 fi
 
 was_active=false

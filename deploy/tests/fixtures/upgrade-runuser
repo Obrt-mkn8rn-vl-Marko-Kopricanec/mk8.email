@@ -5,16 +5,20 @@ set -eu
     || exit 1
 command=$6
 if [ "$2" = mk8wake ]; then
-    [ "$command" = --probe ] \
-        && [ -f "$MK8_UPGRADE_SMOKE_STATE/wake_active" ] || exit 1
+    [ "$command" = --probe ] || exit 1
+    [ ! -f "$MK8_UPGRADE_SMOKE_STATE/fail_wake_preflight" ] || exit 1
     printf 'wake:%s\n' "$command" >> "$MK8_UPGRADE_SMOKE_STATE/events"
     if [ "$5" = "$MK8_UPGRADE_SMOKE_STATE/opt/mk8email/releases/bbbbbbbbbbbbbbbb/wake/mk8.email.Wake.dll" ]; then
-        [ ! -f "$MK8_UPGRADE_SMOKE_STATE/fail_wake_preflight" ] || exit 1
+        [ -f "$MK8_UPGRADE_SMOKE_STATE/receipt_grants" ] \
+            && [ ! -f "$MK8_UPGRADE_SMOKE_STATE/fail_candidate_wake_preflight" ] || exit 1
         if [ -f "$MK8_UPGRADE_SMOKE_STATE/fail_new_wake_health" ] \
             && [ "$(readlink -f "$MK8_UPGRADE_SMOKE_STATE/opt/mk8email/current")" \
                 = "$MK8_UPGRADE_SMOKE_STATE/opt/mk8email/releases/bbbbbbbbbbbbbbbb" ]; then
             exit 1
         fi
+    else
+        [ -f "$MK8_UPGRADE_SMOKE_STATE/wake_active" ] \
+            && [ ! -f "$MK8_UPGRADE_SMOKE_STATE/receipt_grants" ] || exit 1
     fi
     exit 0
 fi
@@ -23,10 +27,12 @@ printf 'cli:%s\n' "$command" >> "$MK8_UPGRADE_SMOKE_STATE/events"
 case "$command" in
     --validate-gateway-config|--validate-worker-config) ;;
     --prepare)
+        [ "$MK8EMAIL_CONFIG_FILE" = "$MK8_UPGRADE_SMOKE_STATE/etc/mk8email/mk8email.worker.config.json" ] || exit 1
         [ ! -f "$MK8_UPGRADE_SMOKE_STATE/active" ] \
             && [ ! -f "$MK8_UPGRADE_SMOKE_STATE/wake_active" ] \
             && [ ! -f "$MK8_UPGRADE_SMOKE_STATE/maintenance_active" ] \
-            && [ ! -f "$MK8_UPGRADE_SMOKE_STATE/fail_new_prepare" ]
+            && [ ! -f "$MK8_UPGRADE_SMOKE_STATE/fail_new_prepare" ] || exit 1
+        : > "$MK8_UPGRADE_SMOKE_STATE/receipt_schema"
         ;;
     --healthcheck-gateway|--probe-worker-dispatch|--probe-gateway-dispatch)
         if [ "$command" = --probe-gateway-dispatch ]; then

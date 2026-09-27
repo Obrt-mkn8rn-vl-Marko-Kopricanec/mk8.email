@@ -137,7 +137,10 @@ public sealed class ImapMovePostgresTests
                 userId, sourceId, "Archive", true,
                 new ImapMessageSelection([new ImapMessageRange(99, 99)], null)));
             Assert.AreEqual(ImapMoveDisposition.Moved, empty.Disposition);
+            Assert.AreEqual(23, empty.DestinationUidValidity);
             Assert.IsEmpty(empty.SourceUids);
+            Assert.IsEmpty(empty.DestinationUids);
+            Assert.IsEmpty(empty.ExpungeSequenceNumbers);
             await Assert.ThrowsAsync<ArgumentException>(() => application.MoveMessagesAsync(
                 new ImapMoveRequest(userId, sourceId, "Archive", false,
                     new ImapMessageSelection([new ImapMessageRange(0, 1)], null))));

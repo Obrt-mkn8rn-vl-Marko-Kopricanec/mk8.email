@@ -676,16 +676,31 @@ internal sealed class ImapApplicationService(
                 Keywords = email.Keywords,
             })
             .ToListAsync(cancellationToken).ConfigureAwait(false);
+        if (!TrySelectFlagUpdates(messages, request, out var modified, out var applicable))
+            return new ImapStoreResult(ImapStoreDisposition.KeywordLimitExceeded, [], []);
+        var updated = await ApplyFlagUpdatesAsync(folder, applicable, cancellationToken).ConfigureAwait(false);
+
+        if (transaction is not null)
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return new ImapStoreResult(ImapStoreDisposition.Stored, modified, updated);
+    }
+
+    private static bool TrySelectFlagUpdates(
+        List<EmailDB> messages,
+        ImapStoreRequest request,
+        out List<int> modified,
+        out List<(EmailDB Email, int SequenceNumber)> applicable)
+    {
         var maximumIdentifier = request.UseUid
             ? messages.Count > 0 ? messages[^1].Uid : 0
             : messages.Count;
-        var resolvedRanges = selection.Ranges is { } ranges
+        var resolvedRanges = request.Selection.Ranges is { } ranges
             ? ResolveMessageRanges(ranges.Select(range => (range.Start, range.End)), maximumIdentifier)
             : null;
-        var savedSearchUids = selection.SavedSearchUids?.ToHashSet();
+        var savedSearchUids = request.Selection.SavedSearchUids?.ToHashSet();
         var rangeIndex = 0;
-        var modified = new List<int>();
-        var applicable = new List<(EmailDB Email, int SequenceNumber)>();
+        modified = [];
+        applicable = [];
 
         for (var index = 0; index < messages.Count; index++)
         {
@@ -713,10 +728,17 @@ internal sealed class ImapApplicationService(
                 continue;
             }
             if (!ImapFlagMutation.TryApply(message, request.Mode, request.Flags, out _))
-                return new ImapStoreResult(ImapStoreDisposition.KeywordLimitExceeded, [], []);
+                return false;
             applicable.Add((message, index + 1));
         }
+        return true;
+    }
 
+    private async Task<List<ImapChangedMessage>> ApplyFlagUpdatesAsync(
+        FolderDB folder,
+        List<(EmailDB Email, int SequenceNumber)> applicable,
+        CancellationToken cancellationToken)
+    {
         var updated = new List<ImapChangedMessage>();
         if (applicable.Count > 0)
         {
@@ -741,9 +763,7 @@ internal sealed class ImapApplicationService(
                 database.Entry(update).State = EntityState.Detached;
         }
 
-        if (transaction is not null)
-            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        return new ImapStoreResult(ImapStoreDisposition.Stored, modified, updated);
+        return updated;
     }
 
     private static EmailDB AttachFlagUpdate(EmailDbContext database, EmailDB metadata, long modSeq)
@@ -813,6 +833,22 @@ internal sealed class ImapApplicationService(
                 ModSeq = email.ModSeq,
             })
             .ToListAsync(cancellationToken).ConfigureAwait(false);
+        var result = await StageMessageMovesAsync(
+            source, destination, messages, request, cancellationToken).ConfigureAwait(false);
+        if (result.SourceUids.Count > 0)
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        if (transaction is not null)
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return result;
+    }
+
+    private async Task<ImapMoveResult> StageMessageMovesAsync(
+        FolderDB source,
+        FolderDB destination,
+        List<EmailDB> messages,
+        ImapMoveRequest request,
+        CancellationToken cancellationToken)
+    {
         var maximumIdentifier = request.UseUid
             ? messages.Count > 0 ? messages[^1].Uid : 0
             : messages.Count;
@@ -860,10 +896,6 @@ internal sealed class ImapApplicationService(
             destinationUids.Add(destinationUid);
         }
 
-        if (sourceUids.Count > 0)
-            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        if (transaction is not null)
-            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         return new ImapMoveResult(ImapMoveDisposition.Moved,
             destination.UidValidity, sourceUids, destinationUids, expungeSequenceNumbers);
     }

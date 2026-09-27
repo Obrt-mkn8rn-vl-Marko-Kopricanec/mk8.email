@@ -146,6 +146,24 @@ public sealed class ImapStorePostgresTests
         await using (var database = new EmailDbContext(options))
         {
             var application = CreateApplication(database);
+            var excluded = await application.StoreFlagsAsync(new ImapStoreRequest(
+                userId, folderId, true,
+                new ImapMessageSelection([new ImapMessageRange(1, null)], null),
+                0, ImapFlagMutationMode.Add, ["\\Deleted"]));
+            Assert.AreEqual(ImapStoreDisposition.Stored, excluded.Disposition);
+            CollectionAssert.AreEqual(new[] { 1, 2, 3 }, excluded.Modified);
+            Assert.IsEmpty(excluded.Updated);
+            var empty = await application.StoreFlagsAsync(new ImapStoreRequest(
+                userId, folderId, true, new ImapMessageSelection(null, []),
+                null, ImapFlagMutationMode.Add, ["\\Deleted"]));
+            Assert.AreEqual(ImapStoreDisposition.Stored, empty.Disposition);
+            Assert.IsEmpty(empty.Modified);
+            Assert.IsEmpty(empty.Updated);
+        }
+
+        await using (var database = new EmailDbContext(options))
+        {
+            var application = CreateApplication(database);
             var keywords = Enumerable.Range(0, 129)
                 .Select(index => $"$Tag{index}")
                 .ToArray();
@@ -156,6 +174,14 @@ public sealed class ImapStorePostgresTests
             Assert.AreEqual(ImapStoreDisposition.KeywordLimitExceeded, limited.Disposition);
             Assert.IsEmpty(limited.Updated);
             Assert.IsEmpty(limited.Modified);
+            var laterOverflow = await application.StoreFlagsAsync(new ImapStoreRequest(
+                userId, folderId, true,
+                new ImapMessageSelection([new ImapMessageRange(1, 3)], null),
+                null, ImapFlagMutationMode.Add,
+                ["\\Seen", .. Enumerable.Range(0, 128).Select(index => $"new{index}")]));
+            Assert.AreEqual(ImapStoreDisposition.KeywordLimitExceeded, laterOverflow.Disposition);
+            Assert.IsEmpty(laterOverflow.Updated);
+            Assert.IsEmpty(laterOverflow.Modified);
         }
         await using (var database = new EmailDbContext(options))
         {
@@ -163,6 +189,10 @@ public sealed class ImapStorePostgresTests
                 .Where(folder => folder.Id == folderId)
                 .Select(folder => folder.HighestModSeq)
                 .SingleAsync());
+            Assert.IsFalse(await database.Emails.Where(email => email.Uid == 1)
+                .Select(email => email.IsRead).SingleAsync());
+            CollectionAssert.AreEqual(Array.Empty<string>(), await database.Emails
+                .Where(email => email.Uid == 1).Select(email => email.Keywords).SingleAsync());
             Assert.IsFalse(await database.Emails
                 .Where(email => email.Uid == 1)
                 .Select(email => email.IsDeleted)

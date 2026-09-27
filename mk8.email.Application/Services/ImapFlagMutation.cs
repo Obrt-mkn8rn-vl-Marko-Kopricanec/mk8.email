@@ -75,7 +75,6 @@ internal static class ImapFlagMutation
             .Order(StringComparer.OrdinalIgnoreCase)
             .ThenBy(keyword => keyword, StringComparer.Ordinal)
             .ToArray();
-        failure = string.Empty;
         return true;
     }
 }

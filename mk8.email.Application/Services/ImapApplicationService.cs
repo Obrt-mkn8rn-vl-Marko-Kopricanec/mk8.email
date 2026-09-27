@@ -1233,42 +1233,10 @@ internal sealed class ImapApplicationService(
         if (request.Messages is null)
             throw new ArgumentNullException(nameof(request), "The IMAP append messages are required.");
         var maximumMessageSize = environment?.Limits.MaxMessageSizeBytes ?? 10 * 1024 * 1024;
-        if (request.UserId == Guid.Empty
-            || string.IsNullOrEmpty(request.MailboxName)
-            || request.Messages.Count is 0 or > MaximumMultiAppendMessages
-            || request.Messages.Any(message => message is null
-                || message.MessageId == Guid.Empty
-                || message.Flags is null
-                || message.RawMessage is null
-                || message.RawMessage.Length == 0)
-            || request.Messages.Select(message => message.MessageId).Distinct().Count()
-                != request.Messages.Count)
-        {
-            throw new ArgumentException("The IMAP APPEND request is invalid.", nameof(request));
-        }
-
-        long addedBytes = 0;
-        foreach (ref readonly var message in CollectionsMarshal.AsSpan(request.Messages))
-        {
-            if (message.RawMessage.Length > maximumMessageSize - addedBytes)
-                throw new ArgumentException("The IMAP APPEND request exceeds the size limit.",
-                    nameof(request));
-            addedBytes += message.RawMessage.Length;
-            if (!ImapFlagMutation.TryValidate(message.Flags, out _)
-                || message.Flags.Where(flag => !flag.StartsWith('\\'))
-                    .Distinct(StringComparer.OrdinalIgnoreCase).Count()
-                    > ImapFlagMutation.MaximumKeywordsPerMessage)
-            {
-                return new ImapAppendResult(ImapAppendDisposition.InvalidFlags, 0, []);
-            }
-            var rawText = MailWireEncoding.Instance.GetString(message.RawMessage);
-            if (rawText.Contains('\0', StringComparison.Ordinal)
-                || !ImapAppendContent.TryPrepareForParsing(
-                    rawText, request.Utf8Enabled, out _))
-            {
-                return new ImapAppendResult(ImapAppendDisposition.InvalidContent, 0, []);
-            }
-        }
+        ValidateAppendShape(request);
+        var validationFailure = ValidateAppendContent(request, maximumMessageSize, out var addedBytes);
+        if (validationFailure is { } invalidDisposition)
+            return new ImapAppendResult(invalidDisposition, 0, []);
 
         var transaction = database.Database.IsRelational()
             ? await database.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken)
@@ -1283,107 +1251,16 @@ internal sealed class ImapApplicationService(
             if (folder is null)
                 return new ImapAppendResult(ImapAppendDisposition.MailboxNotFound, 0, []);
 
-            var ids = request.Messages.Select(message => message.MessageId).ToArray();
-            var existing = await database.Emails
-                .AsNoTracking()
-                .Where(email => ids.Contains(email.Id))
-                .Select(email => new
-                {
-                    email.Id,
-                    email.FolderId,
-                    email.Uid,
-                    email.SizeBytes,
-                    email.RawMessageObjectSha256,
-                })
-                .ToListAsync(cancellationToken).ConfigureAwait(false);
-            if (existing.Count > 0)
-            {
-                if (existing.Count != request.Messages.Count)
-                    throw new InvalidOperationException("The IMAP APPEND message identities conflict.");
-                var byId = existing.ToDictionary(email => email.Id);
-                foreach (ref readonly var message in CollectionsMarshal.AsSpan(request.Messages))
-                {
-                    var stored = byId[message.MessageId];
-                    var hash = Convert.ToHexStringLower(SHA256.HashData(message.RawMessage));
-                    if (stored.FolderId != folder.Id
-                        || stored.Uid < 1
-                        || stored.SizeBytes != message.RawMessage.Length
-                        || !string.Equals(stored.RawMessageObjectSha256, hash,
-                            StringComparison.Ordinal))
-                    {
-                        throw new InvalidOperationException("The IMAP APPEND message identities conflict.");
-                    }
-                }
-
-                return new ImapAppendResult(ImapAppendDisposition.Appended,
-                    folder.UidValidity,
-                    request.Messages.Select(message => byId[message.MessageId].Uid).ToList());
-            }
-
-            var quotaBytes = await database.Users
-                .AsNoTracking()
-                .Where(user => user.Id == request.UserId)
-                .Select(user => (long?)user.QuotaBytes)
-                .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
-            if (quotaBytes is null)
-                return new ImapAppendResult(ImapAppendDisposition.MailboxNotFound, 0, []);
-            if (quotaBytes > 0)
-            {
-                var usedBytes = await database.Emails
-                    .AsNoTracking()
-                    .Where(email => email.Folder.Inbox.OwnerId == request.UserId)
-                    .SumAsync(email => (long?)email.SizeBytes, cancellationToken).ConfigureAwait(false) ?? 0;
-                if (usedBytes >= quotaBytes || addedBytes > quotaBytes - usedBytes)
-                    return new ImapAppendResult(ImapAppendDisposition.OverQuota, 0, []);
-            }
+            var earlyResult = await CheckAppendStateAsync(request, folder, addedBytes, cancellationToken).ConfigureAwait(false);
+            if (earlyResult is not null)
+                return earlyResult;
 
             var marker = effects.Mark();
             var commitAttempted = false;
             var uids = new List<int>(request.Messages.Count);
             try
             {
-                for (var index = 0; index < request.Messages.Count; index++)
-                {
-                    var message = request.Messages[index];
-                    var rawText = MailWireEncoding.Instance.GetString(message.RawMessage);
-                    if (!ImapAppendContent.TryPrepareForParsing(
-                        rawText, request.Utf8Enabled, out var parsingText))
-                    {
-                        throw new InvalidOperationException("The IMAP APPEND content changed after validation.");
-                    }
-                    var (subject, body, headers) = MailMessageParser.Parse(parsingText);
-                    var messageId = MailMessageParser.ExtractHeaderValue(headers, "Message-ID");
-                    var inReplyTo = MailMessageParser.ExtractHeaderValue(headers, "In-Reply-To");
-                    var email = new EmailDB
-                    {
-                        Id = message.MessageId,
-                        Sender = MailMessageParser.ExtractHeaderValue(headers, "From"),
-                        Recipient = MailMessageParser.ExtractHeaderValue(headers, "To"),
-                        Subject = subject.Length > 998 ? subject[..998] : subject,
-                        Body = body,
-                        RawHeaders = headers,
-                        SizeBytes = message.RawMessage.Length,
-                        MessageId = messageId,
-                        InReplyTo = inReplyTo,
-                        Cc = MailMessageParser.ExtractHeaderValue(headers, "Cc"),
-                        EmailObjectId = Guid.CreateVersion7().ToString("N"),
-                        ThreadObjectId = ImapAppendContent.GenerateThreadObjectId(
-                            inReplyTo, messageId),
-                        ReceivedAt = message.InternalDate ?? DateTime.UtcNow,
-                        Uid = folder.NextUid++,
-                        ModSeq = ++folder.HighestModSeq,
-                        FolderId = folder.Id,
-                    };
-                    if (!ImapFlagMutation.TryApply(email, ImapFlagMutationMode.Add,
-                        message.Flags, out _))
-                    {
-                        throw new InvalidOperationException("The IMAP APPEND flags changed after validation.");
-                    }
-                    uids.Add(email.Uid);
-                    await content.SetAsync(email, message.RawMessage, cancellationToken).ConfigureAwait(false);
-                    await database.Emails.AddAsync(email, cancellationToken).ConfigureAwait(false);
-                }
-
+                await StageAppendMessagesAsync(request, folder, uids, cancellationToken).ConfigureAwait(false);
                 await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
                 if (transaction is not null)
                 {
@@ -1394,30 +1271,201 @@ internal sealed class ImapApplicationService(
             }
             catch
             {
-                if (transaction is not null)
-                {
-                    try
-                    {
-                        await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
-                    }
-                    // Preserve the original append failure if rollback also fails.
-#pragma warning disable CA1031
-                    catch (Exception rollbackException)
-                    {
-                        ApplicationServiceLog.ImapAppendRollbackFailed(logger, rollbackException);
-                    }
-#pragma warning restore CA1031
-                }
-                if (commitAttempted)
-                    effects.Discard(marker);
-                else
-                    await effects.RollbackAsync(marker).ConfigureAwait(false);
+                await RecoverAppendAsync(transaction, marker, commitAttempted).ConfigureAwait(false);
                 throw;
             }
 
             return new ImapAppendResult(ImapAppendDisposition.Appended,
                 folder.UidValidity, uids);
         }
+    }
+
+    private static void ValidateAppendShape(ImapAppendRequest request)
+    {
+        if (request.UserId == Guid.Empty
+            || string.IsNullOrEmpty(request.MailboxName)
+            || request.Messages.Count is 0 or > MaximumMultiAppendMessages
+            || request.Messages.Any(message => message is null
+                || message.MessageId == Guid.Empty
+                || message.Flags is null
+                || message.RawMessage is null
+                || message.RawMessage.Length == 0)
+            || request.Messages.Select(message => message.MessageId).Distinct().Count()
+                != request.Messages.Count)
+        {
+            throw new ArgumentException("The IMAP APPEND request is invalid.", nameof(request));
+        }
+
+    }
+
+    private static ImapAppendDisposition? ValidateAppendContent(
+        ImapAppendRequest request, int maximumMessageSize, out long addedBytes)
+    {
+        addedBytes = 0;
+        foreach (ref readonly var message in CollectionsMarshal.AsSpan(request.Messages))
+        {
+            if (message.RawMessage.Length > maximumMessageSize - addedBytes)
+                throw new ArgumentException("The IMAP APPEND request exceeds the size limit.",
+                    nameof(request));
+            addedBytes += message.RawMessage.Length;
+            if (!ImapFlagMutation.TryValidate(message.Flags, out _)
+                || message.Flags.Where(flag => !flag.StartsWith('\\'))
+                    .Distinct(StringComparer.OrdinalIgnoreCase).Count()
+                    > ImapFlagMutation.MaximumKeywordsPerMessage)
+            {
+                return ImapAppendDisposition.InvalidFlags;
+            }
+            var rawText = MailWireEncoding.Instance.GetString(message.RawMessage);
+            if (rawText.Contains('\0', StringComparison.Ordinal)
+                || !ImapAppendContent.TryPrepareForParsing(
+                    rawText, request.Utf8Enabled, out _))
+            {
+                return ImapAppendDisposition.InvalidContent;
+            }
+        }
+
+        return null;
+    }
+
+    private async Task<ImapAppendResult?> CheckAppendStateAsync(
+        ImapAppendRequest request, FolderDB folder, long addedBytes, CancellationToken cancellationToken)
+    {
+        var replay = await ReadAppendReplayAsync(request, folder, cancellationToken).ConfigureAwait(false);
+        if (replay is not null)
+            return replay;
+        return await CheckAppendQuotaAsync(request.UserId, addedBytes, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<ImapAppendResult?> ReadAppendReplayAsync(
+        ImapAppendRequest request, FolderDB folder, CancellationToken cancellationToken)
+    {
+        var ids = request.Messages.Select(message => message.MessageId).ToArray();
+        var existing = await database.Emails
+            .AsNoTracking()
+            .Where(email => ids.Contains(email.Id))
+            .Select(email => new
+            {
+                email.Id,
+                email.FolderId,
+                email.Uid,
+                email.SizeBytes,
+                email.RawMessageObjectSha256,
+            })
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        if (existing.Count > 0)
+        {
+            if (existing.Count != request.Messages.Count)
+                throw new InvalidOperationException("The IMAP APPEND message identities conflict.");
+            var byId = existing.ToDictionary(email => email.Id);
+            foreach (ref readonly var message in CollectionsMarshal.AsSpan(request.Messages))
+            {
+                var stored = byId[message.MessageId];
+                var hash = Convert.ToHexStringLower(SHA256.HashData(message.RawMessage));
+                if (stored.FolderId != folder.Id
+                    || stored.Uid < 1
+                    || stored.SizeBytes != message.RawMessage.Length
+                    || !string.Equals(stored.RawMessageObjectSha256, hash,
+                        StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException("The IMAP APPEND message identities conflict.");
+                }
+            }
+
+            return new ImapAppendResult(ImapAppendDisposition.Appended,
+                folder.UidValidity,
+                request.Messages.Select(message => byId[message.MessageId].Uid).ToList());
+        }
+        return null;
+    }
+
+    private async Task<ImapAppendResult?> CheckAppendQuotaAsync(
+        Guid userId, long addedBytes, CancellationToken cancellationToken)
+    {
+        var quotaBytes = await database.Users
+            .AsNoTracking()
+            .Where(user => user.Id == userId)
+            .Select(user => (long?)user.QuotaBytes)
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+        if (quotaBytes is null)
+            return new ImapAppendResult(ImapAppendDisposition.MailboxNotFound, 0, []);
+        if (quotaBytes > 0)
+        {
+            var usedBytes = await database.Emails
+                .AsNoTracking()
+                .Where(email => email.Folder.Inbox.OwnerId == userId)
+                .SumAsync(email => (long?)email.SizeBytes, cancellationToken).ConfigureAwait(false) ?? 0;
+            if (usedBytes >= quotaBytes || addedBytes > quotaBytes - usedBytes)
+                return new ImapAppendResult(ImapAppendDisposition.OverQuota, 0, []);
+        }
+        return null;
+    }
+
+    private async Task StageAppendMessagesAsync(
+        ImapAppendRequest request, FolderDB folder, List<int> uids, CancellationToken cancellationToken)
+    {
+        for (var index = 0; index < request.Messages.Count; index++)
+        {
+            var message = request.Messages[index];
+            var rawText = MailWireEncoding.Instance.GetString(message.RawMessage);
+            if (!ImapAppendContent.TryPrepareForParsing(
+                rawText, request.Utf8Enabled, out var parsingText))
+            {
+                throw new InvalidOperationException("The IMAP APPEND content changed after validation.");
+            }
+            var (subject, body, headers) = MailMessageParser.Parse(parsingText);
+            var messageId = MailMessageParser.ExtractHeaderValue(headers, "Message-ID");
+            var inReplyTo = MailMessageParser.ExtractHeaderValue(headers, "In-Reply-To");
+            var email = new EmailDB
+            {
+                Id = message.MessageId,
+                Sender = MailMessageParser.ExtractHeaderValue(headers, "From"),
+                Recipient = MailMessageParser.ExtractHeaderValue(headers, "To"),
+                Subject = subject.Length > 998 ? subject[..998] : subject,
+                Body = body,
+                RawHeaders = headers,
+                SizeBytes = message.RawMessage.Length,
+                MessageId = messageId,
+                InReplyTo = inReplyTo,
+                Cc = MailMessageParser.ExtractHeaderValue(headers, "Cc"),
+                EmailObjectId = Guid.CreateVersion7().ToString("N"),
+                ThreadObjectId = ImapAppendContent.GenerateThreadObjectId(
+                    inReplyTo, messageId),
+                ReceivedAt = message.InternalDate ?? DateTime.UtcNow,
+                Uid = folder.NextUid++,
+                ModSeq = ++folder.HighestModSeq,
+                FolderId = folder.Id,
+            };
+            if (!ImapFlagMutation.TryApply(email, ImapFlagMutationMode.Add,
+                message.Flags, out _))
+            {
+                throw new InvalidOperationException("The IMAP APPEND flags changed after validation.");
+            }
+            uids.Add(email.Uid);
+            await content.SetAsync(email, message.RawMessage, cancellationToken).ConfigureAwait(false);
+            await database.Emails.AddAsync(email, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task RecoverAppendAsync(IDbContextTransaction? transaction, int marker, bool commitAttempted)
+    {
+        if (transaction is not null)
+        {
+            try
+            {
+                await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            // Preserve the original append failure if rollback also fails.
+#pragma warning disable CA1031
+            catch (Exception rollbackException)
+            {
+                ApplicationServiceLog.ImapAppendRollbackFailed(logger, rollbackException);
+            }
+#pragma warning restore CA1031
+        }
+        if (commitAttempted)
+            effects.Discard(marker);
+        else
+            await effects.RollbackAsync(marker).ConfigureAwait(false);
     }
 
     public async Task<ImapSearchResult> SearchMessagesAsync(
@@ -1754,6 +1802,42 @@ internal sealed class ImapApplicationService(
         ImapFetchPageRequest request,
         CancellationToken cancellationToken = default)
     {
+        ValidateFetchPageRequest(request);
+
+        var transaction = database.Database.IsRelational()
+            ? await database.Database.BeginTransactionAsync(
+                IsolationLevel.RepeatableRead, cancellationToken)
+.ConfigureAwait(false) : null;
+        // A null transaction is intentional for non-relational test providers.
+#pragma warning disable CA2007, MA0004
+        await using (transaction)
+        {
+#pragma warning restore CA2007, MA0004
+            var folderExists = await database.Folders
+            .AsNoTracking()
+            .AnyAsync(folder => folder.Id == request.FolderId
+                && folder.Inbox.OwnerId == request.UserId,
+                cancellationToken).ConfigureAwait(false);
+            if (!folderExists)
+                return new ImapFetchPageResult(false, 0, 0, 0, request.AfterUid, false, []);
+
+            var query = database.Emails
+                .AsNoTracking()
+                .Where(email => email.FolderId == request.FolderId);
+            var bounds = await ReadFetchPageBoundsAsync(query, request, cancellationToken).ConfigureAwait(false);
+            var inputs = await ReadFetchPageInputsAsync(query, request, bounds.MaxUid, cancellationToken).ConfigureAwait(false);
+            var page = await CollectFetchMessagesAsync(inputs.Candidates, inputs.MessageQuery, inputs.Metadata,
+                request, bounds.SequenceBefore, bounds.MaximumIdentifier, cancellationToken).ConfigureAwait(false);
+
+            if (transaction is not null)
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return new ImapFetchPageResult(true, bounds.MaxUid, bounds.MaximumIdentifier, bounds.MessageCount,
+                page.NextAfterUid, page.HasMore, page.Messages);
+        }
+    }
+
+    private static void ValidateFetchPageRequest(ImapFetchPageRequest request)
+    {
         ArgumentNullException.ThrowIfNull(request);
         if (request.UserId == Guid.Empty
             || request.FolderId == Guid.Empty
@@ -1776,178 +1860,189 @@ internal sealed class ImapApplicationService(
             throw new ArgumentException("The IMAP FETCH page request is invalid.", nameof(request));
         }
 
-        var transaction = database.Database.IsRelational()
-            ? await database.Database.BeginTransactionAsync(
-                IsolationLevel.RepeatableRead, cancellationToken)
-.ConfigureAwait(false) : null;
-        // A null transaction is intentional for non-relational test providers.
-#pragma warning disable CA2007, MA0004
-        await using (transaction)
+    }
+
+    private static async Task<(int MaxUid, int MessageCount, int MaximumIdentifier, int SequenceBefore)> ReadFetchPageBoundsAsync(
+        IQueryable<EmailDB> query, ImapFetchPageRequest request, CancellationToken cancellationToken)
+    {
+        var maxUid = request.SnapshotMaxUid
+            ?? await query.MaxAsync(email => (int?)email.Uid, cancellationToken).ConfigureAwait(false)
+            ?? 0;
+        var messageCount = await query.CountAsync(
+            email => email.Uid <= maxUid, cancellationToken).ConfigureAwait(false);
+        if (request.SnapshotMessageCount is { } snapshotCount
+            && messageCount != snapshotCount)
         {
-#pragma warning restore CA2007, MA0004
-            var folderExists = await database.Folders
-            .AsNoTracking()
-            .AnyAsync(folder => folder.Id == request.FolderId
-                && folder.Inbox.OwnerId == request.UserId,
-                cancellationToken).ConfigureAwait(false);
-            if (!folderExists)
-                return new ImapFetchPageResult(false, 0, 0, 0, request.AfterUid, false, []);
-
-            var query = database.Emails
-                .AsNoTracking()
-                .Where(email => email.FolderId == request.FolderId);
-            var maxUid = request.SnapshotMaxUid
-                ?? await query.MaxAsync(email => (int?)email.Uid, cancellationToken).ConfigureAwait(false)
-                ?? 0;
-            var messageCount = await query.CountAsync(
-                email => email.Uid <= maxUid, cancellationToken).ConfigureAwait(false);
-            if (request.SnapshotMessageCount is { } snapshotCount
-                && messageCount != snapshotCount)
-            {
-                throw new InvalidOperationException(
-                    "The IMAP FETCH mailbox changed during paged enumeration.");
-            }
-            var maximumIdentifier = request.SnapshotMaximumIdentifier
-                ?? (request.UseUid ? maxUid : messageCount);
-            var sequenceBefore = request.AfterUid == 0
-                ? 0
-                : await query.CountAsync(email => email.Uid <= request.AfterUid,
-                    cancellationToken).ConfigureAwait(false);
-            var candidates = await query
-                .Where(email => email.Uid > request.AfterUid && email.Uid <= maxUid)
-                .OrderBy(email => email.Uid)
-                .Select(email => new { email.Id, email.Uid })
-                .Take(FetchScanPageSize + 1)
-                .ToListAsync(cancellationToken).ConfigureAwait(false);
-            var resolvedRanges = request.Selection.Ranges is { } ranges
-                ? ResolveMessageRanges(ranges.Select(range => (range.Start, range.End)),
-                    maximumIdentifier)
-                : null;
-            var savedSearchUids = request.Selection.SavedSearchUids?.ToHashSet();
-            var selected = new List<ImapFetchMessage>();
-            var selectedLimit = request.IncludeStoredContent
-                ? FetchContentPageSize
-                : FetchMetadataPageSize;
-            var messageQuery = request.IncludeStoredContent
-                ? query
-                : query.Select(email => new EmailDB
-                {
-                    Id = email.Id,
-                    Sender = email.Sender,
-                    Recipient = email.Recipient,
-                    Subject = email.Subject,
-                    Body = email.SizeBytes > 0 ? string.Empty : email.Body,
-                    IsRead = email.IsRead,
-                    IsDeleted = email.IsDeleted,
-                    IsFlagged = email.IsFlagged,
-                    IsDraft = email.IsDraft,
-                    IsAnswered = email.IsAnswered,
-                    Keywords = email.Keywords,
-                    ModSeq = email.ModSeq,
-                    Uid = email.Uid,
-                    EmailObjectId = email.EmailObjectId,
-                    ThreadObjectId = email.ThreadObjectId,
-                    SizeBytes = email.SizeBytes,
-                    RawHeaders = email.SizeBytes > 0 ? null : email.RawHeaders,
-                    MessageId = email.MessageId,
-                    InReplyTo = email.InReplyTo,
-                    Cc = email.Cc,
-                    ReceivedAt = email.ReceivedAt,
-                });
-            var candidateIds = candidates.Select(candidate => candidate.Id).ToArray();
-            var metadataById = request.IncludeStoredContent
-                ? null
-                : await messageQuery
-                    .Where(email => candidateIds.Contains(email.Id))
-                    .ToDictionaryAsync(email => email.Id, cancellationToken).ConfigureAwait(false);
-            var contentBytes = 0L;
-            var nextAfterUid = request.AfterUid;
-            var processed = 0;
-            var rangeIndex = 0;
-            for (var index = 0; index < candidates.Count && index < FetchScanPageSize; index++)
-            {
-                if (selected.Count >= selectedLimit)
-                    break;
-
-                var candidate = candidates[index];
-                var identifier = request.UseUid
-                    ? candidate.Uid
-                    : sequenceBefore + index + 1;
-                var matches = savedSearchUids is null
-                    || savedSearchUids.Contains(candidate.Uid);
-                if (resolvedRanges is not null)
-                {
-                    while (rangeIndex < resolvedRanges.Count
-                        && resolvedRanges[rangeIndex].End < identifier)
-                    {
-                        rangeIndex++;
-                    }
-                    matches = matches && rangeIndex < resolvedRanges.Count
-                        && resolvedRanges[rangeIndex].Start <= identifier;
-                }
-
-                if (matches)
-                {
-                    var email = metadataById is not null
-                        ? metadataById[candidate.Id]
-                        : await messageQuery.SingleAsync(
-                            message => message.Id == candidate.Id, cancellationToken).ConfigureAwait(false);
-                    var raw = request.IncludeStoredContent
-                        ? await content.ReadAsync(email, cancellationToken).ConfigureAwait(false)
-                        : null;
-                    if (raw is not null
-                        && selected.Count > 0
-                        && contentBytes + raw.LongLength > FetchContentPageBytes)
-                    {
-                        break;
-                    }
-                    if (raw is not null)
-                        contentBytes += raw.LongLength;
-                    selected.Add(new ImapFetchMessage(
-                        email.Id,
-                        sequenceBefore + index + 1,
-                        email.Uid,
-                        email.ModSeq,
-                        email.IsRead,
-                        email.IsDeleted,
-                        email.IsFlagged,
-                        email.IsDraft,
-                        email.IsAnswered,
-                        email.Keywords ?? [],
-                        email.ReceivedAt,
-                        email.SizeBytes,
-                        email.Sender,
-                        email.Recipient,
-                        email.Cc,
-                        email.Subject,
-                        request.IncludeStoredContent || email.SizeBytes == 0
-                            ? email.Body
-                            : string.Empty,
-                        request.IncludeStoredContent || email.SizeBytes == 0
-                            ? email.RawHeaders
-                            : null,
-                        email.MessageId,
-                        email.InReplyTo,
-                        email.EmailObjectId,
-                        email.ThreadObjectId,
-                        raw));
-                }
-
-                nextAfterUid = candidate.Uid;
-                processed++;
-            }
-
-            if (transaction is not null)
-                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            return new ImapFetchPageResult(
-                true,
-                maxUid,
-                maximumIdentifier,
-                messageCount,
-                nextAfterUid,
-                processed < candidates.Count,
-                selected);
+            throw new InvalidOperationException(
+                "The IMAP FETCH mailbox changed during paged enumeration.");
         }
+        var maximumIdentifier = request.SnapshotMaximumIdentifier
+            ?? (request.UseUid ? maxUid : messageCount);
+        var sequenceBefore = request.AfterUid == 0
+            ? 0
+            : await query.CountAsync(email => email.Uid <= request.AfterUid,
+                cancellationToken).ConfigureAwait(false);
+        return (maxUid, messageCount, maximumIdentifier, sequenceBefore);
+    }
+
+    private sealed record FetchCandidate(Guid Id, int Uid);
+
+    private static async Task<(List<FetchCandidate> Candidates, IQueryable<EmailDB> MessageQuery, Dictionary<Guid, EmailDB>? Metadata)>
+        ReadFetchPageInputsAsync(IQueryable<EmailDB> query, ImapFetchPageRequest request, int maxUid, CancellationToken cancellationToken)
+    {
+        var candidates = await query
+            .Where(email => email.Uid > request.AfterUid && email.Uid <= maxUid)
+            .OrderBy(email => email.Uid)
+            .Select(email => new FetchCandidate(email.Id, email.Uid))
+            .Take(FetchScanPageSize + 1)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        var messageQuery = BuildFetchMessageQuery(query, request.IncludeStoredContent);
+        var candidateIds = candidates.Select(candidate => candidate.Id).ToArray();
+        var metadataById = request.IncludeStoredContent
+            ? null
+            : await messageQuery
+                .Where(email => candidateIds.Contains(email.Id))
+                .ToDictionaryAsync(email => email.Id, cancellationToken).ConfigureAwait(false);
+        return (candidates, messageQuery, metadataById);
+    }
+
+    private static IQueryable<EmailDB> BuildFetchMessageQuery(IQueryable<EmailDB> query, bool includeStoredContent)
+    {
+        return includeStoredContent
+            ? query
+            : query.Select(email => new EmailDB
+            {
+                Id = email.Id,
+                Sender = email.Sender,
+                Recipient = email.Recipient,
+                Subject = email.Subject,
+                Body = email.SizeBytes > 0 ? string.Empty : email.Body,
+                IsRead = email.IsRead,
+                IsDeleted = email.IsDeleted,
+                IsFlagged = email.IsFlagged,
+                IsDraft = email.IsDraft,
+                IsAnswered = email.IsAnswered,
+                Keywords = email.Keywords,
+                ModSeq = email.ModSeq,
+                Uid = email.Uid,
+                EmailObjectId = email.EmailObjectId,
+                ThreadObjectId = email.ThreadObjectId,
+                SizeBytes = email.SizeBytes,
+                RawHeaders = email.SizeBytes > 0 ? null : email.RawHeaders,
+                MessageId = email.MessageId,
+                InReplyTo = email.InReplyTo,
+                Cc = email.Cc,
+                ReceivedAt = email.ReceivedAt,
+            });
+    }
+
+    private async Task<(List<ImapFetchMessage> Messages, int NextAfterUid, bool HasMore)> CollectFetchMessagesAsync(
+        List<FetchCandidate> candidates,
+        IQueryable<EmailDB> messageQuery,
+        Dictionary<Guid, EmailDB>? metadataById,
+        ImapFetchPageRequest request,
+        int sequenceBefore,
+        int maximumIdentifier,
+        CancellationToken cancellationToken)
+    {
+        var resolvedRanges = request.Selection.Ranges is { } ranges
+            ? ResolveMessageRanges(ranges.Select(range => (range.Start, range.End)),
+                maximumIdentifier)
+            : null;
+        var savedSearchUids = request.Selection.SavedSearchUids?.ToHashSet();
+        var selected = new List<ImapFetchMessage>();
+        var selectedLimit = request.IncludeStoredContent
+            ? FetchContentPageSize
+            : FetchMetadataPageSize;
+        var contentBytes = 0L;
+        var nextAfterUid = request.AfterUid;
+        var processed = 0;
+        var rangeIndex = 0;
+        for (var index = 0; index < candidates.Count && index < FetchScanPageSize; index++)
+        {
+            if (selected.Count >= selectedLimit)
+                break;
+
+            var candidate = candidates[index];
+            var identifier = request.UseUid
+                ? candidate.Uid
+                : sequenceBefore + index + 1;
+            var matches = MatchesFetchSelection(identifier, candidate.Uid, savedSearchUids, resolvedRanges, ref rangeIndex);
+
+            if (matches)
+            {
+                var email = metadataById is not null
+                    ? metadataById[candidate.Id]
+                    : await messageQuery.SingleAsync(
+                        message => message.Id == candidate.Id, cancellationToken).ConfigureAwait(false);
+                var raw = request.IncludeStoredContent
+                    ? await content.ReadAsync(email, cancellationToken).ConfigureAwait(false)
+                    : null;
+                if (raw is not null
+                    && selected.Count > 0
+                    && contentBytes + raw.LongLength > FetchContentPageBytes)
+                {
+                    break;
+                }
+                if (raw is not null)
+                    contentBytes += raw.LongLength;
+                selected.Add(CreateFetchMessage(email, sequenceBefore + index + 1, request.IncludeStoredContent, raw));
+            }
+
+            nextAfterUid = candidate.Uid;
+            processed++;
+        }
+        return (selected, nextAfterUid, processed < candidates.Count);
+    }
+
+    private static bool MatchesFetchSelection(int identifier, int uid, HashSet<int>? savedSearchUids,
+        List<(int Start, int End)>? resolvedRanges, ref int rangeIndex)
+    {
+        var matches = savedSearchUids is null
+            || savedSearchUids.Contains(uid);
+        if (resolvedRanges is not null)
+        {
+            while (rangeIndex < resolvedRanges.Count
+                && resolvedRanges[rangeIndex].End < identifier)
+            {
+                rangeIndex++;
+            }
+            matches = matches && rangeIndex < resolvedRanges.Count
+                && resolvedRanges[rangeIndex].Start <= identifier;
+        }
+        return matches;
+    }
+
+    private static ImapFetchMessage CreateFetchMessage(EmailDB email, int sequenceNumber, bool includeStoredContent, byte[]? raw)
+    {
+        return new ImapFetchMessage(
+            email.Id,
+            sequenceNumber,
+            email.Uid,
+            email.ModSeq,
+            email.IsRead,
+            email.IsDeleted,
+            email.IsFlagged,
+            email.IsDraft,
+            email.IsAnswered,
+            email.Keywords ?? [],
+            email.ReceivedAt,
+            email.SizeBytes,
+            email.Sender,
+            email.Recipient,
+            email.Cc,
+            email.Subject,
+            includeStoredContent || email.SizeBytes == 0
+                ? email.Body
+                : string.Empty,
+            includeStoredContent || email.SizeBytes == 0
+                ? email.RawHeaders
+                : null,
+            email.MessageId,
+            email.InReplyTo,
+            email.EmailObjectId,
+            email.ThreadObjectId,
+            raw);
     }
 
     public async Task<ImapQuotaResult> GetQuotaAsync(

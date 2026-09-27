@@ -49,8 +49,8 @@ jobs:
         run: dotnet restore mk8.email.slnx --locked-mode
 
       - name: Build all projects
-        # Application Core's newly enabled analyzer migration is not yet clean.
-        # Keep compiler warnings fatal while its analyzer diagnostics are resolved.
+        # Keep compiler warnings fatal; enrolled analyzer gates run separately below.
+        # JMAP and remaining test-project analyzer migrations still block review.
         run: dotnet build mk8.email.slnx --configuration Release --no-restore --property:TreatWarningsAsErrors=true --property:ContinuousIntegrationBuild=true --property:RunAnalyzers=false
 
       - name: Enforce completed analyzer gates
@@ -59,11 +59,7 @@ jobs:
           set -euo pipefail
           mapfile -t projects < <(grep -l '<EnforceCodeStyleInBuild>true' mk8.email.*/*.csproj | sort)
           for project in "${projects[@]}"; do
-            # Remove this exception when the Application Core analyzer migration reaches zero diagnostics.
-            if [[ "$project" == mk8.email.Application/mk8.email.Application.Core.csproj ]]; then
-              continue
-            fi
-            dotnet build "$project" --configuration Release --no-restore --no-dependencies \
+            dotnet build "$project" --configuration Release --no-restore --no-dependencies --target:Rebuild \
               --property:TreatWarningsAsErrors=true \
               --property:ContinuousIntegrationBuild=true \
               --property:RunAnalyzers=true

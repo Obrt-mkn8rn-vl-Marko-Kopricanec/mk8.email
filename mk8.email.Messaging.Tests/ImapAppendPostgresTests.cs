@@ -37,7 +37,7 @@ public sealed class ImapAppendPostgresTests
             + "Subject: Second\r\nIn-Reply-To: <first@example.test>\r\n\r\nBody 2\r\n");
         var items = new List<ImapAppendMessage>
         {
-            new(Guid.CreateVersion7(), ["\\Seen", "$Label1"], null, raw1),
+            new(Guid.CreateVersion7(), ["\\Seen", "$Label1"], new DateTime(2026, 1, 2, 3, 4, 5, DateTimeKind.Utc), raw1),
             new(Guid.CreateVersion7(), ["\\Flagged"], null, raw2),
         };
         var request = new ImapAppendRequest(ownerId, "INBOX", false, items);
@@ -167,7 +167,22 @@ public sealed class ImapAppendPostgresTests
             var application = CreateApplication(database, objects);
             var replayed = await application.AppendMessagesAsync(request);
             CollectionAssert.AreEqual(new[] { 7, 8 }, replayed.Uids);
+            Assert.AreEqual(ImapAppendDisposition.Appended, replayed.Disposition);
+            Assert.AreEqual(42, replayed.UidValidity);
+            var owner = await database.Users.SingleAsync(user => user.Id == ownerId);
+            owner.QuotaBytes = 1;
+            await database.SaveChangesAsync();
+            var reorderedReplay = await application.AppendMessagesAsync(request with
+            {
+                Messages = [items[1], items[0] with { Flags = [], InternalDate = DateTime.UtcNow }],
+            });
+            Assert.AreEqual(ImapAppendDisposition.Appended, reorderedReplay.Disposition);
+            CollectionAssert.AreEqual(new[] { 8, 7 }, reorderedReplay.Uids);
             Assert.AreEqual(2, objects.ObjectCount);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => application.AppendMessagesAsync(request with
+            {
+                Messages = [items[0], items[1] with { MessageId = Guid.CreateVersion7() }],
+            }));
             await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 application.AppendMessagesAsync(request with
                 {
@@ -181,6 +196,9 @@ public sealed class ImapAppendPostgresTests
             Assert.IsNotNull(stored[1].RawMessageObjectName);
             Assert.IsTrue(stored[0].IsRead);
             Assert.IsTrue(stored[1].IsFlagged);
+            CollectionAssert.AreEqual(new[] { "$Label1" }, stored[0].Keywords);
+            Assert.AreEqual(items[0].InternalDate, stored[0].ReceivedAt);
+            Assert.AreEqual(stored[0].ThreadObjectId, stored[1].ThreadObjectId);
             Assert.AreEqual("First", stored[0].Subject);
             Assert.AreEqual("Second", stored[1].Subject);
             var effects = new LargeObjectTransactionEffects(
@@ -191,6 +209,10 @@ public sealed class ImapAppendPostgresTests
             Assert.AreEqual(9, await database.Folders
                 .Where(folder => folder.Id == folderId)
                 .Select(folder => folder.NextUid)
+                .SingleAsync());
+            Assert.AreEqual(6L, await database.Folders
+                .Where(folder => folder.Id == folderId)
+                .Select(folder => folder.HighestModSeq)
                 .SingleAsync());
         }
     }

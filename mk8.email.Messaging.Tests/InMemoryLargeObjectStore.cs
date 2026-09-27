@@ -9,10 +9,12 @@ internal sealed class InMemoryLargeObjectStore : ILargeObjectStore
     private readonly ConcurrentDictionary<string, StoredObject> _objects = new(StringComparer.Ordinal);
     private int _putCount;
     private int _deleteCount;
+    private int _readCount;
 
     public string Provider => LargeObjectProviders.AzureBlob;
     public int PutCount => Volatile.Read(ref _putCount);
     public int DeleteCount => Volatile.Read(ref _deleteCount);
+    public int ReadCount => Volatile.Read(ref _readCount);
     public int ObjectCount => _objects.Count;
 
     public async Task<LargeObjectWriteResult> PutIfAbsentAsync(
@@ -56,6 +58,7 @@ internal sealed class InMemoryLargeObjectStore : ILargeObjectStore
         {
             throw new InvalidOperationException("The test large object is unavailable or changed.");
         }
+        Interlocked.Increment(ref _readCount);
         await destination.WriteAsync(stored.Content, cancellationToken);
     }
 

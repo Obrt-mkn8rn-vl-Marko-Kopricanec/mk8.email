@@ -4955,7 +4955,7 @@ public sealed class JmapProtocolTests
             string url,
             string? keysJson,
             DateTime expiresAt,
-            byte[] payload,
+            JmapPushMessage payload,
             CancellationToken cancellationToken) =>
             Task.FromResult(WebPushSendOutcome.Success);
 
@@ -4963,10 +4963,10 @@ public sealed class JmapProtocolTests
             string url,
             string? keysJson,
             DateTime expiresAt,
-            byte[] payload,
+            JmapPushMessage payload,
             CancellationToken cancellationToken)
         {
-            VerificationPayloadLength = payload.Length;
+            VerificationPayloadLength = GatewayJmapChangesCodec.EncodePush(payload).Length;
             return Task.CompletedTask;
         }
     }

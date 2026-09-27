@@ -27,8 +27,8 @@ public static class JmapEndpointRouteBuilderExtensions
 
     public static IEndpointRouteBuilder MapJmapEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapGet("/.well-known/jmap", GetSessionAsync);
-        endpoints.MapGet("/jmap/session", GetSessionAsync);
+        endpoints.MapGet("/.well-known/jmap", GetProfileAsync);
+        endpoints.MapGet("/jmap/session", GetProfileAsync);
         endpoints.MapPost("/jmap/api", ProcessRequestAsync);
         endpoints.MapPost("/jmap/upload/{accountId}", UploadAsync);
         endpoints.MapGet("/jmap/download/{accountId}/{blobId}/{name}", DownloadAsync);
@@ -36,7 +36,7 @@ public static class JmapEndpointRouteBuilderExtensions
         return endpoints;
     }
 
-    private static async Task<IResult> GetSessionAsync(
+    private static async Task<IResult> GetProfileAsync(
         HttpContext context,
         IGatewayJmapClient application,
         EnvironmentConfig environment,
@@ -45,14 +45,18 @@ public static class JmapEndpointRouteBuilderExtensions
         if (!GatewayJmapAuthentication.TryParse(context.Request, environment, out var authentication))
             return GatewayJmapAuthentication.Unauthorized(context, environment);
 
-        var result = await application.GetSessionAsync(
-            new JmapSessionApplicationRequest(authentication),
+        var result = await application.GetProfileAsync(
+            new JmapProfileApplicationRequest(authentication),
             cancellationToken).ConfigureAwait(false);
         if (string.Equals(result.Outcome, JmapApplicationOutcomes.Unauthorized, StringComparison.Ordinal))
             return GatewayJmapAuthentication.Unauthorized(context, environment);
 
         SetJmapResponseHeaders(context.Response);
-        return Result(result);
+        if (result.Problem is not null)
+            return Problem(result.Problem);
+        if (result.Profile is null)
+            throw new InvalidOperationException("The Application returned an incomplete account profile.");
+        return Results.Json(GatewayJmapProfileCodec.Render(result.Profile, environment), JsonOptions);
     }
 
     private static async Task<IResult> ProcessRequestAsync(
@@ -114,7 +118,7 @@ public static class JmapEndpointRouteBuilderExtensions
             return Problem(parseProblem);
         if (result.Batch is null)
             throw new InvalidOperationException("The Application returned an incomplete JMAP batch result.");
-        return Results.Json(GatewayJmapBatchCodec.Render(result.Batch), JsonOptions);
+        return Results.Json(GatewayJmapBatchCodec.Render(result.Batch, environment), JsonOptions);
     }
 
     private static async Task<IResult> UploadAsync(
@@ -240,8 +244,8 @@ public static class JmapEndpointRouteBuilderExtensions
                     : -1;
         }
 
-        var initial = await application.PollEventAsync(
-            new JmapEventApplicationRequest(authentication, cursor, types),
+        var initial = await application.PollChangesAsync(
+            new JmapChangesApplicationRequest(authentication, cursor, types),
             cancellationToken).ConfigureAwait(false);
         if (string.Equals(initial.Outcome, JmapApplicationOutcomes.Unauthorized, StringComparison.Ordinal))
         {
@@ -267,9 +271,9 @@ public static class JmapEndpointRouteBuilderExtensions
         var lastSent = DateTime.UtcNow;
         try
         {
-            if (initial.Content is not null)
+            if (initial.Changes is not null)
             {
-                await WriteStateEventAsync(context.Response, cursor.Value, initial.Content, cancellationToken).ConfigureAwait(false);
+                await WriteStateEventAsync(context.Response, cursor.Value, initial.Changes, cancellationToken).ConfigureAwait(false);
                 if (closeAfterState)
                     return;
                 lastSent = DateTime.UtcNow;
@@ -277,15 +281,15 @@ public static class JmapEndpointRouteBuilderExtensions
 
             while (!cancellationToken.IsCancellationRequested)
             {
-                var poll = await application.PollEventAsync(
-                    new JmapEventApplicationRequest(authentication, cursor, types),
+                var poll = await application.PollChangesAsync(
+                    new JmapChangesApplicationRequest(authentication, cursor, types),
                     cancellationToken).ConfigureAwait(false);
                 if (!string.Equals(poll.Outcome, JmapApplicationOutcomes.Ok, StringComparison.Ordinal) || poll.Cursor is null)
                     return;
                 cursor = poll.Cursor.Value;
-                if (poll.Content is not null)
+                if (poll.Changes is not null)
                 {
-                    await WriteStateEventAsync(context.Response, cursor.Value, poll.Content, cancellationToken).ConfigureAwait(false);
+                    await WriteStateEventAsync(context.Response, cursor.Value, poll.Changes, cancellationToken).ConfigureAwait(false);
                     lastSent = DateTime.UtcNow;
                     if (closeAfterState)
                         return;
@@ -309,10 +313,10 @@ public static class JmapEndpointRouteBuilderExtensions
     private static async Task WriteStateEventAsync(
         HttpResponse response,
         long cursor,
-        byte[] content,
+        JmapApplicationChanges changes,
         CancellationToken cancellationToken)
     {
-        var data = Encoding.UTF8.GetString(content);
+        var data = GatewayJmapChangesCodec.Render(changes).ToJsonString(JsonOptions);
         await response.WriteAsync(
             $"id: c{cursor}\nevent: state\ndata: {data}\n\n",
             cancellationToken).ConfigureAwait(false);
@@ -433,15 +437,6 @@ public static class JmapEndpointRouteBuilderExtensions
                 throw new GatewayJmapBodyLimitException("The JMAP request body exceeds the configured limit.");
             await buffer.WriteAsync(block.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
         }
-    }
-
-    private static IResult Result(JmapApplicationResult result)
-    {
-        if (result.Problem is not null)
-            return Problem(result.Problem);
-        if (result.Content is null)
-            throw new InvalidOperationException("The Application returned an incomplete JMAP result.");
-        return Results.Bytes(result.Content, result.ContentType ?? "application/json");
     }
 
     private static IResult Problem(

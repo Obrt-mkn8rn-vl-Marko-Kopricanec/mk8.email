@@ -37,8 +37,9 @@ public sealed class JmapContactsTests
         });
         await database.SaveChangesAsync();
 
-        var session = (await scope.ServiceProvider.GetRequiredService<JmapSessionService>()
-            .BuildAsync(fixture.User)).Value;
+        var session = mk8.email.Gateway.Protocols.Jmap.GatewayJmapProfileCodec.Render(
+            await scope.ServiceProvider.GetRequiredService<JmapAccountProfileService>()
+                .GetProfileAsync(fixture.User), fixture.Configuration);
 
         Assert.IsNotNull(session["capabilities"]?[Contacts]);
         Assert.AreEqual(

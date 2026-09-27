@@ -32,17 +32,18 @@ public sealed class JmapCoreTests
         Assert.IsTrue(storedInbox.Owner.IsActive);
         Assert.IsTrue(storedInbox.Address.IsActive);
         Assert.IsTrue(storedInbox.Address.Company.IsActive);
-        var session = await scope.ServiceProvider
-            .GetRequiredService<JmapSessionService>()
-            .BuildAsync(fixture.User);
+        var profile = await scope.ServiceProvider
+            .GetRequiredService<JmapAccountProfileService>()
+            .GetProfileAsync(fixture.User);
+        var session = GatewayJmapProfileCodec.Render(profile, fixture.Configuration);
 
-        Assert.AreEqual("https://email.mk8n.com/jmap/api", session.Value["apiUrl"]?.GetValue<string>());
+        Assert.AreEqual("https://email.mk8n.com/jmap/api", session["apiUrl"]?.GetValue<string>());
         Assert.AreEqual(
             "https://email.mk8n.com/jmap/upload/{accountId}",
-            session.Value["uploadUrl"]?.GetValue<string>());
-        Assert.IsTrue(session.State.StartsWith('S'));
+            session["uploadUrl"]?.GetValue<string>());
+        Assert.IsTrue(session["state"]!.GetValue<string>().StartsWith('S'));
 
-        var capabilities = session.Value["capabilities"]?.AsObject();
+        var capabilities = session["capabilities"]?.AsObject();
         Assert.IsNotNull(capabilities);
         Assert.IsTrue(capabilities.ContainsKey(JmapConstants.CoreCapability));
         var collations = capabilities[JmapConstants.CoreCapability]!["collationAlgorithms"]!
@@ -52,7 +53,7 @@ public sealed class JmapCoreTests
         CollectionAssert.AreEqual(
             JmapCollation.SupportedIdentifiers.ToArray(),
             collations);
-        var accounts = session.Value["accounts"]?.AsObject();
+        var accounts = session["accounts"]?.AsObject();
         Assert.IsNotNull(accounts);
         var accountId = JmapId.Account(fixture.InboxId);
         Assert.IsTrue(accounts.ContainsKey(accountId), accounts.ToJsonString());

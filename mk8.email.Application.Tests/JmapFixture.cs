@@ -145,14 +145,15 @@ internal sealed class JmapFixture : IAsyncDisposable
     {
         using var scope = Services.CreateScope();
         var processor = scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>();
-        return await ProcessAsync(processor, request, User);
+        return await ProcessAsync(processor, request, User, environment: Configuration);
     }
 
     internal static async Task<JsonObject> ProcessAsync(
         JmapRequestProcessor processor,
         JsonNode? request,
         AuthenticatedMailUser user,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        EnvironmentConfig? environment = null)
     {
         JmapBatchPreflight? preflight = null;
         JmapApplicationBatch batch;
@@ -165,7 +166,8 @@ internal sealed class JmapFixture : IAsyncDisposable
             processor.ValidatePreflight(preflight);
             throw;
         }
-        return GatewayJmapBatchCodec.Render(await processor.ProcessAsync(batch, user, cancellationToken));
+        return GatewayJmapBatchCodec.Render(await processor.ProcessAsync(batch, user, cancellationToken),
+            environment ?? new EnvironmentConfig { Smtp = new SmtpConfig { Hostname = "email.mk8n.com" } });
     }
 
     public async Task<string> StoreBlobAsync(byte[] content, string contentType = "message/rfc822")

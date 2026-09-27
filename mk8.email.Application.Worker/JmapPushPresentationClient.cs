@@ -26,7 +26,7 @@ internal sealed partial class JmapPushPresentationClient(
         string url,
         string? keysJson,
         DateTime expiresAt,
-        byte[] payload,
+        JmapPushMessage payload,
         CancellationToken cancellationToken)
     {
         try
@@ -50,7 +50,7 @@ internal sealed partial class JmapPushPresentationClient(
         string url,
         string? keysJson,
         DateTime expiresAt,
-        byte[] payload,
+        JmapPushMessage payload,
         CancellationToken cancellationToken)
     {
         var target = BuildTarget(url, keysJson, expiresAt, payload);
@@ -68,7 +68,7 @@ internal sealed partial class JmapPushPresentationClient(
         string url,
         string? keysJson,
         DateTime expiresAt,
-        byte[] payload)
+        JmapPushMessage payload)
     {
         string? p256dh = null;
         string? auth = null;
@@ -89,7 +89,8 @@ internal sealed partial class JmapPushPresentationClient(
             p256dh,
             auth,
             new DateTimeOffset(DateTime.SpecifyKind(expiresAt, DateTimeKind.Utc)),
-            payload);
+            null,
+            JmapMessage: payload);
     }
 
     private static ApplicationRequest CreateRequest<T>(

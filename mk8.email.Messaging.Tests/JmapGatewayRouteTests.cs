@@ -120,11 +120,27 @@ public sealed class JmapGatewayRouteTests
                     Encoding.UTF8.GetBytes("person@example.test:route-password-secret")));
             using var response = await client.SendAsync(request, timeout.Token);
 
+            using var discoveryRequest = new HttpRequestMessage(HttpMethod.Get, "/.well-known/jmap");
+            discoveryRequest.Headers.Authorization = request.Headers.Authorization;
+            using var discoveryResponse = await client.SendAsync(discoveryRequest, timeout.Token);
+            Assert.AreEqual(HttpStatusCode.OK, discoveryResponse.StatusCode);
+            using var discovery = JsonDocument.Parse(await discoveryResponse.Content.ReadAsStringAsync(timeout.Token));
+
+            using var eventRequest = new HttpRequestMessage(HttpMethod.Get, "/jmap/event?types=Mailbox&closeafter=state&ping=0");
+            eventRequest.Headers.Authorization = request.Headers.Authorization;
+            eventRequest.Headers.Add("Last-Event-ID", "c0");
+            using var eventResponse = await client.SendAsync(eventRequest, timeout.Token);
+            Assert.AreEqual(HttpStatusCode.OK, eventResponse.StatusCode);
+            StringAssert.Contains(await eventResponse.Content.ReadAsStringAsync(timeout.Token),
+                "data: {\"@type\":\"StateChange\",\"changed\":{\"account-id\":{\"Mailbox\":\"state-1\"}}}");
+
             Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
             using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(timeout.Token));
             Assert.AreEqual(
-                "remote-worker",
+                GatewayJmapProfileCodec.Render(StubJmapApplicationService.Profile, environment)["state"]!.GetValue<string>(),
                 json.RootElement.GetProperty("sessionState").GetString());
+            Assert.AreEqual(discovery.RootElement.GetProperty("state").GetString(), json.RootElement.GetProperty("sessionState").GetString());
+            Assert.AreEqual("https://email.example.test/jmap/api", discovery.RootElement.GetProperty("apiUrl").GetString());
             Assert.AreEqual("person@example.test", jmap.Request?.Authentication.Username);
             Assert.AreEqual("route-password-secret", jmap.Request?.Authentication.Secret);
             Assert.IsNotNull(jmap.Request?.Batch);
@@ -145,11 +161,13 @@ public sealed class JmapGatewayRouteTests
                 + "FROM gateway_traffic_records WHERE protocol = 'jmap'");
             await using var countReader = await countCommand.ExecuteReaderAsync(timeout.Token);
             Assert.IsTrue(await countReader.ReadAsync(timeout.Token));
-            Assert.AreEqual(4L, countReader.GetInt64(0));
-            Assert.AreEqual(2L, countReader.GetInt64(1));
+            // SSE records its headers and streamed body separately, in addition
+            // to the request and two application-boundary records.
+            Assert.AreEqual(13L, countReader.GetInt64(0));
+            Assert.AreEqual(7L, countReader.GetInt64(1));
 
             await using var operationCommand = gatewayDataSource.CreateCommand(
-                "SELECT operation FROM application_requests LIMIT 1");
+                "SELECT operation FROM application_requests WHERE operation = 'jmap.batch.execute.v2' LIMIT 1");
             Assert.AreEqual(
                 ApplicationOperations.JmapBatchExecute,
                 await operationCommand.ExecuteScalarAsync(timeout.Token));
@@ -187,12 +205,16 @@ public sealed class JmapGatewayRouteTests
 
     private sealed class StubJmapApplicationService : IJmapApplicationService
     {
+        internal static JmapApplicationProfile Profile { get; } = new("remote-worker",
+            new JmapServiceLimits(10000, 1, 10000, 1, 64, 500, 500, 32, 255, 10000,
+                ["i;ascii-numeric"], ["receivedAt"]), []);
+
         public JmapBatchApplicationRequest? Request { get; private set; }
 
-        public Task<JmapApplicationResult> GetSessionAsync(
-            JmapSessionApplicationRequest request,
+        public Task<JmapApplicationResult> GetProfileAsync(
+            JmapProfileApplicationRequest request,
             CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
+            Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, Profile: Profile));
 
         public Task<JmapApplicationResult> ExecuteBatchAsync(
             JmapBatchApplicationRequest request,
@@ -201,7 +223,7 @@ public sealed class JmapGatewayRouteTests
             Request = request;
             return Task.FromResult(new JmapApplicationResult(
                 JmapApplicationOutcomes.Ok,
-                Batch: new JmapApplicationBatchResult(request.Batch!.Invocations, "remote-worker", request.Batch.CreatedIds)));
+                Batch: new JmapApplicationBatchResult(request.Batch!.Invocations, Profile, request.Batch.CreatedIds)));
         }
 
         public Task<JmapApplicationResult> UploadAsync(
@@ -214,9 +236,13 @@ public sealed class JmapGatewayRouteTests
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
 
-        public Task<JmapApplicationResult> PollEventAsync(
-            JmapEventApplicationRequest request,
+        public Task<JmapApplicationResult> PollChangesAsync(
+            JmapChangesApplicationRequest request,
             CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
+            Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, Cursor: 42,
+                Changes: new JmapApplicationChanges(new Dictionary<string, IReadOnlyDictionary<string, string>>
+                {
+                    ["account-id"] = new Dictionary<string, string> { ["Mailbox"] = "state-1" },
+                })));
     }
 }

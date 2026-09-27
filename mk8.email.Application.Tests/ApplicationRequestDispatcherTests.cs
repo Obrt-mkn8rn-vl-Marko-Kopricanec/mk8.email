@@ -118,6 +118,18 @@ public sealed class ApplicationRequestDispatcherTests
     }
 
     [TestMethod]
+    [DataRow("jmap.session.get")]
+    [DataRow("jmap.event.poll")]
+    [DataRow("jmap.batch.execute")]
+    public async Task SupersededPresentationContractsFailClosed(string operation)
+    {
+        await using var services = new ServiceCollection().BuildServiceProvider();
+        var result = await new ApplicationRequestDispatcher(services).DispatchAsync(NewRequest(operation, "{}"u8.ToArray()));
+        Assert.IsTrue(result.IsError);
+        Assert.AreEqual("unknown-operation", result.ErrorCode);
+    }
+
+    [TestMethod]
     public async Task JmapBatchDispatchesTypedInvocationsAndResults()
     {
         var service = new StubJmapApplicationService();
@@ -154,7 +166,7 @@ public sealed class ApplicationRequestDispatcherTests
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
         Assert.AreEqual(JmapApplicationOutcomes.Ok, result?.Outcome);
         Assert.IsNotNull(result?.Batch);
-        Assert.AreEqual("worker-revision", result.Batch.Revision);
+        Assert.AreEqual("worker-person", result.Batch.Profile.Username);
         Assert.AreEqual("Core/echo", result.Batch.Invocations[0].Name);
         Assert.IsTrue(result.Batch.Invocations[0].Arguments["ok"]!.GetValue<bool>());
         Assert.IsNull(result.Content);
@@ -219,8 +231,8 @@ public sealed class ApplicationRequestDispatcherTests
     {
         public JmapBatchApplicationRequest? Request { get; private set; }
 
-        public Task<JmapApplicationResult> GetSessionAsync(
-            JmapSessionApplicationRequest request,
+        public Task<JmapApplicationResult> GetProfileAsync(
+            JmapProfileApplicationRequest request,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
 
@@ -231,7 +243,10 @@ public sealed class ApplicationRequestDispatcherTests
             Request = request;
             return Task.FromResult(new JmapApplicationResult(
                 JmapApplicationOutcomes.Ok,
-                Batch: new JmapApplicationBatchResult(request.Batch!.Invocations, "worker-revision")));
+                Batch: new JmapApplicationBatchResult(request.Batch!.Invocations,
+                    new JmapApplicationProfile("worker-person",
+                        new JmapServiceLimits(10000, 1, 10000, 1, 64, 500, 500, 32, 255, 10000,
+                            ["i;ascii-numeric"], ["receivedAt"]), []))));
         }
 
         public Task<JmapApplicationResult> UploadAsync(
@@ -244,8 +259,8 @@ public sealed class ApplicationRequestDispatcherTests
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
 
-        public Task<JmapApplicationResult> PollEventAsync(
-            JmapEventApplicationRequest request,
+        public Task<JmapApplicationResult> PollChangesAsync(
+            JmapChangesApplicationRequest request,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
     }

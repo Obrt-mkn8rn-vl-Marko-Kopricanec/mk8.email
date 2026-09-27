@@ -54,10 +54,10 @@ const mk8.email.Contracts.Messaging.ApplicationOperations.ImapSetMailboxSubscrip
 const mk8.email.Contracts.Messaging.ApplicationOperations.ImapSortMessages = "imap.messages.sort" -> string!
 const mk8.email.Contracts.Messaging.ApplicationOperations.ImapStoreFlags = "imap.messages.flags.store" -> string!
 const mk8.email.Contracts.Messaging.ApplicationOperations.ImapThreadMessages = "imap.messages.thread" -> string!
-const mk8.email.Contracts.Messaging.ApplicationOperations.JmapBatchExecute = "jmap.batch.execute" -> string!
+const mk8.email.Contracts.Messaging.ApplicationOperations.JmapBatchExecute = "jmap.batch.execute.v2" -> string!
 const mk8.email.Contracts.Messaging.ApplicationOperations.JmapDownload = "jmap.download" -> string!
-const mk8.email.Contracts.Messaging.ApplicationOperations.JmapEventPoll = "jmap.event.poll" -> string!
-const mk8.email.Contracts.Messaging.ApplicationOperations.JmapSessionGet = "jmap.session.get" -> string!
+const mk8.email.Contracts.Messaging.ApplicationOperations.JmapChangesPoll = "jmap.changes.poll" -> string!
+const mk8.email.Contracts.Messaging.ApplicationOperations.JmapProfileGet = "jmap.profile.get" -> string!
 const mk8.email.Contracts.Messaging.ApplicationOperations.JmapUpload = "jmap.upload" -> string!
 const mk8.email.Contracts.Messaging.ApplicationOperations.OAuthAuthorizationCodeRedeem = "oauth.authorization-code.redeem" -> string!
 const mk8.email.Contracts.Messaging.ApplicationOperations.OAuthAuthorize = "oauth.authorize" -> string!
@@ -95,7 +95,7 @@ const mk8.email.Contracts.Messaging.JmapApplicationOutcomes.Unauthorized = "unau
 const mk8.email.Contracts.Messaging.ProtocolAuthenticationKinds.BearerToken = "bearer-token" -> string!
 const mk8.email.Contracts.Messaging.ProtocolAuthenticationKinds.Password = "password" -> string!
 const mk8.email.Contracts.Messaging.WebPushPresentationOperations.Protocol = "webpush" -> string!
-const mk8.email.Contracts.Messaging.WebPushPresentationOperations.Send = "webpush.send" -> string!
+const mk8.email.Contracts.Messaging.WebPushPresentationOperations.Send = "webpush.send.v2" -> string!
 const mk8.email.Contracts.Messaging.WebPushPresentationOperations.ValidateEndpoint = "webpush.validate-endpoint" -> string!
 const mk8.email.Contracts.Storage.LargeObjectProviders.AzureBlob = "azure-blob" -> string!
 mk8.email.Contracts.DTOs.AddressDTO
@@ -1590,24 +1590,24 @@ mk8.email.Contracts.Messaging.JmapDownloadApplicationRequest.BlobId.init -> void
 mk8.email.Contracts.Messaging.JmapDownloadApplicationRequest.Deconstruct(out mk8.email.Contracts.Messaging.ProtocolAuthentication! Authentication, out string! AccountId, out string! BlobId) -> void
 mk8.email.Contracts.Messaging.JmapDownloadApplicationRequest.Equals(mk8.email.Contracts.Messaging.JmapDownloadApplicationRequest? other) -> bool
 mk8.email.Contracts.Messaging.JmapDownloadApplicationRequest.JmapDownloadApplicationRequest(mk8.email.Contracts.Messaging.ProtocolAuthentication! Authentication, string! AccountId, string! BlobId) -> void
-mk8.email.Contracts.Messaging.JmapEventApplicationRequest
-mk8.email.Contracts.Messaging.JmapEventApplicationRequest.<Clone>$() -> mk8.email.Contracts.Messaging.JmapEventApplicationRequest!
-mk8.email.Contracts.Messaging.JmapEventApplicationRequest.AfterCursor.get -> long?
-mk8.email.Contracts.Messaging.JmapEventApplicationRequest.AfterCursor.init -> void
-mk8.email.Contracts.Messaging.JmapEventApplicationRequest.Authentication.get -> mk8.email.Contracts.Messaging.ProtocolAuthentication!
-mk8.email.Contracts.Messaging.JmapEventApplicationRequest.Authentication.init -> void
-mk8.email.Contracts.Messaging.JmapEventApplicationRequest.Deconstruct(out mk8.email.Contracts.Messaging.ProtocolAuthentication! Authentication, out long? AfterCursor, out string![]? Types) -> void
-mk8.email.Contracts.Messaging.JmapEventApplicationRequest.Equals(mk8.email.Contracts.Messaging.JmapEventApplicationRequest? other) -> bool
-mk8.email.Contracts.Messaging.JmapEventApplicationRequest.JmapEventApplicationRequest(mk8.email.Contracts.Messaging.ProtocolAuthentication! Authentication, long? AfterCursor, string![]? Types) -> void
-mk8.email.Contracts.Messaging.JmapEventApplicationRequest.Types.get -> string![]?
-mk8.email.Contracts.Messaging.JmapEventApplicationRequest.Types.init -> void
-mk8.email.Contracts.Messaging.JmapSessionApplicationRequest
-mk8.email.Contracts.Messaging.JmapSessionApplicationRequest.<Clone>$() -> mk8.email.Contracts.Messaging.JmapSessionApplicationRequest!
-mk8.email.Contracts.Messaging.JmapSessionApplicationRequest.Authentication.get -> mk8.email.Contracts.Messaging.ProtocolAuthentication!
-mk8.email.Contracts.Messaging.JmapSessionApplicationRequest.Authentication.init -> void
-mk8.email.Contracts.Messaging.JmapSessionApplicationRequest.Deconstruct(out mk8.email.Contracts.Messaging.ProtocolAuthentication! Authentication) -> void
-mk8.email.Contracts.Messaging.JmapSessionApplicationRequest.Equals(mk8.email.Contracts.Messaging.JmapSessionApplicationRequest? other) -> bool
-mk8.email.Contracts.Messaging.JmapSessionApplicationRequest.JmapSessionApplicationRequest(mk8.email.Contracts.Messaging.ProtocolAuthentication! Authentication) -> void
+mk8.email.Contracts.Messaging.JmapChangesApplicationRequest
+mk8.email.Contracts.Messaging.JmapChangesApplicationRequest.<Clone>$() -> mk8.email.Contracts.Messaging.JmapChangesApplicationRequest!
+mk8.email.Contracts.Messaging.JmapChangesApplicationRequest.AfterCursor.get -> long?
+mk8.email.Contracts.Messaging.JmapChangesApplicationRequest.AfterCursor.init -> void
+mk8.email.Contracts.Messaging.JmapChangesApplicationRequest.Authentication.get -> mk8.email.Contracts.Messaging.ProtocolAuthentication!
+mk8.email.Contracts.Messaging.JmapChangesApplicationRequest.Authentication.init -> void
+mk8.email.Contracts.Messaging.JmapChangesApplicationRequest.Deconstruct(out mk8.email.Contracts.Messaging.ProtocolAuthentication! Authentication, out long? AfterCursor, out string![]? Types) -> void
+mk8.email.Contracts.Messaging.JmapChangesApplicationRequest.Equals(mk8.email.Contracts.Messaging.JmapChangesApplicationRequest? other) -> bool
+mk8.email.Contracts.Messaging.JmapChangesApplicationRequest.JmapChangesApplicationRequest(mk8.email.Contracts.Messaging.ProtocolAuthentication! Authentication, long? AfterCursor, string![]? Types) -> void
+mk8.email.Contracts.Messaging.JmapChangesApplicationRequest.Types.get -> string![]?
+mk8.email.Contracts.Messaging.JmapChangesApplicationRequest.Types.init -> void
+mk8.email.Contracts.Messaging.JmapProfileApplicationRequest
+mk8.email.Contracts.Messaging.JmapProfileApplicationRequest.<Clone>$() -> mk8.email.Contracts.Messaging.JmapProfileApplicationRequest!
+mk8.email.Contracts.Messaging.JmapProfileApplicationRequest.Authentication.get -> mk8.email.Contracts.Messaging.ProtocolAuthentication!
+mk8.email.Contracts.Messaging.JmapProfileApplicationRequest.Authentication.init -> void
+mk8.email.Contracts.Messaging.JmapProfileApplicationRequest.Deconstruct(out mk8.email.Contracts.Messaging.ProtocolAuthentication! Authentication) -> void
+mk8.email.Contracts.Messaging.JmapProfileApplicationRequest.Equals(mk8.email.Contracts.Messaging.JmapProfileApplicationRequest? other) -> bool
+mk8.email.Contracts.Messaging.JmapProfileApplicationRequest.JmapProfileApplicationRequest(mk8.email.Contracts.Messaging.ProtocolAuthentication! Authentication) -> void
 mk8.email.Contracts.Messaging.JmapUploadApplicationRequest
 mk8.email.Contracts.Messaging.JmapUploadApplicationRequest.<Clone>$() -> mk8.email.Contracts.Messaging.JmapUploadApplicationRequest!
 mk8.email.Contracts.Messaging.JmapUploadApplicationRequest.AccountId.get -> string!
@@ -1807,17 +1807,15 @@ mk8.email.Contracts.Messaging.WebPushSendRequest
 mk8.email.Contracts.Messaging.WebPushSendRequest.<Clone>$() -> mk8.email.Contracts.Messaging.WebPushSendRequest!
 mk8.email.Contracts.Messaging.WebPushSendRequest.Auth.get -> string?
 mk8.email.Contracts.Messaging.WebPushSendRequest.Auth.init -> void
-mk8.email.Contracts.Messaging.WebPushSendRequest.Deconstruct(out string! Url, out string? P256dh, out string? Auth, out System.DateTimeOffset ExpiresAt, out byte[]! Payload) -> void
 mk8.email.Contracts.Messaging.WebPushSendRequest.Equals(mk8.email.Contracts.Messaging.WebPushSendRequest? other) -> bool
 mk8.email.Contracts.Messaging.WebPushSendRequest.ExpiresAt.get -> System.DateTimeOffset
 mk8.email.Contracts.Messaging.WebPushSendRequest.ExpiresAt.init -> void
 mk8.email.Contracts.Messaging.WebPushSendRequest.P256dh.get -> string?
 mk8.email.Contracts.Messaging.WebPushSendRequest.P256dh.init -> void
-mk8.email.Contracts.Messaging.WebPushSendRequest.Payload.get -> byte[]!
+mk8.email.Contracts.Messaging.WebPushSendRequest.Payload.get -> byte[]?
 mk8.email.Contracts.Messaging.WebPushSendRequest.Payload.init -> void
 mk8.email.Contracts.Messaging.WebPushSendRequest.Url.get -> string!
 mk8.email.Contracts.Messaging.WebPushSendRequest.Url.init -> void
-mk8.email.Contracts.Messaging.WebPushSendRequest.WebPushSendRequest(string! Url, string? P256dh, string? Auth, System.DateTimeOffset ExpiresAt, byte[]! Payload) -> void
 mk8.email.Contracts.Messaging.WebPushSendResult
 mk8.email.Contracts.Messaging.WebPushSendResult.<Clone>$() -> mk8.email.Contracts.Messaging.WebPushSendResult!
 mk8.email.Contracts.Messaging.WebPushSendResult.Deconstruct(out mk8.email.Contracts.Messaging.WebPushSendOutcome Outcome) -> void
@@ -2843,12 +2841,12 @@ override mk8.email.Contracts.Messaging.JmapApplicationResult.ToString() -> strin
 override mk8.email.Contracts.Messaging.JmapDownloadApplicationRequest.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.JmapDownloadApplicationRequest.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.JmapDownloadApplicationRequest.ToString() -> string!
-override mk8.email.Contracts.Messaging.JmapEventApplicationRequest.Equals(object? obj) -> bool
-override mk8.email.Contracts.Messaging.JmapEventApplicationRequest.GetHashCode() -> int
-override mk8.email.Contracts.Messaging.JmapEventApplicationRequest.ToString() -> string!
-override mk8.email.Contracts.Messaging.JmapSessionApplicationRequest.Equals(object? obj) -> bool
-override mk8.email.Contracts.Messaging.JmapSessionApplicationRequest.GetHashCode() -> int
-override mk8.email.Contracts.Messaging.JmapSessionApplicationRequest.ToString() -> string!
+override mk8.email.Contracts.Messaging.JmapChangesApplicationRequest.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.JmapChangesApplicationRequest.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.JmapChangesApplicationRequest.ToString() -> string!
+override mk8.email.Contracts.Messaging.JmapProfileApplicationRequest.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.JmapProfileApplicationRequest.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.JmapProfileApplicationRequest.ToString() -> string!
 override mk8.email.Contracts.Messaging.JmapUploadApplicationRequest.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.JmapUploadApplicationRequest.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.JmapUploadApplicationRequest.ToString() -> string!
@@ -3298,10 +3296,10 @@ static mk8.email.Contracts.Messaging.JmapApplicationResult.operator !=(mk8.email
 static mk8.email.Contracts.Messaging.JmapApplicationResult.operator ==(mk8.email.Contracts.Messaging.JmapApplicationResult? left, mk8.email.Contracts.Messaging.JmapApplicationResult? right) -> bool
 static mk8.email.Contracts.Messaging.JmapDownloadApplicationRequest.operator !=(mk8.email.Contracts.Messaging.JmapDownloadApplicationRequest? left, mk8.email.Contracts.Messaging.JmapDownloadApplicationRequest? right) -> bool
 static mk8.email.Contracts.Messaging.JmapDownloadApplicationRequest.operator ==(mk8.email.Contracts.Messaging.JmapDownloadApplicationRequest? left, mk8.email.Contracts.Messaging.JmapDownloadApplicationRequest? right) -> bool
-static mk8.email.Contracts.Messaging.JmapEventApplicationRequest.operator !=(mk8.email.Contracts.Messaging.JmapEventApplicationRequest? left, mk8.email.Contracts.Messaging.JmapEventApplicationRequest? right) -> bool
-static mk8.email.Contracts.Messaging.JmapEventApplicationRequest.operator ==(mk8.email.Contracts.Messaging.JmapEventApplicationRequest? left, mk8.email.Contracts.Messaging.JmapEventApplicationRequest? right) -> bool
-static mk8.email.Contracts.Messaging.JmapSessionApplicationRequest.operator !=(mk8.email.Contracts.Messaging.JmapSessionApplicationRequest? left, mk8.email.Contracts.Messaging.JmapSessionApplicationRequest? right) -> bool
-static mk8.email.Contracts.Messaging.JmapSessionApplicationRequest.operator ==(mk8.email.Contracts.Messaging.JmapSessionApplicationRequest? left, mk8.email.Contracts.Messaging.JmapSessionApplicationRequest? right) -> bool
+static mk8.email.Contracts.Messaging.JmapChangesApplicationRequest.operator !=(mk8.email.Contracts.Messaging.JmapChangesApplicationRequest? left, mk8.email.Contracts.Messaging.JmapChangesApplicationRequest? right) -> bool
+static mk8.email.Contracts.Messaging.JmapChangesApplicationRequest.operator ==(mk8.email.Contracts.Messaging.JmapChangesApplicationRequest? left, mk8.email.Contracts.Messaging.JmapChangesApplicationRequest? right) -> bool
+static mk8.email.Contracts.Messaging.JmapProfileApplicationRequest.operator !=(mk8.email.Contracts.Messaging.JmapProfileApplicationRequest? left, mk8.email.Contracts.Messaging.JmapProfileApplicationRequest? right) -> bool
+static mk8.email.Contracts.Messaging.JmapProfileApplicationRequest.operator ==(mk8.email.Contracts.Messaging.JmapProfileApplicationRequest? left, mk8.email.Contracts.Messaging.JmapProfileApplicationRequest? right) -> bool
 static mk8.email.Contracts.Messaging.JmapUploadApplicationRequest.operator !=(mk8.email.Contracts.Messaging.JmapUploadApplicationRequest? left, mk8.email.Contracts.Messaging.JmapUploadApplicationRequest? right) -> bool
 static mk8.email.Contracts.Messaging.JmapUploadApplicationRequest.operator ==(mk8.email.Contracts.Messaging.JmapUploadApplicationRequest? left, mk8.email.Contracts.Messaging.JmapUploadApplicationRequest? right) -> bool
 static mk8.email.Contracts.Messaging.OAuthAuthorizationCodeRedeemRequest.operator !=(mk8.email.Contracts.Messaging.OAuthAuthorizationCodeRedeemRequest? left, mk8.email.Contracts.Messaging.OAuthAuthorizationCodeRedeemRequest? right) -> bool

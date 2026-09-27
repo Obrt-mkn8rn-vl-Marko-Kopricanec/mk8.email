@@ -6,10 +6,10 @@ namespace mk8.email.Gateway.Protocols.Jmap;
 public sealed class GatewayJmapClient(IGatewayApplicationTransport transport)
     : IGatewayJmapClient
 {
-    public Task<JmapApplicationResult> GetSessionAsync(
-        JmapSessionApplicationRequest request,
+    public Task<JmapApplicationResult> GetProfileAsync(
+        JmapProfileApplicationRequest request,
         CancellationToken cancellationToken = default) =>
-        SendAsync(ApplicationOperations.JmapSessionGet, request, cancellationToken);
+        SendAsync(ApplicationOperations.JmapProfileGet, request, cancellationToken);
 
     public Task<JmapApplicationResult> ExecuteBatchAsync(
         JmapBatchApplicationRequest request,
@@ -26,10 +26,10 @@ public sealed class GatewayJmapClient(IGatewayApplicationTransport transport)
         CancellationToken cancellationToken = default) =>
         SendAsync(ApplicationOperations.JmapDownload, request, cancellationToken);
 
-    public Task<JmapApplicationResult> PollEventAsync(
-        JmapEventApplicationRequest request,
+    public Task<JmapApplicationResult> PollChangesAsync(
+        JmapChangesApplicationRequest request,
         CancellationToken cancellationToken = default) =>
-        SendAsync(ApplicationOperations.JmapEventPoll, request, cancellationToken);
+        SendAsync(ApplicationOperations.JmapChangesPoll, request, cancellationToken);
 
     private Task<JmapApplicationResult> SendAsync<TRequest>(
         string operation,

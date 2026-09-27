@@ -1,4 +1,4 @@
-using System.Text.Json.Nodes;
+using mk8.email.Contracts.Messaging;
 using Microsoft.EntityFrameworkCore;
 using mk8.email.Application.Interfaces;
 using mk8.email.Infrastructure.Data;
@@ -78,10 +78,10 @@ internal sealed class JmapStateChangeService(
         if (changedKeys.Count == 0)
             return new JmapStateChangePoll(currentCursor, null);
 
-        var changed = new JsonObject();
+        var changed = new Dictionary<string, IReadOnlyDictionary<string, string>>(StringComparer.Ordinal);
         foreach (var group in changedKeys.GroupBy(key => key.AccountId))
         {
-            var typeStates = new JsonObject();
+            var typeStates = new Dictionary<string, string>(StringComparer.Ordinal);
             foreach (var dataType in group.Select(key => key.DataType).Distinct(StringComparer.Ordinal))
             {
                 typeStates[dataType] = await states.GetStateAsync(
@@ -91,10 +91,6 @@ internal sealed class JmapStateChangeService(
             }
             changed[JmapId.Account(group.Key)] = typeStates;
         }
-        return new JmapStateChangePoll(currentCursor, new JsonObject
-        {
-            ["@type"] = "StateChange",
-            ["changed"] = changed,
-        });
+        return new JmapStateChangePoll(currentCursor, new JmapApplicationChanges(changed));
     }
 }

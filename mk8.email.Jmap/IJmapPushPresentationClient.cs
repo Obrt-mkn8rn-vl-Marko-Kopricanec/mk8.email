@@ -13,13 +13,13 @@ public interface IJmapPushPresentationClient
         string url,
         string? keysJson,
         DateTime expiresAt,
-        byte[] payload,
+        JmapPushMessage payload,
         CancellationToken cancellationToken);
 
     Task EnqueueVerificationAsync(
         string url,
         string? keysJson,
         DateTime expiresAt,
-        byte[] payload,
+        JmapPushMessage payload,
         CancellationToken cancellationToken);
 }

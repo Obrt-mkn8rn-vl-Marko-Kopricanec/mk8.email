@@ -65,7 +65,8 @@ public sealed class WebPushPresentationTests
                 "https://push.example.net/jmap",
                 keysJson: null,
                 DateTime.UtcNow.AddMinutes(5),
-                payload,
+                new JmapPushMessage(Changes: new JmapApplicationChanges(
+                    new Dictionary<string, IReadOnlyDictionary<string, string>>())),
                 timeout.Token);
             Assert.AreEqual(WebPushSendOutcome.Success, result);
             Assert.AreEqual(1, handler.CallCount);
@@ -159,7 +160,7 @@ public sealed class WebPushPresentationTests
             "https://push.example.net/jmap",
             keysJson: null,
             DateTime.UtcNow.AddDays(2),
-            Encoding.UTF8.GetBytes("{\"@type\":\"PushVerification\"}"),
+            new JmapPushMessage("subscription-id", "verification"),
             CancellationToken.None);
 
         await using var query = dataSource.CreateCommand(

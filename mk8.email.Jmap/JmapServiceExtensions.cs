@@ -12,7 +12,7 @@ public static class JmapServiceExtensions
         services.TryAddScoped<ISenderAuthorizationService, SenderAuthorizationService>();
         services.TryAddScoped<IEmailService, EmailService>();
         services.AddScoped<JmapAccountService>();
-        services.AddScoped<JmapSessionService>();
+        services.AddScoped<JmapAccountProfileService>();
         services.AddScoped<JmapStateService>();
         services.AddScoped<JmapStateChangeService>();
         services.AddScoped<JmapMailboxStore>();

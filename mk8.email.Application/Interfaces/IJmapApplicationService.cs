@@ -4,8 +4,8 @@ namespace mk8.email.Application.Interfaces;
 
 public interface IJmapApplicationService
 {
-    Task<JmapApplicationResult> GetSessionAsync(
-        JmapSessionApplicationRequest request,
+    Task<JmapApplicationResult> GetProfileAsync(
+        JmapProfileApplicationRequest request,
         CancellationToken cancellationToken = default);
 
     Task<JmapApplicationResult> ExecuteBatchAsync(
@@ -20,7 +20,7 @@ public interface IJmapApplicationService
         JmapDownloadApplicationRequest request,
         CancellationToken cancellationToken = default);
 
-    Task<JmapApplicationResult> PollEventAsync(
-        JmapEventApplicationRequest request,
+    Task<JmapApplicationResult> PollChangesAsync(
+        JmapChangesApplicationRequest request,
         CancellationToken cancellationToken = default);
 }

@@ -8,10 +8,10 @@ namespace mk8.email.Application.Tests;
 internal sealed class InProcessGatewayJmapClient(IServiceScopeFactory scopes)
     : IGatewayJmapClient
 {
-    public Task<JmapApplicationResult> GetSessionAsync(
-        JmapSessionApplicationRequest request,
+    public Task<JmapApplicationResult> GetProfileAsync(
+        JmapProfileApplicationRequest request,
         CancellationToken cancellationToken = default) =>
-        InvokeAsync(service => service.GetSessionAsync(request, cancellationToken));
+        InvokeAsync(service => service.GetProfileAsync(request, cancellationToken));
 
     public Task<JmapApplicationResult> ExecuteBatchAsync(
         JmapBatchApplicationRequest request,
@@ -28,10 +28,10 @@ internal sealed class InProcessGatewayJmapClient(IServiceScopeFactory scopes)
         CancellationToken cancellationToken = default) =>
         InvokeAsync(service => service.DownloadAsync(request, cancellationToken));
 
-    public Task<JmapApplicationResult> PollEventAsync(
-        JmapEventApplicationRequest request,
+    public Task<JmapApplicationResult> PollChangesAsync(
+        JmapChangesApplicationRequest request,
         CancellationToken cancellationToken = default) =>
-        InvokeAsync(service => service.PollEventAsync(request, cancellationToken));
+        InvokeAsync(service => service.PollChangesAsync(request, cancellationToken));
 
     private async Task<JmapApplicationResult> InvokeAsync(
         Func<IJmapApplicationService, Task<JmapApplicationResult>> operation)

@@ -6,7 +6,7 @@ public static class WebPushPresentationOperations
 {
     public const string Protocol = "webpush";
     public const string ValidateEndpoint = "webpush.validate-endpoint";
-    public const string Send = "webpush.send";
+    public const string Send = "webpush.send.v2";
 }
 
 public sealed record WebPushEndpointCheck(string Url);
@@ -18,7 +18,8 @@ public sealed record WebPushSendRequest(
     string? P256dh,
     string? Auth,
     DateTimeOffset ExpiresAt,
-    byte[] Payload);
+    byte[]? Payload,
+    JmapPushMessage? JmapMessage = null);
 
 public enum WebPushSendOutcome
 {

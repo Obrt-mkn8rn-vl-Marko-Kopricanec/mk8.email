@@ -14,7 +14,7 @@ internal sealed class UnavailableJmapPushPresentationClient : IJmapPushPresentat
         string url,
         string? keysJson,
         DateTime expiresAt,
-        byte[] payload,
+        JmapPushMessage payload,
         CancellationToken cancellationToken) =>
         throw new InvalidOperationException("The JMAP Web Push presentation client is unavailable.");
 
@@ -22,7 +22,7 @@ internal sealed class UnavailableJmapPushPresentationClient : IJmapPushPresentat
         string url,
         string? keysJson,
         DateTime expiresAt,
-        byte[] payload,
+        JmapPushMessage payload,
         CancellationToken cancellationToken) =>
         throw new InvalidOperationException("The JMAP Web Push presentation client is unavailable.");
 }

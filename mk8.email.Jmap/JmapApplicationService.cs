@@ -1,4 +1,3 @@
-using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using mk8.email.Application.Interfaces;
 using mk8.email.Configuration;
@@ -9,7 +8,7 @@ namespace mk8.email.Jmap;
 internal sealed class JmapApplicationService(
     IMailAuthenticator mailAuthenticator,
     IServiceProvider services,
-    JmapSessionService sessions,
+    JmapAccountProfileService sessions,
     JmapRequestProcessor processor,
     JmapAccountService accounts,
     JmapBlobService blobs,
@@ -17,16 +16,16 @@ internal sealed class JmapApplicationService(
     JmapConcurrencyLimiter concurrency,
     EnvironmentConfig environment) : IJmapApplicationService
 {
-    public async Task<JmapApplicationResult> GetSessionAsync(
-        JmapSessionApplicationRequest request,
+    public async Task<JmapApplicationResult> GetProfileAsync(
+        JmapProfileApplicationRequest request,
         CancellationToken cancellationToken = default)
     {
         var user = await AuthenticateAsync(request.Authentication, cancellationToken).ConfigureAwait(false);
         if (user is null)
             return Unauthorized();
 
-        var session = await sessions.BuildAsync(user, cancellationToken).ConfigureAwait(false);
-        return Json(session.Value.ToJsonString(JmapJson.SerializerOptions));
+        var profile = await sessions.GetProfileAsync(user, cancellationToken).ConfigureAwait(false);
+        return new JmapApplicationResult(JmapApplicationOutcomes.Ok, Profile: profile);
     }
 
     public async Task<JmapApplicationResult> ExecuteBatchAsync(
@@ -132,8 +131,8 @@ internal sealed class JmapApplicationService(
                 Size: blob.Content.LongLength);
     }
 
-    public async Task<JmapApplicationResult> PollEventAsync(
-        JmapEventApplicationRequest request,
+    public async Task<JmapApplicationResult> PollChangesAsync(
+        JmapChangesApplicationRequest request,
         CancellationToken cancellationToken = default)
     {
         var user = await AuthenticateAsync(request.Authentication, cancellationToken).ConfigureAwait(false);
@@ -167,14 +166,7 @@ internal sealed class JmapApplicationService(
             request.AfterCursor.Value,
             types,
             cancellationToken).ConfigureAwait(false);
-        return new JmapApplicationResult(
-            JmapApplicationOutcomes.Ok,
-            poll.StateChange is null
-                ? null
-                : Encoding.UTF8.GetBytes(
-                    poll.StateChange.ToJsonString(JmapJson.SerializerOptions)),
-            "application/json",
-            Cursor: poll.Cursor);
+        return new JmapApplicationResult(JmapApplicationOutcomes.Ok, Cursor: poll.Cursor, Changes: poll.Changes);
     }
 
     private async Task<AuthenticatedMailUser?> AuthenticateAsync(
@@ -202,11 +194,6 @@ internal sealed class JmapApplicationService(
 
         return null;
     }
-
-    private static JmapApplicationResult Json(string value) => new(
-        JmapApplicationOutcomes.Ok,
-        Encoding.UTF8.GetBytes(value),
-        "application/json");
 
     private static JmapApplicationResult Unauthorized() =>
         new(JmapApplicationOutcomes.Unauthorized);

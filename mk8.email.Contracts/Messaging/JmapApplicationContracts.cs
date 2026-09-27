@@ -15,7 +15,7 @@ public sealed record ProtocolAuthentication(
     string? Username,
     string Secret);
 
-public sealed record JmapSessionApplicationRequest(
+public sealed record JmapProfileApplicationRequest(
     ProtocolAuthentication Authentication);
 
 // A null batch is an authentication/resource check for a document rejected by
@@ -41,8 +41,42 @@ public sealed record JmapApplicationInvocation(
 
 public sealed record JmapApplicationBatchResult(
     JmapApplicationInvocation[] Invocations,
-    string Revision,
+    JmapApplicationProfile Profile,
     IReadOnlyDictionary<string, string>? CreatedIds = null);
+
+public sealed record JmapApplicationProfile(
+    string Username,
+    JmapServiceLimits Limits,
+    JmapAccountProfile[] Accounts);
+
+public sealed record JmapAccountProfile(
+    string Id,
+    string Name,
+    bool IsPersonal,
+    bool IsReadOnly,
+    bool SupportsContacts);
+
+public sealed record JmapServiceLimits(
+    long MaxUploadSizeBytes,
+    int MaxConcurrentUploads,
+    long MaxRequestSizeBytes,
+    int MaxConcurrentRequests,
+    int MaxCallsInRequest,
+    int MaxObjectsInGet,
+    int MaxObjectsInSet,
+    int MaxMailboxDepth,
+    int MaxSizeMailboxName,
+    long MaxMessageSizeBytes,
+    string[] CollationAlgorithms,
+    string[] EmailQuerySortOptions);
+
+public sealed record JmapApplicationChanges(
+    IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>> AccountStates);
+
+public sealed record JmapPushMessage(
+    string? SubscriptionId = null,
+    string? VerificationCode = null,
+    JmapApplicationChanges? Changes = null);
 
 public sealed record JmapUploadApplicationRequest(
     ProtocolAuthentication Authentication,
@@ -55,7 +89,7 @@ public sealed record JmapDownloadApplicationRequest(
     string AccountId,
     string BlobId);
 
-public sealed record JmapEventApplicationRequest(
+public sealed record JmapChangesApplicationRequest(
     ProtocolAuthentication Authentication,
     long? AfterCursor,
     string[]? Types);
@@ -81,4 +115,6 @@ public sealed record JmapApplicationResult(
     long? Size = null,
     long? Cursor = null,
     JmapApplicationProblem? Problem = null,
-    JmapApplicationBatchResult? Batch = null);
+    JmapApplicationBatchResult? Batch = null,
+    JmapApplicationProfile? Profile = null,
+    JmapApplicationChanges? Changes = null);

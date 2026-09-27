@@ -320,6 +320,22 @@ public sealed class ArchitectureBoundaryTests
     }
 
     [TestMethod]
+    public void ProfileChangesAndPushAreTypedUntilGatewayPresentation()
+    {
+        Assert.AreEqual(typeof(mk8.email.Contracts.Messaging.JmapApplicationProfile),
+            typeof(mk8.email.Contracts.Messaging.JmapApplicationResult).GetProperty("Profile")?.PropertyType);
+        Assert.AreEqual(typeof(mk8.email.Contracts.Messaging.JmapApplicationChanges),
+            typeof(mk8.email.Contracts.Messaging.JmapApplicationResult).GetProperty("Changes")?.PropertyType);
+        Assert.IsNull(typeof(mk8.email.Contracts.Messaging.JmapApplicationBatchResult).GetProperty("Revision"));
+        Assert.AreEqual("mk8.email.Gateway", typeof(
+            mk8.email.Gateway.Protocols.Jmap.GatewayJmapProfileCodec).Assembly.GetName().Name);
+        Assert.AreEqual("mk8.email.Gateway", typeof(
+            mk8.email.Gateway.Protocols.Jmap.GatewayJmapChangesCodec).Assembly.GetName().Name);
+        Assert.IsFalse(typeof(mk8.email.Jmap.JmapAccountProfileService).Assembly.GetTypes()
+            .Any(type => type.Name is "JmapSessionDocument" or "JmapPushPresentationPayload"));
+    }
+
+    [TestMethod]
     public void GatewayOwnsDavPresentationWithoutDependingOnDavApplicationLogic()
     {
         var endpointAssembly = typeof(

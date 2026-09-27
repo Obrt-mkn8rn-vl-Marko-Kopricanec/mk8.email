@@ -277,11 +277,11 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
     {
         return request.Operation switch
         {
-            ApplicationOperations.JmapSessionGet => Success(
+            ApplicationOperations.JmapProfileGet => Success(
                 request.Id,
                 await services.GetRequiredService<IJmapApplicationService>()
-                    .GetSessionAsync(
-                        Deserialize<JmapSessionApplicationRequest>(request),
+                    .GetProfileAsync(
+                        Deserialize<JmapProfileApplicationRequest>(request),
                         cancellationToken).ConfigureAwait(false)),
             ApplicationOperations.JmapBatchExecute => Success(
                 request.Id,
@@ -301,11 +301,11 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
                     .DownloadAsync(
                         Deserialize<JmapDownloadApplicationRequest>(request),
                         cancellationToken).ConfigureAwait(false)),
-            ApplicationOperations.JmapEventPoll => Success(
+            ApplicationOperations.JmapChangesPoll => Success(
                 request.Id,
                 await services.GetRequiredService<IJmapApplicationService>()
-                    .PollEventAsync(
-                        Deserialize<JmapEventApplicationRequest>(request),
+                    .PollChangesAsync(
+                        Deserialize<JmapChangesApplicationRequest>(request),
                         cancellationToken).ConfigureAwait(false)),
             _ => Error(request.Id, "unknown-operation", "The application operation is not supported."),
         };

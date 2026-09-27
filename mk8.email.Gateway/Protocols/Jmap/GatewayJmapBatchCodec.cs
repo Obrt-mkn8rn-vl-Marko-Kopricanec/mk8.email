@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using mk8.email.Configuration;
 using mk8.email.Contracts.Messaging;
 
 namespace mk8.email.Gateway.Protocols.Jmap;
@@ -62,7 +63,7 @@ internal static class GatewayJmapBatchCodec
         return new JmapApplicationBatch(capabilities, invocations, createdIds);
     }
 
-    public static JsonObject Render(JmapApplicationBatchResult batch)
+    public static JsonObject Render(JmapApplicationBatchResult batch, EnvironmentConfig environment)
     {
         var responses = new JsonArray();
         foreach (var invocation in batch.Invocations)
@@ -70,7 +71,7 @@ internal static class GatewayJmapBatchCodec
         var result = new JsonObject
         {
             ["methodResponses"] = responses,
-            ["sessionState"] = batch.Revision,
+            ["sessionState"] = GatewayJmapProfileCodec.Render(batch.Profile, environment)["state"]!.DeepClone(),
         };
         if (batch.CreatedIds is not null)
         {

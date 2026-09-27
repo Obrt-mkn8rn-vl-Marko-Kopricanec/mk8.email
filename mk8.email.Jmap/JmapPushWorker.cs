@@ -211,7 +211,7 @@ internal sealed class JmapPushWorker(
             }
             return;
         }
-        if (poll.StateChange is null)
+        if (poll.Changes is null)
         {
             subscription.LastPushedChange = poll.Cursor;
             subscription.FailureCount = 0;
@@ -228,7 +228,7 @@ internal sealed class JmapPushWorker(
                 subscription.Url,
                 subscription.KeysJson,
                 subscription.ExpiresAt,
-                JmapPushPresentationPayload.Serialize(poll.StateChange),
+                new JmapPushMessage(Changes: poll.Changes),
                 cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)

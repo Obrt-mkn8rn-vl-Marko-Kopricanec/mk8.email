@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json.Nodes;
+using mk8.email.Contracts.Messaging;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using mk8.email.Infrastructure.Data;
@@ -69,12 +70,7 @@ internal sealed class PushSubscriptionSetMethod(
                 var id = JmapId.PushSubscription(subscription.Id);
                 context.CreatedIds[item.Key] = id;
                 created[item.Key] = BuildCreatedResponse(item.Value, subscription);
-                var verification = new JsonObject
-                {
-                    ["@type"] = "PushVerification",
-                    ["pushSubscriptionId"] = id,
-                    ["verificationCode"] = subscription.VerificationCode,
-                };
+                var verification = new JmapPushMessage(id, subscription.VerificationCode);
                 context.AddPostCommitAction(async postCommitCancellationToken =>
                 {
                     try
@@ -83,7 +79,7 @@ internal sealed class PushSubscriptionSetMethod(
                             subscription.Url,
                             subscription.KeysJson,
                             subscription.ExpiresAt,
-                            JmapPushPresentationPayload.Serialize(verification),
+                            verification,
                             postCommitCancellationToken).ConfigureAwait(false);
                     }
                     catch (Exception exception) when (exception is not OperationCanceledException)

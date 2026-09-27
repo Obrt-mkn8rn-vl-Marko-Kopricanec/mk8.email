@@ -38,6 +38,22 @@ internal sealed class GatewayWebPushService : IDisposable
         _maximumJournalPayloadBytes = maximumJournalPayloadBytes;
     }
 
+    private static byte[]? GetPayload(WebPushSendRequest request)
+    {
+        if (request.Payload is not null)
+            return request.JmapMessage is null ? request.Payload : null;
+        if (request.JmapMessage is null)
+            return null;
+        try
+        {
+            return GatewayJmapChangesCodec.EncodePush(request.JmapMessage);
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+    }
+
     private static SocketsHttpHandler CreateHandler()
     {
         return new SocketsHttpHandler
@@ -86,9 +102,10 @@ internal sealed class GatewayWebPushService : IDisposable
             return new WebPushSendResult(WebPushSendOutcome.Failed);
         if (subscription.ExpiresAt <= DateTimeOffset.UtcNow)
             return new WebPushSendResult(WebPushSendOutcome.Gone);
-        if (subscription.Payload is null || subscription.Payload.Length == 0)
+        var payload = GetPayload(subscription);
+        if (payload is null || payload.Length == 0)
             return new WebPushSendResult(WebPushSendOutcome.Failed);
-        var body = subscription.Payload;
+        var body = payload;
         var encrypted = false;
         if (subscription.P256dh is not null || subscription.Auth is not null)
         {
@@ -97,7 +114,7 @@ internal sealed class GatewayWebPushService : IDisposable
                 if (subscription.P256dh is null || subscription.Auth is null)
                     return new WebPushSendResult(WebPushSendOutcome.Failed);
                 body = JmapPushEncryption.Encrypt(
-                    subscription.Payload,
+                    payload,
                     subscription.P256dh,
                     subscription.Auth);
                 encrypted = true;

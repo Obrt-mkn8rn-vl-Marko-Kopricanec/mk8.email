@@ -13,7 +13,7 @@ namespace mk8.email.Jmap;
 public sealed class JmapRequestProcessor
 {
     private readonly IReadOnlyDictionary<string, IJmapMethod> _methods;
-    private readonly JmapSessionService _sessions;
+    private readonly JmapAccountProfileService _sessions;
     private readonly EmailDbContext _database;
     private readonly EnvironmentConfig _environment;
     private readonly LargeObjectTransactionEffects _blobEffects;
@@ -21,7 +21,7 @@ public sealed class JmapRequestProcessor
 
     public JmapRequestProcessor(
         IEnumerable<IJmapMethod> methods,
-        JmapSessionService sessions,
+        JmapAccountProfileService sessions,
         EmailDbContext database,
         EnvironmentConfig environment,
         LargeObjectTransactionEffects blobEffects,
@@ -98,9 +98,9 @@ public sealed class JmapRequestProcessor
             }
         }
 
-        var session = await _sessions.BuildAsync(user, cancellationToken).ConfigureAwait(false);
+        var profile = await _sessions.GetProfileAsync(user, cancellationToken).ConfigureAwait(false);
         return new JmapApplicationBatchResult(
-            responses.ToArray(), session.State, batch.CreatedIds is null ? null : createdIds);
+            responses.ToArray(), profile, batch.CreatedIds is null ? null : createdIds);
     }
 
     internal void ValidatePreflight(JmapBatchPreflight? preflight)

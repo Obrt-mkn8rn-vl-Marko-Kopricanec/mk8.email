@@ -27,6 +27,112 @@ public sealed class MailQueueTests
         "body\r\n";
 
     [TestMethod]
+    [DataRow("id", "The queue identifier is not valid.")]
+    [DataRow("sender", "The envelope sender is not valid.")]
+    [DataRow("none", "The recipient count is not valid.")]
+    [DataRow("many", "The recipient count is not valid.")]
+    [DataRow("wire", "The message is not in the mail wire byte representation.")]
+    [DataRow("size", "The message is larger than the configured limit.")]
+    [DataRow("recipient", "A recipient address is not valid.")]
+    [DataRow("auth", "The authenticated user is not valid.")]
+    [DataRow("return", "The DSN return-content request is not valid.")]
+    [DataRow("envelope", "The DSN envelope identifier is not valid.")]
+    [DataRow("notify", "A DSN notification request is not valid.")]
+    [DataRow("original", "A DSN original recipient is not valid.")]
+    [DataRow("recipient-before-auth", "A recipient address is not valid.")]
+    [DataRow("authenticated-empty-sender", "The envelope sender is not valid.")]
+    [DataRow("wire-before-recipient", "The message is not in the mail wire byte representation.")]
+    public async Task SubmissionValidationFinishesBeforeAnyPayloadOrRowIsCreated(string input, string message)
+    {
+        await using var services = CreateServices(CreateEnvironment(),
+            CleanScan(), new StubRelay(OutboundDeliveryStatus.Delivered));
+        using var scope = services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        await database.Database.EnsureCreatedAsync().ConfigureAwait(false);
+        var queue = scope.ServiceProvider.GetRequiredService<IMailSubmissionQueue>();
+        var exception = await Assert.ThrowsExactlyAsync<ArgumentException>(() =>
+            queue.EnqueueAsync(CreateInvalidSubmission(input))).ConfigureAwait(false);
+        Assert.AreEqual("submission", exception.ParamName);
+        StringAssert.StartsWith(exception.Message, message);
+        Assert.AreEqual(0, await database.MailQueueMessages.CountAsync().ConfigureAwait(false));
+        Assert.AreEqual(0, await database.MailQueueRecipients.CountAsync().ConfigureAwait(false));
+        Assert.AreEqual(0, database.MailQueueMessages.Local.Count);
+        Assert.AreEqual(0, services.GetRequiredService<InMemoryLargeObjectStore>().Count);
+    }
+
+    private static MailSubmission CreateInvalidSubmission(string input)
+    {
+        var submission = new MailSubmission(Guid.CreateVersion7(), "sender@example.net",
+            [new MailEnvelopeRecipient(TestAccount, true)], RawMessage, null, null, null);
+        var invalidRecipient = new MailEnvelopeRecipient("invalid", false);
+        return input switch
+        {
+            "id" => submission with { QueueId = Guid.Empty },
+            "sender" => submission with { EnvelopeSender = "invalid" },
+            "none" => submission with { Recipients = [] },
+            "many" => submission with { Recipients = Enumerable.Repeat(submission.Recipients[0], 11).ToArray() },
+            "wire" => submission with { RawMessage = "\u0100" },
+            "size" => submission with { RawMessage = new string('x', 1024 * 1024 + 1) },
+            "recipient" => submission with { Recipients = [invalidRecipient] },
+            "auth" => submission with { AuthenticatedUser = "invalid" },
+            "return" => submission with { Dsn = new MailDsnEnvelope("invalid", null) },
+            "envelope" => submission with { Dsn = new MailDsnEnvelope(null, "bad\r\nvalue") },
+            "notify" => submission with
+            {
+                Recipients = [submission.Recipients[0],
+                    new MailEnvelopeRecipient("other@example.net", false, new MailDsnRecipient("never,failure", null))],
+            },
+            "original" => submission with
+            {
+                Recipients = [submission.Recipients[0],
+                    new MailEnvelopeRecipient("other@example.net", false, new MailDsnRecipient(null, "invalid"))],
+            },
+            "recipient-before-auth" => submission with { Recipients = [invalidRecipient], AuthenticatedUser = "invalid" },
+            "authenticated-empty-sender" => submission with { EnvelopeSender = string.Empty, AuthenticatedUser = TestAccount },
+            "wire-before-recipient" => submission with { RawMessage = "\u0100", Recipients = [invalidRecipient] },
+            _ => throw new ArgumentOutOfRangeException(nameof(input)),
+        };
+    }
+
+    [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task SubmissionRetainsFirstDuplicateMetadataAndOneSchedulingInstant(bool invalidMetadata)
+    {
+        await using var services = CreateServices(CreateEnvironment(),
+            CleanScan(), new StubRelay(OutboundDeliveryStatus.Delivered));
+        using var scope = services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        await database.Database.EnsureCreatedAsync().ConfigureAwait(false);
+        var before = DateTime.UtcNow;
+        var queueId = Guid.CreateVersion7();
+        var queue = scope.ServiceProvider.GetRequiredService<IMailSubmissionQueue>();
+        Assert.AreEqual(queueId, await queue.EnqueueAsync(new MailSubmission(queueId, TestAccount,
+            [new MailEnvelopeRecipient(TestAccount, true, new MailDsnRecipient("delay", null)),
+                new MailEnvelopeRecipient("ADMIN@MK8N.COM", false, new MailDsnRecipient("invalid", "invalid")),
+                new MailEnvelopeRecipient("josé@example.net", false)],
+            RawMessage, invalidMetadata ? new string('x', 46) : " 192.0.2.42 ",
+            invalidMetadata ? "unsafe\r\nhelo" : " mx.example.net ", TestAccount)).ConfigureAwait(false));
+        var queued = await database.MailQueueMessages.Include(item => item.Recipients).SingleAsync().ConfigureAwait(false);
+        Assert.AreEqual(invalidMetadata ? null : "192.0.2.42", queued.ClientIp);
+        Assert.AreEqual(invalidMetadata ? null : "mx.example.net", queued.Helo);
+        Assert.AreEqual(MailQueueDirections.Submission, queued.Direction);
+        Assert.AreEqual(TestAccount, queued.AuthenticatedUser);
+        Assert.IsTrue(queued.RequiresSmtpUtf8);
+        Assert.IsTrue(queued.ReceivedAt >= before && queued.ReceivedAt <= DateTime.UtcNow);
+        Assert.AreEqual(queued.ReceivedAt, queued.NextAttemptAt);
+        Assert.AreEqual(2, queued.Recipients.Count);
+        Assert.IsTrue(queued.Recipients.All(recipient => recipient.NextAttemptAt == queued.ReceivedAt));
+        var local = queued.Recipients.Single(recipient => recipient.Recipient == TestAccount);
+        Assert.IsTrue(local.IsLocal);
+        Assert.AreEqual("DELAY", local.DsnNotify);
+        Assert.IsNull(local.DsnOriginalRecipient);
+        CollectionAssert.AreEqual(new[] { TestAccount }, local.RedirectHistory);
+        Assert.AreEqual(RawMessage, await ReadQueueContentAsync(scope, queued).ConfigureAwait(false));
+        Assert.AreEqual(1, services.GetRequiredService<InMemoryLargeObjectStore>().Count);
+    }
+
+    [TestMethod]
     public async Task CompletedQueueCleanupDrainsEveryExpiredBatch()
     {
         var environment = CreateEnvironment();

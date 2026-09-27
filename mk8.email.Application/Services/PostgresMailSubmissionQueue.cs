@@ -25,100 +25,10 @@ public sealed class PostgresMailSubmissionQueue(
         MailSubmission submission,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(submission);
-        if (submission.QueueId == Guid.Empty)
-            throw new ArgumentException("The queue identifier is not valid.", nameof(submission));
-
-        if (!SmtpAddress.TryNormalize(
-                submission.EnvelopeSender,
-                allowEmpty: submission.AuthenticatedUser is null,
-                out var sender,
-                out var senderRequiresSmtpUtf8))
-        {
-            throw new ArgumentException("The envelope sender is not valid.", nameof(submission));
-        }
-
-        if (submission.Recipients.Count is 0
-            || submission.Recipients.Count > environment.Limits.MaxRecipientsPerMessage)
-        {
-            throw new ArgumentException("The recipient count is not valid.", nameof(submission));
-        }
-
-        if (submission.RawMessage.Any(character => character > byte.MaxValue))
-            throw new ArgumentException("The message is not in the mail wire byte representation.", nameof(submission));
-        if (SmtpInternationalization.HeadersRequireSmtpUtf8(submission.RawMessage)
-            && !SmtpInternationalization.HasValidUtf8Headers(submission.RawMessage))
-        {
-            throw new ArgumentException("Internationalized headers are not valid UTF-8.", nameof(submission));
-        }
-
-        if (MailWireEncoding.Instance.GetByteCount(submission.RawMessage) > environment.Limits.MaxMessageSizeBytes)
-            throw new ArgumentException("The message is larger than the configured limit.", nameof(submission));
-
-        var recipients = new List<MailEnvelopeRecipient>();
-        var recipientRequiresSmtpUtf8 = false;
-        foreach (var recipient in submission.Recipients)
-        {
-            if (!SmtpAddress.TryNormalize(
-                    recipient.Address,
-                    allowEmpty: false,
-                    out var address,
-                    out var addressRequiresSmtpUtf8))
-            {
-                throw new ArgumentException("A recipient address is not valid.", nameof(submission));
-            }
-
-            recipientRequiresSmtpUtf8 |= addressRequiresSmtpUtf8;
-
-            if (recipients.All(item => !string.Equals(item.Address, address, StringComparison.OrdinalIgnoreCase)))
-                recipients.Add(new MailEnvelopeRecipient(address, recipient.IsLocal, recipient.Dsn));
-        }
-
-        var authenticatedUser = submission.AuthenticatedUser;
-        if (authenticatedUser is not null
-            && !SmtpAddress.TryNormalize(authenticatedUser, allowEmpty: false, out authenticatedUser))
-        {
-            throw new ArgumentException("The authenticated user is not valid.", nameof(submission));
-        }
-
-        string? dsnReturnContent = null;
-        string? dsnEnvelopeId = null;
-        if (submission.Dsn?.ReturnContent is not null
-            && !SmtpDsn.TryNormalizeReturnContent(
-                submission.Dsn.ReturnContent,
-                out dsnReturnContent))
-        {
-            throw new ArgumentException("The DSN return-content request is not valid.", nameof(submission));
-        }
-        if (submission.Dsn?.EnvelopeId is not null)
-        {
-            if (!SmtpDsn.TryValidateEnvelopeId(submission.Dsn.EnvelopeId))
-                throw new ArgumentException("The DSN envelope identifier is not valid.", nameof(submission));
-            dsnEnvelopeId = submission.Dsn.EnvelopeId;
-        }
-
-        var now = DateTime.UtcNow;
-        var message = new MailQueueMessageDB
-        {
-            Id = submission.QueueId,
-            EnvelopeSender = sender,
-            RequiresSmtpUtf8 = submission.RequiresSmtpUtf8
-                || senderRequiresSmtpUtf8
-                || recipientRequiresSmtpUtf8
-                || SmtpInternationalization.HeadersRequireSmtpUtf8(submission.RawMessage),
-            DsnReturnContent = dsnReturnContent,
-            DsnEnvelopeId = dsnEnvelopeId,
-            ClientIp = NormalizeMetadata(submission.ClientIp, 45),
-            Helo = NormalizeMetadata(submission.Helo, 255),
-            AuthenticatedUser = authenticatedUser,
-            Direction = authenticatedUser is null
-                ? MailQueueDirections.Inbound
-                : MailQueueDirections.Submission,
-            State = MailQueueStates.Pending,
-            ScanState = MailQueueScanStates.Pending,
-            ReceivedAt = now,
-            NextAttemptAt = now,
-        };
+        var (sender, senderRequiresSmtpUtf8) = ValidateSubmission(submission);
+        var (recipients, recipientRequiresSmtpUtf8) = NormalizeRecipients(submission);
+        var message = CreateQueueMessage(submission, sender, senderRequiresSmtpUtf8 || recipientRequiresSmtpUtf8);
+        var now = message.ReceivedAt;
 
         foreach (ref readonly var recipient in CollectionsMarshal.AsSpan(recipients))
         {
@@ -155,6 +65,124 @@ public sealed class PostgresMailSubmissionQueue(
             });
         }
 
+        return await PersistMessageAsync(message, submission.RawMessage, cancellationToken).ConfigureAwait(false);
+    }
+
+    private (string Sender, bool RequiresSmtpUtf8) ValidateSubmission(MailSubmission submission)
+    {
+        ArgumentNullException.ThrowIfNull(submission);
+        if (submission.QueueId == Guid.Empty)
+            throw new ArgumentException("The queue identifier is not valid.", nameof(submission));
+
+        if (!SmtpAddress.TryNormalize(
+                submission.EnvelopeSender,
+                allowEmpty: submission.AuthenticatedUser is null,
+                out var sender,
+                out var senderRequiresSmtpUtf8))
+        {
+            throw new ArgumentException("The envelope sender is not valid.", nameof(submission));
+        }
+
+        if (submission.Recipients.Count is 0
+            || submission.Recipients.Count > environment.Limits.MaxRecipientsPerMessage)
+        {
+            throw new ArgumentException("The recipient count is not valid.", nameof(submission));
+        }
+
+        if (submission.RawMessage.Any(character => character > byte.MaxValue))
+            throw new ArgumentException("The message is not in the mail wire byte representation.", nameof(submission));
+        if (SmtpInternationalization.HeadersRequireSmtpUtf8(submission.RawMessage)
+            && !SmtpInternationalization.HasValidUtf8Headers(submission.RawMessage))
+        {
+            throw new ArgumentException("Internationalized headers are not valid UTF-8.", nameof(submission));
+        }
+
+        if (MailWireEncoding.Instance.GetByteCount(submission.RawMessage) > environment.Limits.MaxMessageSizeBytes)
+            throw new ArgumentException("The message is larger than the configured limit.", nameof(submission));
+        return (sender, senderRequiresSmtpUtf8);
+    }
+
+    private static (List<MailEnvelopeRecipient> Recipients, bool RequiresSmtpUtf8) NormalizeRecipients(
+        MailSubmission submission)
+    {
+        var recipients = new List<MailEnvelopeRecipient>();
+        var recipientRequiresSmtpUtf8 = false;
+        foreach (var recipient in submission.Recipients)
+        {
+            if (!SmtpAddress.TryNormalize(
+                    recipient.Address,
+                    allowEmpty: false,
+                    out var address,
+                    out var addressRequiresSmtpUtf8))
+            {
+                throw new ArgumentException("A recipient address is not valid.", nameof(submission));
+            }
+
+            recipientRequiresSmtpUtf8 |= addressRequiresSmtpUtf8;
+
+            if (recipients.All(item => !string.Equals(item.Address, address, StringComparison.OrdinalIgnoreCase)))
+                recipients.Add(new MailEnvelopeRecipient(address, recipient.IsLocal, recipient.Dsn));
+        }
+        return (recipients, recipientRequiresSmtpUtf8);
+    }
+
+    private static MailQueueMessageDB CreateQueueMessage(
+        MailSubmission submission,
+        string sender,
+        bool envelopeRequiresSmtpUtf8)
+    {
+        var authenticatedUser = submission.AuthenticatedUser;
+        if (authenticatedUser is not null
+            && !SmtpAddress.TryNormalize(authenticatedUser, allowEmpty: false, out authenticatedUser))
+        {
+            throw new ArgumentException("The authenticated user is not valid.", nameof(submission));
+        }
+
+        string? dsnReturnContent = null;
+        string? dsnEnvelopeId = null;
+        if (submission.Dsn?.ReturnContent is not null
+            && !SmtpDsn.TryNormalizeReturnContent(
+                submission.Dsn.ReturnContent,
+                out dsnReturnContent))
+        {
+            throw new ArgumentException("The DSN return-content request is not valid.", nameof(submission));
+        }
+        if (submission.Dsn?.EnvelopeId is not null)
+        {
+            if (!SmtpDsn.TryValidateEnvelopeId(submission.Dsn.EnvelopeId))
+                throw new ArgumentException("The DSN envelope identifier is not valid.", nameof(submission));
+            dsnEnvelopeId = submission.Dsn.EnvelopeId;
+        }
+
+        var now = DateTime.UtcNow;
+        var message = new MailQueueMessageDB
+        {
+            Id = submission.QueueId,
+            EnvelopeSender = sender,
+            RequiresSmtpUtf8 = submission.RequiresSmtpUtf8
+                || envelopeRequiresSmtpUtf8
+                || SmtpInternationalization.HeadersRequireSmtpUtf8(submission.RawMessage),
+            DsnReturnContent = dsnReturnContent,
+            DsnEnvelopeId = dsnEnvelopeId,
+            ClientIp = NormalizeMetadata(submission.ClientIp, 45),
+            Helo = NormalizeMetadata(submission.Helo, 255),
+            AuthenticatedUser = authenticatedUser,
+            Direction = authenticatedUser is null
+                ? MailQueueDirections.Inbound
+                : MailQueueDirections.Submission,
+            State = MailQueueStates.Pending,
+            ScanState = MailQueueScanStates.Pending,
+            ReceivedAt = now,
+            NextAttemptAt = now,
+        };
+        return message;
+    }
+
+    private async Task<Guid> PersistMessageAsync(
+        MailQueueMessageDB message,
+        string rawMessage,
+        CancellationToken cancellationToken)
+    {
         var effectMarker = transactionEffects.Mark();
         IDbContextTransaction? transaction = null;
         var commitAttempted = false;
@@ -162,7 +190,7 @@ public sealed class PostgresMailSubmissionQueue(
         {
             if (database.Database.IsRelational())
                 transaction = await database.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-            await content.SetAsync(message, submission.RawMessage, cancellationToken).ConfigureAwait(false);
+            await content.SetAsync(message, rawMessage, cancellationToken).ConfigureAwait(false);
             await database.MailQueueMessages.AddAsync(message, cancellationToken).ConfigureAwait(false);
             await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             if (transaction is not null)

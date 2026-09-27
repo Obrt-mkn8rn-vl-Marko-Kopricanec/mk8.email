@@ -129,7 +129,23 @@ public sealed class ImapCopyPostgresTests
                 userId, sourceId, "Archive", true,
                 new ImapMessageSelection([new ImapMessageRange(99, 99)], null)));
             Assert.AreEqual(ImapCopyDisposition.Copied, empty.Disposition);
+            Assert.AreEqual(23, empty.DestinationUidValidity);
             Assert.IsEmpty(empty.SourceUids);
+            Assert.IsEmpty(empty.DestinationUids);
+            foreach (var savedUids in new[] { Array.Empty<int>(), new[] { 999 } })
+            {
+                var savedEmpty = await application.CopyMessagesAsync(new ImapCopyRequest(
+                    userId, sourceId, "Archive", true, new ImapMessageSelection(null, savedUids.ToList())));
+                Assert.AreEqual(ImapCopyDisposition.Copied, savedEmpty.Disposition);
+                Assert.AreEqual(23, savedEmpty.DestinationUidValidity);
+                Assert.IsEmpty(savedEmpty.SourceUids);
+                Assert.IsEmpty(savedEmpty.DestinationUids);
+            }
+            Assert.AreEqual(1, objects.ObjectCount);
+            Assert.AreEqual(1, await database.Emails.CountAsync());
+            var unchanged = await database.Folders.AsNoTracking().SingleAsync(folder => folder.Id == destinationId);
+            Assert.AreEqual(10, unchanged.NextUid);
+            Assert.AreEqual(5L, unchanged.HighestModSeq);
             Assert.AreEqual(ImapCopyDisposition.OverQuota,
                 (await application.CopyMessagesAsync(new ImapCopyRequest(
                     userId, sourceId, "Archive", true, selection))).Disposition);
@@ -178,7 +194,7 @@ public sealed class ImapCopyPostgresTests
             var application = CreateApplication(database, objects);
             var copied = await application.CopyMessagesAsync(new ImapCopyRequest(
                 userId, sourceId, "Archive", true,
-                new ImapMessageSelection([new ImapMessageRange(null, null)], null)));
+                new ImapMessageSelection(null, [1, 1, 999])));
             Assert.AreEqual(ImapCopyDisposition.Copied, copied.Disposition);
             Assert.AreEqual(23, copied.DestinationUidValidity);
             CollectionAssert.AreEqual(new[] { 1 }, copied.SourceUids);

@@ -959,14 +959,7 @@ internal sealed class ImapApplicationService(
         ImapCopyRequest request,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(request);
-        if (request.UserId == Guid.Empty || request.SourceFolderId == Guid.Empty
-            || string.IsNullOrEmpty(request.DestinationMailboxName)
-            || request.Selection is null || !IsValidMessageSelection(request.Selection))
-        {
-            throw new ArgumentException("The IMAP COPY request is invalid.", nameof(request));
-        }
-
+        ValidateCopyRequest(request);
         var transaction = database.Database.IsRelational()
             ? await database.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken).ConfigureAwait(false)
             : null;
@@ -985,9 +978,58 @@ internal sealed class ImapApplicationService(
         if (destination is null)
             return new ImapCopyResult(ImapCopyDisposition.DestinationNotFound, 0, [], []);
 
-        var messages = await database.Emails
+        var messages = await ReadCopyMetadataAsync(sourceFolder.Id, cancellationToken).ConfigureAwait(false);
+        var selected = SelectCopyMessages(messages, request.Selection, request.UseUid);
+        if (selected.Count == 0)
+            return new ImapCopyResult(ImapCopyDisposition.Copied,
+                destination.UidValidity, [], []);
+
+        var quotaFailure = await CheckCopyQuotaAsync(request.UserId, selected, cancellationToken).ConfigureAwait(false);
+        if (quotaFailure is { } disposition)
+            return new ImapCopyResult(disposition, 0, [], []);
+
+        var marker = effects.Mark();
+        var commitAttempted = false;
+        var sourceUids = new List<int>(selected.Count);
+        var destinationUids = new List<int>(selected.Count);
+        try
+        {
+            await StageCopiesAsync(selected, sourceFolder, destination,
+                sourceUids, destinationUids, cancellationToken).ConfigureAwait(false);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            if (transaction is not null)
+            {
+                commitAttempted = true;
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            await effects.CommitAsync(marker).ConfigureAwait(false);
+        }
+        catch
+        {
+            await RecoverCopyAsync(transaction, marker, commitAttempted).ConfigureAwait(false);
+            throw;
+        }
+
+        return new ImapCopyResult(ImapCopyDisposition.Copied,
+            destination.UidValidity, sourceUids, destinationUids);
+    }
+
+    private static void ValidateCopyRequest(ImapCopyRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.UserId == Guid.Empty || request.SourceFolderId == Guid.Empty
+            || string.IsNullOrEmpty(request.DestinationMailboxName)
+            || request.Selection is null || !IsValidMessageSelection(request.Selection))
+        {
+            throw new ArgumentException("The IMAP COPY request is invalid.", nameof(request));
+        }
+    }
+
+    private async Task<List<EmailDB>> ReadCopyMetadataAsync(Guid sourceFolderId, CancellationToken cancellationToken)
+    {
+        return await database.Emails
             .AsNoTracking()
-            .Where(email => email.FolderId == sourceFolder.Id)
+            .Where(email => email.FolderId == sourceFolderId)
             .OrderBy(email => email.Uid)
             .Select(email => new EmailDB
             {
@@ -997,19 +1039,26 @@ internal sealed class ImapApplicationService(
                 SizeBytes = email.SizeBytes,
             })
             .ToListAsync(cancellationToken).ConfigureAwait(false);
-        var maximumIdentifier = request.UseUid
+    }
+
+    private static List<EmailDB> SelectCopyMessages(
+        List<EmailDB> messages,
+        ImapMessageSelection selection,
+        bool useUid)
+    {
+        var maximumIdentifier = useUid
             ? messages.Count > 0 ? messages[^1].Uid : 0
             : messages.Count;
-        var resolvedRanges = request.Selection.Ranges is { } ranges
+        var resolvedRanges = selection.Ranges is { } ranges
             ? ResolveMessageRanges(ranges.Select(range => (range.Start, range.End)), maximumIdentifier)
             : null;
-        var savedSearchUids = request.Selection.SavedSearchUids?.ToHashSet();
+        var savedSearchUids = selection.SavedSearchUids?.ToHashSet();
         var rangeIndex = 0;
         var selected = new List<EmailDB>();
         for (var index = 0; index < messages.Count; index++)
         {
             var message = messages[index];
-            var identifier = request.UseUid ? message.Uid : index + 1;
+            var identifier = useUid ? message.Uid : index + 1;
             if (savedSearchUids is not null && !savedSearchUids.Contains(message.Uid))
                 continue;
             if (resolvedRanges is not null)
@@ -1027,114 +1076,115 @@ internal sealed class ImapApplicationService(
             }
             selected.Add(message);
         }
-        if (selected.Count == 0)
-            return new ImapCopyResult(ImapCopyDisposition.Copied,
-                destination.UidValidity, [], []);
+        return selected;
+    }
 
+    private async Task<ImapCopyDisposition?> CheckCopyQuotaAsync(
+        Guid userId,
+        List<EmailDB> selected,
+        CancellationToken cancellationToken)
+    {
         long addedBytes = 0;
         foreach (ref readonly var message in CollectionsMarshal.AsSpan(selected))
         {
             if (message.SizeBytes < 0 || addedBytes > long.MaxValue - message.SizeBytes)
-                return new ImapCopyResult(ImapCopyDisposition.InvalidSourceSize, 0, [], []);
+                return ImapCopyDisposition.InvalidSourceSize;
             addedBytes += message.SizeBytes;
         }
         var quotaBytes = await database.Users
             .AsNoTracking()
-            .Where(user => user.Id == request.UserId)
+            .Where(user => user.Id == userId)
             .Select(user => (long?)user.QuotaBytes)
             .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
         if (quotaBytes is null)
-            return new ImapCopyResult(ImapCopyDisposition.SourceNotFound, 0, [], []);
+            return ImapCopyDisposition.SourceNotFound;
         if (quotaBytes > 0)
         {
             var usedBytes = await database.Emails
                 .AsNoTracking()
-                .Where(email => email.Folder.Inbox.OwnerId == request.UserId)
+                .Where(email => email.Folder.Inbox.OwnerId == userId)
                 .SumAsync(email => (long?)email.SizeBytes, cancellationToken).ConfigureAwait(false) ?? 0;
             if (usedBytes >= quotaBytes || addedBytes > quotaBytes - usedBytes)
-                return new ImapCopyResult(ImapCopyDisposition.OverQuota, 0, [], []);
+                return ImapCopyDisposition.OverQuota;
         }
+        return null;
+    }
 
-        var marker = effects.Mark();
-        var commitAttempted = false;
-        var sourceUids = new List<int>(selected.Count);
-        var destinationUids = new List<int>(selected.Count);
-        try
+    private async Task StageCopiesAsync(
+        List<EmailDB> selected,
+        FolderDB sourceFolder,
+        FolderDB destination,
+        List<int> sourceUids,
+        List<int> destinationUids,
+        CancellationToken cancellationToken)
+    {
+        for (var index = 0; index < selected.Count; index++)
         {
-            for (var index = 0; index < selected.Count; index++)
-            {
-                var metadata = selected[index];
-                var source = await database.Emails
-                    .AsNoTracking()
-                    .SingleAsync(email => email.Id == metadata.Id
-                        && email.FolderId == sourceFolder.Id, cancellationToken).ConfigureAwait(false);
-                var rawMessage = await content.ReadAsync(source, cancellationToken).ConfigureAwait(false);
-                var destinationUid = destination.NextUid++;
-                var destinationModSeq = ++destination.HighestModSeq;
-                var copy = new EmailDB
-                {
-                    Id = Guid.CreateVersion7(),
-                    Sender = source.Sender,
-                    Recipient = source.Recipient,
-                    Subject = source.Subject,
-                    Body = string.Empty,
-                    MessageId = source.MessageId,
-                    InReplyTo = source.InReplyTo,
-                    Cc = source.Cc,
-                    EmailObjectId = string.IsNullOrEmpty(source.EmailObjectId)
-                        ? source.Id.ToString("N")
-                        : source.EmailObjectId,
-                    ThreadObjectId = source.ThreadObjectId,
-                    IsRead = source.IsRead,
-                    IsDeleted = false,
-                    IsFlagged = source.IsFlagged,
-                    IsDraft = source.IsDraft,
-                    IsAnswered = source.IsAnswered,
-                    Keywords = source.Keywords?.ToArray() ?? [],
-                    ReceivedAt = source.ReceivedAt,
-                    Uid = destinationUid,
-                    ModSeq = destinationModSeq,
-                    FolderId = destination.Id,
-                };
-                await content.SetAsync(copy, rawMessage, cancellationToken).ConfigureAwait(false);
-                await database.Emails.AddAsync(copy, cancellationToken).ConfigureAwait(false);
-                sourceUids.Add(source.Uid);
-                destinationUids.Add(destinationUid);
-            }
-
-            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-            if (transaction is not null)
-            {
-                commitAttempted = true;
-                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            }
-            await effects.CommitAsync(marker).ConfigureAwait(false);
+            var metadata = selected[index];
+            var source = await database.Emails
+                .AsNoTracking()
+                .SingleAsync(email => email.Id == metadata.Id
+                    && email.FolderId == sourceFolder.Id, cancellationToken).ConfigureAwait(false);
+            var rawMessage = await content.ReadAsync(source, cancellationToken).ConfigureAwait(false);
+            var destinationUid = destination.NextUid++;
+            var destinationModSeq = ++destination.HighestModSeq;
+            var copy = CreateCopiedEmail(source, destination, destinationUid, destinationModSeq);
+            await content.SetAsync(copy, rawMessage, cancellationToken).ConfigureAwait(false);
+            await database.Emails.AddAsync(copy, cancellationToken).ConfigureAwait(false);
+            sourceUids.Add(source.Uid);
+            destinationUids.Add(destinationUid);
         }
-        catch
+    }
+
+    private static EmailDB CreateCopiedEmail(EmailDB source, FolderDB destination, int destinationUid, long destinationModSeq)
+    {
+        return new EmailDB
         {
-            if (transaction is not null)
+            Id = Guid.CreateVersion7(),
+            Sender = source.Sender,
+            Recipient = source.Recipient,
+            Subject = source.Subject,
+            Body = string.Empty,
+            MessageId = source.MessageId,
+            InReplyTo = source.InReplyTo,
+            Cc = source.Cc,
+            EmailObjectId = string.IsNullOrEmpty(source.EmailObjectId)
+                ? source.Id.ToString("N")
+                : source.EmailObjectId,
+            ThreadObjectId = source.ThreadObjectId,
+            IsRead = source.IsRead,
+            IsDeleted = false,
+            IsFlagged = source.IsFlagged,
+            IsDraft = source.IsDraft,
+            IsAnswered = source.IsAnswered,
+            Keywords = source.Keywords?.ToArray() ?? [],
+            ReceivedAt = source.ReceivedAt,
+            Uid = destinationUid,
+            ModSeq = destinationModSeq,
+            FolderId = destination.Id,
+        };
+    }
+
+    private async Task RecoverCopyAsync(IDbContextTransaction? transaction, int marker, bool commitAttempted)
+    {
+        if (transaction is not null)
+        {
+            try
             {
-                try
-                {
-                    await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
-                }
-                // Preserve the original copy failure if rollback also fails.
+                await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            // Preserve the original copy failure if rollback also fails.
 #pragma warning disable CA1031
-                catch (Exception rollbackException)
-                {
-                    ApplicationServiceLog.ImapCopyRollbackFailed(logger, rollbackException);
-                }
-#pragma warning restore CA1031
+            catch (Exception rollbackException)
+            {
+                ApplicationServiceLog.ImapCopyRollbackFailed(logger, rollbackException);
             }
-            if (commitAttempted)
-                effects.Discard(marker);
-            else
-                await effects.RollbackAsync(marker).ConfigureAwait(false);
-            throw;
+#pragma warning restore CA1031
         }
-
-        return new ImapCopyResult(ImapCopyDisposition.Copied,
-            destination.UidValidity, sourceUids, destinationUids);
+        if (commitAttempted)
+            effects.Discard(marker);
+        else
+            await effects.RollbackAsync(marker).ConfigureAwait(false);
     }
 
     public async Task<ImapAppendPreflightResult> CheckAppendCapacityAsync(

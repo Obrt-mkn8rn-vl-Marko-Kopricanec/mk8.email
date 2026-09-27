@@ -11,6 +11,12 @@ if [ "$(id -u)" -ne 0 ] || [ "$#" -ne 1 ]; then
 fi
 
 password_file=$1
+role_policy=/usr/local/share/mk8email/postgresql/restricted-role-posture.sql
+if [ -L "$role_policy" ] || [ ! -f "$role_policy" ] \
+    || [ "$(stat -c '%U:%G %a %h' "$role_policy" 2>/dev/null || true)" != 'root:root 644 1' ]; then
+    printf '%s\n' "The installed PostgreSQL role policy is missing or unsafe." >&2
+    exit 1
+fi
 if [ -L "$password_file" ] || [ ! -f "$password_file" ] \
     || [ "$(stat -c '%U:%G %a %h' "$password_file" 2>/dev/null || true)" != 'root:root 600 1' ]; then
     printf '%s\n' "The Gateway database password file has unsafe metadata." >&2
@@ -79,6 +85,18 @@ BEGIN
 END
 $validate$;
 
+SELECT set_config('mk8.restricted_role', 'mk8gateway', true);
+SELECT set_config('mk8.restricted_role_kind', 'gateway', true);
+SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'mk8gateway') AS restricted_role_exists \gset
+\if :restricted_role_exists
+\i /usr/local/share/mk8email/postgresql/restricted-role-posture.sql
+\if :restricted_role_authority_safe
+\else
+\echo 'The existing Gateway role has unsafe delegation, defaults, maintenance or routine authority'
+SELECT 1 / 0;
+\endif
+\endif
+
 SELECT 'CREATE ROLE mk8gateway LOGIN' WHERE NOT EXISTS (
     SELECT 1 FROM pg_roles WHERE rolname = 'mk8gateway') \gexec
 \getenv gateway_password MK8_GATEWAY_DB_PASSWORD
@@ -106,6 +124,12 @@ BEGIN
     END IF;
 END
 $restore_grant$;
+\i /usr/local/share/mk8email/postgresql/restricted-role-posture.sql
+\if :restricted_role_safe
+\else
+\echo 'The configured Gateway role failed the complete authority policy'
+SELECT 1 / 0;
+\endif
 COMMIT;
 SQL
 unset MK8_GATEWAY_DB_PASSWORD gateway_password

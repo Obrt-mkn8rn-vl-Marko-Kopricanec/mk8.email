@@ -1,5 +1,6 @@
 using mk8.email.Contracts.Messaging;
 using Npgsql;
+using mk8.email.DatabasePolicy;
 
 namespace mk8.email.Hosting;
 
@@ -89,22 +90,7 @@ public static class WorkerWakeSchemaTransition
 
     private static async Task ValidateRoleAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string role, CancellationToken token)
     {
-        var command = new NpgsqlCommand("""
-            SELECT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname = @role
-                AND r.rolname <> current_user AND r.rolcanlogin
-                AND NOT (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole
-                    OR r.rolreplication OR r.rolbypassrls OR r.rolinherit)
-                AND NOT EXISTS (SELECT 1 FROM pg_auth_members WHERE member = r.oid)
-                AND NOT EXISTS (SELECT 1 FROM pg_database WHERE datdba = r.oid)
-                AND NOT EXISTS (SELECT 1 FROM pg_namespace WHERE nspowner = r.oid)
-                AND NOT EXISTS (SELECT 1 FROM pg_class WHERE relowner = r.oid)
-                AND NOT EXISTS (SELECT 1 FROM pg_proc WHERE proowner = r.oid)
-                AND NOT EXISTS (SELECT 1 FROM pg_type WHERE typowner = r.oid))
-            """, connection, transaction);
-        await using var commandLifetime = command.ConfigureAwait(false);
-        command.Parameters.AddWithValue("role", role);
-        if (await command.ExecuteScalarAsync(token).ConfigureAwait(false) is not true)
-            throw new InvalidOperationException("The existing Wake database role is missing or unsafe.");
+        await RestrictedPostgresRolePolicy.RequireAsync(connection, transaction, role, "wake", requireReady: false, token).ConfigureAwait(false);
     }
 
     private static async Task RequireSchedulingGrantsAsync(
@@ -120,7 +106,7 @@ public static class WorkerWakeSchemaTransition
                         AND a.attname NOT IN ('effects_pending', 'effects_retry_at')
                         AND has_column_privilege(@role, a.attrelid, a.attname, 'SELECT'))
                 AND NOT has_any_column_privilege(@role, 'public.application_operation_receipts', 'INSERT,UPDATE,REFERENCES')
-                AND NOT has_table_privilege(@role, 'public.application_operation_receipts', 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+                AND NOT has_table_privilege(@role, 'public.application_operation_receipts', 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
                 AND NOT EXISTS (
                     SELECT 1 FROM pg_attribute a CROSS JOIN LATERAL aclexplode(a.attacl) privilege
                     WHERE a.attrelid = 'public.application_operation_receipts'::regclass

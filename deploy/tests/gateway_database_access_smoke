@@ -1,0 +1,82 @@
+#!/bin/sh
+set -eu
+
+if [ "$#" -ne 2 ] || [ -z "${PGHOST:-}" ] || [ -z "${PGPORT:-}" ] || [ -z "${PGUSER:-}" ]; then
+    printf '%s\n' 'Usage: PGHOST=... PGPORT=... PGUSER=... gateway_database_access_smoke CONFIGURE_SCRIPT ROLE_POLICY_SQL' >&2
+    exit 2
+fi
+configure_source=$1
+role_policy=$(readlink -f -- "$2")
+[ -f "$role_policy" ] || exit 2
+test_database=mk8_gateway_smoke_$$
+admin_database=${PGDATABASE:-postgres}
+admin_psql() {
+    psql --no-psqlrc --tuples-only --no-align --set=ON_ERROR_STOP=1 --dbname="$admin_database" "$@"
+}
+test_psql() {
+    psql --no-psqlrc --tuples-only --no-align --set=ON_ERROR_STOP=1 --dbname="$test_database" "$@"
+}
+if [ "$(admin_psql --command="SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'mk8gateway')")" != f ] \
+    || [ "$(admin_psql --command="SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = '$test_database')")" != f ]; then
+    printf '%s\n' 'The isolated PostgreSQL test role or database already exists.' >&2
+    exit 1
+fi
+created_database=false
+cleanup() {
+    if [ "$created_database" = true ]; then
+        admin_psql --command="DROP DATABASE \"$test_database\" WITH (FORCE)" >/dev/null
+        admin_psql --command='DROP ROLE IF EXISTS mk8gateway' >/dev/null
+    fi
+}
+trap cleanup EXIT HUP INT TERM
+admin_psql --command="CREATE DATABASE \"$test_database\"" >/dev/null
+created_database=true
+admin_psql --command="REVOKE ALL ON DATABASE \"$test_database\" FROM PUBLIC" >/dev/null
+test_psql <<'SQL' >/dev/null
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+CREATE TABLE users (id uuid, password_hash text);
+CREATE TABLE gateway_traffic_records (id uuid, sequence bigint);
+CREATE TABLE application_requests (id uuid, state text);
+CREATE TABLE presentation_requests (id uuid, state text);
+CREATE TABLE pop3_maildrop_leases (id uuid);
+CREATE TABLE mk8_restore_state (id smallint, state text, database_sha256 text);
+SQL
+run_install_sql() {
+    sed -n '/^BEGIN;$/,/^SQL$/p' "$configure_source" | sed '$d' \
+        | sed "s@/usr/local/share/mk8email/postgresql/restricted-role-posture.sql@$role_policy@g" \
+        | sed "s/mk8email/$test_database/g" \
+        | MK8_GATEWAY_DB_PASSWORD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa test_psql >/dev/null
+}
+run_install_sql
+run_install_sql
+if [ "$(test_psql --command="SELECT has_table_privilege('mk8gateway', 'application_requests', 'SELECT,INSERT,UPDATE')
+    AND NOT has_column_privilege('mk8gateway', 'users', 'password_hash', 'SELECT')
+    AND has_column_privilege('mk8gateway', 'mk8_restore_state', 'state', 'SELECT')
+    AND NOT has_column_privilege('mk8gateway', 'mk8_restore_state', 'database_sha256', 'SELECT')")" != t ]; then
+    printf '%s\n' 'Gateway role has missing control-plane or excess application access.' >&2
+    exit 1
+fi
+reject_then_restore() {
+    test_psql --command="$1" >/dev/null
+    if run_install_sql 2>/dev/null; then
+        printf '%s\n' 'Gateway provisioning accepted unsafe existing authority.' >&2
+        exit 1
+    fi
+    test_psql --command="$2" >/dev/null
+    run_install_sql
+}
+reject_then_restore 'GRANT SELECT (password_hash) ON users TO mk8gateway' \
+    'REVOKE SELECT (password_hash) ON users FROM mk8gateway'
+reject_then_restore 'GRANT SELECT (rolpassword) ON pg_catalog.pg_authid TO mk8gateway' \
+    'REVOKE SELECT (rolpassword) ON pg_catalog.pg_authid FROM mk8gateway'
+reject_then_restore 'GRANT UPDATE (sequence) ON gateway_traffic_records TO mk8gateway' \
+    'REVOKE UPDATE (sequence) ON gateway_traffic_records FROM mk8gateway'
+reject_then_restore 'GRANT MAINTAIN ON application_requests TO mk8gateway' \
+    'REVOKE MAINTAIN ON application_requests FROM mk8gateway'
+reject_then_restore 'GRANT SELECT ON application_requests TO mk8gateway WITH GRANT OPTION' \
+    'REVOKE GRANT OPTION FOR SELECT ON application_requests FROM mk8gateway'
+reject_then_restore 'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO mk8gateway' \
+    'ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE SELECT ON TABLES FROM mk8gateway'
+reject_then_restore "CREATE FUNCTION unsafe_policy_definer() RETURNS integer LANGUAGE sql SECURITY DEFINER AS 'SELECT 1'" \
+    'DROP FUNCTION unsafe_policy_definer()'
+printf '%s\n' 'Restricted Gateway role SQL, idempotence, and authority-refusal smoke passed.'

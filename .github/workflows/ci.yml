@@ -85,6 +85,11 @@ jobs:
           /usr/lib/postgresql/17/bin/pg_dump --version
 
       - name: Validate operations code
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: ${{ job.services.postgres.ports['5432'] }}
+          PGUSER: postgres
+          PGPASSWORD: mk8email-ci-only
         run: |
           shellcheck \
             deploy/scripts/activate-distributed-role \
@@ -140,6 +145,7 @@ jobs:
             deploy/tests/fixtures/container-dotnet \
             deploy/tests/host_hardening_smoke \
             deploy/tests/management_cli_smoke \
+            deploy/tests/gateway_database_access_smoke \
             deploy/tests/multi_domain_smoke \
             deploy/tests/native_release_smoke \
             deploy/tests/on_demand_activation_smoke \
@@ -155,6 +161,8 @@ jobs:
               deploy/tests/dashboard_smoke.py deploy/tests/distributed_config_smoke.py \
               deploy/tests/mail_smoke.py deploy/tests/multi_domain_smoke.py
           python3 deploy/tests/distributed_config_smoke.py
+          sh deploy/tests/gateway_database_access_smoke deploy/scripts/configure-gateway-database-access deploy/postgresql/restricted-role-posture.sql
+          sh deploy/tests/wake_database_access_smoke deploy/scripts/configure-wake-database-access deploy/postgresql/restricted-role-posture.sql
           sh deploy/tests/container_on_demand_smoke \
             "$PWD/deploy/scripts/container-worker-entrypoint" \
             "$PWD/deploy/tests/fixtures/container-dotnet" \

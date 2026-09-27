@@ -1,14 +1,16 @@
 #!/bin/sh
 set -eu
 
-if [ "$#" -ne 1 ] || [ -z "${PGHOST:-}" ] || [ -z "${PGPORT:-}" ] \
+if [ "$#" -ne 2 ] || [ -z "${PGHOST:-}" ] || [ -z "${PGPORT:-}" ] \
     || [ -z "${PGUSER:-}" ]; then
     printf '%s\n' \
-        'Usage: PGHOST=... PGPORT=... PGUSER=... wake_database_access_smoke CONFIGURE_SCRIPT' >&2
+        'Usage: PGHOST=... PGPORT=... PGUSER=... wake_database_access_smoke CONFIGURE_SCRIPT ROLE_POLICY_SQL' >&2
     exit 2
 fi
 
 configure_source=$1
+role_policy=$(readlink -f -- "$2")
+[ -f "$role_policy" ] || exit 2
 test_database=mk8_wake_smoke_$$
 admin_database=${PGDATABASE:-postgres}
 admin_psql() {
@@ -62,6 +64,7 @@ SQL
 run_install_sql() {
     sed -n '/^BEGIN;$/,/^SQL$/p' "$configure_source" \
         | sed '$d' \
+        | sed "s@/usr/local/share/mk8email/postgresql/restricted-role-posture.sql@$role_policy@g" \
         | sed "s/mk8email/$test_database/g" \
         | MK8_WAKE_DB_PASSWORD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
             test_psql >/dev/null
@@ -94,5 +97,23 @@ if run_install_sql 2>/dev/null; then
 fi
 test_psql --command='REVOKE SELECT (password_hash) ON users FROM mk8wake' >/dev/null
 run_install_sql
+
+reject_then_restore() {
+    test_psql --command="$1" >/dev/null
+    if run_install_sql 2>/dev/null; then
+        printf '%s\n' 'Wake provisioning accepted unsafe existing authority.' >&2
+        exit 1
+    fi
+    test_psql --command="$2" >/dev/null
+    run_install_sql
+}
+reject_then_restore 'GRANT MAINTAIN ON application_requests TO mk8wake' \
+    'REVOKE MAINTAIN ON application_requests FROM mk8wake'
+reject_then_restore 'GRANT SELECT (state) ON application_requests TO mk8wake WITH GRANT OPTION' \
+    'REVOKE GRANT OPTION FOR SELECT (state) ON application_requests FROM mk8wake'
+reject_then_restore 'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO mk8wake' \
+    'ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE SELECT ON TABLES FROM mk8wake'
+reject_then_restore "CREATE FUNCTION unsafe_policy_definer() RETURNS integer LANGUAGE sql SECURITY DEFINER AS 'SELECT 1'" \
+    'DROP FUNCTION unsafe_policy_definer()'
 
 printf '%s\n' 'Restricted Wake database role SQL, idempotence, and refusal smoke passed.'

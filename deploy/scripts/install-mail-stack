@@ -300,6 +300,9 @@ install -o root -g root -m 0644 "$asset_root/deploy/systemd/mk8-mail-health.serv
 install -o root -g root -m 0644 "$asset_root/deploy/systemd/mk8-mail-health.timer" /etc/systemd/system/mk8-mail-health.timer
 
 install -o root -g root -m 0755 "$asset_root/deploy/scripts/configure-mail-database-access" /usr/local/sbin/configure-mail-database-access
+install -d -o root -g root -m 0755 /usr/local/share/mk8email/postgresql
+install -o root -g root -m 0644 "$asset_root/deploy/postgresql/restricted-role-posture.sql" \
+    /usr/local/share/mk8email/postgresql/restricted-role-posture.sql
 install -o root -g root -m 0755 "$asset_root/deploy/scripts/configure-gateway-database-access" /usr/local/sbin/configure-gateway-database-access
 install -o root -g root -m 0755 "$asset_root/deploy/scripts/configure-wake-database-access" /usr/local/sbin/configure-wake-database-access
 install -o root -g root -m 0755 "$asset_root/deploy/scripts/ensure-wake-service-account" /usr/local/sbin/ensure-wake-service-account

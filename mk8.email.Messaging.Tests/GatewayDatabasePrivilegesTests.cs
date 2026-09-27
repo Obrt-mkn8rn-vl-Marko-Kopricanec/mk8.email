@@ -30,7 +30,7 @@ public sealed class GatewayDatabasePrivilegesTests
                     database_sha256 text NOT NULL);
                 INSERT INTO mk8_restore_state VALUES (1, 'complete', 'private-hash');
                 CREATE ROLE "{role}" LOGIN PASSWORD '{password}'
-                    NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+                    NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT;
                 """;
             await setup.ExecuteNonQueryAsync();
         }

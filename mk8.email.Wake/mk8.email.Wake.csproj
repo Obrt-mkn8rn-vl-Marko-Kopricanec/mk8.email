@@ -19,6 +19,8 @@
 
   <ItemGroup>
     <AdditionalFiles Include="BannedSymbols.txt" />
+    <Compile Include="../deploy/postgresql/RestrictedPostgresRolePolicy.cs" Link="RestrictedPostgresRolePolicy.cs" />
+    <EmbeddedResource Include="../deploy/postgresql/restricted-role-posture.sql" LogicalName="mk8.email.RestrictedRolePolicy.sql" />
   </ItemGroup>
 
 </Project>

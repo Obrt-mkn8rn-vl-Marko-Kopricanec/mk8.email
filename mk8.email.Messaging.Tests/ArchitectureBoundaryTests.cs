@@ -41,8 +41,27 @@ public sealed class ArchitectureBoundaryTests
         Assert.IsFalse(references.Any(reference =>
             reference.StartsWith("mk8.email.Application", StringComparison.Ordinal)
             || reference.StartsWith("mk8.email.Gateway", StringComparison.Ordinal)
+            || reference.StartsWith("mk8.email.Hosting", StringComparison.Ordinal)
+            || reference.StartsWith("mk8.email.Messaging", StringComparison.Ordinal)
             || reference.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal)
             || reference.StartsWith("Azure.Storage", StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
+    public async Task RestrictedRoleCallersEmbedIdenticalImmutableSqlPolicies()
+    {
+        string? expected = null;
+        foreach (var assembly in new[] { typeof(GatewayDatabasePrivilegeProbe).Assembly,
+                     typeof(WorkerWakeProbe).Assembly, typeof(mk8.email.Hosting.WorkerWakeSchemaTransition).Assembly })
+        {
+            await using var stream = assembly.GetManifestResourceStream("mk8.email.RestrictedRolePolicy.sql");
+            Assert.IsNotNull(stream);
+            using var reader = new StreamReader(stream);
+            var policy = await reader.ReadToEndAsync();
+            Assert.IsTrue(policy.TrimEnd().EndsWith("\n\\gset", StringComparison.Ordinal));
+            expected ??= policy;
+            Assert.AreEqual(expected, policy);
+        }
     }
 
     [TestMethod]

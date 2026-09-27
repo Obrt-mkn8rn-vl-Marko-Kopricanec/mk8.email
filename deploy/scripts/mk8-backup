@@ -177,7 +177,8 @@ tar --create --gzip --file="$stage/configuration.tar.gz" --directory=/ \
     usr/local/lib/mk8email/tests \
     usr/local/share/mk8email/domain-templates \
     usr/local/share/mk8email/distributed \
-    usr/local/share/mk8email/prerequisites
+    usr/local/share/mk8email/prerequisites \
+    usr/local/share/mk8email/postgresql
 
 if find "$stage" -type l -print -quit | grep -q .; then
     printf '%s\n' "The backup staging directory contains a symbolic link." >&2

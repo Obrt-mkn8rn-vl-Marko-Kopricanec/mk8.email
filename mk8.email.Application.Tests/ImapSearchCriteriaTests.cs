@@ -26,6 +26,43 @@ public sealed class ImapSearchCriteriaTests
     [DataRow("HEADER X-Test first", new[] { 2 }, 3, null)]
     [DataRow("TEXT gamma", new[] { 9 }, 3, null)]
     [DataRow("OR SEEN BODY second", new[] { 2, 5 }, 3, null)]
+    [DataRow("ANSWERED", new[] { 9 }, 0, null)]
+    [DataRow("UNANSWERED", new[] { 2, 5 }, 0, null)]
+    [DataRow("DELETED", new[] { 5 }, 0, null)]
+    [DataRow("UNDELETED", new[] { 2, 9 }, 0, null)]
+    [DataRow("DRAFT", new[] { 9 }, 0, null)]
+    [DataRow("UNDRAFT", new[] { 2, 5 }, 0, null)]
+    [DataRow("UNFLAGGED", new[] { 2, 9 }, 0, null)]
+    [DataRow("UNSEEN", new[] { 5, 9 }, 0, null)]
+    [DataRow("NEW", new int[] { }, 0, null)]
+    [DataRow("RECENT", new int[] { }, 0, null)]
+    [DataRow("OLD", new[] { 2, 5, 9 }, 0, null)]
+    [DataRow("NOT SEEN", new[] { 5, 9 }, 0, null)]
+    [DataRow("OR SEEN (DRAFT UNDELETED)", new[] { 2, 9 }, 0, null)]
+    [DataRow("EMAILID Memail2", new[] { 2 }, 0, null)]
+    [DataRow("EMAILID MEMAIL2", new int[] { }, 0, null)]
+    [DataRow("THREADID Tthreadshared", new[] { 2, 5 }, 0, null)]
+    [DataRow("THREADID TTHREADSHARED", new int[] { }, 0, null)]
+    [DataRow("UID *", new[] { 9 }, 0, null)]
+    [DataRow("UID 9:5", new[] { 5, 9 }, 0, null)]
+    [DataRow("KEYWORD $LABEL1", new[] { 2, 9 }, 0, null)]
+    [DataRow("UNKEYWORD $label1", new[] { 5 }, 0, null)]
+    [DataRow("BEFORE 5-Jan-2026", new[] { 2 }, 0, null)]
+    [DataRow("ON 5-Jan-2026", new[] { 5 }, 0, null)]
+    [DataRow("SINCE 5-Jan-2026", new[] { 5, 9 }, 0, null)]
+    [DataRow("SENTBEFORE 5-Jan-2026", new[] { 2 }, 3, null)]
+    [DataRow("SENTON 5-Jan-2026", new[] { 5 }, 3, null)]
+    [DataRow("SENTSINCE 5-Jan-2026", new[] { 5, 9 }, 3, null)]
+    [DataRow("FROM sender", new[] { 2, 5, 9 }, 3, null)]
+    [DataRow("TO mailbox", new[] { 2, 5, 9 }, 3, null)]
+    [DataRow("CC copy", new[] { 2, 5, 9 }, 3, null)]
+    [DataRow("BCC blind", new[] { 2, 5, 9 }, 3, null)]
+    [DataRow("LARGER 0", new[] { 2, 5, 9 }, 0, null)]
+    [DataRow("SMALLER 0", new int[] { }, 0, null)]
+    [DataRow("MODSEQ /flags/\\Seen SHARED 40", new[] { 5, 9 }, 0, 90L)]
+    [DataRow("MODSEQ /flags/\\Seen PRIV 40", new[] { 5, 9 }, 0, 90L)]
+    [DataRow("MODSEQ /flags/\\Seen ALL 40", new[] { 5, 9 }, 0, 90L)]
+    [DataRow("MODSEQ 91", new int[] { }, 0, null)]
     public async Task SearchKeepsMailboxSequenceNumbersAndReadsOnlyRequiredPayloads(
         string criteria, int[] expectedUids, int reads, long? highestModSequence)
     {
@@ -55,6 +92,27 @@ public sealed class ImapSearchCriteriaTests
     [DataRow("ALL)")]
     [DataRow("OR ALL")]
     [DataRow("HEADER \"\" value")]
+    [DataRow("UNKNOWN")]
+    [DataRow("NOT")]
+    [DataRow("SUBJECT")]
+    [DataRow("EMAILID")]
+    [DataRow("EMAILID invalid!")]
+    [DataRow("THREADID invalid!")]
+    [DataRow("BODY")]
+    [DataRow("TEXT")]
+    [DataRow("HEADER name")]
+    [DataRow("BEFORE 31-Feb-2026")]
+    [DataRow("SENTON invalid")]
+    [DataRow("LARGER -1")]
+    [DataRow("SMALLER 4294967296")]
+    [DataRow("UID 0")]
+    [DataRow("UID")]
+    [DataRow("KEYWORD")]
+    [DataRow("UNKEYWORD")]
+    [DataRow("MODSEQ -1")]
+    [DataRow("MODSEQ /flags/\\Seen INVALID 40")]
+    [DataRow("MODSEQ /flags/\\Seen SHARED")]
+    [DataRow("MODSEQ /invalid SHARED 40")]
     public async Task InvalidCriteriaFailBeforePayloadReads(string criteria)
     {
         await using var fixture = await SearchFixture.CreateAsync().ConfigureAwait(false);
@@ -84,6 +142,19 @@ public sealed class ImapSearchCriteriaTests
     {
         await using var fixture = await SearchFixture.CreateAsync().ConfigureAwait(false);
         var result = await fixture.SearchAsync(new string('(', depth) + "ALL" + new string(')', depth)).ConfigureAwait(false);
+        Assert.AreEqual(allowed, result.FailureResponse is null);
+        CollectionAssert.AreEqual(allowed ? OrderedUids : Array.Empty<int>(), result.Matches.Select(match => match.Uid).ToArray());
+        Assert.AreEqual(0, fixture.Objects.ReadCount);
+    }
+
+    [TestMethod]
+    [DataRow(64, true)]
+    [DataRow(65, false)]
+    public async Task NegationLimitRetainsItsExactBoundary(int depth, bool allowed)
+    {
+        await using var fixture = await SearchFixture.CreateAsync().ConfigureAwait(false);
+        var result = await fixture.SearchAsync(string.Concat(Enumerable.Repeat("NOT ", depth)) + "ALL")
+            .ConfigureAwait(false);
         Assert.AreEqual(allowed, result.FailureResponse is null);
         CollectionAssert.AreEqual(allowed ? OrderedUids : Array.Empty<int>(), result.Matches.Select(match => match.Uid).ToArray());
         Assert.AreEqual(0, fixture.Objects.ReadCount);
@@ -124,9 +195,17 @@ public sealed class ImapSearchCriteriaTests
                     Recipient = "mailbox@example.test",
                     IsRead = uid == 2,
                     IsFlagged = uid == 5,
+                    IsDeleted = uid == 5,
+                    IsDraft = uid == 9,
+                    IsAnswered = uid == 9,
+                    Keywords = uid == 5 ? [] : ["$label1"],
+                    EmailObjectId = $"email{uid}",
+                    ThreadObjectId = uid == 9 ? "thread9" : "threadshared",
+                    ReceivedAt = new DateTime(2026, 1, uid, 12, 0, 0, DateTimeKind.Utc),
                     FolderId = folderId,
                 };
                 var raw = $"From: sender@example.test\r\nTo: mailbox@example.test\r\nSubject: {subject}\r\n"
+                    + $"Date: {uid} Jan 2026 12:00:00 +0000\r\nCc: copy@example.test\r\nBcc: blind@example.test\r\n"
                     + $"X-Test: {body.Split(' ')[0]}\r\n\r\n{body}\r\n";
                 await content.SetAsync(email, Encoding.Latin1.GetBytes(raw), CancellationToken.None).ConfigureAwait(false);
                 database.Emails.Add(email);

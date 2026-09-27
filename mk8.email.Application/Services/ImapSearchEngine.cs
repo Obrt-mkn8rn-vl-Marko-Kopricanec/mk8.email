@@ -200,7 +200,43 @@ internal static class ImapSearchEngine
                 return true;
             }
 
-            switch (token.Value.ToUpperInvariant())
+            return TryParseNamedKey(token.Value.ToUpperInvariant(), depth, out predicate);
+        }
+
+        private bool TryParseNamedKey(string key, int depth, out SearchPredicate predicate)
+        {
+            predicate = MatchNothing();
+            return key switch
+            {
+                "ALL" or "ANSWERED" or "UNANSWERED" or "DELETED" or "UNDELETED" or "DRAFT" or "UNDRAFT"
+                    or "FLAGGED" or "UNFLAGGED" or "SEEN" or "UNSEEN" or "NEW" or "RECENT" or "OLD"
+                    => TryParseFlagKey(key, out predicate),
+                "NOT" or "OR" => TryParseLogicalKey(key, depth, out predicate),
+                "BCC" => TryParseHeaderValue("Bcc", out predicate),
+                "CC" => TryParseHeaderValue("Cc", out predicate),
+                "FROM" => TryParseHeaderValue("From", out predicate),
+                "TO" => TryParseHeaderValue("To", out predicate),
+                "SUBJECT" => TryParseSubjectKey(out predicate),
+                "EMAILID" or "THREADID" => TryParseObjectIdKey(key, out predicate),
+                "BODY" or "TEXT" or "HEADER" => TryParseContentKey(key, out predicate),
+                "BEFORE" => TryParseReceivedDate(static (date, searchDate) => date < searchDate, out predicate),
+                "ON" => TryParseReceivedDate(static (date, searchDate) => date == searchDate, out predicate),
+                "SINCE" => TryParseReceivedDate(static (date, searchDate) => date >= searchDate, out predicate),
+                "SENTBEFORE" => TryParseSentDate(static (date, searchDate) => date < searchDate, out predicate),
+                "SENTON" => TryParseSentDate(static (date, searchDate) => date == searchDate, out predicate),
+                "SENTSINCE" => TryParseSentDate(static (date, searchDate) => date >= searchDate, out predicate),
+                "LARGER" or "SMALLER" => TryParseSizeKey(key, out predicate),
+                "UID" => TryParseUidKey(out predicate),
+                "KEYWORD" or "UNKEYWORD" => TryParseKeywordKey(key, out predicate),
+                "MODSEQ" => TryParseModSequenceKey(out predicate),
+                _ => false,
+            };
+        }
+
+        private static bool TryParseFlagKey(string key, out SearchPredicate predicate)
+        {
+            predicate = MatchNothing();
+            switch (key)
             {
                 case "ALL":
                     predicate = MatchEverything();
@@ -242,6 +278,16 @@ internal static class ImapSearchEngine
                 case "OLD":
                     predicate = MatchEverything();
                     return true;
+                default:
+                    return false;
+            }
+        }
+
+        private bool TryParseLogicalKey(string key, int depth, out SearchPredicate predicate)
+        {
+            predicate = MatchNothing();
+            switch (key)
+            {
                 case "NOT":
                     if (!TryParseKey(depth + 1, out var negated))
                         return false;
@@ -261,19 +307,27 @@ internal static class ImapSearchEngine
                         (message, sequenceNumber) => left.IsMatch(message, sequenceNumber)
                             || right.IsMatch(message, sequenceNumber));
                     return true;
-                case "BCC":
-                    return TryParseHeaderValue("Bcc", out predicate);
-                case "CC":
-                    return TryParseHeaderValue("Cc", out predicate);
-                case "FROM":
-                    return TryParseHeaderValue("From", out predicate);
-                case "SUBJECT":
-                    if (!TryReadValue(out var subject))
-                        return false;
-                    predicate = new SearchPredicate(
-                        SearchDataRequirements.None,
-                        (message, _) => ContainsSearchText(message.Subject, subject));
-                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private bool TryParseSubjectKey(out SearchPredicate predicate)
+        {
+            predicate = MatchNothing();
+            if (!TryReadValue(out var subject))
+                return false;
+            predicate = new SearchPredicate(
+                SearchDataRequirements.None,
+                (message, _) => ContainsSearchText(message.Subject, subject));
+            return true;
+        }
+
+        private bool TryParseObjectIdKey(string key, out SearchPredicate predicate)
+        {
+            predicate = MatchNothing();
+            switch (key)
+            {
                 case "EMAILID":
                     if (!TryReadValue(out var emailObjectId)
                         || !IsValidObjectId(emailObjectId))
@@ -302,8 +356,16 @@ internal static class ImapSearchEngine
                             threadObjectId,
                             StringComparison.Ordinal));
                     return true;
-                case "TO":
-                    return TryParseHeaderValue("To", out predicate);
+                default:
+                    return false;
+            }
+        }
+
+        private bool TryParseContentKey(string key, out SearchPredicate predicate)
+        {
+            predicate = MatchNothing();
+            switch (key)
+            {
                 case "BODY":
                     if (!TryReadValue(out var bodyText))
                         return false;
@@ -333,30 +395,16 @@ internal static class ImapSearchEngine
                             headerName,
                             headerValue));
                     return true;
-                case "BEFORE":
-                    return TryParseReceivedDate(
-                        static (messageDate, searchDate) => messageDate < searchDate,
-                        out predicate);
-                case "ON":
-                    return TryParseReceivedDate(
-                        static (messageDate, searchDate) => messageDate == searchDate,
-                        out predicate);
-                case "SINCE":
-                    return TryParseReceivedDate(
-                        static (messageDate, searchDate) => messageDate >= searchDate,
-                        out predicate);
-                case "SENTBEFORE":
-                    return TryParseSentDate(
-                        static (messageDate, searchDate) => messageDate < searchDate,
-                        out predicate);
-                case "SENTON":
-                    return TryParseSentDate(
-                        static (messageDate, searchDate) => messageDate == searchDate,
-                        out predicate);
-                case "SENTSINCE":
-                    return TryParseSentDate(
-                        static (messageDate, searchDate) => messageDate >= searchDate,
-                        out predicate);
+                default:
+                    return false;
+            }
+        }
+
+        private bool TryParseSizeKey(string key, out SearchPredicate predicate)
+        {
+            predicate = MatchNothing();
+            switch (key)
+            {
                 case "LARGER":
                     if (!TryReadUnsignedNumber(out var larger))
                         return false;
@@ -371,27 +419,41 @@ internal static class ImapSearchEngine
                         SearchDataRequirements.None,
                         (message, _) => message.SizeBytes < smaller);
                     return true;
-                case "UID":
-                    if (!TryReadValue(out var uidSet))
-                    {
-                        return false;
-                    }
+                default:
+                    return false;
+            }
+        }
 
-                    if (string.Equals(uidSet, "$", StringComparison.Ordinal))
-                    {
-                        predicate = new SearchPredicate(
-                            SearchDataRequirements.None,
-                            (message, _) => savedSearchUids.Contains(message.Uid));
-                        return true;
-                    }
+        private bool TryParseUidKey(out SearchPredicate predicate)
+        {
+            predicate = MatchNothing();
+            if (!TryReadValue(out var uidSet))
+            {
+                return false;
+            }
 
-                    if (!TryParseMessageSet(uidSet, maximumUid, out var uidRanges))
-                        return false;
+            if (string.Equals(uidSet, "$", StringComparison.Ordinal))
+            {
+                predicate = new SearchPredicate(
+                    SearchDataRequirements.None,
+                    (message, _) => savedSearchUids.Contains(message.Uid));
+                return true;
+            }
 
-                    predicate = new SearchPredicate(
-                        SearchDataRequirements.None,
-                        (message, _) => MessageSetContains(uidRanges, message.Uid));
-                    return true;
+            if (!TryParseMessageSet(uidSet, maximumUid, out var uidRanges))
+                return false;
+
+            predicate = new SearchPredicate(
+                SearchDataRequirements.None,
+                (message, _) => MessageSetContains(uidRanges, message.Uid));
+            return true;
+        }
+
+        private bool TryParseKeywordKey(string key, out SearchPredicate predicate)
+        {
+            predicate = MatchNothing();
+            switch (key)
+            {
                 case "KEYWORD":
                     if (!TryReadValue(out var keyword))
                         return false;
@@ -406,28 +468,32 @@ internal static class ImapSearchEngine
                         SearchDataRequirements.None,
                         (message, _) => !HasKeyword(message, absentKeyword));
                     return true;
-                case "MODSEQ":
-                    if (!TryReadValue(out var modSequenceText))
-                        return false;
-                    if (!TryParseModSequence(modSequenceText, out var modSequence))
-                    {
-                        if (!modSequenceText.StartsWith("/flags/", StringComparison.OrdinalIgnoreCase)
-                            || !TryReadValue(out var entryType)
-                            || entryType.ToUpperInvariant() is not ("SHARED" or "PRIV" or "ALL")
-                            || !TryReadValue(out modSequenceText)
-                            || !TryParseModSequence(modSequenceText, out modSequence))
-                        {
-                            return false;
-                        }
-                    }
-
-                    predicate = new SearchPredicate(
-                        SearchDataRequirements.ModSequenceResult,
-                        (message, _) => message.ModSeq >= modSequence);
-                    return true;
                 default:
                     return false;
             }
+        }
+
+        private bool TryParseModSequenceKey(out SearchPredicate predicate)
+        {
+            predicate = MatchNothing();
+            if (!TryReadValue(out var modSequenceText))
+                return false;
+            if (!TryParseModSequence(modSequenceText, out var modSequence))
+            {
+                if (!modSequenceText.StartsWith("/flags/", StringComparison.OrdinalIgnoreCase)
+                    || !TryReadValue(out var entryType)
+                    || entryType.ToUpperInvariant() is not ("SHARED" or "PRIV" or "ALL")
+                    || !TryReadValue(out modSequenceText)
+                    || !TryParseModSequence(modSequenceText, out modSequence))
+                {
+                    return false;
+                }
+            }
+
+            predicate = new SearchPredicate(
+                SearchDataRequirements.ModSequenceResult,
+                (message, _) => message.ModSeq >= modSequence);
+            return true;
         }
 
         private static bool TryParseModSequence(string value, out long modSequence) =>

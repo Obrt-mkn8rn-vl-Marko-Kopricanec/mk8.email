@@ -7,7 +7,8 @@ namespace mk8.email.Gateway.ApplicationBridge;
 public sealed class GatewayApplicationTransport(
     IApplicationRequestClient requests,
     IGatewayTrafficJournal traffic,
-    GatewayApplicationOptions options) : IGatewayApplicationTransport
+    GatewayApplicationOptions options,
+    IApplicationTransportControl? availability = null) : IGatewayApplicationTransport
 {
     private const string JsonContentType = "application/json";
     // Internal envelopes use canonical camelCase; opaque argument/result keys
@@ -71,6 +72,8 @@ public sealed class GatewayApplicationTransport(
                 isUnavailable: true,
                 exception);
         }
+
+        await RequireAvailabilityAsync(protocol, sessionId, requestId, cancellationToken).ConfigureAwait(false);
 
         ApplicationResponse response;
         try
@@ -140,6 +143,32 @@ public sealed class GatewayApplicationTransport(
                 "The application worker returned an invalid response.",
                 innerException: exception);
         }
+    }
+
+    private async Task RequireAvailabilityAsync(
+        string protocol,
+        Guid sessionId,
+        Guid requestId,
+        CancellationToken cancellationToken)
+    {
+        if (availability is null)
+            return;
+        bool isAvailable;
+        try
+        {
+            isAvailable = await availability.IsAvailableAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            await AppendFailureAsync(protocol, sessionId, requestId, "gateway-request-cancelled").ConfigureAwait(false);
+            throw;
+        }
+        if (isAvailable)
+            return;
+
+        await AppendFailureAsync(protocol, sessionId, requestId, "application-unavailable").ConfigureAwait(false);
+        throw new GatewayApplicationException(
+            "application-unavailable", "The application transport requires operator reconciliation.", isUnavailable: true);
     }
 
     private async Task AppendFailureAsync(

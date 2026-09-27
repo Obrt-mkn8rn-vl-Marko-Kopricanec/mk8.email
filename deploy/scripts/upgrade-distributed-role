@@ -218,6 +218,7 @@ start_selected() {
 wait_ready() {
     ready_cli=$1
     ready_wake=$2
+    ready_contract_mode=$3
     ready=false
     attempt=0
     while [ "$attempt" -lt 15 ]; do
@@ -227,7 +228,8 @@ wait_ready() {
                     --header 'Host: admin.mk8n.com' \
                     http://127.0.0.1:8080/health/ready >/dev/null \
                     && timeout 20s runuser -u mk8email -- /usr/bin/dotnet "$ready_cli" \
-                        --healthcheck-gateway "$config" >/dev/null; then
+                        --healthcheck-gateway "$config" >/dev/null \
+                    && probe_gateway_contracts; then
                     ready=true
                     break
                 fi
@@ -247,6 +249,19 @@ wait_ready() {
         sleep 2
     done
     [ "$ready" = true ]
+}
+
+probe_gateway_contracts() {
+    if [ "$ready_contract_mode" = candidate ]; then
+        timeout 20s runuser -u mk8email -- /usr/bin/dotnet "$ready_cli" \
+            --probe-gateway-dispatch "$config" >/dev/null
+    else
+        # Restore the prior release using its own Gateway's interpretation.
+        # Do not require an older management CLI to recognize a new command.
+        curl --silent --fail --max-time 12 --noproxy '*' \
+            --header 'Host: admin.mk8n.com' \
+            http://127.0.0.1:8080/health/application >/dev/null
+    fi
 }
 
 interrupted=false
@@ -274,7 +289,7 @@ rollback() {
                 start_status=$?
                 if [ "$start_status" -eq 0 ]; then
                     wait_ready "$previous_release/cli/mk8.email.Application.CLI.dll" \
-                        "$previous_release/wake/mk8.email.Wake.dll"
+                        "$previous_release/wake/mk8.email.Wake.dll" prior
                     start_status=$?
                 fi
             else
@@ -306,7 +321,7 @@ if [ "$role" = worker ]; then
         || fail "The staged Application Worker schema or Azure Blob migration failed."
 fi
 start_selected || fail "The upgraded role could not be started."
-wait_ready "$staged_cli" "$staged_release/wake/mk8.email.Wake.dll" \
+wait_ready "$staged_cli" "$staged_release/wake/mk8.email.Wake.dll" candidate \
     || fail "The upgraded role did not become ready."
 
 completed=true

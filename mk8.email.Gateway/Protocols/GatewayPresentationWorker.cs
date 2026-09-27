@@ -100,6 +100,10 @@ internal sealed class GatewayPresentationWorker(
         ApplicationRequestLease lease,
         CancellationToken stoppingToken)
     {
+        // A superseded operation may arrive after the availability check.
+        // Keep Gateway alive, but leave this lease for its original role.
+        if (DistributedContractVersions.SupersededOperations.Contains(lease.Request.Operation))
+            throw new InvalidOperationException("A superseded presentation operation requires its original Gateway.");
         var trafficSessionId = Guid.CreateVersion7();
         using var operationCancellation = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
         var remaining = lease.Request.Deadline - DateTimeOffset.UtcNow;

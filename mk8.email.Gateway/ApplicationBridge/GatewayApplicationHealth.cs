@@ -14,6 +14,8 @@ public static class GatewayApplicationHealth
             ApplicationOperations.SystemPing,
             new { },
             cancellationToken).ConfigureAwait(false);
+        if (!string.Equals(response.ContractVersion, DistributedContractVersions.Current, StringComparison.Ordinal))
+            return Results.Problem("The Application Worker uses incompatible distributed contracts.", statusCode: StatusCodes.Status503ServiceUnavailable);
         return Results.Ok(new { status = "ready", respondedAt = response.RespondedAt });
     }
 }

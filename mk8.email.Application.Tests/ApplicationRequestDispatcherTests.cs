@@ -26,6 +26,7 @@ public sealed class ApplicationRequestDispatcherTests
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
         Assert.IsNotNull(value);
         Assert.IsTrue(value.RespondedAt <= DateTimeOffset.UtcNow);
+        Assert.AreEqual(DistributedContractVersions.Current, value.ContractVersion);
     }
 
     [TestMethod]

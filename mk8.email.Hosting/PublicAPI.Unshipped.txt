@@ -1,1 +1,4 @@
 #nullable enable
+mk8.email.Hosting.DistributedQueueContractGuard
+static mk8.email.Hosting.DistributedQueueContractGuard.IsCompatibleAsync(Npgsql.NpgsqlDataSource! dataSource, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
+static mk8.email.Hosting.DistributedQueueContractGuard.RequireCompatibleAsync(Npgsql.NpgsqlDataSource! dataSource, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!

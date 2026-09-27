@@ -32,7 +32,7 @@ mk8.email.Gateway.ApplicationBridge.GatewayApplicationOptions.TrafficJournalTime
 mk8.email.Gateway.ApplicationBridge.GatewayApplicationOptions.TrafficJournalTimeout.init -> void
 mk8.email.Gateway.ApplicationBridge.GatewayApplicationServiceExtensions
 mk8.email.Gateway.ApplicationBridge.GatewayApplicationTransport
-mk8.email.Gateway.ApplicationBridge.GatewayApplicationTransport.GatewayApplicationTransport(mk8.email.Messaging.IApplicationRequestClient! requests, mk8.email.Messaging.IGatewayTrafficJournal! traffic, mk8.email.Gateway.ApplicationBridge.GatewayApplicationOptions! options) -> void
+mk8.email.Gateway.ApplicationBridge.GatewayApplicationTransport.GatewayApplicationTransport(mk8.email.Messaging.IApplicationRequestClient! requests, mk8.email.Messaging.IGatewayTrafficJournal! traffic, mk8.email.Gateway.ApplicationBridge.GatewayApplicationOptions! options, mk8.email.Messaging.IApplicationTransportControl? availability = null) -> void
 mk8.email.Gateway.ApplicationBridge.GatewayApplicationTransport.SendAsync<TRequest, TResponse>(string! protocol, string! operation, TRequest value, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<TResponse>!
 mk8.email.Gateway.ApplicationBridge.GatewayMailSystemStatusReader
 mk8.email.Gateway.ApplicationBridge.GatewayMailSystemStatusReader.GatewayMailSystemStatusReader(mk8.email.Configuration.EnvironmentConfig! environment, Microsoft.Extensions.Logging.ILogger<mk8.email.Gateway.ApplicationBridge.GatewayMailSystemStatusReader!>! logger) -> void

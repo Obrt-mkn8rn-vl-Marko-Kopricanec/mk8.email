@@ -37,7 +37,7 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
             {
                 ApplicationOperations.SystemPing => Success(
                     request.Id,
-                    new SystemPingResult(DateTimeOffset.UtcNow)),
+                    new SystemPingResult(DateTimeOffset.UtcNow, DistributedContractVersions.Current)),
                 _ when operation.StartsWith("smtp.", StringComparison.Ordinal) =>
                     await DispatchSmtpAsync(request, cancellationToken).ConfigureAwait(false),
                 _ when operation.StartsWith("sieve.", StringComparison.Ordinal) =>

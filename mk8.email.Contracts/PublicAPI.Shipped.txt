@@ -1778,11 +1778,11 @@ mk8.email.Contracts.Messaging.ProtocolAuthentication.Username.init -> void
 mk8.email.Contracts.Messaging.ProtocolAuthenticationKinds
 mk8.email.Contracts.Messaging.SystemPingResult
 mk8.email.Contracts.Messaging.SystemPingResult.<Clone>$() -> mk8.email.Contracts.Messaging.SystemPingResult!
-mk8.email.Contracts.Messaging.SystemPingResult.Deconstruct(out System.DateTimeOffset RespondedAt) -> void
+mk8.email.Contracts.Messaging.SystemPingResult.Deconstruct(out System.DateTimeOffset RespondedAt, out string? ContractVersion) -> void
 mk8.email.Contracts.Messaging.SystemPingResult.Equals(mk8.email.Contracts.Messaging.SystemPingResult? other) -> bool
 mk8.email.Contracts.Messaging.SystemPingResult.RespondedAt.get -> System.DateTimeOffset
 mk8.email.Contracts.Messaging.SystemPingResult.RespondedAt.init -> void
-mk8.email.Contracts.Messaging.SystemPingResult.SystemPingResult(System.DateTimeOffset RespondedAt) -> void
+mk8.email.Contracts.Messaging.SystemPingResult.SystemPingResult(System.DateTimeOffset RespondedAt, string? ContractVersion = null) -> void
 mk8.email.Contracts.Messaging.WebPushEndpointCheck
 mk8.email.Contracts.Messaging.WebPushEndpointCheck.<Clone>$() -> mk8.email.Contracts.Messaging.WebPushEndpointCheck!
 mk8.email.Contracts.Messaging.WebPushEndpointCheck.Deconstruct(out string! Url) -> void

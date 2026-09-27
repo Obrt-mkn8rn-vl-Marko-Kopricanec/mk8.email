@@ -54,5 +54,7 @@ public static class DistributedApplicationProbe
         }
         if (result is null || result.RespondedAt == default)
             throw new InvalidOperationException("The Application Worker returned an empty probe result.");
+        if (!string.Equals(result.ContractVersion, DistributedContractVersions.Current, StringComparison.Ordinal))
+            throw new InvalidOperationException("The Application Worker uses incompatible distributed contracts.");
     }
 }

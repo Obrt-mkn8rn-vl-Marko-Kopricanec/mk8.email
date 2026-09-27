@@ -1,4 +1,5 @@
 #nullable enable
+const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v4" -> string!
 mk8.email.Contracts.Messaging.ApplicationArgumentBinding
 mk8.email.Contracts.Messaging.ApplicationArgumentBinding.<Clone>$() -> mk8.email.Contracts.Messaging.ApplicationArgumentBinding!
 mk8.email.Contracts.Messaging.ApplicationArgumentBinding.ApplicationArgumentBinding(string! Target, string! SourceCorrelationId, string! SourceName, mk8.email.Contracts.Messaging.ApplicationValuePathSegment![]! Path, mk8.email.Contracts.Messaging.ApplicationBindingFailure Failure = mk8.email.Contracts.Messaging.ApplicationBindingFailure.None) -> void
@@ -29,6 +30,7 @@ mk8.email.Contracts.Messaging.ApplicationValuePathSegment.Deconstruct(out string
 mk8.email.Contracts.Messaging.ApplicationValuePathSegment.Equals(mk8.email.Contracts.Messaging.ApplicationValuePathSegment? other) -> bool
 mk8.email.Contracts.Messaging.ApplicationValuePathSegment.Property.get -> string!
 mk8.email.Contracts.Messaging.ApplicationValuePathSegment.Property.init -> void
+mk8.email.Contracts.Messaging.DistributedContractVersions
 mk8.email.Contracts.Messaging.JmapAccountProfile
 mk8.email.Contracts.Messaging.JmapAccountProfile.<Clone>$() -> mk8.email.Contracts.Messaging.JmapAccountProfile!
 mk8.email.Contracts.Messaging.JmapAccountProfile.Deconstruct(out string! Id, out string! Name, out bool IsPersonal, out bool IsReadOnly, out bool SupportsContacts) -> void
@@ -176,6 +178,8 @@ mk8.email.Contracts.Messaging.JmapServiceLimits.MaxSizeMailboxName.get -> int
 mk8.email.Contracts.Messaging.JmapServiceLimits.MaxSizeMailboxName.init -> void
 mk8.email.Contracts.Messaging.JmapServiceLimits.MaxUploadSizeBytes.get -> long
 mk8.email.Contracts.Messaging.JmapServiceLimits.MaxUploadSizeBytes.init -> void
+mk8.email.Contracts.Messaging.SystemPingResult.ContractVersion.get -> string?
+mk8.email.Contracts.Messaging.SystemPingResult.ContractVersion.init -> void
 mk8.email.Contracts.Messaging.WebPushSendRequest.Deconstruct(out string! Url, out string? P256dh, out string? Auth, out System.DateTimeOffset ExpiresAt, out byte[]? Payload, out mk8.email.Contracts.Messaging.JmapPushMessage? JmapMessage) -> void
 mk8.email.Contracts.Messaging.WebPushSendRequest.JmapMessage.get -> mk8.email.Contracts.Messaging.JmapPushMessage?
 mk8.email.Contracts.Messaging.WebPushSendRequest.JmapMessage.init -> void
@@ -223,6 +227,7 @@ static mk8.email.Contracts.Messaging.ApplicationArgumentBinding.operator !=(mk8.
 static mk8.email.Contracts.Messaging.ApplicationArgumentBinding.operator ==(mk8.email.Contracts.Messaging.ApplicationArgumentBinding? left, mk8.email.Contracts.Messaging.ApplicationArgumentBinding? right) -> bool
 static mk8.email.Contracts.Messaging.ApplicationValuePathSegment.operator !=(mk8.email.Contracts.Messaging.ApplicationValuePathSegment? left, mk8.email.Contracts.Messaging.ApplicationValuePathSegment? right) -> bool
 static mk8.email.Contracts.Messaging.ApplicationValuePathSegment.operator ==(mk8.email.Contracts.Messaging.ApplicationValuePathSegment? left, mk8.email.Contracts.Messaging.ApplicationValuePathSegment? right) -> bool
+static mk8.email.Contracts.Messaging.DistributedContractVersions.SupersededOperations.get -> System.Collections.Generic.IReadOnlySet<string!>!
 static mk8.email.Contracts.Messaging.JmapAccountProfile.operator !=(mk8.email.Contracts.Messaging.JmapAccountProfile? left, mk8.email.Contracts.Messaging.JmapAccountProfile? right) -> bool
 static mk8.email.Contracts.Messaging.JmapAccountProfile.operator ==(mk8.email.Contracts.Messaging.JmapAccountProfile? left, mk8.email.Contracts.Messaging.JmapAccountProfile? right) -> bool
 static mk8.email.Contracts.Messaging.JmapApplicationBatch.operator !=(mk8.email.Contracts.Messaging.JmapApplicationBatch? left, mk8.email.Contracts.Messaging.JmapApplicationBatch? right) -> bool

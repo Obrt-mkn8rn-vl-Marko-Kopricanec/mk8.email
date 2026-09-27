@@ -10,5 +10,6 @@ public sealed class RestoreAwareApplicationTransportControl(
 {
     public async Task<bool> IsAvailableAsync(CancellationToken cancellationToken = default) =>
         await DistributedRestoreActivationGuard.IsReadyAsync(dataSource, cancellationToken).ConfigureAwait(false)
+        && await DistributedQueueContractGuard.IsCompatibleAsync(dataSource, cancellationToken).ConfigureAwait(false)
         && await transport.IsAvailableAsync(cancellationToken).ConfigureAwait(false);
 }

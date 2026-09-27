@@ -56,7 +56,24 @@ public sealed class GatewayApplicationHealthTests
         Assert.AreEqual("5", context.Response.Headers.RetryAfter.ToString());
     }
 
-    private sealed class StubTransport(DateTimeOffset responseTime) : IGatewayApplicationTransport
+    [TestMethod]
+    [DataRow(null)]
+    [DataRow("")]
+    [DataRow("mk8.distributed.v3")]
+    [DataRow("different-contract")]
+    public async Task IncompatibleWorkerCannotProduceAReadyHealthResponse(string? version)
+    {
+        var result = await GatewayApplicationHealth.CheckAsync(new StubTransport(DateTimeOffset.UtcNow, version), CancellationToken.None);
+        var context = new DefaultHttpContext();
+        using var services = new ServiceCollection().AddLogging().BuildServiceProvider();
+        using var body = new MemoryStream();
+        context.RequestServices = services;
+        context.Response.Body = body;
+        await result.ExecuteAsync(context);
+        Assert.AreEqual(StatusCodes.Status503ServiceUnavailable, context.Response.StatusCode);
+    }
+
+    private sealed class StubTransport(DateTimeOffset responseTime, string? version = DistributedContractVersions.Current) : IGatewayApplicationTransport
     {
         public string? Protocol { get; private set; }
         public string? Operation { get; private set; }
@@ -70,7 +87,7 @@ public sealed class GatewayApplicationHealthTests
             Protocol = protocol;
             Operation = operation;
             Assert.IsInstanceOfType<object>(value);
-            return Task.FromResult((TResponse)(object)new SystemPingResult(responseTime));
+            return Task.FromResult((TResponse)(object)new SystemPingResult(responseTime, version));
         }
     }
 

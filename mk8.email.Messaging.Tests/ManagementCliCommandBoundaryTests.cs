@@ -38,6 +38,7 @@ public sealed class ManagementCliCommandBoundaryTests
             ["--probe-gateway-backends", missing],
             ["--probe-worker-backends", missing],
             ["--probe-worker-dispatch", missing],
+            ["--probe-gateway-dispatch", missing],
             ["--audit-blob-references", missing],
         ];
 

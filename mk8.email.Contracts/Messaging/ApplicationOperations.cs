@@ -89,7 +89,7 @@ public static class ApplicationOperations
     public const string DavScheduleSubmit = "dav.schedule.submit";
 }
 
-public sealed record SystemPingResult(DateTimeOffset RespondedAt);
+public sealed record SystemPingResult(DateTimeOffset RespondedAt, string? ContractVersion = null);
 
 public sealed record AdminEnsureDomainRequest(string CompanyName, string Domain);
 

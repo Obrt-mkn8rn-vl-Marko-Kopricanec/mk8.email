@@ -71,6 +71,8 @@ try
     using var host = builder.Build();
     await DistributedRestoreActivationGuard.RequireReadyAsync(
         host.Services.GetRequiredService<NpgsqlDataSource>()).ConfigureAwait(false);
+    await DistributedQueueContractGuard.RequireCompatibleAsync(
+        host.Services.GetRequiredService<NpgsqlDataSource>()).ConfigureAwait(false);
     if (!drain)
     {
         using var scope = host.Services.CreateScope();

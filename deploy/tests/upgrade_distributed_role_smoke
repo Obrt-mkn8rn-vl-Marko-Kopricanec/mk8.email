@@ -100,6 +100,7 @@ test "$(readlink -f "$state/opt/mk8email/current")" \
 test -f "$state/active"
 grep -Fx 'cli:--probe-gateway-backends' "$state/events" >/dev/null
 grep -Fx 'cli:--healthcheck-gateway' "$state/events" >/dev/null
+grep -Fx 'cli:--probe-gateway-dispatch' "$state/events" >/dev/null
 
 prepare_case gateway_preflight mk8email-gateway.service admin/mk8.email.Gateway.dll
 : > "$state/fail_preflight"
@@ -131,6 +132,18 @@ prepare_case gateway_health_rollback mk8email-gateway.service admin/mk8.email.Ga
 : > "$state/fail_new_health"
 if sh "$state/upgrade" gateway "$new_id" >/dev/null 2>&1; then
     printf '%s\n' "The role reported success after failed health checks." >&2
+    exit 1
+fi
+test "$(readlink -f "$state/opt/mk8email/current")" \
+    = "$state/opt/mk8email/releases/$old_id"
+test -f "$state/active"
+test "$(grep -cx stop "$state/events")" -eq 2
+test "$(grep -cx start "$state/events")" -eq 2
+
+prepare_case gateway_contract_rollback mk8email-gateway.service admin/mk8.email.Gateway.dll
+: > "$state/fail_new_contract"
+if sh "$state/upgrade" gateway "$new_id" >/dev/null 2>&1; then
+    printf '%s\n' "The role reported success with an incompatible Worker contract." >&2
     exit 1
 fi
 test "$(readlink -f "$state/opt/mk8email/current")" \

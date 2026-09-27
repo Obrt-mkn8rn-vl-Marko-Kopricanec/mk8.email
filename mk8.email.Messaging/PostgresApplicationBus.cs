@@ -483,11 +483,13 @@ public partial class PostgresApplicationBus : IApplicationRequestClient, IApplic
                     completed_at = clock_timestamp()
                 WHERE state IN ('pending', 'processing')
                     AND deadline_at <= clock_timestamp()
+                    AND NOT (operation = ANY (@superseded_operations))
                 RETURNING id
             )
             SELECT pg_notify('{_responseChannel}', id::text) FROM expired
             """);
         await using var commandLifetime = command.ConfigureAwait(false);
+        command.Parameters.AddWithValue("superseded_operations", DistributedContractVersions.SupersededOperations.ToArray());
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 

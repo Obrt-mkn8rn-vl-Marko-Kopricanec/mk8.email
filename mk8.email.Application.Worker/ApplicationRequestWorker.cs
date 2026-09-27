@@ -34,6 +34,10 @@ internal sealed partial class ApplicationRequestWorker(
         ApplicationRequestLease lease,
         CancellationToken stoppingToken)
     {
+        // Do not turn an upgrade race into a terminal unknown-operation reply.
+        // Leave the lease retryable for the original role to drain/reconcile.
+        if (mk8.email.Contracts.Messaging.DistributedContractVersions.SupersededOperations.Contains(lease.Request.Operation))
+            throw new InvalidOperationException("A superseded application operation requires its original Worker.");
         var operationCancellation = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
         var leaseLost = false;
         var renewTask = RenewLeaseAsync(lease, operationCancellation, () => leaseLost = true);

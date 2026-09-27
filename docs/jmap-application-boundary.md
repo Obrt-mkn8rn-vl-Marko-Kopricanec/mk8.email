@@ -40,6 +40,14 @@ and upgrade both roles before resuming admission. An old Gateway/new Worker or
 new Gateway/old Worker pairing is not supported. No live upgrade or deployment
 is authorized by this source checkpoint.
 
+The known superseded operation precondition is enforced: Worker startup and
+activation probes reject pending/leased work in either lane, and Gateway remains
+live but unready without consuming it. Late leases are preserved for original-role
+drain/reconciliation. Gateway activation/candidate upgrades also require a Worker
+ping with matching internal contract metadata; prior-release rollback uses the
+prior Gateway's own health interpretation. These guards are not release attestation
+and do not replace the same-approved-release requirement or business replay receipts.
+
 This is an intermediate boundary correction, not completion of the API-agnostic
 architecture. Method-response character normalization still requires further
 extraction or a documented application-level representation. Creation-reference

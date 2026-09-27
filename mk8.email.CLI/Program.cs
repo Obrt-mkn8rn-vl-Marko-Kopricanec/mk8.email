@@ -71,10 +71,10 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
             && arguments[0] is ("--validate-gateway-config" or "--validate-worker-config"
                 or "--healthcheck-gateway"
                 or "--probe-gateway-backends" or "--probe-worker-backends"
-                or "--probe-worker-dispatch"))
+                or "--probe-worker-dispatch" or "--probe-gateway-dispatch"))
         {
             var role = arguments[0] is ("--validate-gateway-config" or "--healthcheck-gateway"
-                or "--probe-gateway-backends")
+                or "--probe-gateway-backends" or "--probe-gateway-dispatch")
                 ? EnvironmentValidationRole.Gateway
                 : EnvironmentValidationRole.ApplicationWorker;
             var validated = EnvironmentLoader.LoadFromFile(
@@ -88,11 +88,12 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
                     ? 0
                     : 1;
             }
-            if (string.Equals(arguments[0], "--probe-worker-dispatch", StringComparison.Ordinal))
+            if (arguments[0] is "--probe-worker-dispatch" or "--probe-gateway-dispatch")
             {
                 var source = NpgsqlDataSource.Create(validated.BuildConnectionString());
                 await using var sourceLifetime = source.ConfigureAwait(false);
                 await DistributedRestoreActivationGuard.RequireReadyAsync(source).ConfigureAwait(false);
+                await DistributedQueueContractGuard.RequireCompatibleAsync(source).ConfigureAwait(false);
                 var probeServices = new ServiceCollection()
                     .AddDistributedMessaging(validated)
                     .BuildServiceProvider();
@@ -109,6 +110,8 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
                 var source = NpgsqlDataSource.Create(validated.BuildConnectionString());
                 await using var sourceLifetime = source.ConfigureAwait(false);
                 await DistributedRestoreActivationGuard.RequireReadyAsync(
+                    source, probeTimeout.Token).ConfigureAwait(false);
+                await DistributedQueueContractGuard.RequireCompatibleAsync(
                     source, probeTimeout.Token).ConfigureAwait(false);
                 if (role == EnvironmentValidationRole.Gateway)
                     await GatewayDatabasePrivilegeProbe.ProbeAsync(source, probeTimeout.Token).ConfigureAwait(false);
@@ -558,7 +561,7 @@ static bool IsSupportedCommand(string[] arguments) =>
         ("--validate-gateway-config" or "--validate-worker-config"
             or "--healthcheck-gateway"
             or "--probe-gateway-backends" or "--probe-worker-backends"
-            or "--probe-worker-dispatch" or "--audit-blob-references");
+            or "--probe-worker-dispatch" or "--probe-gateway-dispatch" or "--audit-blob-references");
 
 static bool Matches(string[] arguments, int length, string command) =>
     arguments.Length == length && string.Equals(arguments[0], command, StringComparison.Ordinal);

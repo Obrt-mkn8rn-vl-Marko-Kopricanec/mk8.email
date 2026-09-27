@@ -1,5 +1,6 @@
 using System.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using mk8.email.Application.Interfaces;
 using mk8.email.Application.Protocol;
 using mk8.email.Contracts.Enums;
@@ -85,59 +86,11 @@ public class EmailService(
                 await db.Folders.AddAsync(folder, cancellationToken).ConfigureAwait(false);
             }
 
-            var uid = folder.NextUid++;
-            var modSeq = ++folder.HighestModSeq;
-
-            var (subject, body, headers) = ParseMessage(rawMessage);
-
-            var messageId = MailMessageParser.ExtractHeaderValue(headers, "Message-ID");
-            if (string.IsNullOrEmpty(messageId))
-                messageId = $"<{Guid.NewGuid()}@{target.Domain}>";
-
-            var inReplyTo = MailMessageParser.ExtractHeaderValue(headers, "In-Reply-To");
-            var threadId = await ResolveThreadObjectIdAsync(
-                target.Id,
-                inReplyTo,
-                messageId,
-                cancellationToken).ConfigureAwait(false);
-
-            var rawBytes = MailWireEncoding.Instance.GetBytes(rawMessage);
-            var email = new EmailDB
-            {
-                Id = Guid.CreateVersion7(),
-                Sender = sender,
-                Recipient = recipient,
-                Subject = subject.Length > 998 ? subject[..998] : subject,
-                Body = body,
-                RawHeaders = headers,
-                MessageId = messageId,
-                InReplyTo = inReplyTo,
-                Cc = MailMessageParser.ExtractHeaderValue(headers, "Cc"),
-                EmailObjectId = Guid.CreateVersion7().ToString("N"),
-                ThreadObjectId = threadId,
-                QueueDeliveryId = queueDeliveryId,
-                Uid = uid,
-                ModSeq = modSeq,
-                FolderId = folder.Id,
-            };
+            var (email, rawBytes) = await PrepareStoredMessageAsync(
+                sender, recipient, rawMessage, target, folder, queueDeliveryId,
+                isSentCopy: false, cancellationToken).ConfigureAwait(false);
             ApplyFlags(email, normalizedFlags);
-            var marker = transactionEffects.Mark();
-            var commitAttempted = false;
-            try
-            {
-                await content.SetAsync(email, rawBytes, cancellationToken).ConfigureAwait(false);
-                await db.Emails.AddAsync(email, cancellationToken).ConfigureAwait(false);
-                await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-                commitAttempted = true;
-                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-                await transactionEffects.CommitAsync(marker).ConfigureAwait(false);
-            }
-            catch
-            {
-                await TryRollbackAsync(transaction).ConfigureAwait(false);
-                await CompleteRollbackAsync(marker, commitAttempted).ConfigureAwait(false);
-                throw;
-            }
+            await StoreAndCommitMessageAsync(email, rawBytes, transaction, cancellationToken).ConfigureAwait(false);
             return true;
         }
     }
@@ -182,61 +135,80 @@ public class EmailService(
             if (folder is null)
                 return false;
 
-            var uid = folder.NextUid++;
-            var modSeq = ++folder.HighestModSeq;
-
-            var (subject, body, headers) = ParseMessage(rawMessage);
-            var recipient = MailMessageParser.ExtractHeaderValue(headers, "To");
-
-            var sentMessageId = MailMessageParser.ExtractHeaderValue(headers, "Message-ID");
-            if (string.IsNullOrEmpty(sentMessageId))
-                sentMessageId = $"<{Guid.NewGuid()}@{target.Domain}>";
-
-            var sentInReplyTo = MailMessageParser.ExtractHeaderValue(headers, "In-Reply-To");
-            var sentThreadId = await ResolveThreadObjectIdAsync(
-                target.Id,
-                sentInReplyTo,
-                sentMessageId,
-                cancellationToken).ConfigureAwait(false);
-
-            var rawBytes = MailWireEncoding.Instance.GetBytes(rawMessage);
-            var email = new EmailDB
-            {
-                Id = Guid.CreateVersion7(),
-                Sender = sender,
-                Recipient = recipient,
-                Subject = subject.Length > 998 ? subject[..998] : subject,
-                Body = body,
-                RawHeaders = headers,
-                MessageId = sentMessageId,
-                InReplyTo = sentInReplyTo,
-                Cc = MailMessageParser.ExtractHeaderValue(headers, "Cc"),
-                EmailObjectId = Guid.CreateVersion7().ToString("N"),
-                ThreadObjectId = sentThreadId,
-                QueueDeliveryId = queueDeliveryId,
-                Uid = uid,
-                ModSeq = modSeq,
-                IsRead = true,
-                FolderId = folder.Id,
-            };
-            var marker = transactionEffects.Mark();
-            var commitAttempted = false;
-            try
-            {
-                await content.SetAsync(email, rawBytes, cancellationToken).ConfigureAwait(false);
-                await db.Emails.AddAsync(email, cancellationToken).ConfigureAwait(false);
-                await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-                commitAttempted = true;
-                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-                await transactionEffects.CommitAsync(marker).ConfigureAwait(false);
-            }
-            catch
-            {
-                await TryRollbackAsync(transaction).ConfigureAwait(false);
-                await CompleteRollbackAsync(marker, commitAttempted).ConfigureAwait(false);
-                throw;
-            }
+            var (email, rawBytes) = await PrepareStoredMessageAsync(
+                sender, string.Empty, rawMessage, target, folder, queueDeliveryId,
+                isSentCopy: true, cancellationToken).ConfigureAwait(false);
+            await StoreAndCommitMessageAsync(email, rawBytes, transaction, cancellationToken).ConfigureAwait(false);
             return true;
+        }
+    }
+
+    private async Task<(EmailDB Email, byte[] RawBytes)> PrepareStoredMessageAsync(
+        string sender,
+        string recipient,
+        string rawMessage,
+        TargetInbox target,
+        FolderDB folder,
+        Guid? queueDeliveryId,
+        bool isSentCopy,
+        CancellationToken cancellationToken)
+    {
+        var uid = folder.NextUid++;
+        var modSeq = ++folder.HighestModSeq;
+        var (subject, body, headers) = ParseMessage(rawMessage);
+        if (isSentCopy)
+            recipient = MailMessageParser.ExtractHeaderValue(headers, "To");
+        var messageId = MailMessageParser.ExtractHeaderValue(headers, "Message-ID");
+        if (string.IsNullOrEmpty(messageId))
+            messageId = $"<{Guid.NewGuid()}@{target.Domain}>";
+        var inReplyTo = MailMessageParser.ExtractHeaderValue(headers, "In-Reply-To");
+        var threadId = await ResolveThreadObjectIdAsync(
+            target.Id, inReplyTo, messageId, cancellationToken).ConfigureAwait(false);
+        var rawBytes = MailWireEncoding.Instance.GetBytes(rawMessage);
+        var email = new EmailDB
+        {
+            Id = Guid.CreateVersion7(),
+            Sender = sender,
+            Recipient = recipient,
+            Subject = subject.Length > 998 ? subject[..998] : subject,
+            Body = body,
+            RawHeaders = headers,
+            MessageId = messageId,
+            InReplyTo = inReplyTo,
+            Cc = MailMessageParser.ExtractHeaderValue(headers, "Cc"),
+            EmailObjectId = Guid.CreateVersion7().ToString("N"),
+            ThreadObjectId = threadId,
+            QueueDeliveryId = queueDeliveryId,
+            Uid = uid,
+            ModSeq = modSeq,
+            IsRead = isSentCopy,
+            FolderId = folder.Id,
+        };
+        return (email, rawBytes);
+    }
+
+    private async Task StoreAndCommitMessageAsync(
+        EmailDB email,
+        byte[] rawBytes,
+        IDbContextTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        var marker = transactionEffects.Mark();
+        var commitAttempted = false;
+        try
+        {
+            await content.SetAsync(email, rawBytes, cancellationToken).ConfigureAwait(false);
+            await db.Emails.AddAsync(email, cancellationToken).ConfigureAwait(false);
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            commitAttempted = true;
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            await transactionEffects.CommitAsync(marker).ConfigureAwait(false);
+        }
+        catch
+        {
+            await TryRollbackAsync(transaction).ConfigureAwait(false);
+            await CompleteRollbackAsync(marker, commitAttempted).ConfigureAwait(false);
+            throw;
         }
     }
 

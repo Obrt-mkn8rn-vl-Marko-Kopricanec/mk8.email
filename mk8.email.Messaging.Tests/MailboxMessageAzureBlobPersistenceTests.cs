@@ -4,6 +4,7 @@ using Azure.Storage.Blobs.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using mk8.email.Application.Services;
+using mk8.email.Contracts.Enums;
 using mk8.email.Contracts.Storage;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Infrastructure.Models;
@@ -216,6 +217,154 @@ public sealed class MailboxMessageAzureBlobPersistenceTests
         }
     }
 
+    [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task EmailServiceCommitsBlobBackedMetadataAndReplaysIdempotently(bool sentCopy)
+    {
+        await using var server = await RequirePostgresAsync();
+        var client = new BlobServiceClient(RequireAzureBlobConnection());
+        var containerName = $"mk8-email-service-{Guid.NewGuid():N}";
+        var container = client.GetBlobContainerClient(containerName);
+        var store = CreateStore(client, containerName);
+        var folderId = await PrepareEmailServiceFolderAsync(server.ConnectionString, store, sentCopy);
+        var deliveryId = Guid.CreateVersion7();
+        var raw = BuildEmailServiceMessage(sentCopy);
+
+        try
+        {
+            await using (var context = CreateContext(server.ConnectionString))
+            {
+                var effects = CreateEffects(store);
+                var content = new MailboxMessageContentService(store, effects);
+                var service = new EmailService(context, content, effects);
+                Assert.IsTrue(await StoreEmailAsync(service, sentCopy, raw, deliveryId));
+                Assert.IsTrue(await StoreEmailAsync(service, sentCopy, "replacement body", deliveryId));
+            }
+            await using var verification = CreateContext(server.ConnectionString);
+            var email = await verification.Emails.AsNoTracking().SingleAsync();
+            VerifyEmailServiceMetadata(email, sentCopy, deliveryId, folderId);
+            var contentReader = new MailboxMessageContentService(store, CreateEffects(store));
+            CollectionAssert.AreEqual(Encoding.Latin1.GetBytes(raw),
+                await contentReader.ReadAsync(email, CancellationToken.None));
+            Assert.HasCount(1, await GetBlobNamesAsync(container));
+            var folder = await verification.Folders.AsNoTracking().SingleAsync(item => item.Id == folderId);
+            Assert.AreEqual(4, folder.NextUid);
+            Assert.AreEqual(3L, folder.HighestModSeq);
+        }
+        finally
+        {
+            await container.DeleteIfExistsAsync();
+        }
+    }
+
+    [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task EmailServiceDatabaseFailureRollsBackCountersAndRemovesCreatedBlob(bool sentCopy)
+    {
+        await using var server = await RequirePostgresAsync();
+        var client = new BlobServiceClient(RequireAzureBlobConnection());
+        var containerName = $"mk8-email-failure-{Guid.NewGuid():N}";
+        var container = client.GetBlobContainerClient(containerName);
+        var store = CreateStore(client, containerName);
+        var folderId = await PrepareEmailServiceFolderAsync(server.ConnectionString, store, sentCopy);
+        await using (var setup = CreateContext(server.ConnectionString))
+        {
+            await setup.Database.ExecuteSqlRawAsync(
+                "ALTER TABLE emails ADD CONSTRAINT ck_test_reject_email CHECK (false)");
+        }
+
+        try
+        {
+            await using (var context = CreateContext(server.ConnectionString))
+            {
+                var effects = CreateEffects(store);
+                var service = new EmailService(context, new MailboxMessageContentService(store, effects), effects);
+                var exception = await Assert.ThrowsExactlyAsync<DbUpdateException>(() =>
+                    StoreEmailAsync(service, sentCopy, BuildEmailServiceMessage(sentCopy), Guid.CreateVersion7()));
+                Assert.AreEqual(PostgresErrorCodes.CheckViolation,
+                    Assert.IsInstanceOfType<PostgresException>(exception.InnerException).SqlState);
+            }
+            await using var verification = CreateContext(server.ConnectionString);
+            Assert.AreEqual(0, await verification.Emails.CountAsync());
+            var folder = await verification.Folders.AsNoTracking().SingleAsync(item => item.Id == folderId);
+            Assert.AreEqual(3, folder.NextUid);
+            Assert.AreEqual(2L, folder.HighestModSeq);
+            Assert.HasCount(0, await GetBlobNamesAsync(container));
+        }
+        finally
+        {
+            await container.DeleteIfExistsAsync();
+        }
+    }
+
+    private static async Task<Guid> PrepareEmailServiceFolderAsync(
+        string connectionString,
+        AzureBlobLargeObjectStore store,
+        bool sentCopy)
+    {
+        var inboxFolderId = await CreateEmptyMigratedSchemaAsync(connectionString, store);
+        await using var context = CreateContext(connectionString);
+        var inboxFolder = await context.Folders.SingleAsync(folder => folder.Id == inboxFolderId);
+        inboxFolder.Name = DefaultFolders.Inbox;
+        var selected = inboxFolder;
+        if (sentCopy)
+        {
+            selected = new FolderDB
+            {
+                Id = Guid.CreateVersion7(),
+                InboxId = inboxFolder.InboxId,
+                Name = DefaultFolders.Sent,
+                NextUid = 3,
+                HighestModSeq = 2,
+            };
+            context.Folders.Add(selected);
+        }
+        await context.SaveChangesAsync();
+        return selected.Id;
+    }
+
+    private static Task<bool> StoreEmailAsync(EmailService service, bool sentCopy, string raw, Guid deliveryId) =>
+        sentCopy
+            ? service.SaveSentCopyAsync("mailbox@mailbox.example.test", raw, deliveryId)
+            : service.DeliverAsync("sender@example.test", "mailbox@mailbox.example.test", raw,
+                queueDeliveryId: deliveryId, flags: ["\\Flagged", "tag"]);
+
+    private static string BuildEmailServiceMessage(bool sentCopy)
+    {
+        var sender = sentCopy ? "mailbox@mailbox.example.test" : "sender@example.test";
+        return Encoding.Latin1.GetString(BuildMessageWithLargeAttachment())
+            .Replace("From: sender@example.test", $"From: {sender}", StringComparison.Ordinal)
+            .Replace("To: mailbox@mailbox.example.test", "To: header@example.test", StringComparison.Ordinal)
+            .Replace("Subject: attachment migration",
+                "Subject: " + new string('s', 1001) + "\r\nMessage-ID: <email-service@example.test>\r\n"
+                    + "In-Reply-To: <parent@example.test>\r\nCc: copy@example.test",
+                StringComparison.Ordinal);
+    }
+
+    private static void VerifyEmailServiceMetadata(EmailDB email, bool sentCopy, Guid deliveryId, Guid folderId)
+    {
+        Assert.AreEqual(folderId, email.FolderId);
+        Assert.AreEqual(deliveryId, email.QueueDeliveryId);
+        Assert.AreEqual(3, email.Uid);
+        Assert.AreEqual(3L, email.ModSeq);
+        Assert.AreEqual(sentCopy, email.IsRead);
+        Assert.AreEqual(!sentCopy, email.IsFlagged);
+        CollectionAssert.AreEqual(sentCopy ? Array.Empty<string>() : new[] { "tag" }, email.Keywords);
+        Assert.AreEqual(sentCopy ? "header@example.test" : "mailbox@mailbox.example.test", email.Recipient);
+        Assert.AreEqual(new string('s', 998), email.Subject);
+        Assert.AreEqual("<email-service@example.test>", email.MessageId);
+        Assert.AreEqual("<parent@example.test>", email.InReplyTo);
+        Assert.AreEqual("copy@example.test", email.Cc);
+        Assert.IsFalse(string.IsNullOrEmpty(email.EmailObjectId));
+        Assert.IsFalse(string.IsNullOrEmpty(email.ThreadObjectId));
+        Assert.IsNull(email.RawMessage);
+        Assert.AreEqual(LargeObjectProviders.AzureBlob, email.RawMessageObjectProvider);
+        StringAssert.Contains(email.Body, "visible message text");
+        Assert.IsFalse(email.Body.Contains("attachment-sentinel", StringComparison.Ordinal));
+    }
+
     private static async Task CreateSchemaAndLegacyRowsAsync(
         string connectionString,
         Guid rawMessageId,
@@ -385,13 +534,16 @@ public sealed class MailboxMessageAzureBlobPersistenceTests
 
     private static async Task<List<string>> GetBlobNamesAsync(
         BlobContainerClient container,
-        Guid messageId)
+        Guid? messageId = null)
     {
+        var prefix = messageId is { } id
+            ? $"objects/mail/messages/{id:N}/"
+            : "objects/mail/messages/";
         var names = new List<string>();
         await foreach (var item in container.GetBlobsAsync(
                            BlobTraits.None,
                            BlobStates.None,
-                           $"objects/mail/messages/{messageId:N}/",
+                           prefix,
                            CancellationToken.None))
         {
             names.Add(item.Name);

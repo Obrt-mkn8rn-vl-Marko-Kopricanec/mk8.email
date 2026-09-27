@@ -167,6 +167,17 @@ public sealed class ImapSearchPostgresTests
                 sortRequest with { SearchCriteria = "$", SavedSearchUids = [1, 3] });
             CollectionAssert.AreEqual(new[] { 1, 3 },
                 savedSort.SortedMatches.Select(match => match.Uid).ToArray());
+            CollectionAssert.AreEqual(new[] { 1, 3 },
+                savedSort.SortedMatches.Select(match => match.SequenceNumber).ToArray());
+            var emptySort = await application.SortMessagesAsync(
+                sortRequest with { SearchCriteria = "UID 999" });
+            Assert.IsTrue(emptySort.FolderFound);
+            Assert.IsNull(emptySort.FailureResponse);
+            Assert.IsEmpty(emptySort.SortedMatches);
+            var invalidSort = await application.SortMessagesAsync(
+                sortRequest with { SearchCriteria = "OR" });
+            StringAssert.StartsWith(invalidSort.FailureResponse, "BAD ");
+            Assert.IsEmpty(invalidSort.SortedMatches);
             await Assert.ThrowsAsync<ArgumentException>(() => application.SortMessagesAsync(
                 sortRequest with { Charset = "UNSUPPORTED" }));
             await Assert.ThrowsAsync<ArgumentException>(() => application.SortMessagesAsync(
@@ -212,6 +223,18 @@ public sealed class ImapSearchPostgresTests
             });
             Assert.HasCount(2, savedThread.Nodes);
             Assert.IsFalse(savedThread.Nodes.Any(node => node.Identifier == 2));
+            var emptyThread = await application.ThreadMessagesAsync(threadRequest with
+            {
+                Algorithm = ImapThreadAlgorithm.OrderedSubject,
+                SearchCriteria = "UID 999",
+            });
+            Assert.IsTrue(emptyThread.FolderFound);
+            Assert.IsNull(emptyThread.FailureResponse);
+            Assert.IsEmpty(emptyThread.Nodes);
+            var invalidThread = await application.ThreadMessagesAsync(
+                threadRequest with { SearchCriteria = "OR" });
+            StringAssert.StartsWith(invalidThread.FailureResponse, "BAD ");
+            Assert.IsEmpty(invalidThread.Nodes);
             await Assert.ThrowsAsync<ArgumentException>(() => application.ThreadMessagesAsync(
                 threadRequest with { Charset = "UNSUPPORTED" }));
             await Assert.ThrowsAsync<ArgumentException>(() => application.ThreadMessagesAsync(
@@ -242,6 +265,20 @@ public sealed class ImapSearchPostgresTests
             Assert.IsFalse(missing.Messages[0].Found);
             await Assert.ThrowsAsync<ArgumentException>(() => application.MarkMessagesSeenAsync(
                 seenRequest with { MessageIds = [messageIds[0], messageIds[0]] }));
+            var mixedRequest = seenRequest with
+            {
+                MessageIds = [Guid.CreateVersion7(), messageIds[2], messageIds[0]],
+            };
+            var mixed = await application.MarkMessagesSeenAsync(mixedRequest);
+            CollectionAssert.AreEqual(mixedRequest.MessageIds, mixed.Messages
+                .Select(message => message.Id).ToList());
+            CollectionAssert.AreEqual(new[] { false, true, true },
+                mixed.Messages.Select(message => message.Found).ToArray());
+            CollectionAssert.AreEqual(new long[] { 0, 6, 4 },
+                mixed.Messages.Select(message => message.ModSeq).ToArray());
+            var mixedReplay = await application.MarkMessagesSeenAsync(mixedRequest);
+            CollectionAssert.AreEqual(new long[] { 0, 6, 4 },
+                mixedReplay.Messages.Select(message => message.ModSeq).ToArray());
 
             var fetchRequest = new ImapFetchPageRequest(
                 ownerId, folderId, true,
@@ -288,7 +325,7 @@ public sealed class ImapSearchPostgresTests
         }
         await using (var database = new EmailDbContext(options))
         {
-            Assert.AreEqual(5L, await database.Folders
+            Assert.AreEqual(6L, await database.Folders
                 .Where(folder => folder.Id == folderId)
                 .Select(folder => folder.HighestModSeq)
                 .SingleAsync());
@@ -297,9 +334,9 @@ public sealed class ImapSearchPostgresTests
                 .OrderBy(email => email.Uid)
                 .Select(email => new { email.IsRead, email.ModSeq })
                 .ToListAsync();
-            CollectionAssert.AreEqual(new[] { true, true, false },
+            CollectionAssert.AreEqual(new[] { true, true, true },
                 flags.Select(email => email.IsRead).ToArray());
-            CollectionAssert.AreEqual(new long[] { 4, 5, 3 },
+            CollectionAssert.AreEqual(new long[] { 4, 5, 6 },
                 flags.Select(email => email.ModSeq).ToArray());
         }
 

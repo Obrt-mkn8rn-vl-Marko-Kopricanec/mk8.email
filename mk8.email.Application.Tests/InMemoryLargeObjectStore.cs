@@ -8,10 +8,12 @@ internal sealed class InMemoryLargeObjectStore : ILargeObjectStore
 {
     private readonly ConcurrentDictionary<string, StoredObject> objects =
         new(StringComparer.Ordinal);
+    private int readCount;
 
     public string Provider => LargeObjectProviders.AzureBlob;
 
     public int Count => objects.Count;
+    public int ReadCount => Volatile.Read(ref readCount);
 
     public bool Contains(string objectName) => objects.ContainsKey(objectName);
 
@@ -65,6 +67,7 @@ internal sealed class InMemoryLargeObjectStore : ILargeObjectStore
             throw new FileNotFoundException("The test object does not exist.", reference.ObjectName);
         if (stored.Reference != reference)
             throw new InvalidOperationException("The test object reference failed its integrity check.");
+        Interlocked.Increment(ref readCount);
         await destination.WriteAsync(stored.Content, cancellationToken);
     }
 

@@ -610,6 +610,18 @@ internal static class ImapSearchEngine
         var includeRawHeaders = predicate.Requirements.HasFlag(SearchDataRequirements.RawHeaders);
         var includeModSequence = predicate.Requirements.HasFlag(
             SearchDataRequirements.ModSequenceResult);
+        var messages = await ReadSearchMessagesAsync(
+            query, content, includeBody, includeRawHeaders, cancellationToken).ConfigureAwait(false);
+        return MatchSearchMessages(messages, predicate, includeModSequence);
+    }
+
+    private static async Task<List<SearchStoredMessage>> ReadSearchMessagesAsync(
+        IQueryable<EmailDB> query,
+        MailboxMessageContentService content,
+        bool includeBody,
+        bool includeRawHeaders,
+        CancellationToken cancellationToken)
+    {
         List<SearchStoredMessage> messages;
         if (includeBody || includeRawHeaders)
         {
@@ -627,9 +639,17 @@ internal static class ImapSearchEngine
         }
         else
         {
-            messages = await BuildSearchMessageQuery(query, false, false)
+            messages = await BuildSearchMessageQuery(query)
                 .ToListAsync(cancellationToken).ConfigureAwait(false);
         }
+        return messages;
+    }
+
+    private static SearchExecutionResult MatchSearchMessages(
+        List<SearchStoredMessage> messages,
+        SearchPredicate predicate,
+        bool includeModSequence)
+    {
         var matches = new List<SearchCandidate>();
         long? highestModSequence = null;
         var sequenceNumber = 0;
@@ -677,90 +697,9 @@ internal static class ImapSearchEngine
             message.ThreadObjectId,
             message.ReceivedAt);
 
-    private static IQueryable<SearchStoredMessage> BuildSearchMessageQuery(
-        IQueryable<EmailDB> query,
-        bool includeBody,
-        bool includeRawHeaders)
+    private static IQueryable<SearchStoredMessage> BuildSearchMessageQuery(IQueryable<EmailDB> query)
     {
         var ordered = query.OrderBy(message => message.Uid);
-        if (includeBody && includeRawHeaders)
-        {
-            return ordered.Select(message => new SearchStoredMessage(
-                message.Id,
-                message.Uid,
-                message.Sender,
-                message.Recipient,
-                message.Subject,
-                message.Body,
-                message.IsRead,
-                message.IsDeleted,
-                message.IsFlagged,
-                message.IsDraft,
-                message.IsAnswered,
-                message.Keywords,
-                message.ModSeq,
-                message.SizeBytes,
-                message.RawHeaders,
-                message.MessageId,
-                message.InReplyTo,
-                message.Cc,
-                message.EmailObjectId,
-                message.ThreadObjectId,
-                message.ReceivedAt));
-        }
-
-        if (includeBody)
-        {
-            return ordered.Select(message => new SearchStoredMessage(
-                message.Id,
-                message.Uid,
-                message.Sender,
-                message.Recipient,
-                message.Subject,
-                message.Body,
-                message.IsRead,
-                message.IsDeleted,
-                message.IsFlagged,
-                message.IsDraft,
-                message.IsAnswered,
-                message.Keywords,
-                message.ModSeq,
-                message.SizeBytes,
-                null,
-                message.MessageId,
-                message.InReplyTo,
-                message.Cc,
-                message.EmailObjectId,
-                message.ThreadObjectId,
-                message.ReceivedAt));
-        }
-
-        if (includeRawHeaders)
-        {
-            return ordered.Select(message => new SearchStoredMessage(
-                message.Id,
-                message.Uid,
-                message.Sender,
-                message.Recipient,
-                message.Subject,
-                string.Empty,
-                message.IsRead,
-                message.IsDeleted,
-                message.IsFlagged,
-                message.IsDraft,
-                message.IsAnswered,
-                message.Keywords,
-                message.ModSeq,
-                message.SizeBytes,
-                message.RawHeaders,
-                message.MessageId,
-                message.InReplyTo,
-                message.Cc,
-                message.EmailObjectId,
-                message.ThreadObjectId,
-                message.ReceivedAt));
-        }
-
         return ordered.Select(message => new SearchStoredMessage(
             message.Id,
             message.Uid,
@@ -802,88 +741,97 @@ internal static class ImapSearchEngine
             if (tokens.Count >= MaximumSearchTokens)
                 return false;
 
-            if (criteria[index] == '(')
-            {
-                tokens.Add(new SearchToken(SearchTokenKind.OpenParenthesis, "("));
-                index++;
-                continue;
-            }
-
-            if (criteria[index] == ')')
-            {
-                tokens.Add(new SearchToken(SearchTokenKind.CloseParenthesis, ")"));
-                index++;
-                if (index < criteria.Length
-                    && criteria[index] != ' '
-                    && criteria[index] != ')')
-                {
-                    return false;
-                }
-                continue;
-            }
-
-            if (criteria[index] == '"')
-            {
-                index++;
-                var value = new StringBuilder();
-                var terminated = false;
-                while (index < criteria.Length)
-                {
-                    var character = criteria[index++];
-                    if (character == '"')
-                    {
-                        terminated = true;
-                        break;
-                    }
-
-                    if (character == '\\')
-                    {
-                        if (index >= criteria.Length)
-                            return false;
-                        character = criteria[index++];
-                        if (character is not '\\' and not '"')
-                            return false;
-                    }
-
-                    if (character == '\0')
-                        return false;
-                    value.Append(character);
-                }
-
-                if (!terminated)
-                    return false;
-                if (index < criteria.Length
-                    && criteria[index] != ' '
-                    && criteria[index] != ')')
-                {
-                    return false;
-                }
-
-                tokens.Add(new SearchToken(SearchTokenKind.Atom, value.ToString()));
-                continue;
-            }
-
-            var start = index;
-            while (index < criteria.Length
-                   && criteria[index] != ' '
-                   && criteria[index] is not '(' and not ')')
-            {
-                if (criteria[index] is '\r' or '\n' or '\0')
-                    return false;
-                index++;
-            }
-
-            if (index == start)
+            if (!TryAddSearchToken(criteria, ref index, tokens))
                 return false;
-            if (index < criteria.Length && criteria[index] == '(')
-                return false;
+        }
+        return tokens.Count <= MaximumSearchTokens;
+    }
 
-            tokens.Add(new SearchToken(
-                SearchTokenKind.Atom,
-                criteria[start..index]));
+    private static bool TryAddSearchToken(string criteria, ref int index, List<SearchToken> tokens)
+    {
+        if (criteria[index] == '(')
+        {
+            tokens.Add(new SearchToken(SearchTokenKind.OpenParenthesis, "("));
+            index++;
+            return true;
         }
 
-        return tokens.Count <= MaximumSearchTokens;
+        if (criteria[index] == ')')
+        {
+            tokens.Add(new SearchToken(SearchTokenKind.CloseParenthesis, ")"));
+            index++;
+            if (index < criteria.Length
+                && criteria[index] != ' '
+                && criteria[index] != ')')
+            {
+                return false;
+            }
+            return true;
+        }
+
+        if (criteria[index] == '"')
+            return TryAddQuotedSearchToken(criteria, ref index, tokens);
+
+        var start = index;
+        while (index < criteria.Length
+               && criteria[index] != ' '
+               && criteria[index] is not '(' and not ')')
+        {
+            if (criteria[index] is '\r' or '\n' or '\0')
+                return false;
+            index++;
+        }
+
+        if (index == start)
+            return false;
+        if (index < criteria.Length && criteria[index] == '(')
+            return false;
+
+        tokens.Add(new SearchToken(
+            SearchTokenKind.Atom,
+            criteria[start..index]));
+        return true;
+    }
+
+    private static bool TryAddQuotedSearchToken(string criteria, ref int index, List<SearchToken> tokens)
+    {
+        index++;
+        var value = new StringBuilder();
+        var terminated = false;
+        while (index < criteria.Length)
+        {
+            var character = criteria[index++];
+            if (character == '"')
+            {
+                terminated = true;
+                break;
+            }
+
+            if (character == '\\')
+            {
+                if (index >= criteria.Length)
+                    return false;
+                character = criteria[index++];
+                if (character is not '\\' and not '"')
+                    return false;
+            }
+
+            if (character == '\0')
+                return false;
+            value.Append(character);
+        }
+
+        if (!terminated)
+            return false;
+        if (index < criteria.Length
+            && criteria[index] != ' '
+            && criteria[index] != ')')
+        {
+            return false;
+        }
+
+        tokens.Add(new SearchToken(SearchTokenKind.Atom, value.ToString()));
+        return true;
     }
 
     private static bool LooksLikeMessageSet(string value)

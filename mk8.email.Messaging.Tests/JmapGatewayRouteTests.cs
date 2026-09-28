@@ -107,7 +107,8 @@ public sealed class JmapGatewayRouteTests
             };
             const string requestDocument =
                 """
-                {"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
+                {"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail",
+                          "urn:ietf:params:jmap:submission","urn:ietf:params:jmap:contacts"],
                  "methodCalls":[["Mailbox/query",{"x":1,"X":2,"nested":{"items":[1,null,"text"],"key":3,"Key":4,"reference":"#made"}},"call-1"],
                    ["Core/echo",{"#copied":{"resultOf":"call-1","name":"Mailbox/query","path":"/nested/items/2"}},"call-2"],
                    ["Mailbox/query",{"#collision":{"resultOf":"call-1","name":"Mailbox/query","path":"/�~02"}},"call-3"],
@@ -115,7 +116,13 @@ public sealed class JmapGatewayRouteTests
                      "ids":["M22222222222222222222222222222222","M33333333333333333333333333333333","M22222222222222222222222222222222"],
                      "properties":["name","myRights"]},"call-4"],
                    ["Mailbox/changes",{"accountId":"A11111111111111111111111111111111",
-                     "sinceState":"s0","maxChanges":2},"call-5"]],
+                     "sinceState":"s0","maxChanges":2},"call-5"],
+                   ["Thread/changes",{"accountId":"A11111111111111111111111111111111","sinceState":"s0"},"call-6"],
+                   ["Email/changes",{"accountId":"A11111111111111111111111111111111","sinceState":"s0"},"call-7"],
+                   ["Identity/changes",{"accountId":"A11111111111111111111111111111111","sinceState":"s0"},"call-8"],
+                   ["EmailSubmission/changes",{"accountId":"A11111111111111111111111111111111","sinceState":"s0"},"call-9"],
+                   ["AddressBook/changes",{"accountId":"A11111111111111111111111111111111","sinceState":"s0"},"call-10"],
+                   ["ContactCard/changes",{"accountId":"A11111111111111111111111111111111","sinceState":"s0"},"call-11"]],
                  "createdIds":{"made":"object-id"}}
                 """;
             using var request = new HttpRequestMessage(HttpMethod.Post, "/jmap/api")
@@ -152,11 +159,12 @@ public sealed class JmapGatewayRouteTests
             Assert.AreEqual("person@example.test", jmap.Request?.Authentication.Username);
             Assert.AreEqual("route-password-secret", jmap.Request?.Authentication.Secret);
             Assert.IsNotNull(jmap.Request?.Command);
-            CollectionAssert.AreEqual(new[] { MailFeature.Basic, MailFeature.Messages }, jmap.Request.Command.Features.ToArray());
-            Assert.AreEqual(4, jmap.Executions);
+            CollectionAssert.AreEqual(new[] { MailFeature.Basic, MailFeature.Messages, MailFeature.Submission,
+                MailFeature.Contacts }, jmap.Request.Command.Features.ToArray());
+            Assert.AreEqual(10, jmap.Executions);
             Assert.AreEqual("second", jmap.Commands[1].Arguments["collision"]!.GetValue<string>());
             Assert.IsFalse(jmap.Commands[1].Arguments.ContainsKey("#collision"));
-            Assert.AreEqual(5, jmap.Plan?.Plan?.OperationCount);
+            Assert.AreEqual(11, jmap.Plan?.Plan?.OperationCount);
             Assert.AreEqual(MailOperationKind.FindFolders, jmap.Request.Command.Operation);
             Assert.AreEqual("text", jmap.Request.Command.Arguments["nested"]?["items"]?[2]?.GetValue<string>());
             Assert.AreEqual(1, jmap.Request.Command.Arguments["x"]!.GetValue<int>());
@@ -205,6 +213,29 @@ public sealed class JmapGatewayRouteTests
             Assert.AreEqual("s42", changesResponse[1].GetProperty("newState").GetString());
             Assert.AreEqual("M22222222222222222222222222222222",
                 changesResponse[1].GetProperty("created")[0].GetString());
+            var changeOperations = new[]
+            {
+                MailOperationKind.ReadThreadChanges, MailOperationKind.ReadMessageChanges,
+                MailOperationKind.ReadSenderIdentityChanges, MailOperationKind.ReadSubmissionChanges,
+                MailOperationKind.ReadAddressBookChanges, MailOperationKind.ReadContactChanges,
+            };
+            var changeNames = new[]
+            {
+                "Thread/changes", "Email/changes", "Identity/changes",
+                "EmailSubmission/changes", "AddressBook/changes", "ContactCard/changes",
+            };
+            for (var index = 0; index < changeOperations.Length; index++)
+            {
+                Assert.AreEqual(changeOperations[index], jmap.Commands[index + 4].Operation);
+                Assert.IsTrue(jmap.Commands[index + 4].Arguments.ContainsKey("sinceState"));
+                var displayed = json.RootElement.GetProperty("methodResponses")[index + 5];
+                Assert.AreEqual(changeNames[index], displayed[0].GetString());
+                Assert.AreEqual($"call-{index + 6}", displayed[2].GetString());
+                Assert.AreEqual("s42", displayed[1].GetProperty("newState").GetString());
+                Assert.AreEqual(1, displayed[1].GetProperty("created").GetArrayLength());
+                Assert.AreEqual(changeOperations[index] == MailOperationKind.ReadContactChanges,
+                    displayed[1].TryGetProperty("updatedProperties", out _));
+            }
 
             await using var countCommand = gatewayDataSource.CreateCommand(
                 "SELECT count(*), count(*) FILTER (WHERE metadata ->> 'layer' = 'presentation') "
@@ -213,7 +244,7 @@ public sealed class JmapGatewayRouteTests
             Assert.IsTrue(await countReader.ReadAsync(timeout.Token));
             // SSE records its headers and streamed body separately, in addition
             // to the request and two application-boundary records.
-            Assert.AreEqual(21L, countReader.GetInt64(0));
+            Assert.AreEqual(33L, countReader.GetInt64(0));
             Assert.AreEqual(7L, countReader.GetInt64(1));
 
             await using var operationCommand = gatewayDataSource.CreateCommand(
@@ -293,13 +324,24 @@ public sealed class JmapGatewayRouteTests
                     OperationResult: new(new(MailOperationKind.ReadFolders, ApplicationValueCodec.Encode(node)),
                         request.Command.KnownEntities!, Profile)));
             }
-            if (request.Command.Operation == MailOperationKind.ReadFolderChanges)
+            if (MailChangeOperations.TryGetFeature(request.Command.Operation, out _))
             {
-                var changes = new MailFolderChangesResult(MailFolderChangesStatus.Ok, "s0", "s42", false,
-                    ["M22222222222222222222222222222222"], [], []);
+                var objectId = request.Command.Operation switch
+                {
+                    MailOperationKind.ReadFolderChanges => "M22222222222222222222222222222222",
+                    MailOperationKind.ReadThreadChanges => "T22222222222222222222222222222222",
+                    MailOperationKind.ReadMessageChanges => "E22222222222222222222222222222222",
+                    MailOperationKind.ReadSenderIdentityChanges => "I22222222222222222222222222222222",
+                    MailOperationKind.ReadSubmissionChanges => "S22222222222222222222222222222222",
+                    MailOperationKind.ReadAddressBookChanges => "D22222222222222222222222222222222",
+                    MailOperationKind.ReadContactChanges => "C22222222222222222222222222222222",
+                    _ => throw new InvalidOperationException(),
+                };
+                var changes = new MailChangesResult(MailChangesStatus.Ok, "s0", "s42", false,
+                    [objectId], [], []);
                 var node = JsonSerializer.SerializeToNode(changes, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
                 return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                    OperationResult: new(new(MailOperationKind.ReadFolderChanges, ApplicationValueCodec.Encode(node)),
+                    OperationResult: new(new(request.Command.Operation, ApplicationValueCodec.Encode(node)),
                         request.Command.KnownEntities!, Profile)));
             }
             var data = (System.Text.Json.Nodes.JsonObject)request.Command.Arguments.DeepClone();

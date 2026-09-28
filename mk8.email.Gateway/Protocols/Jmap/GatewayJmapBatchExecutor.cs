@@ -88,7 +88,7 @@ internal static class GatewayJmapBatchExecutor
             return new("invalidArguments", null, null);
         }
         GatewayMailboxGetCodec.Call? folderCall = null;
-        GatewayMailboxChangesCodec.Call? changesCall = null;
+        GatewayMailChangesCodec.Call? changesCall = null;
         JsonObject payload = arguments;
         if (invocation.Operation == MailOperationKind.ReadFolders && features.Contains(MailFeature.Messages))
         {
@@ -97,9 +97,10 @@ internal static class GatewayJmapBatchExecutor
             payload = JsonSerializer.SerializeToNode(folderCall!.Command, FolderJsonOptions)?.AsObject()
                 ?? throw new InvalidOperationException("Could not encode the folder read command.");
         }
-        else if (invocation.Operation == MailOperationKind.ReadFolderChanges && features.Contains(MailFeature.Messages))
+        else if (MailChangeOperations.TryGetFeature(invocation.Operation, out var changeFeature)
+            && features.Contains(changeFeature))
         {
-            if (!GatewayMailboxChangesCodec.TryParse(arguments, out changesCall, out var failure))
+            if (!GatewayMailChangesCodec.TryParse(arguments, invocation.Operation, out changesCall, out var failure))
                 return new(failure ?? "invalidArguments", null, null);
             payload = JsonSerializer.SerializeToNode(changesCall!.Command, FolderJsonOptions)?.AsObject()
                 ?? throw new InvalidOperationException("Could not encode the folder changes command.");
@@ -128,7 +129,7 @@ internal static class GatewayJmapBatchExecutor
     private static (MailOperationKind Operation, JsonObject Data) DecodePrimary(
         MailOperationResponse response,
         GatewayMailboxGetCodec.Call? folderCall,
-        GatewayMailboxChangesCodec.Call? changesCall)
+        GatewayMailChangesCodec.Call? changesCall)
     {
         if (folderCall is null && changesCall is null)
             return (response.Operation, (JsonObject)ApplicationValueCodec.Decode(response.Data)!);
@@ -138,11 +139,11 @@ internal static class GatewayJmapBatchExecutor
             return (response.Operation, (JsonObject)ApplicationValueCodec.Decode(response.Data)!);
         if (changesCall is not null)
         {
-            if (response.Operation != MailOperationKind.ReadFolderChanges)
-                throw new InvalidOperationException("The Application returned a different folder changes operation.");
-            var changesResult = ApplicationValueCodec.Decode(response.Data)?.Deserialize<MailFolderChangesResult>(FolderJsonOptions)
-                ?? throw new InvalidOperationException("The Application returned an incomplete folder changes result.");
-            return GatewayMailboxChangesCodec.Render(changesCall, changesResult);
+            if (response.Operation != changesCall.Operation)
+                throw new InvalidOperationException("The Application returned a different mail changes operation.");
+            var changesResult = ApplicationValueCodec.Decode(response.Data)?.Deserialize<MailChangesResult>(FolderJsonOptions)
+                ?? throw new InvalidOperationException("The Application returned an incomplete mail changes result.");
+            return GatewayMailChangesCodec.Render(changesCall, changesResult);
         }
         if (response.Operation != MailOperationKind.ReadFolders)
             throw new InvalidOperationException("The Application returned a different folder read operation.");

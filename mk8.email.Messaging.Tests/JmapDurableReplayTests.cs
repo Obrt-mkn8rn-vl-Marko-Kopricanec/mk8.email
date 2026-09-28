@@ -32,6 +32,35 @@ namespace mk8.email.Messaging.Tests;
 public sealed class JmapDurableReplayTests
 {
     [TestMethod]
+    public async Task PostgreSqlChangeReaderPreservesContactAndIdentityLazyDefaults()
+    {
+        await using var rig = await Rig.CreateAsync();
+        using var scope = rig.Services.CreateScope();
+        var reader = scope.ServiceProvider.GetRequiredService<IMailChangesReader>();
+        await using var before = rig.Context();
+        Assert.AreEqual(0, await before.DavCollections.CountAsync());
+        Assert.AreEqual(0, await before.JmapIdentities.CountAsync());
+
+        var denied = await reader.ReadAsync(MailOperationKind.ReadAddressBookChanges,
+            new MailChangesCommand(rig.InboxId, "s0", null, false), rig.User, CancellationToken.None);
+        Assert.AreEqual(MailChangesStatus.AccountNotSupported, denied.Status);
+        await using var unchanged = rig.Context();
+        Assert.AreEqual(0, await unchanged.DavCollections.CountAsync());
+
+        var books = await reader.ReadAsync(MailOperationKind.ReadAddressBookChanges,
+            new MailChangesCommand(rig.InboxId, "s0", null, true), rig.User, CancellationToken.None);
+        Assert.AreEqual(MailChangesStatus.Ok, books.Status);
+        Assert.IsTrue(books.CreatedKeys.Any(key => key.StartsWith('D')));
+        var identities = await reader.ReadAsync(MailOperationKind.ReadSenderIdentityChanges,
+            new MailChangesCommand(rig.InboxId, "s0", null, true), rig.User, CancellationToken.None);
+        Assert.AreEqual(MailChangesStatus.Ok, identities.Status);
+        Assert.IsTrue(identities.CreatedKeys.Contains(JmapId.Identity(rig.InboxId)));
+        await using var after = rig.Context();
+        Assert.AreEqual(1, await after.DavCollections.CountAsync());
+        Assert.AreEqual(1, await after.JmapIdentities.CountAsync());
+    }
+
+    [TestMethod]
     public async Task TypedMailboxChangesReplaysItsCommittedStateAcrossWorkerRetries()
     {
         await using var rig = await Rig.CreateAsync();

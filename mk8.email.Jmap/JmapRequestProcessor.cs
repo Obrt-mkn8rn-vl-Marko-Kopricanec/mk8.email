@@ -17,6 +17,7 @@ public sealed class JmapRequestProcessor
     private readonly IReadOnlyDictionary<MailOperationKind, IJmapMethod> _methods;
     private readonly JmapAccountProfileService _sessions;
     private readonly IMailFolderReader _folderReader;
+    private readonly IMailChangesReader _changesReader;
     private readonly EmailDbContext _database;
     private readonly EnvironmentConfig _environment;
     private readonly LargeObjectTransactionEffects _blobEffects;
@@ -36,7 +37,7 @@ public sealed class JmapRequestProcessor
         LargeObjectTransactionEffects blobEffects,
         ILogger<JmapRequestProcessor> logger,
         ApplicationOperationReceiptStore? receipts = null)
-        : this(methods, sessions, database, environment, blobEffects, logger, receipts, null)
+        : this(methods, sessions, database, environment, blobEffects, logger, receipts, null, null)
     {
     }
 
@@ -48,7 +49,8 @@ public sealed class JmapRequestProcessor
         LargeObjectTransactionEffects blobEffects,
         ILogger<JmapRequestProcessor> logger,
         ApplicationOperationReceiptStore? receipts,
-        IMailFolderReader? folderReader)
+        IMailFolderReader? folderReader,
+        IMailChangesReader? changesReader)
     {
         _methods = methods.ToDictionary(method => ValidRegisteredOperation(method.Operation, method.Feature));
         _sessions = sessions;
@@ -60,6 +62,15 @@ public sealed class JmapRequestProcessor
         }
         else
             _folderReader = folderReader;
+        if (changesReader is null)
+        {
+            var accountService = new JmapAccountService(database);
+            _changesReader = new MailChangesReader(accountService,
+                new JmapStateService(database, accountService),
+                new JmapIdentityService(database, accountService), database, environment);
+        }
+        else
+            _changesReader = changesReader;
         _database = database;
         _environment = environment;
         _blobEffects = blobEffects;
@@ -118,23 +129,38 @@ public sealed class JmapRequestProcessor
                 return new MailOperationResponse(MailOperationKind.ReadFolders, ApplicationValueCodec.Encode(data));
             }, receiptKey, cancellationToken).ConfigureAwait(false);
         }
-        else if (command.Operation == MailOperationKind.ReadFolderChanges && features.Contains(MailFeature.Messages))
-        {
-            var changesCommand = ParseFolderChangesCommand(command.Arguments);
-            response = await InvokeAtomicallyAsync(command.Operation, context, async token =>
-            {
-                var result = await _folderReader.ReadChangesAsync(changesCommand, user, token).ConfigureAwait(false);
-                var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
-                    ?? throw new InvalidOperationException("The folder changes reader returned an incomplete result.");
-                return new MailOperationResponse(MailOperationKind.ReadFolderChanges, ApplicationValueCodec.Encode(data));
-            }, receiptKey, cancellationToken).ConfigureAwait(false);
-        }
+        else if (MailChangeOperations.TryGetFeature(command.Operation, out var changeFeature)
+            && features.Contains(changeFeature))
+            response = await ExecuteChangesAsync(command, context, user, receiptKey, cancellationToken)
+                .ConfigureAwait(false);
         else
         {
             response = EncodeResponse(JmapMethodResponse.Error("unknownMethod"));
         }
         var profile = await _sessions.GetProfileAsync(user, cancellationToken).ConfigureAwait(false);
         return new MailOperationResult(response, createdIds, profile);
+    }
+
+    private async Task<MailOperationResponse> ExecuteChangesAsync(
+        MailOperationCommand command,
+        JmapInvocationContext context,
+        AuthenticatedMailUser user,
+        ApplicationReceiptKey? receiptKey,
+        CancellationToken cancellationToken)
+    {
+        var changesCommand = ParseMailChangesCommand(command.Arguments);
+        if (command.Operation is not (MailOperationKind.ReadAddressBookChanges
+                or MailOperationKind.ReadContactChanges)
+            && !changesCommand.AccountReferenceEligible)
+            throw NotRequest("The mail changes account reference is invalid.");
+        return await InvokeAtomicallyAsync(command.Operation, context, async token =>
+        {
+            var result = await _changesReader.ReadAsync(command.Operation, changesCommand, user, token)
+                .ConfigureAwait(false);
+            var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
+                ?? throw new InvalidOperationException("The mail changes reader returned an incomplete result.");
+            return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
+        }, receiptKey, cancellationToken).ConfigureAwait(false);
     }
 
     private static MailFolderReadCommand ParseFolderCommand(JsonObject arguments)
@@ -153,22 +179,23 @@ public sealed class JmapRequestProcessor
         }
     }
 
-    private static MailFolderChangesCommand ParseFolderChangesCommand(JsonObject arguments)
+    private static MailChangesCommand ParseMailChangesCommand(JsonObject arguments)
     {
-        if (arguments.Count != 3 || !arguments.ContainsKey("accountId")
-            || !arguments.ContainsKey("sinceState") || !arguments.ContainsKey("maxChanges"))
-            throw NotRequest("The folder changes command has an invalid shape.");
+        if (arguments.Count != 4 || !arguments.ContainsKey("accountId")
+            || !arguments.ContainsKey("sinceState") || !arguments.ContainsKey("maxChanges")
+            || !arguments.ContainsKey("accountReferenceEligible"))
+            throw NotRequest("The mail changes command has an invalid shape.");
         try
         {
-            var command = JsonSerializer.Deserialize<MailFolderChangesCommand>(arguments, ReceiptJsonOptions)
-                ?? throw NotRequest("The folder changes command is missing.");
+            var command = JsonSerializer.Deserialize<MailChangesCommand>(arguments, ReceiptJsonOptions)
+                ?? throw NotRequest("The mail changes command is missing.");
             if (command.SinceState is null || command.MaxChanges is < 1 or > 9_007_199_254_740_991)
-                throw NotRequest("The folder changes command contains invalid values.");
+                throw NotRequest("The mail changes command contains invalid values.");
             return command;
         }
         catch (JsonException)
         {
-            throw NotRequest("The folder changes command contains invalid values.");
+            throw NotRequest("The mail changes command contains invalid values.");
         }
     }
 

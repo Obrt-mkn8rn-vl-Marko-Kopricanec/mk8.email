@@ -3,11 +3,11 @@ using mk8.email.Contracts.Messaging;
 
 namespace mk8.email.Jmap;
 
-internal interface IMailFolderReader
+internal interface IMailChangesReader
 {
-    Task<MailFolderReadResult> ReadAsync(
-        MailFolderReadCommand command,
+    Task<MailChangesResult> ReadAsync(
+        MailOperationKind operation,
+        MailChangesCommand command,
         AuthenticatedMailUser user,
         CancellationToken cancellationToken);
-
 }

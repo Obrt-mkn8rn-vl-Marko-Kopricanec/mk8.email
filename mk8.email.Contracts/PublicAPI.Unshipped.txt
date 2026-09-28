@@ -1,6 +1,6 @@
 #nullable enable
-const mk8.email.Contracts.Messaging.ApplicationOperations.MailOperationExecute = "mail.operation.execute.v4" -> string!
-const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v11" -> string!
+const mk8.email.Contracts.Messaging.ApplicationOperations.MailOperationExecute = "mail.operation.execute.v5" -> string!
+const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v12" -> string!
 mk8.email.Contracts.Messaging.DistributedContractVersions
 mk8.email.Contracts.Messaging.JmapAccountProfile
 mk8.email.Contracts.Messaging.JmapAccountProfile.<Clone>$() -> mk8.email.Contracts.Messaging.JmapAccountProfile!
@@ -88,40 +88,44 @@ mk8.email.Contracts.Messaging.MailAdmissionPlan.Features.init -> void
 mk8.email.Contracts.Messaging.MailAdmissionPlan.MailAdmissionPlan(System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailFeature>! Features, int OperationCount) -> void
 mk8.email.Contracts.Messaging.MailAdmissionPlan.OperationCount.get -> int
 mk8.email.Contracts.Messaging.MailAdmissionPlan.OperationCount.init -> void
-mk8.email.Contracts.Messaging.MailFolderChangesCommand
-mk8.email.Contracts.Messaging.MailFolderChangesCommand.<Clone>$() -> mk8.email.Contracts.Messaging.MailFolderChangesCommand!
-mk8.email.Contracts.Messaging.MailFolderChangesCommand.AccountId.get -> System.Guid
-mk8.email.Contracts.Messaging.MailFolderChangesCommand.AccountId.init -> void
-mk8.email.Contracts.Messaging.MailFolderChangesCommand.Deconstruct(out System.Guid AccountId, out string! SinceState, out long? MaxChanges) -> void
-mk8.email.Contracts.Messaging.MailFolderChangesCommand.Equals(mk8.email.Contracts.Messaging.MailFolderChangesCommand? other) -> bool
-mk8.email.Contracts.Messaging.MailFolderChangesCommand.MailFolderChangesCommand(System.Guid AccountId, string! SinceState, long? MaxChanges) -> void
-mk8.email.Contracts.Messaging.MailFolderChangesCommand.MaxChanges.get -> long?
-mk8.email.Contracts.Messaging.MailFolderChangesCommand.MaxChanges.init -> void
-mk8.email.Contracts.Messaging.MailFolderChangesCommand.SinceState.get -> string!
-mk8.email.Contracts.Messaging.MailFolderChangesCommand.SinceState.init -> void
-mk8.email.Contracts.Messaging.MailFolderChangesResult
-mk8.email.Contracts.Messaging.MailFolderChangesResult.<Clone>$() -> mk8.email.Contracts.Messaging.MailFolderChangesResult!
-mk8.email.Contracts.Messaging.MailFolderChangesResult.CreatedKeys.get -> System.Collections.Generic.IReadOnlyList<string!>!
-mk8.email.Contracts.Messaging.MailFolderChangesResult.CreatedKeys.init -> void
-mk8.email.Contracts.Messaging.MailFolderChangesResult.Deconstruct(out mk8.email.Contracts.Messaging.MailFolderChangesStatus Status, out string? OldState, out string? NewState, out bool HasMoreChanges, out System.Collections.Generic.IReadOnlyList<string!>! CreatedKeys, out System.Collections.Generic.IReadOnlyList<string!>! UpdatedKeys, out System.Collections.Generic.IReadOnlyList<string!>! DestroyedKeys) -> void
-mk8.email.Contracts.Messaging.MailFolderChangesResult.DestroyedKeys.get -> System.Collections.Generic.IReadOnlyList<string!>!
-mk8.email.Contracts.Messaging.MailFolderChangesResult.DestroyedKeys.init -> void
-mk8.email.Contracts.Messaging.MailFolderChangesResult.Equals(mk8.email.Contracts.Messaging.MailFolderChangesResult? other) -> bool
-mk8.email.Contracts.Messaging.MailFolderChangesResult.HasMoreChanges.get -> bool
-mk8.email.Contracts.Messaging.MailFolderChangesResult.HasMoreChanges.init -> void
-mk8.email.Contracts.Messaging.MailFolderChangesResult.MailFolderChangesResult(mk8.email.Contracts.Messaging.MailFolderChangesStatus Status, string? OldState, string? NewState, bool HasMoreChanges, System.Collections.Generic.IReadOnlyList<string!>! CreatedKeys, System.Collections.Generic.IReadOnlyList<string!>! UpdatedKeys, System.Collections.Generic.IReadOnlyList<string!>! DestroyedKeys) -> void
-mk8.email.Contracts.Messaging.MailFolderChangesResult.NewState.get -> string?
-mk8.email.Contracts.Messaging.MailFolderChangesResult.NewState.init -> void
-mk8.email.Contracts.Messaging.MailFolderChangesResult.OldState.get -> string?
-mk8.email.Contracts.Messaging.MailFolderChangesResult.OldState.init -> void
-mk8.email.Contracts.Messaging.MailFolderChangesResult.Status.get -> mk8.email.Contracts.Messaging.MailFolderChangesStatus
-mk8.email.Contracts.Messaging.MailFolderChangesResult.Status.init -> void
-mk8.email.Contracts.Messaging.MailFolderChangesResult.UpdatedKeys.get -> System.Collections.Generic.IReadOnlyList<string!>!
-mk8.email.Contracts.Messaging.MailFolderChangesResult.UpdatedKeys.init -> void
-mk8.email.Contracts.Messaging.MailFolderChangesStatus
-mk8.email.Contracts.Messaging.MailFolderChangesStatus.AccountNotFound = 1 -> mk8.email.Contracts.Messaging.MailFolderChangesStatus
-mk8.email.Contracts.Messaging.MailFolderChangesStatus.CannotCalculateChanges = 2 -> mk8.email.Contracts.Messaging.MailFolderChangesStatus
-mk8.email.Contracts.Messaging.MailFolderChangesStatus.Ok = 0 -> mk8.email.Contracts.Messaging.MailFolderChangesStatus
+mk8.email.Contracts.Messaging.MailChangeOperations
+mk8.email.Contracts.Messaging.MailChangesCommand
+mk8.email.Contracts.Messaging.MailChangesCommand.<Clone>$() -> mk8.email.Contracts.Messaging.MailChangesCommand!
+mk8.email.Contracts.Messaging.MailChangesCommand.AccountId.get -> System.Guid
+mk8.email.Contracts.Messaging.MailChangesCommand.AccountId.init -> void
+mk8.email.Contracts.Messaging.MailChangesCommand.AccountReferenceEligible.get -> bool
+mk8.email.Contracts.Messaging.MailChangesCommand.AccountReferenceEligible.init -> void
+mk8.email.Contracts.Messaging.MailChangesCommand.Deconstruct(out System.Guid AccountId, out string! SinceState, out long? MaxChanges, out bool AccountReferenceEligible) -> void
+mk8.email.Contracts.Messaging.MailChangesCommand.Equals(mk8.email.Contracts.Messaging.MailChangesCommand? other) -> bool
+mk8.email.Contracts.Messaging.MailChangesCommand.MailChangesCommand(System.Guid AccountId, string! SinceState, long? MaxChanges, bool AccountReferenceEligible) -> void
+mk8.email.Contracts.Messaging.MailChangesCommand.MaxChanges.get -> long?
+mk8.email.Contracts.Messaging.MailChangesCommand.MaxChanges.init -> void
+mk8.email.Contracts.Messaging.MailChangesCommand.SinceState.get -> string!
+mk8.email.Contracts.Messaging.MailChangesCommand.SinceState.init -> void
+mk8.email.Contracts.Messaging.MailChangesResult
+mk8.email.Contracts.Messaging.MailChangesResult.<Clone>$() -> mk8.email.Contracts.Messaging.MailChangesResult!
+mk8.email.Contracts.Messaging.MailChangesResult.CreatedKeys.get -> System.Collections.Generic.IReadOnlyList<string!>!
+mk8.email.Contracts.Messaging.MailChangesResult.CreatedKeys.init -> void
+mk8.email.Contracts.Messaging.MailChangesResult.Deconstruct(out mk8.email.Contracts.Messaging.MailChangesStatus Status, out string? OldState, out string? NewState, out bool HasMoreChanges, out System.Collections.Generic.IReadOnlyList<string!>! CreatedKeys, out System.Collections.Generic.IReadOnlyList<string!>! UpdatedKeys, out System.Collections.Generic.IReadOnlyList<string!>! DestroyedKeys) -> void
+mk8.email.Contracts.Messaging.MailChangesResult.DestroyedKeys.get -> System.Collections.Generic.IReadOnlyList<string!>!
+mk8.email.Contracts.Messaging.MailChangesResult.DestroyedKeys.init -> void
+mk8.email.Contracts.Messaging.MailChangesResult.Equals(mk8.email.Contracts.Messaging.MailChangesResult? other) -> bool
+mk8.email.Contracts.Messaging.MailChangesResult.HasMoreChanges.get -> bool
+mk8.email.Contracts.Messaging.MailChangesResult.HasMoreChanges.init -> void
+mk8.email.Contracts.Messaging.MailChangesResult.MailChangesResult(mk8.email.Contracts.Messaging.MailChangesStatus Status, string? OldState, string? NewState, bool HasMoreChanges, System.Collections.Generic.IReadOnlyList<string!>! CreatedKeys, System.Collections.Generic.IReadOnlyList<string!>! UpdatedKeys, System.Collections.Generic.IReadOnlyList<string!>! DestroyedKeys) -> void
+mk8.email.Contracts.Messaging.MailChangesResult.NewState.get -> string?
+mk8.email.Contracts.Messaging.MailChangesResult.NewState.init -> void
+mk8.email.Contracts.Messaging.MailChangesResult.OldState.get -> string?
+mk8.email.Contracts.Messaging.MailChangesResult.OldState.init -> void
+mk8.email.Contracts.Messaging.MailChangesResult.Status.get -> mk8.email.Contracts.Messaging.MailChangesStatus
+mk8.email.Contracts.Messaging.MailChangesResult.Status.init -> void
+mk8.email.Contracts.Messaging.MailChangesResult.UpdatedKeys.get -> System.Collections.Generic.IReadOnlyList<string!>!
+mk8.email.Contracts.Messaging.MailChangesResult.UpdatedKeys.init -> void
+mk8.email.Contracts.Messaging.MailChangesStatus
+mk8.email.Contracts.Messaging.MailChangesStatus.AccountNotFound = 1 -> mk8.email.Contracts.Messaging.MailChangesStatus
+mk8.email.Contracts.Messaging.MailChangesStatus.AccountNotSupported = 2 -> mk8.email.Contracts.Messaging.MailChangesStatus
+mk8.email.Contracts.Messaging.MailChangesStatus.CannotCalculateChanges = 3 -> mk8.email.Contracts.Messaging.MailChangesStatus
+mk8.email.Contracts.Messaging.MailChangesStatus.Ok = 0 -> mk8.email.Contracts.Messaging.MailChangesStatus
 mk8.email.Contracts.Messaging.MailFolderReadCommand
 mk8.email.Contracts.Messaging.MailFolderReadCommand.<Clone>$() -> mk8.email.Contracts.Messaging.MailFolderReadCommand!
 mk8.email.Contracts.Messaging.MailFolderReadCommand.AccountId.get -> System.Guid
@@ -207,12 +211,12 @@ override mk8.email.Contracts.Messaging.JmapPushMessage.ToString() -> string!
 override mk8.email.Contracts.Messaging.JmapServiceLimits.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.JmapServiceLimits.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.JmapServiceLimits.ToString() -> string!
-override mk8.email.Contracts.Messaging.MailFolderChangesCommand.Equals(object? obj) -> bool
-override mk8.email.Contracts.Messaging.MailFolderChangesCommand.GetHashCode() -> int
-override mk8.email.Contracts.Messaging.MailFolderChangesCommand.ToString() -> string!
-override mk8.email.Contracts.Messaging.MailFolderChangesResult.Equals(object? obj) -> bool
-override mk8.email.Contracts.Messaging.MailFolderChangesResult.GetHashCode() -> int
-override mk8.email.Contracts.Messaging.MailFolderChangesResult.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailChangesCommand.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailChangesCommand.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailChangesCommand.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailChangesResult.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailChangesResult.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailChangesResult.ToString() -> string!
 override mk8.email.Contracts.Messaging.MailFolderReadCommand.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.MailFolderReadCommand.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.MailFolderReadCommand.ToString() -> string!
@@ -395,10 +399,11 @@ mk8.email.Contracts.Messaging.MailOperationApplicationRequest.Authentication.get
 mk8.email.Contracts.Messaging.MailOperationApplicationRequest.Authentication.init -> void
 mk8.email.Contracts.Messaging.MailOperationApplicationRequest
 override mk8.email.Contracts.Messaging.MailOperationApplicationRequest.ToString() -> string!
-static mk8.email.Contracts.Messaging.MailFolderChangesCommand.operator !=(mk8.email.Contracts.Messaging.MailFolderChangesCommand? left, mk8.email.Contracts.Messaging.MailFolderChangesCommand? right) -> bool
-static mk8.email.Contracts.Messaging.MailFolderChangesCommand.operator ==(mk8.email.Contracts.Messaging.MailFolderChangesCommand? left, mk8.email.Contracts.Messaging.MailFolderChangesCommand? right) -> bool
-static mk8.email.Contracts.Messaging.MailFolderChangesResult.operator !=(mk8.email.Contracts.Messaging.MailFolderChangesResult? left, mk8.email.Contracts.Messaging.MailFolderChangesResult? right) -> bool
-static mk8.email.Contracts.Messaging.MailFolderChangesResult.operator ==(mk8.email.Contracts.Messaging.MailFolderChangesResult? left, mk8.email.Contracts.Messaging.MailFolderChangesResult? right) -> bool
+static mk8.email.Contracts.Messaging.MailChangeOperations.TryGetFeature(mk8.email.Contracts.Messaging.MailOperationKind operation, out mk8.email.Contracts.Messaging.MailFeature feature) -> bool
+static mk8.email.Contracts.Messaging.MailChangesCommand.operator !=(mk8.email.Contracts.Messaging.MailChangesCommand? left, mk8.email.Contracts.Messaging.MailChangesCommand? right) -> bool
+static mk8.email.Contracts.Messaging.MailChangesCommand.operator ==(mk8.email.Contracts.Messaging.MailChangesCommand? left, mk8.email.Contracts.Messaging.MailChangesCommand? right) -> bool
+static mk8.email.Contracts.Messaging.MailChangesResult.operator !=(mk8.email.Contracts.Messaging.MailChangesResult? left, mk8.email.Contracts.Messaging.MailChangesResult? right) -> bool
+static mk8.email.Contracts.Messaging.MailChangesResult.operator ==(mk8.email.Contracts.Messaging.MailChangesResult? left, mk8.email.Contracts.Messaging.MailChangesResult? right) -> bool
 static mk8.email.Contracts.Messaging.MailFolderReadCommand.operator !=(mk8.email.Contracts.Messaging.MailFolderReadCommand? left, mk8.email.Contracts.Messaging.MailFolderReadCommand? right) -> bool
 static mk8.email.Contracts.Messaging.MailFolderReadCommand.operator ==(mk8.email.Contracts.Messaging.MailFolderReadCommand? left, mk8.email.Contracts.Messaging.MailFolderReadCommand? right) -> bool
 static mk8.email.Contracts.Messaging.MailFolderReadResult.operator !=(mk8.email.Contracts.Messaging.MailFolderReadResult? left, mk8.email.Contracts.Messaging.MailFolderReadResult? right) -> bool

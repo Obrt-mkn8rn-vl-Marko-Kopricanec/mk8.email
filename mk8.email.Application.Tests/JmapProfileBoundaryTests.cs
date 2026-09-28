@@ -36,7 +36,7 @@ public sealed class JmapProfileBoundaryTests
             .GetProfileAsync(fixture.User);
         var gateway = Gateway("https://edge.example.test/mail");
         var session = GatewayJmapProfileCodec.Render(profile, gateway);
-        var batch = await scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>().ProcessAsync(
+        var batch = await JmapFixture.ProcessBatchAsync(scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>(),
             new JmapApplicationBatch([MailFeature.Basic],
                 [new JmapApplicationCall(MailOperationKind.Echo, new JsonObject { ["ok"] = true }, "one")]), fixture.User);
         var response = GatewayJmapBatchCodec.Render(batch, gateway);

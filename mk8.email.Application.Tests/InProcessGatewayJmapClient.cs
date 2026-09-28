@@ -13,10 +13,15 @@ internal sealed class InProcessGatewayJmapClient(IServiceScopeFactory scopes)
         CancellationToken cancellationToken = default) =>
         InvokeAsync(service => service.GetProfileAsync(request, cancellationToken));
 
-    public Task<JmapApplicationResult> ExecuteBatchAsync(
-        JmapBatchApplicationRequest request,
+    public Task<JmapApplicationResult> ValidatePlanAsync(
+        MailPlanApplicationRequest request,
         CancellationToken cancellationToken = default) =>
-        InvokeAsync(service => service.ExecuteBatchAsync(request, Guid.CreateVersion7(), cancellationToken));
+        InvokeAsync(service => service.ValidatePlanAsync(request, cancellationToken));
+
+    public Task<JmapApplicationResult> ExecuteOperationAsync(
+        MailOperationApplicationRequest request,
+        CancellationToken cancellationToken = default) =>
+        InvokeAsync(service => service.ExecuteOperationAsync(request, Guid.CreateVersion7(), cancellationToken));
 
     public Task<JmapApplicationResult> UploadAsync(
         JmapUploadApplicationRequest request,

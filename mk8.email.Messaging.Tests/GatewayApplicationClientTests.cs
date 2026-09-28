@@ -163,6 +163,58 @@ public sealed class GatewayApplicationClientTests
         TimeSpan.FromSeconds(10),
         TimeSpan.FromSeconds(10));
 
+    [TestMethod]
+    public async Task OnePresentationDeadlineClipsEveryDurableOperationAndNestedScopes()
+    {
+        var requests = new StubRequestClient(request => new ApplicationResponse(request.Id, "application/json",
+            "true"u8.ToArray(), new Dictionary<string, string>()));
+        var journal = new StubTrafficJournal();
+        var transport = new GatewayApplicationTransport(requests, journal, TestOptions());
+        DateTimeOffset bounded;
+        using (GatewayApplicationDeadline.Begin(TimeSpan.FromSeconds(3)))
+        {
+            bounded = GatewayApplicationDeadline.Clip(DateTimeOffset.MaxValue);
+            await transport.SendAsync<object, bool>("jmap", ApplicationOperations.MailPlanValidate, new { });
+            Assert.AreEqual(bounded, requests.Request!.Deadline);
+            using (GatewayApplicationDeadline.Begin(TimeSpan.FromSeconds(20)))
+                Assert.AreEqual(bounded, GatewayApplicationDeadline.Clip(DateTimeOffset.MaxValue));
+            await transport.SendAsync<object, bool>("jmap", ApplicationOperations.MailOperationExecute, new { });
+            Assert.AreEqual(bounded, requests.Request!.Deadline);
+        }
+        Assert.AreEqual(DateTimeOffset.MaxValue, GatewayApplicationDeadline.Clip(DateTimeOffset.MaxValue));
+        Assert.HasCount(4, journal.Records);
+    }
+
+    [TestMethod]
+    public async Task ExpiredPresentationDeadlineJournalsRejectionWithoutQueuingWork()
+    {
+        var requests = new StubRequestClient(_ => throw new AssertFailedException("Expired work was queued."));
+        var journal = new StubTrafficJournal();
+        var transport = new GatewayApplicationTransport(requests, journal, TestOptions());
+        using var deadline = GatewayApplicationDeadline.Begin(TimeSpan.FromSeconds(-1));
+        var failure = await Assert.ThrowsExactlyAsync<GatewayApplicationException>(
+            () => transport.SendAsync<object, bool>("jmap", ApplicationOperations.MailOperationExecute, new { }));
+        Assert.AreEqual("application-timeout", failure.Code);
+        Assert.IsTrue(failure.IsUnavailable);
+        Assert.IsNull(requests.Request);
+        Assert.HasCount(2, journal.Records);
+        StringAssert.Contains(Encoding.UTF8.GetString(journal.Records[1].Payload), "application-timeout");
+    }
+
+    [TestMethod]
+    public async Task ParallelPresentationDeadlineScopesAreIsolated()
+    {
+        async Task<DateTimeOffset> ScopedAsync(int seconds)
+        {
+            using var scope = GatewayApplicationDeadline.Begin(TimeSpan.FromSeconds(seconds));
+            await Task.Yield();
+            return GatewayApplicationDeadline.Clip(DateTimeOffset.MaxValue);
+        }
+        var values = await Task.WhenAll(ScopedAsync(2), ScopedAsync(20));
+        Assert.IsTrue(values[1] - values[0] > TimeSpan.FromSeconds(15));
+        Assert.AreEqual(DateTimeOffset.MaxValue, GatewayApplicationDeadline.Clip(DateTimeOffset.MaxValue));
+    }
+
     private static GatewayApplicationClient CreateClient(
         IApplicationRequestClient requests,
         IGatewayTrafficJournal journal,

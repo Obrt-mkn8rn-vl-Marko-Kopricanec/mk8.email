@@ -38,7 +38,6 @@ public static class JmapServiceExtensions
         services.AddHostedService(provider => provider.GetRequiredService<JmapPushWorker>());
         services.AddScoped<EmailSetMethod>();
         services.AddScoped<JmapRequestProcessor>();
-        services.AddScoped<IJmapMethod, CoreEchoMethod>();
         services.AddScoped<IJmapMethod, MailboxGetMethod>();
         services.AddScoped<IJmapMethod, MailboxChangesMethod>();
         services.AddScoped<IJmapMethod, MailboxQueryMethod>();

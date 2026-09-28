@@ -28,31 +28,46 @@ internal sealed class JmapApplicationService(
         return new JmapApplicationResult(JmapApplicationOutcomes.Ok, Profile: profile);
     }
 
-    public async Task<JmapApplicationResult> ExecuteBatchAsync(
-        JmapBatchApplicationRequest request,
-        Guid operationId,
+    public async Task<JmapApplicationResult> ValidatePlanAsync(
+        MailPlanApplicationRequest request,
         CancellationToken cancellationToken = default)
     {
         var user = await AuthenticateAsync(request.Authentication, cancellationToken).ConfigureAwait(false);
         if (user is null)
             return Unauthorized();
 
+        var profile = await sessions.GetProfileAsync(user, cancellationToken).ConfigureAwait(false);
         try
         {
             using var lease = await concurrency.AcquireRequestAsync(cancellationToken).ConfigureAwait(false);
-            if (request.Batch is null)
-            {
-                processor.ValidatePreflight(request.Preflight);
-                return new JmapApplicationResult(JmapApplicationOutcomes.Ok);
-            }
-            var response = await processor.ProcessAsync(request.Batch, user, operationId, cancellationToken).ConfigureAwait(false);
-            return new JmapApplicationResult(JmapApplicationOutcomes.Ok, Batch: response);
+            processor.ValidatePreflight(request.Plan);
+            return new JmapApplicationResult(JmapApplicationOutcomes.Ok, Profile: profile);
         }
         catch (MailApplicationException exception)
         {
             return new JmapApplicationResult(
                 JmapApplicationOutcomes.Ok,
-                Failure: exception.Failure);
+                Failure: exception.Failure, Profile: profile);
+        }
+    }
+
+    public async Task<JmapApplicationResult> ExecuteOperationAsync(
+        MailOperationApplicationRequest request,
+        Guid operationId,
+        CancellationToken cancellationToken = default)
+    {
+        var user = await AuthenticateAsync(request.Authentication, cancellationToken).ConfigureAwait(false);
+        if (user is null)
+            return Unauthorized();
+        try
+        {
+            using var lease = await concurrency.AcquireRequestAsync(cancellationToken).ConfigureAwait(false);
+            var result = await processor.ExecuteAsync(request.Command, user, operationId, cancellationToken).ConfigureAwait(false);
+            return new JmapApplicationResult(JmapApplicationOutcomes.Ok, OperationResult: result);
+        }
+        catch (MailApplicationException exception)
+        {
+            return new JmapApplicationResult(JmapApplicationOutcomes.Ok, Failure: exception.Failure);
         }
     }
 

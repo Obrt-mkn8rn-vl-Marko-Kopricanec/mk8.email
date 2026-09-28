@@ -44,7 +44,7 @@ internal static class GatewayJmapProfileCodec
             ["maxSizeUpload"] = Math.Min(limits.MaxUploadSizeBytes, gateway.MaxUploadSizeBytes),
             ["maxConcurrentUpload"] = limits.MaxConcurrentUploads,
             ["maxSizeRequest"] = Math.Min(limits.MaxRequestSizeBytes, gateway.MaxRequestSizeBytes),
-            ["maxConcurrentRequests"] = limits.MaxConcurrentRequests,
+            ["maxConcurrentRequests"] = Math.Min(limits.MaxConcurrentRequests, gateway.MaxConcurrentRequests),
             ["maxCallsInRequest"] = limits.MaxCallsInRequest,
             ["maxObjectsInGet"] = limits.MaxObjectsInGet,
             ["maxObjectsInSet"] = limits.MaxObjectsInSet,

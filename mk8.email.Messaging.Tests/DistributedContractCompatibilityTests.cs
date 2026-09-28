@@ -32,6 +32,8 @@ public sealed class DistributedContractCompatibilityTests
     [DataRow("jmap.batch.execute.v4", false, true)]
     [DataRow("jmap.batch.execute.v5", false, false)]
     [DataRow("jmap.batch.execute.v5", false, true)]
+    [DataRow("jmap.batch.execute.v6", false, false)]
+    [DataRow("jmap.batch.execute.v6", false, true)]
     [DataRow("jmap.profile.get", false, false)]
     [DataRow("jmap.profile.get", false, true)]
     [DataRow("jmap.upload", false, false)]
@@ -70,6 +72,7 @@ public sealed class DistributedContractCompatibilityTests
     [DataRow("jmap.batch.execute.v2", false)]
     [DataRow("webpush.send", true)]
     [DataRow("jmap.batch.execute.v5", false)]
+    [DataRow("jmap.batch.execute.v6", false)]
     [DataRow("jmap.profile.get", false)]
     [DataRow("jmap.upload", false)]
     [DataRow("jmap.download", false)]
@@ -106,7 +109,7 @@ public sealed class DistributedContractCompatibilityTests
         using var protector = AesGcmPayloadProtectorTests.CreateProtector("test", "compatible-key");
         var application = new PostgresApplicationBus(source, protector);
         var presentation = new PostgresPresentationBus(source, protector);
-        await application.EnqueueAsync(Request(ApplicationOperations.JmapBatchExecute));
+        await application.EnqueueAsync(Request(ApplicationOperations.MailOperationExecute));
         await presentation.EnqueueAsync(Request(WebPushPresentationOperations.Send));
         Assert.IsTrue(await Control(source).IsAvailableAsync());
         var current = await application.TryClaimAsync("current-role");

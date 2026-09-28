@@ -1,9 +1,9 @@
 using System.Text.Json.Nodes;
 using mk8.email.Contracts.Messaging;
 
-namespace mk8.email.Jmap;
+namespace mk8.email.Gateway.Protocols.Jmap;
 
-internal static class ApplicationArgumentBindingResolver
+internal static class GatewayJmapArgumentBindingResolver
 {
     public static bool TryResolve(
         JmapApplicationCall call,

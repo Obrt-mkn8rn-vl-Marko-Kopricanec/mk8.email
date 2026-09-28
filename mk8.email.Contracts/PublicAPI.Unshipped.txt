@@ -1,5 +1,5 @@
 #nullable enable
-const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v7" -> string!
+const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v8" -> string!
 mk8.email.Contracts.Messaging.ApplicationArgumentBinding
 mk8.email.Contracts.Messaging.ApplicationArgumentBinding.<Clone>$() -> mk8.email.Contracts.Messaging.ApplicationArgumentBinding!
 mk8.email.Contracts.Messaging.ApplicationArgumentBinding.ApplicationArgumentBinding(string! Target, string! SourceCorrelationId, mk8.email.Contracts.Messaging.MailOperationKind SourceOperation, mk8.email.Contracts.Messaging.ApplicationValuePathSegment![]! Path, mk8.email.Contracts.Messaging.ApplicationBindingFailure Failure = mk8.email.Contracts.Messaging.ApplicationBindingFailure.None) -> void
@@ -110,12 +110,10 @@ mk8.email.Contracts.Messaging.JmapApplicationProfile.Limits.get -> mk8.email.Con
 mk8.email.Contracts.Messaging.JmapApplicationProfile.Limits.init -> void
 mk8.email.Contracts.Messaging.JmapApplicationProfile.Username.get -> string!
 mk8.email.Contracts.Messaging.JmapApplicationProfile.Username.init -> void
-mk8.email.Contracts.Messaging.JmapApplicationResult.Batch.get -> mk8.email.Contracts.Messaging.JmapApplicationBatchResult?
-mk8.email.Contracts.Messaging.JmapApplicationResult.Batch.init -> void
 mk8.email.Contracts.Messaging.JmapApplicationResult.Changes.get -> mk8.email.Contracts.Messaging.JmapApplicationChanges?
 mk8.email.Contracts.Messaging.JmapApplicationResult.Changes.init -> void
-mk8.email.Contracts.Messaging.JmapApplicationResult.Deconstruct(out string! Outcome, out byte[]? Content, out string? ContentType, out string? BlobId, out long? Size, out long? Cursor, out mk8.email.Contracts.Messaging.MailApplicationFailure? Failure, out mk8.email.Contracts.Messaging.JmapApplicationBatchResult? Batch, out mk8.email.Contracts.Messaging.JmapApplicationProfile? Profile, out mk8.email.Contracts.Messaging.JmapApplicationChanges? Changes) -> void
-mk8.email.Contracts.Messaging.JmapApplicationResult.JmapApplicationResult(string! Outcome, byte[]? Content = null, string? ContentType = null, string? BlobId = null, long? Size = null, long? Cursor = null, mk8.email.Contracts.Messaging.MailApplicationFailure? Failure = null, mk8.email.Contracts.Messaging.JmapApplicationBatchResult? Batch = null, mk8.email.Contracts.Messaging.JmapApplicationProfile? Profile = null, mk8.email.Contracts.Messaging.JmapApplicationChanges? Changes = null) -> void
+mk8.email.Contracts.Messaging.JmapApplicationResult.Deconstruct(out string! Outcome, out byte[]? Content, out string? ContentType, out string? BlobId, out long? Size, out long? Cursor, out mk8.email.Contracts.Messaging.MailApplicationFailure? Failure, out mk8.email.Contracts.Messaging.MailOperationResult? OperationResult, out mk8.email.Contracts.Messaging.JmapApplicationProfile? Profile, out mk8.email.Contracts.Messaging.JmapApplicationChanges? Changes) -> void
+mk8.email.Contracts.Messaging.JmapApplicationResult.JmapApplicationResult(string! Outcome, byte[]? Content = null, string? ContentType = null, string? BlobId = null, long? Size = null, long? Cursor = null, mk8.email.Contracts.Messaging.MailApplicationFailure? Failure = null, mk8.email.Contracts.Messaging.MailOperationResult? OperationResult = null, mk8.email.Contracts.Messaging.JmapApplicationProfile? Profile = null, mk8.email.Contracts.Messaging.JmapApplicationChanges? Changes = null) -> void
 mk8.email.Contracts.Messaging.JmapApplicationResult.Profile.get -> mk8.email.Contracts.Messaging.JmapApplicationProfile?
 mk8.email.Contracts.Messaging.JmapApplicationResult.Profile.init -> void
 mk8.email.Contracts.Messaging.JmapBatchApplicationRequest
@@ -254,7 +252,6 @@ static mk8.email.Contracts.Messaging.JmapPushMessage.operator ==(mk8.email.Contr
 static mk8.email.Contracts.Messaging.JmapServiceLimits.operator !=(mk8.email.Contracts.Messaging.JmapServiceLimits? left, mk8.email.Contracts.Messaging.JmapServiceLimits? right) -> bool
 static mk8.email.Contracts.Messaging.JmapServiceLimits.operator ==(mk8.email.Contracts.Messaging.JmapServiceLimits? left, mk8.email.Contracts.Messaging.JmapServiceLimits? right) -> bool
 *REMOVED*const mk8.email.Contracts.Messaging.ApplicationOperations.JmapBatchExecute = "jmap.batch.execute.v4" -> string!
-const mk8.email.Contracts.Messaging.ApplicationOperations.JmapBatchExecute = "jmap.batch.execute.v6" -> string!
 mk8.email.Contracts.Messaging.MailOperationKind
 mk8.email.Contracts.Messaging.MailOperationKind.None = 0 -> mk8.email.Contracts.Messaging.MailOperationKind
 mk8.email.Contracts.Messaging.MailOperationKind.Failure = 1 -> mk8.email.Contracts.Messaging.MailOperationKind
@@ -363,3 +360,134 @@ override mk8.email.Contracts.Messaging.MailApplicationFailure.GetHashCode() -> i
 override mk8.email.Contracts.Messaging.MailApplicationFailure.ToString() -> string!
 static mk8.email.Contracts.Messaging.MailApplicationFailure.operator !=(mk8.email.Contracts.Messaging.MailApplicationFailure? left, mk8.email.Contracts.Messaging.MailApplicationFailure? right) -> bool
 static mk8.email.Contracts.Messaging.MailApplicationFailure.operator ==(mk8.email.Contracts.Messaging.MailApplicationFailure? left, mk8.email.Contracts.Messaging.MailApplicationFailure? right) -> bool
+const mk8.email.Contracts.Messaging.ApplicationOperations.MailOperationExecute = "mail.operation.execute" -> string!
+const mk8.email.Contracts.Messaging.ApplicationOperations.MailPlanValidate = "mail.plan.validate" -> string!
+mk8.email.Contracts.Messaging.ApplicationValue.Kind.get -> mk8.email.Contracts.Messaging.ApplicationValueKind
+mk8.email.Contracts.Messaging.ApplicationValue.Kind.init -> void
+mk8.email.Contracts.Messaging.ApplicationValue.CodeUnits.get -> System.ReadOnlyMemory<byte>?
+mk8.email.Contracts.Messaging.ApplicationValue.Number.get -> string?
+mk8.email.Contracts.Messaging.ApplicationValue.Number.init -> void
+mk8.email.Contracts.Messaging.ApplicationValue.CodeUnits.init -> void
+mk8.email.Contracts.Messaging.ApplicationValue.Members.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.ApplicationValueMember!>?
+mk8.email.Contracts.Messaging.ApplicationValue.Members.init -> void
+mk8.email.Contracts.Messaging.ApplicationValue.Items.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.ApplicationValue!>?
+mk8.email.Contracts.Messaging.ApplicationValue.Items.init -> void
+mk8.email.Contracts.Messaging.ApplicationValue.Boolean.get -> bool?
+mk8.email.Contracts.Messaging.ApplicationValue.Boolean.init -> void
+mk8.email.Contracts.Messaging.ApplicationValue
+override mk8.email.Contracts.Messaging.ApplicationValue.ToString() -> string!
+static mk8.email.Contracts.Messaging.ApplicationValue.operator !=(mk8.email.Contracts.Messaging.ApplicationValue? left, mk8.email.Contracts.Messaging.ApplicationValue? right) -> bool
+static mk8.email.Contracts.Messaging.ApplicationValue.operator ==(mk8.email.Contracts.Messaging.ApplicationValue? left, mk8.email.Contracts.Messaging.ApplicationValue? right) -> bool
+override mk8.email.Contracts.Messaging.ApplicationValue.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.ApplicationValue.Equals(object? obj) -> bool
+mk8.email.Contracts.Messaging.ApplicationValue.Equals(mk8.email.Contracts.Messaging.ApplicationValue? other) -> bool
+mk8.email.Contracts.Messaging.ApplicationValue.<Clone>$() -> mk8.email.Contracts.Messaging.ApplicationValue!
+mk8.email.Contracts.Messaging.ApplicationValue.Deconstruct(out mk8.email.Contracts.Messaging.ApplicationValueKind Kind, out System.ReadOnlyMemory<byte>? CodeUnits, out string? Number, out bool? Boolean, out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.ApplicationValueMember!>? Members, out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.ApplicationValue!>? Items, out string? Text) -> void
+mk8.email.Contracts.Messaging.ApplicationValueCodec
+mk8.email.Contracts.Messaging.ApplicationValueKind
+mk8.email.Contracts.Messaging.ApplicationValueKind.None = 0 -> mk8.email.Contracts.Messaging.ApplicationValueKind
+mk8.email.Contracts.Messaging.ApplicationValueKind.Null = 1 -> mk8.email.Contracts.Messaging.ApplicationValueKind
+mk8.email.Contracts.Messaging.ApplicationValueKind.Map = 2 -> mk8.email.Contracts.Messaging.ApplicationValueKind
+mk8.email.Contracts.Messaging.ApplicationValueKind.Array = 3 -> mk8.email.Contracts.Messaging.ApplicationValueKind
+mk8.email.Contracts.Messaging.ApplicationValueKind.Text = 4 -> mk8.email.Contracts.Messaging.ApplicationValueKind
+mk8.email.Contracts.Messaging.ApplicationValueKind.Boolean = 6 -> mk8.email.Contracts.Messaging.ApplicationValueKind
+mk8.email.Contracts.Messaging.ApplicationValueKind.Number = 5 -> mk8.email.Contracts.Messaging.ApplicationValueKind
+mk8.email.Contracts.Messaging.ApplicationValueMember
+override mk8.email.Contracts.Messaging.ApplicationValueMember.ToString() -> string!
+static mk8.email.Contracts.Messaging.ApplicationValueMember.operator !=(mk8.email.Contracts.Messaging.ApplicationValueMember? left, mk8.email.Contracts.Messaging.ApplicationValueMember? right) -> bool
+static mk8.email.Contracts.Messaging.ApplicationValueMember.operator ==(mk8.email.Contracts.Messaging.ApplicationValueMember? left, mk8.email.Contracts.Messaging.ApplicationValueMember? right) -> bool
+override mk8.email.Contracts.Messaging.ApplicationValueMember.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.ApplicationValueMember.Equals(object? obj) -> bool
+mk8.email.Contracts.Messaging.ApplicationValueMember.Equals(mk8.email.Contracts.Messaging.ApplicationValueMember? other) -> bool
+mk8.email.Contracts.Messaging.ApplicationValueMember.<Clone>$() -> mk8.email.Contracts.Messaging.ApplicationValueMember!
+mk8.email.Contracts.Messaging.ApplicationValueMember.Deconstruct(out System.ReadOnlyMemory<byte> NameCodeUnits, out mk8.email.Contracts.Messaging.ApplicationValue! Value) -> void
+mk8.email.Contracts.Messaging.ApplicationValueMember.NameCodeUnits.get -> System.ReadOnlyMemory<byte>
+mk8.email.Contracts.Messaging.ApplicationValueMember.NameCodeUnits.init -> void
+mk8.email.Contracts.Messaging.ApplicationValueMember.Value.get -> mk8.email.Contracts.Messaging.ApplicationValue!
+mk8.email.Contracts.Messaging.ApplicationValueMember.Value.init -> void
+mk8.email.Contracts.Messaging.JmapApplicationResult.OperationResult.get -> mk8.email.Contracts.Messaging.MailOperationResult?
+mk8.email.Contracts.Messaging.JmapApplicationResult.OperationResult.init -> void
+mk8.email.Contracts.Messaging.MailOperationApplicationRequest.Authentication.get -> mk8.email.Contracts.Messaging.ProtocolAuthentication!
+mk8.email.Contracts.Messaging.MailOperationApplicationRequest.Authentication.init -> void
+mk8.email.Contracts.Messaging.MailOperationApplicationRequest
+override mk8.email.Contracts.Messaging.MailOperationApplicationRequest.ToString() -> string!
+static mk8.email.Contracts.Messaging.MailOperationApplicationRequest.operator !=(mk8.email.Contracts.Messaging.MailOperationApplicationRequest? left, mk8.email.Contracts.Messaging.MailOperationApplicationRequest? right) -> bool
+static mk8.email.Contracts.Messaging.MailOperationApplicationRequest.operator ==(mk8.email.Contracts.Messaging.MailOperationApplicationRequest? left, mk8.email.Contracts.Messaging.MailOperationApplicationRequest? right) -> bool
+override mk8.email.Contracts.Messaging.MailOperationApplicationRequest.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailOperationApplicationRequest.Equals(object? obj) -> bool
+mk8.email.Contracts.Messaging.MailOperationApplicationRequest.Equals(mk8.email.Contracts.Messaging.MailOperationApplicationRequest? other) -> bool
+mk8.email.Contracts.Messaging.MailOperationApplicationRequest.<Clone>$() -> mk8.email.Contracts.Messaging.MailOperationApplicationRequest!
+mk8.email.Contracts.Messaging.MailOperationApplicationRequest.Deconstruct(out mk8.email.Contracts.Messaging.ProtocolAuthentication! Authentication, out mk8.email.Contracts.Messaging.MailOperationCommand! Command) -> void
+mk8.email.Contracts.Messaging.MailOperationApplicationRequest.Command.get -> mk8.email.Contracts.Messaging.MailOperationCommand!
+mk8.email.Contracts.Messaging.MailOperationApplicationRequest.Command.init -> void
+mk8.email.Contracts.Messaging.MailOperationCommand.Features.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailFeature>!
+mk8.email.Contracts.Messaging.MailOperationCommand.Features.init -> void
+mk8.email.Contracts.Messaging.MailOperationCommand.Operation.get -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationCommand.Operation.init -> void
+mk8.email.Contracts.Messaging.MailOperationCommand.Arguments.get -> System.Text.Json.Nodes.JsonObject!
+mk8.email.Contracts.Messaging.MailOperationCommand.Arguments.init -> void
+mk8.email.Contracts.Messaging.MailOperationCommand
+override mk8.email.Contracts.Messaging.MailOperationCommand.ToString() -> string!
+mk8.email.Contracts.Messaging.MailOperationCommand.KnownEntities.get -> System.Collections.Generic.IReadOnlyDictionary<string!, string!>?
+mk8.email.Contracts.Messaging.MailOperationCommand.KnownEntities.init -> void
+static mk8.email.Contracts.Messaging.MailOperationCommand.operator !=(mk8.email.Contracts.Messaging.MailOperationCommand? left, mk8.email.Contracts.Messaging.MailOperationCommand? right) -> bool
+static mk8.email.Contracts.Messaging.MailOperationCommand.operator ==(mk8.email.Contracts.Messaging.MailOperationCommand? left, mk8.email.Contracts.Messaging.MailOperationCommand? right) -> bool
+override mk8.email.Contracts.Messaging.MailOperationCommand.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailOperationCommand.Equals(object? obj) -> bool
+mk8.email.Contracts.Messaging.MailOperationCommand.Equals(mk8.email.Contracts.Messaging.MailOperationCommand? other) -> bool
+mk8.email.Contracts.Messaging.MailOperationCommand.<Clone>$() -> mk8.email.Contracts.Messaging.MailOperationCommand!
+mk8.email.Contracts.Messaging.MailOperationCommand.Deconstruct(out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailFeature>! Features, out mk8.email.Contracts.Messaging.MailOperationKind Operation, out System.Text.Json.Nodes.JsonObject! Arguments, out System.Collections.Generic.IReadOnlyDictionary<string!, string!>? KnownEntities) -> void
+mk8.email.Contracts.Messaging.MailOperationResponse.Data.get -> mk8.email.Contracts.Messaging.ApplicationValue!
+mk8.email.Contracts.Messaging.MailOperationResponse.Data.init -> void
+mk8.email.Contracts.Messaging.MailOperationResponse.Operation.get -> mk8.email.Contracts.Messaging.MailOperationKind
+mk8.email.Contracts.Messaging.MailOperationResponse.Operation.init -> void
+mk8.email.Contracts.Messaging.MailOperationResponse.AdditionalResults.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailOperationResponse!>?
+mk8.email.Contracts.Messaging.MailOperationResponse.AdditionalResults.init -> void
+mk8.email.Contracts.Messaging.MailOperationResult.Response.get -> mk8.email.Contracts.Messaging.MailOperationResponse!
+mk8.email.Contracts.Messaging.MailOperationResult.Response.init -> void
+mk8.email.Contracts.Messaging.MailOperationResult.KnownEntities.get -> System.Collections.Generic.IReadOnlyDictionary<string!, string!>!
+mk8.email.Contracts.Messaging.MailOperationResult.Profile.get -> mk8.email.Contracts.Messaging.JmapApplicationProfile!
+mk8.email.Contracts.Messaging.MailOperationResult.KnownEntities.init -> void
+mk8.email.Contracts.Messaging.MailOperationResult.Profile.init -> void
+mk8.email.Contracts.Messaging.MailOperationResponse
+override mk8.email.Contracts.Messaging.MailOperationResponse.ToString() -> string!
+static mk8.email.Contracts.Messaging.MailOperationResponse.operator !=(mk8.email.Contracts.Messaging.MailOperationResponse? left, mk8.email.Contracts.Messaging.MailOperationResponse? right) -> bool
+static mk8.email.Contracts.Messaging.MailOperationResponse.operator ==(mk8.email.Contracts.Messaging.MailOperationResponse? left, mk8.email.Contracts.Messaging.MailOperationResponse? right) -> bool
+override mk8.email.Contracts.Messaging.MailOperationResponse.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailOperationResponse.Equals(object? obj) -> bool
+mk8.email.Contracts.Messaging.MailOperationResponse.Equals(mk8.email.Contracts.Messaging.MailOperationResponse? other) -> bool
+mk8.email.Contracts.Messaging.MailOperationResponse.<Clone>$() -> mk8.email.Contracts.Messaging.MailOperationResponse!
+mk8.email.Contracts.Messaging.MailOperationResponse.Deconstruct(out mk8.email.Contracts.Messaging.MailOperationKind Operation, out mk8.email.Contracts.Messaging.ApplicationValue! Data, out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailOperationResponse!>? AdditionalResults) -> void
+mk8.email.Contracts.Messaging.MailPlanApplicationRequest.Authentication.get -> mk8.email.Contracts.Messaging.ProtocolAuthentication!
+mk8.email.Contracts.Messaging.MailPlanApplicationRequest.Authentication.init -> void
+mk8.email.Contracts.Messaging.MailOperationResult
+override mk8.email.Contracts.Messaging.MailOperationResult.ToString() -> string!
+static mk8.email.Contracts.Messaging.MailOperationResult.operator !=(mk8.email.Contracts.Messaging.MailOperationResult? left, mk8.email.Contracts.Messaging.MailOperationResult? right) -> bool
+static mk8.email.Contracts.Messaging.MailOperationResult.operator ==(mk8.email.Contracts.Messaging.MailOperationResult? left, mk8.email.Contracts.Messaging.MailOperationResult? right) -> bool
+override mk8.email.Contracts.Messaging.MailOperationResult.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailOperationResult.Equals(object? obj) -> bool
+mk8.email.Contracts.Messaging.MailOperationResult.Equals(mk8.email.Contracts.Messaging.MailOperationResult? other) -> bool
+mk8.email.Contracts.Messaging.MailOperationResult.<Clone>$() -> mk8.email.Contracts.Messaging.MailOperationResult!
+mk8.email.Contracts.Messaging.MailOperationResult.Deconstruct(out mk8.email.Contracts.Messaging.MailOperationResponse! Response, out System.Collections.Generic.IReadOnlyDictionary<string!, string!>! KnownEntities, out mk8.email.Contracts.Messaging.JmapApplicationProfile! Profile) -> void
+mk8.email.Contracts.Messaging.MailPlanApplicationRequest
+mk8.email.Contracts.Messaging.MailPlanApplicationRequest.Plan.get -> mk8.email.Contracts.Messaging.JmapBatchPreflight?
+override mk8.email.Contracts.Messaging.MailPlanApplicationRequest.ToString() -> string!
+mk8.email.Contracts.Messaging.MailPlanApplicationRequest.Plan.init -> void
+static mk8.email.Contracts.Messaging.MailPlanApplicationRequest.operator !=(mk8.email.Contracts.Messaging.MailPlanApplicationRequest? left, mk8.email.Contracts.Messaging.MailPlanApplicationRequest? right) -> bool
+static mk8.email.Contracts.Messaging.MailPlanApplicationRequest.operator ==(mk8.email.Contracts.Messaging.MailPlanApplicationRequest? left, mk8.email.Contracts.Messaging.MailPlanApplicationRequest? right) -> bool
+override mk8.email.Contracts.Messaging.MailPlanApplicationRequest.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailPlanApplicationRequest.Equals(object? obj) -> bool
+mk8.email.Contracts.Messaging.MailPlanApplicationRequest.Equals(mk8.email.Contracts.Messaging.MailPlanApplicationRequest? other) -> bool
+mk8.email.Contracts.Messaging.MailPlanApplicationRequest.<Clone>$() -> mk8.email.Contracts.Messaging.MailPlanApplicationRequest!
+mk8.email.Contracts.Messaging.MailPlanApplicationRequest.Deconstruct(out mk8.email.Contracts.Messaging.ProtocolAuthentication! Authentication, out mk8.email.Contracts.Messaging.JmapBatchPreflight? Plan) -> void
+mk8.email.Contracts.Messaging.MailPlanApplicationRequest.MailPlanApplicationRequest(mk8.email.Contracts.Messaging.ProtocolAuthentication! Authentication, mk8.email.Contracts.Messaging.JmapBatchPreflight? Plan = null) -> void
+mk8.email.Contracts.Messaging.MailOperationResult.MailOperationResult(mk8.email.Contracts.Messaging.MailOperationResponse! Response, System.Collections.Generic.IReadOnlyDictionary<string!, string!>! KnownEntities, mk8.email.Contracts.Messaging.JmapApplicationProfile! Profile) -> void
+mk8.email.Contracts.Messaging.MailOperationResponse.MailOperationResponse(mk8.email.Contracts.Messaging.MailOperationKind Operation, mk8.email.Contracts.Messaging.ApplicationValue! Data, System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailOperationResponse!>? AdditionalResults = null) -> void
+mk8.email.Contracts.Messaging.MailOperationCommand.MailOperationCommand(System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailFeature>! Features, mk8.email.Contracts.Messaging.MailOperationKind Operation, System.Text.Json.Nodes.JsonObject! Arguments, System.Collections.Generic.IReadOnlyDictionary<string!, string!>? KnownEntities = null) -> void
+mk8.email.Contracts.Messaging.MailOperationApplicationRequest.MailOperationApplicationRequest(mk8.email.Contracts.Messaging.ProtocolAuthentication! Authentication, mk8.email.Contracts.Messaging.MailOperationCommand! Command) -> void
+mk8.email.Contracts.Messaging.ApplicationValueMember.ApplicationValueMember(System.ReadOnlyMemory<byte> NameCodeUnits, mk8.email.Contracts.Messaging.ApplicationValue! Value) -> void
+static mk8.email.Contracts.Messaging.ApplicationValueCodec.Encode(System.Text.Json.Nodes.JsonNode? value) -> mk8.email.Contracts.Messaging.ApplicationValue!
+static mk8.email.Contracts.Messaging.ApplicationValueCodec.Decode(mk8.email.Contracts.Messaging.ApplicationValue! value) -> System.Text.Json.Nodes.JsonNode?
+mk8.email.Contracts.Messaging.ApplicationValue.ApplicationValue(mk8.email.Contracts.Messaging.ApplicationValueKind Kind, System.ReadOnlyMemory<byte>? CodeUnits = null, string? Number = null, bool? Boolean = null, System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.ApplicationValueMember!>? Members = null, System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.ApplicationValue!>? Items = null, string? Text = null) -> void
+mk8.email.Contracts.Messaging.ApplicationValue.Text.get -> string?
+mk8.email.Contracts.Messaging.ApplicationValue.Text.init -> void

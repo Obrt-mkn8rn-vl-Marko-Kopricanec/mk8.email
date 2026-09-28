@@ -65,11 +65,11 @@ public sealed class JmapOperationBoundaryTests
         await using var fixture = await JmapFixture.CreateAsync();
         using var scope = fixture.Services.CreateScope();
         var methods = scope.ServiceProvider.GetServices<IJmapMethod>().ToArray();
-        Assert.HasCount(39, methods);
-        Assert.HasCount(39, methods.Select(method => method.Operation).Distinct().ToArray());
+        Assert.HasCount(38, methods);
+        Assert.HasCount(38, methods.Select(method => method.Operation).Distinct().ToArray());
         foreach (var method in methods)
             Assert.AreEqual(method.Operation, GatewayJmapOperationCodec.DecodeCall(GatewayJmapOperationCodec.Render(method.Operation)));
-        CollectionAssert.AreEquivalent(Enum.GetValues<MailOperationKind>().Except([MailOperationKind.None, MailOperationKind.Failure]).ToArray(),
+        CollectionAssert.AreEquivalent(Enum.GetValues<MailOperationKind>().Except([MailOperationKind.None, MailOperationKind.Failure, MailOperationKind.Echo]).ToArray(),
             methods.Select(method => method.Operation).ToArray());
     }
 
@@ -114,7 +114,7 @@ public sealed class JmapOperationBoundaryTests
         var transported = JsonSerializer.Deserialize<JmapApplicationBatch>(encoded, options)!;
         await using var fixture = await JmapFixture.CreateAsync();
         using var scope = fixture.Services.CreateScope();
-        var result = await scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>().ProcessAsync(transported, fixture.User);
+        var result = await JmapFixture.ProcessBatchAsync(scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>(), transported, fixture.User);
         Assert.AreEqual("unknownMethod", result.Invocations[1].Arguments["value"]!.GetValue<string>());
         Assert.AreEqual("invalidResultReference", result.Invocations[2].Arguments["type"]!.GetValue<string>());
         Assert.AreEqual("invalidResultReference", result.Invocations[3].Arguments["type"]!.GetValue<string>());
@@ -165,8 +165,8 @@ public sealed class JmapOperationBoundaryTests
         using var scope = fixture.Services.CreateScope();
         var batch = new JmapApplicationBatch([MailFeature.Basic],
             [new(MailOperationKind.FindFolders, new JsonObject(), "first"), new(operation, new JsonObject(), "invalid")]);
-        await Assert.ThrowsAsync<MailApplicationException>(() =>
-            scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>().ProcessAsync(batch, fixture.User));
+        await Assert.ThrowsAsync<GatewayJmapBatchCodec.RequestException>(() =>
+            JmapFixture.ProcessBatchAsync(scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>(), batch, fixture.User));
         Assert.AreEqual(0, calls);
     }
 
@@ -180,8 +180,8 @@ public sealed class JmapOperationBoundaryTests
         var batch = new JmapApplicationBatch([MailFeature.Basic],
             [new(MailOperationKind.FindFolders, new JsonObject(), "first"), new(MailOperationKind.Echo, new JsonObject(), "invalid",
                 [new("value", "first", (MailOperationKind)999, [])])]);
-        await Assert.ThrowsAsync<MailApplicationException>(() =>
-            scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>().ProcessAsync(batch, fixture.User));
+        await Assert.ThrowsAsync<GatewayJmapBatchCodec.RequestException>(() =>
+            JmapFixture.ProcessBatchAsync(scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>(), batch, fixture.User));
         Assert.AreEqual(0, calls);
     }
 

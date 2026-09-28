@@ -16,7 +16,7 @@ namespace mk8.email.Application.Tests;
 public sealed class JmapPresentationBoundaryTests
 {
     [TestMethod]
-    public async Task WorkerRejectsMalformedTypedBatchBeforeAnyInvocation()
+    public async Task GatewayRejectsMalformedTypedBatchBeforeAnyInvocation()
     {
         var count = 0;
         await using var fixture = await JmapFixture.CreateAsync(configureServices: services =>
@@ -26,23 +26,23 @@ public sealed class JmapPresentationBoundaryTests
         var batch = new JmapApplicationBatch([MailFeature.Basic],
             [new JmapApplicationCall(MailOperationKind.FindFolders, new JsonObject(), "first"),
              new JmapApplicationCall(MailOperationKind.Echo, null!, "second")]);
-        var exception = await Assert.ThrowsAsync<MailApplicationException>(() => processor.ProcessAsync(batch, fixture.User));
+        var exception = await Assert.ThrowsAsync<GatewayJmapBatchCodec.RequestException>(() => JmapFixture.ProcessBatchAsync(processor, batch, fixture.User));
 
-        Assert.AreEqual(MailFailureKind.MalformedBatch, exception.Failure.Kind);
+        Assert.AreEqual("urn:ietf:params:jmap:error:notRequest", exception.Problem.Type);
         Assert.AreEqual(0, count);
     }
 
     [TestMethod]
-    public async Task WorkerValidatesTypedCreationIdentifiersIndependently()
+    public async Task GatewayValidatesTypedCreationIdentifiersBeforeSequencing()
     {
         await using var fixture = await JmapFixture.CreateAsync();
         using var scope = fixture.Services.CreateScope();
         var processor = scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>();
         var batch = new JmapApplicationBatch([MailFeature.Basic], [],
             new Dictionary<string, string> { ["invalid key"] = "object-id" });
-        var exception = await Assert.ThrowsAsync<MailApplicationException>(() => processor.ProcessAsync(batch, fixture.User));
+        var exception = await Assert.ThrowsAsync<GatewayJmapBatchCodec.RequestException>(() => JmapFixture.ProcessBatchAsync(processor, batch, fixture.User));
 
-        Assert.AreEqual(MailFailureKind.MalformedBatch, exception.Failure.Kind);
+        Assert.AreEqual("urn:ietf:params:jmap:error:notRequest", exception.Problem.Type);
     }
 
     [TestMethod]

@@ -11,10 +11,15 @@ public sealed class GatewayJmapClient(IGatewayApplicationTransport transport)
         CancellationToken cancellationToken = default) =>
         SendAsync(ApplicationOperations.JmapProfileGet, request, cancellationToken);
 
-    public Task<JmapApplicationResult> ExecuteBatchAsync(
-        JmapBatchApplicationRequest request,
+    public Task<JmapApplicationResult> ValidatePlanAsync(
+        MailPlanApplicationRequest request,
         CancellationToken cancellationToken = default) =>
-        SendAsync(ApplicationOperations.JmapBatchExecute, request, cancellationToken);
+        SendAsync(ApplicationOperations.MailPlanValidate, request, cancellationToken);
+
+    public Task<JmapApplicationResult> ExecuteOperationAsync(
+        MailOperationApplicationRequest request,
+        CancellationToken cancellationToken = default) =>
+        SendAsync(ApplicationOperations.MailOperationExecute, request, cancellationToken);
 
     public Task<JmapApplicationResult> UploadAsync(
         JmapUploadApplicationRequest request,

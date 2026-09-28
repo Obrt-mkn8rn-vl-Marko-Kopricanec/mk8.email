@@ -19,6 +19,7 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = false,
+        MaxDepth = 256,
     };
     private IDavApplicationService Dav => services.GetRequiredService<IDavApplicationService>();
 
@@ -50,7 +51,8 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
                     await DispatchAdminAsync(request, cancellationToken).ConfigureAwait(false),
                 _ when operation.StartsWith("oauth.", StringComparison.Ordinal) =>
                     await DispatchOAuthAsync(request, cancellationToken).ConfigureAwait(false),
-                _ when operation.StartsWith("jmap.", StringComparison.Ordinal) =>
+                _ when operation.StartsWith("jmap.", StringComparison.Ordinal)
+                    || operation.StartsWith("mail.", StringComparison.Ordinal) =>
                     await DispatchJmapAsync(request, cancellationToken).ConfigureAwait(false),
                 _ when operation.StartsWith("dav.", StringComparison.Ordinal) =>
                     await DispatchDavAsync(request, cancellationToken).ConfigureAwait(false),
@@ -288,11 +290,16 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
                     .GetProfileAsync(
                         Deserialize<JmapProfileApplicationRequest>(request),
                         cancellationToken).ConfigureAwait(false)),
-            ApplicationOperations.JmapBatchExecute => Success(
+            ApplicationOperations.MailPlanValidate => Success(
                 request.Id,
                 await services.GetRequiredService<IJmapApplicationService>()
-                    .ExecuteBatchAsync(
-                        Deserialize<JmapBatchApplicationRequest>(request),
+                    .ValidatePlanAsync(Deserialize<MailPlanApplicationRequest>(request),
+                        cancellationToken).ConfigureAwait(false)),
+            ApplicationOperations.MailOperationExecute => Success(
+                request.Id,
+                await services.GetRequiredService<IJmapApplicationService>()
+                    .ExecuteOperationAsync(
+                        Deserialize<MailOperationApplicationRequest>(request),
                         request.Id,
                         cancellationToken).ConfigureAwait(false)),
             ApplicationOperations.JmapUpload => Success(

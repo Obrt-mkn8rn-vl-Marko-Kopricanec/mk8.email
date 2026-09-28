@@ -117,6 +117,7 @@ internal sealed class DavFixture : IAsyncDisposable
         builder.Services.AddDavProtocol();
         builder.Services.AddJmapApplication();
         builder.Services.AddSingleton<IGatewayJmapClient, InProcessGatewayJmapClient>();
+        builder.Services.AddSingleton<GatewayJmapBatchLimiter>();
         builder.Services.AddScoped<GatewayDavStore>();
         builder.Services.AddSingleton<IGatewayApplicationTransport, InProcessDavTransport>();
 

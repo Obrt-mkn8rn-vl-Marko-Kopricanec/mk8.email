@@ -34,7 +34,7 @@ public sealed class JmapArgumentBindingBoundaryTests
         var transported = JsonSerializer.Deserialize<JmapApplicationBatch>(JsonSerializer.Serialize(batch, options), options)!;
         await using var fixture = await JmapFixture.CreateAsync();
         using var scope = fixture.Services.CreateScope();
-        var result = await scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>().ProcessAsync(transported, fixture.User);
+        var result = await JmapFixture.ProcessBatchAsync(scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>(), transported, fixture.User);
         Assert.AreEqual("two", result.Invocations[1].Arguments["copied"]!.GetValue<string>());
         Assert.AreEqual(1, result.Invocations[0].Arguments["x"]!.GetValue<int>());
         Assert.AreEqual(2, result.Invocations[0].Arguments["X"]!.GetValue<int>());
@@ -165,9 +165,9 @@ public sealed class JmapArgumentBindingBoundaryTests
         var batch = new JmapApplicationBatch([MailFeature.Basic],
             [new JmapApplicationCall(MailOperationKind.FindFolders, new JsonObject(), "first"),
              new JmapApplicationCall(MailOperationKind.Echo, new JsonObject(), "second", [binding!])]);
-        var exception = await Assert.ThrowsAsync<MailApplicationException>(() =>
-            scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>().ProcessAsync(batch, fixture.User));
-        Assert.AreEqual(MailFailureKind.MalformedBatch, exception.Failure.Kind);
+        var exception = await Assert.ThrowsAsync<GatewayJmapBatchCodec.RequestException>(() =>
+            JmapFixture.ProcessBatchAsync(scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>(), batch, fixture.User));
+        Assert.AreEqual("urn:ietf:params:jmap:error:notRequest", exception.Problem.Type);
         Assert.AreEqual(0, calls);
     }
 

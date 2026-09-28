@@ -16,6 +16,7 @@ public sealed class GatewayApplicationTransport(
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = false,
+        MaxDepth = 256,
     };
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The durable presentation boundary keeps its ordered validation, journaling and failure handling together.")]
@@ -46,7 +47,7 @@ public sealed class GatewayApplicationTransport(
             payload,
             metadata,
             now,
-            now.Add(options.RequestTimeout),
+            GatewayApplicationDeadline.Clip(now.Add(options.RequestTimeout)),
             requestId.ToString("N"));
         try
         {
@@ -78,7 +79,13 @@ public sealed class GatewayApplicationTransport(
         ApplicationResponse response;
         try
         {
+            GatewayApplicationDeadline.ThrowIfExpired();
             response = await requests.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        }
+        catch (GatewayApplicationException exception) when (string.Equals(exception.Code, "application-timeout", StringComparison.Ordinal))
+        {
+            await AppendFailureAsync(protocol, sessionId, requestId, "application-timeout").ConfigureAwait(false);
+            throw;
         }
         catch (ApplicationRequestExpiredException exception)
         {

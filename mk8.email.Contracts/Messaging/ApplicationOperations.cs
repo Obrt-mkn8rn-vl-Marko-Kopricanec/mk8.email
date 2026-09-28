@@ -67,7 +67,8 @@ public static class ApplicationOperations
     public const string OAuthTokenRefresh = "oauth.token.refresh";
     public const string OAuthTokenRevoke = "oauth.token.revoke";
     public const string JmapProfileGet = "jmap.profile.get.v2";
-    public const string JmapBatchExecute = "jmap.batch.execute.v6";
+    public const string MailPlanValidate = "mail.plan.validate";
+    public const string MailOperationExecute = "mail.operation.execute";
     public const string JmapUpload = "jmap.upload.v2";
     public const string JmapDownload = "jmap.download.v2";
     public const string JmapChangesPoll = "jmap.changes.poll.v2";

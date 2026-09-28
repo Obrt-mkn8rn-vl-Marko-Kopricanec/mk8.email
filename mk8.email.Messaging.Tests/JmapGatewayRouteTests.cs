@@ -107,9 +107,10 @@ public sealed class JmapGatewayRouteTests
             };
             const string requestDocument =
                 """
-                {"using":["urn:ietf:params:jmap:core"],
-                 "methodCalls":[["Core/echo",{"x":1,"X":2,"nested":{"items":[1,null,"text"],"key":3,"Key":4}},"call-1"],
-                   ["Core/echo",{"#copied":{"resultOf":"call-1","name":"Core/echo","path":"/nested/items/2"}},"call-2"]],
+                {"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
+                 "methodCalls":[["Mailbox/get",{"x":1,"X":2,"nested":{"items":[1,null,"text"],"key":3,"Key":4}},"call-1"],
+                   ["Core/echo",{"#copied":{"resultOf":"call-1","name":"Mailbox/get","path":"/nested/items/2"}},"call-2"],
+                   ["Mailbox/get",{"#collision":{"resultOf":"call-1","name":"Mailbox/get","path":"/�~02"}},"call-3"]],
                  "createdIds":{"made":"object-id"}}
                 """;
             using var request = new HttpRequestMessage(HttpMethod.Post, "/jmap/api")
@@ -145,26 +146,21 @@ public sealed class JmapGatewayRouteTests
             Assert.AreEqual("https://email.example.test/jmap/api", discovery.RootElement.GetProperty("apiUrl").GetString());
             Assert.AreEqual("person@example.test", jmap.Request?.Authentication.Username);
             Assert.AreEqual("route-password-secret", jmap.Request?.Authentication.Secret);
-            Assert.IsNotNull(jmap.Request?.Batch);
-            CollectionAssert.AreEqual(new[] { MailFeature.Basic }, jmap.Request.Batch.Features);
-            Assert.AreEqual(2, jmap.Request.Batch.Invocations.Length);
-            Assert.AreEqual(MailOperationKind.Echo, jmap.Request.Batch.Invocations[0].Operation);
-            Assert.AreEqual("call-1", jmap.Request.Batch.Invocations[0].CorrelationId);
-            Assert.AreEqual("text", jmap.Request.Batch.Invocations[0].Arguments["nested"]?["items"]?[2]?.GetValue<string>());
-            Assert.AreEqual(1, jmap.Request.Batch.Invocations[0].Arguments["x"]!.GetValue<int>());
-            Assert.AreEqual(2, jmap.Request.Batch.Invocations[0].Arguments["X"]!.GetValue<int>());
-            Assert.AreEqual(3, jmap.Request.Batch.Invocations[0].Arguments["nested"]!["key"]!.GetValue<int>());
-            Assert.AreEqual(4, jmap.Request.Batch.Invocations[0].Arguments["nested"]!["Key"]!.GetValue<int>());
-            Assert.IsFalse(jmap.Request.Batch.Invocations[1].Arguments.ContainsKey("#copied"));
-            var binding = jmap.Request.Batch.Invocations[1].Bindings!.Single();
-            Assert.AreEqual("copied", binding.Target);
-            Assert.AreEqual("call-1", binding.SourceCorrelationId);
-            Assert.AreEqual(MailOperationKind.Echo, binding.SourceOperation);
-            CollectionAssert.AreEqual(new[] { "nested", "items", "2" }, binding.Path.Select(part => part.Property).ToArray());
-            Assert.AreEqual(2, binding.Path[2].ArrayIndex);
-            Assert.AreEqual("object-id", jmap.Request.Batch.CreatedIds?["made"]);
+            Assert.IsNotNull(jmap.Request?.Command);
+            CollectionAssert.AreEqual(new[] { MailFeature.Basic, MailFeature.Messages }, jmap.Request.Command.Features.ToArray());
+            Assert.AreEqual(2, jmap.Executions);
+            Assert.AreEqual("second", jmap.Commands[1].Arguments["collision"]!.GetValue<string>());
+            Assert.IsFalse(jmap.Commands[1].Arguments.ContainsKey("#collision"));
+            Assert.AreEqual(3, jmap.Plan?.Plan?.InvocationCount);
+            Assert.AreEqual(MailOperationKind.ReadFolders, jmap.Request.Command.Operation);
+            Assert.AreEqual("text", jmap.Request.Command.Arguments["nested"]?["items"]?[2]?.GetValue<string>());
+            Assert.AreEqual(1, jmap.Request.Command.Arguments["x"]!.GetValue<int>());
+            Assert.AreEqual(2, jmap.Request.Command.Arguments["X"]!.GetValue<int>());
+            Assert.AreEqual(3, jmap.Request.Command.Arguments["nested"]!["key"]!.GetValue<int>());
+            Assert.AreEqual(4, jmap.Request.Command.Arguments["nested"]!["Key"]!.GetValue<int>());
+            Assert.AreEqual("object-id", jmap.Request.Command.KnownEntities?["made"]);
             var invocation = json.RootElement.GetProperty("methodResponses")[0];
-            Assert.AreEqual("Core/echo", invocation[0].GetString());
+            Assert.AreEqual("Mailbox/get", invocation[0].GetString());
             Assert.AreEqual("call-1", invocation[2].GetString());
             Assert.AreEqual(JsonValueKind.Null, invocation[1].GetProperty("nested").GetProperty("items")[1].ValueKind);
             Assert.AreEqual(1, invocation[1].GetProperty("x").GetInt32());
@@ -182,14 +178,14 @@ public sealed class JmapGatewayRouteTests
             Assert.IsTrue(await countReader.ReadAsync(timeout.Token));
             // SSE records its headers and streamed body separately, in addition
             // to the request and two application-boundary records.
-            Assert.AreEqual(13L, countReader.GetInt64(0));
+            Assert.AreEqual(17L, countReader.GetInt64(0));
             Assert.AreEqual(7L, countReader.GetInt64(1));
 
             await using var operationCommand = gatewayDataSource.CreateCommand(
                 "SELECT operation FROM application_requests WHERE operation = @operation LIMIT 1");
-            operationCommand.Parameters.AddWithValue("operation", ApplicationOperations.JmapBatchExecute);
+            operationCommand.Parameters.AddWithValue("operation", ApplicationOperations.MailOperationExecute);
             Assert.AreEqual(
-                ApplicationOperations.JmapBatchExecute,
+                ApplicationOperations.MailOperationExecute,
                 await operationCommand.ExecuteScalarAsync(timeout.Token));
             await using var ciphertextCommand = gatewayDataSource.CreateCommand(
                 "SELECT payload_inline FROM gateway_traffic_records WHERE payload_inline IS NOT NULL");
@@ -229,28 +225,38 @@ public sealed class JmapGatewayRouteTests
             new JmapServiceLimits(10000, 1, 10000, 1, 64, 500, 500, 32, 255, 10000,
                 ["i;ascii-numeric"], ["receivedAt"]), []);
 
-        public JmapBatchApplicationRequest? Request { get; private set; }
+        public MailOperationApplicationRequest? Request { get; private set; }
 
         public Task<JmapApplicationResult> GetProfileAsync(
             JmapProfileApplicationRequest request,
             CancellationToken cancellationToken = default) =>
             Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, Profile: Profile));
 
-        public Task<JmapApplicationResult> ExecuteBatchAsync(
-            JmapBatchApplicationRequest request,
-            Guid operationId,
-            CancellationToken cancellationToken = default)
+        public MailPlanApplicationRequest? Plan { get; private set; }
+        public int Executions { get; private set; }
+        public List<MailOperationCommand> Commands { get; } = [];
+
+        public Task<JmapApplicationResult> ValidatePlanAsync(MailPlanApplicationRequest request, CancellationToken cancellationToken = default)
         {
-            Request = request;
-            var results = new List<JmapApplicationInvocation>();
-            foreach (var call in request.Batch!.Invocations)
+            Plan = request;
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, Profile: Profile));
+        }
+
+        public Task<JmapApplicationResult> ExecuteOperationAsync(
+            MailOperationApplicationRequest request, Guid operationId, CancellationToken cancellationToken = default)
+        {
+            Request ??= request;
+            Executions++;
+            Commands.Add(request.Command);
+            var data = (System.Text.Json.Nodes.JsonObject)request.Command.Arguments.DeepClone();
+            if (Executions == 1)
             {
-                Assert.IsTrue(ApplicationArgumentBindingResolver.TryResolve(call, results, out var arguments, out _));
-                results.Add(new JmapApplicationInvocation(call.Operation, JmapJson.SanitizeResponse(arguments), call.CorrelationId));
+                data["\ud800"] = "first";
+                data["\udfff"] = "second";
             }
-            return Task.FromResult(new JmapApplicationResult(
-                JmapApplicationOutcomes.Ok,
-                Batch: new JmapApplicationBatchResult(results.ToArray(), Profile, request.Batch.CreatedIds)));
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
+                OperationResult: new(new(request.Command.Operation, ApplicationValueCodec.Encode(data)),
+                    request.Command.KnownEntities!, Profile)));
         }
 
         public Task<JmapApplicationResult> UploadAsync(

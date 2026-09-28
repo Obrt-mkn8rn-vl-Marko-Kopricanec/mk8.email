@@ -15,6 +15,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="../mk8.email.Application.Tests/ProcessorGatewayJmapClient.cs" Link="ProcessorGatewayJmapClient.cs" />
     <ProjectReference Include="..\mk8.email.Application.Worker\mk8.email.Application.Worker.csproj" />
     <ProjectReference Include="..\mk8.email.CLI\mk8.email.Application.CLI.csproj" />
     <ProjectReference Include="..\mk8.email.Configuration\mk8.email.Configuration.csproj" />

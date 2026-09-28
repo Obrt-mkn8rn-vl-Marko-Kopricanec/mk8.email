@@ -82,7 +82,7 @@ internal static class GatewayJmapBatchCodec
         return result;
     }
 
-    private static bool IsId(string value)
+    internal static bool IsId(string value)
     {
         if (value.Length is < 1 or > 255)
             return false;

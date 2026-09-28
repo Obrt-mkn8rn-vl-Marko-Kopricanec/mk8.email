@@ -47,7 +47,7 @@ public sealed class JmapFeatureBoundaryTests
         var accepted = transported with { Features = [MailFeature.Basic, MailFeature.Basic] };
         await using var fixture = await JmapFixture.CreateAsync();
         using var scope = fixture.Services.CreateScope();
-        var result = await scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>().ProcessAsync(accepted, fixture.User);
+        var result = await JmapFixture.ProcessBatchAsync(scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>(), accepted, fixture.User);
         Assert.AreEqual("urn:example:opaque", result.Invocations[0].Arguments["capability"]!.GetValue<string>());
         Assert.AreEqual(7, result.Invocations[0].Arguments["Features"]![0]!.GetValue<int>());
         Assert.AreEqual("urn:example:opaque", result.Invocations[0].Arguments["type"]!.GetValue<string>());
@@ -79,7 +79,7 @@ public sealed class JmapFeatureBoundaryTests
         var processor = scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>();
         var batch = JsonSerializer.Deserialize<JmapApplicationBatch>(
             """{"features":null,"invocations":[]}""", ContractOptions())!;
-        var error = await Assert.ThrowsAsync<MailApplicationException>(() => processor.ProcessAsync(batch, fixture.User));
+        var error = await Assert.ThrowsAsync<MailApplicationException>(() => JmapFixture.ProcessBatchAsync(processor, batch, fixture.User));
         Assert.AreEqual(MailFailureKind.MalformedBatch, error.Failure.Kind);
         var preflight = JsonSerializer.Deserialize<JmapBatchPreflight>(
             """{"features":null,"invocationCount":0}""", ContractOptions())!;
@@ -99,7 +99,7 @@ public sealed class JmapFeatureBoundaryTests
         var batch = new JmapApplicationBatch([MailFeature.Basic, feature],
             [new(MailOperationKind.FindFolders, new JsonObject(), "first")]);
         var error = await Assert.ThrowsAsync<MailApplicationException>(() =>
-            scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>().ProcessAsync(batch, fixture.User));
+            JmapFixture.ProcessBatchAsync(scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>(), batch, fixture.User));
         Assert.AreEqual(MailFailureKind.MalformedBatch, error.Failure.Kind);
         Assert.AreEqual(0, calls);
     }
@@ -121,7 +121,7 @@ public sealed class JmapFeatureBoundaryTests
         await using var fixture = await JmapFixture.CreateAsync();
         using var scope = fixture.Services.CreateScope();
         var methods = scope.ServiceProvider.GetServices<IJmapMethod>().ToArray();
-        Assert.HasCount(39, methods);
+        Assert.HasCount(38, methods);
         Assert.IsTrue(methods.All(method => Enum.IsDefined(method.Feature) && method.Feature != MailFeature.Unsupported));
         CollectionAssert.AreEquivalent(Enum.GetValues<MailFeature>().Except([MailFeature.Unsupported]).ToArray(),
             methods.Select(method => method.Feature).Distinct().ToArray());
@@ -166,20 +166,23 @@ public sealed class JmapFeatureBoundaryTests
         using var scope = fixture.Services.CreateScope();
         var service = scope.ServiceProvider.GetRequiredService<IJmapApplicationService>();
         var authentication = Authentication(fixture, "good");
-        var unsupported = await service.ExecuteBatchAsync(new(authentication, null, new([MailFeature.Unsupported], -1)), Guid.NewGuid());
+        var unsupported = await service.ValidatePlanAsync(new(authentication, new([MailFeature.Unsupported], -1)));
         Assert.AreEqual(new MailApplicationFailure(MailFailureKind.UnsupportedFeature, "The requested mail features are not supported."), unsupported.Failure);
-        var missing = await service.ExecuteBatchAsync(new(authentication, new([MailFeature.Messages], [])), Guid.NewGuid());
+        var missing = await service.ValidatePlanAsync(new(authentication, new([MailFeature.Messages], 0)));
         Assert.AreEqual(MailFailureKind.MalformedBatch, missing.Failure?.Kind);
-        var negative = await service.ExecuteBatchAsync(new(authentication, null, new([MailFeature.Basic], -1)), Guid.NewGuid());
+        var negative = await service.ValidatePlanAsync(new(authentication, new([MailFeature.Basic], -1)));
         Assert.AreEqual(MailFailureKind.MalformedBatch, negative.Failure?.Kind);
-        var excessive = await service.ExecuteBatchAsync(new(authentication, null,
-            new([MailFeature.Basic], fixture.Configuration.Jmap.MaxCallsInRequest + 1)), Guid.NewGuid());
+        var excessive = await service.ValidatePlanAsync(new(authentication,
+            new([MailFeature.Basic], fixture.Configuration.Jmap.MaxCallsInRequest + 1)));
         Assert.AreEqual(MailResourceLimit.OperationCount, excessive.Failure?.Limit);
-        var serialized = JsonSerializer.Serialize(excessive, ContractOptions());
+        Assert.IsNotNull(excessive.Profile);
+        // The profile carries domain policy for Gateway admission; the failure
+        // itself must not carry a rendered problem or wire-limit identifier.
+        var serialized = JsonSerializer.Serialize(excessive.Failure, ContractOptions());
         Assert.IsFalse(serialized.Contains("urn:ietf:", StringComparison.Ordinal));
         Assert.IsFalse(serialized.Contains("maxCallsInRequest", StringComparison.Ordinal));
         Assert.IsFalse(serialized.Contains("\"title\"", StringComparison.Ordinal));
-        var accepted = await service.ExecuteBatchAsync(new(authentication, null, new([MailFeature.Basic], 0)), Guid.NewGuid());
+        var accepted = await service.ValidatePlanAsync(new(authentication, new([MailFeature.Basic], 0)));
         Assert.AreEqual(JmapApplicationOutcomes.Ok, accepted.Outcome);
         Assert.IsNull(accepted.Failure);
     }
@@ -196,12 +199,12 @@ public sealed class JmapFeatureBoundaryTests
         {
             for (var index = 0; index < fixture.Configuration.Jmap.MaxConcurrentRequests; index++)
                 leases.Add(await limiter.AcquireRequestAsync(CancellationToken.None));
-            var invalid = await service.ExecuteBatchAsync(new(Authentication(fixture, "bad"), null,
-                new([MailFeature.Unsupported], -1)), Guid.NewGuid());
+            var invalid = await service.ValidatePlanAsync(new(Authentication(fixture, "bad"),
+                new([MailFeature.Unsupported], -1)));
             Assert.AreEqual(JmapApplicationOutcomes.Unauthorized, invalid.Outcome);
             Assert.IsNull(invalid.Failure);
-            var valid = await service.ExecuteBatchAsync(new(Authentication(fixture, "good"), null,
-                new([MailFeature.Unsupported], -1)), Guid.NewGuid());
+            var valid = await service.ValidatePlanAsync(new(Authentication(fixture, "good"),
+                new([MailFeature.Unsupported], -1)));
             Assert.AreEqual(MailResourceLimit.RequestConcurrency, valid.Failure?.Limit);
         }
         finally

@@ -8,8 +8,12 @@ public interface IGatewayJmapClient
         JmapProfileApplicationRequest request,
         CancellationToken cancellationToken = default);
 
-    Task<JmapApplicationResult> ExecuteBatchAsync(
-        JmapBatchApplicationRequest request,
+    Task<JmapApplicationResult> ValidatePlanAsync(
+        MailPlanApplicationRequest request,
+        CancellationToken cancellationToken = default);
+
+    Task<JmapApplicationResult> ExecuteOperationAsync(
+        MailOperationApplicationRequest request,
         CancellationToken cancellationToken = default);
 
     Task<JmapApplicationResult> UploadAsync(

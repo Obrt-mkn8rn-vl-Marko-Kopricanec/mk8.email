@@ -24,6 +24,7 @@ public sealed class JmapRequestProcessor
     private static readonly JsonSerializerOptions ReceiptJsonOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = false,
+        MaxDepth = 256,
     };
 
     public JmapRequestProcessor(
@@ -44,89 +45,38 @@ public sealed class JmapRequestProcessor
         _receipts = receipts;
     }
 
-    public Task<JmapApplicationBatchResult> ProcessAsync(
-        JmapApplicationBatch batch,
-        AuthenticatedMailUser user,
-        CancellationToken cancellationToken = default) => ProcessAsync(batch, user, null, cancellationToken);
+    internal Task<JmapApplicationProfile> GetProfileAsync(AuthenticatedMailUser user, CancellationToken token = default) =>
+        _sessions.GetProfileAsync(user, token);
 
-    public async Task<JmapApplicationBatchResult> ProcessAsync(
-        JmapApplicationBatch batch,
+    public async Task<MailOperationResult> ExecuteAsync(
+        MailOperationCommand command,
         AuthenticatedMailUser user,
         Guid? operationId,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(batch);
+        ArgumentNullException.ThrowIfNull(command);
         ArgumentNullException.ThrowIfNull(user);
-        if (batch.Invocations is null)
-            throw NotRequest("The application batch must contain invocations.");
-        var features = ValidateHeader(batch.Features, batch.Invocations.Length);
-        var invocations = CloneInvocations(batch.Invocations);
-        var createdIds = CloneCreatedIds(batch.CreatedIds);
+        if (command.Features is null || command.Arguments is null || !Enum.IsDefined(command.Operation)
+            || command.Operation is MailOperationKind.Failure or MailOperationKind.Echo)
+            throw NotRequest("The mail operation command is incomplete.");
+        var features = ValidateHeader(command.Features.ToArray(), 1);
+        var createdIds = CloneCreatedIds(command.KnownEntities);
         var context = new JmapInvocationContext(user, features, createdIds);
-        var responses = new List<JmapApplicationInvocation>();
         var relational = _database.Database.IsRelational();
         if (relational && (operationId is null || operationId == Guid.Empty || _receipts is null))
             throw new InvalidOperationException("A durable operation identity and receipt store are required.");
         var inputHash = relational
-            ? Convert.ToHexStringLower(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(batch, ReceiptJsonOptions)))
+            ? Convert.ToHexStringLower(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(command, ReceiptJsonOptions)))
             : string.Empty;
-
-        for (var step = 0; step < invocations.Count; step++)
-        {
-            var invocation = invocations[step];
-            var receiptKey = relational
-                ? new ApplicationReceiptKey(operationId!.Value, step, user.Id, "jmap.batch", inputHash)
-                : null;
-            JmapMethodResponse response;
-            if (!ApplicationArgumentBindingResolver.TryResolve(
-                    invocation,
-                    responses,
-                    out var resolvedArguments,
-                    out var referenceFailure))
-                response = JmapMethodResponse.Error(referenceFailure == ApplicationBindingFailure.InvalidTarget
-                    ? "invalidArguments" : "invalidResultReference");
-            else if (!_methods.TryGetValue(invocation.Operation, out var method)
-                || !features.Contains(method.Feature))
-                response = JmapMethodResponse.Error("unknownMethod");
-            else
-                response = await InvokeAtomicallyAsync(
-                    method, context, resolvedArguments, receiptKey, cancellationToken).ConfigureAwait(false);
-
-            AddResponse(response);
-            if (response.AdditionalResponses is not null)
-            {
-                foreach (var additional in response.AdditionalResponses)
-                    AddResponse(additional);
-            }
-
-            void AddResponse(JmapMethodResponse completed)
-            {
-                var arguments = JmapJson.SanitizeResponse(completed.Arguments);
-                responses.Add(new JmapApplicationInvocation(completed.Operation, arguments, invocation.CorrelationId));
-            }
-        }
-
+        var receiptKey = relational
+            ? new ApplicationReceiptKey(operationId!.Value, 0, user.Id, "mail.operation", inputHash)
+            : null;
+        var response = !_methods.TryGetValue(command.Operation, out var method) || !features.Contains(method.Feature)
+            ? EncodeResponse(JmapMethodResponse.Error("unknownMethod"))
+            : await InvokeAtomicallyAsync(method, context, (JsonObject)command.Arguments.DeepClone(),
+                receiptKey, cancellationToken).ConfigureAwait(false);
         var profile = await _sessions.GetProfileAsync(user, cancellationToken).ConfigureAwait(false);
-        return new JmapApplicationBatchResult(
-            responses.ToArray(), profile, batch.CreatedIds is null ? null : createdIds);
-    }
-
-    private static List<JmapApplicationCall> CloneInvocations(JmapApplicationCall[] calls)
-    {
-        var invocations = new List<JmapApplicationCall>(calls.Length);
-        foreach (var invocation in calls)
-        {
-            if (invocation is null || !Enum.IsDefined(invocation.Operation)
-                || invocation.Operation == MailOperationKind.Failure
-                || invocation.Arguments is null || invocation.CorrelationId is null)
-                throw NotRequest("An application invocation is incomplete.");
-            invocations.Add(invocation with
-            {
-                Arguments = (JsonObject)invocation.Arguments.DeepClone(),
-                Bindings = CloneBindings(invocation.Bindings),
-            });
-        }
-        return invocations;
+        return new MailOperationResult(response, createdIds, profile);
     }
 
     private static Dictionary<string, string> CloneCreatedIds(IReadOnlyDictionary<string, string>? values)
@@ -137,7 +87,7 @@ public sealed class JmapRequestProcessor
             foreach (var item in values)
             {
                 if (item.Value is null || !JmapId.IsValidId(item.Key) || !JmapId.IsValidId(item.Value))
-                    throw NotRequest("The createdIds property contains an invalid creation id or object id.");
+                    throw NotRequest("The known entity map contains an invalid identifier.");
                 createdIds.Add(item.Key, item.Value);
             }
         }
@@ -171,14 +121,14 @@ public sealed class JmapRequestProcessor
         return features;
     }
 
-    private async Task<JmapMethodResponse> InvokeAtomicallyAsync(
+    private async Task<MailOperationResponse> InvokeAtomicallyAsync(
         IJmapMethod method,
         JmapInvocationContext context,
         JsonObject arguments,
         ApplicationReceiptKey? receiptKey,
         CancellationToken cancellationToken)
     {
-        var createdIds = context.CreatedIds.ToDictionary(item => item.Key, item => item.Value);
+        var createdIds = context.CreatedIds.ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal);
         var postCommitMarker = context.MarkPostCommitActions();
         var blobEffectMarker = _blobEffects.Mark();
         var presentationMarker = context.MarkPresentationEffects();
@@ -196,7 +146,7 @@ public sealed class JmapRequestProcessor
                 {
                     var replay = JsonSerializer.Deserialize<JmapReplayState>(existing.Result.Span, ReceiptJsonOptions)
                         ?? throw new InvalidOperationException("The invocation receipt result is incomplete.");
-                    ValidateResponse(replay.Response);
+                    ValidateEncodedResponse(replay.Response);
                     context.CreatedIds.Clear();
                     foreach (var item in replay.CreatedIds)
                         context.CreatedIds[item.Key] = item.Value;
@@ -206,20 +156,20 @@ public sealed class JmapRequestProcessor
 
             var response = await method.InvokeAsync(context, arguments, cancellationToken).ConfigureAwait(false);
             ValidateResponse(response);
+            var encoded = EncodeResponse(response);
             if (MustRollBack(response))
             {
                 await RollBackAsync(transaction).ConfigureAwait(false);
                 await _blobEffects.RollbackAsync(blobEffectMarker).ConfigureAwait(false);
                 RestoreInvocationState(context, createdIds, postCommitMarker);
                 context.DiscardPresentationEffects(presentationMarker);
-                return response;
+                return encoded;
             }
 
             if (receiptKey is not null)
             {
-                response = NormalizeForReceipt(response);
                 var result = JsonSerializer.SerializeToUtf8Bytes(new JmapReplayState(
-                    response, context.CreatedIds.ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal)), ReceiptJsonOptions);
+                    encoded, context.CreatedIds.ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal)), ReceiptJsonOptions);
                 await _receipts!.SaveAsync(receiptKey,
                     new ApplicationReceiptContent(result, context.PresentationEffectsSince(presentationMarker)),
                     cancellationToken).ConfigureAwait(false);
@@ -246,7 +196,7 @@ public sealed class JmapRequestProcessor
                     _logger.LogWarning(exception, "A JMAP post-commit action failed");
                 }
             }
-            return response;
+            return encoded;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -263,7 +213,7 @@ public sealed class JmapRequestProcessor
             RestoreInvocationState(context, createdIds, postCommitMarker);
             context.DiscardPresentationEffects(presentationMarker);
             _logger.LogError(exception, "Mail operation {Operation} failed", method.Operation);
-            return JmapMethodResponse.Error("serverFail");
+            return EncodeResponse(JmapMethodResponse.Error("serverFail"));
         }
         finally
         {
@@ -273,9 +223,21 @@ public sealed class JmapRequestProcessor
         }
     }
 
-    private static JmapMethodResponse NormalizeForReceipt(JmapMethodResponse response) => new(
-        response.Operation, JmapJson.SanitizeResponse(response.Arguments),
-        response.AdditionalResponses?.Select(NormalizeForReceipt).ToArray());
+    private static MailOperationResponse EncodeResponse(JmapMethodResponse response) => new(
+        response.Operation, ApplicationValueCodec.Encode(response.Arguments),
+        response.AdditionalResponses?.Select(EncodeResponse).ToArray());
+
+    private static void ValidateEncodedResponse(MailOperationResponse response)
+    {
+        if (response is null || !Enum.IsDefined(response.Operation) || response.Operation is MailOperationKind.None or MailOperationKind.Echo
+            || response.Data is null || ApplicationValueCodec.Decode(response.Data) is not JsonObject)
+            throw new InvalidOperationException("A mail operation receipt contains an invalid result.");
+        if (response.AdditionalResults is not null)
+        {
+            foreach (var additional in response.AdditionalResults)
+                ValidateEncodedResponse(additional);
+        }
+    }
 
     private async Task CompleteBlobRollbackAsync(int marker, bool commitAttempted)
     {
@@ -322,40 +284,15 @@ public sealed class JmapRequestProcessor
         _database.ChangeTracker.Clear();
     }
 
-    private static ApplicationArgumentBinding[]? CloneBindings(ApplicationArgumentBinding[]? bindings)
-    {
-        if (bindings is null)
-            return null;
-        var result = new ApplicationArgumentBinding[bindings.Length];
-        for (var index = 0; index < bindings.Length; index++)
-        {
-            var binding = bindings[index];
-            if (binding is null || binding.Target is null || binding.SourceCorrelationId is null
-                || !Enum.IsDefined(binding.SourceOperation) || binding.Path is null || !Enum.IsDefined(binding.Failure))
-                throw NotRequest("An application argument binding is incomplete.");
-            var path = new ApplicationValuePathSegment[binding.Path.Length];
-            for (var segmentIndex = 0; segmentIndex < path.Length; segmentIndex++)
-            {
-                var segment = binding.Path[segmentIndex];
-                if (segment is null || segment.Property is null || segment.ArrayIndex is < 0
-                    || segment.ArrayIndex is not null && segment.AllArrayItems)
-                    throw NotRequest("An application value selector is incomplete or ambiguous.");
-                path[segmentIndex] = segment;
-            }
-            result[index] = binding with { Path = path };
-        }
-        return result;
-    }
-
     private static MailOperationKind ValidRegisteredOperation(MailOperationKind operation, MailFeature feature) =>
-        Enum.IsDefined(operation) && operation is not (MailOperationKind.None or MailOperationKind.Failure)
+        Enum.IsDefined(operation) && operation is not (MailOperationKind.None or MailOperationKind.Failure or MailOperationKind.Echo)
             && Enum.IsDefined(feature) && feature != MailFeature.Unsupported
             ? operation : throw new ArgumentException("A handler must register a supported mail operation.", nameof(operation));
 
     private static void ValidateResponse(JmapMethodResponse response)
     {
         if (response is null || response.Arguments is null || !Enum.IsDefined(response.Operation)
-            || response.Operation == MailOperationKind.None)
+            || response.Operation is MailOperationKind.None or MailOperationKind.Echo)
             throw new InvalidOperationException("A handler returned an unsupported mail operation result.");
         if (response.AdditionalResponses is not null)
         {

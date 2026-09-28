@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using Microsoft.Net.Http.Headers;
 using mk8.email.Configuration;
 using mk8.email.Contracts.Messaging;
+using mk8.email.Gateway.ApplicationBridge;
 using NetMediaTypeHeaderValue = System.Net.Http.Headers.MediaTypeHeaderValue;
 
 namespace mk8.email.Gateway.Protocols.Jmap;
@@ -63,6 +64,7 @@ public static class JmapEndpointRouteBuilderExtensions
         HttpContext context,
         IGatewayJmapClient application,
         EnvironmentConfig environment,
+        GatewayJmapBatchLimiter concurrency,
         CancellationToken cancellationToken)
     {
         if (!GatewayJmapAuthentication.TryParse(context.Request, environment, out var authentication))
@@ -94,31 +96,60 @@ public static class JmapEndpointRouteBuilderExtensions
                 "maxSizeRequest"));
         }
 
-        JmapApplicationBatch? batch = null;
-        JmapBatchPreflight? preflight = null;
-        GatewayJmapProblem? parseProblem = null;
-        try
-        {
-            batch = GatewayJmapBatchCodec.Parse(
-                GatewayJmapJson.ParseRequest(document, environment.Jmap), out preflight);
-        }
-        catch (GatewayJmapBatchCodec.RequestException exception)
-        {
-            parseProblem = exception.Problem;
-        }
+        var (batch, preflight, parseProblem) = ParseBatchDocument(document, environment.Jmap);
 
-        var result = await application.ExecuteBatchAsync(
-            new JmapBatchApplicationRequest(authentication, batch, preflight),
+        using var deadline = GatewayApplicationDeadline.Begin(
+            context.RequestServices.GetService<GatewayApplicationOptions>()?.RequestTimeout ?? TimeSpan.FromSeconds(25));
+        var result = await application.ValidatePlanAsync(
+            new MailPlanApplicationRequest(authentication, preflight),
             cancellationToken).ConfigureAwait(false);
         if (string.Equals(result.Outcome, JmapApplicationOutcomes.Unauthorized, StringComparison.Ordinal))
             return GatewayJmapAuthentication.Unauthorized(context, environment);
+        if (result.Profile is null)
+            throw new InvalidOperationException("The Application returned an incomplete account profile.");
+        using var lease = concurrency.TryAcquire(result.Profile.Limits.MaxConcurrentRequests);
+        if (lease is null)
+            return Problem(GatewayJmapFailureCodec.Render(new(MailFailureKind.ResourceLimit,
+                "There are too many concurrent JMAP requests.", MailResourceLimit.RequestConcurrency)));
         if (result.Failure is not null)
             return Problem(GatewayJmapFailureCodec.Render(result.Failure));
         if (parseProblem is not null)
             return Problem(parseProblem);
-        if (result.Batch is null)
-            throw new InvalidOperationException("The Application returned an incomplete JMAP batch result.");
-        return Results.Json(GatewayJmapBatchCodec.Render(result.Batch, environment), JsonOptions);
+        var execution = await GatewayJmapBatchExecutor.ExecuteAsync(
+            application, authentication, batch!, result.Profile, cancellationToken).ConfigureAwait(false);
+        return RenderBatchExecution(context, environment, execution);
+    }
+
+    private static (JmapApplicationBatch? Batch, JmapBatchPreflight? Plan, GatewayJmapProblem? Problem) ParseBatchDocument(
+        byte[] document,
+        JmapConfig configuration)
+    {
+        JmapBatchPreflight? preflight = null;
+        try
+        {
+            var batch = GatewayJmapBatchCodec.Parse(GatewayJmapJson.ParseRequest(document, configuration), out preflight);
+            return (batch, preflight, null);
+        }
+        catch (GatewayJmapBatchCodec.RequestException exception)
+        {
+            return (null, preflight, exception.Problem);
+        }
+    }
+
+    private static IResult RenderBatchExecution(
+        HttpContext context,
+        EnvironmentConfig environment,
+        GatewayJmapBatchExecutor.Execution execution)
+    {
+        if (execution.Failure is { } failure)
+        {
+            if (string.Equals(failure.Outcome, JmapApplicationOutcomes.Unauthorized, StringComparison.Ordinal))
+                return GatewayJmapAuthentication.Unauthorized(context, environment);
+            if (failure.Failure is not null)
+                return Problem(GatewayJmapFailureCodec.Render(failure.Failure));
+            throw new InvalidOperationException("The Application returned an unsupported mail operation outcome.");
+        }
+        return Results.Json(GatewayJmapBatchCodec.Render(execution.Batch!, environment), JsonOptions);
     }
 
     private static async Task<IResult> UploadAsync(

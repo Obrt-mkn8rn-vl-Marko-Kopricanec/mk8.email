@@ -110,10 +110,14 @@ public sealed class WorkerWakeSchemaTransitionTests
     [DataRow("jmap.batch.execute.v5", true, false)]
     [DataRow("jmap.batch.execute.v5", false, true)]
     [DataRow("jmap.batch.execute.v5", true, true)]
-    [DataRow(ApplicationOperations.JmapBatchExecute, false, false)]
-    [DataRow(ApplicationOperations.JmapBatchExecute, true, false)]
-    [DataRow(ApplicationOperations.JmapBatchExecute, false, true)]
-    [DataRow(ApplicationOperations.JmapBatchExecute, true, true)]
+    [DataRow("jmap.batch.execute.v6", false, false)]
+    [DataRow("jmap.batch.execute.v6", true, false)]
+    [DataRow("jmap.batch.execute.v6", false, true)]
+    [DataRow("jmap.batch.execute.v6", true, true)]
+    [DataRow(ApplicationOperations.MailOperationExecute, false, false)]
+    [DataRow(ApplicationOperations.MailOperationExecute, true, false)]
+    [DataRow(ApplicationOperations.MailOperationExecute, false, true)]
+    [DataRow(ApplicationOperations.MailOperationExecute, true, true)]
     public async Task PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(string operation, bool leased, bool expired)
     {
         await using var fixture = await Fixture.CreateAsync();

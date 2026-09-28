@@ -181,8 +181,21 @@ internal sealed class JmapFixture : IAsyncDisposable
             processor.ValidatePreflight(preflight);
             throw;
         }
-        return GatewayJmapBatchCodec.Render(await processor.ProcessAsync(batch, user, cancellationToken),
+        return GatewayJmapBatchCodec.Render(await ProcessBatchAsync(processor, batch, user, cancellationToken),
             environment ?? new EnvironmentConfig { Smtp = new SmtpConfig { Hostname = "email.mk8n.com" } });
+    }
+
+    internal static async Task<JmapApplicationBatchResult> ProcessBatchAsync(
+        JmapRequestProcessor processor,
+        JmapApplicationBatch batch,
+        AuthenticatedMailUser user,
+        CancellationToken cancellationToken = default)
+    {
+        processor.ValidatePreflight(new(batch.Features, batch.Invocations?.Length ?? 0));
+        var result = await GatewayJmapBatchExecutor.ExecuteAsync(new mk8.email.TestSupport.ProcessorGatewayJmapClient(processor, user),
+            new(ProtocolAuthenticationKinds.Password, user.Username, "test-only"),
+            batch, await processor.GetProfileAsync(user, cancellationToken), cancellationToken);
+        return result.Batch!;
     }
 
     public async Task<string> StoreBlobAsync(byte[] content, string contentType = "message/rfc822")

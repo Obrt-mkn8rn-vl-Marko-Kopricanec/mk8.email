@@ -139,6 +139,6 @@ public sealed record JmapApplicationResult(
     long? Size = null,
     long? Cursor = null,
     MailApplicationFailure? Failure = null,
-    JmapApplicationBatchResult? Batch = null,
+    MailOperationResult? OperationResult = null,
     JmapApplicationProfile? Profile = null,
     JmapApplicationChanges? Changes = null);

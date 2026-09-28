@@ -365,7 +365,7 @@ public sealed class ArchitectureBoundaryTests
     }
 
     [TestMethod]
-    public void ArgumentBindingSyntaxIsOwnedByGatewayAndWorkerReceivesTypedSelectors()
+    public void ArgumentBindingSyntaxAndResolutionAreOwnedByGateway()
     {
         Assert.AreEqual(typeof(JmapApplicationCall[]), typeof(JmapApplicationBatch).GetProperty("Invocations")?.PropertyType);
         Assert.AreEqual(typeof(ApplicationArgumentBinding[]), typeof(JmapApplicationCall).GetProperty("Bindings")?.PropertyType);
@@ -383,6 +383,22 @@ public sealed class ArchitectureBoundaryTests
         Assert.IsFalse(typeof(mk8.email.Jmap.JmapRequestProcessor)
             .GetMethods(System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
             .Any(method => method.Name is "TryResolveResultReferences" or "TryApplyJsonPointer" or "TryDecodePointerToken"));
+    }
+
+    [TestMethod]
+    public void WorkerReceivesOnlyResolvedMailCommandsAndReturnsRawValueTrees()
+    {
+        var worker = typeof(mk8.email.Jmap.JmapRequestProcessor);
+        Assert.IsFalse(worker.GetMethods().Any(method => method.Name == "ProcessAsync"));
+        Assert.IsFalse(worker.Assembly.GetTypes().Any(type => type.Name is "CoreEchoMethod" or "ApplicationArgumentBindingResolver"));
+        Assert.IsFalse(typeof(mk8.email.Jmap.JmapJson).GetMethods(System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+            .Any(method => method.Name == "SanitizeResponse"));
+        Assert.IsFalse(typeof(MailOperationCommand).GetProperties().Any(property =>
+            property.Name is "Invocations" or "Bindings" or "CorrelationId" or "Document"));
+        Assert.AreEqual(typeof(ApplicationValue), typeof(MailOperationResponse).GetProperty("Data")?.PropertyType);
+        Assert.AreEqual("mk8.email.Gateway", typeof(mk8.email.Gateway.Protocols.Jmap.GatewayJmapBatchExecutor).Assembly.GetName().Name);
+        Assert.AreEqual("mk8.email.Gateway", typeof(mk8.email.Gateway.Protocols.Jmap.GatewayJmapArgumentBindingResolver).Assembly.GetName().Name);
+        Assert.AreEqual("mk8.email.Gateway", typeof(mk8.email.Gateway.ApplicationBridge.GatewayApplicationDeadline).Assembly.GetName().Name);
     }
 
     [TestMethod]

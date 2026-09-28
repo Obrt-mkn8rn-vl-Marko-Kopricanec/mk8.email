@@ -66,7 +66,7 @@ public sealed class ApplicationRequestDispatcherTests
             .AddSingleton<IJmapApplicationService>(new StubJmapApplicationService())
             .BuildServiceProvider();
         var dispatcher = new ApplicationRequestDispatcher(services);
-        var request = NewRequest(ApplicationOperations.JmapBatchExecute, "{"u8.ToArray());
+        var request = NewRequest(ApplicationOperations.MailOperationExecute, "{"u8.ToArray());
 
         var response = await dispatcher.DispatchAsync(request);
 
@@ -137,55 +137,44 @@ public sealed class ApplicationRequestDispatcherTests
     }
 
     [TestMethod]
-    public async Task JmapBatchDispatchesTypedInvocationsAndResults()
+    public async Task MailOperationDispatchesResolvedArgumentsAndLosslessResults()
     {
         var service = new StubJmapApplicationService();
-        await using var services = new ServiceCollection()
-            .AddSingleton<IJmapApplicationService>(service)
-            .BuildServiceProvider();
+        await using var services = new ServiceCollection().AddSingleton<IJmapApplicationService>(service).BuildServiceProvider();
         var dispatcher = new ApplicationRequestDispatcher(services);
-        var value = new JmapBatchApplicationRequest(
-            new ProtocolAuthentication(
-                ProtocolAuthenticationKinds.Password,
-                "person@example.test",
-                "secret"),
-            new JmapApplicationBatch([MailFeature.Basic],
-                [new JmapApplicationCall(MailOperationKind.Echo, new System.Text.Json.Nodes.JsonObject
-                {
-                    ["ok"] = true, ["x"] = 1, ["X"] = 2,
-                    ["nested"] = new System.Text.Json.Nodes.JsonObject { ["key"] = 3, ["Key"] = 4 },
-                }, "c1")],
-                new Dictionary<string, string> { ["created"] = "object-id" }));
-        var request = NewRequest(
-            ApplicationOperations.JmapBatchExecute,
-            JsonSerializer.SerializeToUtf8Bytes(
-                value,
-                new JsonSerializerOptions(JsonSerializerDefaults.Web)));
-
+        var value = new MailOperationApplicationRequest(new(ProtocolAuthenticationKinds.Password, "person@example.test", "secret"),
+            new([MailFeature.Basic], MailOperationKind.ReadFolders, new System.Text.Json.Nodes.JsonObject
+            {
+                ["ok"] = true,
+                ["x"] = 1,
+                ["X"] = 2,
+                ["nested"] = new System.Text.Json.Nodes.JsonObject { ["key"] = 3, ["Key"] = 4 },
+            }, new Dictionary<string, string> { ["created"] = "object-id" }));
+        var request = NewRequest(ApplicationOperations.MailOperationExecute,
+            JsonSerializer.SerializeToUtf8Bytes(value, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
         var response = await dispatcher.DispatchAsync(request);
-
         Assert.IsFalse(response.IsError);
         Assert.AreEqual(value.Authentication.Username, service.Request?.Authentication.Username);
-        Assert.IsNotNull(service.Request?.Batch);
-        CollectionAssert.AreEqual(value.Batch!.Features, service.Request.Batch.Features);
-        Assert.AreEqual(MailOperationKind.Echo, service.Request.Batch.Invocations[0].Operation);
-        Assert.AreEqual("c1", service.Request.Batch.Invocations[0].CorrelationId);
-        Assert.IsTrue(service.Request.Batch.Invocations[0].Arguments["ok"]!.GetValue<bool>());
-        Assert.AreEqual(1, service.Request.Batch.Invocations[0].Arguments["x"]!.GetValue<int>());
-        Assert.AreEqual(2, service.Request.Batch.Invocations[0].Arguments["X"]!.GetValue<int>());
-        Assert.AreEqual(3, service.Request.Batch.Invocations[0].Arguments["nested"]!["key"]!.GetValue<int>());
-        Assert.AreEqual(4, service.Request.Batch.Invocations[0].Arguments["nested"]!["Key"]!.GetValue<int>());
-        Assert.AreEqual("object-id", service.Request.Batch.CreatedIds?["created"]);
-        var result = JsonSerializer.Deserialize<JmapApplicationResult>(
-            response.Payload,
+        Assert.AreEqual(request.Id, service.OperationId);
+        Assert.IsNotNull(service.Request?.Command);
+        CollectionAssert.AreEqual(value.Command.Features.ToArray(), service.Request.Command.Features.ToArray());
+        Assert.AreEqual(MailOperationKind.ReadFolders, service.Request.Command.Operation);
+        Assert.IsTrue(service.Request.Command.Arguments["ok"]!.GetValue<bool>());
+        Assert.AreEqual(1, service.Request.Command.Arguments["x"]!.GetValue<int>());
+        Assert.AreEqual(2, service.Request.Command.Arguments["X"]!.GetValue<int>());
+        Assert.AreEqual(3, service.Request.Command.Arguments["nested"]!["key"]!.GetValue<int>());
+        Assert.AreEqual(4, service.Request.Command.Arguments["nested"]!["Key"]!.GetValue<int>());
+        Assert.AreEqual("object-id", service.Request.Command.KnownEntities?["created"]);
+        var result = JsonSerializer.Deserialize<JmapApplicationResult>(response.Payload,
             new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = false });
         Assert.AreEqual(JmapApplicationOutcomes.Ok, result?.Outcome);
-        Assert.IsNotNull(result?.Batch);
-        Assert.AreEqual("worker-person", result.Batch.Profile.Username);
-        Assert.AreEqual(MailOperationKind.Echo, result.Batch.Invocations[0].Operation);
-        Assert.IsTrue(result.Batch.Invocations[0].Arguments["ok"]!.GetValue<bool>());
-        Assert.AreEqual(1, result.Batch.Invocations[0].Arguments["x"]!.GetValue<int>());
-        Assert.AreEqual(2, result.Batch.Invocations[0].Arguments["X"]!.GetValue<int>());
+        Assert.IsNotNull(result?.OperationResult);
+        Assert.AreEqual("worker-person", result.OperationResult.Profile.Username);
+        Assert.AreEqual(MailOperationKind.ReadFolders, result.OperationResult.Response.Operation);
+        var data = ApplicationValueCodec.Decode(result.OperationResult.Response.Data)!;
+        Assert.IsTrue(data["ok"]!.GetValue<bool>());
+        Assert.AreEqual(1, data["x"]!.GetValue<int>());
+        Assert.AreEqual(2, data["X"]!.GetValue<int>());
         Assert.IsNull(result.Content);
     }
 
@@ -246,24 +235,26 @@ public sealed class ApplicationRequestDispatcherTests
 
     private sealed class StubJmapApplicationService : IJmapApplicationService
     {
-        public JmapBatchApplicationRequest? Request { get; private set; }
+        public MailOperationApplicationRequest? Request { get; private set; }
 
         public Task<JmapApplicationResult> GetProfileAsync(
             JmapProfileApplicationRequest request,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
 
-        public Task<JmapApplicationResult> ExecuteBatchAsync(
-            JmapBatchApplicationRequest request,
-            Guid operationId,
-            CancellationToken cancellationToken = default)
+        public Guid OperationId { get; private set; }
+
+        public Task<JmapApplicationResult> ValidatePlanAsync(MailPlanApplicationRequest request, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<JmapApplicationResult> ExecuteOperationAsync(
+            MailOperationApplicationRequest request, Guid operationId, CancellationToken cancellationToken = default)
         {
             Request = request;
-            return Task.FromResult(new JmapApplicationResult(
-                JmapApplicationOutcomes.Ok,
-                Batch: new JmapApplicationBatchResult(request.Batch!.Invocations.Select(call =>
-                    new JmapApplicationInvocation(call.Operation, call.Arguments, call.CorrelationId)).ToArray(),
-                    new JmapApplicationProfile("worker-person",
+            OperationId = operationId;
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
+                OperationResult: new(new(request.Command.Operation, ApplicationValueCodec.Encode(request.Command.Arguments)),
+                    request.Command.KnownEntities!, new JmapApplicationProfile("worker-person",
                         new JmapServiceLimits(10000, 1, 10000, 1, 64, 500, 500, 32, 255, 10000,
                             ["i;ascii-numeric"], ["receivedAt"]), []))));
         }

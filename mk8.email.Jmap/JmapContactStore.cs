@@ -62,7 +62,7 @@ public sealed class JmapContactStore(
             CreatedAt = now,
             UpdatedAt = now,
         };
-        database.DavCollections.Add(collection);
+        await database.DavCollections.AddAsync(collection, cancellationToken).ConfigureAwait(false);
         try
         {
             await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
@@ -313,7 +313,7 @@ public sealed class JmapContactStore(
         };
         await resourceContent.SetAsync(resource, content, cancellationToken).ConfigureAwait(false);
         collection.UpdatedAt = now;
-        database.DavResources.Add(resource);
+        await database.DavResources.AddAsync(resource, cancellationToken).ConfigureAwait(false);
         AddDavChange(database, collection, resourceName, false, resource.Etag, sequence, now);
         return resource;
     }

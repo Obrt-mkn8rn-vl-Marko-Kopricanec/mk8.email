@@ -205,13 +205,13 @@ internal sealed class EmailCopyMethod(
                 notDestroyed[wireId] = JmapMethodHelpers.SetError("notFound");
                 continue;
             }
-            database.ExpungedUids.Add(new ExpungedUidDB
+            await database.ExpungedUids.AddAsync(new ExpungedUidDB
             {
                 Id = Guid.CreateVersion7(),
                 Uid = source.Uid,
                 ModSeq = ++source.Folder.HighestModSeq,
                 FolderId = source.FolderId,
-            });
+            }, cancellationToken).ConfigureAwait(false);
             content.DeleteOnCommit(source);
             database.Emails.Remove(source);
             await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);

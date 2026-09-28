@@ -317,7 +317,7 @@ internal sealed class MailboxSetMethod(
             SortOrder = sortOrder,
             IsSubscribed = isSubscribed,
         };
-        database.Folders.Add(folder);
+        await database.Folders.AddAsync(folder, cancellationToken).ConfigureAwait(false);
         await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return new CreateResult(folder, parentId, null);
     }
@@ -688,7 +688,7 @@ internal sealed class MailboxSetMethod(
             foreach (var plan in createPlans.Where(plan => !destroyedIds.Contains(plan.Node.Id)))
             {
                 var node = nodes[plan.Node.Id];
-                database.Folders.Add(new FolderDB
+                await database.Folders.AddAsync(new FolderDB
                 {
                     Id = node.Id,
                     Name = finalNames[node.Id],
@@ -697,7 +697,7 @@ internal sealed class MailboxSetMethod(
                     SuppressDefaultJmapRole = true,
                     SortOrder = node.SortOrder,
                     IsSubscribed = node.IsSubscribed,
-                });
+                }, cancellationToken).ConfigureAwait(false);
             }
             foreach (var email in destroyedEmails)
                 content.DeleteOnCommit(email);

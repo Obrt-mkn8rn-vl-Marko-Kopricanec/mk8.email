@@ -217,14 +217,14 @@ public sealed class JmapStateService(
             return;
 
         var now = DateTime.UtcNow;
-        database.JmapChanges.Add(new JmapChangeDB
+        await database.JmapChanges.AddAsync(new JmapChangeDB
         {
             AccountId = accountId,
             DataType = BaselineDataType,
             ObjectId = JmapId.Account(accountId),
             ChangeKind = JmapConstants.CreatedChange,
             ChangedAt = now,
-        });
+        }, cancellationToken).ConfigureAwait(false);
 
         var mailboxIds = await database.Folders
             .AsNoTracking()

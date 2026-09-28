@@ -97,7 +97,7 @@ internal sealed class IdentitySetMethod(
                     HtmlSignature = values.HtmlSignature,
                     MayDelete = true,
                 };
-                database.JmapIdentities.Add(identity);
+                await database.JmapIdentities.AddAsync(identity, cancellationToken).ConfigureAwait(false);
                 await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
                 var wireId = JmapId.Identity(id);
                 context.CreatedIds[item.Key] = wireId;

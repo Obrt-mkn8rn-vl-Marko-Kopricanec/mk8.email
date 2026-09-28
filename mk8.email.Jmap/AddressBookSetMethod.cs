@@ -129,7 +129,7 @@ internal sealed class AddressBookSetMethod(
                     CreatedAt = now,
                     UpdatedAt = now,
                 };
-                database.DavCollections.Add(book);
+                await database.DavCollections.AddAsync(book, cancellationToken).ConfigureAwait(false);
                 books.Add(book);
                 var idString = JmapId.AddressBook(id);
                 byId[idString] = book;

@@ -33,7 +33,7 @@ internal sealed class JmapIdentityService(
         var preexistingChanges = database.ChangeTracker.Entries<JmapChangeDB>()
             .Select(entry => entry.Entity)
             .ToHashSet();
-        database.JmapIdentities.Add(identity);
+        await database.JmapIdentities.AddAsync(identity, cancellationToken).ConfigureAwait(false);
         try
         {
             await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);

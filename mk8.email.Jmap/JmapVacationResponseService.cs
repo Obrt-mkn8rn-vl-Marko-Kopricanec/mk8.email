@@ -41,7 +41,7 @@ internal sealed class JmapVacationResponseService(
         var preexistingChanges = database.ChangeTracker.Entries<JmapChangeDB>()
             .Select(entry => entry.Entity)
             .ToHashSet();
-        database.JmapVacationResponses.Add(response);
+        await database.JmapVacationResponses.AddAsync(response, cancellationToken).ConfigureAwait(false);
         try
         {
             await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);

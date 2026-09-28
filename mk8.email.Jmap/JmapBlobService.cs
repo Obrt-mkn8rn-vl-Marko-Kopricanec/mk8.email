@@ -270,7 +270,7 @@ public sealed class JmapBlobService(
                 ExpiresAt = now.AddHours(environment.Jmap.UploadRetentionHours),
             };
             JmapBlobLargeObjectMigrationService.ApplyReference(blob, reference);
-            database.JmapBlobs.Add(blob);
+            await database.JmapBlobs.AddAsync(blob, cancellationToken).ConfigureAwait(false);
             await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             if (ownedTransaction is not null)
             {

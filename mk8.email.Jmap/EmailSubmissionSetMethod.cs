@@ -417,8 +417,8 @@ internal sealed class EmailSubmissionSetMethod(
             CreatedAt = now,
             UpdatedAt = now,
         };
-        database.MailQueueMessages.Add(queue);
-        database.JmapEmailSubmissions.Add(submission);
+        await database.MailQueueMessages.AddAsync(queue, cancellationToken).ConfigureAwait(false);
+        await database.JmapEmailSubmissions.AddAsync(submission, cancellationToken).ConfigureAwait(false);
         await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return new SubmissionCreateResult(submission, null);
     }

@@ -287,7 +287,7 @@ internal sealed class PushSubscriptionSetMethod(
             UpdatedAt = now,
             LastPushedChange = await stateChanges.GetCursorAsync(context.User, cancellationToken).ConfigureAwait(false),
         };
-        database.JmapPushSubscriptions.Add(subscription);
+        await database.JmapPushSubscriptions.AddAsync(subscription, cancellationToken).ConfigureAwait(false);
         await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return new PushCreateResult(subscription, null);
     }

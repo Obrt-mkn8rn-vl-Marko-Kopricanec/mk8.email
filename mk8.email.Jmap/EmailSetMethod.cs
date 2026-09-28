@@ -282,13 +282,13 @@ internal sealed class EmailSetMethod(
         if (mailbox.Folder.Id != email.FolderId)
         {
             var source = email.Folder;
-            database.ExpungedUids.Add(new ExpungedUidDB
+            await database.ExpungedUids.AddAsync(new ExpungedUidDB
             {
                 Id = Guid.CreateVersion7(),
                 Uid = email.Uid,
                 ModSeq = ++source.HighestModSeq,
                 FolderId = source.Id,
-            });
+            }, cancellationToken).ConfigureAwait(false);
             email.FolderId = mailbox.Folder.Id;
             email.Folder = mailbox.Folder;
             email.Uid = mailbox.Folder.NextUid++;
@@ -523,13 +523,13 @@ internal sealed class EmailSetMethod(
                 cancellationToken).ConfigureAwait(false);
         if (email is null)
             return JmapMethodHelpers.SetError("notFound");
-        database.ExpungedUids.Add(new ExpungedUidDB
+        await database.ExpungedUids.AddAsync(new ExpungedUidDB
         {
             Id = Guid.CreateVersion7(),
             Uid = email.Uid,
             ModSeq = ++email.Folder.HighestModSeq,
             FolderId = email.FolderId,
-        });
+        }, cancellationToken).ConfigureAwait(false);
         content.DeleteOnCommit(email);
         database.Emails.Remove(email);
         await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);

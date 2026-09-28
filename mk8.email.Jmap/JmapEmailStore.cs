@@ -92,7 +92,7 @@ internal sealed class JmapEmailStore(
             };
             ApplyKeywords(email, keywords);
             await content.SetAsync(email, raw, cancellationToken).ConfigureAwait(false);
-            database.Emails.Add(email);
+            await database.Emails.AddAsync(email, cancellationToken).ConfigureAwait(false);
             await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             return new JmapStoredEmailResult(email, null);
         }

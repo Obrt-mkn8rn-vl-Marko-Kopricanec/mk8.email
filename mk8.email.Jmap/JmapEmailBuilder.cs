@@ -167,7 +167,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
             var format = FormatOptions.Default.Clone();
             format.NewLineFormat = NewLineFormat.Dos;
             using var stream = new MemoryStream();
-            message.WriteTo(format, stream, cancellationToken);
+            await message.WriteToAsync(format, stream, cancellationToken).ConfigureAwait(false);
             raw = stream.ToArray();
         }
         catch (Exception exception) when (exception is FormatException or InvalidOperationException)

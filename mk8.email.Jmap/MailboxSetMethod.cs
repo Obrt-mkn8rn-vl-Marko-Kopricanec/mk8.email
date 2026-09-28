@@ -1087,7 +1087,7 @@ internal sealed class MailboxSetMethod(
         }
         return Encoding.UTF8.GetByteCount(name) <= FolderDB.MaximumLeafNameOctets
             && IsNetUnicode(name)
-            && !name.Contains('/')
+            && !name.Contains('/', StringComparison.Ordinal)
             && !name.Any(char.IsControl);
     }
 

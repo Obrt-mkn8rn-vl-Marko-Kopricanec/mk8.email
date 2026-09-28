@@ -277,9 +277,9 @@ public sealed class JmapContactStore(
 
         foreach (var property in properties)
         {
-            if (property == "id")
+            if (string.Equals(property, "id", StringComparison.Ordinal))
                 continue;
-            if (property == "addressBookIds")
+            if (string.Equals(property, "addressBookIds", StringComparison.Ordinal))
                 result[property] = new JsonObject { [view.AddressBookId] = true };
             else if (source.TryGetPropertyValue(property, out var value))
                 result[property] = value?.DeepClone();
@@ -384,7 +384,7 @@ public sealed class JmapContactStore(
             && kindValue.TryGetValue<string>(out var parsedKind)
                 ? parsedKind
                 : "photo";
-        return kind == "sound"
+        return string.Equals(kind, "sound", StringComparison.Ordinal)
             ? contentType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase)
             : contentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase);
     }

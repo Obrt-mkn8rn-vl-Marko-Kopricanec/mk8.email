@@ -63,7 +63,7 @@ public static class JmapId
         if (string.IsNullOrEmpty(value) || value[0] != 'R' || !IsValidId(value))
             return false;
 
-        var separator = value.IndexOf('_');
+        var separator = value.IndexOf('_', StringComparison.Ordinal);
         if (separator != 33
             || !Guid.TryParseExact(value.AsSpan(1, 32), "N", out emailId)
             || !TryBase64UrlDecode(value[(separator + 1)..], out var bytes))
@@ -97,7 +97,7 @@ public static class JmapId
         if (string.IsNullOrEmpty(value) || value[0] != 'H' || !IsValidId(value))
             return false;
 
-        var firstSeparator = value.IndexOf('_');
+        var firstSeparator = value.IndexOf('_', StringComparison.Ordinal);
         var secondSeparator = value.IndexOf('_', firstSeparator + 1);
         if (firstSeparator != 33
             || secondSeparator <= firstSeparator + 1

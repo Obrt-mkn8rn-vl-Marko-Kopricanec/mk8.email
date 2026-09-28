@@ -324,7 +324,7 @@ internal sealed class PushSubscriptionSetMethod(
             if (!value.TryGetPropertyValue("verificationCode", out var verificationNode)
                 || verificationNode is not JsonValue verificationValue
                 || !verificationValue.TryGetValue<string>(out var code)
-                || code != subscription.VerificationCode)
+                || !string.Equals(code, subscription.VerificationCode, StringComparison.Ordinal))
                 invalid.Add("verificationCode");
             else
                 verified = true;

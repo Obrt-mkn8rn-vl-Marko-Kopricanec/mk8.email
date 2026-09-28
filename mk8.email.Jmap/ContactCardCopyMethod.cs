@@ -58,8 +58,10 @@ internal sealed class ContactCardCopyMethod(
             source.InboxId, JmapConstants.ContactCardDataType, cancellationToken).ConfigureAwait(false);
         var targetState = await states.GetStateAsync(
             target.InboxId, JmapConstants.ContactCardDataType, cancellationToken).ConfigureAwait(false);
-        if (ifFromInState is not null && ifFromInState != sourceState
-            || ifInState is not null && ifInState != targetState)
+        if (ifFromInState is not null
+                && !string.Equals(ifFromInState, sourceState, StringComparison.Ordinal)
+            || ifInState is not null
+                && !string.Equals(ifInState, targetState, StringComparison.Ordinal))
         {
             return JmapMethodResponse.Error("stateMismatch");
         }

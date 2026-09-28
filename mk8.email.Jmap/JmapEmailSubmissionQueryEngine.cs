@@ -160,7 +160,7 @@ internal static class JmapEmailSubmissionQueryEngine
             (identityIds is null || identityIds.Contains(item.IdentityId))
             && (emailIds is null || emailIds.Contains(item.EmailId))
             && (threadIds is null || threadIds.Contains(item.ThreadId))
-            && (undoStatus is null || item.UndoStatus == undoStatus)
+            && (undoStatus is null || string.Equals(item.UndoStatus, undoStatus, StringComparison.Ordinal))
             && (before is null || item.SendAt < before.Value.UtcDateTime)
             && (after is null || item.SendAt >= after.Value.UtcDateTime);
         return true;

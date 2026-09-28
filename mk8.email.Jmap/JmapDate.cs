@@ -354,6 +354,6 @@ internal static partial class JmapDate
 
     [GeneratedRegex(
         "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})$",
-        RegexOptions.CultureInvariant)]
+        RegexOptions.CultureInvariant, 1000)]
     private static partial Regex DatePattern();
 }

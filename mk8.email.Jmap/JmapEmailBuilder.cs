@@ -316,10 +316,10 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
         {
             return PartBuildResult.Failed("invalidProperties");
         }
-        if (mediaType != "text" && charset is not null)
+        if (!string.Equals(mediaType, "text", StringComparison.Ordinal) && charset is not null)
             return PartBuildResult.Failed("invalidProperties", properties: ["charset"]);
 
-        if (mediaType == "multipart")
+        if (string.Equals(mediaType, "multipart", StringComparison.Ordinal))
         {
             if (partId is not null || blobId is not null || value["subParts"] is not JsonArray subParts)
                 return PartBuildResult.Failed("invalidProperties");
@@ -362,7 +362,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
             if (value.ContainsKey("charset")
                 || value.ContainsKey("size")
                 || !TryGetBodyValue(bodyValues, partId, out var textValue)
-                || mediaType != "text"
+                || !string.Equals(mediaType, "text", StringComparison.Ordinal)
                 || !partIds.Add(partId))
             {
                 return PartBuildResult.Failed("invalidProperties");
@@ -384,7 +384,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
             part = new MimePart(mediaType, mediaSubtype)
             {
                 Content = new MimeContent(new MemoryStream(blob.Content, writable: false), ContentEncoding.Default),
-                ContentTransferEncoding = mediaType == "text"
+                ContentTransferEncoding = string.Equals(mediaType, "text", StringComparison.Ordinal)
                     ? ContentEncoding.QuotedPrintable
                     : ContentEncoding.Base64,
             };
@@ -394,7 +394,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
             return PartBuildResult.Failed("invalidProperties");
         }
 
-        if (mediaType == "text" && charset is not null)
+        if (string.Equals(mediaType, "text", StringComparison.Ordinal) && charset is not null)
         {
             try
             {
@@ -617,7 +617,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
         mediaSubtype = string.Empty;
         if (!JmapMediaType.TryNormalize(value, out var normalized))
             return false;
-        var separator = normalized.IndexOf('/');
+        var separator = normalized.IndexOf('/', StringComparison.Ordinal);
         mediaType = normalized[..separator];
         mediaSubtype = normalized[(separator + 1)..];
         return true;
@@ -889,7 +889,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
         WritableHeader header,
         JsonNode? node)
     {
-        if (header.Form == "Raw")
+        if (string.Equals(header.Form, "Raw", StringComparison.Ordinal))
         {
             if (node is not JsonValue rawNode
                 || !rawNode.TryGetValue<string>(out var rawValue)
@@ -952,7 +952,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
 
     private static bool IsAllowedHeaderForm(string name, string form)
     {
-        if (form == "Raw")
+        if (string.Equals(form, "Raw", StringComparison.Ordinal))
             return true;
         var normalized = name.ToUpperInvariant();
         return form switch
@@ -995,18 +995,18 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
         out string value)
     {
         value = string.Empty;
-        if (form == "Text")
+        if (string.Equals(form, "Text", StringComparison.Ordinal))
         {
             return node is JsonValue jsonValue
                 && jsonValue.TryGetValue<string>(out value!);
         }
-        if (form == "Addresses")
+        if (string.Equals(form, "Addresses", StringComparison.Ordinal))
         {
             if (!TryParseAddressList(node, out var addresses)) return false;
             value = addresses.ToString();
             return true;
         }
-        if (form == "GroupedAddresses")
+        if (string.Equals(form, "GroupedAddresses", StringComparison.Ordinal))
         {
             if (node is not JsonArray groups) return false;
             var addresses = new InternetAddressList();
@@ -1024,7 +1024,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
             value = addresses.ToString();
             return true;
         }
-        if (form == "MessageIds")
+        if (string.Equals(form, "MessageIds", StringComparison.Ordinal))
         {
             if (node is not JsonArray ids) return false;
             var parsed = new List<string>();
@@ -1038,7 +1038,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
             value = string.Join(' ', parsed);
             return true;
         }
-        if (form == "Date")
+        if (string.Equals(form, "Date", StringComparison.Ordinal))
         {
             if (node is not JsonValue dateValue
                 || !dateValue.TryGetValue<string>(out var text)
@@ -1046,7 +1046,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
             value = DateUtils.FormatDate(date);
             return true;
         }
-        if (form == "URLs")
+        if (string.Equals(form, "URLs", StringComparison.Ordinal))
         {
             if (node is not JsonArray urls) return false;
             var parsed = new List<string>();

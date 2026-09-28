@@ -277,7 +277,7 @@ internal static partial class JmapEmailCodec
                 current = multipart[oneBased - 1];
             }
         }
-        else if (tokens.Length != 1 || tokens[0] != "1")
+        else if (tokens.Length != 1 || !string.Equals(tokens[0], "1", StringComparison.Ordinal))
         {
             return false;
         }
@@ -502,7 +502,7 @@ internal static partial class JmapEmailCodec
                     && part.Type.StartsWith("text/", StringComparison.Ordinal))
                 {
                     var value = DecodeText(part).Text;
-                    text.Add(part.Type == "text/html" ? JmapHtmlText.Extract(value) : value);
+                    text.Add(string.Equals(part.Type, "text/html", StringComparison.Ordinal) ? JmapHtmlText.Extract(value) : value);
                 }
             }
             foreach (var nested in NestedMessages(current.Message.Body))
@@ -663,10 +663,10 @@ internal static partial class JmapEmailCodec
     {
         var leafParts = Flatten(root).Where(part => part.PartId is not null).ToArray();
         var textCandidates = leafParts
-            .Where(part => IsInlineBodyPart(part) && part.Type == "text/plain")
+            .Where(part => IsInlineBodyPart(part) && string.Equals(part.Type, "text/plain", StringComparison.Ordinal))
             .ToArray();
         var htmlCandidates = leafParts
-            .Where(part => IsInlineBodyPart(part) && part.Type == "text/html")
+            .Where(part => IsInlineBodyPart(part) && string.Equals(part.Type, "text/html", StringComparison.Ordinal))
             .ToArray();
         var textBodyValues = new List<PartDescriptor>();
         var htmlBodyValues = new List<PartDescriptor>();
@@ -721,7 +721,7 @@ internal static partial class JmapEmailCodec
                 SelectDisplayedParts(
                     part.SubParts,
                     subtype,
-                    inAlternative || subtype == "alternative",
+                    inAlternative || string.Equals(subtype, "alternative", StringComparison.Ordinal),
                     htmlBody,
                     textBody);
                 continue;
@@ -734,32 +734,32 @@ internal static partial class JmapEmailCodec
                     StringComparison.OrdinalIgnoreCase)
                 && (part.Type is "text/plain" or "text/html" || inlineMedia)
                 && (index == 0
-                    || multipartType != "related"
+                    || !string.Equals(multipartType, "related", StringComparison.Ordinal)
                         && (inlineMedia || part.Name is null));
             if (!isInline)
                 continue;
 
-            if (multipartType == "alternative")
+            if (string.Equals(multipartType, "alternative", StringComparison.Ordinal))
             {
-                if (part.Type == "text/plain")
+                if (string.Equals(part.Type, "text/plain", StringComparison.Ordinal))
                     textBody?.Add(part);
-                else if (part.Type == "text/html")
+                else if (string.Equals(part.Type, "text/html", StringComparison.Ordinal))
                     htmlBody?.Add(part);
                 continue;
             }
 
             if (inAlternative)
             {
-                if (part.Type == "text/plain")
+                if (string.Equals(part.Type, "text/plain", StringComparison.Ordinal))
                     htmlBody = null;
-                else if (part.Type == "text/html")
+                else if (string.Equals(part.Type, "text/html", StringComparison.Ordinal))
                     textBody = null;
             }
             textBody?.Add(part);
             htmlBody?.Add(part);
         }
 
-        if (multipartType != "alternative" || textBody is null || htmlBody is null)
+        if (!string.Equals(multipartType, "alternative", StringComparison.Ordinal) || textBody is null || htmlBody is null)
             return;
         if (textBody.Count == textLength && htmlBody.Count != htmlLength)
             textBody.AddRange(htmlBody.Skip(htmlLength));
@@ -858,7 +858,7 @@ internal static partial class JmapEmailCodec
             var truncated = TruncateUtf8(
                 text,
                 options.MaxBodyValueBytes,
-                avoidOpenHtmlTag: part.Type == "text/html");
+                avoidOpenHtmlTag: string.Equals(part.Type, "text/html", StringComparison.Ordinal));
             result[part.PartId!] = new JsonObject
             {
                 ["value"] = truncated.Value,
@@ -1003,7 +1003,7 @@ internal static partial class JmapEmailCodec
         if (source is null)
             return string.Empty;
         var value = DecodeText(source).Text;
-        if (source.Type == "text/html")
+        if (string.Equals(source.Type, "text/html", StringComparison.Ordinal))
             value = JmapHtmlText.Extract(value);
         value = WhiteSpaceRegex().Replace(value, " ").Trim();
         return TruncateRunes(value, 256);
@@ -1135,7 +1135,7 @@ internal static partial class JmapEmailCodec
         var value = header.Value;
         var raw = header.RawValue;
         var rawTabCount = raw.Count(character => character == (byte)'\t');
-        if (rawTabCount == 0 || !value.Contains('\t'))
+        if (rawTabCount == 0 || !value.Contains('\t', StringComparison.Ordinal))
             return (value, null);
 
         var marker = "\ue000\ue001";
@@ -1524,7 +1524,7 @@ internal static partial class JmapEmailCodec
             .ToString();
     }
 
-    [GeneratedRegex("\\s+", RegexOptions.CultureInvariant)]
+    [GeneratedRegex("\\s+", RegexOptions.CultureInvariant, 1000)]
     private static partial Regex WhiteSpaceRegex();
 
     private enum HeaderForm

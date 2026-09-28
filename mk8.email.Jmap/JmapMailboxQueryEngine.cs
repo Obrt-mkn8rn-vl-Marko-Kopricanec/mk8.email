@@ -91,7 +91,7 @@ internal static class JmapMailboxQueryEngine
                 return false;
             }
             if (property is not ("sortOrder" or "name")
-                || property == "name"
+                || string.Equals(property, "name", StringComparison.Ordinal)
                     && collation is not null
                     && !JmapCollation.IsSupported(collation))
             {

@@ -273,7 +273,7 @@ public sealed class JmapRequestProcessor
         && (!response.Arguments.TryGetPropertyValue("type", out var typeNode)
             || typeNode is not JsonValue typeValue
             || !typeValue.TryGetValue<string>(out var type)
-            || type != "serverPartialFail");
+            || !string.Equals(type, "serverPartialFail", StringComparison.Ordinal));
 
     private async Task RollBackAsync(IDbContextTransaction? transaction)
     {

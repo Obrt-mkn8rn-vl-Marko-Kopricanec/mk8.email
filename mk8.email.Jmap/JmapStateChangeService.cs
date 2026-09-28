@@ -72,7 +72,7 @@ internal sealed class JmapStateChangeService(
             .Distinct()
             .ToListAsync(cancellationToken).ConfigureAwait(false);
         changedKeys = changedKeys
-            .Where(key => key.DataType != "_Account"
+            .Where(key => !string.Equals(key.DataType, "_Account", StringComparison.Ordinal)
                 && (requestedTypes is null || requestedTypes.Contains(key.DataType)))
             .ToList();
         if (changedKeys.Count == 0)

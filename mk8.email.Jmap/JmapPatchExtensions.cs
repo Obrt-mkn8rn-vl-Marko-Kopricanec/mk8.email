@@ -15,7 +15,7 @@ internal static class JmapPatchExtensions
     {
         foreach (var item in patch)
         {
-            var separator = item.Key.IndexOf('/');
+            var separator = item.Key.IndexOf('/', StringComparison.Ordinal);
             var firstToken = separator < 0 ? item.Key : item.Key[..separator];
             yield return firstToken.Replace("~1", "/", StringComparison.Ordinal)
                 .Replace("~0", "~", StringComparison.Ordinal);

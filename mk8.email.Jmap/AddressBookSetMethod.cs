@@ -232,7 +232,7 @@ internal sealed class AddressBookSetMethod(
                     var id = JmapId.AddressBook(book.Id);
                     if (created.FirstOrDefault(entry =>
                             context.CreatedIds.TryGetValue(entry.Key, out var createdId)
-                            && createdId == id).Value is JsonObject createdBook)
+                            && string.Equals(createdId, id, StringComparison.Ordinal)).Value is JsonObject createdBook)
                     {
                         createdBook["isDefault"] = false;
                         SetMayDelete(createdBook, !string.Equals(
@@ -256,7 +256,7 @@ internal sealed class AddressBookSetMethod(
                 {
                     nextDefault.IsDefault = true;
                     nextDefault.UpdatedAt = now;
-                    var createdEntry = context.CreatedIds.FirstOrDefault(entry => entry.Value == resolvedDefault);
+                    var createdEntry = context.CreatedIds.FirstOrDefault(entry => string.Equals(entry.Value, resolvedDefault, StringComparison.Ordinal));
                     if (!string.IsNullOrEmpty(createdEntry.Key)
                         && created[createdEntry.Key] is JsonObject createdBook)
                     {

@@ -201,7 +201,7 @@ internal static class JmapContactQueryEngine
             else if (item.Value is not JsonValue stringValue
                 || !stringValue.TryGetValue<string>(out var text)
                 || text is null
-                || item.Key == "inAddressBook" && !JmapId.IsValidId(text))
+                || string.Equals(item.Key, "inAddressBook", StringComparison.Ordinal) && !JmapId.IsValidId(text))
             {
                 error = "invalidArguments";
                 return false;

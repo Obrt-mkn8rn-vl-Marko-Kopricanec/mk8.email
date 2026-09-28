@@ -8,7 +8,7 @@ internal static class JmapMediaType
         if (value is null)
             return false;
 
-        var separator = value.IndexOf('/');
+        var separator = value.IndexOf('/', StringComparison.Ordinal);
         if (separator <= 0
             || separator != value.LastIndexOf('/')
             || !IsRestrictedName(value.AsSpan(0, separator))

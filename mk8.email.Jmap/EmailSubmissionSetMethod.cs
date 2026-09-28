@@ -200,12 +200,12 @@ internal sealed class EmailSubmissionSetMethod(
                         properties: ["undoStatus"]);
                     continue;
                 }
-                if (requestedStatus == "canceled" && submission.UndoStatus != "pending")
+                if (string.Equals(requestedStatus, "canceled", StringComparison.Ordinal) && !string.Equals(submission.UndoStatus, "pending", StringComparison.Ordinal))
                 {
                     notUpdated[item.Key] = JmapMethodHelpers.SetError("cannotUnsend");
                     continue;
                 }
-                if (requestedStatus != submission.UndoStatus)
+                if (!string.Equals(requestedStatus, submission.UndoStatus, StringComparison.Ordinal))
                 {
                     notUpdated[item.Key] = JmapMethodHelpers.SetError("cannotUnsend");
                     continue;
@@ -1136,7 +1136,7 @@ internal sealed class EmailSubmissionSetMethod(
                 var submissionId = context.ResolveId(item);
                 if (submissionId is not null
                     && successful.TryGetValue(submissionId, out var emailId)
-                    && !emailDestroys.Any(node => node?.GetValue<string>() == emailId))
+                    && !emailDestroys.Any(node => string.Equals(node?.GetValue<string>(), emailId, StringComparison.Ordinal)))
                     emailDestroys.Add(emailId);
             }
         }

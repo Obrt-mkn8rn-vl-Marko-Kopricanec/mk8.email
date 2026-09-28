@@ -49,7 +49,7 @@ internal sealed class SearchSnippetGetMethod(
                     out _,
                     out var filterError))
             {
-                return JmapMethodResponse.Error(filterError == "invalidArguments"
+                return JmapMethodResponse.Error(string.Equals(filterError, "invalidArguments", StringComparison.Ordinal)
                     ? "unsupportedFilter"
                     : filterError);
             }

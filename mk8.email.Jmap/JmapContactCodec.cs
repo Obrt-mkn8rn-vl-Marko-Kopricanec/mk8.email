@@ -161,7 +161,7 @@ internal static class JmapContactCodec
             if (name["components"] is JsonArray components)
             {
                 var values = components.OfType<JsonObject>()
-                    .Where(component => StringValue(component["kind"]) != "separator")
+                    .Where(component => !string.Equals(StringValue(component["kind"]), "separator", StringComparison.Ordinal))
                     .Select(component => StringValue(component["value"]))
                     .Where(value => !string.IsNullOrWhiteSpace(value));
                 var joined = string.Join(' ', values!);
@@ -318,7 +318,7 @@ internal static class JmapContactCodec
                     titles[ObjectId(property, titles, "t", ref index)] = new JsonObject
                     {
                         ["name"] = value,
-                        ["kind"] = property.Name == "ROLE" ? "role" : "title",
+                        ["kind"] = string.Equals(property.Name, "ROLE", StringComparison.Ordinal) ? "role" : "title",
                     };
                     break;
                 case "EMAIL":
@@ -494,7 +494,7 @@ internal static class JmapContactCodec
     {
         var anniversary = new JsonObject
         {
-            ["kind"] = propertyName == "BDAY" ? "birth" : "wedding",
+            ["kind"] = string.Equals(propertyName, "BDAY", StringComparison.Ordinal) ? "birth" : "wedding",
         };
         if (TryVCardTimestamp(value, out var timestamp))
         {
@@ -701,7 +701,7 @@ internal static class JmapContactCodec
             var name = StringValue(value["name"]);
             if (string.IsNullOrEmpty(name))
                 continue;
-            lines.Add((StringValue(value["kind"]) == "role" ? "ROLE" : "TITLE")
+            lines.Add((string.Equals(StringValue(value["kind"]), "role", StringComparison.Ordinal) ? "ROLE" : "TITLE")
                 + PropertyIdParameter(item.Key)
                 + ":"
                 + EscapeText(name));
@@ -850,7 +850,7 @@ internal static class JmapContactCodec
                 : null;
             if (string.IsNullOrEmpty(date))
                 continue;
-            lines.Add((StringValue(value["kind"]) == "birth" ? "BDAY" : "ANNIVERSARY")
+            lines.Add((string.Equals(StringValue(value["kind"]), "birth", StringComparison.Ordinal) ? "BDAY" : "ANNIVERSARY")
                 + PropertyIdParameter(item.Key)
                 + ":"
                 + EscapeText(date));
@@ -879,7 +879,7 @@ internal static class JmapContactCodec
 
     private static string? FormatAnniversaryDate(JsonObject value)
     {
-        if (StringValue(value["@type"]) == "Timestamp")
+        if (string.Equals(StringValue(value["@type"]), "Timestamp", StringComparison.Ordinal))
         {
             return StringValue(value["utc"]) is { } utc
                 && JmapDate.TryParseUtcDate(utc, out var timestamp)
@@ -930,7 +930,7 @@ internal static class JmapContactCodec
             if (name["components"] is JsonArray components)
             {
                 var values = components.OfType<JsonObject>()
-                    .Where(component => StringValue(component["kind"]) != "separator")
+                    .Where(component => !string.Equals(StringValue(component["kind"]), "separator", StringComparison.Ordinal))
                     .Select(component => StringValue(component["value"]))
                     .Where(value => !string.IsNullOrWhiteSpace(value));
                 var joined = string.Join(' ', values!);
@@ -1015,7 +1015,7 @@ internal static class JmapContactCodec
         var parameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var part in parts.Skip(1))
         {
-            var equals = part.IndexOf('=');
+            var equals = part.IndexOf('=', StringComparison.Ordinal);
             if (equals > 0)
                 parameters[part[..equals].ToUpperInvariant()] = part[(equals + 1)..];
         }

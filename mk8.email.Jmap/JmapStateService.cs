@@ -111,9 +111,9 @@ public sealed class JmapStateService(
             sinceState,
             FormatState(newSequence),
             hasMoreChanges,
-            folded.Where(item => item.Value == JmapConstants.CreatedChange).Select(item => item.Key).ToArray(),
-            folded.Where(item => item.Value == JmapConstants.UpdatedChange).Select(item => item.Key).ToArray(),
-            folded.Where(item => item.Value == JmapConstants.DestroyedChange).Select(item => item.Key).ToArray());
+            folded.Where(item => string.Equals(item.Value, JmapConstants.CreatedChange, StringComparison.Ordinal)).Select(item => item.Key).ToArray(),
+            folded.Where(item => string.Equals(item.Value, JmapConstants.UpdatedChange, StringComparison.Ordinal)).Select(item => item.Key).ToArray(),
+            folded.Where(item => string.Equals(item.Value, JmapConstants.DestroyedChange, StringComparison.Ordinal)).Select(item => item.Key).ToArray());
     }
 
     private Task<bool> HasUnsafeFutureLifecycleAsync(
@@ -130,7 +130,7 @@ public sealed class JmapStateService(
             .Select(change => change.Key)
             .ToArray();
         var mustNotBeUpdated = pageChanges
-            .Where(change => change.Value == JmapConstants.DestroyedChange)
+            .Where(change => string.Equals(change.Value, JmapConstants.DestroyedChange, StringComparison.Ordinal))
             .Select(change => change.Key)
             .ToArray();
         if (mustNotBeCreated.Length == 0 && mustNotBeUpdated.Length == 0)

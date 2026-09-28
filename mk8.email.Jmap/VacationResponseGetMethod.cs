@@ -49,7 +49,7 @@ internal sealed class VacationResponseGetMethod(
         var notFound = new JsonArray();
         if (requestedIds is not null)
         {
-            foreach (var id in requestedIds.Where(id => id != "singleton").Distinct(StringComparer.Ordinal))
+            foreach (var id in requestedIds.Where(id => !string.Equals(id, "singleton", StringComparison.Ordinal)).Distinct(StringComparer.Ordinal))
                 notFound.Add(id);
         }
         return new JmapMethodResponse(Operation, new JsonObject

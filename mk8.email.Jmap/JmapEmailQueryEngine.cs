@@ -520,7 +520,7 @@ internal static partial class JmapEmailQueryEngine
     private static int CompareString(string left, string right, string? collation) =>
         JmapCollation.Compare(left, right, collation);
 
-    [GeneratedRegex("(?:\\\"(?:\\\\.|[^\\\"])*\\\"|'(?:\\\\.|[^'])*'|\\S+)", RegexOptions.CultureInvariant)]
+    [GeneratedRegex("(?:\\\"(?:\\\\.|[^\\\"])*\\\"|'(?:\\\\.|[^'])*'|\\S+)", RegexOptions.CultureInvariant, 1000)]
     private static partial Regex SearchTokenRegex();
 
 }

@@ -189,9 +189,9 @@ internal static class JmapContactValidator
     {
         ValidatePropertyNames(card, CardProperties, invalid);
 
-        if (!HasString(card, "@type", out var type) || type != "Card")
+        if (!HasString(card, "@type", out var type) || !string.Equals(type, "Card", StringComparison.Ordinal))
             invalid.Add("@type");
-        if (!HasString(card, "version", out var version) || version != "1.0")
+        if (!HasString(card, "version", out var version) || !string.Equals(version, "1.0", StringComparison.Ordinal))
             invalid.Add("version");
         if (!HasString(card, "uid", out var uid)
             || string.IsNullOrWhiteSpace(uid)
@@ -219,7 +219,7 @@ internal static class JmapContactValidator
         ValidateUtcDate(card, "updated", invalid);
         ValidateTrueSet(card, "members", invalid);
         if (card.ContainsKey("members")
-            && (!HasString(card, "kind", out var memberKind) || memberKind != "group"))
+            && (!HasString(card, "kind", out var memberKind) || !string.Equals(memberKind, "group", StringComparison.Ordinal)))
         {
             invalid.Add("members");
         }
@@ -296,7 +296,7 @@ internal static class JmapContactValidator
             {
                 return false;
             }
-            var isSeparator = kind == "separator";
+            var isSeparator = string.Equals(kind, "separator", StringComparison.Ordinal);
             if (isSeparator && (!isOrdered || previousWasSeparator))
                 return false;
             hasNonSeparator |= !isSeparator;
@@ -506,7 +506,7 @@ internal static class JmapContactValidator
             {
                 return false;
             }
-            var isSeparator = kind == "separator";
+            var isSeparator = string.Equals(kind, "separator", StringComparison.Ordinal);
             if (isSeparator && (!isOrdered || previousWasSeparator))
                 return false;
             hasNonSeparator |= !isSeparator;
@@ -702,7 +702,7 @@ internal static class JmapContactValidator
         foreach (var item in patch)
         {
             if (!TryParsePatchPath(item.Key, out var path)
-                || path[0] == "localizations")
+                || string.Equals(path[0], "localizations", StringComparison.Ordinal))
             {
                 return false;
             }
@@ -781,7 +781,7 @@ internal static class JmapContactValidator
         var result = new List<string>();
         foreach (var token in value.Split('/'))
         {
-            if (!TryDecodePointerToken(token, out var decoded) || decoded == "-")
+            if (!TryDecodePointerToken(token, out var decoded) || string.Equals(decoded, "-", StringComparison.Ordinal))
                 return false;
             result.Add(decoded);
         }
@@ -859,7 +859,7 @@ internal static class JmapContactValidator
 
     private static bool IsValidExtensionProperty(string value)
     {
-        var colon = value.IndexOf(':');
+        var colon = value.IndexOf(':', StringComparison.Ordinal);
         if (colon >= 0)
         {
             if (colon == 0 || colon == value.Length - 1)
@@ -1119,7 +1119,7 @@ internal static class JmapContactValidator
 
     private static bool HasExpectedType(JsonObject value, string expected) =>
         !value.TryGetPropertyValue("@type", out var node)
-        || TryString(node, out var type) && type == expected;
+        || TryString(node, out var type) && string.Equals(type, expected, StringComparison.Ordinal);
 
     private static bool HasString(JsonObject value, string property, out string text)
     {

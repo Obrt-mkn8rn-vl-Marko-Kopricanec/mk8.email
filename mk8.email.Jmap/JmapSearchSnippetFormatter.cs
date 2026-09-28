@@ -23,7 +23,7 @@ internal static partial class JmapSearchSnippetFormatter
             var childNegated = negated;
             if (value["operator"] is JsonValue operatorValue
                 && operatorValue.TryGetValue<string>(out var operation)
-                && operation == "NOT")
+                && string.Equals(operation, "NOT", StringComparison.Ordinal))
             {
                 childNegated = !childNegated;
             }
@@ -137,25 +137,34 @@ internal static partial class JmapSearchSnippetFormatter
         if (terms.Count == 0)
             return WebUtility.HtmlEncode(value);
         var pattern = string.Join('|', terms.Select(Regex.Escape));
-        var expression = new Regex(pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        var expression = new Regex(pattern,
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.NonBacktracking,
+            TimeSpan.FromSeconds(1));
         var builder = new StringBuilder();
         var previous = 0;
-        foreach (Match match in expression.Matches(value))
+        try
         {
-            builder.Append(WebUtility.HtmlEncode(value[previous..match.Index]));
-            builder.Append("<mark>")
-                .Append(WebUtility.HtmlEncode(match.Value))
-                .Append("</mark>");
-            previous = match.Index + match.Length;
+            foreach (Match match in expression.Matches(value))
+            {
+                builder.Append(WebUtility.HtmlEncode(value[previous..match.Index]));
+                builder.Append("<mark>")
+                    .Append(WebUtility.HtmlEncode(match.Value))
+                    .Append("</mark>");
+                previous = match.Index + match.Length;
+            }
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return WebUtility.HtmlEncode(value);
         }
         builder.Append(WebUtility.HtmlEncode(value[previous..]));
         return builder.ToString();
     }
 
-    [GeneratedRegex("(?:\\\"(?:\\\\.|[^\\\"])*\\\"|'(?:\\\\.|[^'])*'|\\S+)", RegexOptions.CultureInvariant)]
+    [GeneratedRegex("(?:\\\"(?:\\\\.|[^\\\"])*\\\"|'(?:\\\\.|[^'])*'|\\S+)", RegexOptions.CultureInvariant, 1000)]
     private static partial Regex TermRegex();
 
-    [GeneratedRegex("\\s+", RegexOptions.CultureInvariant)]
+    [GeneratedRegex("\\s+", RegexOptions.CultureInvariant, 1000)]
     private static partial Regex WhiteSpaceRegex();
 
 }

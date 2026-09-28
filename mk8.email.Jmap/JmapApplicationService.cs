@@ -176,7 +176,7 @@ internal sealed class JmapApplicationService(
         ProtocolAuthentication authentication,
         CancellationToken cancellationToken)
     {
-        if (authentication.Kind == ProtocolAuthenticationKinds.Password
+        if (string.Equals(authentication.Kind, ProtocolAuthenticationKinds.Password, StringComparison.Ordinal)
             && !string.IsNullOrEmpty(authentication.Username))
         {
             return await mailAuthenticator.AuthenticateAsync(
@@ -185,7 +185,7 @@ internal sealed class JmapApplicationService(
                 cancellationToken).ConfigureAwait(false);
         }
 
-        if (authentication.Kind == ProtocolAuthenticationKinds.BearerToken
+        if (string.Equals(authentication.Kind, ProtocolAuthenticationKinds.BearerToken, StringComparison.Ordinal)
             && environment.OAuth.EnableOAuth)
         {
             return await services.GetRequiredService<IOAuthTokenService>()

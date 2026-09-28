@@ -379,14 +379,14 @@ internal sealed class EmailSetMethod(
         }
         foreach (var item in patch)
         {
-            var separator = item.Key.IndexOf('/');
+            var separator = item.Key.IndexOf('/', StringComparison.Ordinal);
             if (separator < 0)
                 continue;
             var root = item.Key[..separator];
             if (root is not ("bodyStructure" or "textBody" or "htmlBody" or "attachments"))
                 continue;
             var remainder = item.Key[(separator + 1)..];
-            var nextSeparator = remainder.IndexOf('/');
+            var nextSeparator = remainder.IndexOf('/', StringComparison.Ordinal);
             var token = nextSeparator < 0 ? remainder : remainder[..nextSeparator];
             result.Add(token.Replace("~1", "/", StringComparison.Ordinal)
                 .Replace("~0", "~", StringComparison.Ordinal));
@@ -410,7 +410,7 @@ internal sealed class EmailSetMethod(
             foreach (var item in bodyPart)
             {
                 result.Add(item.Key);
-                if (item.Key == "subParts")
+                if (string.Equals(item.Key, "subParts", StringComparison.Ordinal))
                 {
                     if (item.Value is null)
                         sawExplicitNullSubParts = true;

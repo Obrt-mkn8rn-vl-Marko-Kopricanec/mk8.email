@@ -69,7 +69,7 @@ internal sealed class VacationResponseSetMethod(
             foreach (var item in update)
             {
                 var resolvedId = context.ResolveId(item.Key);
-                if (resolvedId != "singleton")
+                if (!string.Equals(resolvedId, "singleton", StringComparison.Ordinal))
                 {
                     notUpdated[item.Key] = JmapMethodHelpers.SetError("notFound");
                     continue;
@@ -119,7 +119,8 @@ internal sealed class VacationResponseSetMethod(
         {
             foreach (var id in destroy.Distinct(StringComparer.Ordinal))
                 notDestroyed[id] = JmapMethodHelpers.SetError(
-                    context.ResolveId(id) == "singleton" ? "singleton" : "notFound");
+                    string.Equals(context.ResolveId(id), "singleton", StringComparison.Ordinal)
+                        ? "singleton" : "notFound");
         }
         return new JmapMethodResponse(Operation, new JsonObject
         {

@@ -152,6 +152,32 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
             Console.WriteLine($"Verified {count} database-referenced Azure Blob object(s).");
             return 0;
         }
+        if (Matches(arguments, 2, "--audit-messaging-keys"))
+        {
+            var worker = EnvironmentLoader.LoadFromFile(
+                arguments[1], isDevelopment, EnvironmentValidationRole.ApplicationWorker);
+            if (!worker.Messaging.Enabled)
+                throw new InvalidOperationException("Distributed messaging must be enabled.");
+            var dataSource = NpgsqlDataSource.Create(worker.BuildConnectionString());
+            await using var dataSourceLifetime = dataSource.ConfigureAwait(false);
+            var services = new ServiceCollection()
+                .AddAzureBlobObjectStorage(worker)
+                .BuildServiceProvider();
+            await using var servicesLifetime = services.ConfigureAwait(false);
+            var availableKeyIds = worker.Messaging.DecryptionKeys
+                .Select(key => key.Id).Append(worker.Messaging.EncryptionKeyId).ToArray();
+            using var timeout = new CancellationTokenSource(TimeSpan.FromHours(2));
+            var count = await DistributedMessagingKeyAudit.AuditAsync(
+                dataSource,
+                services.GetRequiredService<ILargeObjectStore>(),
+                availableKeyIds,
+                Math.Min(int.MaxValue, worker.Messaging.MaxPayloadBytes * 4L + 65_536),
+                timeout.Token).ConfigureAwait(false);
+            Console.WriteLine($"Indexed {count} live encrypted payload(s) and receipt(s): "
+                + "stored key IDs are configured and receipt Blob hashes match. "
+                + "Historical decryption and archived snapshots require separate verification.");
+            return 0;
+        }
         if (Matches(arguments, 2, "--verify-distributed-snapshot"))
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromHours(2));
@@ -569,7 +595,8 @@ static bool IsSupportedCommand(string[] arguments) =>
         ("--validate-gateway-config" or "--validate-worker-config"
             or "--healthcheck-gateway"
             or "--probe-gateway-backends" or "--probe-worker-backends"
-            or "--probe-worker-dispatch" or "--probe-gateway-dispatch" or "--audit-blob-references");
+            or "--probe-worker-dispatch" or "--probe-gateway-dispatch"
+            or "--audit-blob-references" or "--audit-messaging-keys");
 
 static bool Matches(string[] arguments, int length, string command) =>
     arguments.Length == length && string.Equals(arguments[0], command, StringComparison.Ordinal);

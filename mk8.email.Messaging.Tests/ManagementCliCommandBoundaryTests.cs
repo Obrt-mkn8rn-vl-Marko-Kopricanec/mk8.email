@@ -43,6 +43,7 @@ public sealed class ManagementCliCommandBoundaryTests
             ["--probe-worker-dispatch", missing],
             ["--probe-gateway-dispatch", missing],
             ["--audit-blob-references", missing],
+            ["--audit-messaging-keys", missing],
             ["--worker-wake-schema-state", missing, missing],
             ["--prepare-worker-wake", missing, missing],
             ["--restore-worker-wake", missing, missing, "legacy"],

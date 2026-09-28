@@ -61,10 +61,22 @@ the exact approved release and verify its digest before a recovery drill.
 For a compromised Gateway, discard the host and revoke its PostgreSQL and
 Azure Blob-compatible credentials; reissue its TLS private key/certificates and
 Gateway-only credentials. Retrieve Worker-only and archive keys independently.
-The shared messaging key is exposed to Gateway by the current transport, so
-retain old keys until encrypted queue, receipt, and object records are
-reconciled, then rotate in a coordinated role upgrade. Do not delete old keys
-merely because a replacement Gateway starts. Validate both role configurations,
+The shared messaging key is exposed to Gateway by the current transport. On
+the Worker host, run
+`mk8.email.Application.CLI --audit-messaging-keys WORKER_CONFIG`
+before role activation and again before retiring any prior key. It reads every
+live Gateway journal, application/presentation request and response key ID and
+every protected receipt envelope from a read-only PostgreSQL snapshot. A new
+unrecognized encryption-key column also fails closed. Missing key IDs or
+changed/missing receipt Blobs fail the audit. This is a structural inventory:
+it does not authenticate historical key bytes, decrypt queue bodies, prove
+Gateway/Worker key-ring equality, or attest a restored archive. The separate
+Gateway dispatch probe tests active-key interoperability. Keep the old keys until
+all live records and each retained off-site snapshot are reconciled, stop old
+writers, repeat the audit with the proposed reduced key ring, and only then
+rotate in a coordinated role upgrade. A passing live audit alone cannot prove
+that a concurrently running old Gateway will not write another old-key record.
+Do not delete old keys merely because a replacement Gateway starts. Validate both role configurations,
 restricted database privileges, Wake, durable request/reply flow, mail protocol
 listeners, and a deep end-to-end health probe during an isolated two-host
 restore.

@@ -130,7 +130,7 @@ internal sealed class JmapEmailStore(
             {
                 return false;
             }
-            var normalized = item.Key.ToLowerInvariant();
+            var normalized = item.Key.ToProtocolLowerInvariant();
             if (!JmapEmailCodec.IsValidKeyword(normalized))
                 return false;
             result.Add(normalized);

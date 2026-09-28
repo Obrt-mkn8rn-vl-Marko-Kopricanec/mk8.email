@@ -150,7 +150,7 @@ internal static partial class JmapEmailQueryEngine
             var needsKeyword = property is
                 "hasKeyword" or "allInThreadHaveKeyword" or "someInThreadHaveKeyword";
             if (needsKeyword != (keyword is not null)
-                || keyword is not null && !JmapEmailCodec.IsValidKeyword(keyword.ToLowerInvariant()))
+                || keyword is not null && !JmapEmailCodec.IsValidKeyword(keyword.ToProtocolLowerInvariant()))
             {
                 result = [];
                 error = "invalidArguments";
@@ -165,7 +165,7 @@ internal static partial class JmapEmailQueryEngine
                 error = "unsupportedSort";
                 return false;
             }
-            comparators.Add(new JmapEmailComparator(property, ascending, keyword?.ToLowerInvariant(), collation));
+            comparators.Add(new JmapEmailComparator(property, ascending, keyword?.ToProtocolLowerInvariant(), collation));
         }
         result = comparators;
         return true;
@@ -469,7 +469,7 @@ internal static partial class JmapEmailQueryEngine
         {
             return false;
         }
-        result = result.ToLowerInvariant();
+        result = result.ToProtocolLowerInvariant();
         return JmapEmailCodec.IsValidKeyword(result);
     }
 

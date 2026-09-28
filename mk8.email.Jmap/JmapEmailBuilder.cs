@@ -695,9 +695,9 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
         {
             if (disposition is not null)
             {
-                if (!IsMimeToken(disposition.ToLowerInvariant()))
+                if (!IsMimeToken(disposition.ToProtocolLowerInvariant()))
                     return false;
-                entity.ContentDisposition = new ContentDisposition(disposition.ToLowerInvariant());
+                entity.ContentDisposition = new ContentDisposition(disposition.ToProtocolLowerInvariant());
             }
             if (contentId is not null)
             {

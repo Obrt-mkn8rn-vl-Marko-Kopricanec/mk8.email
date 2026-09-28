@@ -141,7 +141,7 @@ internal static partial class JmapEmailCodec
             {
                 partId = candidate;
                 content = GetDecodedContent(part.Entity);
-                contentType = part.Entity.ContentType.MimeType.ToLowerInvariant();
+                contentType = part.Entity.ContentType.MimeType.ToProtocolLowerInvariant();
                 name = GetPartName(part.Entity);
                 return true;
             }
@@ -241,7 +241,7 @@ internal static partial class JmapEmailCodec
         if (entity is Multipart)
             return false;
         content = GetDecodedContent(entity);
-        contentType = entity.ContentType.MimeType.ToLowerInvariant();
+        contentType = entity.ContentType.MimeType.ToProtocolLowerInvariant();
         name = GetPartName(entity);
         return true;
     }
@@ -446,7 +446,7 @@ internal static partial class JmapEmailCodec
         if (email.IsAnswered) result["$answered"] = true;
         foreach (var keyword in email.Keywords ?? [])
         {
-            var normalized = keyword.ToLowerInvariant();
+            var normalized = keyword.ToProtocolLowerInvariant();
             if (IsValidKeyword(normalized) && !result.ContainsKey(normalized))
                 result[normalized] = true;
         }
@@ -567,7 +567,7 @@ internal static partial class JmapEmailCodec
 
         var partId = entity is Multipart ? null : path;
         var bytes = GetDecodedContent(entity);
-        var type = entity.ContentType.MimeType.ToLowerInvariant();
+        var type = entity.ContentType.MimeType.ToProtocolLowerInvariant();
         var charset = type.StartsWith("text/", StringComparison.Ordinal)
             ? entity.ContentType.Charset ?? "us-ascii"
             : null;
@@ -597,7 +597,7 @@ internal static partial class JmapEmailCodec
             fileName,
             type,
             charset,
-            entity.ContentDisposition?.Disposition?.ToLowerInvariant(),
+            entity.ContentDisposition?.Disposition?.ToProtocolLowerInvariant(),
             entity.ContentId,
             languages is { Count: > 0 } ? languages.ToArray() : null,
             entity.ContentLocation?.ToString(),
@@ -907,7 +907,7 @@ internal static partial class JmapEmailCodec
         if (string.IsNullOrWhiteSpace(value))
             return false;
 
-        return value.Trim().ToLowerInvariant() is not (
+        return value.Trim().ToProtocolLowerInvariant() is not (
             "7bit" or "8bit" or "binary" or "base64" or "quoted-printable"
             or "uuencode" or "x-uuencode" or "uue" or "x-uue");
     }

@@ -280,7 +280,7 @@ internal sealed class PushSubscriptionSetMethod(
             Url = url,
             Types = types,
             KeysJson = keysJson,
-            VerificationCode = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant(),
+            VerificationCode = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToProtocolLowerInvariant(),
             IsVerified = false,
             ExpiresAt = LimitExpiry(expiry, now),
             CreatedAt = now,

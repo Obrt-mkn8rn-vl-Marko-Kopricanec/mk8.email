@@ -263,7 +263,7 @@ internal static class JmapContactCodec
                     card["uid"] = value;
                     break;
                 case "KIND":
-                    card["kind"] = value.ToLowerInvariant();
+                    card["kind"] = value.ToProtocolLowerInvariant();
                     break;
                 case "PRODID":
                     card["prodId"] = value;
@@ -347,7 +347,7 @@ internal static class JmapContactCodec
                     media[ObjectId(property, media, "m", ref index)] = ResourceValue(
                         property,
                         value,
-                        property.Name.ToLowerInvariant());
+                        property.Name.ToProtocolLowerInvariant());
                     break;
                 case "NOTE":
                     notes[ObjectId(property, notes, "x", ref index)] =
@@ -575,7 +575,7 @@ internal static class JmapContactCodec
             return null;
         foreach (var value in values.Split(','))
         {
-            var normalized = value.Trim().Trim('"').ToLowerInvariant();
+            var normalized = value.Trim().Trim('"').ToProtocolLowerInvariant();
             var mediaType = normalized switch
             {
                 "jpeg" or "jpg" => "image/jpeg",
@@ -625,7 +625,7 @@ internal static class JmapContactCodec
             return contexts;
         foreach (var type in types.Split(','))
         {
-            var normalized = type.Trim().Trim('"').ToLowerInvariant() switch
+            var normalized = type.Trim().Trim('"').ToProtocolLowerInvariant() switch
             {
                 "home" => "private",
                 "work" => "work",

@@ -17,7 +17,7 @@ internal static class JmapMediaType
             return false;
         }
 
-        normalized = value.ToLowerInvariant();
+        normalized = value.ToProtocolLowerInvariant();
         return true;
     }
 

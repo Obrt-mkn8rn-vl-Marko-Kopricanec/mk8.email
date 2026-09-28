@@ -1,7 +1,10 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using mk8.email.Application.Interfaces;
 using mk8.email.Application.Services;
+using mk8.email.Configuration;
+using mk8.email.Infrastructure.Data;
 
 namespace mk8.email.Jmap;
 
@@ -16,6 +19,7 @@ public static class JmapServiceExtensions
         services.AddScoped<JmapStateService>();
         services.AddScoped<JmapStateChangeService>();
         services.AddScoped<JmapMailboxStore>();
+        services.AddScoped<IMailFolderReader, MailFolderReader>();
         services.TryAddScoped<LargeObjectTransactionEffects>();
         services.TryAddScoped<ApplicationOperationReceiptStore>();
         services.TryAddScoped<MailQueueContentService>();
@@ -37,8 +41,21 @@ public static class JmapServiceExtensions
             provider.GetRequiredService<JmapPushWorker>());
         services.AddHostedService(provider => provider.GetRequiredService<JmapPushWorker>());
         services.AddScoped<EmailSetMethod>();
-        services.AddScoped<JmapRequestProcessor>();
-        services.AddScoped<IJmapMethod, MailboxGetMethod>();
+        services.AddScoped<JmapRequestProcessor>(provider => new JmapRequestProcessor(
+            provider.GetRequiredService<IEnumerable<IJmapMethod>>(),
+            provider.GetRequiredService<JmapAccountProfileService>(),
+            provider.GetRequiredService<EmailDbContext>(),
+            provider.GetRequiredService<EnvironmentConfig>(),
+            provider.GetRequiredService<LargeObjectTransactionEffects>(),
+            provider.GetRequiredService<ILogger<JmapRequestProcessor>>(),
+            provider.GetRequiredService<ApplicationOperationReceiptStore>(),
+            provider.GetRequiredService<IMailFolderReader>()));
+        AddJmapMethods(services);
+        return services;
+    }
+
+    private static void AddJmapMethods(IServiceCollection services)
+    {
         services.AddScoped<IJmapMethod, MailboxChangesMethod>();
         services.AddScoped<IJmapMethod, MailboxQueryMethod>();
         services.AddScoped<IJmapMethod, MailboxQueryChangesMethod>();
@@ -76,6 +93,5 @@ public static class JmapServiceExtensions
         services.AddScoped<IJmapMethod, ContactCardQueryChangesMethod>();
         services.AddScoped<IJmapMethod, ContactCardSetMethod>();
         services.AddScoped<IJmapMethod, ContactCardCopyMethod>();
-        return services;
     }
 }

@@ -38,6 +38,14 @@ public sealed class JmapAccountService(EmailDbContext database)
         if (!JmapId.TryParseAccount(accountId, out var inboxId))
             return null;
 
+        return await GetAccountByInboxIdAsync(user, inboxId, cancellationToken).ConfigureAwait(false);
+    }
+
+    internal async Task<JmapAccount?> GetAccountByInboxIdAsync(
+        AuthenticatedMailUser user,
+        Guid inboxId,
+        CancellationToken cancellationToken = default)
+    {
         return await database.Inboxes
             .AsNoTracking()
             .Where(inbox => inbox.Id == inboxId
@@ -61,7 +69,8 @@ public sealed class JmapAccountService(EmailDbContext database)
         string? accountId,
         CancellationToken cancellationToken = default)
     {
-        var primary = (await GetAccountsAsync(user, cancellationToken).ConfigureAwait(false)).FirstOrDefault();
+        var available = await GetAccountsAsync(user, cancellationToken).ConfigureAwait(false);
+        var primary = available.Count == 0 ? null : available[0];
         return primary is not null
             && string.Equals(JmapId.Account(primary.InboxId), accountId, StringComparison.Ordinal)
                 ? primary

@@ -32,6 +32,47 @@ namespace mk8.email.Messaging.Tests;
 public sealed class JmapDurableReplayTests
 {
     [TestMethod]
+    public async Task TypedMailboxReadReplaysItsCommittedSnapshotAcrossWorkerRetries()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var folderId = Guid.CreateVersion7();
+        await using (var setup = rig.Context())
+        {
+            setup.Folders.Add(new FolderDB
+            {
+                Id = folderId,
+                InboxId = rig.InboxId,
+                Name = "Before retry",
+                UidValidity = 1,
+                NextUid = 1,
+            });
+            await setup.SaveChangesAsync();
+        }
+        var batch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Messages],
+            [new JmapApplicationCall(MailOperationKind.ReadFolders, new JsonObject
+            {
+                ["accountId"] = JmapId.Account(rig.InboxId),
+                ["ids"] = new JsonArray(JmapId.Mailbox(folderId)),
+                ["properties"] = new JsonArray("name"),
+            }, "get")]);
+        var operation = Guid.CreateVersion7();
+        var first = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual("Before retry", first.Invocations[0].Arguments["list"]![0]!["name"]!.GetValue<string>());
+        await using (var changed = rig.Context())
+        {
+            var folder = await changed.Folders.SingleAsync(row => row.Id == folderId);
+            folder.Name = "After retry";
+            await changed.SaveChangesAsync();
+        }
+        var replay = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
+        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7());
+        Assert.AreEqual("After retry", fresh.Invocations[0].Arguments["list"]![0]!["name"]!.GetValue<string>());
+        await using var verification = rig.Context();
+        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync());
+    }
+
+    [TestMethod]
     public async Task NativeContactMutationsReplayResultsAndCreationReferencesWithoutDuplicatingData()
     {
         await using var rig = await Rig.CreateAsync();

@@ -135,7 +135,7 @@ public sealed class JmapCoreTests
                     () => failedPostCommitCount++,
                     true));
                 JmapFixture.OverrideMethod(services, new AtomicityProbeMethod(
-                    MailOperationKind.ReadFolders,
+                    MailOperationKind.MutateFolders,
                     "kept",
                     "E22222222222222222222222222222222",
                     () => successfulPostCommitCount++,
@@ -149,13 +149,13 @@ public sealed class JmapCoreTests
               "createdIds":{"existing":"E00000000000000000000000000000000"},
               "methodCalls":[
                 ["Mailbox/query",{},"f1"],
-                ["Mailbox/get",{},"s1"]
+                ["Mailbox/set",{},"s1"]
               ]
             }
             """);
 
         Assert.AreEqual("serverFail", response["methodResponses"]![0]![1]!["type"]!.GetValue<string>());
-        Assert.AreEqual("Mailbox/get", response["methodResponses"]![1]![0]!.GetValue<string>());
+        Assert.AreEqual("Mailbox/set", response["methodResponses"]![1]![0]!.GetValue<string>());
         var createdIds = response["createdIds"]!.AsObject();
         Assert.IsTrue(createdIds.ContainsKey("existing"));
         Assert.IsFalse(createdIds.ContainsKey("transient"));

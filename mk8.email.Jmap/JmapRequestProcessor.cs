@@ -16,6 +16,7 @@ public sealed class JmapRequestProcessor
 {
     private readonly IReadOnlyDictionary<MailOperationKind, IJmapMethod> _methods;
     private readonly JmapAccountProfileService _sessions;
+    private readonly IMailFolderReader _folderReader;
     private readonly EmailDbContext _database;
     private readonly EnvironmentConfig _environment;
     private readonly LargeObjectTransactionEffects _blobEffects;
@@ -35,9 +36,30 @@ public sealed class JmapRequestProcessor
         LargeObjectTransactionEffects blobEffects,
         ILogger<JmapRequestProcessor> logger,
         ApplicationOperationReceiptStore? receipts = null)
+        : this(methods, sessions, database, environment, blobEffects, logger, receipts, null)
+    {
+    }
+
+    internal JmapRequestProcessor(
+        IEnumerable<IJmapMethod> methods,
+        JmapAccountProfileService sessions,
+        EmailDbContext database,
+        EnvironmentConfig environment,
+        LargeObjectTransactionEffects blobEffects,
+        ILogger<JmapRequestProcessor> logger,
+        ApplicationOperationReceiptStore? receipts,
+        IMailFolderReader? folderReader)
     {
         _methods = methods.ToDictionary(method => ValidRegisteredOperation(method.Operation, method.Feature));
         _sessions = sessions;
+        if (folderReader is null)
+        {
+            var accountService = new JmapAccountService(database);
+            _folderReader = new MailFolderReader(accountService,
+                new JmapMailboxStore(database), new JmapStateService(database, accountService), environment);
+        }
+        else
+            _folderReader = folderReader;
         _database = database;
         _environment = environment;
         _blobEffects = blobEffects;
@@ -74,12 +96,50 @@ public sealed class JmapRequestProcessor
         var receiptKey = relational
             ? new ApplicationReceiptKey(operationId!.Value, 0, user.Id, "mail.operation", inputHash)
             : null;
-        var response = !_methods.TryGetValue(command.Operation, out var method) || !features.Contains(method.Feature)
-            ? EncodeResponse(JmapMethodResponse.Error("unknownMethod"))
-            : await InvokeAtomicallyAsync(method, context, (JsonObject)command.Arguments.DeepClone(),
-                receiptKey, cancellationToken).ConfigureAwait(false);
+        MailOperationResponse response;
+        if (_methods.TryGetValue(command.Operation, out var method) && features.Contains(method.Feature))
+        {
+            var arguments = (JsonObject)command.Arguments.DeepClone();
+            response = await InvokeAtomicallyAsync(method.Operation, context, async token =>
+            {
+                var methodResponse = await method.InvokeAsync(context, arguments, token).ConfigureAwait(false);
+                ValidateResponse(methodResponse);
+                return EncodeResponse(methodResponse);
+            }, receiptKey, cancellationToken).ConfigureAwait(false);
+        }
+        else if (command.Operation == MailOperationKind.ReadFolders && features.Contains(MailFeature.Messages))
+        {
+            var folderCommand = ParseFolderCommand(command.Arguments);
+            response = await InvokeAtomicallyAsync(command.Operation, context, async token =>
+            {
+                var result = await _folderReader.ReadAsync(folderCommand, user, token).ConfigureAwait(false);
+                var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
+                    ?? throw new InvalidOperationException("The folder reader returned an incomplete result.");
+                return new MailOperationResponse(MailOperationKind.ReadFolders, ApplicationValueCodec.Encode(data));
+            }, receiptKey, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            response = EncodeResponse(JmapMethodResponse.Error("unknownMethod"));
+        }
         var profile = await _sessions.GetProfileAsync(user, cancellationToken).ConfigureAwait(false);
         return new MailOperationResult(response, createdIds, profile);
+    }
+
+    private static MailFolderReadCommand ParseFolderCommand(JsonObject arguments)
+    {
+        if (arguments.Count != 3 || !arguments.ContainsKey("accountId")
+            || !arguments.ContainsKey("folderIds") || !arguments.ContainsKey("checkAccountOnly"))
+            throw NotRequest("The folder read command has an invalid shape.");
+        try
+        {
+            return JsonSerializer.Deserialize<MailFolderReadCommand>(arguments, ReceiptJsonOptions)
+                ?? throw NotRequest("The folder read command is missing.");
+        }
+        catch (JsonException)
+        {
+            throw NotRequest("The folder read command contains invalid values.");
+        }
     }
 
     private static Dictionary<string, string> CloneCreatedIds(IReadOnlyDictionary<string, string>? values)
@@ -139,9 +199,9 @@ public sealed class JmapRequestProcessor
     }
 
     private async Task<MailOperationResponse> InvokeAtomicallyAsync(
-        IJmapMethod method,
+        MailOperationKind operation,
         JmapInvocationContext context,
-        JsonObject arguments,
+        Func<CancellationToken, Task<MailOperationResponse>> invoke,
         ApplicationReceiptKey? receiptKey,
         CancellationToken cancellationToken)
     {
@@ -171,10 +231,9 @@ public sealed class JmapRequestProcessor
                 }
             }
 
-            var response = await method.InvokeAsync(context, arguments, cancellationToken).ConfigureAwait(false);
-            ValidateResponse(response);
-            var encoded = EncodeResponse(response);
-            if (MustRollBack(response))
+            var encoded = await invoke(cancellationToken).ConfigureAwait(false);
+            ValidateEncodedResponse(encoded);
+            if (MustRollBack(encoded))
             {
                 await RollBackAsync(transaction).ConfigureAwait(false);
                 await _blobEffects.RollbackAsync(blobEffectMarker).ConfigureAwait(false);
@@ -229,7 +288,7 @@ public sealed class JmapRequestProcessor
             await CompleteBlobRollbackAsync(blobEffectMarker, commitAttempted).ConfigureAwait(false);
             RestoreInvocationState(context, createdIds, postCommitMarker);
             context.DiscardPresentationEffects(presentationMarker);
-            _logger.LogError(exception, "Mail operation {Operation} failed", method.Operation);
+            _logger.LogError(exception, "Mail operation {Operation} failed", operation);
             return EncodeResponse(JmapMethodResponse.Error("serverFail"));
         }
         finally
@@ -268,9 +327,10 @@ public sealed class JmapRequestProcessor
         await _blobEffects.RollbackAsync(marker).ConfigureAwait(false);
     }
 
-    private static bool MustRollBack(JmapMethodResponse response) =>
+    private static bool MustRollBack(MailOperationResponse response) =>
         response.Operation == MailOperationKind.Failure
-        && (!response.Arguments.TryGetPropertyValue("type", out var typeNode)
+        && (ApplicationValueCodec.Decode(response.Data) is not JsonObject arguments
+            || !arguments.TryGetPropertyValue("type", out var typeNode)
             || typeNode is not JsonValue typeValue
             || !typeValue.TryGetValue<string>(out var type)
             || !string.Equals(type, "serverPartialFail", StringComparison.Ordinal));

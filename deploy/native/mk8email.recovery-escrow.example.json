@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "refs": {
+    "shared.messaging.active": "example://replace-with-independent-escrow-reference",
+    "worker.oauth-signing": "example://replace-with-independent-escrow-reference",
+    "worker.mfa-encryption": "example://replace-with-independent-escrow-reference",
+    "backup.signing": "example://replace-with-independent-escrow-reference",
+    "backup.decryption": "example://replace-with-independent-escrow-reference"
+  }
+}

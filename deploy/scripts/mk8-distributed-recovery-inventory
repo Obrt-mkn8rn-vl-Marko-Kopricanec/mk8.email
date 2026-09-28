@@ -1,0 +1,342 @@
+#!/usr/bin/env python3
+"""Create a secret-free, release-bound split-host recovery inventory."""
+
+import argparse
+import hashlib
+import json
+import os
+import posixpath
+import re
+import stat
+import sys
+import tempfile
+from pathlib import Path
+
+
+HOST_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9.-]{0,127}\Z")
+RELEASE_ID = re.compile(r"[0-9a-f]{40}\Z")
+ESCROW_REF = re.compile(r"(?:offline|vault)://[A-Za-z0-9][A-Za-z0-9._/-]{0,255}\Z")
+DIRECT_SECRETS = (
+    ("Database", "Password"),
+    ("Messaging", "EncryptionKey"),
+    ("ObjectStorage", "ConnectionString"),
+    ("OAuth", "SigningKey"),
+    ("Mfa", "EncryptionKey"),
+)
+WORKER_ONLY_HANDLES = (
+    ("OAuth", "SigningKeyFile"),
+    ("Mfa", "EncryptionKeyFile"),
+    ("Dkim", "PrivateKeyPath"),
+)
+
+
+def reject_duplicate_keys(pairs):
+    result = {}
+    seen = set()
+    for key, value in pairs:
+        folded = key.casefold()
+        if folded in seen:
+            raise ValueError("A configuration object contains duplicate or case-colliding keys.")
+        seen.add(folded)
+        result[key] = value
+    return result
+
+
+def reject_constant(_value):
+    raise ValueError("Non-finite JSON numbers are not allowed in recovery configuration.")
+
+
+def read_json(path, private=False):
+    if not path.is_absolute() or path.resolve(strict=True) != path:
+        raise ValueError("Recovery input paths must be absolute and canonical.")
+    metadata = path.lstat()
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+        raise ValueError("A recovery input is not a regular, single-link file.")
+    if metadata.st_mode & 0o022 or private and metadata.st_mode & 0o077:
+        raise ValueError("A recovery input has unsafe permissions.")
+    if private and metadata.st_uid != os.getuid():
+        raise ValueError("A private recovery input is not owned by the caller.")
+    if private:
+        parent = path.parent.stat()
+        if parent.st_uid != os.getuid() or parent.st_mode & 0o077:
+            raise ValueError("A private recovery input directory is unsafe.")
+    if metadata.st_size > 1_048_576:
+        raise ValueError("A recovery input is too large.")
+    raw = path.read_bytes()
+    document = json.loads(
+        raw,
+        object_pairs_hook=reject_duplicate_keys,
+        parse_constant=reject_constant,
+    )
+    if not isinstance(document, dict):
+        raise ValueError("A recovery input must contain a JSON object.")
+    return document, hashlib.sha256(raw).hexdigest()
+
+
+def check_shape(value, example, location=()):
+    if isinstance(example, dict):
+        if not isinstance(value, dict):
+            raise ValueError("A recovery configuration section has the wrong shape.")
+        expected = set(example)
+        if location == ("Messaging",) and "DecryptionKeys" in value:
+            expected.add("DecryptionKeys")
+        if set(value) != expected:
+            raise ValueError("A recovery configuration has missing or unexpected fields.")
+        for key, member in value.items():
+            if location == ("Messaging",) and key == "DecryptionKeys":
+                if not isinstance(member, list):
+                    raise ValueError("Messaging.DecryptionKeys must be an array.")
+                for key_entry in member:
+                    if not isinstance(key_entry, dict) or set(key_entry) != {"Id", "KeyFile"}:
+                        raise ValueError("A messaging decryption key must contain only Id and KeyFile.")
+                    if not isinstance(key_entry["Id"], str):
+                        raise ValueError("A messaging decryption key ID is invalid.")
+                    secret_path(key_entry["KeyFile"])
+            else:
+                check_shape(member, example[key], location + (key,))
+        return
+    if isinstance(example, list):
+        if not isinstance(value, list):
+            raise ValueError("A recovery configuration array has the wrong shape.")
+        if not example and value:
+            raise ValueError("A recovery configuration array has the wrong shape.")
+        if example and any(type(item) is not type(example[0]) for item in value):
+            raise ValueError("A recovery configuration array has the wrong shape.")
+        return
+    if example is None:
+        valid = value is None or isinstance(value, str)
+    elif isinstance(example, bool):
+        valid = type(value) is bool
+    elif isinstance(example, int):
+        valid = type(value) is int
+    else:
+        valid = isinstance(value, str) or value is None and location[-1].endswith(("File", "Path"))
+    if not valid:
+        raise ValueError("A recovery configuration value has the wrong type.")
+
+
+def secret_path(value):
+    if not isinstance(value, str) or not value.startswith("/") or value == "/":
+        raise ValueError("A required secret handle is not an absolute path.")
+    if posixpath.normpath(value) != value or any(ord(char) < 32 for char in value):
+        raise ValueError("A secret handle path is not canonical.")
+    return value
+
+
+def optional_secret_path(value):
+    return None if value is None else secret_path(value)
+
+
+def validate_role(config, example, role):
+    for section, field in DIRECT_SECRETS:
+        if field in config.get(section, {}):
+            raise ValueError("Inline credentials or private keys are forbidden in recovery configuration.")
+    check_shape(config, example)
+    if config["Messaging"]["Enabled"] is not True:
+        raise ValueError("Distributed messaging must be enabled in both roles.")
+    if config["ObjectStorage"]["Provider"] != "azure-blob":
+        raise ValueError("Both roles must use the Azure Blob protocol.")
+    for section, field in (
+        ("Database", "PasswordFile"),
+        ("Messaging", "EncryptionKeyFile"),
+        ("ObjectStorage", "ConnectionStringFile"),
+    ):
+        secret_path(config[section][field])
+    if role == "gateway":
+        for section, field in WORKER_ONLY_HANDLES:
+            if config[section][field] is not None:
+                raise ValueError("Gateway configuration names a Worker-only private-key handle.")
+        secret_path(config["Tls"]["CertificateKeyPath"])
+        secret_path(config["Admin"]["DataProtectionKeyPath"])
+    else:
+        if config["Tls"]["CertificateKeyPath"] is not None:
+            raise ValueError("Worker configuration names a Gateway-only TLS private-key handle.")
+        if config["Admin"]["DataProtectionKeyPath"] is not None:
+            raise ValueError("Worker configuration names Gateway-only data-protection keys.")
+        for section, enabled, field in (
+            ("OAuth", "EnableOpenIdConnect", "SigningKeyFile"),
+            ("Mfa", "EnableTotp", "EncryptionKeyFile"),
+            ("Dkim", "EnableSigning", "PrivateKeyPath"),
+        ):
+            if config[section][enabled]:
+                secret_path(config[section][field])
+            else:
+                optional_secret_path(config[section][field])
+
+
+def prior_keys(config):
+    entries = config["Messaging"].get("DecryptionKeys", [])
+    result = {}
+    for entry in entries:
+        identifier = entry["Id"]
+        if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", identifier) or identifier in result:
+            raise ValueError("A previous messaging key ID is invalid or duplicated.")
+        result[identifier] = secret_path(entry["KeyFile"])
+    return result
+
+
+def inventory(arguments):
+    if not RELEASE_ID.fullmatch(arguments.release_commit):
+        raise ValueError("The release commit must be an exact lowercase Git SHA-1.")
+    if not HOST_ID.fullmatch(arguments.gateway_host) or not HOST_ID.fullmatch(arguments.worker_host):
+        raise ValueError("A role host identifier is invalid.")
+    if arguments.gateway_host.casefold() == arguments.worker_host.casefold():
+        raise ValueError("Disposable-Gateway recovery requires separate Gateway and Worker hosts.")
+
+    example, template_digest = read_json(arguments.template)
+    gateway, gateway_digest = read_json(arguments.gateway_config, private=True)
+    worker, worker_digest = read_json(arguments.worker_config, private=True)
+    escrow, _ = read_json(arguments.escrow_map, private=True)
+    validate_role(gateway, example, "gateway")
+    validate_role(worker, example, "worker")
+    if gateway["Database"]["Name"] != worker["Database"]["Name"]:
+        raise ValueError("Gateway and Worker must name the same database.")
+    if gateway["Database"]["Username"] == worker["Database"]["Username"]:
+        raise ValueError("Gateway and Worker must use distinct database roles.")
+    for section, field in (
+        ("Messaging", "EncryptionKeyId"),
+        ("ObjectStorage", "ContainerName"),
+        ("ObjectStorage", "ObjectPrefix"),
+    ):
+        if gateway[section][field] != worker[section][field]:
+            raise ValueError("Gateway and Worker backend namespace settings disagree.")
+
+    previous_gateway = prior_keys(gateway)
+    previous_worker = prior_keys(worker)
+    active_key = gateway["Messaging"]["EncryptionKeyId"]
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", active_key):
+        raise ValueError("The active messaging key ID is invalid.")
+    if previous_gateway.keys() != previous_worker.keys() or active_key in previous_gateway:
+        raise ValueError("The role messaging key rings disagree.")
+
+    handles = []
+
+    def add(identifier, role, path, recovery, escrow_ref=None):
+        item = {"id": identifier, "role": role, "path": path, "recovery": recovery}
+        if escrow_ref is not None:
+            item["escrowRef"] = escrow_ref
+        handles.append(item)
+
+    add("gateway.database", "gateway", gateway["Database"]["PasswordFile"], "reissue")
+    add("worker.database", "worker", worker["Database"]["PasswordFile"], "reissue")
+    add("gateway.blob", "gateway", gateway["ObjectStorage"]["ConnectionStringFile"], "reissue")
+    add("worker.blob", "worker", worker["ObjectStorage"]["ConnectionStringFile"], "reissue")
+    add("gateway.tls", "gateway", gateway["Tls"]["CertificateKeyPath"], "reissue")
+    add("gateway.admin-data-protection", "gateway", gateway["Admin"]["DataProtectionKeyPath"], "reissue")
+    add("wake.database", "worker", secret_path(arguments.wake_connection_handle), "reissue")
+    add("backup.blob", "worker", secret_path(arguments.backup_connection_handle), "reissue")
+    add("backup.recipients", "worker", secret_path(arguments.backup_recipients_handle), "restore-public")
+    add("backup.verify", "worker", secret_path(arguments.backup_verify_handle), "restore-public")
+
+    escrow_needed = {"shared.messaging.active", "backup.signing", "backup.decryption"}
+    for identifier in sorted(previous_gateway):
+        escrow_needed.add("shared.messaging.previous." + identifier)
+    for section, field, identifier in (
+        ("OAuth", "SigningKeyFile", "worker.oauth-signing"),
+        ("Mfa", "EncryptionKeyFile", "worker.mfa-encryption"),
+        ("Dkim", "PrivateKeyPath", "worker.dkim-private"),
+    ):
+        if worker[section][field] is not None:
+            escrow_needed.add(identifier)
+    if (set(escrow) != {"schemaVersion", "refs"}
+            or type(escrow["schemaVersion"]) is not int
+            or escrow["schemaVersion"] != 1):
+        raise ValueError("The escrow reference map has an unsupported schema.")
+    references = escrow["refs"]
+    if not isinstance(references, dict) or set(references) != escrow_needed:
+        raise ValueError("The escrow reference map does not exactly cover retained keys.")
+    if any(not isinstance(ref, str) or not ESCROW_REF.fullmatch(ref) for ref in references.values()):
+        raise ValueError("An escrow reference is invalid or contains inline credential syntax.")
+    if len(set(references.values())) != len(references):
+        raise ValueError("Distinct retained keys must have distinct escrow references.")
+
+    add("shared.messaging.active", "shared", {
+        "gateway": gateway["Messaging"]["EncryptionKeyFile"],
+        "worker": worker["Messaging"]["EncryptionKeyFile"],
+    }, "reconcile-then-rotate", references["shared.messaging.active"])
+    for identifier in sorted(previous_gateway):
+        entry_id = "shared.messaging.previous." + identifier
+        add(entry_id, "shared", {
+            "gateway": previous_gateway[identifier],
+            "worker": previous_worker[identifier],
+        }, "retain-until-reconciled", references[entry_id])
+    for section, field, identifier in (
+        ("OAuth", "SigningKeyFile", "worker.oauth-signing"),
+        ("Mfa", "EncryptionKeyFile", "worker.mfa-encryption"),
+        ("Dkim", "PrivateKeyPath", "worker.dkim-private"),
+    ):
+        if worker[section][field] is not None:
+            add(identifier, "worker", worker[section][field], "retrieve-from-escrow", references[identifier])
+    add("backup.signing", "worker", secret_path(arguments.backup_signing_handle),
+        "retrieve-from-escrow", references["backup.signing"])
+    add("backup.decryption", "offline", None,
+        "retrieve-from-escrow", references["backup.decryption"])
+
+    return {
+        "schemaVersion": 1,
+        "releaseCommit": arguments.release_commit,
+        "templateSha256": template_digest,
+        "roles": {
+            "gateway": {"hostId": arguments.gateway_host, "sha256": gateway_digest, "config": gateway},
+            "worker": {"hostId": arguments.worker_host, "sha256": worker_digest, "config": worker},
+        },
+        "namespace": {
+            "database": gateway["Database"]["Name"],
+            "messagingKeyId": active_key,
+            "blobContainer": gateway["ObjectStorage"]["ContainerName"],
+            "blobPrefix": gateway["ObjectStorage"]["ObjectPrefix"],
+        },
+        "secretHandles": sorted(handles, key=lambda item: item["id"]),
+        "verificationStillRequired": [
+            "Backend credentials have distinct effective privileges and target the same services.",
+            "Old encrypted records are reconciled before shared key retirement.",
+            "Dynamic domain TLS and DKIM keys are inventoried and reissued or escrowed separately.",
+            "A timed isolated two-host restore proves the recovery objective.",
+        ],
+    }
+
+
+def publish(output, document):
+    if not output.is_absolute() or output.parent.resolve(strict=True) != output.parent:
+        raise ValueError("The inventory output path must have a canonical absolute parent.")
+    parent = output.parent.stat()
+    if parent.st_uid != os.getuid() or parent.st_mode & 0o077:
+        raise ValueError("The inventory output directory must be private and owned by the caller.")
+    payload = (json.dumps(document, indent=2, sort_keys=True, ensure_ascii=False) + "\n").encode("utf-8")
+    descriptor, temporary = tempfile.mkstemp(prefix=".recovery-inventory-", dir=output.parent)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.link(temporary, output)
+        directory = os.open(output.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        os.unlink(temporary)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    for name in (
+        "template", "gateway-config", "worker-config", "escrow-map", "gateway-host",
+        "worker-host", "release-commit", "wake-connection-handle", "backup-connection-handle",
+        "backup-recipients-handle", "backup-verify-handle", "backup-signing-handle", "output",
+    ):
+        parser.add_argument("--" + name, required=True)
+    arguments = parser.parse_args()
+    for field in ("template", "gateway_config", "worker_config", "escrow_map", "output"):
+        setattr(arguments, field, Path(getattr(arguments, field)))
+    try:
+        publish(arguments.output, inventory(arguments))
+    except (OSError, ValueError, TypeError, KeyError) as error:
+        print(f"Recovery inventory refused: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

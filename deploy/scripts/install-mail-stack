@@ -309,6 +309,7 @@ install -o root -g root -m 0755 "$asset_root/deploy/scripts/ensure-wake-service-
 install -o root -g root -m 0755 "$asset_root/deploy/scripts/configure-apt-sources" /usr/local/sbin/configure-apt-sources
 install -o root -g root -m 0755 "$asset_root/deploy/scripts/activate-mail-stack" /usr/local/sbin/activate-mail-stack
 install -o root -g root -m 0755 "$asset_root/deploy/scripts/activate-distributed-role" /usr/local/sbin/activate-distributed-role
+install -o root -g root -m 0755 "$asset_root/deploy/scripts/mk8-distributed-recovery-inventory" /usr/local/sbin/mk8-distributed-recovery-inventory
 install -o root -g root -m 0755 "$asset_root/deploy/scripts/install-distributed-role" /usr/local/sbin/install-distributed-role
 install -o root -g root -m 0755 "$asset_root/deploy/scripts/upgrade-distributed-role" /usr/local/sbin/upgrade-distributed-role
 install -o root -g root -m 0755 "$asset_root/deploy/scripts/deactivate-mail-stack" /usr/local/sbin/deactivate-mail-stack
@@ -345,6 +346,9 @@ install -d -o root -g root -m 0755 /usr/local/share/mk8email/distributed
 install -o root -g root -m 0644 \
     "$asset_root/deploy/native/mk8email.distributed.config.example.json" \
     /usr/local/share/mk8email/distributed/config.example.json
+install -o root -g root -m 0644 \
+    "$asset_root/deploy/native/mk8email.recovery-escrow.example.json" \
+    /usr/local/share/mk8email/distributed/recovery-escrow.example.json
 
 install -d -o root -g root -m 0755 /usr/local/lib/mk8email/tests
 install -o root -g root -m 0755 "$asset_root/deploy/tests/backup_restore_smoke" /usr/local/lib/mk8email/tests/backup_restore_smoke

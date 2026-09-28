@@ -151,6 +151,7 @@ tar --create --gzip --file="$stage/configuration.tar.gz" --directory=/ \
     var/www/mk8email-domains \
     usr/local/sbin/activate-mail-stack \
     usr/local/sbin/activate-distributed-role \
+    usr/local/sbin/mk8-distributed-recovery-inventory \
     usr/local/sbin/install-distributed-role \
     usr/local/sbin/upgrade-distributed-role \
     usr/local/sbin/configure-apt-sources \

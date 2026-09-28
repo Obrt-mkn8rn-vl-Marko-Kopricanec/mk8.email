@@ -239,6 +239,7 @@ run_unit "mk8-build-$short_commit-$$" yes /bin/sh -eu -c '
         deploy/tests/static_web_assets_smoke.py
     python3 deploy/tests/static_web_assets_smoke.py
     python3 deploy/tests/distributed_config_smoke.py
+    python3 deploy/tests/distributed_recovery_inventory_smoke.py
     sh deploy/tests/upgrade_distributed_role_smoke "$stable_source/deploy/scripts/upgrade-distributed-role"
     sh deploy/tests/on_demand_activation_smoke \
         "$stable_source/deploy/scripts/activate-distributed-role" \

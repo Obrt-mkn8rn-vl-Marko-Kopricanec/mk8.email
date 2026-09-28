@@ -30,8 +30,8 @@ internal sealed class ContactCardSetMethod(
             || !JmapContactArguments.TryGetObjectMap(arguments, "update", out var updates)
             || !JmapContactArguments.TryGetDestroy(arguments, out var destroys)
             || !JmapMethodHelpers.AreValidCreationIds(creates?.Keys)
-            || !JmapMethodHelpers.AreValidIdReferences(updates?.Keys)
-            || !JmapMethodHelpers.AreValidIdReferences(destroys))
+            || !JmapMethodHelpers.AreValidIdReferences(updates?.Keys, context)
+            || !JmapMethodHelpers.AreValidIdReferences(destroys, context))
         {
             return JmapMethodResponse.Error("invalidArguments");
         }

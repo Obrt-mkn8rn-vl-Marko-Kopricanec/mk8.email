@@ -108,7 +108,7 @@ public sealed class JmapGatewayRouteTests
             const string requestDocument =
                 """
                 {"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
-                 "methodCalls":[["Mailbox/get",{"x":1,"X":2,"nested":{"items":[1,null,"text"],"key":3,"Key":4}},"call-1"],
+                 "methodCalls":[["Mailbox/get",{"x":1,"X":2,"nested":{"items":[1,null,"text"],"key":3,"Key":4,"reference":"#made"}},"call-1"],
                    ["Core/echo",{"#copied":{"resultOf":"call-1","name":"Mailbox/get","path":"/nested/items/2"}},"call-2"],
                    ["Mailbox/get",{"#collision":{"resultOf":"call-1","name":"Mailbox/get","path":"/�~02"}},"call-3"]],
                  "createdIds":{"made":"object-id"}}
@@ -158,6 +158,8 @@ public sealed class JmapGatewayRouteTests
             Assert.AreEqual(2, jmap.Request.Command.Arguments["X"]!.GetValue<int>());
             Assert.AreEqual(3, jmap.Request.Command.Arguments["nested"]!["key"]!.GetValue<int>());
             Assert.AreEqual(4, jmap.Request.Command.Arguments["nested"]!["Key"]!.GetValue<int>());
+            Assert.AreEqual("#made", jmap.Request.Command.Arguments["nested"]!["reference"]!.GetValue<string>());
+            Assert.AreEqual("made", jmap.Request.Command.ReferenceAliases["#made"]);
             Assert.AreEqual("object-id", jmap.Request.Command.KnownEntities?["made"]);
             var invocation = json.RootElement.GetProperty("methodResponses")[0];
             Assert.AreEqual("Mailbox/get", invocation[0].GetString());

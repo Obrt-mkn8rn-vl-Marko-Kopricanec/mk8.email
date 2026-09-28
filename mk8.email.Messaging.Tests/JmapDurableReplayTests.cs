@@ -163,10 +163,12 @@ public sealed class JmapDurableReplayTests
     {
         await using var rig = await Rig.CreateAsync();
         var now = DateTimeOffset.UtcNow;
+        var mutationArguments = rig.ContactsBatch().Invocations[0].Arguments;
         var request = new ApplicationRequest(Guid.CreateVersion7(), Guid.CreateVersion7(), 0, "jmap", ApplicationOperations.MailOperationExecute,
             "application/json", JsonSerializer.SerializeToUtf8Bytes(new MailOperationApplicationRequest(
                 new ProtocolAuthentication(ProtocolAuthenticationKinds.Password, rig.User.Username, "test"),
-                new([MailFeature.Basic, MailFeature.Contacts], MailOperationKind.MutateAddressBooks, rig.ContactsBatch().Invocations[0].Arguments)),
+                new([MailFeature.Basic, MailFeature.Contacts], MailOperationKind.MutateAddressBooks,
+                    mutationArguments, GatewayJmapReferenceAliasCodec.Collect(mutationArguments))),
                 new JsonSerializerOptions(JsonSerializerDefaults.Web)), new Dictionary<string, string>(), now, now.AddMinutes(3));
         await rig.Bus.EnqueueAsync(request);
         var lease = await rig.Bus.TryClaimAsync("first-worker");
@@ -335,7 +337,8 @@ public sealed class JmapDurableReplayTests
     {
         await using var rig = await Rig.CreateAsync();
         var identity = Guid.CreateVersion7();
-        var command = new MailOperationCommand([MailFeature.Basic], MailOperationKind.FindFolders, new JsonObject());
+        var command = new MailOperationCommand([MailFeature.Basic], MailOperationKind.FindFolders, new JsonObject(),
+            new Dictionary<string, string>(StringComparer.Ordinal));
         using var scope = rig.Services.CreateScope();
         var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
         var receipts = scope.ServiceProvider.GetRequiredService<ApplicationOperationReceiptStore>();

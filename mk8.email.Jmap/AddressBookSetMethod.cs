@@ -47,11 +47,11 @@ internal sealed class AddressBookSetMethod(
             || !JmapContactArguments.TryGetObjectMap(arguments, "update", out var updates)
             || !JmapContactArguments.TryGetDestroy(arguments, out var destroys)
             || !JmapMethodHelpers.AreValidCreationIds(creates?.Keys)
-            || !JmapMethodHelpers.AreValidIdReferences(updates?.Keys)
-            || !JmapMethodHelpers.AreValidIdReferences(destroys)
+            || !JmapMethodHelpers.AreValidIdReferences(updates?.Keys, context)
+            || !JmapMethodHelpers.AreValidIdReferences(destroys, context)
             || requestedDefault is not null
                 && (requestedDefault.Length == 0
-                    || requestedDefault[0] != '#'
+                    || !context.TryGetReferenceKey(requestedDefault, out _)
                         && !JmapId.IsValidId(requestedDefault)))
         {
             return JmapMethodResponse.Error("invalidArguments");

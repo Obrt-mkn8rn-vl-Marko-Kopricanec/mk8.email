@@ -1,5 +1,6 @@
 #nullable enable
-const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v8" -> string!
+const mk8.email.Contracts.Messaging.ApplicationOperations.MailOperationExecute = "mail.operation.execute.v2" -> string!
+const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v9" -> string!
 mk8.email.Contracts.Messaging.DistributedContractVersions
 mk8.email.Contracts.Messaging.JmapAccountProfile
 mk8.email.Contracts.Messaging.JmapAccountProfile.<Clone>$() -> mk8.email.Contracts.Messaging.JmapAccountProfile!
@@ -87,6 +88,10 @@ mk8.email.Contracts.Messaging.MailAdmissionPlan.Features.init -> void
 mk8.email.Contracts.Messaging.MailAdmissionPlan.MailAdmissionPlan(System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailFeature>! Features, int OperationCount) -> void
 mk8.email.Contracts.Messaging.MailAdmissionPlan.OperationCount.get -> int
 mk8.email.Contracts.Messaging.MailAdmissionPlan.OperationCount.init -> void
+mk8.email.Contracts.Messaging.MailOperationCommand.Deconstruct(out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailFeature>! Features, out mk8.email.Contracts.Messaging.MailOperationKind Operation, out System.Text.Json.Nodes.JsonObject! Arguments, out System.Collections.Generic.IReadOnlyDictionary<string!, string!>! ReferenceAliases, out System.Collections.Generic.IReadOnlyDictionary<string!, string!>? KnownEntities) -> void
+mk8.email.Contracts.Messaging.MailOperationCommand.MailOperationCommand(System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailFeature>! Features, mk8.email.Contracts.Messaging.MailOperationKind Operation, System.Text.Json.Nodes.JsonObject! Arguments, System.Collections.Generic.IReadOnlyDictionary<string!, string!>! ReferenceAliases, System.Collections.Generic.IReadOnlyDictionary<string!, string!>? KnownEntities = null) -> void
+mk8.email.Contracts.Messaging.MailOperationCommand.ReferenceAliases.get -> System.Collections.Generic.IReadOnlyDictionary<string!, string!>!
+mk8.email.Contracts.Messaging.MailOperationCommand.ReferenceAliases.init -> void
 mk8.email.Contracts.Messaging.MailPlanApplicationRequest.<Clone>$() -> mk8.email.Contracts.Messaging.MailPlanApplicationRequest!
 mk8.email.Contracts.Messaging.MailPlanApplicationRequest.Equals(mk8.email.Contracts.Messaging.MailPlanApplicationRequest? other) -> bool
 mk8.email.Contracts.Messaging.MailPlanApplicationRequest.MailPlanApplicationRequest(mk8.email.Contracts.Messaging.ProtocolAuthentication! Authentication, mk8.email.Contracts.Messaging.MailAdmissionPlan? Plan = null) -> void
@@ -238,7 +243,6 @@ override mk8.email.Contracts.Messaging.MailApplicationFailure.GetHashCode() -> i
 override mk8.email.Contracts.Messaging.MailApplicationFailure.ToString() -> string!
 static mk8.email.Contracts.Messaging.MailApplicationFailure.operator !=(mk8.email.Contracts.Messaging.MailApplicationFailure? left, mk8.email.Contracts.Messaging.MailApplicationFailure? right) -> bool
 static mk8.email.Contracts.Messaging.MailApplicationFailure.operator ==(mk8.email.Contracts.Messaging.MailApplicationFailure? left, mk8.email.Contracts.Messaging.MailApplicationFailure? right) -> bool
-const mk8.email.Contracts.Messaging.ApplicationOperations.MailOperationExecute = "mail.operation.execute" -> string!
 const mk8.email.Contracts.Messaging.ApplicationOperations.MailPlanValidate = "mail.plan.validate" -> string!
 mk8.email.Contracts.Messaging.ApplicationValue.Kind.get -> mk8.email.Contracts.Messaging.ApplicationValueKind
 mk8.email.Contracts.Messaging.ApplicationValue.Kind.init -> void
@@ -314,7 +318,6 @@ override mk8.email.Contracts.Messaging.MailOperationCommand.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.MailOperationCommand.Equals(object? obj) -> bool
 mk8.email.Contracts.Messaging.MailOperationCommand.Equals(mk8.email.Contracts.Messaging.MailOperationCommand? other) -> bool
 mk8.email.Contracts.Messaging.MailOperationCommand.<Clone>$() -> mk8.email.Contracts.Messaging.MailOperationCommand!
-mk8.email.Contracts.Messaging.MailOperationCommand.Deconstruct(out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailFeature>! Features, out mk8.email.Contracts.Messaging.MailOperationKind Operation, out System.Text.Json.Nodes.JsonObject! Arguments, out System.Collections.Generic.IReadOnlyDictionary<string!, string!>? KnownEntities) -> void
 mk8.email.Contracts.Messaging.MailOperationResponse.Data.get -> mk8.email.Contracts.Messaging.ApplicationValue!
 mk8.email.Contracts.Messaging.MailOperationResponse.Data.init -> void
 mk8.email.Contracts.Messaging.MailOperationResponse.Operation.get -> mk8.email.Contracts.Messaging.MailOperationKind
@@ -351,7 +354,6 @@ mk8.email.Contracts.Messaging.MailPlanApplicationRequest
 mk8.email.Contracts.Messaging.MailPlanApplicationRequest.Plan.init -> void
 mk8.email.Contracts.Messaging.MailOperationResult.MailOperationResult(mk8.email.Contracts.Messaging.MailOperationResponse! Response, System.Collections.Generic.IReadOnlyDictionary<string!, string!>! KnownEntities, mk8.email.Contracts.Messaging.JmapApplicationProfile! Profile) -> void
 mk8.email.Contracts.Messaging.MailOperationResponse.MailOperationResponse(mk8.email.Contracts.Messaging.MailOperationKind Operation, mk8.email.Contracts.Messaging.ApplicationValue! Data, System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailOperationResponse!>? AdditionalResults = null) -> void
-mk8.email.Contracts.Messaging.MailOperationCommand.MailOperationCommand(System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailFeature>! Features, mk8.email.Contracts.Messaging.MailOperationKind Operation, System.Text.Json.Nodes.JsonObject! Arguments, System.Collections.Generic.IReadOnlyDictionary<string!, string!>? KnownEntities = null) -> void
 mk8.email.Contracts.Messaging.MailOperationApplicationRequest.MailOperationApplicationRequest(mk8.email.Contracts.Messaging.ProtocolAuthentication! Authentication, mk8.email.Contracts.Messaging.MailOperationCommand! Command) -> void
 mk8.email.Contracts.Messaging.ApplicationValueMember.ApplicationValueMember(System.ReadOnlyMemory<byte> NameCodeUnits, mk8.email.Contracts.Messaging.ApplicationValue! Value) -> void
 static mk8.email.Contracts.Messaging.ApplicationValueCodec.Encode(System.Text.Json.Nodes.JsonNode? value) -> mk8.email.Contracts.Messaging.ApplicationValue!

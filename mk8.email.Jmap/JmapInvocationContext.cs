@@ -15,14 +15,19 @@ public sealed class JmapInvocationContext(
     public AuthenticatedMailUser User { get; } = user;
     public IReadOnlySet<MailFeature> Features { get; } = features;
     public IDictionary<string, string> CreatedIds { get; } = createdIds;
+    internal Dictionary<string, string> ReferenceAliases { get; init; } =
+        new Dictionary<string, string>(StringComparer.Ordinal);
 
     public string? ResolveId(string? id)
     {
-        if (string.IsNullOrEmpty(id) || id[0] != '#')
+        if (id is null || !ReferenceAliases.TryGetValue(id, out var creationKey))
             return id;
 
-        return CreatedIds.TryGetValue(id[1..], out var resolved) ? resolved : null;
+        return CreatedIds.TryGetValue(creationKey, out var resolved) ? resolved : null;
     }
+
+    internal bool TryGetReferenceKey(string value, out string creationKey) =>
+        ReferenceAliases.TryGetValue(value, out creationKey!);
 
     internal int MarkPostCommitActions() => _postCommitActions.Count;
 

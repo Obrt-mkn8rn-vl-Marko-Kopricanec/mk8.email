@@ -223,12 +223,11 @@ internal static class JmapMethodHelpers
     public static bool AreValidCreationIds(IEnumerable<string>? values) =>
         values is null || values.All(JmapId.IsValidId);
 
-    public static bool AreValidIdReferences(IEnumerable<string>? values) =>
+    public static bool AreValidIdReferences(IEnumerable<string>? values, JmapInvocationContext context) =>
         values is null || values.All(value =>
             JmapId.IsValidId(value)
-            || value.Length > 1
-                && value[0] == '#'
-                && JmapId.IsValidId(value[1..]));
+            || context.TryGetReferenceKey(value, out var creationKey)
+                && JmapId.IsValidId(creationKey));
 
     public static JsonArray ToJsonArray(IEnumerable<string> values)
     {

@@ -55,8 +55,8 @@ internal sealed class MailboxSetMethod(
             || !TryGetObjectMap(arguments, "update", out var update)
             || !TryGetDestroy(arguments, out var destroy)
             || !JmapMethodHelpers.AreValidCreationIds(create?.Keys)
-            || !JmapMethodHelpers.AreValidIdReferences(update?.Keys)
-            || !JmapMethodHelpers.AreValidIdReferences(destroy))
+            || !JmapMethodHelpers.AreValidIdReferences(update?.Keys, context)
+            || !JmapMethodHelpers.AreValidIdReferences(destroy, context))
         {
             return JmapMethodResponse.Error("invalidArguments");
         }
@@ -476,7 +476,10 @@ internal sealed class MailboxSetMethod(
         var planningContext = new JmapInvocationContext(
             context.User,
             context.Features,
-            planningIds);
+            planningIds)
+        {
+            ReferenceAliases = context.ReferenceAliases,
+        };
 
         var createPlans = new List<MailboxCreatePlan>(requestedCreates.Count);
         foreach (var item in requestedCreates)
@@ -1025,12 +1028,12 @@ internal sealed class MailboxSetMethod(
             || !parentValue.TryGetValue<string>(out var requestedId)
             || requestedId is null
             || context.ResolveId(requestedId) is not null
-            || requestedId.Length < 2
-            || requestedId[0] != '#')
+            || !context.TryGetReferenceKey(requestedId, out var creationKey)
+            || creationKey.Length == 0)
         {
             return false;
         }
-        return pending.ContainsKey(requestedId[1..]);
+        return pending.ContainsKey(creationKey);
     }
 
     private static bool TryGetDestroy(

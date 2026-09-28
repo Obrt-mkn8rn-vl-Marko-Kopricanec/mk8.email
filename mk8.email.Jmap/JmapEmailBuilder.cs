@@ -90,7 +90,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
         var blobReferences = EnumerateBlobReferences(value)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
-        if (!JmapMethodHelpers.AreValidIdReferences(blobReferences))
+        if (!JmapMethodHelpers.AreValidIdReferences(blobReferences, context))
         {
             message.Dispose();
             return JmapBuildResult.Failed("invalidProperties", properties: ["blobId"]);

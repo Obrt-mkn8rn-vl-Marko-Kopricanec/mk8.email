@@ -61,7 +61,10 @@ public sealed class JmapRequestProcessor
             throw NotRequest("The mail operation command is incomplete.");
         var features = ValidateHeader(command.Features.ToArray(), 1);
         var createdIds = CloneCreatedIds(command.KnownEntities);
-        var context = new JmapInvocationContext(user, features, createdIds);
+        var context = new JmapInvocationContext(user, features, createdIds)
+        {
+            ReferenceAliases = CloneReferenceAliases(command.ReferenceAliases),
+        };
         var relational = _database.Database.IsRelational();
         if (relational && (operationId is null || operationId == Guid.Empty || _receipts is null))
             throw new InvalidOperationException("A durable operation identity and receipt store are required.");
@@ -92,6 +95,20 @@ public sealed class JmapRequestProcessor
             }
         }
         return createdIds;
+    }
+
+    private static Dictionary<string, string> CloneReferenceAliases(IReadOnlyDictionary<string, string>? values)
+    {
+        if (values is null)
+            throw NotRequest("The reference alias map is required.");
+        var aliases = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var item in values)
+        {
+            if (item.Key is null || item.Value is null)
+                throw NotRequest("The reference alias map is incomplete.");
+            aliases.Add(item.Key, item.Value);
+        }
+        return aliases;
     }
 
     internal void ValidatePlan(MailAdmissionPlan? plan)

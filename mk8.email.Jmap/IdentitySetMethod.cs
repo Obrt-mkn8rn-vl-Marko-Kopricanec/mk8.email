@@ -42,8 +42,8 @@ internal sealed class IdentitySetMethod(
             || !JmapEmailMutationHelpers.TryGetObjectMap(arguments, "update", false, out var update)
             || !TryDestroy(arguments, out var destroy)
             || !JmapMethodHelpers.AreValidCreationIds(create?.Keys)
-            || !JmapMethodHelpers.AreValidIdReferences(update?.Keys)
-            || !JmapMethodHelpers.AreValidIdReferences(destroy))
+            || !JmapMethodHelpers.AreValidIdReferences(update?.Keys, context)
+            || !JmapMethodHelpers.AreValidIdReferences(destroy, context))
             return JmapMethodResponse.Error("invalidArguments");
         var operationCount = (create?.Count ?? 0) + (update?.Count ?? 0) + (destroy?.Count ?? 0);
         if (operationCount > environment.Jmap.MaxObjectsInSet)

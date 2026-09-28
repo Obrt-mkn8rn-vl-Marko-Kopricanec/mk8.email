@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
 using mk8.email.Application.Interfaces;
 using mk8.email.Application.Services;
@@ -45,6 +46,7 @@ public sealed class ApplicationRequestDispatcherTests
     [DataRow("jmap.upload")]
     [DataRow("jmap.download")]
     [DataRow("jmap.changes.poll")]
+    [DataRow("mail.operation.execute")]
     [DataRow("dav.unknown")]
     public async Task UnknownOperationReturnsAStableApplicationError(string operation)
     {
@@ -73,6 +75,35 @@ public sealed class ApplicationRequestDispatcherTests
         Assert.IsTrue(response.IsError);
         Assert.AreEqual("invalid-arguments", response.ErrorCode);
         Assert.AreEqual("application/problem+json", response.ContentType);
+    }
+
+    [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task LegacyOrWrongCaseReferenceAliasEnvelopeFailsBeforeDispatch(bool wrongCase)
+    {
+        var service = new StubJmapApplicationService();
+        await using var services = new ServiceCollection()
+            .AddSingleton<IJmapApplicationService>(service)
+            .BuildServiceProvider();
+        var value = new MailOperationApplicationRequest(
+            new(ProtocolAuthenticationKinds.Password, "person@example.test", "secret"),
+            new([MailFeature.Basic], MailOperationKind.ReadFolders, new JsonObject(),
+                new Dictionary<string, string>(StringComparer.Ordinal)));
+        var payload = JsonNode.Parse(JsonSerializer.SerializeToUtf8Bytes(value,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web)))!.AsObject();
+        var command = payload["command"]!.AsObject();
+        command.Remove("referenceAliases");
+        if (wrongCase)
+            command["ReferenceAliases"] = new JsonObject();
+
+        var response = await new ApplicationRequestDispatcher(services).DispatchAsync(
+            NewRequest(ApplicationOperations.MailOperationExecute,
+                JsonSerializer.SerializeToUtf8Bytes(payload)));
+
+        Assert.IsTrue(response.IsError);
+        Assert.AreEqual("invalid-arguments", response.ErrorCode);
+        Assert.IsNull(service.Request);
     }
 
     [TestMethod]
@@ -149,7 +180,8 @@ public sealed class ApplicationRequestDispatcherTests
                 ["x"] = 1,
                 ["X"] = 2,
                 ["nested"] = new System.Text.Json.Nodes.JsonObject { ["key"] = 3, ["Key"] = 4 },
-            }, new Dictionary<string, string> { ["created"] = "object-id" }));
+            }, new Dictionary<string, string>(StringComparer.Ordinal),
+            new Dictionary<string, string> { ["created"] = "object-id" }));
         var request = NewRequest(ApplicationOperations.MailOperationExecute,
             JsonSerializer.SerializeToUtf8Bytes(value, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
         var response = await dispatcher.DispatchAsync(request);
@@ -165,6 +197,7 @@ public sealed class ApplicationRequestDispatcherTests
         Assert.AreEqual(3, service.Request.Command.Arguments["nested"]!["key"]!.GetValue<int>());
         Assert.AreEqual(4, service.Request.Command.Arguments["nested"]!["Key"]!.GetValue<int>());
         Assert.AreEqual("object-id", service.Request.Command.KnownEntities?["created"]);
+        Assert.AreEqual(0, service.Request.Command.ReferenceAliases.Count);
         var result = JsonSerializer.Deserialize<JmapApplicationResult>(response.Payload,
             new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = false });
         Assert.AreEqual(JmapApplicationOutcomes.Ok, result?.Outcome);

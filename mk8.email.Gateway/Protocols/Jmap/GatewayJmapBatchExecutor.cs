@@ -31,8 +31,19 @@ internal static class GatewayJmapBatchExecutor
                 AddResponse(invocation.Operation, arguments);
             else
             {
+                IReadOnlyDictionary<string, string> aliases;
+                try
+                {
+                    aliases = GatewayJmapReferenceAliasCodec.Collect(arguments);
+                }
+                catch (GatewayJmapBatchCodec.RequestException)
+                {
+                    AddFailure("invalidArguments");
+                    continue;
+                }
                 var result = await application.ExecuteOperationAsync(new(authentication,
-                    new MailOperationCommand(batch.Features, invocation.Operation, arguments, knownEntities)),
+                    new MailOperationCommand(batch.Features, invocation.Operation, arguments,
+                        aliases, knownEntities)),
                     cancellationToken).ConfigureAwait(false);
                 if (!string.Equals(result.Outcome, JmapApplicationOutcomes.Ok, StringComparison.Ordinal) || result.Failure is not null)
                     return new Execution(null, result);

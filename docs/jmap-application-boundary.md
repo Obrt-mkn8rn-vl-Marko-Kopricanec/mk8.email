@@ -4,7 +4,7 @@ Gateway parses and validates I-JSON and the outer JMAP request envelope. Its
 batch, call, result and reference-selector models exist only in Gateway, not in
 the shared durable Contracts assembly. It sends a protocol-neutral
 authentication/feature/operation-count admission plan through `mail.plan.validate`, then
-one resolved mail operation at a time through `mail.operation.execute`. Worker
+one resolved mail operation at a time through `mail.operation.execute.v2`. Worker
 returns a typed operation result, domain failures, known entity mappings and an
 account profile. Gateway alone sequences the batch, handles Core/echo, and renders
 the response envelope and HTTP problems. Worker receives neither the original
@@ -20,7 +20,7 @@ wrong-case or undefined internal discriminators fail closed before any mutation.
 Handler registration rejects duplicate or invalid identifiers, and primary/additional
 result identifiers are checked before commit and on receipt replay. Opaque business
 values named `name` or `sourceName` are untouched. This is a coordinated contract
-change (`mk8.distributed.v8`), not completion of all JMAP value-shaping extraction.
+change (`mk8.distributed.v9`), not completion of all JMAP value-shaping extraction.
 
 Capability URNs are also Gateway-owned. Gateway maps them into stable `MailFeature`
 identifiers; Worker enforces feature admission and method eligibility using only
@@ -48,6 +48,11 @@ which error wins. First-result selection, array wildcard flattening, strict arra
 indexes, creation identifiers and references to normalized results are preserved.
 Internal JSON envelopes use canonical camelCase names and case-sensitive decoding
 on both sides, preserving case-distinct properties in opaque application values.
+Gateway also recognizes creation-reference tokens in argument keys and values and
+provides a typed alias map with each business command. Worker resolves only those
+aliases against its current known-entity map, so a create followed by a reference
+inside one operation still works without Worker parsing the JMAP `#` marker.
+The alias map is required on the v2 command. Opaque non-ID values are not rewritten.
 
 Worker returns typed accounts, feature limits and change maps, never session URLs
 or event/push JSON. Gateway renders discovery documents, chooses its public URLs,
@@ -63,9 +68,10 @@ changes and typed push verification/change notifications before encryption/send.
 This changes the durable operation contracts. The old `jmap.api.process`,
 `jmap.batch.execute`, `jmap.batch.execute.v2`, `jmap.batch.execute.v3`, `jmap.batch.execute.v4`,
 `jmap.batch.execute.v5`, `jmap.batch.execute.v6`, `jmap.session.get`, `jmap.event.poll`, `jmap.profile.get`,
-`jmap.upload`, `jmap.download`, `jmap.changes.poll` and `webpush.send` operations
+`jmap.upload`, `jmap.download`, `jmap.changes.poll`, `webpush.send` and
+`mail.operation.execute` operations
 are unsupported. The current operations are `mail.plan.validate`,
-`mail.operation.execute`, `jmap.profile.get.v2`, `jmap.upload.v2`,
+`mail.operation.execute.v2`, `jmap.profile.get.v2`, `jmap.upload.v2`,
 `jmap.download.v2`, `jmap.changes.poll.v2` and `webpush.send.v2`. Old requests must
 not be reinterpreted as new empty or incomplete data.
 Before upgrading an existing distributed installation, stop admission, drain or
@@ -109,7 +115,8 @@ release link. These are root-operator actions; the Wake identity receives neithe
 Worker credentials nor schema-management privileges.
 
 Rollback to a pre-receipt Worker removes the newly introduced receipt table only
-when it is empty and there are no pending/leased v4, v5 or v6 JMAP requests or current mail operations, including expired
+when it is empty and there are no pending/leased v4, v5 or v6 JMAP requests or
+v1/v2 mail operations, including expired
 ones. It holds the snapshot/deletion barrier and transaction/table locks while deciding.
 A committed receipt or incompatible request refuses legacy rollback, preserves state,
 and leaves the Worker units stopped for explicit reconciliation or verified restore.
@@ -137,7 +144,7 @@ with a 256-level limit. Invalid primary/additional results fail before business
 commit, and corrupted replay data fails closed.
 
 This is an intermediate boundary correction, not completion of the API-agnostic
-architecture. Creation-reference resolution and per-method value shaping still
-require the full API-awareness audit. JMAP and the two remaining test projects have
+architecture. Per-method value shaping and any remaining protocol-shaped domain
+arguments still require the full API-awareness audit. JMAP and the two remaining test projects have
 unfinished analyzer gates. Full independent review and deployment remain blocked
 until those obligations are closed.

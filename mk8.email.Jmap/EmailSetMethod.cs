@@ -43,8 +43,8 @@ internal sealed class EmailSetMethod(
             || !TryGetObjectMap(arguments, "update", out var update)
             || !TryGetDestroy(arguments, out var destroy)
             || !JmapMethodHelpers.AreValidCreationIds(create?.Keys)
-            || !JmapMethodHelpers.AreValidIdReferences(update?.Keys)
-            || !JmapMethodHelpers.AreValidIdReferences(destroy))
+            || !JmapMethodHelpers.AreValidIdReferences(update?.Keys, context)
+            || !JmapMethodHelpers.AreValidIdReferences(destroy, context))
         {
             return JmapMethodResponse.Error("invalidArguments");
         }

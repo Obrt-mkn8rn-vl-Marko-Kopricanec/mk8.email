@@ -81,8 +81,8 @@ public sealed class JmapBlobLargeObjectMigrationService(
             if (legacy.Count == 0)
                 break;
 
-            foreach (var blob in legacy)
-                await MigrateAsync(blob, cancellationToken).ConfigureAwait(false);
+            for (var blobIndex = 0; blobIndex < legacy.Count; blobIndex++)
+                await MigrateAsync(legacy[blobIndex], cancellationToken).ConfigureAwait(false);
             database.ChangeTracker.Clear();
         }
     }

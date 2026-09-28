@@ -231,12 +231,12 @@ public sealed class JmapStateService(
             .Where(folder => folder.InboxId == accountId)
             .Select(folder => folder.Id)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
-        foreach (var mailboxId in mailboxIds)
+        for (var mailboxIndex = 0; mailboxIndex < mailboxIds.Count; mailboxIndex++)
         {
             AddBaselineChange(
                 accountId,
                 JmapConstants.MailboxDataType,
-                JmapId.Mailbox(mailboxId),
+                JmapId.Mailbox(mailboxIds[mailboxIndex]),
                 now);
         }
 
@@ -283,12 +283,12 @@ public sealed class JmapStateService(
                         && collection.CollectionType == DavCollectionDB.AddressBookType)
                     .Select(collection => collection.Id)
                     .ToListAsync(cancellationToken).ConfigureAwait(false);
-                foreach (var addressBookId in addressBookIds)
+                for (var addressBookIndex = 0; addressBookIndex < addressBookIds.Count; addressBookIndex++)
                 {
                     AddBaselineChange(
                         accountId,
                         JmapConstants.AddressBookDataType,
-                        JmapId.AddressBook(addressBookId),
+                        JmapId.AddressBook(addressBookIds[addressBookIndex]),
                         now);
                 }
 
@@ -298,12 +298,12 @@ public sealed class JmapStateService(
                         && resource.Collection.CollectionType == DavCollectionDB.AddressBookType)
                     .Select(resource => resource.Id)
                     .ToListAsync(cancellationToken).ConfigureAwait(false);
-                foreach (var contactCardId in contactCardIds)
+                for (var contactCardIndex = 0; contactCardIndex < contactCardIds.Count; contactCardIndex++)
                 {
                     AddBaselineChange(
                         accountId,
                         JmapConstants.ContactCardDataType,
-                        JmapId.ContactCard(contactCardId),
+                        JmapId.ContactCard(contactCardIds[contactCardIndex]),
                         now);
                 }
             }
@@ -318,8 +318,8 @@ public sealed class JmapStateService(
                 email.ThreadObjectId,
             })
             .ToListAsync(cancellationToken).ConfigureAwait(false);
-        foreach (var email in emails)
-            AddBaselineChange(accountId, JmapConstants.EmailDataType, JmapId.Email(email.Id), now);
+        for (var emailIndex = 0; emailIndex < emails.Count; emailIndex++)
+            AddBaselineChange(accountId, JmapConstants.EmailDataType, JmapId.Email(emails[emailIndex].Id), now);
         foreach (var threadId in emails
                      .Select(email => email.ThreadObjectId ?? email.Id.ToString("N"))
                      .Distinct(StringComparer.Ordinal))
@@ -332,12 +332,12 @@ public sealed class JmapStateService(
             .Where(identity => identity.AccountId == accountId)
             .Select(identity => identity.Id)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
-        foreach (var identityId in identityIds)
+        for (var identityIndex = 0; identityIndex < identityIds.Count; identityIndex++)
         {
             AddBaselineChange(
                 accountId,
                 JmapConstants.IdentityDataType,
-                JmapId.Identity(identityId),
+                JmapId.Identity(identityIds[identityIndex]),
                 now);
         }
 
@@ -346,12 +346,12 @@ public sealed class JmapStateService(
             .Where(submission => submission.AccountId == accountId)
             .Select(submission => submission.Id)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
-        foreach (var submissionId in submissionIds)
+        for (var submissionIndex = 0; submissionIndex < submissionIds.Count; submissionIndex++)
         {
             AddBaselineChange(
                 accountId,
                 JmapConstants.EmailSubmissionDataType,
-                JmapId.Submission(submissionId),
+                JmapId.Submission(submissionIds[submissionIndex]),
                 now);
         }
         if (await database.JmapVacationResponses.AsNoTracking().AnyAsync(

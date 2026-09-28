@@ -106,8 +106,9 @@ public sealed class JmapContactStore(
             .OrderBy(resource => resource.Id);
         var resources = await (tracked ? query : query.AsNoTracking()).ToListAsync(cancellationToken).ConfigureAwait(false);
         var cards = new List<JmapContactCardView>(resources.Count);
-        foreach (var resource in resources)
+        for (var resourceIndex = 0; resourceIndex < resources.Count; resourceIndex++)
         {
+            var resource = resources[resourceIndex];
             var content = await resourceContent.ReadAsync(resource, cancellationToken).ConfigureAwait(false);
             cards.Add(new JmapContactCardView(
                 resource,

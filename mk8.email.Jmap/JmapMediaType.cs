@@ -26,7 +26,7 @@ internal static class JmapMediaType
         if (value.Length is < 1 or > 127 || !IsAsciiLetterOrDigit(value[0]))
             return false;
 
-        foreach (var character in value[1..])
+        foreach (ref readonly var character in value[1..])
         {
             if (!IsAsciiLetterOrDigit(character)
                 && character is not ('!' or '#' or '$' or '&' or '-' or '^' or '_' or '.' or '+'))

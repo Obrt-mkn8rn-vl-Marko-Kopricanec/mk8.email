@@ -111,8 +111,8 @@ internal sealed class EmailQueryMethod(
         }
         finally
         {
-            foreach (var item in all)
-                item.Dispose();
+            for (var itemIndex = 0; itemIndex < all.Count; itemIndex++)
+                all[itemIndex].Dispose();
         }
     }
 }

@@ -87,8 +87,9 @@ internal static class JmapEmailSubmissionJson
         if (recipients.Count == 0)
             return null;
         var result = new JsonObject();
-        foreach (var recipient in recipients)
+        for (var recipientIndex = 0; recipientIndex < recipients.Count; recipientIndex++)
         {
+            var recipient = recipients[recipientIndex];
             var delivered = recipient.State switch
             {
                 MailQueueRecipientStates.Pending => "queued",

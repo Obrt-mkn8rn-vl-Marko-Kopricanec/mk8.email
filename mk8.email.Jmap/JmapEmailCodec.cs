@@ -133,8 +133,9 @@ internal static partial class JmapEmailCodec
         contentType = "application/octet-stream";
         name = null;
         var parts = EnumerateLeafEntities(message.Body);
-        foreach (var part in parts)
+        for (var partIndex = 0; partIndex < parts.Count; partIndex++)
         {
+            var part = parts[partIndex];
             var candidate = prefix is null ? part.Path : $"{prefix}!{part.Path}";
             if (nestingDepth == 0 && MatchesPathHash(candidate, pathHash))
             {
@@ -148,8 +149,9 @@ internal static partial class JmapEmailCodec
         if (nestingDepth == 0)
             return false;
 
-        foreach (var part in parts)
+        for (var partIndex = 0; partIndex < parts.Count; partIndex++)
         {
+            var part = parts[partIndex];
             try
             {
                 using var nestedMessage = Parse(GetDecodedContent(part.Entity));

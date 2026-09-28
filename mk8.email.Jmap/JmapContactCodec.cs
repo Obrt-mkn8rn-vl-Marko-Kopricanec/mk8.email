@@ -75,10 +75,11 @@ internal static class JmapContactCodec
         core.Insert(core.Count - 1, JsonProperty + ":" + encodedJson);
 
         var output = new StringBuilder();
-        foreach (var line in core)
+        for (var lineIndex = 0; lineIndex < core.Count; lineIndex++)
         {
-            foreach (var folded in Fold(line))
-                output.Append(folded).Append("\r\n");
+            var foldedLines = Fold(core[lineIndex]);
+            for (var foldedIndex = 0; foldedIndex < foldedLines.Count; foldedIndex++)
+                output.Append(foldedLines[foldedIndex]).Append("\r\n");
         }
         return Encoding.UTF8.GetBytes(output.ToString());
     }

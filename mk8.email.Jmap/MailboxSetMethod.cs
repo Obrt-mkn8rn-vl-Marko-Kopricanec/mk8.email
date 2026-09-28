@@ -699,8 +699,8 @@ internal sealed class MailboxSetMethod(
                     IsSubscribed = node.IsSubscribed,
                 }, cancellationToken).ConfigureAwait(false);
             }
-            foreach (var email in destroyedEmails)
-                content.DeleteOnCommit(email);
+            for (var emailIndex = 0; emailIndex < destroyedEmails.Count; emailIndex++)
+                content.DeleteOnCommit(destroyedEmails[emailIndex]);
             if (destroyedEmails.Count > 0)
                 database.Emails.RemoveRange(destroyedEmails);
             if (destroyedStoredIds.Length > 0)
@@ -719,8 +719,9 @@ internal sealed class MailboxSetMethod(
                 await transaction.DisposeAsync().ConfigureAwait(false);
         }
 
-        foreach (var plan in createPlans)
+        for (var planIndex = 0; planIndex < createPlans.Count; planIndex++)
         {
+            var plan = createPlans[planIndex];
             var id = JmapId.Mailbox(plan.Node.Id);
             context.CreatedIds[plan.CreationId] = id;
             createdResponse[plan.CreationId] = BuildCreatedResponse(
@@ -732,8 +733,8 @@ internal sealed class MailboxSetMethod(
                 plan.Node.SortOrder,
                 plan.Node.IsSubscribed);
         }
-        foreach (var responseId in updateResponseIds)
-            updatedResponse[responseId] = null;
+        for (var responseIndex = 0; responseIndex < updateResponseIds.Count; responseIndex++)
+            updatedResponse[updateResponseIds[responseIndex]] = null;
         foreach (var response in destroyResponseIds
                      .OrderByDescending(item => GetDepth(item.FolderId)))
         {
@@ -898,8 +899,8 @@ internal sealed class MailboxSetMethod(
                 }
             }
 
-            foreach (var folder in folders)
-                folder.Name = finalNames[folder.Id];
+            for (var folderIndex = 0; folderIndex < folders.Count; folderIndex++)
+                folders[folderIndex].Name = finalNames[folders[folderIndex].Id];
             foreach (var plan in plans)
             {
                 var folder = foldersById[plan.Key];
@@ -918,8 +919,8 @@ internal sealed class MailboxSetMethod(
                 await transaction.DisposeAsync().ConfigureAwait(false);
         }
 
-        foreach (var responseId in responseIds)
-            updatedResponse[responseId] = null;
+        for (var responseIndex = 0; responseIndex < responseIds.Count; responseIndex++)
+            updatedResponse[responseIds[responseIndex]] = null;
         return true;
     }
 
@@ -988,8 +989,8 @@ internal sealed class MailboxSetMethod(
             .ToListAsync(cancellationToken).ConfigureAwait(false);
         if (messages.Count > 0 && !onDestroyRemoveEmails)
             return JmapMethodHelpers.SetError("mailboxHasEmail");
-        foreach (var message in messages)
-            content.DeleteOnCommit(message);
+        for (var messageIndex = 0; messageIndex < messages.Count; messageIndex++)
+            content.DeleteOnCommit(messages[messageIndex]);
         if (messages.Count > 0)
             database.Emails.RemoveRange(messages);
         database.Folders.Remove(folder);

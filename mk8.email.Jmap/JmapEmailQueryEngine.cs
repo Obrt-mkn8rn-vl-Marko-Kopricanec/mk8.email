@@ -53,8 +53,9 @@ internal static partial class JmapEmailQueryEngine
         var result = new List<JmapEmailQueryItem>(emails.Count);
         try
         {
-            foreach (var email in emails)
+            for (var emailIndex = 0; emailIndex < emails.Count; emailIndex++)
             {
+                var email = emails[emailIndex];
                 var rawMessage = await content.ReadAsync(email, cancellationToken).ConfigureAwait(false);
                 var message = JmapEmailCodec.Parse(rawMessage);
                 var keywords = JmapEmailCodec.BuildKeywords(email)
@@ -76,8 +77,8 @@ internal static partial class JmapEmailQueryEngine
         }
         catch
         {
-            foreach (var item in result)
-                item.Dispose();
+            for (var itemIndex = 0; itemIndex < result.Count; itemIndex++)
+                result[itemIndex].Dispose();
             throw;
         }
     }

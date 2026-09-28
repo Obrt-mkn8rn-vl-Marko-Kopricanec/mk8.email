@@ -174,8 +174,9 @@ internal sealed class JmapEmailStore(
             .Where(email => email.Folder.Inbox.OwnerId == userId && email.SizeBytes <= 0)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
         var used = knownSize;
-        foreach (var email in unknownSize)
+        for (var emailIndex = 0; emailIndex < unknownSize.Count; emailIndex++)
         {
+            var email = unknownSize[emailIndex];
             var size = (await content.ReadAsync(email, cancellationToken).ConfigureAwait(false)).LongLength;
             used = size > long.MaxValue - used ? long.MaxValue : used + size;
         }

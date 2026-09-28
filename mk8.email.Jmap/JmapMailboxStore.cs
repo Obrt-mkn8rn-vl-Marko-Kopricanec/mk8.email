@@ -42,8 +42,9 @@ internal sealed class JmapMailboxStore(EmailDbContext database)
             StringComparer.OrdinalIgnoreCase);
         var messagesByFolder = messages.ToLookup(message => message.FolderId);
         var result = new List<JmapMailboxView>(folders.Count);
-        foreach (var folder in folders)
+        for (var folderIndex = 0; folderIndex < folders.Count; folderIndex++)
         {
+            var folder = folders[folderIndex];
             var folderMessages = messagesByFolder[folder.Id].ToArray();
             var unreadMessages = folderMessages
                 .Where(message => !message.IsRead && !message.IsDraft)

@@ -357,8 +357,9 @@ internal sealed class EmailSubmissionSetMethod(
 
         var envelopeRecipients = new List<MailEnvelopeRecipient>(recipients.Count);
         var forbiddenRecipients = new List<string>();
-        foreach (var recipient in recipients)
+        for (var recipientIndex = 0; recipientIndex < recipients.Count; recipientIndex++)
         {
+            var recipient = recipients[recipientIndex];
             var isLocal = await emailService.CanReceiveAsync(recipient, cancellationToken).ConfigureAwait(false);
             if (!isLocal && !environment.Smtp.AllowRelay)
                 forbiddenRecipients.Add(recipient);
@@ -388,8 +389,9 @@ internal sealed class EmailSubmissionSetMethod(
             SentCopyCreated = true,
         };
         await queueContent.SetAsync(queue, deliveryMessage, cancellationToken).ConfigureAwait(false);
-        foreach (var recipient in envelopeRecipients)
+        for (var recipientIndex = 0; recipientIndex < envelopeRecipients.Count; recipientIndex++)
         {
+            var recipient = envelopeRecipients[recipientIndex];
             queue.Recipients.Add(new MailQueueRecipientDB
             {
                 Id = Guid.CreateVersion7(),
@@ -744,7 +746,7 @@ internal sealed class EmailSubmissionSetMethod(
 
     private static bool IsWhitespaceOnly(ReadOnlySpan<byte> value)
     {
-        foreach (var character in value)
+        foreach (ref readonly var character in value)
         {
             if (character is not ((byte)' ' or (byte)'\t'))
                 return false;
@@ -754,7 +756,7 @@ internal sealed class EmailSubmissionSetMethod(
 
     private static bool IsValidFieldName(ReadOnlySpan<byte> value)
     {
-        foreach (var character in value)
+        foreach (ref readonly var character in value)
         {
             if (character is < 33 or > 126)
                 return false;
@@ -764,7 +766,7 @@ internal sealed class EmailSubmissionSetMethod(
 
     private static bool HasInvalidHeaderValueByte(ReadOnlySpan<byte> value)
     {
-        foreach (var character in value)
+        foreach (ref readonly var character in value)
         {
             if (character != (byte)'\t' && (character < 32 || character == 127))
                 return true;

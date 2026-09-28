@@ -245,8 +245,9 @@ public sealed class JmapBlobService(
                 .ThenBy(blob => blob.Id)
                 .ToListAsync(cancellationToken).ConfigureAwait(false);
             var usedBytes = accountBlobs.Sum(blob => blob.SizeBytes);
-            foreach (var existing in accountBlobs)
+            for (var blobIndex = 0; blobIndex < accountBlobs.Count; blobIndex++)
             {
+                var existing = accountBlobs[blobIndex];
                 if (usedBytes + reference.Length
                     <= environment.Jmap.MaxUnreferencedBlobBytesPerAccount)
                 {
@@ -280,13 +281,13 @@ public sealed class JmapBlobService(
 
             if (hasCallerTransaction)
             {
-                foreach (var removedReference in removedReferences)
-                    transactionEffects.DeleteOnCommit(removedReference);
+                for (var referenceIndex = 0; referenceIndex < removedReferences.Count; referenceIndex++)
+                    transactionEffects.DeleteOnCommit(removedReferences[referenceIndex]);
             }
             else
             {
-                foreach (var removedReference in removedReferences)
-                    await DeleteBestEffortAsync(removedReference).ConfigureAwait(false);
+                for (var referenceIndex = 0; referenceIndex < removedReferences.Count; referenceIndex++)
+                    await DeleteBestEffortAsync(removedReferences[referenceIndex]).ConfigureAwait(false);
             }
             return blob;
         }

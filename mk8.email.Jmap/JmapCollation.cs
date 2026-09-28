@@ -53,10 +53,10 @@ internal static class JmapCollation
     private static string FoldAscii(string value)
     {
         var characters = value.ToCharArray();
-        for (var index = 0; index < characters.Length; index++)
+        foreach (ref var character in characters.AsSpan())
         {
-            if (characters[index] is >= 'a' and <= 'z')
-                characters[index] = (char)(characters[index] - ('a' - 'A'));
+            if (character is >= 'a' and <= 'z')
+                character = (char)(character - ('a' - 'A'));
         }
         return new string(characters);
     }

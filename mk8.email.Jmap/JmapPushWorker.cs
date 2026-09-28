@@ -148,8 +148,9 @@ internal sealed class JmapPushWorker(
             .ToListAsync(cancellationToken).ConfigureAwait(false);
         if (expired.Count > 0)
         {
-            foreach (var subscription in expired)
+            for (var subscriptionIndex = 0; subscriptionIndex < expired.Count; subscriptionIndex++)
             {
+                var subscription = expired[subscriptionIndex];
                 subscription.Url = string.Empty;
                 subscription.KeysJson = null;
             }

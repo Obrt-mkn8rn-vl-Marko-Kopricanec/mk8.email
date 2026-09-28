@@ -65,12 +65,13 @@ public sealed class JmapOperationBoundaryTests
         await using var fixture = await JmapFixture.CreateAsync();
         using var scope = fixture.Services.CreateScope();
         var methods = scope.ServiceProvider.GetServices<IJmapMethod>().ToArray();
-        Assert.HasCount(37, methods);
-        Assert.HasCount(37, methods.Select(method => method.Operation).Distinct().ToArray());
+        Assert.HasCount(36, methods);
+        Assert.HasCount(36, methods.Select(method => method.Operation).Distinct().ToArray());
         foreach (var method in methods)
             Assert.AreEqual(method.Operation, GatewayJmapOperationCodec.DecodeCall(GatewayJmapOperationCodec.Render(method.Operation)));
         CollectionAssert.AreEquivalent(Enum.GetValues<MailOperationKind>().Except([MailOperationKind.None, MailOperationKind.Failure, MailOperationKind.Echo]).ToArray(),
-            methods.Select(method => method.Operation).Append(MailOperationKind.ReadFolders).ToArray());
+            methods.Select(method => method.Operation)
+                .Concat([MailOperationKind.ReadFolders, MailOperationKind.ReadFolderChanges]).ToArray());
     }
 
     [TestMethod]

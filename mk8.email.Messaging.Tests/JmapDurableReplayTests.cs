@@ -32,6 +32,49 @@ namespace mk8.email.Messaging.Tests;
 public sealed class JmapDurableReplayTests
 {
     [TestMethod]
+    public async Task TypedMailboxChangesReplaysItsCommittedStateAcrossWorkerRetries()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var folderId = Guid.CreateVersion7();
+        await using (var setup = rig.Context())
+        {
+            setup.Folders.Add(new FolderDB
+            {
+                Id = folderId,
+                InboxId = rig.InboxId,
+                Name = "Initial",
+                UidValidity = 1,
+                NextUid = 1,
+            });
+            await setup.SaveChangesAsync();
+        }
+        var batch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Messages],
+            [new JmapApplicationCall(MailOperationKind.ReadFolderChanges, new JsonObject
+            {
+                ["accountId"] = JmapId.Account(rig.InboxId),
+                ["sinceState"] = "s0",
+            }, "changes")]);
+        var operation = Guid.CreateVersion7();
+        var first = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual(MailOperationKind.ReadFolderChanges, first.Invocations[0].Operation);
+        Assert.IsTrue(first.Invocations[0].Arguments["created"]!.AsArray()
+            .Any(value => value!.GetValue<string>() == JmapId.Mailbox(folderId)));
+        await using (var changed = rig.Context())
+        {
+            var folder = await changed.Folders.SingleAsync(row => row.Id == folderId);
+            folder.Name = "Updated";
+            await changed.SaveChangesAsync();
+        }
+        var replay = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
+        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7());
+        Assert.AreNotEqual(first.Invocations[0].Arguments["newState"]!.GetValue<string>(),
+            fresh.Invocations[0].Arguments["newState"]!.GetValue<string>());
+        await using var verification = rig.Context();
+        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync());
+    }
+
+    [TestMethod]
     public async Task TypedMailboxReadReplaysItsCommittedSnapshotAcrossWorkerRetries()
     {
         await using var rig = await Rig.CreateAsync();

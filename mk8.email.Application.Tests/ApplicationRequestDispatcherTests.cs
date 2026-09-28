@@ -48,6 +48,7 @@ public sealed class ApplicationRequestDispatcherTests
     [DataRow("jmap.changes.poll")]
     [DataRow("mail.operation.execute")]
     [DataRow("mail.operation.execute.v2")]
+    [DataRow("mail.operation.execute.v3")]
     [DataRow("dav.unknown")]
     public async Task UnknownOperationReturnsAStableApplicationError(string operation)
     {

@@ -88,6 +88,7 @@ internal static class GatewayJmapBatchExecutor
             return new("invalidArguments", null, null);
         }
         GatewayMailboxGetCodec.Call? folderCall = null;
+        GatewayMailboxChangesCodec.Call? changesCall = null;
         JsonObject payload = arguments;
         if (invocation.Operation == MailOperationKind.ReadFolders && features.Contains(MailFeature.Messages))
         {
@@ -95,6 +96,13 @@ internal static class GatewayJmapBatchExecutor
                 return new(failure ?? "invalidArguments", null, null);
             payload = JsonSerializer.SerializeToNode(folderCall!.Command, FolderJsonOptions)?.AsObject()
                 ?? throw new InvalidOperationException("Could not encode the folder read command.");
+        }
+        else if (invocation.Operation == MailOperationKind.ReadFolderChanges && features.Contains(MailFeature.Messages))
+        {
+            if (!GatewayMailboxChangesCodec.TryParse(arguments, out changesCall, out var failure))
+                return new(failure ?? "invalidArguments", null, null);
+            payload = JsonSerializer.SerializeToNode(changesCall!.Command, FolderJsonOptions)?.AsObject()
+                ?? throw new InvalidOperationException("Could not encode the folder changes command.");
         }
         var result = await application.ExecuteOperationAsync(new(authentication,
             new MailOperationCommand(features, invocation.Operation, payload, aliases, knownEntities)),
@@ -107,7 +115,7 @@ internal static class GatewayJmapBatchExecutor
         ValidateResponse(operation.Response);
         var displayed = new List<(MailOperationKind Operation, JsonObject Data)>
         {
-            DecodePrimary(operation.Response, folderCall),
+            DecodePrimary(operation.Response, folderCall, changesCall),
         };
         if (operation.Response.AdditionalResults is not null)
         {
@@ -119,19 +127,28 @@ internal static class GatewayJmapBatchExecutor
 
     private static (MailOperationKind Operation, JsonObject Data) DecodePrimary(
         MailOperationResponse response,
-        GatewayMailboxGetCodec.Call? folderCall)
+        GatewayMailboxGetCodec.Call? folderCall,
+        GatewayMailboxChangesCodec.Call? changesCall)
     {
-        if (folderCall is null)
+        if (folderCall is null && changesCall is null)
             return (response.Operation, (JsonObject)ApplicationValueCodec.Decode(response.Data)!);
         if (response.AdditionalResults is not null)
-            throw new InvalidOperationException("A folder read returned unexpected additional results.");
+            throw new InvalidOperationException("A folder operation returned unexpected additional results.");
         if (response.Operation == MailOperationKind.Failure)
             return (response.Operation, (JsonObject)ApplicationValueCodec.Decode(response.Data)!);
+        if (changesCall is not null)
+        {
+            if (response.Operation != MailOperationKind.ReadFolderChanges)
+                throw new InvalidOperationException("The Application returned a different folder changes operation.");
+            var changesResult = ApplicationValueCodec.Decode(response.Data)?.Deserialize<MailFolderChangesResult>(FolderJsonOptions)
+                ?? throw new InvalidOperationException("The Application returned an incomplete folder changes result.");
+            return GatewayMailboxChangesCodec.Render(changesCall, changesResult);
+        }
         if (response.Operation != MailOperationKind.ReadFolders)
             throw new InvalidOperationException("The Application returned a different folder read operation.");
         var folderResult = ApplicationValueCodec.Decode(response.Data)?.Deserialize<MailFolderReadResult>(FolderJsonOptions)
             ?? throw new InvalidOperationException("The Application returned an incomplete folder read result.");
-        return GatewayMailboxGetCodec.Render(folderCall, folderResult);
+        return GatewayMailboxGetCodec.Render(folderCall!, folderResult);
     }
 
     private sealed record RemoteInvocation(

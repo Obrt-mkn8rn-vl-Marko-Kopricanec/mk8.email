@@ -9,4 +9,9 @@ internal interface IMailFolderReader
         MailFolderReadCommand command,
         AuthenticatedMailUser user,
         CancellationToken cancellationToken);
+
+    Task<MailFolderChangesResult> ReadChangesAsync(
+        MailFolderChangesCommand command,
+        AuthenticatedMailUser user,
+        CancellationToken cancellationToken);
 }

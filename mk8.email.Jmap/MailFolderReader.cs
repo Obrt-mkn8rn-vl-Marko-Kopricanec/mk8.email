@@ -41,4 +41,23 @@ internal sealed class MailFolderReader(
             .ConfigureAwait(false);
         return new(MailFolderReadStatus.Ok, state, folders);
     }
+
+    public async Task<MailFolderChangesResult> ReadChangesAsync(
+        MailFolderChangesCommand command,
+        AuthenticatedMailUser user,
+        CancellationToken cancellationToken)
+    {
+        var account = await accounts.GetAccountByInboxIdAsync(user, command.AccountId, cancellationToken)
+            .ConfigureAwait(false);
+        if (account is null)
+            return new(MailFolderChangesStatus.AccountNotFound, null, null, false, [], [], []);
+
+        var changes = await states.GetChangesAsync(account.InboxId, JmapConstants.MailboxDataType,
+            command.SinceState, command.MaxChanges, environment.Jmap.MaxObjectsInGet, cancellationToken)
+            .ConfigureAwait(false);
+        return changes is null
+            ? new(MailFolderChangesStatus.CannotCalculateChanges, null, null, false, [], [], [])
+            : new(MailFolderChangesStatus.Ok, changes.OldState, changes.NewState,
+                changes.HasMoreChanges, changes.Created, changes.Updated, changes.Destroyed);
+    }
 }

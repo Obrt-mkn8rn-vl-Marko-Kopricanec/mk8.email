@@ -118,6 +118,17 @@ public sealed class JmapRequestProcessor
                 return new MailOperationResponse(MailOperationKind.ReadFolders, ApplicationValueCodec.Encode(data));
             }, receiptKey, cancellationToken).ConfigureAwait(false);
         }
+        else if (command.Operation == MailOperationKind.ReadFolderChanges && features.Contains(MailFeature.Messages))
+        {
+            var changesCommand = ParseFolderChangesCommand(command.Arguments);
+            response = await InvokeAtomicallyAsync(command.Operation, context, async token =>
+            {
+                var result = await _folderReader.ReadChangesAsync(changesCommand, user, token).ConfigureAwait(false);
+                var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
+                    ?? throw new InvalidOperationException("The folder changes reader returned an incomplete result.");
+                return new MailOperationResponse(MailOperationKind.ReadFolderChanges, ApplicationValueCodec.Encode(data));
+            }, receiptKey, cancellationToken).ConfigureAwait(false);
+        }
         else
         {
             response = EncodeResponse(JmapMethodResponse.Error("unknownMethod"));
@@ -139,6 +150,25 @@ public sealed class JmapRequestProcessor
         catch (JsonException)
         {
             throw NotRequest("The folder read command contains invalid values.");
+        }
+    }
+
+    private static MailFolderChangesCommand ParseFolderChangesCommand(JsonObject arguments)
+    {
+        if (arguments.Count != 3 || !arguments.ContainsKey("accountId")
+            || !arguments.ContainsKey("sinceState") || !arguments.ContainsKey("maxChanges"))
+            throw NotRequest("The folder changes command has an invalid shape.");
+        try
+        {
+            var command = JsonSerializer.Deserialize<MailFolderChangesCommand>(arguments, ReceiptJsonOptions)
+                ?? throw NotRequest("The folder changes command is missing.");
+            if (command.SinceState is null || command.MaxChanges is < 1 or > 9_007_199_254_740_991)
+                throw NotRequest("The folder changes command contains invalid values.");
+            return command;
+        }
+        catch (JsonException)
+        {
+            throw NotRequest("The folder changes command contains invalid values.");
         }
     }
 

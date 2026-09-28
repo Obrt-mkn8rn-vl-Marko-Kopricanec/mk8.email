@@ -56,7 +56,6 @@ public static class JmapServiceExtensions
 
     private static void AddJmapMethods(IServiceCollection services)
     {
-        services.AddScoped<IJmapMethod, MailboxChangesMethod>();
         services.AddScoped<IJmapMethod, MailboxQueryMethod>();
         services.AddScoped<IJmapMethod, MailboxQueryChangesMethod>();
         services.AddScoped<IJmapMethod, MailboxSetMethod>();

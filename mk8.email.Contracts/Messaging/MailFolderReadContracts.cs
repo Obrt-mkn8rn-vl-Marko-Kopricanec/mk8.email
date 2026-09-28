@@ -34,3 +34,24 @@ public sealed record MailFolderReadResult(
     MailFolderReadStatus Status,
     string? State,
     IReadOnlyList<MailFolderSnapshot> Folders);
+
+public sealed record MailFolderChangesCommand(
+    [property: JsonRequired] Guid AccountId,
+    [property: JsonRequired] string SinceState,
+    [property: JsonRequired] long? MaxChanges);
+
+public enum MailFolderChangesStatus
+{
+    Ok,
+    AccountNotFound,
+    CannotCalculateChanges,
+}
+
+public sealed record MailFolderChangesResult(
+    MailFolderChangesStatus Status,
+    string? OldState,
+    string? NewState,
+    bool HasMoreChanges,
+    IReadOnlyList<string> CreatedKeys,
+    IReadOnlyList<string> UpdatedKeys,
+    IReadOnlyList<string> DestroyedKeys);

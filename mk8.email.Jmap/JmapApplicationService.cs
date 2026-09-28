@@ -40,7 +40,7 @@ internal sealed class JmapApplicationService(
         try
         {
             using var lease = await concurrency.AcquireRequestAsync(cancellationToken).ConfigureAwait(false);
-            processor.ValidatePreflight(request.Plan);
+            processor.ValidatePlan(request.Plan);
             return new JmapApplicationResult(JmapApplicationOutcomes.Ok, Profile: profile);
         }
         catch (MailApplicationException exception)

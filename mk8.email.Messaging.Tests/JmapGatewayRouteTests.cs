@@ -151,7 +151,7 @@ public sealed class JmapGatewayRouteTests
             Assert.AreEqual(2, jmap.Executions);
             Assert.AreEqual("second", jmap.Commands[1].Arguments["collision"]!.GetValue<string>());
             Assert.IsFalse(jmap.Commands[1].Arguments.ContainsKey("#collision"));
-            Assert.AreEqual(3, jmap.Plan?.Plan?.InvocationCount);
+            Assert.AreEqual(3, jmap.Plan?.Plan?.OperationCount);
             Assert.AreEqual(MailOperationKind.ReadFolders, jmap.Request.Command.Operation);
             Assert.AreEqual("text", jmap.Request.Command.Arguments["nested"]?["items"]?[2]?.GetValue<string>());
             Assert.AreEqual(1, jmap.Request.Command.Arguments["x"]!.GetValue<int>());

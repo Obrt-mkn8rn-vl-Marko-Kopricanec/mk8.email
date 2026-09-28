@@ -8,6 +8,7 @@ using mk8.email.Contracts.Imap;
 using mk8.email.Gateway.Protocols.Sieve;
 using mk8.email.Gateway.Protocols.Pop3;
 using mk8.email.Gateway.Protocols.Imap;
+using mk8.email.Gateway.Protocols.Jmap;
 using mk8.email.Imap.Presentation;
 using mk8.email.Wake;
 
@@ -326,10 +327,23 @@ public sealed class ArchitectureBoundaryTests
     [TestMethod]
     public void JmapBatchBoundaryHasNoRawApiDocumentOrHttpStatus()
     {
-        Assert.IsNull(typeof(mk8.email.Contracts.Messaging.JmapBatchApplicationRequest).GetProperty("Document"));
-        Assert.AreEqual(
-            typeof(mk8.email.Contracts.Messaging.JmapApplicationBatch),
-            typeof(mk8.email.Contracts.Messaging.JmapBatchApplicationRequest).GetProperty("Batch")?.PropertyType);
+        Assert.AreEqual(typeof(MailAdmissionPlan), typeof(MailPlanApplicationRequest).GetProperty("Plan")?.PropertyType);
+        foreach (var frontendType in new[]
+        {
+            "JmapBatchApplicationRequest",
+            "JmapBatchPreflight",
+            "JmapApplicationBatch",
+            "JmapApplicationCall",
+            "JmapApplicationInvocation",
+            "JmapApplicationBatchResult",
+            "ApplicationArgumentBinding",
+            "ApplicationValuePathSegment",
+            "ApplicationBindingFailure",
+        })
+        {
+            Assert.IsNull(typeof(MailAdmissionPlan).Assembly.GetType("mk8.email.Contracts.Messaging." + frontendType));
+        }
+        Assert.AreEqual("mk8.email.Gateway", typeof(JmapApplicationBatch).Assembly.GetName().Name);
         Assert.IsNull(typeof(mk8.email.Jmap.MailApplicationException).GetProperty("StatusCode"));
         Assert.IsNull(typeof(mk8.email.Jmap.MailApplicationException).GetProperty("Type"));
         Assert.IsNull(typeof(MailApplicationFailure).GetProperty("Type"));
@@ -337,7 +351,8 @@ public sealed class ArchitectureBoundaryTests
         Assert.IsNull(typeof(JmapApplicationResult).GetProperty("Problem"));
         Assert.AreEqual(typeof(MailApplicationFailure), typeof(JmapApplicationResult).GetProperty("Failure")?.PropertyType);
         Assert.AreEqual(typeof(MailFeature[]), typeof(JmapApplicationBatch).GetProperty("Features")?.PropertyType);
-        Assert.AreEqual(typeof(MailFeature[]), typeof(JmapBatchPreflight).GetProperty("Features")?.PropertyType);
+        Assert.AreEqual(typeof(IReadOnlyList<MailFeature>), typeof(MailAdmissionPlan).GetProperty("Features")?.PropertyType);
+        Assert.IsNull(typeof(MailAdmissionPlan).GetProperty("InvocationCount"));
         Assert.IsNull(typeof(JmapApplicationBatch).GetProperty("Capabilities"));
         Assert.IsNull(typeof(mk8.email.Jmap.JmapInvocationContext).GetProperty("Capabilities"));
         Assert.IsNull(typeof(mk8.email.Jmap.IJmapMethod).GetProperty("Capability"));
@@ -355,7 +370,7 @@ public sealed class ArchitectureBoundaryTests
             typeof(mk8.email.Contracts.Messaging.JmapApplicationResult).GetProperty("Profile")?.PropertyType);
         Assert.AreEqual(typeof(mk8.email.Contracts.Messaging.JmapApplicationChanges),
             typeof(mk8.email.Contracts.Messaging.JmapApplicationResult).GetProperty("Changes")?.PropertyType);
-        Assert.IsNull(typeof(mk8.email.Contracts.Messaging.JmapApplicationBatchResult).GetProperty("Revision"));
+        Assert.IsNull(typeof(JmapApplicationBatchResult).GetProperty("Revision"));
         Assert.AreEqual("mk8.email.Gateway", typeof(
             mk8.email.Gateway.Protocols.Jmap.GatewayJmapProfileCodec).Assembly.GetName().Name);
         Assert.AreEqual("mk8.email.Gateway", typeof(

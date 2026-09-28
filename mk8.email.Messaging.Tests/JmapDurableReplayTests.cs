@@ -323,7 +323,7 @@ public sealed class JmapDurableReplayTests
         JmapRequestProcessor processor, JmapApplicationBatch batch, AuthenticatedMailUser user,
         Guid operation, CancellationToken token = default)
     {
-        processor.ValidatePreflight(new(batch.Features, batch.Invocations.Length));
+        processor.ValidatePlan(new(batch.Features, batch.Invocations.Length));
         var execution = await GatewayJmapBatchExecutor.ExecuteAsync(new ProcessorGatewayJmapClient(processor, user, operation),
             new(ProtocolAuthenticationKinds.Password, user.Username, "test"),
             batch, await processor.GetProfileAsync(user, token), token);

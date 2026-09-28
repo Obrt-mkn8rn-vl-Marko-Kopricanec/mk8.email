@@ -120,11 +120,11 @@ public static class JmapEndpointRouteBuilderExtensions
         return RenderBatchExecution(context, environment, execution);
     }
 
-    private static (JmapApplicationBatch? Batch, JmapBatchPreflight? Plan, GatewayJmapProblem? Problem) ParseBatchDocument(
+    private static (JmapApplicationBatch? Batch, MailAdmissionPlan? Plan, GatewayJmapProblem? Problem) ParseBatchDocument(
         byte[] document,
         JmapConfig configuration)
     {
-        JmapBatchPreflight? preflight = null;
+        MailAdmissionPlan? preflight = null;
         try
         {
             var batch = GatewayJmapBatchCodec.Parse(GatewayJmapJson.ParseRequest(document, configuration), out preflight);

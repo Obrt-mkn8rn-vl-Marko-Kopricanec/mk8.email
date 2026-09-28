@@ -19,7 +19,7 @@ internal sealed class ProcessorGatewayJmapClient(
 
     public async Task<JmapApplicationResult> ValidatePlanAsync(MailPlanApplicationRequest request, CancellationToken cancellationToken = default)
     {
-        processor.ValidatePreflight(request.Plan);
+        processor.ValidatePlan(request.Plan);
         return new(JmapApplicationOutcomes.Ok, Profile: await processor.GetProfileAsync(user, cancellationToken));
     }
 

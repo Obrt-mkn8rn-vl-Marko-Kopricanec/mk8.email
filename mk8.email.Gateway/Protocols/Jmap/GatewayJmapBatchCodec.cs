@@ -6,9 +6,9 @@ namespace mk8.email.Gateway.Protocols.Jmap;
 
 internal static class GatewayJmapBatchCodec
 {
-    public static JmapApplicationBatch Parse(JsonNode? node, out JmapBatchPreflight? preflight)
+    public static JmapApplicationBatch Parse(JsonNode? node, out MailAdmissionPlan? plan)
     {
-        preflight = null;
+        plan = null;
         if (node is not JsonObject request
             || request["using"] is not JsonArray usingNode
             || request["methodCalls"] is not JsonArray calls)
@@ -25,7 +25,7 @@ internal static class GatewayJmapBatchCodec
         }
         // Worker still checks authorization, capacity and supported capabilities
         // before Gateway reveals a later malformed-invocation/createdIds error.
-        preflight = new JmapBatchPreflight(features, calls.Count);
+        plan = new MailAdmissionPlan(features, calls.Count);
 
         var invocations = new JmapApplicationCall[calls.Count];
         for (var index = 0; index < calls.Count; index++)

@@ -1,7 +1,9 @@
 # JMAP application boundary migration
 
-Gateway parses and validates I-JSON and the outer JMAP request envelope. It sends
-an authentication/feature/count admission plan through `mail.plan.validate`, then
+Gateway parses and validates I-JSON and the outer JMAP request envelope. Its
+batch, call, result and reference-selector models exist only in Gateway, not in
+the shared durable Contracts assembly. It sends a protocol-neutral
+authentication/feature/operation-count admission plan through `mail.plan.validate`, then
 one resolved mail operation at a time through `mail.operation.execute`. Worker
 returns a typed operation result, domain failures, known entity mappings and an
 account profile. Gateway alone sequences the batch, handles Core/echo, and renders
@@ -136,7 +138,6 @@ commit, and corrupted replay data fails closed.
 
 This is an intermediate boundary correction, not completion of the API-agnostic
 architecture. Creation-reference resolution and per-method value shaping still
-require the full API-awareness audit. Obsolete shared frontend DTOs also need to
-leave the Contracts assembly. JMAP and the two remaining test projects have
+require the full API-awareness audit. JMAP and the two remaining test projects have
 unfinished analyzer gates. Full independent review and deployment remain blocked
 until those obligations are closed.

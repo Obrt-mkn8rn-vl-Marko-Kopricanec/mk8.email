@@ -94,13 +94,13 @@ public sealed class JmapRequestProcessor
         return createdIds;
     }
 
-    internal void ValidatePreflight(JmapBatchPreflight? preflight)
+    internal void ValidatePlan(MailAdmissionPlan? plan)
     {
-        if (preflight is not null)
-            _ = ValidateHeader(preflight.Features, preflight.InvocationCount);
+        if (plan is not null)
+            _ = ValidateHeader(plan.Features, plan.OperationCount);
     }
 
-    private HashSet<MailFeature> ValidateHeader(MailFeature[] values, int invocationCount)
+    private HashSet<MailFeature> ValidateHeader(IReadOnlyList<MailFeature>? values, int invocationCount)
     {
         if (values is null || values.Any(feature => !Enum.IsDefined(feature)))
             throw NotRequest("The application batch contains invalid feature identifiers.");

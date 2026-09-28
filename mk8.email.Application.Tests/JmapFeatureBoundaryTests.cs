@@ -37,7 +37,7 @@ public sealed class JmapFeatureBoundaryTests
             """), out var preflight);
         CollectionAssert.AreEqual(new[] { MailFeature.Basic, MailFeature.Unsupported }, batch.Features);
         Assert.IsNotNull(preflight);
-        CollectionAssert.AreEqual(batch.Features, preflight.Features);
+        CollectionAssert.AreEqual(batch.Features, preflight.Features.ToArray());
         var options = ContractOptions();
         var encoded = JsonSerializer.SerializeToNode(batch, options)!;
         Assert.IsNull(encoded["capabilities"]);
@@ -59,7 +59,7 @@ public sealed class JmapFeatureBoundaryTests
     public void OldOrWrongCaseBatchFieldsAreNotSilentlyDefaulted(string json)
     {
         Assert.ThrowsExactly<JsonException>(() => JsonSerializer.Deserialize<JmapApplicationBatch>(json, ContractOptions()));
-        Assert.ThrowsExactly<JsonException>(() => JsonSerializer.Deserialize<JmapBatchPreflight>(json, ContractOptions()));
+        Assert.ThrowsExactly<JsonException>(() => JsonSerializer.Deserialize<MailAdmissionPlan>(json, ContractOptions()));
     }
 
     [TestMethod]
@@ -81,10 +81,23 @@ public sealed class JmapFeatureBoundaryTests
             """{"features":null,"invocations":[]}""", ContractOptions())!;
         var error = await Assert.ThrowsAsync<MailApplicationException>(() => JmapFixture.ProcessBatchAsync(processor, batch, fixture.User));
         Assert.AreEqual(MailFailureKind.MalformedBatch, error.Failure.Kind);
-        var preflight = JsonSerializer.Deserialize<JmapBatchPreflight>(
+        var preflight = JsonSerializer.Deserialize<MailAdmissionPlan>(
             """{"features":null,"invocationCount":0}""", ContractOptions())!;
-        var preflightError = Assert.ThrowsExactly<MailApplicationException>(() => processor.ValidatePreflight(preflight));
+        var preflightError = Assert.ThrowsExactly<MailApplicationException>(() => processor.ValidatePlan(preflight));
         Assert.AreEqual(MailFailureKind.MalformedBatch, preflightError.Failure.Kind);
+    }
+
+    [TestMethod]
+    public void NeutralAdmissionPlanPreservesExistingInternalWireShape()
+    {
+        var options = ContractOptions();
+        var plan = new MailAdmissionPlan([MailFeature.Basic, MailFeature.Contacts], 3);
+        var encoded = JsonSerializer.SerializeToNode(plan, options)!;
+        Assert.AreEqual(3, encoded["invocationCount"]!.GetValue<int>());
+        Assert.IsNull(encoded["operationCount"]);
+        var decoded = JsonSerializer.Deserialize<MailAdmissionPlan>(encoded, options)!;
+        Assert.AreEqual(3, decoded.OperationCount);
+        CollectionAssert.AreEqual(plan.Features.ToArray(), decoded.Features.ToArray());
     }
 
     [TestMethod]

@@ -170,7 +170,7 @@ internal sealed class JmapFixture : IAsyncDisposable
         CancellationToken cancellationToken = default,
         EnvironmentConfig? environment = null)
     {
-        JmapBatchPreflight? preflight = null;
+        MailAdmissionPlan? preflight = null;
         JmapApplicationBatch batch;
         try
         {
@@ -178,7 +178,7 @@ internal sealed class JmapFixture : IAsyncDisposable
         }
         catch (GatewayJmapBatchCodec.RequestException)
         {
-            processor.ValidatePreflight(preflight);
+            processor.ValidatePlan(preflight);
             throw;
         }
         return GatewayJmapBatchCodec.Render(await ProcessBatchAsync(processor, batch, user, cancellationToken),
@@ -191,7 +191,7 @@ internal sealed class JmapFixture : IAsyncDisposable
         AuthenticatedMailUser user,
         CancellationToken cancellationToken = default)
     {
-        processor.ValidatePreflight(new(batch.Features, batch.Invocations?.Length ?? 0));
+        processor.ValidatePlan(new(batch.Features, batch.Invocations?.Length ?? 0));
         var result = await GatewayJmapBatchExecutor.ExecuteAsync(new mk8.email.TestSupport.ProcessorGatewayJmapClient(processor, user),
             new(ProtocolAuthenticationKinds.Password, user.Username, "test-only"),
             batch, await processor.GetProfileAsync(user, cancellationToken), cancellationToken);

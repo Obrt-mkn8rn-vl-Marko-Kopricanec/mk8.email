@@ -80,6 +80,12 @@ public static class EnvironmentLoader
         }
         else
         {
+            if (!string.IsNullOrEmpty(config.OAuth.SigningKey)
+                || !string.IsNullOrEmpty(config.Mfa.EncryptionKey))
+            {
+                throw new InvalidOperationException(
+                    "Gateway configuration must not contain Worker-only OAuth or MFA secret values.");
+            }
             config.OAuth.SigningKey = string.Empty;
             config.Mfa.EncryptionKey = string.Empty;
         }

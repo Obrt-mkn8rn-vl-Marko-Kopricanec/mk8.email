@@ -276,6 +276,32 @@ public sealed class EnvironmentConfigTests
     }
 
     [TestMethod]
+    public void GatewayLoaderRejectsEmbeddedWorkerOnlySecrets()
+    {
+        var signingConfiguration = CreateValidConfiguration(
+            oauthEnable: true,
+            oidcEnable: true,
+            oidcSigningKey: "worker-signing-secret");
+        var signingPath = WriteFile(
+            "gateway-with-worker-signing-secret.json",
+            JsonSerializer.Serialize(signingConfiguration));
+        var signingException = Assert.ThrowsExactly<InvalidOperationException>(() =>
+            EnvironmentLoader.LoadFromFile(signingPath, role: EnvironmentValidationRole.Gateway));
+        StringAssert.Contains(signingException.Message, "Worker-only OAuth or MFA secret values", StringComparison.Ordinal);
+
+        var mfaConfiguration = CreateValidConfiguration(
+            oauthEnable: true,
+            mfaEnable: true,
+            mfaEncryptionKey: "worker-mfa-secret");
+        var mfaPath = WriteFile(
+            "gateway-with-worker-mfa-secret.json",
+            JsonSerializer.Serialize(mfaConfiguration));
+        var mfaException = Assert.ThrowsExactly<InvalidOperationException>(() =>
+            EnvironmentLoader.LoadFromFile(mfaPath, role: EnvironmentValidationRole.Gateway));
+        StringAssert.Contains(mfaException.Message, "Worker-only OAuth or MFA secret values", StringComparison.Ordinal);
+    }
+
+    [TestMethod]
     public void GatewayDoesNotRequireApplicationOnlyDkimPrivateKey()
     {
         var missingWorkerKey = Path.Combine(_testDirectory, "worker-only-dkim-key");

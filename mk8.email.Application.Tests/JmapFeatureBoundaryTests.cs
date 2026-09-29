@@ -134,7 +134,7 @@ public sealed class JmapFeatureBoundaryTests
         await using var fixture = await JmapFixture.CreateAsync();
         using var scope = fixture.Services.CreateScope();
         var methods = scope.ServiceProvider.GetServices<IJmapMethod>().ToArray();
-        Assert.HasCount(25, methods);
+        Assert.HasCount(24, methods);
         Assert.IsNotNull(scope.ServiceProvider.GetRequiredService<IMailFolderReader>());
         Assert.IsNotNull(scope.ServiceProvider.GetRequiredService<IMailChangesReader>());
         Assert.IsNotNull(scope.ServiceProvider.GetRequiredService<IMailAddressBookReader>());
@@ -142,6 +142,7 @@ public sealed class JmapFeatureBoundaryTests
         Assert.IsNotNull(scope.ServiceProvider.GetRequiredService<IMailVacationReader>());
         Assert.IsNotNull(scope.ServiceProvider.GetRequiredService<IMailPushSubscriptionReader>());
         Assert.IsNotNull(scope.ServiceProvider.GetRequiredService<IMailThreadReader>());
+        Assert.IsNotNull(scope.ServiceProvider.GetRequiredService<IMailSubmissionReader>());
         Assert.IsTrue(methods.All(method => Enum.IsDefined(method.Feature) && method.Feature != MailFeature.Unsupported));
         CollectionAssert.AreEquivalent(Enum.GetValues<MailFeature>().Except([MailFeature.Unsupported]).ToArray(),
             methods.Select(method => method.Feature).Distinct().ToArray());

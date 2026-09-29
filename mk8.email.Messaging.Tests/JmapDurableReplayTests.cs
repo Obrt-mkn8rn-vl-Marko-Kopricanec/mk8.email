@@ -32,6 +32,58 @@ namespace mk8.email.Messaging.Tests;
 public sealed class JmapDurableReplayTests
 {
     [TestMethod]
+    public async Task TypedSubmissionReadReplaysCommittedSnapshotAcrossWorkerRetries()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var submissionId = Guid.CreateVersion7();
+        await using (var setup = rig.Context())
+        {
+            setup.JmapEmailSubmissions.Add(new JmapEmailSubmissionDB
+            {
+                Id = submissionId,
+                SubmissionObjectId = JmapId.Submission(submissionId),
+                AccountId = rig.InboxId,
+                IdentityId = JmapId.Identity(rig.InboxId),
+                EmailId = JmapId.Email(submissionId),
+                ThreadId = JmapId.Thread(submissionId.ToString("N")),
+                QueueId = Guid.CreateVersion7(),
+                EnvelopeSender = rig.User.Username,
+                EnvelopeRecipients = ["recipient@example.test"],
+                SendAt = new DateTime(2026, 9, 29, 12, 0, 0, DateTimeKind.Utc),
+                UndoStatus = "final",
+            });
+            await setup.SaveChangesAsync();
+        }
+        var batch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Submission],
+            [new JmapApplicationCall(MailOperationKind.ReadSubmissions, new JsonObject
+            {
+                ["accountId"] = JmapId.Account(rig.InboxId),
+                ["ids"] = new JsonArray(JmapId.Submission(submissionId)),
+                ["properties"] = new JsonArray("undoStatus", "envelope"),
+            }, "submission")]);
+        var operation = Guid.CreateVersion7();
+        var first = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual("final", first.Invocations[0].Arguments["list"]![0]!["undoStatus"]!.GetValue<string>());
+        Assert.AreEqual(rig.User.Username,
+            first.Invocations[0].Arguments["list"]![0]!["envelope"]!["mailFrom"]!["email"]!.GetValue<string>());
+        await using (var changed = rig.Context())
+        {
+            var submission = await changed.JmapEmailSubmissions.SingleAsync();
+            submission.UndoStatus = "pending";
+            submission.EnvelopeSender = "updated@example.test";
+            await changed.SaveChangesAsync();
+        }
+        var replay = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
+        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7());
+        Assert.AreEqual("pending", fresh.Invocations[0].Arguments["list"]![0]!["undoStatus"]!.GetValue<string>());
+        Assert.AreEqual("updated@example.test",
+            fresh.Invocations[0].Arguments["list"]![0]!["envelope"]!["mailFrom"]!["email"]!.GetValue<string>());
+        await using var verification = rig.Context();
+        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync());
+    }
+
+    [TestMethod]
     public async Task TypedThreadReadReplaysCommittedGroupingAcrossWorkerRetries()
     {
         await using var rig = await Rig.CreateAsync();

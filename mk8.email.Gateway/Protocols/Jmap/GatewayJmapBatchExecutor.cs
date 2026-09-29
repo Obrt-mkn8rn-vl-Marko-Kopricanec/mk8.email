@@ -165,6 +165,12 @@ internal static class GatewayJmapBatchExecutor
             selection = Select<MailThreadReadCommand, MailThreadReadResult>(operation, call!.Command,
                 result => GatewayThreadGetCodec.Render(call, result));
         }
+        else if (operation == MailOperationKind.ReadSubmissions && features.Contains(MailFeature.Submission))
+        {
+            if (!GatewaySubmissionGetCodec.TryParse(arguments, maximumObjects, out var call, out failure)) return false;
+            selection = Select<MailSubmissionReadCommand, MailSubmissionReadResult>(operation, call!.Command,
+                result => GatewaySubmissionGetCodec.Render(call, result));
+        }
         return true;
     }
 

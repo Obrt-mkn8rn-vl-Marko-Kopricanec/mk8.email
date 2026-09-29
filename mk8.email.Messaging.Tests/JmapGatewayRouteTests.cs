@@ -136,7 +136,10 @@ public sealed class JmapGatewayRouteTests
                      "P33333333333333333333333333333333"],
                      "properties":["deviceClientId","expires","types"]},"call-15"],
                    ["Thread/get",{"accountId":"A11111111111111111111111111111111",
-                     "ids":["TYyE","Tmissing"],"properties":["emailIds"]},"call-16"]],
+                     "ids":["TYyE","Tmissing"],"properties":["emailIds"]},"call-16"],
+                   ["EmailSubmission/get",{"accountId":"A11111111111111111111111111111111",
+                     "ids":["S22222222222222222222222222222222","S33333333333333333333333333333333"],
+                     "properties":["envelope","deliveryStatus","sendAt"]},"call-17"]],
                  "createdIds":{"made":"object-id"}}
                 """;
             using var request = new HttpRequestMessage(HttpMethod.Post, "/jmap/api")
@@ -175,10 +178,10 @@ public sealed class JmapGatewayRouteTests
             Assert.IsNotNull(jmap.Request?.Command);
             CollectionAssert.AreEqual(new[] { MailFeature.Basic, MailFeature.Messages, MailFeature.Submission,
                 MailFeature.Contacts, MailFeature.AutomaticReplies }, jmap.Request.Command.Features.ToArray());
-            Assert.AreEqual(15, jmap.Executions);
+            Assert.AreEqual(16, jmap.Executions);
             Assert.AreEqual("second", jmap.Commands[1].Arguments["collision"]!.GetValue<string>());
             Assert.IsFalse(jmap.Commands[1].Arguments.ContainsKey("#collision"));
-            Assert.AreEqual(16, jmap.Plan?.Plan?.OperationCount);
+            Assert.AreEqual(17, jmap.Plan?.Plan?.OperationCount);
             Assert.AreEqual(MailOperationKind.FindFolders, jmap.Request.Command.Operation);
             Assert.AreEqual("text", jmap.Request.Command.Arguments["nested"]?["items"]?[2]?.GetValue<string>());
             Assert.AreEqual(1, jmap.Request.Command.Arguments["x"]!.GetValue<int>());
@@ -314,6 +317,23 @@ public sealed class JmapGatewayRouteTests
             Assert.AreEqual("E22222222222222222222222222222222",
                 threadResponse[1].GetProperty("list")[0].GetProperty("emailIds")[0].GetString());
             Assert.AreEqual("Tmissing", threadResponse[1].GetProperty("notFound")[0].GetString());
+            var submissionCommand = jmap.Commands[15];
+            Assert.AreEqual(MailOperationKind.ReadSubmissions, submissionCommand.Operation);
+            Assert.IsFalse(submissionCommand.Arguments.ContainsKey("ids"));
+            Assert.IsFalse(submissionCommand.Arguments.ContainsKey("properties"));
+            Assert.AreEqual(2, submissionCommand.Arguments["submissionIds"]!.AsArray().Count);
+            Assert.IsTrue(submissionCommand.Arguments["includeDeliveryStatus"]!.GetValue<bool>());
+            var submissionResponse = json.RootElement.GetProperty("methodResponses")[16];
+            Assert.AreEqual("EmailSubmission/get", submissionResponse[0].GetString());
+            Assert.AreEqual("call-17", submissionResponse[2].GetString());
+            Assert.AreEqual("12", submissionResponse[1].GetProperty("list")[0]
+                .GetProperty("envelope").GetProperty("mailFrom").GetProperty("parameters")
+                .GetProperty("SIZE").GetString());
+            Assert.AreEqual("queued", submissionResponse[1].GetProperty("list")[0]
+                .GetProperty("deliveryStatus").GetProperty("recipient@example.test")
+                .GetProperty("delivered").GetString());
+            Assert.AreEqual("S33333333333333333333333333333333",
+                submissionResponse[1].GetProperty("notFound")[0].GetString());
 
             await using var countCommand = gatewayDataSource.CreateCommand(
                 "SELECT count(*), count(*) FILTER (WHERE metadata ->> 'layer' = 'presentation') "
@@ -322,7 +342,7 @@ public sealed class JmapGatewayRouteTests
             Assert.IsTrue(await countReader.ReadAsync(timeout.Token));
             // SSE records its headers and streamed body separately, in addition
             // to the request and two application-boundary records.
-            Assert.AreEqual(43L, countReader.GetInt64(0));
+            Assert.AreEqual(45L, countReader.GetInt64(0));
             Assert.AreEqual(7L, countReader.GetInt64(1));
 
             await using var operationCommand = gatewayDataSource.CreateCommand(
@@ -475,6 +495,21 @@ public sealed class JmapGatewayRouteTests
                 var node = JsonSerializer.SerializeToNode(threads, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
                 return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
                     OperationResult: new(new(MailOperationKind.ReadThreads, ApplicationValueCodec.Encode(node)),
+                        request.Command.KnownEntities!, Profile)));
+            }
+            if (request.Command.Operation == MailOperationKind.ReadSubmissions)
+            {
+                var submissions = new MailSubmissionReadResult(MailSubmissionReadStatus.Ok, "s47",
+                    [new MailSubmissionSnapshot(Guid.Parse("22222222-2222-2222-2222-222222222222"),
+                        "I11111111111111111111111111111111", "E11111111111111111111111111111111",
+                        "TYyE", "{\"mailFrom\":{\"email\":\"sender@example.test\",\"parameters\":{\"SIZE\":\"12\"}},\"rcptTo\":[]}",
+                        "sender@example.test", ["recipient@example.test"],
+                        new DateTime(2026, 9, 29, 12, 34, 56, DateTimeKind.Utc), "final",
+                        [new MailSubmissionDeliverySnapshot("recipient@example.test",
+                            MailSubmissionDeliveryState.Pending, null)])]);
+                var node = JsonSerializer.SerializeToNode(submissions, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
+                    OperationResult: new(new(MailOperationKind.ReadSubmissions, ApplicationValueCodec.Encode(node)),
                         request.Command.KnownEntities!, Profile)));
             }
             var data = (System.Text.Json.Nodes.JsonObject)request.Command.Arguments.DeepClone();

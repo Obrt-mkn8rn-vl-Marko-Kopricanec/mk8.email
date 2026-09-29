@@ -23,6 +23,7 @@ public sealed class JmapRequestProcessor
     private readonly IMailVacationReader? _vacationReader;
     private readonly IMailPushSubscriptionReader _pushReader;
     private readonly IMailThreadReader _threadReader;
+    private readonly IMailSubmissionReader? _submissionReader;
     private readonly EmailDbContext _database;
     private readonly EnvironmentConfig _environment;
     private readonly LargeObjectTransactionEffects _blobEffects;
@@ -43,7 +44,7 @@ public sealed class JmapRequestProcessor
         ILogger<JmapRequestProcessor> logger,
         ApplicationOperationReceiptStore? receipts = null)
         : this(methods, sessions, database, environment, blobEffects, logger, receipts,
-            null, null, null, null, null, null, null)
+            null, null, null, null, null, null, null, null)
     {
     }
 
@@ -61,7 +62,8 @@ public sealed class JmapRequestProcessor
         IMailIdentityReader? identityReader,
         IMailVacationReader? vacationReader,
         IMailPushSubscriptionReader? pushReader,
-        IMailThreadReader? threadReader)
+        IMailThreadReader? threadReader,
+        IMailSubmissionReader? submissionReader)
     {
         _methods = methods.ToDictionary(method => ValidRegisteredOperation(method.Operation, method.Feature));
         _sessions = sessions;
@@ -109,6 +111,7 @@ public sealed class JmapRequestProcessor
         }
         else
             _threadReader = threadReader;
+        _submissionReader = submissionReader;
         _database = database;
         _environment = environment;
         _blobEffects = blobEffects;
@@ -170,6 +173,9 @@ public sealed class JmapRequestProcessor
                 .ConfigureAwait(false);
         else if (command.Operation == MailOperationKind.ReadThreads && features.Contains(MailFeature.Messages))
             response = await ExecuteThreadsAsync(command, context, user, receiptKey, cancellationToken)
+                .ConfigureAwait(false);
+        else if (command.Operation == MailOperationKind.ReadSubmissions && features.Contains(MailFeature.Submission))
+            response = await ExecuteSubmissionsAsync(command, context, user, receiptKey, cancellationToken)
                 .ConfigureAwait(false);
         else
         {
@@ -321,6 +327,25 @@ public sealed class JmapRequestProcessor
         }, receiptKey, cancellationToken);
     }
 
+    private Task<MailOperationResponse> ExecuteSubmissionsAsync(
+        MailOperationCommand command,
+        JmapInvocationContext context,
+        AuthenticatedMailUser user,
+        ApplicationReceiptKey? receiptKey,
+        CancellationToken cancellationToken)
+    {
+        var readCommand = ParseSubmissionCommand(command.Arguments);
+        var reader = _submissionReader
+            ?? throw new InvalidOperationException("The submission reader is not configured.");
+        return InvokeAtomicallyAsync(command.Operation, context, async token =>
+        {
+            var result = await reader.ReadAsync(readCommand, user, token).ConfigureAwait(false);
+            var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
+                ?? throw new InvalidOperationException("The submission reader returned an incomplete result.");
+            return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
+        }, receiptKey, cancellationToken);
+    }
+
     private static MailFolderReadCommand ParseFolderCommand(JsonObject arguments)
     {
         if (arguments.Count != 3 || !arguments.ContainsKey("accountId")
@@ -435,6 +460,22 @@ public sealed class JmapRequestProcessor
         catch (JsonException)
         {
             throw NotRequest("The thread read command contains invalid values.");
+        }
+    }
+
+    private static MailSubmissionReadCommand ParseSubmissionCommand(JsonObject arguments)
+    {
+        if (arguments.Count != 3 || !arguments.ContainsKey("accountId")
+            || !arguments.ContainsKey("submissionIds") || !arguments.ContainsKey("includeDeliveryStatus"))
+            throw NotRequest("The submission read command has an invalid shape.");
+        try
+        {
+            return JsonSerializer.Deserialize<MailSubmissionReadCommand>(arguments, ReceiptJsonOptions)
+                ?? throw NotRequest("The submission read command is missing.");
+        }
+        catch (JsonException)
+        {
+            throw NotRequest("The submission read command contains invalid values.");
         }
     }
 

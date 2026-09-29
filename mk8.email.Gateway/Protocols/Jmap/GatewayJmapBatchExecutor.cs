@@ -217,6 +217,18 @@ internal static class GatewayJmapBatchExecutor
             selection = Select<MailSubmissionQueryChangesCommand, MailSubmissionQueryChangesResult>(operation, call!.Command,
                 result => GatewaySubmissionQueryCodec.RenderChanges(call, result));
         }
+        else if (operation == MailOperationKind.FindFolders && features.Contains(MailFeature.Messages))
+        {
+            if (!GatewayFolderQueryCodec.TryParseQuery(arguments, maximumObjectsInGet, out var call, out failure)) return false;
+            selection = Select<MailFolderQueryCommand, MailFolderQueryResult>(operation, call!.Command,
+                result => GatewayFolderQueryCodec.RenderQuery(call, result));
+        }
+        else if (operation == MailOperationKind.FindFolderChanges && features.Contains(MailFeature.Messages))
+        {
+            if (!GatewayFolderQueryCodec.TryParseChanges(arguments, out var call, out failure)) return false;
+            selection = Select<MailFolderQueryChangesCommand, MailFolderQueryChangesResult>(operation, call!.Command,
+                result => GatewayFolderQueryCodec.RenderChanges(call, result));
+        }
         return true;
     }
 

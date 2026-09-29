@@ -140,7 +140,7 @@ internal sealed class JmapFixture : IAsyncDisposable
     {
         var implementation = replacement.Operation switch
         {
-            MailOperationKind.FindFolders => typeof(MailboxQueryMethod),
+            MailOperationKind.FindFolders => null,
             MailOperationKind.MutateFolders => typeof(MailboxSetMethod),
             _ => throw new ArgumentException("Unsupported test handler replacement.", nameof(replacement)),
         };

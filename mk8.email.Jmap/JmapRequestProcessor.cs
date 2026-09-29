@@ -28,6 +28,7 @@ public sealed class JmapRequestProcessor
     private readonly IMailBlobCopyService? _blobCopyService;
     private readonly IMailVacationMutator? _vacationMutator;
     private readonly IMailSubmissionQueryService? _submissionQueryService;
+    private readonly IMailFolderQueryService? _folderQueryService;
     private readonly EmailDbContext _database;
     private readonly EnvironmentConfig _environment;
     private readonly LargeObjectTransactionEffects _blobEffects;
@@ -52,7 +53,7 @@ public sealed class JmapRequestProcessor
         ILogger<JmapRequestProcessor> logger,
         ApplicationOperationReceiptStore? receipts = null)
         : this(methods, sessions, database, environment, blobEffects, logger, receipts,
-            null, null, null, null, null, null, null, null, null, null, null)
+            null, null, null, null, null, null, null, null, null, null, null, null)
     {
     }
 
@@ -74,7 +75,8 @@ public sealed class JmapRequestProcessor
         IMailSubmissionReader? submissionReader,
         IMailBlobCopyService? blobCopyService,
         IMailVacationMutator? vacationMutator,
-        IMailSubmissionQueryService? submissionQueryService)
+        IMailSubmissionQueryService? submissionQueryService,
+        IMailFolderQueryService? folderQueryService)
     {
         _methods = methods.ToDictionary(method => ValidRegisteredOperation(method.Operation, method.Feature));
         _sessions = sessions;
@@ -126,6 +128,7 @@ public sealed class JmapRequestProcessor
         _blobCopyService = blobCopyService;
         _vacationMutator = vacationMutator;
         _submissionQueryService = submissionQueryService;
+        _folderQueryService = folderQueryService;
         _database = database;
         _environment = environment;
         _blobEffects = blobEffects;
@@ -202,6 +205,12 @@ public sealed class JmapRequestProcessor
                 .ConfigureAwait(false);
         else if (command.Operation == MailOperationKind.FindSubmissionChanges && features.Contains(MailFeature.Submission))
             response = await ExecuteSubmissionQueryChangesAsync(command, context, user, receiptKey, cancellationToken)
+                .ConfigureAwait(false);
+        else if (command.Operation == MailOperationKind.FindFolders && features.Contains(MailFeature.Messages))
+            response = await ExecuteFolderQueryAsync(command, context, user, receiptKey, cancellationToken)
+                .ConfigureAwait(false);
+        else if (command.Operation == MailOperationKind.FindFolderChanges && features.Contains(MailFeature.Messages))
+            response = await ExecuteFolderQueryChangesAsync(command, context, user, receiptKey, cancellationToken)
                 .ConfigureAwait(false);
         else
         {
@@ -444,6 +453,44 @@ public sealed class JmapRequestProcessor
             var result = await service.QueryChangesAsync(query, user, token).ConfigureAwait(false);
             var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
                 ?? throw new InvalidOperationException("The submission query service returned an incomplete result.");
+            return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
+        }, receiptKey, cancellationToken);
+    }
+
+    private Task<MailOperationResponse> ExecuteFolderQueryAsync(
+        MailOperationCommand command,
+        JmapInvocationContext context,
+        AuthenticatedMailUser user,
+        ApplicationReceiptKey? receiptKey,
+        CancellationToken cancellationToken)
+    {
+        var query = ParseFolderQueryCommand(command.Arguments);
+        var service = _folderQueryService
+            ?? throw new InvalidOperationException("The folder query service is not configured.");
+        return InvokeAtomicallyAsync(command.Operation, context, async token =>
+        {
+            var result = await service.QueryAsync(query, user, token).ConfigureAwait(false);
+            var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
+                ?? throw new InvalidOperationException("The folder query service returned an incomplete result.");
+            return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
+        }, receiptKey, cancellationToken);
+    }
+
+    private Task<MailOperationResponse> ExecuteFolderQueryChangesAsync(
+        MailOperationCommand command,
+        JmapInvocationContext context,
+        AuthenticatedMailUser user,
+        ApplicationReceiptKey? receiptKey,
+        CancellationToken cancellationToken)
+    {
+        var query = ParseFolderQueryChangesCommand(command.Arguments);
+        var service = _folderQueryService
+            ?? throw new InvalidOperationException("The folder query service is not configured.");
+        return InvokeAtomicallyAsync(command.Operation, context, async token =>
+        {
+            var result = await service.QueryChangesAsync(query, user, token).ConfigureAwait(false);
+            var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
+                ?? throw new InvalidOperationException("The folder query service returned an incomplete result.");
             return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
         }, receiptKey, cancellationToken);
     }
@@ -717,6 +764,85 @@ public sealed class JmapRequestProcessor
 
     private static bool ValidSubmissionIds(IReadOnlyList<string>? ids) =>
         ids is null || ids.All(id => id is not null && JmapId.IsValidId(id));
+
+    private MailFolderQueryCommand ParseFolderQueryCommand(JsonObject arguments)
+    {
+        if (arguments.Count != 8 || !arguments.ContainsKey("accountId")
+            || !arguments.ContainsKey("criteria") || !arguments.ContainsKey("checkAccountOnly")
+            || !arguments.ContainsKey("position") || !arguments.ContainsKey("anchorId")
+            || !arguments.ContainsKey("anchorCanMatch")
+            || !arguments.ContainsKey("anchorOffset") || !arguments.ContainsKey("limit"))
+            throw NotRequest("The folder query command has an invalid shape.");
+        try
+        {
+            var query = JsonSerializer.Deserialize<MailFolderQueryCommand>(arguments, StrictReceiptJsonOptions)
+                ?? throw NotRequest("The folder query command is missing.");
+            ValidateFolderCriteria(query.Criteria);
+            if (query.Position is < -9_007_199_254_740_991L or > 9_007_199_254_740_991L
+                || query.AnchorOffset is < -9_007_199_254_740_991L or > 9_007_199_254_740_991L
+                || query.AnchorId is null && query.AnchorCanMatch
+                || query.Limit < 0 || query.Limit > _environment.Jmap.MaxObjectsInGet)
+                throw NotRequest("The folder query window is invalid.");
+            return query;
+        }
+        catch (JsonException)
+        {
+            throw NotRequest("The folder query command contains invalid values.");
+        }
+    }
+
+    private static MailFolderQueryChangesCommand ParseFolderQueryChangesCommand(JsonObject arguments)
+    {
+        if (arguments.Count != 5 || !arguments.ContainsKey("accountId")
+            || !arguments.ContainsKey("criteria") || !arguments.ContainsKey("checkAccountOnly")
+            || !arguments.ContainsKey("sinceState") || !arguments.ContainsKey("maxChanges"))
+            throw NotRequest("The folder query-changes command has an invalid shape.");
+        try
+        {
+            var query = JsonSerializer.Deserialize<MailFolderQueryChangesCommand>(arguments, StrictReceiptJsonOptions)
+                ?? throw NotRequest("The folder query-changes command is missing.");
+            ValidateFolderCriteria(query.Criteria);
+            if (query.SinceState is null || query.Criteria.SortAsTree || query.Criteria.FilterAsTree
+                || query.MaxChanges is < 0 or > 9_007_199_254_740_991L)
+                throw NotRequest("The folder query-changes values are invalid.");
+            return query;
+        }
+        catch (JsonException)
+        {
+            throw NotRequest("The folder query-changes command contains invalid values.");
+        }
+    }
+
+    private static void ValidateFolderCriteria(MailFolderQueryCriteria? criteria)
+    {
+        if (criteria?.Sort is null || criteria.Sort.Any(item => item is null
+            || !Enum.IsDefined(item.Field) || !Enum.IsDefined(item.Collation)))
+            throw NotRequest("The folder query sort is invalid.");
+        ValidateFolderFilter(criteria.Filter, 0);
+    }
+
+    private static void ValidateFolderFilter(MailFolderFilter? filter, int depth)
+    {
+        if (filter is null) return;
+        if (depth > 64 || !Enum.IsDefined(filter.Operator)
+            || !Enum.IsDefined(filter.ParentConstraint))
+            throw NotRequest("The folder query filter is invalid.");
+        if (filter.Operator != MailFolderFilterOperator.Condition)
+        {
+            if (filter.Conditions is null || filter.ParentConstraint != MailFolderParentConstraint.Any
+                || filter.ParentId is not null || filter.Name is not null || filter.Role is not null
+                || filter.MatchNullRole || filter.HasAnyRole is not null || filter.IsSubscribed is not null)
+                throw NotRequest("The folder query operator is invalid.");
+            foreach (var child in filter.Conditions)
+                ValidateFolderFilter(child, depth + 1);
+            return;
+        }
+        if (filter.Conditions is not null
+            || filter.ParentConstraint == MailFolderParentConstraint.Folder && filter.ParentId is null
+            || filter.ParentConstraint != MailFolderParentConstraint.Folder && filter.ParentId is not null
+            || filter.MatchNullRole && filter.Role is not null)
+            throw NotRequest("The folder query condition is invalid.");
+    }
 
     private static Dictionary<string, string> CloneCreatedIds(IReadOnlyDictionary<string, string>? values)
     {

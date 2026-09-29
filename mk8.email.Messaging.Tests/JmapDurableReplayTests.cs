@@ -623,6 +623,101 @@ public sealed class JmapDurableReplayTests
     }
 
     [TestMethod]
+    public async Task TypedFolderQueryReplaysCommittedFilteredOrderAcrossWorkerRetries()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var folderId = Guid.CreateVersion7();
+        await using (var setup = rig.Context())
+        {
+            setup.Folders.Add(new FolderDB
+            {
+                Id = folderId,
+                InboxId = rig.InboxId,
+                Name = "Alpha",
+                UidValidity = 1,
+                NextUid = 1,
+            });
+            await setup.SaveChangesAsync();
+        }
+        var batch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Messages],
+            [new JmapApplicationCall(MailOperationKind.FindFolders, new JsonObject
+            {
+                ["accountId"] = JmapId.Account(rig.InboxId),
+                ["filter"] = new JsonObject { ["name"] = "Alpha" },
+                ["sort"] = new JsonArray(new JsonObject { ["property"] = "name" }),
+                ["calculateTotal"] = true,
+            }, "query")]);
+        var operation = Guid.CreateVersion7();
+        var first = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual(MailOperationKind.FindFolders, first.Invocations[0].Operation);
+        Assert.AreEqual(JmapId.Mailbox(folderId), first.Invocations[0].Arguments["ids"]![0]!.GetValue<string>());
+        await using (var changed = rig.Context())
+        {
+            var folder = await changed.Folders.SingleAsync(row => row.Id == folderId);
+            folder.Name = "Beta";
+            await changed.SaveChangesAsync();
+        }
+        var replay = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
+        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7());
+        Assert.AreEqual(0, fresh.Invocations[0].Arguments["ids"]!.AsArray().Count);
+        Assert.AreEqual(0, fresh.Invocations[0].Arguments["total"]!.GetValue<int>());
+        await using var verification = rig.Context();
+        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync());
+    }
+
+    [TestMethod]
+    public async Task TypedFolderQueryChangesReplaysCommittedDeltaAcrossWorkerRetries()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var query = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Messages],
+            [new JmapApplicationCall(MailOperationKind.FindFolders, new JsonObject
+            {
+                ["accountId"] = JmapId.Account(rig.InboxId),
+            }, "initial")]);
+        var initial = await rig.InvokeAsync(query, Guid.CreateVersion7());
+        var since = initial.Invocations[0].Arguments["queryState"]!.GetValue<string>();
+        var folderId = Guid.CreateVersion7();
+        await using (var setup = rig.Context())
+        {
+            setup.Folders.Add(new FolderDB
+            {
+                Id = folderId,
+                InboxId = rig.InboxId,
+                Name = "New",
+                UidValidity = 1,
+                NextUid = 1,
+            });
+            await setup.SaveChangesAsync();
+        }
+        var batch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Messages],
+            [new JmapApplicationCall(MailOperationKind.FindFolderChanges, new JsonObject
+            {
+                ["accountId"] = JmapId.Account(rig.InboxId),
+                ["sinceQueryState"] = since,
+                ["calculateTotal"] = true,
+            }, "changes")]);
+        var operation = Guid.CreateVersion7();
+        var first = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual(MailOperationKind.FindFolderChanges, first.Invocations[0].Operation);
+        Assert.AreEqual(JmapId.Mailbox(folderId),
+            first.Invocations[0].Arguments["added"]![0]!["id"]!.GetValue<string>());
+        await using (var changed = rig.Context())
+        {
+            var folder = await changed.Folders.SingleAsync(row => row.Id == folderId);
+            folder.Name = "Renamed";
+            await changed.SaveChangesAsync();
+        }
+        var replay = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
+        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7());
+        Assert.AreNotEqual(first.Invocations[0].Arguments["newQueryState"]!.GetValue<string>(),
+            fresh.Invocations[0].Arguments["newQueryState"]!.GetValue<string>());
+        await using var verification = rig.Context();
+        Assert.AreEqual(3, await verification.ApplicationOperationReceipts.CountAsync());
+    }
+
+    [TestMethod]
     public async Task NativeContactMutationsReplayResultsAndCreationReferencesWithoutDuplicatingData()
     {
         await using var rig = await Rig.CreateAsync();

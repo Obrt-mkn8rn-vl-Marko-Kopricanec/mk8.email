@@ -261,6 +261,15 @@ internal static class GatewayJmapBatchExecutor
         out TypedOperationSelection? selection,
         out string? failure)
     {
+        if (operation == MailOperationKind.MutateNotificationSubscriptions && features.Contains(MailFeature.Basic))
+        {
+            selection = null;
+            if (!GatewayPushSubscriptionSetCodec.TryParse(arguments, knownEntities, maximumObjectsInSet,
+                    out var call, out failure)) return false;
+            selection = Select<MailPushSubscriptionMutationCommand, MailPushSubscriptionMutationResult>(
+                operation, call!.Command, result => GatewayPushSubscriptionSetCodec.Render(call, result));
+            return true;
+        }
         if (operation == MailOperationKind.MutateAddressBooks && features.Contains(MailFeature.Contacts))
         {
             selection = null;

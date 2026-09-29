@@ -196,7 +196,9 @@ public sealed class JmapGatewayRouteTests
                      "create":{"route-identity":{"email":"person@example.test"}}},"call-33"],
                    ["AddressBook/set",{"accountId":"A11111111111111111111111111111111",
                      "create":{"route-book":{"name":"Route Book"}},
-                     "onSuccessSetIsDefault":"#route-book"},"call-34"]],
+                     "onSuccessSetIsDefault":"#route-book"},"call-34"],
+                   ["PushSubscription/set",{"create":{"route-push":{
+                     "deviceClientId":"route-device","url":"https://1.1.1.1/push"}}},"call-35"]],
                  "createdIds":{"made":"object-id"}}
                 """;
             using var request = new HttpRequestMessage(HttpMethod.Post, "/jmap/api")
@@ -235,10 +237,10 @@ public sealed class JmapGatewayRouteTests
             Assert.IsNotNull(jmap.Request?.Command);
             CollectionAssert.AreEqual(new[] { MailFeature.Basic, MailFeature.Messages, MailFeature.Submission,
                 MailFeature.Contacts, MailFeature.AutomaticReplies }, jmap.Request.Command.Features.ToArray());
-            Assert.AreEqual(33, jmap.Executions);
+            Assert.AreEqual(34, jmap.Executions);
             Assert.AreEqual("second", jmap.Commands[1].Arguments["collision"]!.GetValue<string>());
             Assert.IsFalse(jmap.Commands[1].Arguments.ContainsKey("#collision"));
-            Assert.AreEqual(34, jmap.Plan?.Plan?.OperationCount);
+            Assert.AreEqual(35, jmap.Plan?.Plan?.OperationCount);
             Assert.AreEqual(MailOperationKind.ReadMessages, jmap.Request.Command.Operation);
             Assert.AreEqual("text", jmap.Request.Command.Arguments["nested"]?["items"]?[2]?.GetValue<string>());
             Assert.AreEqual(1, jmap.Request.Command.Arguments["x"]!.GetValue<int>());
@@ -623,6 +625,15 @@ public sealed class JmapGatewayRouteTests
                 .GetProperty("isDefault").GetBoolean());
             Assert.IsFalse(bookSetResponse[1].GetProperty("updated").GetProperty("D22222222222222222222222222222222")
                 .GetProperty("isDefault").GetBoolean());
+            var pushSetCommand = jmap.Commands[33];
+            Assert.AreEqual(MailOperationKind.MutateNotificationSubscriptions, pushSetCommand.Operation);
+            Assert.AreEqual("route-device", pushSetCommand.Arguments["creates"]![0]!["values"]!["deviceClientId"]!
+                .GetValue<string>());
+            Assert.IsFalse(pushSetCommand.Arguments.ContainsKey("create"));
+            var pushSetResponse = json.RootElement.GetProperty("methodResponses")[35];
+            Assert.AreEqual("PushSubscription/set", pushSetResponse[0].GetString());
+            Assert.AreEqual("P99999999999999999999999999999999",
+                pushSetResponse[1].GetProperty("created").GetProperty("route-push").GetProperty("id").GetString());
 
             await using var countCommand = gatewayDataSource.CreateCommand(
                 "SELECT count(*), count(*) FILTER (WHERE metadata ->> 'layer' = 'presentation') "
@@ -631,7 +642,7 @@ public sealed class JmapGatewayRouteTests
             Assert.IsTrue(await countReader.ReadAsync(timeout.Token));
             // SSE records its headers and streamed body separately, in addition
             // to the request and two application-boundary records.
-            Assert.AreEqual(79L, countReader.GetInt64(0));
+            Assert.AreEqual(81L, countReader.GetInt64(0));
             Assert.AreEqual(7L, countReader.GetInt64(1));
 
             await using var operationCommand = gatewayDataSource.CreateCommand(
@@ -911,6 +922,17 @@ public sealed class JmapGatewayRouteTests
                 return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
                     OperationResult: new(new(MailOperationKind.MutateAddressBooks, ApplicationValueCodec.Encode(node)),
                         request.Command.KnownEntities!, Profile)));
+            }
+            if (request.Command.Operation == MailOperationKind.MutateNotificationSubscriptions)
+            {
+                var mutation = new MailPushSubscriptionMutationResult(
+                    [new("route-push", Guid.Parse("99999999-9999-9999-9999-999999999999"),
+                        MailPushSubscriptionMutationError.None,
+                        new DateTime(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc), null, null)], [], []);
+                var node = JsonSerializer.SerializeToNode(mutation, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
+                    OperationResult: new(new(MailOperationKind.MutateNotificationSubscriptions,
+                        ApplicationValueCodec.Encode(node)), request.Command.KnownEntities!, Profile)));
             }
             if (request.Command.Operation == MailOperationKind.CopyContacts)
             {

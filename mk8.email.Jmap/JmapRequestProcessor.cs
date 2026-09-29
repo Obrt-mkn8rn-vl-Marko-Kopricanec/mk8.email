@@ -25,6 +25,8 @@ public sealed class JmapRequestProcessor
     private readonly IMailIdentityMutationService? _identityMutationService;
     private readonly IMailVacationReader? _vacationReader;
     private readonly IMailPushSubscriptionReader _pushReader;
+    private readonly IMailPushSubscriptionMutationService? _pushMutationService;
+    private readonly IJmapPushPresentationClient? _pushDelivery;
     private readonly IMailThreadReader _threadReader;
     private readonly IMailSubmissionReader? _submissionReader;
     private readonly IMailBlobCopyService? _blobCopyService;
@@ -52,6 +54,9 @@ public sealed class JmapRequestProcessor
     {
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
     };
+    private static readonly Action<ILogger, string, Exception?> PushVerificationWarning =
+        LoggerMessage.Define<string>(LogLevel.Warning, new EventId(1201, "PushVerificationDelivery"),
+            "Could not deliver JMAP push verification for {PushSubscriptionId}");
 
     public JmapRequestProcessor(
         IEnumerable<IJmapMethod> methods,
@@ -62,7 +67,8 @@ public sealed class JmapRequestProcessor
         ILogger<JmapRequestProcessor> logger,
         ApplicationOperationReceiptStore? receipts = null)
         : this(methods, sessions, database, environment, blobEffects, logger, receipts,
-            null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null)
+            null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+            null, null)
     {
     }
 
@@ -94,7 +100,9 @@ public sealed class JmapRequestProcessor
         IMailContactQueryService? contactQueryService,
         IMailContactReader? contactReader,
         IMailImportService? importService,
-        IMailCopyService? copyService)
+        IMailCopyService? copyService,
+        IMailPushSubscriptionMutationService? pushMutationService,
+        IJmapPushPresentationClient? pushDelivery)
     {
         _methods = methods.ToDictionary(method => ValidRegisteredOperation(method.Operation, method.Feature));
         _sessions = sessions;
@@ -112,6 +120,8 @@ public sealed class JmapRequestProcessor
         _identityMutationService = identityMutationService;
         _vacationReader = vacationReader;
         _pushReader = pushReader ?? new MailPushSubscriptionReader(database, environment);
+        _pushMutationService = pushMutationService;
+        _pushDelivery = pushDelivery;
         _threadReader = threadReader ?? new MailThreadReader(database, accountService, stateService);
         _submissionReader = submissionReader;
         _blobCopyService = blobCopyService;
@@ -188,6 +198,9 @@ public sealed class JmapRequestProcessor
                 .ConfigureAwait(false);
         else if (command.Operation == MailOperationKind.ReadNotificationSubscriptions && features.Contains(MailFeature.Basic))
             response = await ExecutePushSubscriptionsAsync(command, context, user, receiptKey, cancellationToken)
+                .ConfigureAwait(false);
+        else if (command.Operation == MailOperationKind.MutateNotificationSubscriptions && features.Contains(MailFeature.Basic))
+            response = await ExecutePushMutationAsync(command, context, user, receiptKey, cancellationToken)
                 .ConfigureAwait(false);
         else if (command.Operation == MailOperationKind.ReadThreads && features.Contains(MailFeature.Messages))
             response = await ExecuteThreadsAsync(command, context, user, receiptKey, cancellationToken)
@@ -435,6 +448,59 @@ public sealed class JmapRequestProcessor
                 ?? throw new InvalidOperationException("The push-subscription reader returned an incomplete result.");
             return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
         }, receiptKey, cancellationToken).ConfigureAwait(false);
+    }
+
+    private Task<MailOperationResponse> ExecutePushMutationAsync(
+        MailOperationCommand command,
+        JmapInvocationContext context,
+        AuthenticatedMailUser user,
+        ApplicationReceiptKey? receiptKey,
+        CancellationToken cancellationToken)
+    {
+        var mutation = ParsePushMutationCommand(command);
+        var service = _pushMutationService
+            ?? throw new InvalidOperationException("The push-subscription mutation service is not configured.");
+        var delivery = _pushDelivery
+            ?? throw new InvalidOperationException("Push verification delivery is not configured.");
+        return InvokeAtomicallyAsync(command.Operation, context, async token =>
+        {
+            var execution = await service.MutateAsync(mutation, user, token).ConfigureAwait(false);
+            if (execution.Result.Created.Count != mutation.Creates.Count)
+                throw new InvalidOperationException("The push mutation returned incomplete creations.");
+            for (var index = 0; index < execution.Result.Created.Count; index++)
+            {
+                var outcome = execution.Result.Created[index];
+                if (!string.Equals(outcome.CreationId, mutation.Creates[index].CreationId, StringComparison.Ordinal))
+                    throw new InvalidOperationException("The push mutation returned inconsistent creations.");
+                if (outcome.Error == MailPushSubscriptionMutationError.None
+                    && outcome.SubscriptionId is { } id)
+                    context.CreatedIds[outcome.CreationId] = $"P{id:N}";
+            }
+            foreach (var verification in execution.Verifications)
+            {
+                if (_database.Database.IsRelational())
+                {
+                    var effect = delivery.CreateVerificationRequest(verification.Url, verification.KeysJson,
+                        verification.ExpiresAt, verification.Message);
+                    if (effect is not null) context.AddPresentationEffect(effect);
+                }
+                else context.AddPostCommitAction(async postCommitToken =>
+                {
+                    try
+                    {
+                        await delivery.EnqueueVerificationAsync(verification.Url, verification.KeysJson,
+                            verification.ExpiresAt, verification.Message, postCommitToken).ConfigureAwait(false);
+                    }
+                    catch (Exception exception) when (exception is not OperationCanceledException)
+                    {
+                        PushVerificationWarning(_logger, verification.Message.SubscriptionId!, exception);
+                    }
+                });
+            }
+            var data = JsonSerializer.SerializeToNode(execution.Result, ReceiptJsonOptions)
+                ?? throw new InvalidOperationException("The push mutation service returned an incomplete result.");
+            return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
+        }, receiptKey, cancellationToken);
     }
 
     private Task<MailOperationResponse> ExecuteThreadsAsync(
@@ -978,6 +1044,60 @@ public sealed class JmapRequestProcessor
             throw NotRequest("The push-subscription read command contains invalid values.");
         }
     }
+
+    private MailPushSubscriptionMutationCommand ParsePushMutationCommand(MailOperationCommand command)
+    {
+        var arguments = command.Arguments;
+        if (arguments.Count != 3 || !arguments.ContainsKey("creates")
+            || !arguments.ContainsKey("updates") || !arguments.ContainsKey("destroys"))
+            throw NotRequest("The push mutation command has an invalid shape.");
+        try
+        {
+            var mutation = JsonSerializer.Deserialize<MailPushSubscriptionMutationCommand>(arguments,
+                StrictReceiptJsonOptions) ?? throw NotRequest("The push mutation command is missing.");
+            if (mutation.Creates is null || mutation.Updates is null || mutation.Destroys is null
+                || mutation.Creates.Count + mutation.Updates.Count + mutation.Destroys.Count
+                    > _environment.Jmap.MaxObjectsInSet
+                || mutation.Creates.Any(item => item is null || item.CreationId is null
+                    || !JmapId.IsValidId(item.CreationId))
+                || mutation.Creates.Select(item => item.CreationId).Distinct(StringComparer.Ordinal).Count()
+                    != mutation.Creates.Count
+                || mutation.Updates.Any(item => item is null || !ValidPushTarget(item.RequestedId, item.Target,
+                        command.KnownEntities)
+                    || item.Patch is not null && item.Patch.UnknownProperties is null)
+                || mutation.Updates.Select(item => item.RequestedId).Distinct(StringComparer.Ordinal).Count()
+                    != mutation.Updates.Count
+                || mutation.Destroys.Any(item => item is null || !ValidPushTarget(item.RequestedId, item.Target,
+                    command.KnownEntities))
+                || mutation.Destroys.Select(item => item.RequestedId).Distinct(StringComparer.Ordinal).Count()
+                    != mutation.Destroys.Count)
+                throw NotRequest("The push mutation values are invalid.");
+            return mutation;
+        }
+        catch (JsonException)
+        {
+            throw NotRequest("The push mutation command contains invalid values.");
+        }
+    }
+
+    private static bool ValidPushTarget(string? requestedId, MailPushSubscriptionTarget? target,
+        IReadOnlyDictionary<string, string>? knownEntities)
+    {
+        if (requestedId is null || target is null || target.ExistingId == Guid.Empty) return false;
+        if (requestedId.Length > 1 && requestedId[0] == '#')
+        {
+            var key = requestedId[1..];
+            if (!JmapId.IsValidId(key)) return false;
+            if (knownEntities is not null && knownEntities.TryGetValue(key, out var resolved))
+                return target.CreatedKey is null && target.ExistingId == ParsedPushId(resolved);
+            return target.ExistingId is null && string.Equals(target.CreatedKey, key, StringComparison.Ordinal);
+        }
+        if (!JmapId.IsValidId(requestedId) || target.CreatedKey is not null) return false;
+        return target.ExistingId == ParsedPushId(requestedId);
+    }
+
+    private static Guid? ParsedPushId(string value) => JmapId.TryParsePushSubscription(value, out var id)
+        ? id : null;
 
     private static MailThreadReadCommand ParseThreadCommand(JsonObject arguments)
     {

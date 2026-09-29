@@ -95,6 +95,53 @@ public sealed class JmapDurableReplayTests
     }
 
     [TestMethod]
+    public async Task TypedContactCopyPreservesAccountPrecedenceAndReplaysCommittedError()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var otherAccountId = Guid.CreateVersion7();
+        await using (var setup = rig.Context())
+        {
+            var primary = await setup.Inboxes.SingleAsync();
+            setup.Inboxes.Add(new InboxDB
+            {
+                Id = otherAccountId,
+                Name = "other",
+                AddressId = primary.AddressId,
+                OwnerId = rig.User.Id,
+            });
+            await setup.SaveChangesAsync();
+        }
+        var arguments = new JsonObject
+        {
+            ["fromAccountId"] = JmapId.Account(rig.InboxId),
+            ["accountId"] = JmapId.Account(otherAccountId),
+            ["create"] = new JsonObject { ["copy"] = new JsonObject { ["id"] = "Csource" } },
+        };
+        var batch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Contacts],
+            [new JmapApplicationCall(MailOperationKind.CopyContacts, (JsonObject)arguments.DeepClone(), "copy")]);
+        var operation = Guid.CreateVersion7();
+        var first = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual(MailOperationKind.Failure, first.Invocations[0].Operation);
+        Assert.AreEqual("accountNotSupportedByMethod", first.Invocations[0].Arguments["type"]!.GetValue<string>());
+        var replay = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
+        arguments["fromAccountId"] = JmapId.Account(otherAccountId);
+        arguments["accountId"] = JmapId.Account(rig.InboxId);
+        var reversed = await rig.InvokeAsync(new JmapApplicationBatch([MailFeature.Basic, MailFeature.Contacts],
+            [new JmapApplicationCall(MailOperationKind.CopyContacts, (JsonObject)arguments.DeepClone(), "reversed")]),
+            Guid.CreateVersion7());
+        Assert.AreEqual("fromAccountNotSupportedByMethod",
+            reversed.Invocations[0].Arguments["type"]!.GetValue<string>());
+        arguments["fromAccountId"] = "Ainvalid";
+        var missing = await rig.InvokeAsync(new JmapApplicationBatch([MailFeature.Basic, MailFeature.Contacts],
+            [new JmapApplicationCall(MailOperationKind.CopyContacts, arguments, "missing")]),
+            Guid.CreateVersion7());
+        Assert.AreEqual("fromAccountNotFound", missing.Invocations[0].Arguments["type"]!.GetValue<string>());
+        await using var verification = rig.Context();
+        Assert.AreEqual(3, await verification.ApplicationOperationReceipts.CountAsync());
+    }
+
+    [TestMethod]
     public async Task TypedSubmissionReadReplaysCommittedSnapshotAcrossWorkerRetries()
     {
         await using var rig = await Rig.CreateAsync();

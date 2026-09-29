@@ -31,6 +31,7 @@ public static class JmapServiceExtensions
         services.AddScoped<IMailVacationMutator, MailVacationMutator>();
         services.AddScoped<IMailSubmissionQueryService, MailSubmissionQueryService>();
         services.AddScoped<IMailFolderQueryService, MailFolderQueryService>();
+        services.AddScoped<IMailContactCopyService, MailContactCopyService>();
         services.TryAddScoped<LargeObjectTransactionEffects>();
         services.TryAddScoped<ApplicationOperationReceiptStore>();
         services.TryAddScoped<MailQueueContentService>();
@@ -71,7 +72,8 @@ public static class JmapServiceExtensions
             provider.GetRequiredService<IMailBlobCopyService>(),
             provider.GetRequiredService<IMailVacationMutator>(),
             provider.GetRequiredService<IMailSubmissionQueryService>(),
-            provider.GetRequiredService<IMailFolderQueryService>()));
+            provider.GetRequiredService<IMailFolderQueryService>(),
+            provider.GetRequiredService<IMailContactCopyService>()));
         AddJmapMethods(services);
         return services;
     }
@@ -95,6 +97,5 @@ public static class JmapServiceExtensions
         services.AddScoped<IJmapMethod, ContactCardQueryMethod>();
         services.AddScoped<IJmapMethod, ContactCardQueryChangesMethod>();
         services.AddScoped<IJmapMethod, ContactCardSetMethod>();
-        services.AddScoped<IJmapMethod, ContactCardCopyMethod>();
     }
 }

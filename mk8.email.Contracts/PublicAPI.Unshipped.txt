@@ -1,6 +1,6 @@
 #nullable enable
-const mk8.email.Contracts.Messaging.ApplicationOperations.MailOperationExecute = "mail.operation.execute.v14" -> string!
-const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v21" -> string!
+const mk8.email.Contracts.Messaging.ApplicationOperations.MailOperationExecute = "mail.operation.execute.v15" -> string!
+const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v22" -> string!
 mk8.email.Contracts.Messaging.DistributedContractVersions
 mk8.email.Contracts.Messaging.JmapAccountProfile
 mk8.email.Contracts.Messaging.JmapAccountProfile.<Clone>$() -> mk8.email.Contracts.Messaging.JmapAccountProfile!
@@ -212,6 +212,45 @@ mk8.email.Contracts.Messaging.MailChangesStatus.AccountNotFound = 1 -> mk8.email
 mk8.email.Contracts.Messaging.MailChangesStatus.AccountNotSupported = 2 -> mk8.email.Contracts.Messaging.MailChangesStatus
 mk8.email.Contracts.Messaging.MailChangesStatus.CannotCalculateChanges = 3 -> mk8.email.Contracts.Messaging.MailChangesStatus
 mk8.email.Contracts.Messaging.MailChangesStatus.Ok = 0 -> mk8.email.Contracts.Messaging.MailChangesStatus
+mk8.email.Contracts.Messaging.MailContactCopyCommand
+mk8.email.Contracts.Messaging.MailContactCopyCommand.<Clone>$() -> mk8.email.Contracts.Messaging.MailContactCopyCommand!
+mk8.email.Contracts.Messaging.MailContactCopyCommand.CreationIds.get -> System.Collections.Generic.IReadOnlyList<string!>!
+mk8.email.Contracts.Messaging.MailContactCopyCommand.CreationIds.init -> void
+mk8.email.Contracts.Messaging.MailContactCopyCommand.Deconstruct(out System.Guid SourceAccountId, out bool SourceReferenceParseable, out bool SourceReferenceEligible, out System.Guid TargetAccountId, out bool TargetReferenceParseable, out bool TargetReferenceEligible, out string? IfFromInState, out string? IfInState, out System.Collections.Generic.IReadOnlyList<string!>! CreationIds) -> void
+mk8.email.Contracts.Messaging.MailContactCopyCommand.Equals(mk8.email.Contracts.Messaging.MailContactCopyCommand? other) -> bool
+mk8.email.Contracts.Messaging.MailContactCopyCommand.IfFromInState.get -> string?
+mk8.email.Contracts.Messaging.MailContactCopyCommand.IfFromInState.init -> void
+mk8.email.Contracts.Messaging.MailContactCopyCommand.IfInState.get -> string?
+mk8.email.Contracts.Messaging.MailContactCopyCommand.IfInState.init -> void
+mk8.email.Contracts.Messaging.MailContactCopyCommand.MailContactCopyCommand(System.Guid SourceAccountId, bool SourceReferenceParseable, bool SourceReferenceEligible, System.Guid TargetAccountId, bool TargetReferenceParseable, bool TargetReferenceEligible, string? IfFromInState, string? IfInState, System.Collections.Generic.IReadOnlyList<string!>! CreationIds) -> void
+mk8.email.Contracts.Messaging.MailContactCopyCommand.SourceAccountId.get -> System.Guid
+mk8.email.Contracts.Messaging.MailContactCopyCommand.SourceAccountId.init -> void
+mk8.email.Contracts.Messaging.MailContactCopyCommand.SourceReferenceEligible.get -> bool
+mk8.email.Contracts.Messaging.MailContactCopyCommand.SourceReferenceEligible.init -> void
+mk8.email.Contracts.Messaging.MailContactCopyCommand.SourceReferenceParseable.get -> bool
+mk8.email.Contracts.Messaging.MailContactCopyCommand.SourceReferenceParseable.init -> void
+mk8.email.Contracts.Messaging.MailContactCopyCommand.TargetAccountId.get -> System.Guid
+mk8.email.Contracts.Messaging.MailContactCopyCommand.TargetAccountId.init -> void
+mk8.email.Contracts.Messaging.MailContactCopyCommand.TargetReferenceEligible.get -> bool
+mk8.email.Contracts.Messaging.MailContactCopyCommand.TargetReferenceEligible.init -> void
+mk8.email.Contracts.Messaging.MailContactCopyCommand.TargetReferenceParseable.get -> bool
+mk8.email.Contracts.Messaging.MailContactCopyCommand.TargetReferenceParseable.init -> void
+mk8.email.Contracts.Messaging.MailContactCopyResult
+mk8.email.Contracts.Messaging.MailContactCopyResult.<Clone>$() -> mk8.email.Contracts.Messaging.MailContactCopyResult!
+mk8.email.Contracts.Messaging.MailContactCopyResult.Deconstruct(out mk8.email.Contracts.Messaging.MailContactCopyStatus Status, out string? State) -> void
+mk8.email.Contracts.Messaging.MailContactCopyResult.Equals(mk8.email.Contracts.Messaging.MailContactCopyResult? other) -> bool
+mk8.email.Contracts.Messaging.MailContactCopyResult.MailContactCopyResult(mk8.email.Contracts.Messaging.MailContactCopyStatus Status, string? State) -> void
+mk8.email.Contracts.Messaging.MailContactCopyResult.State.get -> string?
+mk8.email.Contracts.Messaging.MailContactCopyResult.State.init -> void
+mk8.email.Contracts.Messaging.MailContactCopyResult.Status.get -> mk8.email.Contracts.Messaging.MailContactCopyStatus
+mk8.email.Contracts.Messaging.MailContactCopyResult.Status.init -> void
+mk8.email.Contracts.Messaging.MailContactCopyStatus
+mk8.email.Contracts.Messaging.MailContactCopyStatus.AccountNotFound = 3 -> mk8.email.Contracts.Messaging.MailContactCopyStatus
+mk8.email.Contracts.Messaging.MailContactCopyStatus.AccountNotSupported = 4 -> mk8.email.Contracts.Messaging.MailContactCopyStatus
+mk8.email.Contracts.Messaging.MailContactCopyStatus.FromAccountNotFound = 1 -> mk8.email.Contracts.Messaging.MailContactCopyStatus
+mk8.email.Contracts.Messaging.MailContactCopyStatus.FromAccountNotSupported = 2 -> mk8.email.Contracts.Messaging.MailContactCopyStatus
+mk8.email.Contracts.Messaging.MailContactCopyStatus.Ok = 0 -> mk8.email.Contracts.Messaging.MailContactCopyStatus
+mk8.email.Contracts.Messaging.MailContactCopyStatus.StateMismatch = 5 -> mk8.email.Contracts.Messaging.MailContactCopyStatus
 mk8.email.Contracts.Messaging.MailFolderFilter
 mk8.email.Contracts.Messaging.MailFolderFilter.<Clone>$() -> mk8.email.Contracts.Messaging.MailFolderFilter!
 mk8.email.Contracts.Messaging.MailFolderFilter.Conditions.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailFolderFilter!>?
@@ -901,6 +940,12 @@ override mk8.email.Contracts.Messaging.MailChangesCommand.ToString() -> string!
 override mk8.email.Contracts.Messaging.MailChangesResult.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.MailChangesResult.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.MailChangesResult.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailContactCopyCommand.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailContactCopyCommand.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailContactCopyCommand.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailContactCopyResult.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailContactCopyResult.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailContactCopyResult.ToString() -> string!
 override mk8.email.Contracts.Messaging.MailFolderFilter.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.MailFolderFilter.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.MailFolderFilter.ToString() -> string!
@@ -1214,6 +1259,10 @@ static mk8.email.Contracts.Messaging.MailChangesCommand.operator !=(mk8.email.Co
 static mk8.email.Contracts.Messaging.MailChangesCommand.operator ==(mk8.email.Contracts.Messaging.MailChangesCommand? left, mk8.email.Contracts.Messaging.MailChangesCommand? right) -> bool
 static mk8.email.Contracts.Messaging.MailChangesResult.operator !=(mk8.email.Contracts.Messaging.MailChangesResult? left, mk8.email.Contracts.Messaging.MailChangesResult? right) -> bool
 static mk8.email.Contracts.Messaging.MailChangesResult.operator ==(mk8.email.Contracts.Messaging.MailChangesResult? left, mk8.email.Contracts.Messaging.MailChangesResult? right) -> bool
+static mk8.email.Contracts.Messaging.MailContactCopyCommand.operator !=(mk8.email.Contracts.Messaging.MailContactCopyCommand? left, mk8.email.Contracts.Messaging.MailContactCopyCommand? right) -> bool
+static mk8.email.Contracts.Messaging.MailContactCopyCommand.operator ==(mk8.email.Contracts.Messaging.MailContactCopyCommand? left, mk8.email.Contracts.Messaging.MailContactCopyCommand? right) -> bool
+static mk8.email.Contracts.Messaging.MailContactCopyResult.operator !=(mk8.email.Contracts.Messaging.MailContactCopyResult? left, mk8.email.Contracts.Messaging.MailContactCopyResult? right) -> bool
+static mk8.email.Contracts.Messaging.MailContactCopyResult.operator ==(mk8.email.Contracts.Messaging.MailContactCopyResult? left, mk8.email.Contracts.Messaging.MailContactCopyResult? right) -> bool
 static mk8.email.Contracts.Messaging.MailFolderFilter.operator !=(mk8.email.Contracts.Messaging.MailFolderFilter? left, mk8.email.Contracts.Messaging.MailFolderFilter? right) -> bool
 static mk8.email.Contracts.Messaging.MailFolderFilter.operator ==(mk8.email.Contracts.Messaging.MailFolderFilter? left, mk8.email.Contracts.Messaging.MailFolderFilter? right) -> bool
 static mk8.email.Contracts.Messaging.MailFolderIndexedId.operator !=(mk8.email.Contracts.Messaging.MailFolderIndexedId? left, mk8.email.Contracts.Messaging.MailFolderIndexedId? right) -> bool

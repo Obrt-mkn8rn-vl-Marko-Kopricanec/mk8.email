@@ -29,6 +29,7 @@ public sealed class JmapRequestProcessor
     private readonly IMailVacationMutator? _vacationMutator;
     private readonly IMailSubmissionQueryService? _submissionQueryService;
     private readonly IMailFolderQueryService? _folderQueryService;
+    private readonly IMailContactCopyService? _contactCopyService;
     private readonly EmailDbContext _database;
     private readonly EnvironmentConfig _environment;
     private readonly LargeObjectTransactionEffects _blobEffects;
@@ -53,7 +54,7 @@ public sealed class JmapRequestProcessor
         ILogger<JmapRequestProcessor> logger,
         ApplicationOperationReceiptStore? receipts = null)
         : this(methods, sessions, database, environment, blobEffects, logger, receipts,
-            null, null, null, null, null, null, null, null, null, null, null, null)
+            null, null, null, null, null, null, null, null, null, null, null, null, null)
     {
     }
 
@@ -76,7 +77,8 @@ public sealed class JmapRequestProcessor
         IMailBlobCopyService? blobCopyService,
         IMailVacationMutator? vacationMutator,
         IMailSubmissionQueryService? submissionQueryService,
-        IMailFolderQueryService? folderQueryService)
+        IMailFolderQueryService? folderQueryService,
+        IMailContactCopyService? contactCopyService)
     {
         _methods = methods.ToDictionary(method => ValidRegisteredOperation(method.Operation, method.Feature));
         _sessions = sessions;
@@ -129,6 +131,7 @@ public sealed class JmapRequestProcessor
         _vacationMutator = vacationMutator;
         _submissionQueryService = submissionQueryService;
         _folderQueryService = folderQueryService;
+        _contactCopyService = contactCopyService;
         _database = database;
         _environment = environment;
         _blobEffects = blobEffects;
@@ -211,6 +214,9 @@ public sealed class JmapRequestProcessor
                 .ConfigureAwait(false);
         else if (command.Operation == MailOperationKind.FindFolderChanges && features.Contains(MailFeature.Messages))
             response = await ExecuteFolderQueryChangesAsync(command, context, user, receiptKey, cancellationToken)
+                .ConfigureAwait(false);
+        else if (command.Operation == MailOperationKind.CopyContacts && features.Contains(MailFeature.Contacts))
+            response = await ExecuteContactCopyAsync(command, context, user, receiptKey, cancellationToken)
                 .ConfigureAwait(false);
         else
         {
@@ -491,6 +497,25 @@ public sealed class JmapRequestProcessor
             var result = await service.QueryChangesAsync(query, user, token).ConfigureAwait(false);
             var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
                 ?? throw new InvalidOperationException("The folder query service returned an incomplete result.");
+            return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
+        }, receiptKey, cancellationToken);
+    }
+
+    private Task<MailOperationResponse> ExecuteContactCopyAsync(
+        MailOperationCommand command,
+        JmapInvocationContext context,
+        AuthenticatedMailUser user,
+        ApplicationReceiptKey? receiptKey,
+        CancellationToken cancellationToken)
+    {
+        var copy = ParseContactCopyCommand(command.Arguments);
+        var service = _contactCopyService
+            ?? throw new InvalidOperationException("The contact-copy service is not configured.");
+        return InvokeAtomicallyAsync(command.Operation, context, async token =>
+        {
+            var result = await service.CopyAsync(copy, user, token).ConfigureAwait(false);
+            var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
+                ?? throw new InvalidOperationException("The contact-copy service returned an incomplete result.");
             return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
         }, receiptKey, cancellationToken);
     }
@@ -842,6 +867,39 @@ public sealed class JmapRequestProcessor
             || filter.ParentConstraint != MailFolderParentConstraint.Folder && filter.ParentId is not null
             || filter.MatchNullRole && filter.Role is not null)
             throw NotRequest("The folder query condition is invalid.");
+    }
+
+    private MailContactCopyCommand ParseContactCopyCommand(JsonObject arguments)
+    {
+        if (arguments.Count != 9 || !arguments.ContainsKey("sourceAccountId")
+            || !arguments.ContainsKey("sourceReferenceParseable")
+            || !arguments.ContainsKey("sourceReferenceEligible")
+            || !arguments.ContainsKey("targetAccountId")
+            || !arguments.ContainsKey("targetReferenceParseable")
+            || !arguments.ContainsKey("targetReferenceEligible")
+            || !arguments.ContainsKey("ifFromInState") || !arguments.ContainsKey("ifInState")
+            || !arguments.ContainsKey("creationIds"))
+            throw NotRequest("The contact-copy command has an invalid shape.");
+        try
+        {
+            var copy = JsonSerializer.Deserialize<MailContactCopyCommand>(arguments, StrictReceiptJsonOptions)
+                ?? throw NotRequest("The contact-copy command is missing.");
+            if (copy.SourceReferenceEligible && !copy.SourceReferenceParseable
+                || copy.TargetReferenceEligible && !copy.TargetReferenceParseable
+                || !copy.SourceReferenceParseable && copy.SourceAccountId != Guid.Empty
+                || !copy.TargetReferenceParseable && copy.TargetAccountId != Guid.Empty
+                || copy.SourceReferenceEligible && copy.TargetReferenceEligible
+                    && copy.SourceAccountId == copy.TargetAccountId
+                || copy.CreationIds is null || copy.CreationIds.Count > _environment.Jmap.MaxObjectsInSet
+                || copy.CreationIds.Any(id => id is null || !JmapId.IsValidId(id))
+                || copy.CreationIds.Distinct(StringComparer.Ordinal).Count() != copy.CreationIds.Count)
+                throw NotRequest("The contact-copy creation identifiers are invalid.");
+            return copy;
+        }
+        catch (JsonException)
+        {
+            throw NotRequest("The contact-copy command contains invalid values.");
+        }
     }
 
     private static Dictionary<string, string> CloneCreatedIds(IReadOnlyDictionary<string, string>? values)

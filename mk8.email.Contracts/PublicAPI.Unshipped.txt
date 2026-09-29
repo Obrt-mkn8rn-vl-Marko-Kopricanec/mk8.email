@@ -1,6 +1,6 @@
 #nullable enable
-const mk8.email.Contracts.Messaging.ApplicationOperations.MailOperationExecute = "mail.operation.execute.v8" -> string!
-const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v15" -> string!
+const mk8.email.Contracts.Messaging.ApplicationOperations.MailOperationExecute = "mail.operation.execute.v9" -> string!
+const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v16" -> string!
 mk8.email.Contracts.Messaging.DistributedContractVersions
 mk8.email.Contracts.Messaging.JmapAccountProfile
 mk8.email.Contracts.Messaging.JmapAccountProfile.<Clone>$() -> mk8.email.Contracts.Messaging.JmapAccountProfile!
@@ -328,6 +328,36 @@ mk8.email.Contracts.Messaging.MailPushSubscriptionSnapshot.Types.get -> System.C
 mk8.email.Contracts.Messaging.MailPushSubscriptionSnapshot.Types.init -> void
 mk8.email.Contracts.Messaging.MailPushSubscriptionSnapshot.VerificationCode.get -> string?
 mk8.email.Contracts.Messaging.MailPushSubscriptionSnapshot.VerificationCode.init -> void
+mk8.email.Contracts.Messaging.MailThreadEmailSnapshot
+mk8.email.Contracts.Messaging.MailThreadEmailSnapshot.<Clone>$() -> mk8.email.Contracts.Messaging.MailThreadEmailSnapshot!
+mk8.email.Contracts.Messaging.MailThreadEmailSnapshot.Deconstruct(out System.Guid EmailId, out string? StoredThreadId) -> void
+mk8.email.Contracts.Messaging.MailThreadEmailSnapshot.EmailId.get -> System.Guid
+mk8.email.Contracts.Messaging.MailThreadEmailSnapshot.EmailId.init -> void
+mk8.email.Contracts.Messaging.MailThreadEmailSnapshot.Equals(mk8.email.Contracts.Messaging.MailThreadEmailSnapshot? other) -> bool
+mk8.email.Contracts.Messaging.MailThreadEmailSnapshot.MailThreadEmailSnapshot(System.Guid EmailId, string? StoredThreadId) -> void
+mk8.email.Contracts.Messaging.MailThreadEmailSnapshot.StoredThreadId.get -> string?
+mk8.email.Contracts.Messaging.MailThreadEmailSnapshot.StoredThreadId.init -> void
+mk8.email.Contracts.Messaging.MailThreadReadCommand
+mk8.email.Contracts.Messaging.MailThreadReadCommand.<Clone>$() -> mk8.email.Contracts.Messaging.MailThreadReadCommand!
+mk8.email.Contracts.Messaging.MailThreadReadCommand.AccountId.get -> System.Guid
+mk8.email.Contracts.Messaging.MailThreadReadCommand.AccountId.init -> void
+mk8.email.Contracts.Messaging.MailThreadReadCommand.Deconstruct(out System.Guid AccountId) -> void
+mk8.email.Contracts.Messaging.MailThreadReadCommand.Equals(mk8.email.Contracts.Messaging.MailThreadReadCommand? other) -> bool
+mk8.email.Contracts.Messaging.MailThreadReadCommand.MailThreadReadCommand(System.Guid AccountId) -> void
+mk8.email.Contracts.Messaging.MailThreadReadResult
+mk8.email.Contracts.Messaging.MailThreadReadResult.<Clone>$() -> mk8.email.Contracts.Messaging.MailThreadReadResult!
+mk8.email.Contracts.Messaging.MailThreadReadResult.Deconstruct(out mk8.email.Contracts.Messaging.MailThreadReadStatus Status, out string? State, out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailThreadEmailSnapshot!>! Emails) -> void
+mk8.email.Contracts.Messaging.MailThreadReadResult.Emails.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailThreadEmailSnapshot!>!
+mk8.email.Contracts.Messaging.MailThreadReadResult.Emails.init -> void
+mk8.email.Contracts.Messaging.MailThreadReadResult.Equals(mk8.email.Contracts.Messaging.MailThreadReadResult? other) -> bool
+mk8.email.Contracts.Messaging.MailThreadReadResult.MailThreadReadResult(mk8.email.Contracts.Messaging.MailThreadReadStatus Status, string? State, System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailThreadEmailSnapshot!>! Emails) -> void
+mk8.email.Contracts.Messaging.MailThreadReadResult.State.get -> string?
+mk8.email.Contracts.Messaging.MailThreadReadResult.State.init -> void
+mk8.email.Contracts.Messaging.MailThreadReadResult.Status.get -> mk8.email.Contracts.Messaging.MailThreadReadStatus
+mk8.email.Contracts.Messaging.MailThreadReadResult.Status.init -> void
+mk8.email.Contracts.Messaging.MailThreadReadStatus
+mk8.email.Contracts.Messaging.MailThreadReadStatus.AccountNotFound = 1 -> mk8.email.Contracts.Messaging.MailThreadReadStatus
+mk8.email.Contracts.Messaging.MailThreadReadStatus.Ok = 0 -> mk8.email.Contracts.Messaging.MailThreadReadStatus
 mk8.email.Contracts.Messaging.MailVacationReadCommand
 mk8.email.Contracts.Messaging.MailVacationReadCommand.<Clone>$() -> mk8.email.Contracts.Messaging.MailVacationReadCommand!
 mk8.email.Contracts.Messaging.MailVacationReadCommand.AccountId.get -> System.Guid
@@ -445,6 +475,15 @@ override mk8.email.Contracts.Messaging.MailPushSubscriptionReadResult.ToString()
 override mk8.email.Contracts.Messaging.MailPushSubscriptionSnapshot.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.MailPushSubscriptionSnapshot.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.MailPushSubscriptionSnapshot.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailThreadEmailSnapshot.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailThreadEmailSnapshot.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailThreadEmailSnapshot.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailThreadReadCommand.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailThreadReadCommand.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailThreadReadCommand.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailThreadReadResult.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailThreadReadResult.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailThreadReadResult.ToString() -> string!
 override mk8.email.Contracts.Messaging.MailVacationReadCommand.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.MailVacationReadCommand.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.MailVacationReadCommand.ToString() -> string!
@@ -735,6 +774,12 @@ static mk8.email.Contracts.Messaging.MailPushSubscriptionReadResult.operator !=(
 static mk8.email.Contracts.Messaging.MailPushSubscriptionReadResult.operator ==(mk8.email.Contracts.Messaging.MailPushSubscriptionReadResult? left, mk8.email.Contracts.Messaging.MailPushSubscriptionReadResult? right) -> bool
 static mk8.email.Contracts.Messaging.MailPushSubscriptionSnapshot.operator !=(mk8.email.Contracts.Messaging.MailPushSubscriptionSnapshot? left, mk8.email.Contracts.Messaging.MailPushSubscriptionSnapshot? right) -> bool
 static mk8.email.Contracts.Messaging.MailPushSubscriptionSnapshot.operator ==(mk8.email.Contracts.Messaging.MailPushSubscriptionSnapshot? left, mk8.email.Contracts.Messaging.MailPushSubscriptionSnapshot? right) -> bool
+static mk8.email.Contracts.Messaging.MailThreadEmailSnapshot.operator !=(mk8.email.Contracts.Messaging.MailThreadEmailSnapshot? left, mk8.email.Contracts.Messaging.MailThreadEmailSnapshot? right) -> bool
+static mk8.email.Contracts.Messaging.MailThreadEmailSnapshot.operator ==(mk8.email.Contracts.Messaging.MailThreadEmailSnapshot? left, mk8.email.Contracts.Messaging.MailThreadEmailSnapshot? right) -> bool
+static mk8.email.Contracts.Messaging.MailThreadReadCommand.operator !=(mk8.email.Contracts.Messaging.MailThreadReadCommand? left, mk8.email.Contracts.Messaging.MailThreadReadCommand? right) -> bool
+static mk8.email.Contracts.Messaging.MailThreadReadCommand.operator ==(mk8.email.Contracts.Messaging.MailThreadReadCommand? left, mk8.email.Contracts.Messaging.MailThreadReadCommand? right) -> bool
+static mk8.email.Contracts.Messaging.MailThreadReadResult.operator !=(mk8.email.Contracts.Messaging.MailThreadReadResult? left, mk8.email.Contracts.Messaging.MailThreadReadResult? right) -> bool
+static mk8.email.Contracts.Messaging.MailThreadReadResult.operator ==(mk8.email.Contracts.Messaging.MailThreadReadResult? left, mk8.email.Contracts.Messaging.MailThreadReadResult? right) -> bool
 static mk8.email.Contracts.Messaging.MailVacationReadCommand.operator !=(mk8.email.Contracts.Messaging.MailVacationReadCommand? left, mk8.email.Contracts.Messaging.MailVacationReadCommand? right) -> bool
 static mk8.email.Contracts.Messaging.MailVacationReadCommand.operator ==(mk8.email.Contracts.Messaging.MailVacationReadCommand? left, mk8.email.Contracts.Messaging.MailVacationReadCommand? right) -> bool
 static mk8.email.Contracts.Messaging.MailVacationReadResult.operator !=(mk8.email.Contracts.Messaging.MailVacationReadResult? left, mk8.email.Contracts.Messaging.MailVacationReadResult? right) -> bool

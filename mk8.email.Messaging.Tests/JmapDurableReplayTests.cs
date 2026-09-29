@@ -32,6 +32,65 @@ namespace mk8.email.Messaging.Tests;
 public sealed class JmapDurableReplayTests
 {
     [TestMethod]
+    public async Task TypedThreadReadReplaysCommittedGroupingAcrossWorkerRetries()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var folderId = Guid.CreateVersion7();
+        var emailId = Guid.CreateVersion7();
+        await using (var setup = rig.Context())
+        {
+            setup.Folders.Add(new FolderDB
+            {
+                Id = folderId,
+                InboxId = rig.InboxId,
+                Name = "Inbox",
+                UidValidity = 1,
+                NextUid = 2,
+            });
+            setup.Emails.Add(new EmailDB
+            {
+                Id = emailId,
+                Sender = "sender@example.test",
+                Recipient = rig.User.Username,
+                Subject = "Thread receipt",
+                Body = "body",
+                RawMessage = "hello"u8.ToArray(),
+                SizeBytes = 5,
+                EmailObjectId = emailId.ToString("N"),
+                ThreadObjectId = "c!",
+                ReceivedAt = new DateTime(2026, 9, 29, 12, 0, 0, DateTimeKind.Utc),
+                FolderId = folderId,
+                Uid = 1,
+                ModSeq = 1,
+            });
+            await setup.SaveChangesAsync();
+        }
+        var batch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Messages],
+            [new JmapApplicationCall(MailOperationKind.ReadThreads, new JsonObject
+            {
+                ["accountId"] = JmapId.Account(rig.InboxId),
+                ["properties"] = new JsonArray("emailIds"),
+            }, "thread")]);
+        var operation = Guid.CreateVersion7();
+        var first = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual("TYyE", first.Invocations[0].Arguments["list"]![0]!["id"]!.GetValue<string>());
+        Assert.AreEqual(JmapId.Email(emailId),
+            first.Invocations[0].Arguments["list"]![0]!["emailIds"]![0]!.GetValue<string>());
+        await using (var changed = rig.Context())
+        {
+            var email = await changed.Emails.SingleAsync();
+            email.ThreadObjectId = "changed";
+            await changed.SaveChangesAsync();
+        }
+        var replay = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
+        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7());
+        Assert.AreEqual("Tchanged", fresh.Invocations[0].Arguments["list"]![0]!["id"]!.GetValue<string>());
+        await using var verification = rig.Context();
+        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync());
+    }
+
+    [TestMethod]
     public async Task TypedVacationReadReplaysItsCommittedSnapshotAcrossWorkerRetries()
     {
         await using var rig = await Rig.CreateAsync();

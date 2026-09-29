@@ -22,6 +22,7 @@ public sealed class JmapRequestProcessor
     private readonly IMailIdentityReader _identityReader;
     private readonly IMailVacationReader? _vacationReader;
     private readonly IMailPushSubscriptionReader _pushReader;
+    private readonly IMailThreadReader _threadReader;
     private readonly EmailDbContext _database;
     private readonly EnvironmentConfig _environment;
     private readonly LargeObjectTransactionEffects _blobEffects;
@@ -42,7 +43,7 @@ public sealed class JmapRequestProcessor
         ILogger<JmapRequestProcessor> logger,
         ApplicationOperationReceiptStore? receipts = null)
         : this(methods, sessions, database, environment, blobEffects, logger, receipts,
-            null, null, null, null, null, null)
+            null, null, null, null, null, null, null)
     {
     }
 
@@ -59,7 +60,8 @@ public sealed class JmapRequestProcessor
         IMailAddressBookReader? addressBookReader,
         IMailIdentityReader? identityReader,
         IMailVacationReader? vacationReader,
-        IMailPushSubscriptionReader? pushReader)
+        IMailPushSubscriptionReader? pushReader,
+        IMailThreadReader? threadReader)
     {
         _methods = methods.ToDictionary(method => ValidRegisteredOperation(method.Operation, method.Feature));
         _sessions = sessions;
@@ -99,6 +101,14 @@ public sealed class JmapRequestProcessor
             _identityReader = identityReader;
         _vacationReader = vacationReader;
         _pushReader = pushReader ?? new MailPushSubscriptionReader(database, environment);
+        if (threadReader is null)
+        {
+            var accountService = new JmapAccountService(database);
+            _threadReader = new MailThreadReader(database, accountService,
+                new JmapStateService(database, accountService));
+        }
+        else
+            _threadReader = threadReader;
         _database = database;
         _environment = environment;
         _blobEffects = blobEffects;
@@ -157,6 +167,9 @@ public sealed class JmapRequestProcessor
                 .ConfigureAwait(false);
         else if (command.Operation == MailOperationKind.ReadNotificationSubscriptions && features.Contains(MailFeature.Basic))
             response = await ExecutePushSubscriptionsAsync(command, context, user, receiptKey, cancellationToken)
+                .ConfigureAwait(false);
+        else if (command.Operation == MailOperationKind.ReadThreads && features.Contains(MailFeature.Messages))
+            response = await ExecuteThreadsAsync(command, context, user, receiptKey, cancellationToken)
                 .ConfigureAwait(false);
         else
         {
@@ -291,6 +304,23 @@ public sealed class JmapRequestProcessor
         }, receiptKey, cancellationToken).ConfigureAwait(false);
     }
 
+    private Task<MailOperationResponse> ExecuteThreadsAsync(
+        MailOperationCommand command,
+        JmapInvocationContext context,
+        AuthenticatedMailUser user,
+        ApplicationReceiptKey? receiptKey,
+        CancellationToken cancellationToken)
+    {
+        var readCommand = ParseThreadCommand(command.Arguments);
+        return InvokeAtomicallyAsync(command.Operation, context, async token =>
+        {
+            var result = await _threadReader.ReadAsync(readCommand, user, token).ConfigureAwait(false);
+            var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
+                ?? throw new InvalidOperationException("The thread reader returned an incomplete result.");
+            return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
+        }, receiptKey, cancellationToken);
+    }
+
     private static MailFolderReadCommand ParseFolderCommand(JsonObject arguments)
     {
         if (arguments.Count != 3 || !arguments.ContainsKey("accountId")
@@ -390,6 +420,21 @@ public sealed class JmapRequestProcessor
         catch (JsonException)
         {
             throw NotRequest("The push-subscription read command contains invalid values.");
+        }
+    }
+
+    private static MailThreadReadCommand ParseThreadCommand(JsonObject arguments)
+    {
+        if (arguments.Count != 1 || !arguments.ContainsKey("accountId"))
+            throw NotRequest("The thread read command has an invalid shape.");
+        try
+        {
+            return JsonSerializer.Deserialize<MailThreadReadCommand>(arguments, ReceiptJsonOptions)
+                ?? throw NotRequest("The thread read command is missing.");
+        }
+        catch (JsonException)
+        {
+            throw NotRequest("The thread read command contains invalid values.");
         }
     }
 

@@ -25,6 +25,7 @@ public static class JmapServiceExtensions
         services.AddScoped<IMailIdentityReader, MailIdentityReader>();
         services.AddScoped<IMailVacationReader, MailVacationReader>();
         services.AddScoped<IMailPushSubscriptionReader, MailPushSubscriptionReader>();
+        services.AddScoped<IMailThreadReader, MailThreadReader>();
         services.TryAddScoped<LargeObjectTransactionEffects>();
         services.TryAddScoped<ApplicationOperationReceiptStore>();
         services.TryAddScoped<MailQueueContentService>();
@@ -59,7 +60,8 @@ public static class JmapServiceExtensions
             provider.GetRequiredService<IMailAddressBookReader>(),
             provider.GetRequiredService<IMailIdentityReader>(),
             provider.GetRequiredService<IMailVacationReader>(),
-            provider.GetRequiredService<IMailPushSubscriptionReader>()));
+            provider.GetRequiredService<IMailPushSubscriptionReader>(),
+            provider.GetRequiredService<IMailThreadReader>()));
         AddJmapMethods(services);
         return services;
     }
@@ -69,7 +71,6 @@ public static class JmapServiceExtensions
         services.AddScoped<IJmapMethod, MailboxQueryMethod>();
         services.AddScoped<IJmapMethod, MailboxQueryChangesMethod>();
         services.AddScoped<IJmapMethod, MailboxSetMethod>();
-        services.AddScoped<IJmapMethod, ThreadGetMethod>();
         services.AddScoped<IJmapMethod, EmailGetMethod>();
         services.AddScoped<IJmapMethod, EmailQueryMethod>();
         services.AddScoped<IJmapMethod, EmailQueryChangesMethod>();

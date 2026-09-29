@@ -38,6 +38,7 @@ public sealed class JmapRequestProcessor
     private readonly IMailContactCopyService? _contactCopyService;
     private readonly IMailContactQueryService? _contactQueryService;
     private readonly IMailContactReader? _contactReader;
+    private readonly IMailContactMutationService? _contactMutationService;
     private readonly IMailImportService? _importService;
     private readonly IMailCopyService? _copyService;
     private readonly EmailDbContext _database;
@@ -68,7 +69,7 @@ public sealed class JmapRequestProcessor
         ApplicationOperationReceiptStore? receipts = null)
         : this(methods, sessions, database, environment, blobEffects, logger, receipts,
             null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
-            null, null)
+            null, null, null)
     {
     }
 
@@ -102,7 +103,8 @@ public sealed class JmapRequestProcessor
         IMailImportService? importService,
         IMailCopyService? copyService,
         IMailPushSubscriptionMutationService? pushMutationService,
-        IJmapPushPresentationClient? pushDelivery)
+        IJmapPushPresentationClient? pushDelivery,
+        IMailContactMutationService? contactMutationService)
     {
         _methods = methods.ToDictionary(method => ValidRegisteredOperation(method.Operation, method.Feature));
         _sessions = sessions;
@@ -122,6 +124,7 @@ public sealed class JmapRequestProcessor
         _pushReader = pushReader ?? new MailPushSubscriptionReader(database, environment);
         _pushMutationService = pushMutationService;
         _pushDelivery = pushDelivery;
+        _contactMutationService = contactMutationService;
         _threadReader = threadReader ?? new MailThreadReader(database, accountService, stateService);
         _submissionReader = submissionReader;
         _blobCopyService = blobCopyService;
@@ -246,6 +249,9 @@ public sealed class JmapRequestProcessor
                 .ConfigureAwait(false);
         else if (command.Operation == MailOperationKind.ReadContacts && features.Contains(MailFeature.Contacts))
             response = await ExecuteContactsAsync(command, context, user, receiptKey, cancellationToken)
+                .ConfigureAwait(false);
+        else if (command.Operation == MailOperationKind.MutateContacts && features.Contains(MailFeature.Contacts))
+            response = await ExecuteContactMutationAsync(command, context, user, receiptKey, cancellationToken)
                 .ConfigureAwait(false);
         else if (command.Operation == MailOperationKind.ImportMessages && features.Contains(MailFeature.Messages))
             response = await ExecuteImportAsync(command, context, user, receiptKey, cancellationToken)
@@ -782,6 +788,39 @@ public sealed class JmapRequestProcessor
             var result = await service.ReadAsync(read, user, token).ConfigureAwait(false);
             var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
                 ?? throw new InvalidOperationException("The contact reader returned an incomplete result.");
+            return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
+        }, receiptKey, cancellationToken);
+    }
+
+    private Task<MailOperationResponse> ExecuteContactMutationAsync(
+        MailOperationCommand command,
+        JmapInvocationContext context,
+        AuthenticatedMailUser user,
+        ApplicationReceiptKey? receiptKey,
+        CancellationToken cancellationToken)
+    {
+        var mutation = ParseContactMutationCommand(command);
+        var service = _contactMutationService
+            ?? throw new InvalidOperationException("The contact mutation service is not configured.");
+        return InvokeAtomicallyAsync(command.Operation, context, async token =>
+        {
+            var result = await service.MutateAsync(mutation, user, token).ConfigureAwait(false);
+            if (result.Status == MailContactMutationStatus.Ok)
+            {
+                if (result.Created.Count != mutation.Creates.Count)
+                    throw new InvalidOperationException("The contact mutation returned incomplete creations.");
+                for (var index = 0; index < result.Created.Count; index++)
+                {
+                    var item = result.Created[index];
+                    if (!string.Equals(item.CreationId, mutation.Creates[index].CreationId,
+                            StringComparison.Ordinal))
+                        throw new InvalidOperationException("The contact mutation returned inconsistent creations.");
+                    if (item.Error == MailContactMutationError.None && item.CardId is { } id)
+                        context.CreatedIds[item.CreationId] = $"C{id:N}";
+                }
+            }
+            var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
+                ?? throw new InvalidOperationException("The contact mutation service returned an incomplete result.");
             return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
         }, receiptKey, cancellationToken);
     }
@@ -1592,6 +1631,110 @@ public sealed class JmapRequestProcessor
         }
     }
 
+    private MailContactMutationCommand ParseContactMutationCommand(MailOperationCommand command)
+    {
+        var arguments = command.Arguments;
+        if (arguments.Count != 8 || !arguments.ContainsKey("accountId")
+            || !arguments.ContainsKey("accountReferenceParseable")
+            || !arguments.ContainsKey("accountReferenceEligible")
+            || !arguments.ContainsKey("ifInState") || !arguments.ContainsKey("addressBookAliases")
+            || !arguments.ContainsKey("creates") || !arguments.ContainsKey("updates")
+            || !arguments.ContainsKey("destroys"))
+            throw NotRequest("The contact mutation command has an invalid shape.");
+        try
+        {
+            var mutation = JsonSerializer.Deserialize<MailContactMutationCommand>(arguments,
+                StrictReceiptJsonOptions) ?? throw NotRequest("The contact mutation command is missing.");
+            if (mutation.AccountReferenceEligible && !mutation.AccountReferenceParseable
+                || !mutation.AccountReferenceParseable && mutation.AccountId != Guid.Empty
+                || mutation.AddressBookAliases is null || !ValidBookAliases(mutation.AddressBookAliases,
+                    command.KnownEntities)
+                || mutation.Creates is null || mutation.Updates is null || mutation.Destroys is null
+                || mutation.Creates.Count + mutation.Updates.Count + mutation.Destroys.Count
+                    > _environment.Jmap.MaxObjectsInSet
+                || mutation.Creates.Any(item => item is null || item.CreationId is null
+                    || !JmapId.IsValidId(item.CreationId) || !ValidContactCreate(item))
+                || mutation.Creates.Select(item => item.CreationId).Distinct(StringComparer.Ordinal).Count()
+                    != mutation.Creates.Count
+                || mutation.Updates.Any(item => item is null || !ValidContactTarget(item.RequestedId,
+                    item.Target, command.KnownEntities) || item.Patch is not null && !ValidContactPatch(item.Patch))
+                || mutation.Updates.Select(item => item.RequestedId).Distinct(StringComparer.Ordinal).Count()
+                    != mutation.Updates.Count
+                || mutation.Destroys.Any(item => item is null || !ValidContactTarget(item.RequestedId,
+                    item.Target, command.KnownEntities))
+                || mutation.Destroys.Select(item => item.RequestedId).Distinct(StringComparer.Ordinal).Count()
+                    != mutation.Destroys.Count)
+                throw NotRequest("The contact mutation values are invalid.");
+            return mutation;
+        }
+        catch (Exception exception) when (exception is JsonException or InvalidOperationException)
+        {
+            throw NotRequest("The contact mutation command contains invalid values.");
+        }
+    }
+
+    private static bool ValidBookAliases(IReadOnlyDictionary<string, Guid> aliases,
+        IReadOnlyDictionary<string, string>? knownEntities)
+    {
+        foreach (var item in aliases)
+        {
+            if (item.Key.Length < 2 || item.Key[0] != '#' || !JmapId.IsValidId(item.Key[1..])
+                || item.Value == Guid.Empty || knownEntities is null
+                || !knownEntities.TryGetValue(item.Key[1..], out var value)
+                || !string.Equals(value, $"D{item.Value:N}", StringComparison.Ordinal)) return false;
+        }
+        return true;
+    }
+
+    private static bool ValidContactCreate(MailContactCreate item)
+    {
+        if (item.Card is null || item.AddressBookId == Guid.Empty) return false;
+        return ApplicationValueCodec.Decode(item.Card) is JsonObject card
+            && !card.ContainsKey("id") && !card.ContainsKey("addressBookIds");
+    }
+
+    private static bool ValidContactPatch(IReadOnlyList<MailContactPatchEntry> entries)
+    {
+        for (var index = 0; index < entries.Count; index++)
+        {
+            var entry = entries[index];
+            if (entry is null || entry.Path is null || entry.Path.Count == 0
+                || entry.Path.Any(string.IsNullOrEmpty) || entry.Value is null) return false;
+            _ = ApplicationValueCodec.Decode(entry.Value);
+            for (var previous = 0; previous < index; previous++)
+                if (ContactPatchPrefix(entries[previous].Path, entry.Path)
+                    || ContactPatchPrefix(entry.Path, entries[previous].Path)) return false;
+        }
+        return true;
+    }
+
+    private static bool ContactPatchPrefix(IReadOnlyList<string> left, IReadOnlyList<string> right)
+    {
+        if (left.Count > right.Count) return false;
+        for (var index = 0; index < left.Count; index++)
+            if (!string.Equals(left[index], right[index], StringComparison.Ordinal)) return false;
+        return true;
+    }
+
+    private static bool ValidContactTarget(string? requestedId, MailContactTarget? target,
+        IReadOnlyDictionary<string, string>? knownEntities)
+    {
+        if (requestedId is null || target is null || target.ExistingId == Guid.Empty) return false;
+        if (requestedId.Length > 1 && requestedId[0] == '#')
+        {
+            var key = requestedId[1..];
+            if (!JmapId.IsValidId(key)) return false;
+            if (knownEntities is not null && knownEntities.TryGetValue(key, out var resolved))
+                return target.CreatedKey is null && target.ExistingId == ParsedContactId(resolved);
+            return target.ExistingId is null && string.Equals(target.CreatedKey, key, StringComparison.Ordinal);
+        }
+        if (!JmapId.IsValidId(requestedId) || target.CreatedKey is not null) return false;
+        return target.ExistingId == ParsedContactId(requestedId);
+    }
+
+    private static Guid? ParsedContactId(string value) => JmapId.TryParseContactCard(value, out var id)
+        ? id : null;
+
     private MailImportCommand ParseImportCommand(JsonObject arguments)
     {
         if (arguments.Count != 3 || !arguments.ContainsKey("accountId")
@@ -1730,7 +1873,7 @@ public sealed class JmapRequestProcessor
             throw NotRequest("The application batch contains invalid feature identifiers.");
         var features = values.ToHashSet();
         var supported = _methods.Values.Select(method => method.Feature)
-            .Append(MailFeature.Basic).Append(MailFeature.AutomaticReplies).ToHashSet();
+            .Concat([MailFeature.Basic, MailFeature.AutomaticReplies, MailFeature.Contacts]).ToHashSet();
         if (features.Any(feature => !supported.Contains(feature)))
             throw new MailApplicationException(new MailApplicationFailure(
                 MailFailureKind.UnsupportedFeature, "The requested mail features are not supported."));

@@ -1304,8 +1304,8 @@ public sealed class JmapDurableReplayTests
             scope.ServiceProvider.GetRequiredService<LargeObjectTransactionEffects>(),
             NullLogger<JmapRequestProcessor>.Instance,
             scope.ServiceProvider.GetRequiredService<ApplicationOperationReceiptStore>());
-        var result = await InvokeGatewayAsync(processor, new JmapApplicationBatch([MailFeature.Basic],
-            [new(MailOperationKind.MutateContacts, new JsonObject(), "mutation")], new Dictionary<string, string>()),
+        var result = await InvokeGatewayAsync(processor, new JmapApplicationBatch([MailFeature.Basic, MailFeature.Submission],
+            [new(MailOperationKind.MutateSubmissions, new JsonObject(), "mutation")], new Dictionary<string, string>()),
             rig.User, Guid.CreateVersion7());
         Assert.AreEqual(MailOperationKind.Failure, result.Invocations[0].Operation);
         Assert.AreEqual("serverFail", result.Invocations[0].Arguments["type"]!.GetValue<string>());
@@ -1387,8 +1387,8 @@ public sealed class JmapDurableReplayTests
 
     private sealed class InvalidResultMethod(EmailDbContext database, MailOperationKind invalid, bool additional, Action callback) : IJmapMethod
     {
-        public MailOperationKind Operation => MailOperationKind.MutateContacts;
-        public MailFeature Feature => MailFeature.Basic;
+        public MailOperationKind Operation => MailOperationKind.MutateSubmissions;
+        public MailFeature Feature => MailFeature.Submission;
         public async Task<JmapMethodResponse> InvokeAsync(JmapInvocationContext context, JsonObject arguments,
             CancellationToken cancellationToken = default)
         {

@@ -30,6 +30,7 @@ public sealed class JmapRequestProcessor
     private readonly IMailSubmissionQueryService? _submissionQueryService;
     private readonly IMailFolderQueryService? _folderQueryService;
     private readonly IMailContactCopyService? _contactCopyService;
+    private readonly IMailContactQueryService? _contactQueryService;
     private readonly EmailDbContext _database;
     private readonly EnvironmentConfig _environment;
     private readonly LargeObjectTransactionEffects _blobEffects;
@@ -54,7 +55,7 @@ public sealed class JmapRequestProcessor
         ILogger<JmapRequestProcessor> logger,
         ApplicationOperationReceiptStore? receipts = null)
         : this(methods, sessions, database, environment, blobEffects, logger, receipts,
-            null, null, null, null, null, null, null, null, null, null, null, null, null)
+            null, null, null, null, null, null, null, null, null, null, null, null, null, null)
     {
     }
 
@@ -78,7 +79,8 @@ public sealed class JmapRequestProcessor
         IMailVacationMutator? vacationMutator,
         IMailSubmissionQueryService? submissionQueryService,
         IMailFolderQueryService? folderQueryService,
-        IMailContactCopyService? contactCopyService)
+        IMailContactCopyService? contactCopyService,
+        IMailContactQueryService? contactQueryService)
     {
         _methods = methods.ToDictionary(method => ValidRegisteredOperation(method.Operation, method.Feature));
         _sessions = sessions;
@@ -132,6 +134,7 @@ public sealed class JmapRequestProcessor
         _submissionQueryService = submissionQueryService;
         _folderQueryService = folderQueryService;
         _contactCopyService = contactCopyService;
+        _contactQueryService = contactQueryService;
         _database = database;
         _environment = environment;
         _blobEffects = blobEffects;
@@ -217,6 +220,12 @@ public sealed class JmapRequestProcessor
                 .ConfigureAwait(false);
         else if (command.Operation == MailOperationKind.CopyContacts && features.Contains(MailFeature.Contacts))
             response = await ExecuteContactCopyAsync(command, context, user, receiptKey, cancellationToken)
+                .ConfigureAwait(false);
+        else if (command.Operation == MailOperationKind.FindContacts && features.Contains(MailFeature.Contacts))
+            response = await ExecuteContactQueryAsync(command, context, user, receiptKey, cancellationToken)
+                .ConfigureAwait(false);
+        else if (command.Operation == MailOperationKind.FindContactChanges && features.Contains(MailFeature.Contacts))
+            response = await ExecuteContactQueryChangesAsync(command, context, user, receiptKey, cancellationToken)
                 .ConfigureAwait(false);
         else
         {
@@ -516,6 +525,44 @@ public sealed class JmapRequestProcessor
             var result = await service.CopyAsync(copy, user, token).ConfigureAwait(false);
             var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
                 ?? throw new InvalidOperationException("The contact-copy service returned an incomplete result.");
+            return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
+        }, receiptKey, cancellationToken);
+    }
+
+    private Task<MailOperationResponse> ExecuteContactQueryAsync(
+        MailOperationCommand command,
+        JmapInvocationContext context,
+        AuthenticatedMailUser user,
+        ApplicationReceiptKey? receiptKey,
+        CancellationToken cancellationToken)
+    {
+        var query = ParseContactQueryCommand(command.Arguments);
+        var service = _contactQueryService
+            ?? throw new InvalidOperationException("The contact query service is not configured.");
+        return InvokeAtomicallyAsync(command.Operation, context, async token =>
+        {
+            var result = await service.QueryAsync(query, user, token).ConfigureAwait(false);
+            var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
+                ?? throw new InvalidOperationException("The contact query service returned an incomplete result.");
+            return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
+        }, receiptKey, cancellationToken);
+    }
+
+    private Task<MailOperationResponse> ExecuteContactQueryChangesAsync(
+        MailOperationCommand command,
+        JmapInvocationContext context,
+        AuthenticatedMailUser user,
+        ApplicationReceiptKey? receiptKey,
+        CancellationToken cancellationToken)
+    {
+        var query = ParseContactQueryChangesCommand(command.Arguments);
+        var service = _contactQueryService
+            ?? throw new InvalidOperationException("The contact query service is not configured.");
+        return InvokeAtomicallyAsync(command.Operation, context, async token =>
+        {
+            var result = await service.QueryChangesAsync(query, user, token).ConfigureAwait(false);
+            var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
+                ?? throw new InvalidOperationException("The contact query service returned an incomplete result.");
             return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
         }, receiptKey, cancellationToken);
     }
@@ -900,6 +947,97 @@ public sealed class JmapRequestProcessor
         {
             throw NotRequest("The contact-copy command contains invalid values.");
         }
+    }
+
+    private MailContactQueryCommand ParseContactQueryCommand(JsonObject arguments)
+    {
+        if (arguments.Count != 10 || !arguments.ContainsKey("accountId")
+            || !arguments.ContainsKey("accountReferenceParseable")
+            || !arguments.ContainsKey("accountReferenceEligible")
+            || !arguments.ContainsKey("criteria") || !arguments.ContainsKey("checkAccountOnly")
+            || !arguments.ContainsKey("position") || !arguments.ContainsKey("anchorId")
+            || !arguments.ContainsKey("anchorCanMatch") || !arguments.ContainsKey("anchorOffset")
+            || !arguments.ContainsKey("limit"))
+            throw NotRequest("The contact query command has an invalid shape.");
+        try
+        {
+            var query = JsonSerializer.Deserialize<MailContactQueryCommand>(arguments, StrictReceiptJsonOptions)
+                ?? throw NotRequest("The contact query command is missing.");
+            ValidateContactCriteria(query.Criteria);
+            if (query.AccountReferenceEligible && !query.AccountReferenceParseable
+                || !query.AccountReferenceParseable && query.AccountId != Guid.Empty
+                || query.Position is < -9_007_199_254_740_991L or > 9_007_199_254_740_991L
+                || query.AnchorOffset is < -9_007_199_254_740_991L or > 9_007_199_254_740_991L
+                || query.AnchorId is null && query.AnchorCanMatch
+                || query.Limit < 0 || query.Limit > _environment.Jmap.MaxObjectsInGet)
+                throw NotRequest("The contact query values are invalid.");
+            return query;
+        }
+        catch (JsonException)
+        {
+            throw NotRequest("The contact query command contains invalid values.");
+        }
+    }
+
+    private static MailContactQueryChangesCommand ParseContactQueryChangesCommand(JsonObject arguments)
+    {
+        if (arguments.Count != 7 || !arguments.ContainsKey("accountId")
+            || !arguments.ContainsKey("accountReferenceParseable")
+            || !arguments.ContainsKey("accountReferenceEligible")
+            || !arguments.ContainsKey("criteria") || !arguments.ContainsKey("checkAccountOnly")
+            || !arguments.ContainsKey("sinceState") || !arguments.ContainsKey("maxChanges"))
+            throw NotRequest("The contact query-changes command has an invalid shape.");
+        try
+        {
+            var query = JsonSerializer.Deserialize<MailContactQueryChangesCommand>(arguments, StrictReceiptJsonOptions)
+                ?? throw NotRequest("The contact query-changes command is missing.");
+            ValidateContactCriteria(query.Criteria);
+            if (query.AccountReferenceEligible && !query.AccountReferenceParseable
+                || !query.AccountReferenceParseable && query.AccountId != Guid.Empty
+                || query.SinceState is null
+                || query.MaxChanges is < 0 or > 9_007_199_254_740_991L)
+                throw NotRequest("The contact query-changes values are invalid.");
+            return query;
+        }
+        catch (JsonException)
+        {
+            throw NotRequest("The contact query-changes command contains invalid values.");
+        }
+    }
+
+    private static void ValidateContactCriteria(MailContactQueryCriteria? criteria)
+    {
+        if (criteria?.Sort is null || criteria.Sort.Any(item => item is null
+            || !Enum.IsDefined(item.Field) || !Enum.IsDefined(item.Collation)))
+            throw NotRequest("The contact query sort is invalid.");
+        ValidateContactFilter(criteria.Filter, 0);
+    }
+
+    private static void ValidateContactFilter(MailContactFilter? filter, int depth)
+    {
+        if (filter is null) return;
+        if (depth > 64 || !Enum.IsDefined(filter.Operator)
+            || filter.CreatedBefore is { Kind: not DateTimeKind.Utc }
+            || filter.CreatedAfter is { Kind: not DateTimeKind.Utc }
+            || filter.UpdatedBefore is { Kind: not DateTimeKind.Utc }
+            || filter.UpdatedAfter is { Kind: not DateTimeKind.Utc })
+            throw NotRequest("The contact query filter is invalid.");
+        if (filter.Operator != MailContactFilterOperator.Condition)
+        {
+            if (filter.Conditions is null || filter.Terms is not null
+                || filter.CreatedBefore is not null || filter.CreatedAfter is not null
+                || filter.UpdatedBefore is not null || filter.UpdatedAfter is not null)
+                throw NotRequest("The contact query operator is invalid.");
+            foreach (var child in filter.Conditions)
+                ValidateContactFilter(child, depth + 1);
+            return;
+        }
+        if (filter.Conditions is not null || filter.Terms is null
+            || filter.Terms.Any(item => item is null || !Enum.IsDefined(item.Field)
+                || item.Value is null || item.Field == MailContactFilterField.InAddressBook
+                    && !JmapId.IsValidId(item.Value))
+            || filter.Terms.Select(item => item.Field).Distinct().Count() != filter.Terms.Count)
+            throw NotRequest("The contact query condition is invalid.");
     }
 
     private static Dictionary<string, string> CloneCreatedIds(IReadOnlyDictionary<string, string>? values)

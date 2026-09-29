@@ -142,6 +142,63 @@ public sealed class JmapDurableReplayTests
     }
 
     [TestMethod]
+    public async Task TypedContactQueriesReplayCommittedSearchAndChangeSnapshots()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var initialBatch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Contacts],
+            [new JmapApplicationCall(MailOperationKind.FindContacts, new JsonObject
+            {
+                ["accountId"] = JmapId.Account(rig.InboxId),
+            }, "initial")]);
+        var initial = await rig.InvokeAsync(initialBatch, Guid.CreateVersion7());
+        var since = initial.Invocations[0].Arguments["queryState"]!.GetValue<string>();
+        var created = await rig.InvokeAsync(rig.ContactsBatch(), Guid.CreateVersion7());
+        var cardId = created.Invocations[1].Arguments["created"]!["card"]!["id"]!.GetValue<string>();
+        var query = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Contacts],
+            [new JmapApplicationCall(MailOperationKind.FindContacts, new JsonObject
+            {
+                ["accountId"] = JmapId.Account(rig.InboxId),
+                ["filter"] = new JsonObject { ["name"] = "Replay" },
+                ["sort"] = new JsonArray(new JsonObject { ["property"] = "name/given" }),
+                ["calculateTotal"] = true,
+            }, "query")]);
+        var changes = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Contacts],
+            [new JmapApplicationCall(MailOperationKind.FindContactChanges, new JsonObject
+            {
+                ["accountId"] = JmapId.Account(rig.InboxId),
+                ["sinceQueryState"] = since,
+                ["filter"] = new JsonObject { ["name"] = "Replay" },
+                ["calculateTotal"] = true,
+            }, "changes")]);
+        var queryOperation = Guid.CreateVersion7();
+        var changesOperation = Guid.CreateVersion7();
+        var firstQuery = await rig.InvokeAsync(query, queryOperation);
+        var firstChanges = await rig.InvokeAsync(changes, changesOperation);
+        Assert.AreEqual(cardId, firstQuery.Invocations[0].Arguments["ids"]![0]!.GetValue<string>());
+        Assert.AreEqual(cardId, firstChanges.Invocations[0].Arguments["added"]![0]!["id"]!.GetValue<string>());
+        var changed = await rig.InvokeAsync(new JmapApplicationBatch([MailFeature.Basic, MailFeature.Contacts],
+            [new JmapApplicationCall(MailOperationKind.MutateContacts, new JsonObject
+            {
+                ["accountId"] = JmapId.Account(rig.InboxId),
+                ["update"] = new JsonObject { [cardId] = new JsonObject
+                {
+                    ["name"] = new JsonObject { ["@type"] = "Name", ["full"] = "Other person" },
+                } },
+            }, "update")]), Guid.CreateVersion7());
+        Assert.IsTrue(changed.Invocations[0].Arguments["updated"]!.AsObject().ContainsKey(cardId));
+        var replayQuery = await rig.InvokeAsync(query, queryOperation);
+        var replayChanges = await rig.InvokeAsync(changes, changesOperation);
+        Assert.AreEqual(JsonSerializer.Serialize(firstQuery.Invocations), JsonSerializer.Serialize(replayQuery.Invocations));
+        Assert.AreEqual(JsonSerializer.Serialize(firstChanges.Invocations), JsonSerializer.Serialize(replayChanges.Invocations));
+        var freshQuery = await rig.InvokeAsync(query, Guid.CreateVersion7());
+        var freshChanges = await rig.InvokeAsync(changes, Guid.CreateVersion7());
+        Assert.AreEqual(0, freshQuery.Invocations[0].Arguments["ids"]!.AsArray().Count);
+        Assert.AreEqual(0, freshChanges.Invocations[0].Arguments["added"]!.AsArray().Count);
+        Assert.AreNotEqual(firstChanges.Invocations[0].Arguments["newQueryState"]!.GetValue<string>(),
+            freshChanges.Invocations[0].Arguments["newQueryState"]!.GetValue<string>());
+    }
+
+    [TestMethod]
     public async Task TypedSubmissionReadReplaysCommittedSnapshotAcrossWorkerRetries()
     {
         await using var rig = await Rig.CreateAsync();

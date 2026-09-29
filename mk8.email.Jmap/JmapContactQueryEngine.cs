@@ -1,124 +1,55 @@
 using System.Text;
 using System.Text.Json.Nodes;
-using mk8.email.Configuration;
+using mk8.email.Contracts.Messaging;
 
 namespace mk8.email.Jmap;
 
 internal static class JmapContactQueryEngine
 {
-    private static readonly HashSet<string> FilterProperties = new HashSet<string>(
-        [
-            "inAddressBook", "uid", "hasMember", "kind", "createdBefore", "createdAfter",
-            "updatedBefore", "updatedAfter", "text", "name", "name/given", "name/surname",
-            "name/surname2", "nickname", "organization", "email", "phone", "onlineService",
-            "address", "note",
-        ],
-        StringComparer.Ordinal);
-
-    public static bool TryFilter(
+    public static List<JmapContactCardView> Filter(
         IReadOnlyList<JmapContactCardView> cards,
-        JsonNode? filter,
-        out List<JmapContactCardView> result,
-        out string error)
+        MailContactFilter? filter) => cards.Where(BuildPredicate(filter)).ToList();
+
+    public static bool IsFilterMutable(MailContactFilter? filter)
     {
-        result = [];
-        if (!TryBuildPredicate(filter, out var predicate, out error))
-            return false;
-        result = cards.Where(predicate).ToList();
-        return true;
+        if (filter is null) return false;
+        return filter.Operator == MailContactFilterOperator.Condition
+            ? filter.Terms is { Count: > 0 } || filter.CreatedBefore is not null
+                || filter.CreatedAfter is not null || filter.UpdatedBefore is not null
+                || filter.UpdatedAfter is not null
+            : filter.Conditions!.Any(IsFilterMutable);
     }
 
-    public static bool IsFilterMutable(JsonNode? filter)
+    public static bool ImmutableFilterMatchesAll(MailContactFilter? filter)
     {
-        if (filter is not JsonObject value)
-            return false;
-        if (!value.ContainsKey("operator"))
-            return value.Count > 0;
-        return value["conditions"] is JsonArray conditions
-            && conditions.Any(IsFilterMutable);
-    }
-
-    public static bool ImmutableFilterMatchesAll(JsonNode? filter)
-    {
-        if (filter is not JsonObject value || !value.ContainsKey("operator"))
+        if (filter is null || filter.Operator == MailContactFilterOperator.Condition)
             return true;
-        var operation = value["operator"]!.GetValue<string>();
-        var conditions = value["conditions"]!.AsArray()
-            .Select(ImmutableFilterMatchesAll)
-            .ToArray();
-        return operation switch
+        var conditions = filter.Conditions!.Select(ImmutableFilterMatchesAll).ToArray();
+        return filter.Operator switch
         {
-            "AND" => conditions.All(result => result),
-            "OR" => conditions.Any(result => result),
+            MailContactFilterOperator.And => conditions.All(result => result),
+            MailContactFilterOperator.Or => conditions.Any(result => result),
             _ => conditions.All(result => !result),
         };
     }
 
-    public static bool TryParseSort(
-        JsonNode? sort,
-        out IReadOnlyList<JmapContactComparator> comparators,
-        out string error)
-    {
-        error = string.Empty;
-        if (sort is null)
-        {
-            comparators = [];
-            return true;
-        }
-        if (sort is not JsonArray array)
-        {
-            comparators = [];
-            error = "invalidArguments";
-            return false;
-        }
-        var result = new List<JmapContactComparator>();
-        foreach (var node in array)
-        {
-            if (node is not JsonObject comparator
-                || !JmapMethodHelpers.HasOnlyProperties(
-                    comparator, "property", "isAscending", "collation")
-                || !JmapMethodHelpers.TryGetRequiredString(comparator, "property", out var property)
-                || !JmapMethodHelpers.TryGetOptionalBoolean(
-                    comparator, "isAscending", true, out var ascending)
-                || !JmapMethodHelpers.TryGetOptionalString(
-                    comparator, "collation", out var collation, allowNull: false))
-            {
-                comparators = [];
-                error = "invalidArguments";
-                return false;
-            }
-            if (property is not ("created" or "updated" or "name/given" or "name/surname" or "name/surname2")
-                || property.StartsWith("name/", StringComparison.Ordinal)
-                    && collation is not null
-                    && !JmapCollation.IsSupported(collation))
-            {
-                comparators = [];
-                error = "unsupportedSort";
-                return false;
-            }
-            result.Add(new JmapContactComparator(property, ascending, collation));
-        }
-        comparators = result;
-        return true;
-    }
-
     public static List<JmapContactCardView> Sort(
         IEnumerable<JmapContactCardView> cards,
-        IReadOnlyList<JmapContactComparator> comparators)
+        IReadOnlyList<MailContactSort> comparators)
     {
         var comparer = Comparer<JmapContactCardView>.Create((left, right) =>
         {
             foreach (var comparator in comparators)
             {
-                var comparison = comparator.Property switch
+                var comparison = comparator.Field switch
                 {
-                    "created" => CardDate(left, "created", left.Resource.CreatedAt)
+                    MailContactSortField.Created => CardDate(left, "created", left.Resource.CreatedAt)
                         .CompareTo(CardDate(right, "created", right.Resource.CreatedAt)),
-                    "updated" => CardDate(left, "updated", left.Resource.UpdatedAt)
+                    MailContactSortField.Updated => CardDate(left, "updated", left.Resource.UpdatedAt)
                         .CompareTo(CardDate(right, "updated", right.Resource.UpdatedAt)),
                     _ => JmapCollation.Compare(
-                        NameComponent(left.Card, comparator.Property[5..]),
-                        NameComponent(right.Card, comparator.Property[5..]),
+                        NameComponent(left.Card, NameKind(comparator.Field)),
+                        NameComponent(right.Card, NameKind(comparator.Field)),
                         comparator.Collation),
                 };
                 if (comparison != 0)
@@ -129,130 +60,71 @@ internal static class JmapContactQueryEngine
         return cards.Order(comparer).ToList();
     }
 
-    private static bool TryBuildPredicate(
-        JsonNode? filter,
-        out Func<JmapContactCardView, bool> predicate,
-        out string error)
+    private static Func<JmapContactCardView, bool> BuildPredicate(MailContactFilter? filter)
     {
-        predicate = static _ => true;
-        error = string.Empty;
         if (filter is null)
-            return true;
-        if (filter is not JsonObject value)
+            return static _ => true;
+        if (filter.Operator != MailContactFilterOperator.Condition)
         {
-            error = "invalidArguments";
-            return false;
-        }
-        if (value.ContainsKey("operator"))
-        {
-            if (!JmapMethodHelpers.TryGetRequiredString(value, "operator", out var operation)
-                || operation is not ("AND" or "OR" or "NOT")
-                || value["conditions"] is not JsonArray conditions
-                || value.Any(item => item.Key is not ("operator" or "conditions")))
+            var children = filter.Conditions!.Select(BuildPredicate).ToArray();
+            return filter.Operator switch
             {
-                error = "invalidArguments";
-                return false;
-            }
-            var children = new List<Func<JmapContactCardView, bool>>();
-            foreach (var condition in conditions)
-            {
-                if (!TryBuildPredicate(condition, out var child, out error))
-                    return false;
-                children.Add(child);
-            }
-            predicate = operation switch
-            {
-                "AND" => card => children.All(child => child(card)),
-                "OR" => card => children.Any(child => child(card)),
+                MailContactFilterOperator.And => card => children.All(child => child(card)),
+                MailContactFilterOperator.Or => card => children.Any(child => child(card)),
                 _ => card => children.All(child => !child(card)),
             };
-            return true;
         }
-        if (value.Any(item => !FilterProperties.Contains(item.Key)))
-        {
-            error = "unsupportedFilter";
-            return false;
-        }
-
-        var strings = new Dictionary<string, string>(StringComparer.Ordinal);
-        DateTimeOffset? createdBefore = null;
-        DateTimeOffset? createdAfter = null;
-        DateTimeOffset? updatedBefore = null;
-        DateTimeOffset? updatedAfter = null;
-        foreach (var item in value)
-        {
-            if (item.Key is "createdBefore" or "createdAfter" or "updatedBefore" or "updatedAfter")
-            {
-                if (item.Value is not JsonValue dateValue
-                    || !dateValue.TryGetValue<string>(out var dateText)
-                    || !JmapDate.TryParseUtcDate(dateText, out var date))
-                {
-                    error = "invalidArguments";
-                    return false;
-                }
-                switch (item.Key)
-                {
-                    case "createdBefore": createdBefore = date; break;
-                    case "createdAfter": createdAfter = date; break;
-                    case "updatedBefore": updatedBefore = date; break;
-                    case "updatedAfter": updatedAfter = date; break;
-                }
-            }
-            else if (item.Value is not JsonValue stringValue
-                || !stringValue.TryGetValue<string>(out var text)
-                || text is null
-                || string.Equals(item.Key, "inAddressBook", StringComparison.Ordinal) && !JmapId.IsValidId(text))
-            {
-                error = "invalidArguments";
-                return false;
-            }
-            else
-            {
-                strings[item.Key] = text;
-            }
-        }
-
-        predicate = view =>
-            (!strings.TryGetValue("inAddressBook", out var addressBook)
-                || string.Equals(view.AddressBookId, addressBook, StringComparison.Ordinal))
-            && (!strings.TryGetValue("uid", out var uid)
-                || string.Equals(StringValue(view.Card["uid"]), uid, StringComparison.Ordinal))
-            && (!strings.TryGetValue("kind", out var kind)
-                || string.Equals(StringValue(view.Card["kind"]) ?? "individual", kind, StringComparison.Ordinal))
-            && (!strings.TryGetValue("hasMember", out var member)
-                || view.Card["members"] is JsonObject members && members.ContainsKey(member))
-            && (createdBefore is null || CardDate(view, "created", view.Resource.CreatedAt) < createdBefore)
-            && (createdAfter is null || CardDate(view, "created", view.Resource.CreatedAt) >= createdAfter)
-            && (updatedBefore is null || CardDate(view, "updated", view.Resource.UpdatedAt) < updatedBefore)
-            && (updatedAfter is null || CardDate(view, "updated", view.Resource.UpdatedAt) >= updatedAfter)
-            && strings.Where(item => item.Key is not (
-                    "inAddressBook" or "uid" or "kind" or "hasMember"))
-                .All(item => MatchesField(view.Card, item.Key, item.Value));
-        return true;
+        return view =>
+            (filter.CreatedBefore is null || CardDate(view, "created", view.Resource.CreatedAt) < filter.CreatedBefore)
+            && (filter.CreatedAfter is null || CardDate(view, "created", view.Resource.CreatedAt) >= filter.CreatedAfter)
+            && (filter.UpdatedBefore is null || CardDate(view, "updated", view.Resource.UpdatedAt) < filter.UpdatedBefore)
+            && (filter.UpdatedAfter is null || CardDate(view, "updated", view.Resource.UpdatedAt) >= filter.UpdatedAfter)
+            && filter.Terms!.All(term => MatchesTerm(view, term));
     }
 
-    private static bool MatchesField(JsonObject card, string property, string query)
+    private static bool MatchesTerm(JmapContactCardView view, MailContactFilterTerm term) =>
+        term.Field switch
+        {
+            MailContactFilterField.InAddressBook =>
+                string.Equals(view.AddressBookId, term.Value, StringComparison.Ordinal),
+            MailContactFilterField.Uid =>
+                string.Equals(StringValue(view.Card["uid"]), term.Value, StringComparison.Ordinal),
+            MailContactFilterField.Kind =>
+                string.Equals(StringValue(view.Card["kind"]) ?? "individual", term.Value, StringComparison.Ordinal),
+            MailContactFilterField.HasMember =>
+                view.Card["members"] is JsonObject members && members.ContainsKey(term.Value),
+            _ => MatchesField(view.Card, term.Field, term.Value),
+        };
+
+    private static bool MatchesField(JsonObject card, MailContactFilterField property, string query)
     {
         IEnumerable<string> values = property switch
         {
-            "text" => DescendantStrings(card),
-            "name" => NameStrings(card),
-            "name/given" => [NameComponent(card, "given")],
-            "name/surname" => [NameComponent(card, "surname")],
-            "name/surname2" => [NameComponent(card, "surname2")],
-            "nickname" => MapStrings(card["nicknames"], "name"),
-            "organization" => MapStrings(card["organizations"], "name"),
-            "email" => MapStrings(card["emails"], "address", "label"),
-            "phone" => MapStrings(card["phones"], "number", "label"),
-            "onlineService" => MapStrings(card["onlineServices"], "service", "uri", "user", "label"),
-            "address" => AddressStrings(card),
-            "note" => MapStrings(card["notes"], "note"),
+            MailContactFilterField.Text => DescendantStrings(card),
+            MailContactFilterField.Name => NameStrings(card),
+            MailContactFilterField.GivenName => [NameComponent(card, "given")],
+            MailContactFilterField.Surname => [NameComponent(card, "surname")],
+            MailContactFilterField.Surname2 => [NameComponent(card, "surname2")],
+            MailContactFilterField.Nickname => MapStrings(card["nicknames"], "name"),
+            MailContactFilterField.Organization => MapStrings(card["organizations"], "name"),
+            MailContactFilterField.Email => MapStrings(card["emails"], "address", "label"),
+            MailContactFilterField.Phone => MapStrings(card["phones"], "number", "label"),
+            MailContactFilterField.OnlineService => MapStrings(card["onlineServices"], "service", "uri", "user", "label"),
+            MailContactFilterField.Address => AddressStrings(card),
+            MailContactFilterField.Note => MapStrings(card["notes"], "note"),
             _ => [],
         };
         var haystacks = values.Where(value => !string.IsNullOrEmpty(value)).ToArray();
         return ParseSearchTerms(query).All(term =>
             haystacks.Any(value => value.Contains(term, StringComparison.InvariantCultureIgnoreCase)));
     }
+
+    private static string NameKind(MailContactSortField field) => field switch
+    {
+        MailContactSortField.GivenName => "given",
+        MailContactSortField.Surname => "surname",
+        _ => "surname2",
+    };
 
     private static List<string> ParseSearchTerms(string value)
     {

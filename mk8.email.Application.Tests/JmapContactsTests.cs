@@ -75,6 +75,86 @@ public sealed class JmapContactsTests
     }
 
     [TestMethod]
+    public async Task ContactQueriesKeepRecursiveCriteriaAndAccountErrorPrecedenceAtTheGateway()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var bookId = await GetDefaultAddressBookIdAsync(fixture);
+        var created = Arguments(await InvokeAsync(fixture, "ContactCard/set", new JsonObject
+        {
+            ["accountId"] = fixture.AccountId,
+            ["create"] = new JsonObject
+            {
+                ["card"] = Card(bookId, "query-uid", "Alice Adams", "Alice", "Adams", "alice@example.net"),
+            },
+        }));
+        var cardId = created["created"]!["card"]!["id"]!.GetValue<string>();
+        var matching = Arguments(await InvokeAsync(fixture, "ContactCard/query", new JsonObject
+        {
+            ["accountId"] = fixture.AccountId,
+            ["filter"] = new JsonObject
+            {
+                ["operator"] = "AND",
+                ["conditions"] = new JsonArray(
+                    new JsonObject { ["email"] = "alice@example.net" },
+                    new JsonObject { ["name/surname"] = "Adams" }),
+            },
+            ["sort"] = new JsonArray(new JsonObject
+            {
+                ["property"] = "name/surname",
+                ["collation"] = "i;ascii-casemap",
+            }),
+            ["calculateTotal"] = true,
+        }));
+        CollectionAssert.AreEqual(new[] { cardId }, StringValues(matching["ids"]!));
+        Assert.AreEqual(1, matching["total"]!.GetValue<int>());
+        var excluded = Arguments(await InvokeAsync(fixture, "ContactCard/query", new JsonObject
+        {
+            ["accountId"] = fixture.AccountId,
+            ["filter"] = new JsonObject
+            {
+                ["operator"] = "NOT",
+                ["conditions"] = new JsonArray(new JsonObject { ["uid"] = "query-uid" }),
+            },
+        }));
+        Assert.AreEqual(0, excluded["ids"]!.AsArray().Count);
+        var unsupported = Arguments(await InvokeAsync(fixture, "ContactCard/query", new JsonObject
+        {
+            ["accountId"] = fixture.AccountId,
+            ["filter"] = new JsonObject { ["unknown"] = true },
+        }));
+        Assert.AreEqual("unsupportedFilter", unsupported["type"]!.GetValue<string>());
+        var missingAccount = Arguments(await InvokeAsync(fixture, "ContactCard/query", new JsonObject
+        {
+            ["accountId"] = JmapId.Account(Guid.CreateVersion7()),
+            ["filter"] = new JsonObject { ["unknown"] = true },
+        }));
+        Assert.AreEqual("accountNotFound", missingAccount["type"]!.GetValue<string>());
+        var noncanonicalAccount = Arguments(await InvokeAsync(fixture, "ContactCard/query", new JsonObject
+        {
+            ["accountId"] = fixture.AccountId.ToUpperInvariant(),
+        }));
+        Assert.AreEqual("accountNotSupportedByMethod", noncanonicalAccount["type"]!.GetValue<string>());
+        var invalidDate = Arguments(await InvokeAsync(fixture, "ContactCard/query", new JsonObject
+        {
+            ["accountId"] = fixture.AccountId,
+            ["filter"] = new JsonObject { ["createdBefore"] = "not-a-date" },
+        }));
+        Assert.AreEqual("invalidArguments", invalidDate["type"]!.GetValue<string>());
+        var unsupportedSort = Arguments(await InvokeAsync(fixture, "ContactCard/query", new JsonObject
+        {
+            ["accountId"] = fixture.AccountId,
+            ["sort"] = new JsonArray(new JsonObject { ["property"] = "email" }),
+        }));
+        Assert.AreEqual("unsupportedSort", unsupportedSort["type"]!.GetValue<string>());
+        var missingAnchor = Arguments(await InvokeAsync(fixture, "ContactCard/query", new JsonObject
+        {
+            ["accountId"] = fixture.AccountId,
+            ["anchor"] = "opaque",
+        }));
+        Assert.AreEqual("anchorNotFound", missingAnchor["type"]!.GetValue<string>());
+    }
+
+    [TestMethod]
     public async Task AddressBookLifecycleTracksChangesAndProtectsTheDefault()
     {
         await using var fixture = await JmapFixture.CreateAsync();

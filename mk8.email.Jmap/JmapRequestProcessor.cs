@@ -21,6 +21,7 @@ public sealed class JmapRequestProcessor
     private readonly IMailChangesReader _changesReader;
     private readonly IMailAddressBookReader _addressBookReader;
     private readonly IMailIdentityReader _identityReader;
+    private readonly IMailIdentityMutationService? _identityMutationService;
     private readonly IMailVacationReader? _vacationReader;
     private readonly IMailPushSubscriptionReader _pushReader;
     private readonly IMailThreadReader _threadReader;
@@ -60,7 +61,7 @@ public sealed class JmapRequestProcessor
         ILogger<JmapRequestProcessor> logger,
         ApplicationOperationReceiptStore? receipts = null)
         : this(methods, sessions, database, environment, blobEffects, logger, receipts,
-            null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null)
+            null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null)
     {
     }
 
@@ -76,6 +77,7 @@ public sealed class JmapRequestProcessor
         IMailChangesReader? changesReader,
         IMailAddressBookReader? addressBookReader,
         IMailIdentityReader? identityReader,
+        IMailIdentityMutationService? identityMutationService,
         IMailVacationReader? vacationReader,
         IMailPushSubscriptionReader? pushReader,
         IMailThreadReader? threadReader,
@@ -128,6 +130,7 @@ public sealed class JmapRequestProcessor
         }
         else
             _identityReader = identityReader;
+        _identityMutationService = identityMutationService;
         _vacationReader = vacationReader;
         _pushReader = pushReader ?? new MailPushSubscriptionReader(database, environment);
         if (threadReader is null)
@@ -201,6 +204,9 @@ public sealed class JmapRequestProcessor
                 .ConfigureAwait(false);
         else if (command.Operation == MailOperationKind.ReadSenderIdentities && features.Contains(MailFeature.Submission))
             response = await ExecuteIdentitiesAsync(command, context, user, receiptKey, cancellationToken)
+                .ConfigureAwait(false);
+        else if (command.Operation == MailOperationKind.MutateSenderIdentities && features.Contains(MailFeature.Submission))
+            response = await ExecuteIdentityMutationAsync(command, context, user, receiptKey, cancellationToken)
                 .ConfigureAwait(false);
         else if (command.Operation == MailOperationKind.ReadVacationSettings && features.Contains(MailFeature.AutomaticReplies))
             response = await ExecuteVacationAsync(command, context, user, receiptKey, cancellationToken)
@@ -354,6 +360,38 @@ public sealed class JmapRequestProcessor
                 ?? throw new InvalidOperationException("The identity reader returned an incomplete result.");
             return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
         }, receiptKey, cancellationToken).ConfigureAwait(false);
+    }
+
+    private Task<MailOperationResponse> ExecuteIdentityMutationAsync(
+        MailOperationCommand command,
+        JmapInvocationContext context,
+        AuthenticatedMailUser user,
+        ApplicationReceiptKey? receiptKey,
+        CancellationToken cancellationToken)
+    {
+        var mutation = ParseIdentityMutationCommand(command.Arguments);
+        var service = _identityMutationService
+            ?? throw new InvalidOperationException("The identity mutation service is not configured.");
+        return InvokeAtomicallyAsync(command.Operation, context, async token =>
+        {
+            var result = await service.MutateAsync(mutation, user, token).ConfigureAwait(false);
+            if (result.Status == MailIdentityMutationStatus.Ok)
+            {
+                if (result.Created.Count != mutation.Creates.Count)
+                    throw new InvalidOperationException("The identity mutation returned incomplete creations.");
+                for (var index = 0; index < result.Created.Count; index++)
+                {
+                    var item = result.Created[index];
+                    if (!string.Equals(item.CreationId, mutation.Creates[index].CreationId, StringComparison.Ordinal))
+                        throw new InvalidOperationException("The identity mutation returned inconsistent creations.");
+                    if (item.Error == MailIdentityMutationError.None && item.IdentityId is { } id)
+                        context.CreatedIds[item.CreationId] = JmapId.Identity(id);
+                }
+            }
+            var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
+                ?? throw new InvalidOperationException("The identity mutation service returned an incomplete result.");
+            return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
+        }, receiptKey, cancellationToken);
     }
 
     private async Task<MailOperationResponse> ExecuteVacationAsync(
@@ -816,6 +854,46 @@ public sealed class JmapRequestProcessor
             throw NotRequest("The identity read command contains invalid values.");
         }
     }
+
+    private MailIdentityMutationCommand ParseIdentityMutationCommand(JsonObject arguments)
+    {
+        if (arguments.Count != 5 || !arguments.ContainsKey("accountId")
+            || !arguments.ContainsKey("ifInState") || !arguments.ContainsKey("creates")
+            || !arguments.ContainsKey("updates") || !arguments.ContainsKey("destroys"))
+            throw NotRequest("The identity mutation command has an invalid shape.");
+        try
+        {
+            var mutation = JsonSerializer.Deserialize<MailIdentityMutationCommand>(arguments, StrictReceiptJsonOptions)
+                ?? throw NotRequest("The identity mutation command is missing.");
+            if (mutation.Creates is null || mutation.Updates is null || mutation.Destroys is null
+                || mutation.Creates.Count + mutation.Updates.Count + mutation.Destroys.Count
+                    > _environment.Jmap.MaxObjectsInSet
+                || mutation.Creates.Any(item => item is null || item.CreationId is null
+                    || !JmapId.IsValidId(item.CreationId))
+                || mutation.Creates.Select(item => item.CreationId).Distinct(StringComparer.Ordinal).Count()
+                    != mutation.Creates.Count
+                || mutation.Updates.Any(item => item is null || !ValidIdentityTarget(item.RequestedId, item.Target))
+                || mutation.Updates.Select(item => item.RequestedId).Distinct(StringComparer.Ordinal).Count()
+                    != mutation.Updates.Count
+                || mutation.Destroys.Any(item => item is null || !ValidIdentityTarget(item.RequestedId, item.Target))
+                || mutation.Destroys.Select(item => item.RequestedId).Distinct(StringComparer.Ordinal).Count()
+                    != mutation.Destroys.Count)
+                throw NotRequest("The identity mutation values are invalid.");
+            return mutation;
+        }
+        catch (JsonException)
+        {
+            throw NotRequest("The identity mutation command contains invalid values.");
+        }
+    }
+
+    private static bool ValidIdentityTarget(string? requestedId, MailIdentityTarget? target) =>
+        requestedId is not null && target is not null
+        && (JmapId.IsValidId(requestedId)
+            || requestedId.Length > 1 && requestedId[0] == '#' && JmapId.IsValidId(requestedId[1..]))
+        && target.ExistingId != Guid.Empty
+        && (target.CreatedKey is null || JmapId.IsValidId(target.CreatedKey))
+        && (target.ExistingId is null || target.CreatedKey is null);
 
     private static MailVacationReadCommand ParseVacationCommand(JsonObject arguments)
     {

@@ -246,9 +246,32 @@ internal static class GatewayJmapBatchExecutor
                 result => GatewayEmailCopyCodec.RenderAdditional(call, result));
         }
         else
-            return TryPrepareTypedMessageOperation(operation, arguments, features,
+            return TryPrepareTypedIdentityOrMessageOperation(operation, arguments, knownEntities, features,
                 maximumObjectsInGet, maximumObjectsInSet, out selection, out failure);
         return true;
+    }
+
+    private static bool TryPrepareTypedIdentityOrMessageOperation(
+        MailOperationKind operation,
+        JsonObject arguments,
+        IReadOnlyDictionary<string, string> knownEntities,
+        IReadOnlyList<MailFeature> features,
+        int maximumObjectsInGet,
+        int maximumObjectsInSet,
+        out TypedOperationSelection? selection,
+        out string? failure)
+    {
+        if (operation == MailOperationKind.MutateSenderIdentities && features.Contains(MailFeature.Submission))
+        {
+            selection = null;
+            if (!GatewayIdentitySetCodec.TryParse(arguments, knownEntities, maximumObjectsInSet, out var call, out failure))
+                return false;
+            selection = Select<MailIdentityMutationCommand, MailIdentityMutationResult>(operation, call!.Command,
+                result => GatewayIdentitySetCodec.Render(call, result));
+            return true;
+        }
+        return TryPrepareTypedMessageOperation(operation, arguments, features,
+            maximumObjectsInGet, maximumObjectsInSet, out selection, out failure);
     }
 
     private static bool TryPrepareTypedMessageOperation(

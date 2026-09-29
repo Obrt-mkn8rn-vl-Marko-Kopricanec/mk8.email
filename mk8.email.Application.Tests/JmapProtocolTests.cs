@@ -3938,6 +3938,101 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task IdentitySetKeepsReferencesPatchesOwnershipAndDeletionAtomic()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var created = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Submission}}}"],
+          "methodCalls": [["Identity/set", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "create":{
+              "fresh":{"email":"{{{fixture.User.Username}}}","name":"Before"},
+              "transient":{"email":"{{{fixture.User.Username}}}"},
+              "foreign":{"email":"foreign@example.net"},
+              "badAddress":{"email":"{{{fixture.User.Username}}}",
+                "replyTo":[{"email":"User <{{{fixture.User.Username}}}>"}]}
+            },
+            "update":{"#fresh":{"name":"After","textSignature":null},
+              "#transient":{"name":"will not apply"}},
+            "destroy":["#transient"]
+          }, "set"]]
+        }
+        """);
+        var wireId = Arguments(created)["created"]!["fresh"]!["id"]!.GetValue<string>();
+        var transientId = Arguments(created)["created"]!["transient"]!["id"]!.GetValue<string>();
+        Assert.AreEqual("forbiddenFrom", Arguments(created)["notCreated"]!["foreign"]!["type"]!.GetValue<string>());
+        Assert.AreEqual("invalidProperties", Arguments(created)["notCreated"]!["badAddress"]!["type"]!.GetValue<string>());
+        Assert.IsTrue(Arguments(created)["updated"]!.AsObject().ContainsKey(wireId));
+        Assert.AreEqual("willDestroy", Arguments(created)["notUpdated"]!["#transient"]!["type"]!
+            .GetValue<string>());
+        Assert.AreEqual(transientId, Arguments(created)["destroyed"]![0]!.GetValue<string>());
+
+        var checkedPatch = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Submission}}}"],
+          "methodCalls": [["Identity/set", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "update":{
+              "{{{wireId}}}":{"id":"{{{wireId}}}","email":"{{{fixture.User.Username}}}",
+                "mayDelete":true,"replyTo":[{"email":"reply@example.net","name":null}]}
+            }
+          }, "patch"]]
+        }
+        """);
+        Assert.IsNull(Arguments(checkedPatch)["notUpdated"]);
+        Assert.IsTrue(Arguments(checkedPatch)["updated"]!.AsObject().ContainsKey(wireId));
+
+        var read = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Submission}}}"],
+          "methodCalls": [["Identity/get", {
+            "accountId":"{{{fixture.AccountId}}}","ids":["{{{wireId}}}"]
+          }, "read"]]
+        }
+        """);
+        Assert.AreEqual("After", Arguments(read)["list"]![0]!["name"]!.GetValue<string>());
+        Assert.AreEqual("reply@example.net", Arguments(read)["list"]![0]!["replyTo"]![0]!["email"]!.GetValue<string>());
+        Assert.AreEqual(string.Empty, Arguments(read)["list"]![0]!["textSignature"]!.GetValue<string>());
+
+        var invalid = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Submission}}}"],
+          "methodCalls": [
+            ["Identity/set",{"accountId":"{{{fixture.AccountId}}}",
+              "update":{"{{{wireId}}}":{"email":"changed@example.net"} } },"immutable"],
+            ["Identity/set",{"accountId":"{{{fixture.AccountId}}}",
+              "update":{"{{{wireId}}}":{"name/child":"broken"} } },"patch"]
+          ]
+        }
+        """);
+        Assert.AreEqual("invalidProperties", Arguments(invalid)["notUpdated"]![wireId]!["type"]!.GetValue<string>());
+        Assert.AreEqual("email", Arguments(invalid)["notUpdated"]![wireId]!["properties"]![0]!.GetValue<string>());
+        Assert.AreEqual("invalidPatch", Arguments(invalid, 1)["notUpdated"]![wireId]!["type"]!.GetValue<string>());
+
+        var destroyed = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Submission}}}"],
+          "methodCalls": [["Identity/set", {
+            "accountId":"{{{fixture.AccountId}}}",
+            "update":{"{{{wireId}}}":{"name":"will not apply"},
+              "I22222222222222222222222222222222":{"name":"missing"}},
+            "destroy":["{{{wireId}}}","I{{{fixture.InboxId:N}}}",
+              "I22222222222222222222222222222222"]
+          }, "destroy"]]
+        }
+        """);
+        Assert.AreEqual("willDestroy", Arguments(destroyed)["notUpdated"]![wireId]!["type"]!.GetValue<string>());
+        Assert.AreEqual("notFound", Arguments(destroyed)["notUpdated"]!["I22222222222222222222222222222222"]!["type"]!
+            .GetValue<string>());
+        Assert.AreEqual(wireId, Arguments(destroyed)["destroyed"]![0]!.GetValue<string>());
+        Assert.AreEqual("forbidden", Arguments(destroyed)["notDestroyed"]![$"I{fixture.InboxId:N}"]!["type"]!
+            .GetValue<string>());
+        Assert.AreEqual("notFound", Arguments(destroyed)["notDestroyed"]!["I22222222222222222222222222222222"]!["type"]!
+            .GetValue<string>());
+    }
+
+    [TestMethod]
     public async Task IdentityAndSubmissionRejectInvalidWireValues()
     {
         await using var fixture = await JmapFixture.CreateAsync();

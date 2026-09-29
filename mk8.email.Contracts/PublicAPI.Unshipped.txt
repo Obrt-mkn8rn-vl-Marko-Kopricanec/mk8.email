@@ -1,6 +1,6 @@
 #nullable enable
-const mk8.email.Contracts.Messaging.ApplicationOperations.MailOperationExecute = "mail.operation.execute.v21" -> string!
-const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v28" -> string!
+const mk8.email.Contracts.Messaging.ApplicationOperations.MailOperationExecute = "mail.operation.execute.v22" -> string!
+const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v29" -> string!
 mk8.email.Contracts.Messaging.DistributedContractVersions
 mk8.email.Contracts.Messaging.JmapAccountProfile
 mk8.email.Contracts.Messaging.JmapAccountProfile.<Clone>$() -> mk8.email.Contracts.Messaging.JmapAccountProfile!
@@ -780,6 +780,131 @@ mk8.email.Contracts.Messaging.MailIdentityAddressSnapshot.Equals(mk8.email.Contr
 mk8.email.Contracts.Messaging.MailIdentityAddressSnapshot.MailIdentityAddressSnapshot(string? Name, string! Email) -> void
 mk8.email.Contracts.Messaging.MailIdentityAddressSnapshot.Name.get -> string?
 mk8.email.Contracts.Messaging.MailIdentityAddressSnapshot.Name.init -> void
+mk8.email.Contracts.Messaging.MailIdentityCreate
+mk8.email.Contracts.Messaging.MailIdentityCreate.<Clone>$() -> mk8.email.Contracts.Messaging.MailIdentityCreate!
+mk8.email.Contracts.Messaging.MailIdentityCreate.CreationId.get -> string!
+mk8.email.Contracts.Messaging.MailIdentityCreate.CreationId.init -> void
+mk8.email.Contracts.Messaging.MailIdentityCreate.Deconstruct(out string! CreationId, out mk8.email.Contracts.Messaging.MailIdentityValues? Values) -> void
+mk8.email.Contracts.Messaging.MailIdentityCreate.Equals(mk8.email.Contracts.Messaging.MailIdentityCreate? other) -> bool
+mk8.email.Contracts.Messaging.MailIdentityCreate.MailIdentityCreate(string! CreationId, mk8.email.Contracts.Messaging.MailIdentityValues? Values) -> void
+mk8.email.Contracts.Messaging.MailIdentityCreate.Values.get -> mk8.email.Contracts.Messaging.MailIdentityValues?
+mk8.email.Contracts.Messaging.MailIdentityCreate.Values.init -> void
+mk8.email.Contracts.Messaging.MailIdentityCreateOutcome
+mk8.email.Contracts.Messaging.MailIdentityCreateOutcome.<Clone>$() -> mk8.email.Contracts.Messaging.MailIdentityCreateOutcome!
+mk8.email.Contracts.Messaging.MailIdentityCreateOutcome.CreationId.get -> string!
+mk8.email.Contracts.Messaging.MailIdentityCreateOutcome.CreationId.init -> void
+mk8.email.Contracts.Messaging.MailIdentityCreateOutcome.Deconstruct(out string! CreationId, out System.Guid? IdentityId, out mk8.email.Contracts.Messaging.MailIdentityMutationError Error) -> void
+mk8.email.Contracts.Messaging.MailIdentityCreateOutcome.Equals(mk8.email.Contracts.Messaging.MailIdentityCreateOutcome? other) -> bool
+mk8.email.Contracts.Messaging.MailIdentityCreateOutcome.Error.get -> mk8.email.Contracts.Messaging.MailIdentityMutationError
+mk8.email.Contracts.Messaging.MailIdentityCreateOutcome.Error.init -> void
+mk8.email.Contracts.Messaging.MailIdentityCreateOutcome.IdentityId.get -> System.Guid?
+mk8.email.Contracts.Messaging.MailIdentityCreateOutcome.IdentityId.init -> void
+mk8.email.Contracts.Messaging.MailIdentityCreateOutcome.MailIdentityCreateOutcome(string! CreationId, System.Guid? IdentityId, mk8.email.Contracts.Messaging.MailIdentityMutationError Error) -> void
+mk8.email.Contracts.Messaging.MailIdentityDestroy
+mk8.email.Contracts.Messaging.MailIdentityDestroy.<Clone>$() -> mk8.email.Contracts.Messaging.MailIdentityDestroy!
+mk8.email.Contracts.Messaging.MailIdentityDestroy.Deconstruct(out string! RequestedId, out mk8.email.Contracts.Messaging.MailIdentityTarget! Target) -> void
+mk8.email.Contracts.Messaging.MailIdentityDestroy.Equals(mk8.email.Contracts.Messaging.MailIdentityDestroy? other) -> bool
+mk8.email.Contracts.Messaging.MailIdentityDestroy.MailIdentityDestroy(string! RequestedId, mk8.email.Contracts.Messaging.MailIdentityTarget! Target) -> void
+mk8.email.Contracts.Messaging.MailIdentityDestroy.RequestedId.get -> string!
+mk8.email.Contracts.Messaging.MailIdentityDestroy.RequestedId.init -> void
+mk8.email.Contracts.Messaging.MailIdentityDestroy.Target.get -> mk8.email.Contracts.Messaging.MailIdentityTarget!
+mk8.email.Contracts.Messaging.MailIdentityDestroy.Target.init -> void
+mk8.email.Contracts.Messaging.MailIdentityDestroyOutcome
+mk8.email.Contracts.Messaging.MailIdentityDestroyOutcome.<Clone>$() -> mk8.email.Contracts.Messaging.MailIdentityDestroyOutcome!
+mk8.email.Contracts.Messaging.MailIdentityDestroyOutcome.Deconstruct(out string! RequestedId, out System.Guid? IdentityId, out mk8.email.Contracts.Messaging.MailIdentityMutationError Error) -> void
+mk8.email.Contracts.Messaging.MailIdentityDestroyOutcome.Equals(mk8.email.Contracts.Messaging.MailIdentityDestroyOutcome? other) -> bool
+mk8.email.Contracts.Messaging.MailIdentityDestroyOutcome.Error.get -> mk8.email.Contracts.Messaging.MailIdentityMutationError
+mk8.email.Contracts.Messaging.MailIdentityDestroyOutcome.Error.init -> void
+mk8.email.Contracts.Messaging.MailIdentityDestroyOutcome.IdentityId.get -> System.Guid?
+mk8.email.Contracts.Messaging.MailIdentityDestroyOutcome.IdentityId.init -> void
+mk8.email.Contracts.Messaging.MailIdentityDestroyOutcome.MailIdentityDestroyOutcome(string! RequestedId, System.Guid? IdentityId, mk8.email.Contracts.Messaging.MailIdentityMutationError Error) -> void
+mk8.email.Contracts.Messaging.MailIdentityDestroyOutcome.RequestedId.get -> string!
+mk8.email.Contracts.Messaging.MailIdentityDestroyOutcome.RequestedId.init -> void
+mk8.email.Contracts.Messaging.MailIdentityImmutableField
+mk8.email.Contracts.Messaging.MailIdentityImmutableField.Email = 1 -> mk8.email.Contracts.Messaging.MailIdentityImmutableField
+mk8.email.Contracts.Messaging.MailIdentityImmutableField.Id = 0 -> mk8.email.Contracts.Messaging.MailIdentityImmutableField
+mk8.email.Contracts.Messaging.MailIdentityImmutableField.MayDelete = 2 -> mk8.email.Contracts.Messaging.MailIdentityImmutableField
+mk8.email.Contracts.Messaging.MailIdentityMutationCommand
+mk8.email.Contracts.Messaging.MailIdentityMutationCommand.<Clone>$() -> mk8.email.Contracts.Messaging.MailIdentityMutationCommand!
+mk8.email.Contracts.Messaging.MailIdentityMutationCommand.AccountId.get -> System.Guid
+mk8.email.Contracts.Messaging.MailIdentityMutationCommand.AccountId.init -> void
+mk8.email.Contracts.Messaging.MailIdentityMutationCommand.Creates.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailIdentityCreate!>!
+mk8.email.Contracts.Messaging.MailIdentityMutationCommand.Creates.init -> void
+mk8.email.Contracts.Messaging.MailIdentityMutationCommand.Deconstruct(out System.Guid AccountId, out string? IfInState, out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailIdentityCreate!>! Creates, out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailIdentityUpdate!>! Updates, out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailIdentityDestroy!>! Destroys) -> void
+mk8.email.Contracts.Messaging.MailIdentityMutationCommand.Destroys.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailIdentityDestroy!>!
+mk8.email.Contracts.Messaging.MailIdentityMutationCommand.Destroys.init -> void
+mk8.email.Contracts.Messaging.MailIdentityMutationCommand.Equals(mk8.email.Contracts.Messaging.MailIdentityMutationCommand? other) -> bool
+mk8.email.Contracts.Messaging.MailIdentityMutationCommand.IfInState.get -> string?
+mk8.email.Contracts.Messaging.MailIdentityMutationCommand.IfInState.init -> void
+mk8.email.Contracts.Messaging.MailIdentityMutationCommand.MailIdentityMutationCommand(System.Guid AccountId, string? IfInState, System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailIdentityCreate!>! Creates, System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailIdentityUpdate!>! Updates, System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailIdentityDestroy!>! Destroys) -> void
+mk8.email.Contracts.Messaging.MailIdentityMutationCommand.Updates.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailIdentityUpdate!>!
+mk8.email.Contracts.Messaging.MailIdentityMutationCommand.Updates.init -> void
+mk8.email.Contracts.Messaging.MailIdentityMutationError
+mk8.email.Contracts.Messaging.MailIdentityMutationError.Forbidden = 6 -> mk8.email.Contracts.Messaging.MailIdentityMutationError
+mk8.email.Contracts.Messaging.MailIdentityMutationError.ForbiddenFrom = 3 -> mk8.email.Contracts.Messaging.MailIdentityMutationError
+mk8.email.Contracts.Messaging.MailIdentityMutationError.InvalidProperties = 2 -> mk8.email.Contracts.Messaging.MailIdentityMutationError
+mk8.email.Contracts.Messaging.MailIdentityMutationError.None = 0 -> mk8.email.Contracts.Messaging.MailIdentityMutationError
+mk8.email.Contracts.Messaging.MailIdentityMutationError.NotFound = 4 -> mk8.email.Contracts.Messaging.MailIdentityMutationError
+mk8.email.Contracts.Messaging.MailIdentityMutationError.Skipped = 1 -> mk8.email.Contracts.Messaging.MailIdentityMutationError
+mk8.email.Contracts.Messaging.MailIdentityMutationError.WillDestroy = 5 -> mk8.email.Contracts.Messaging.MailIdentityMutationError
+mk8.email.Contracts.Messaging.MailIdentityMutationResult
+mk8.email.Contracts.Messaging.MailIdentityMutationResult.<Clone>$() -> mk8.email.Contracts.Messaging.MailIdentityMutationResult!
+mk8.email.Contracts.Messaging.MailIdentityMutationResult.Created.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailIdentityCreateOutcome!>!
+mk8.email.Contracts.Messaging.MailIdentityMutationResult.Created.init -> void
+mk8.email.Contracts.Messaging.MailIdentityMutationResult.Deconstruct(out mk8.email.Contracts.Messaging.MailIdentityMutationStatus Status, out string? OldState, out string? NewState, out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailIdentityCreateOutcome!>! Created, out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailIdentityUpdateOutcome!>! Updated, out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailIdentityDestroyOutcome!>! Destroyed) -> void
+mk8.email.Contracts.Messaging.MailIdentityMutationResult.Destroyed.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailIdentityDestroyOutcome!>!
+mk8.email.Contracts.Messaging.MailIdentityMutationResult.Destroyed.init -> void
+mk8.email.Contracts.Messaging.MailIdentityMutationResult.Equals(mk8.email.Contracts.Messaging.MailIdentityMutationResult? other) -> bool
+mk8.email.Contracts.Messaging.MailIdentityMutationResult.MailIdentityMutationResult(mk8.email.Contracts.Messaging.MailIdentityMutationStatus Status, string? OldState, string? NewState, System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailIdentityCreateOutcome!>! Created, System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailIdentityUpdateOutcome!>! Updated, System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailIdentityDestroyOutcome!>! Destroyed) -> void
+mk8.email.Contracts.Messaging.MailIdentityMutationResult.NewState.get -> string?
+mk8.email.Contracts.Messaging.MailIdentityMutationResult.NewState.init -> void
+mk8.email.Contracts.Messaging.MailIdentityMutationResult.OldState.get -> string?
+mk8.email.Contracts.Messaging.MailIdentityMutationResult.OldState.init -> void
+mk8.email.Contracts.Messaging.MailIdentityMutationResult.Status.get -> mk8.email.Contracts.Messaging.MailIdentityMutationStatus
+mk8.email.Contracts.Messaging.MailIdentityMutationResult.Status.init -> void
+mk8.email.Contracts.Messaging.MailIdentityMutationResult.Updated.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailIdentityUpdateOutcome!>!
+mk8.email.Contracts.Messaging.MailIdentityMutationResult.Updated.init -> void
+mk8.email.Contracts.Messaging.MailIdentityMutationStatus
+mk8.email.Contracts.Messaging.MailIdentityMutationStatus.AccountNotFound = 1 -> mk8.email.Contracts.Messaging.MailIdentityMutationStatus
+mk8.email.Contracts.Messaging.MailIdentityMutationStatus.Ok = 0 -> mk8.email.Contracts.Messaging.MailIdentityMutationStatus
+mk8.email.Contracts.Messaging.MailIdentityMutationStatus.StateMismatch = 2 -> mk8.email.Contracts.Messaging.MailIdentityMutationStatus
+mk8.email.Contracts.Messaging.MailIdentityPatch
+mk8.email.Contracts.Messaging.MailIdentityPatch.<Clone>$() -> mk8.email.Contracts.Messaging.MailIdentityPatch!
+mk8.email.Contracts.Messaging.MailIdentityPatch.AssertEmail.get -> bool
+mk8.email.Contracts.Messaging.MailIdentityPatch.AssertEmail.init -> void
+mk8.email.Contracts.Messaging.MailIdentityPatch.AssertId.get -> bool
+mk8.email.Contracts.Messaging.MailIdentityPatch.AssertId.init -> void
+mk8.email.Contracts.Messaging.MailIdentityPatch.AssertMayDelete.get -> bool
+mk8.email.Contracts.Messaging.MailIdentityPatch.AssertMayDelete.init -> void
+mk8.email.Contracts.Messaging.MailIdentityPatch.Bcc.get -> mk8.email.Contracts.Messaging.MailIdentityAddressListSnapshot?
+mk8.email.Contracts.Messaging.MailIdentityPatch.Bcc.init -> void
+mk8.email.Contracts.Messaging.MailIdentityPatch.Deconstruct(out bool SetName, out string? Name, out bool SetReplyTo, out mk8.email.Contracts.Messaging.MailIdentityAddressListSnapshot? ReplyTo, out bool SetBcc, out mk8.email.Contracts.Messaging.MailIdentityAddressListSnapshot? Bcc, out bool SetTextSignature, out string? TextSignature, out bool SetHtmlSignature, out string? HtmlSignature, out bool AssertId, out string? Id, out bool AssertEmail, out string? Email, out bool AssertMayDelete, out bool? MayDelete) -> void
+mk8.email.Contracts.Messaging.MailIdentityPatch.Email.get -> string?
+mk8.email.Contracts.Messaging.MailIdentityPatch.Email.init -> void
+mk8.email.Contracts.Messaging.MailIdentityPatch.Equals(mk8.email.Contracts.Messaging.MailIdentityPatch? other) -> bool
+mk8.email.Contracts.Messaging.MailIdentityPatch.HtmlSignature.get -> string?
+mk8.email.Contracts.Messaging.MailIdentityPatch.HtmlSignature.init -> void
+mk8.email.Contracts.Messaging.MailIdentityPatch.Id.get -> string?
+mk8.email.Contracts.Messaging.MailIdentityPatch.Id.init -> void
+mk8.email.Contracts.Messaging.MailIdentityPatch.MailIdentityPatch(bool SetName, string? Name, bool SetReplyTo, mk8.email.Contracts.Messaging.MailIdentityAddressListSnapshot? ReplyTo, bool SetBcc, mk8.email.Contracts.Messaging.MailIdentityAddressListSnapshot? Bcc, bool SetTextSignature, string? TextSignature, bool SetHtmlSignature, string? HtmlSignature, bool AssertId, string? Id, bool AssertEmail, string? Email, bool AssertMayDelete, bool? MayDelete) -> void
+mk8.email.Contracts.Messaging.MailIdentityPatch.MayDelete.get -> bool?
+mk8.email.Contracts.Messaging.MailIdentityPatch.MayDelete.init -> void
+mk8.email.Contracts.Messaging.MailIdentityPatch.Name.get -> string?
+mk8.email.Contracts.Messaging.MailIdentityPatch.Name.init -> void
+mk8.email.Contracts.Messaging.MailIdentityPatch.ReplyTo.get -> mk8.email.Contracts.Messaging.MailIdentityAddressListSnapshot?
+mk8.email.Contracts.Messaging.MailIdentityPatch.ReplyTo.init -> void
+mk8.email.Contracts.Messaging.MailIdentityPatch.SetBcc.get -> bool
+mk8.email.Contracts.Messaging.MailIdentityPatch.SetBcc.init -> void
+mk8.email.Contracts.Messaging.MailIdentityPatch.SetHtmlSignature.get -> bool
+mk8.email.Contracts.Messaging.MailIdentityPatch.SetHtmlSignature.init -> void
+mk8.email.Contracts.Messaging.MailIdentityPatch.SetName.get -> bool
+mk8.email.Contracts.Messaging.MailIdentityPatch.SetName.init -> void
+mk8.email.Contracts.Messaging.MailIdentityPatch.SetReplyTo.get -> bool
+mk8.email.Contracts.Messaging.MailIdentityPatch.SetReplyTo.init -> void
+mk8.email.Contracts.Messaging.MailIdentityPatch.SetTextSignature.get -> bool
+mk8.email.Contracts.Messaging.MailIdentityPatch.SetTextSignature.init -> void
+mk8.email.Contracts.Messaging.MailIdentityPatch.TextSignature.get -> string?
+mk8.email.Contracts.Messaging.MailIdentityPatch.TextSignature.init -> void
 mk8.email.Contracts.Messaging.MailIdentityReadCommand
 mk8.email.Contracts.Messaging.MailIdentityReadCommand.<Clone>$() -> mk8.email.Contracts.Messaging.MailIdentityReadCommand!
 mk8.email.Contracts.Messaging.MailIdentityReadCommand.AccountId.get -> System.Guid
@@ -825,6 +950,56 @@ mk8.email.Contracts.Messaging.MailIdentitySnapshot.ReplyTo.get -> mk8.email.Cont
 mk8.email.Contracts.Messaging.MailIdentitySnapshot.ReplyTo.init -> void
 mk8.email.Contracts.Messaging.MailIdentitySnapshot.TextSignature.get -> string!
 mk8.email.Contracts.Messaging.MailIdentitySnapshot.TextSignature.init -> void
+mk8.email.Contracts.Messaging.MailIdentityTarget
+mk8.email.Contracts.Messaging.MailIdentityTarget.<Clone>$() -> mk8.email.Contracts.Messaging.MailIdentityTarget!
+mk8.email.Contracts.Messaging.MailIdentityTarget.CreatedKey.get -> string?
+mk8.email.Contracts.Messaging.MailIdentityTarget.CreatedKey.init -> void
+mk8.email.Contracts.Messaging.MailIdentityTarget.Deconstruct(out System.Guid? ExistingId, out string? CreatedKey) -> void
+mk8.email.Contracts.Messaging.MailIdentityTarget.Equals(mk8.email.Contracts.Messaging.MailIdentityTarget? other) -> bool
+mk8.email.Contracts.Messaging.MailIdentityTarget.ExistingId.get -> System.Guid?
+mk8.email.Contracts.Messaging.MailIdentityTarget.ExistingId.init -> void
+mk8.email.Contracts.Messaging.MailIdentityTarget.MailIdentityTarget(System.Guid? ExistingId, string? CreatedKey) -> void
+mk8.email.Contracts.Messaging.MailIdentityUpdate
+mk8.email.Contracts.Messaging.MailIdentityUpdate.<Clone>$() -> mk8.email.Contracts.Messaging.MailIdentityUpdate!
+mk8.email.Contracts.Messaging.MailIdentityUpdate.Deconstruct(out string! RequestedId, out mk8.email.Contracts.Messaging.MailIdentityTarget! Target, out mk8.email.Contracts.Messaging.MailIdentityPatch? Patch) -> void
+mk8.email.Contracts.Messaging.MailIdentityUpdate.Equals(mk8.email.Contracts.Messaging.MailIdentityUpdate? other) -> bool
+mk8.email.Contracts.Messaging.MailIdentityUpdate.MailIdentityUpdate(string! RequestedId, mk8.email.Contracts.Messaging.MailIdentityTarget! Target, mk8.email.Contracts.Messaging.MailIdentityPatch? Patch) -> void
+mk8.email.Contracts.Messaging.MailIdentityUpdate.Patch.get -> mk8.email.Contracts.Messaging.MailIdentityPatch?
+mk8.email.Contracts.Messaging.MailIdentityUpdate.Patch.init -> void
+mk8.email.Contracts.Messaging.MailIdentityUpdate.RequestedId.get -> string!
+mk8.email.Contracts.Messaging.MailIdentityUpdate.RequestedId.init -> void
+mk8.email.Contracts.Messaging.MailIdentityUpdate.Target.get -> mk8.email.Contracts.Messaging.MailIdentityTarget!
+mk8.email.Contracts.Messaging.MailIdentityUpdate.Target.init -> void
+mk8.email.Contracts.Messaging.MailIdentityUpdateOutcome
+mk8.email.Contracts.Messaging.MailIdentityUpdateOutcome.<Clone>$() -> mk8.email.Contracts.Messaging.MailIdentityUpdateOutcome!
+mk8.email.Contracts.Messaging.MailIdentityUpdateOutcome.Deconstruct(out string! RequestedId, out System.Guid? IdentityId, out mk8.email.Contracts.Messaging.MailIdentityMutationError Error, out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailIdentityImmutableField>? InvalidFields) -> void
+mk8.email.Contracts.Messaging.MailIdentityUpdateOutcome.Equals(mk8.email.Contracts.Messaging.MailIdentityUpdateOutcome? other) -> bool
+mk8.email.Contracts.Messaging.MailIdentityUpdateOutcome.Error.get -> mk8.email.Contracts.Messaging.MailIdentityMutationError
+mk8.email.Contracts.Messaging.MailIdentityUpdateOutcome.Error.init -> void
+mk8.email.Contracts.Messaging.MailIdentityUpdateOutcome.IdentityId.get -> System.Guid?
+mk8.email.Contracts.Messaging.MailIdentityUpdateOutcome.IdentityId.init -> void
+mk8.email.Contracts.Messaging.MailIdentityUpdateOutcome.InvalidFields.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailIdentityImmutableField>?
+mk8.email.Contracts.Messaging.MailIdentityUpdateOutcome.InvalidFields.init -> void
+mk8.email.Contracts.Messaging.MailIdentityUpdateOutcome.MailIdentityUpdateOutcome(string! RequestedId, System.Guid? IdentityId, mk8.email.Contracts.Messaging.MailIdentityMutationError Error, System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailIdentityImmutableField>? InvalidFields) -> void
+mk8.email.Contracts.Messaging.MailIdentityUpdateOutcome.RequestedId.get -> string!
+mk8.email.Contracts.Messaging.MailIdentityUpdateOutcome.RequestedId.init -> void
+mk8.email.Contracts.Messaging.MailIdentityValues
+mk8.email.Contracts.Messaging.MailIdentityValues.<Clone>$() -> mk8.email.Contracts.Messaging.MailIdentityValues!
+mk8.email.Contracts.Messaging.MailIdentityValues.Bcc.get -> mk8.email.Contracts.Messaging.MailIdentityAddressListSnapshot?
+mk8.email.Contracts.Messaging.MailIdentityValues.Bcc.init -> void
+mk8.email.Contracts.Messaging.MailIdentityValues.Deconstruct(out string! Name, out string? Email, out mk8.email.Contracts.Messaging.MailIdentityAddressListSnapshot? ReplyTo, out mk8.email.Contracts.Messaging.MailIdentityAddressListSnapshot? Bcc, out string! TextSignature, out string! HtmlSignature) -> void
+mk8.email.Contracts.Messaging.MailIdentityValues.Email.get -> string?
+mk8.email.Contracts.Messaging.MailIdentityValues.Email.init -> void
+mk8.email.Contracts.Messaging.MailIdentityValues.Equals(mk8.email.Contracts.Messaging.MailIdentityValues? other) -> bool
+mk8.email.Contracts.Messaging.MailIdentityValues.HtmlSignature.get -> string!
+mk8.email.Contracts.Messaging.MailIdentityValues.HtmlSignature.init -> void
+mk8.email.Contracts.Messaging.MailIdentityValues.MailIdentityValues(string! Name, string? Email, mk8.email.Contracts.Messaging.MailIdentityAddressListSnapshot? ReplyTo, mk8.email.Contracts.Messaging.MailIdentityAddressListSnapshot? Bcc, string! TextSignature, string! HtmlSignature) -> void
+mk8.email.Contracts.Messaging.MailIdentityValues.Name.get -> string!
+mk8.email.Contracts.Messaging.MailIdentityValues.Name.init -> void
+mk8.email.Contracts.Messaging.MailIdentityValues.ReplyTo.get -> mk8.email.Contracts.Messaging.MailIdentityAddressListSnapshot?
+mk8.email.Contracts.Messaging.MailIdentityValues.ReplyTo.init -> void
+mk8.email.Contracts.Messaging.MailIdentityValues.TextSignature.get -> string!
+mk8.email.Contracts.Messaging.MailIdentityValues.TextSignature.init -> void
 mk8.email.Contracts.Messaging.MailImportCommand
 mk8.email.Contracts.Messaging.MailImportCommand.<Clone>$() -> mk8.email.Contracts.Messaging.MailImportCommand!
 mk8.email.Contracts.Messaging.MailImportCommand.AccountId.get -> System.Guid
@@ -1648,6 +1823,27 @@ override mk8.email.Contracts.Messaging.MailIdentityAddressListSnapshot.ToString(
 override mk8.email.Contracts.Messaging.MailIdentityAddressSnapshot.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.MailIdentityAddressSnapshot.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.MailIdentityAddressSnapshot.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailIdentityCreate.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailIdentityCreate.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailIdentityCreate.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailIdentityCreateOutcome.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailIdentityCreateOutcome.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailIdentityCreateOutcome.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailIdentityDestroy.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailIdentityDestroy.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailIdentityDestroy.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailIdentityDestroyOutcome.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailIdentityDestroyOutcome.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailIdentityDestroyOutcome.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailIdentityMutationCommand.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailIdentityMutationCommand.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailIdentityMutationCommand.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailIdentityMutationResult.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailIdentityMutationResult.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailIdentityMutationResult.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailIdentityPatch.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailIdentityPatch.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailIdentityPatch.ToString() -> string!
 override mk8.email.Contracts.Messaging.MailIdentityReadCommand.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.MailIdentityReadCommand.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.MailIdentityReadCommand.ToString() -> string!
@@ -1657,6 +1853,18 @@ override mk8.email.Contracts.Messaging.MailIdentityReadResult.ToString() -> stri
 override mk8.email.Contracts.Messaging.MailIdentitySnapshot.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.MailIdentitySnapshot.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.MailIdentitySnapshot.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailIdentityTarget.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailIdentityTarget.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailIdentityTarget.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailIdentityUpdate.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailIdentityUpdate.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailIdentityUpdate.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailIdentityUpdateOutcome.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailIdentityUpdateOutcome.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailIdentityUpdateOutcome.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailIdentityValues.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailIdentityValues.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailIdentityValues.ToString() -> string!
 override mk8.email.Contracts.Messaging.MailImportCommand.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.MailImportCommand.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.MailImportCommand.ToString() -> string!
@@ -2034,12 +2242,34 @@ static mk8.email.Contracts.Messaging.MailIdentityAddressListSnapshot.operator !=
 static mk8.email.Contracts.Messaging.MailIdentityAddressListSnapshot.operator ==(mk8.email.Contracts.Messaging.MailIdentityAddressListSnapshot? left, mk8.email.Contracts.Messaging.MailIdentityAddressListSnapshot? right) -> bool
 static mk8.email.Contracts.Messaging.MailIdentityAddressSnapshot.operator !=(mk8.email.Contracts.Messaging.MailIdentityAddressSnapshot? left, mk8.email.Contracts.Messaging.MailIdentityAddressSnapshot? right) -> bool
 static mk8.email.Contracts.Messaging.MailIdentityAddressSnapshot.operator ==(mk8.email.Contracts.Messaging.MailIdentityAddressSnapshot? left, mk8.email.Contracts.Messaging.MailIdentityAddressSnapshot? right) -> bool
+static mk8.email.Contracts.Messaging.MailIdentityCreate.operator !=(mk8.email.Contracts.Messaging.MailIdentityCreate? left, mk8.email.Contracts.Messaging.MailIdentityCreate? right) -> bool
+static mk8.email.Contracts.Messaging.MailIdentityCreate.operator ==(mk8.email.Contracts.Messaging.MailIdentityCreate? left, mk8.email.Contracts.Messaging.MailIdentityCreate? right) -> bool
+static mk8.email.Contracts.Messaging.MailIdentityCreateOutcome.operator !=(mk8.email.Contracts.Messaging.MailIdentityCreateOutcome? left, mk8.email.Contracts.Messaging.MailIdentityCreateOutcome? right) -> bool
+static mk8.email.Contracts.Messaging.MailIdentityCreateOutcome.operator ==(mk8.email.Contracts.Messaging.MailIdentityCreateOutcome? left, mk8.email.Contracts.Messaging.MailIdentityCreateOutcome? right) -> bool
+static mk8.email.Contracts.Messaging.MailIdentityDestroy.operator !=(mk8.email.Contracts.Messaging.MailIdentityDestroy? left, mk8.email.Contracts.Messaging.MailIdentityDestroy? right) -> bool
+static mk8.email.Contracts.Messaging.MailIdentityDestroy.operator ==(mk8.email.Contracts.Messaging.MailIdentityDestroy? left, mk8.email.Contracts.Messaging.MailIdentityDestroy? right) -> bool
+static mk8.email.Contracts.Messaging.MailIdentityDestroyOutcome.operator !=(mk8.email.Contracts.Messaging.MailIdentityDestroyOutcome? left, mk8.email.Contracts.Messaging.MailIdentityDestroyOutcome? right) -> bool
+static mk8.email.Contracts.Messaging.MailIdentityDestroyOutcome.operator ==(mk8.email.Contracts.Messaging.MailIdentityDestroyOutcome? left, mk8.email.Contracts.Messaging.MailIdentityDestroyOutcome? right) -> bool
+static mk8.email.Contracts.Messaging.MailIdentityMutationCommand.operator !=(mk8.email.Contracts.Messaging.MailIdentityMutationCommand? left, mk8.email.Contracts.Messaging.MailIdentityMutationCommand? right) -> bool
+static mk8.email.Contracts.Messaging.MailIdentityMutationCommand.operator ==(mk8.email.Contracts.Messaging.MailIdentityMutationCommand? left, mk8.email.Contracts.Messaging.MailIdentityMutationCommand? right) -> bool
+static mk8.email.Contracts.Messaging.MailIdentityMutationResult.operator !=(mk8.email.Contracts.Messaging.MailIdentityMutationResult? left, mk8.email.Contracts.Messaging.MailIdentityMutationResult? right) -> bool
+static mk8.email.Contracts.Messaging.MailIdentityMutationResult.operator ==(mk8.email.Contracts.Messaging.MailIdentityMutationResult? left, mk8.email.Contracts.Messaging.MailIdentityMutationResult? right) -> bool
+static mk8.email.Contracts.Messaging.MailIdentityPatch.operator !=(mk8.email.Contracts.Messaging.MailIdentityPatch? left, mk8.email.Contracts.Messaging.MailIdentityPatch? right) -> bool
+static mk8.email.Contracts.Messaging.MailIdentityPatch.operator ==(mk8.email.Contracts.Messaging.MailIdentityPatch? left, mk8.email.Contracts.Messaging.MailIdentityPatch? right) -> bool
 static mk8.email.Contracts.Messaging.MailIdentityReadCommand.operator !=(mk8.email.Contracts.Messaging.MailIdentityReadCommand? left, mk8.email.Contracts.Messaging.MailIdentityReadCommand? right) -> bool
 static mk8.email.Contracts.Messaging.MailIdentityReadCommand.operator ==(mk8.email.Contracts.Messaging.MailIdentityReadCommand? left, mk8.email.Contracts.Messaging.MailIdentityReadCommand? right) -> bool
 static mk8.email.Contracts.Messaging.MailIdentityReadResult.operator !=(mk8.email.Contracts.Messaging.MailIdentityReadResult? left, mk8.email.Contracts.Messaging.MailIdentityReadResult? right) -> bool
 static mk8.email.Contracts.Messaging.MailIdentityReadResult.operator ==(mk8.email.Contracts.Messaging.MailIdentityReadResult? left, mk8.email.Contracts.Messaging.MailIdentityReadResult? right) -> bool
 static mk8.email.Contracts.Messaging.MailIdentitySnapshot.operator !=(mk8.email.Contracts.Messaging.MailIdentitySnapshot? left, mk8.email.Contracts.Messaging.MailIdentitySnapshot? right) -> bool
 static mk8.email.Contracts.Messaging.MailIdentitySnapshot.operator ==(mk8.email.Contracts.Messaging.MailIdentitySnapshot? left, mk8.email.Contracts.Messaging.MailIdentitySnapshot? right) -> bool
+static mk8.email.Contracts.Messaging.MailIdentityTarget.operator !=(mk8.email.Contracts.Messaging.MailIdentityTarget? left, mk8.email.Contracts.Messaging.MailIdentityTarget? right) -> bool
+static mk8.email.Contracts.Messaging.MailIdentityTarget.operator ==(mk8.email.Contracts.Messaging.MailIdentityTarget? left, mk8.email.Contracts.Messaging.MailIdentityTarget? right) -> bool
+static mk8.email.Contracts.Messaging.MailIdentityUpdate.operator !=(mk8.email.Contracts.Messaging.MailIdentityUpdate? left, mk8.email.Contracts.Messaging.MailIdentityUpdate? right) -> bool
+static mk8.email.Contracts.Messaging.MailIdentityUpdate.operator ==(mk8.email.Contracts.Messaging.MailIdentityUpdate? left, mk8.email.Contracts.Messaging.MailIdentityUpdate? right) -> bool
+static mk8.email.Contracts.Messaging.MailIdentityUpdateOutcome.operator !=(mk8.email.Contracts.Messaging.MailIdentityUpdateOutcome? left, mk8.email.Contracts.Messaging.MailIdentityUpdateOutcome? right) -> bool
+static mk8.email.Contracts.Messaging.MailIdentityUpdateOutcome.operator ==(mk8.email.Contracts.Messaging.MailIdentityUpdateOutcome? left, mk8.email.Contracts.Messaging.MailIdentityUpdateOutcome? right) -> bool
+static mk8.email.Contracts.Messaging.MailIdentityValues.operator !=(mk8.email.Contracts.Messaging.MailIdentityValues? left, mk8.email.Contracts.Messaging.MailIdentityValues? right) -> bool
+static mk8.email.Contracts.Messaging.MailIdentityValues.operator ==(mk8.email.Contracts.Messaging.MailIdentityValues? left, mk8.email.Contracts.Messaging.MailIdentityValues? right) -> bool
 static mk8.email.Contracts.Messaging.MailImportCommand.operator !=(mk8.email.Contracts.Messaging.MailImportCommand? left, mk8.email.Contracts.Messaging.MailImportCommand? right) -> bool
 static mk8.email.Contracts.Messaging.MailImportCommand.operator ==(mk8.email.Contracts.Messaging.MailImportCommand? left, mk8.email.Contracts.Messaging.MailImportCommand? right) -> bool
 static mk8.email.Contracts.Messaging.MailImportItem.operator !=(mk8.email.Contracts.Messaging.MailImportItem? left, mk8.email.Contracts.Messaging.MailImportItem? right) -> bool

@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Security.Cryptography;
 using mk8.email.Contracts.Messaging;
 using Microsoft.EntityFrameworkCore;
@@ -26,6 +27,7 @@ public sealed class JmapRequestProcessor
     private readonly IMailSubmissionReader? _submissionReader;
     private readonly IMailBlobCopyService? _blobCopyService;
     private readonly IMailVacationMutator? _vacationMutator;
+    private readonly IMailSubmissionQueryService? _submissionQueryService;
     private readonly EmailDbContext _database;
     private readonly EnvironmentConfig _environment;
     private readonly LargeObjectTransactionEffects _blobEffects;
@@ -35,6 +37,10 @@ public sealed class JmapRequestProcessor
     {
         PropertyNameCaseInsensitive = false,
         MaxDepth = 256,
+    };
+    private static readonly JsonSerializerOptions StrictReceiptJsonOptions = new(ReceiptJsonOptions)
+    {
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
     };
 
     public JmapRequestProcessor(
@@ -46,7 +52,7 @@ public sealed class JmapRequestProcessor
         ILogger<JmapRequestProcessor> logger,
         ApplicationOperationReceiptStore? receipts = null)
         : this(methods, sessions, database, environment, blobEffects, logger, receipts,
-            null, null, null, null, null, null, null, null, null, null)
+            null, null, null, null, null, null, null, null, null, null, null)
     {
     }
 
@@ -67,7 +73,8 @@ public sealed class JmapRequestProcessor
         IMailThreadReader? threadReader,
         IMailSubmissionReader? submissionReader,
         IMailBlobCopyService? blobCopyService,
-        IMailVacationMutator? vacationMutator)
+        IMailVacationMutator? vacationMutator,
+        IMailSubmissionQueryService? submissionQueryService)
     {
         _methods = methods.ToDictionary(method => ValidRegisteredOperation(method.Operation, method.Feature));
         _sessions = sessions;
@@ -118,6 +125,7 @@ public sealed class JmapRequestProcessor
         _submissionReader = submissionReader;
         _blobCopyService = blobCopyService;
         _vacationMutator = vacationMutator;
+        _submissionQueryService = submissionQueryService;
         _database = database;
         _environment = environment;
         _blobEffects = blobEffects;
@@ -188,6 +196,12 @@ public sealed class JmapRequestProcessor
                 .ConfigureAwait(false);
         else if (command.Operation == MailOperationKind.MutateVacationSettings && features.Contains(MailFeature.AutomaticReplies))
             response = await ExecuteVacationSetAsync(command, context, user, receiptKey, cancellationToken)
+                .ConfigureAwait(false);
+        else if (command.Operation == MailOperationKind.FindSubmissions && features.Contains(MailFeature.Submission))
+            response = await ExecuteSubmissionQueryAsync(command, context, user, receiptKey, cancellationToken)
+                .ConfigureAwait(false);
+        else if (command.Operation == MailOperationKind.FindSubmissionChanges && features.Contains(MailFeature.Submission))
+            response = await ExecuteSubmissionQueryChangesAsync(command, context, user, receiptKey, cancellationToken)
                 .ConfigureAwait(false);
         else
         {
@@ -396,6 +410,44 @@ public sealed class JmapRequestProcessor
         }, receiptKey, cancellationToken);
     }
 
+    private Task<MailOperationResponse> ExecuteSubmissionQueryAsync(
+        MailOperationCommand command,
+        JmapInvocationContext context,
+        AuthenticatedMailUser user,
+        ApplicationReceiptKey? receiptKey,
+        CancellationToken cancellationToken)
+    {
+        var query = ParseSubmissionQueryCommand(command.Arguments);
+        var service = _submissionQueryService
+            ?? throw new InvalidOperationException("The submission query service is not configured.");
+        return InvokeAtomicallyAsync(command.Operation, context, async token =>
+        {
+            var result = await service.QueryAsync(query, user, token).ConfigureAwait(false);
+            var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
+                ?? throw new InvalidOperationException("The submission query service returned an incomplete result.");
+            return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
+        }, receiptKey, cancellationToken);
+    }
+
+    private Task<MailOperationResponse> ExecuteSubmissionQueryChangesAsync(
+        MailOperationCommand command,
+        JmapInvocationContext context,
+        AuthenticatedMailUser user,
+        ApplicationReceiptKey? receiptKey,
+        CancellationToken cancellationToken)
+    {
+        var query = ParseSubmissionQueryChangesCommand(command.Arguments);
+        var service = _submissionQueryService
+            ?? throw new InvalidOperationException("The submission query service is not configured.");
+        return InvokeAtomicallyAsync(command.Operation, context, async token =>
+        {
+            var result = await service.QueryChangesAsync(query, user, token).ConfigureAwait(false);
+            var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
+                ?? throw new InvalidOperationException("The submission query service returned an incomplete result.");
+            return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
+        }, receiptKey, cancellationToken);
+    }
+
     private static MailFolderReadCommand ParseFolderCommand(JsonObject arguments)
     {
         if (arguments.Count != 3 || !arguments.ContainsKey("accountId")
@@ -583,6 +635,88 @@ public sealed class JmapRequestProcessor
             throw NotRequest("The vacation mutation command contains invalid values.");
         }
     }
+
+    private MailSubmissionQueryCommand ParseSubmissionQueryCommand(JsonObject arguments)
+    {
+        if (arguments.Count != 8 || !arguments.ContainsKey("accountId")
+            || !arguments.ContainsKey("criteria") || !arguments.ContainsKey("checkAccountOnly")
+            || !arguments.ContainsKey("position") || !arguments.ContainsKey("anchorId")
+            || !arguments.ContainsKey("anchorCanMatch")
+            || !arguments.ContainsKey("anchorOffset") || !arguments.ContainsKey("limit"))
+            throw NotRequest("The submission query command has an invalid shape.");
+        try
+        {
+            var query = JsonSerializer.Deserialize<MailSubmissionQueryCommand>(arguments, StrictReceiptJsonOptions)
+                ?? throw NotRequest("The submission query command is missing.");
+            ValidateSubmissionCriteria(query.Criteria);
+            if (query.Position is < -9_007_199_254_740_991L or > 9_007_199_254_740_991L
+                || query.AnchorOffset is < -9_007_199_254_740_991L or > 9_007_199_254_740_991L
+                || query.AnchorId is null && query.AnchorCanMatch
+                || query.Limit < 0 || query.Limit > _environment.Jmap.MaxObjectsInGet)
+                throw NotRequest("The submission query window is invalid.");
+            return query;
+        }
+        catch (JsonException)
+        {
+            throw NotRequest("The submission query command contains invalid values.");
+        }
+    }
+
+    private static MailSubmissionQueryChangesCommand ParseSubmissionQueryChangesCommand(JsonObject arguments)
+    {
+        if (arguments.Count != 5 || !arguments.ContainsKey("accountId")
+            || !arguments.ContainsKey("criteria") || !arguments.ContainsKey("checkAccountOnly")
+            || !arguments.ContainsKey("sinceState") || !arguments.ContainsKey("maxChanges"))
+            throw NotRequest("The submission query-changes command has an invalid shape.");
+        try
+        {
+            var query = JsonSerializer.Deserialize<MailSubmissionQueryChangesCommand>(arguments, StrictReceiptJsonOptions)
+                ?? throw NotRequest("The submission query-changes command is missing.");
+            ValidateSubmissionCriteria(query.Criteria);
+            if (query.SinceState is null
+                || query.MaxChanges is < 0 or > 9_007_199_254_740_991L)
+                throw NotRequest("The submission query-changes values are invalid.");
+            return query;
+        }
+        catch (JsonException)
+        {
+            throw NotRequest("The submission query-changes command contains invalid values.");
+        }
+    }
+
+    private static void ValidateSubmissionCriteria(MailSubmissionQueryCriteria? criteria)
+    {
+        if (criteria?.Sort is null || criteria.Sort.Any(item => item is null
+            || !Enum.IsDefined(item.Field) || !Enum.IsDefined(item.Collation)))
+            throw NotRequest("The submission query sort is invalid.");
+        ValidateSubmissionFilter(criteria.Filter, 0);
+    }
+
+    private static void ValidateSubmissionFilter(MailSubmissionFilter? filter, int depth)
+    {
+        if (filter is null) return;
+        if (depth > 64 || !Enum.IsDefined(filter.Operator))
+            throw NotRequest("The submission query filter is invalid.");
+        if (filter.Operator != MailSubmissionFilterOperator.Condition)
+        {
+            if (filter.Conditions is null || filter.IdentityIds is not null || filter.EmailIds is not null
+                || filter.ThreadIds is not null || filter.UndoStatus is not null
+                || filter.Before is not null || filter.After is not null)
+                throw NotRequest("The submission query operator is invalid.");
+            foreach (var child in filter.Conditions)
+                ValidateSubmissionFilter(child, depth + 1);
+            return;
+        }
+        if (filter.Conditions is not null || !ValidSubmissionIds(filter.IdentityIds)
+            || !ValidSubmissionIds(filter.EmailIds) || !ValidSubmissionIds(filter.ThreadIds)
+            || filter.UndoStatus is not null and not ("pending" or "final" or "canceled")
+            || filter.Before is { Kind: not DateTimeKind.Utc }
+            || filter.After is { Kind: not DateTimeKind.Utc })
+            throw NotRequest("The submission query condition is invalid.");
+    }
+
+    private static bool ValidSubmissionIds(IReadOnlyList<string>? ids) =>
+        ids is null || ids.All(id => id is not null && JmapId.IsValidId(id));
 
     private static Dictionary<string, string> CloneCreatedIds(IReadOnlyDictionary<string, string>? values)
     {

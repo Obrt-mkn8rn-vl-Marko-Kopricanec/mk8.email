@@ -148,7 +148,13 @@ public sealed class JmapGatewayRouteTests
                      "ifInState":"s48","update":{"singleton":{"isEnabled":true,
                        "fromDate":"2026-09-29T12:34:56Z","textBody":"Away"},
                        "missing":{"subject":"ignored"}},"create":{"new":{}},
-                     "destroy":["singleton"]},"call-19"]],
+                     "destroy":["singleton"]},"call-19"],
+                   ["EmailSubmission/query",{"accountId":"A11111111111111111111111111111111",
+                     "filter":{"undoStatus":"final"},
+                     "sort":[{"property":"sentAt","isAscending":true}],
+                     "limit":1,"calculateTotal":true},"call-20"],
+                   ["EmailSubmission/queryChanges",{"accountId":"A11111111111111111111111111111111",
+                     "sinceQueryState":"s50","maxChanges":2,"calculateTotal":true},"call-21"]],
                  "createdIds":{"made":"object-id"}}
                 """;
             using var request = new HttpRequestMessage(HttpMethod.Post, "/jmap/api")
@@ -187,10 +193,10 @@ public sealed class JmapGatewayRouteTests
             Assert.IsNotNull(jmap.Request?.Command);
             CollectionAssert.AreEqual(new[] { MailFeature.Basic, MailFeature.Messages, MailFeature.Submission,
                 MailFeature.Contacts, MailFeature.AutomaticReplies }, jmap.Request.Command.Features.ToArray());
-            Assert.AreEqual(18, jmap.Executions);
+            Assert.AreEqual(20, jmap.Executions);
             Assert.AreEqual("second", jmap.Commands[1].Arguments["collision"]!.GetValue<string>());
             Assert.IsFalse(jmap.Commands[1].Arguments.ContainsKey("#collision"));
-            Assert.AreEqual(19, jmap.Plan?.Plan?.OperationCount);
+            Assert.AreEqual(21, jmap.Plan?.Plan?.OperationCount);
             Assert.AreEqual(MailOperationKind.FindFolders, jmap.Request.Command.Operation);
             Assert.AreEqual("text", jmap.Request.Command.Arguments["nested"]?["items"]?[2]?.GetValue<string>());
             Assert.AreEqual(1, jmap.Request.Command.Arguments["x"]!.GetValue<int>());
@@ -377,6 +383,30 @@ public sealed class JmapGatewayRouteTests
                 .GetProperty("new").GetProperty("type").GetString());
             Assert.AreEqual("singleton", vacationSetResponse[1].GetProperty("notDestroyed")
                 .GetProperty("singleton").GetProperty("type").GetString());
+            var queryCommand = jmap.Commands[18];
+            Assert.AreEqual(MailOperationKind.FindSubmissions, queryCommand.Operation);
+            Assert.AreEqual("11111111-1111-1111-1111-111111111111",
+                queryCommand.Arguments["accountId"]!.GetValue<string>());
+            Assert.AreEqual("final", queryCommand.Arguments["criteria"]!["filter"]!["undoStatus"]!.GetValue<string>());
+            Assert.AreEqual(1, queryCommand.Arguments["limit"]!.GetValue<int>());
+            Assert.IsFalse(queryCommand.Arguments.ContainsKey("filter"));
+            var queryResponse = json.RootElement.GetProperty("methodResponses")[19];
+            Assert.AreEqual("EmailSubmission/query", queryResponse[0].GetString());
+            Assert.AreEqual("call-20", queryResponse[2].GetString());
+            Assert.AreEqual("S22222222222222222222222222222222",
+                queryResponse[1].GetProperty("ids")[0].GetString());
+            Assert.AreEqual(1, queryResponse[1].GetProperty("total").GetInt32());
+            var queryChangesCommand = jmap.Commands[19];
+            Assert.AreEqual(MailOperationKind.FindSubmissionChanges, queryChangesCommand.Operation);
+            Assert.AreEqual("s50", queryChangesCommand.Arguments["sinceState"]!.GetValue<string>());
+            Assert.AreEqual(2, queryChangesCommand.Arguments["maxChanges"]!.GetValue<int>());
+            var queryChangesResponse = json.RootElement.GetProperty("methodResponses")[20];
+            Assert.AreEqual("EmailSubmission/queryChanges", queryChangesResponse[0].GetString());
+            Assert.AreEqual("call-21", queryChangesResponse[2].GetString());
+            Assert.AreEqual("S22222222222222222222222222222222",
+                queryChangesResponse[1].GetProperty("removed")[0].GetString());
+            Assert.AreEqual("S33333333333333333333333333333333",
+                queryChangesResponse[1].GetProperty("added")[0].GetProperty("id").GetString());
 
             await using var countCommand = gatewayDataSource.CreateCommand(
                 "SELECT count(*), count(*) FILTER (WHERE metadata ->> 'layer' = 'presentation') "
@@ -385,7 +415,7 @@ public sealed class JmapGatewayRouteTests
             Assert.IsTrue(await countReader.ReadAsync(timeout.Token));
             // SSE records its headers and streamed body separately, in addition
             // to the request and two application-boundary records.
-            Assert.AreEqual(49L, countReader.GetInt64(0));
+            Assert.AreEqual(53L, countReader.GetInt64(0));
             Assert.AreEqual(7L, countReader.GetInt64(1));
 
             await using var operationCommand = gatewayDataSource.CreateCommand(
@@ -573,6 +603,25 @@ public sealed class JmapGatewayRouteTests
                 var node = JsonSerializer.SerializeToNode(mutation, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
                 return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
                     OperationResult: new(new(MailOperationKind.MutateVacationSettings, ApplicationValueCodec.Encode(node)),
+                        request.Command.KnownEntities!, Profile)));
+            }
+            if (request.Command.Operation == MailOperationKind.FindSubmissions)
+            {
+                var query = new MailSubmissionQueryResult(MailSubmissionQueryStatus.Ok, "s50", 0,
+                    [Guid.Parse("22222222-2222-2222-2222-222222222222")], 1);
+                var node = JsonSerializer.SerializeToNode(query, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
+                    OperationResult: new(new(MailOperationKind.FindSubmissions, ApplicationValueCodec.Encode(node)),
+                        request.Command.KnownEntities!, Profile)));
+            }
+            if (request.Command.Operation == MailOperationKind.FindSubmissionChanges)
+            {
+                var changes = new MailSubmissionQueryChangesResult(MailSubmissionQueryStatus.Ok, "s51",
+                    ["S22222222222222222222222222222222"],
+                    [new(Guid.Parse("33333333-3333-3333-3333-333333333333"), 0)], 1);
+                var node = JsonSerializer.SerializeToNode(changes, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
+                    OperationResult: new(new(MailOperationKind.FindSubmissionChanges, ApplicationValueCodec.Encode(node)),
                         request.Command.KnownEntities!, Profile)));
             }
             var data = (System.Text.Json.Nodes.JsonObject)request.Command.Arguments.DeepClone();

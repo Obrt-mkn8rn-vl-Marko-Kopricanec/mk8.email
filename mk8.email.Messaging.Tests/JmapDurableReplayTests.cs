@@ -147,6 +147,135 @@ public sealed class JmapDurableReplayTests
     }
 
     [TestMethod]
+    public async Task TypedSubmissionQueryReplaysCommittedFilteredOrderAcrossWorkerRetries()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var submissionId = Guid.CreateVersion7();
+        await using (var setup = rig.Context())
+        {
+            setup.JmapEmailSubmissions.Add(NewSubmission(rig, submissionId, "final"));
+            await setup.SaveChangesAsync();
+        }
+        var batch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Submission],
+            [new JmapApplicationCall(MailOperationKind.FindSubmissions, new JsonObject
+            {
+                ["accountId"] = JmapId.Account(rig.InboxId),
+                ["filter"] = new JsonObject { ["undoStatus"] = "final" },
+                ["calculateTotal"] = true,
+            }, "query")]);
+        var operation = Guid.CreateVersion7();
+        var first = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual(MailOperationKind.FindSubmissions, first.Invocations[0].Operation);
+        Assert.AreEqual(JmapId.Submission(submissionId), first.Invocations[0].Arguments["ids"]![0]!.GetValue<string>());
+        await using (var changed = rig.Context())
+        {
+            var submission = await changed.JmapEmailSubmissions.SingleAsync();
+            submission.UndoStatus = "canceled";
+            await changed.SaveChangesAsync();
+        }
+        var replay = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
+        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7());
+        Assert.AreEqual(0, fresh.Invocations[0].Arguments["ids"]!.AsArray().Count);
+        Assert.AreEqual(0, fresh.Invocations[0].Arguments["total"]!.GetValue<int>());
+        await using var verification = rig.Context();
+        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync());
+    }
+
+    [TestMethod]
+    public async Task TypedSubmissionQueryDoesNotMatchOpaqueAnchorToLegacyEmptyGuidRow()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using (var setup = rig.Context())
+        {
+            var legacyRow = NewSubmission(rig, Guid.Empty, "final");
+            setup.JmapEmailSubmissions.Add(legacyRow);
+            await setup.SaveChangesAsync();
+            // EF generates a new key for Guid.Empty, so create the legacy row directly in PostgreSQL.
+            await setup.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE jmap_email_submissions SET id = {Guid.Empty} WHERE id = {legacyRow.Id}");
+        }
+        var arguments = new JsonObject
+        {
+            ["accountId"] = JmapId.Account(rig.InboxId),
+            ["anchor"] = JmapId.Submission(Guid.Empty),
+        };
+        var canonical = await rig.InvokeAsync(new JmapApplicationBatch(
+            [MailFeature.Basic, MailFeature.Submission],
+            [new JmapApplicationCall(MailOperationKind.FindSubmissions, (JsonObject)arguments.DeepClone(), "canonical")]),
+            Guid.CreateVersion7());
+        Assert.IsNotNull(canonical.Invocations[0].Arguments["ids"],
+            canonical.Invocations[0].Arguments.ToJsonString());
+        Assert.AreEqual(JmapId.Submission(Guid.Empty),
+            canonical.Invocations[0].Arguments["ids"]![0]!.GetValue<string>());
+        arguments["anchor"] = "opaque";
+        var opaque = await rig.InvokeAsync(new JmapApplicationBatch(
+            [MailFeature.Basic, MailFeature.Submission],
+            [new JmapApplicationCall(MailOperationKind.FindSubmissions, arguments, "opaque")]),
+            Guid.CreateVersion7());
+        Assert.AreEqual("anchorNotFound", opaque.Invocations[0].Arguments["type"]!.GetValue<string>());
+    }
+
+    [TestMethod]
+    public async Task TypedSubmissionQueryChangesReplaysCommittedDeltaAcrossWorkerRetries()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var query = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Submission],
+            [new JmapApplicationCall(MailOperationKind.FindSubmissions, new JsonObject
+            {
+                ["accountId"] = JmapId.Account(rig.InboxId),
+            }, "initial")]);
+        var initial = await rig.InvokeAsync(query, Guid.CreateVersion7());
+        var since = initial.Invocations[0].Arguments["queryState"]!.GetValue<string>();
+        var submissionId = Guid.CreateVersion7();
+        await using (var setup = rig.Context())
+        {
+            setup.JmapEmailSubmissions.Add(NewSubmission(rig, submissionId, "final"));
+            await setup.SaveChangesAsync();
+        }
+        var batch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Submission],
+            [new JmapApplicationCall(MailOperationKind.FindSubmissionChanges, new JsonObject
+            {
+                ["accountId"] = JmapId.Account(rig.InboxId),
+                ["sinceQueryState"] = since,
+                ["filter"] = new JsonObject { ["undoStatus"] = "final" },
+                ["calculateTotal"] = true,
+            }, "changes")]);
+        var operation = Guid.CreateVersion7();
+        var first = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual(MailOperationKind.FindSubmissionChanges, first.Invocations[0].Operation);
+        Assert.AreEqual(JmapId.Submission(submissionId),
+            first.Invocations[0].Arguments["added"]![0]!["id"]!.GetValue<string>());
+        await using (var changed = rig.Context())
+        {
+            var submission = await changed.JmapEmailSubmissions.SingleAsync();
+            submission.UndoStatus = "canceled";
+            await changed.SaveChangesAsync();
+        }
+        var replay = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
+        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7());
+        Assert.AreEqual(0, fresh.Invocations[0].Arguments["added"]!.AsArray().Count);
+        await using var verification = rig.Context();
+        Assert.AreEqual(3, await verification.ApplicationOperationReceipts.CountAsync());
+    }
+
+    private static JmapEmailSubmissionDB NewSubmission(Rig rig, Guid id, string undoStatus) => new()
+    {
+        Id = id,
+        SubmissionObjectId = JmapId.Submission(id),
+        AccountId = rig.InboxId,
+        IdentityId = JmapId.Identity(rig.InboxId),
+        EmailId = JmapId.Email(id),
+        ThreadId = JmapId.Thread(id.ToString("N")),
+        QueueId = Guid.CreateVersion7(),
+        EnvelopeSender = rig.User.Username,
+        EnvelopeRecipients = ["recipient@example.test"],
+        SendAt = new DateTime(2026, 9, 29, 12, 0, 0, DateTimeKind.Utc),
+        UndoStatus = undoStatus,
+    };
+
+    [TestMethod]
     public async Task TypedThreadReadReplaysCommittedGroupingAcrossWorkerRetries()
     {
         await using var rig = await Rig.CreateAsync();

@@ -176,16 +176,17 @@ internal static class GatewayJmapBatchExecutor
                 result => GatewaySubmissionGetCodec.Render(call, result));
         }
         else
-            return TryPrepareTypedMutation(operation, arguments, knownEntities, features,
-                maximumObjectsInSet, out selection, out failure);
+            return TryPrepareTypedExtendedOperation(operation, arguments, knownEntities, features,
+                maximumObjects, maximumObjectsInSet, out selection, out failure);
         return true;
     }
 
-    private static bool TryPrepareTypedMutation(
+    private static bool TryPrepareTypedExtendedOperation(
         MailOperationKind operation,
         JsonObject arguments,
         IReadOnlyDictionary<string, string> knownEntities,
         IReadOnlyList<MailFeature> features,
+        int maximumObjectsInGet,
         int maximumObjectsInSet,
         out TypedOperationSelection? selection,
         out string? failure)
@@ -203,6 +204,18 @@ internal static class GatewayJmapBatchExecutor
             if (!GatewayVacationSetCodec.TryParse(arguments, knownEntities, maximumObjectsInSet, out var call, out failure)) return false;
             selection = Select<MailVacationSetCommand, MailVacationSetResult>(operation, call!.Command,
                 result => GatewayVacationSetCodec.Render(call, result));
+        }
+        else if (operation == MailOperationKind.FindSubmissions && features.Contains(MailFeature.Submission))
+        {
+            if (!GatewaySubmissionQueryCodec.TryParseQuery(arguments, maximumObjectsInGet, out var call, out failure)) return false;
+            selection = Select<MailSubmissionQueryCommand, MailSubmissionQueryResult>(operation, call!.Command,
+                result => GatewaySubmissionQueryCodec.RenderQuery(call, result));
+        }
+        else if (operation == MailOperationKind.FindSubmissionChanges && features.Contains(MailFeature.Submission))
+        {
+            if (!GatewaySubmissionQueryCodec.TryParseChanges(arguments, out var call, out failure)) return false;
+            selection = Select<MailSubmissionQueryChangesCommand, MailSubmissionQueryChangesResult>(operation, call!.Command,
+                result => GatewaySubmissionQueryCodec.RenderChanges(call, result));
         }
         return true;
     }

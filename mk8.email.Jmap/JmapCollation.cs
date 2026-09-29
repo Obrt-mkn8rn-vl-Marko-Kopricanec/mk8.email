@@ -1,5 +1,6 @@
 using System.Text;
 using mk8.email.Application.Protocol;
+using mk8.email.Contracts.Messaging;
 
 namespace mk8.email.Jmap;
 
@@ -19,6 +20,14 @@ internal static class JmapCollation
         {
             "i;ascii-numeric" => CompareAsciiNumeric(left, right),
             "i;ascii-casemap" => CompareAsciiCasemap(left, right),
+            _ => Rfc5256.CompareUnicodeCasemap(left, right),
+        };
+
+    public static int Compare(string left, string right, MailStringCollation collation) =>
+        collation switch
+        {
+            MailStringCollation.AsciiNumeric => CompareAsciiNumeric(left, right),
+            MailStringCollation.AsciiCasemap => CompareAsciiCasemap(left, right),
             _ => Rfc5256.CompareUnicodeCasemap(left, right),
         };
 

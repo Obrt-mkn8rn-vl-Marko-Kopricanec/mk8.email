@@ -1,6 +1,6 @@
 #nullable enable
-const mk8.email.Contracts.Messaging.ApplicationOperations.MailOperationExecute = "mail.operation.execute.v11" -> string!
-const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v18" -> string!
+const mk8.email.Contracts.Messaging.ApplicationOperations.MailOperationExecute = "mail.operation.execute.v12" -> string!
+const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v19" -> string!
 mk8.email.Contracts.Messaging.DistributedContractVersions
 mk8.email.Contracts.Messaging.JmapAccountProfile
 mk8.email.Contracts.Messaging.JmapAccountProfile.<Clone>$() -> mk8.email.Contracts.Messaging.JmapAccountProfile!
@@ -492,6 +492,34 @@ mk8.email.Contracts.Messaging.MailVacationReadResult.Vacation.init -> void
 mk8.email.Contracts.Messaging.MailVacationReadStatus
 mk8.email.Contracts.Messaging.MailVacationReadStatus.AccountNotFound = 1 -> mk8.email.Contracts.Messaging.MailVacationReadStatus
 mk8.email.Contracts.Messaging.MailVacationReadStatus.Ok = 0 -> mk8.email.Contracts.Messaging.MailVacationReadStatus
+mk8.email.Contracts.Messaging.MailVacationSetCommand
+mk8.email.Contracts.Messaging.MailVacationSetCommand.<Clone>$() -> mk8.email.Contracts.Messaging.MailVacationSetCommand!
+mk8.email.Contracts.Messaging.MailVacationSetCommand.AccountId.get -> System.Guid
+mk8.email.Contracts.Messaging.MailVacationSetCommand.AccountId.init -> void
+mk8.email.Contracts.Messaging.MailVacationSetCommand.Deconstruct(out System.Guid AccountId, out string? IfInState, out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailVacationUpdate!>! Updates) -> void
+mk8.email.Contracts.Messaging.MailVacationSetCommand.Equals(mk8.email.Contracts.Messaging.MailVacationSetCommand? other) -> bool
+mk8.email.Contracts.Messaging.MailVacationSetCommand.IfInState.get -> string?
+mk8.email.Contracts.Messaging.MailVacationSetCommand.IfInState.init -> void
+mk8.email.Contracts.Messaging.MailVacationSetCommand.MailVacationSetCommand(System.Guid AccountId, string? IfInState, System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailVacationUpdate!>! Updates) -> void
+mk8.email.Contracts.Messaging.MailVacationSetCommand.Updates.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailVacationUpdate!>!
+mk8.email.Contracts.Messaging.MailVacationSetCommand.Updates.init -> void
+mk8.email.Contracts.Messaging.MailVacationSetResult
+mk8.email.Contracts.Messaging.MailVacationSetResult.<Clone>$() -> mk8.email.Contracts.Messaging.MailVacationSetResult!
+mk8.email.Contracts.Messaging.MailVacationSetResult.Deconstruct(out mk8.email.Contracts.Messaging.MailVacationSetStatus Status, out string? OldState, out string? NewState, out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailVacationUpdateResult!>! Updates) -> void
+mk8.email.Contracts.Messaging.MailVacationSetResult.Equals(mk8.email.Contracts.Messaging.MailVacationSetResult? other) -> bool
+mk8.email.Contracts.Messaging.MailVacationSetResult.MailVacationSetResult(mk8.email.Contracts.Messaging.MailVacationSetStatus Status, string? OldState, string? NewState, System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailVacationUpdateResult!>! Updates) -> void
+mk8.email.Contracts.Messaging.MailVacationSetResult.NewState.get -> string?
+mk8.email.Contracts.Messaging.MailVacationSetResult.NewState.init -> void
+mk8.email.Contracts.Messaging.MailVacationSetResult.OldState.get -> string?
+mk8.email.Contracts.Messaging.MailVacationSetResult.OldState.init -> void
+mk8.email.Contracts.Messaging.MailVacationSetResult.Status.get -> mk8.email.Contracts.Messaging.MailVacationSetStatus
+mk8.email.Contracts.Messaging.MailVacationSetResult.Status.init -> void
+mk8.email.Contracts.Messaging.MailVacationSetResult.Updates.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailVacationUpdateResult!>!
+mk8.email.Contracts.Messaging.MailVacationSetResult.Updates.init -> void
+mk8.email.Contracts.Messaging.MailVacationSetStatus
+mk8.email.Contracts.Messaging.MailVacationSetStatus.AccountNotFound = 1 -> mk8.email.Contracts.Messaging.MailVacationSetStatus
+mk8.email.Contracts.Messaging.MailVacationSetStatus.Ok = 0 -> mk8.email.Contracts.Messaging.MailVacationSetStatus
+mk8.email.Contracts.Messaging.MailVacationSetStatus.StateMismatch = 2 -> mk8.email.Contracts.Messaging.MailVacationSetStatus
 mk8.email.Contracts.Messaging.MailVacationSnapshot
 mk8.email.Contracts.Messaging.MailVacationSnapshot.<Clone>$() -> mk8.email.Contracts.Messaging.MailVacationSnapshot!
 mk8.email.Contracts.Messaging.MailVacationSnapshot.Deconstruct(out bool IsEnabled, out System.DateTime? FromDate, out System.DateTime? ToDate, out string? Subject, out string? TextBody, out string? HtmlBody) -> void
@@ -509,6 +537,44 @@ mk8.email.Contracts.Messaging.MailVacationSnapshot.TextBody.get -> string?
 mk8.email.Contracts.Messaging.MailVacationSnapshot.TextBody.init -> void
 mk8.email.Contracts.Messaging.MailVacationSnapshot.ToDate.get -> System.DateTime?
 mk8.email.Contracts.Messaging.MailVacationSnapshot.ToDate.init -> void
+mk8.email.Contracts.Messaging.MailVacationUpdate
+mk8.email.Contracts.Messaging.MailVacationUpdate.<Clone>$() -> mk8.email.Contracts.Messaging.MailVacationUpdate!
+mk8.email.Contracts.Messaging.MailVacationUpdate.Deconstruct(out bool SetIsEnabled, out bool IsEnabled, out bool SetFromDate, out System.DateTime? FromDate, out bool SetToDate, out System.DateTime? ToDate, out bool SetSubject, out string? Subject, out bool SetTextBody, out string? TextBody, out bool SetHtmlBody, out string? HtmlBody) -> void
+mk8.email.Contracts.Messaging.MailVacationUpdate.Equals(mk8.email.Contracts.Messaging.MailVacationUpdate? other) -> bool
+mk8.email.Contracts.Messaging.MailVacationUpdate.FromDate.get -> System.DateTime?
+mk8.email.Contracts.Messaging.MailVacationUpdate.FromDate.init -> void
+mk8.email.Contracts.Messaging.MailVacationUpdate.HtmlBody.get -> string?
+mk8.email.Contracts.Messaging.MailVacationUpdate.HtmlBody.init -> void
+mk8.email.Contracts.Messaging.MailVacationUpdate.IsEnabled.get -> bool
+mk8.email.Contracts.Messaging.MailVacationUpdate.IsEnabled.init -> void
+mk8.email.Contracts.Messaging.MailVacationUpdate.MailVacationUpdate(bool SetIsEnabled, bool IsEnabled, bool SetFromDate, System.DateTime? FromDate, bool SetToDate, System.DateTime? ToDate, bool SetSubject, string? Subject, bool SetTextBody, string? TextBody, bool SetHtmlBody, string? HtmlBody) -> void
+mk8.email.Contracts.Messaging.MailVacationUpdate.SetFromDate.get -> bool
+mk8.email.Contracts.Messaging.MailVacationUpdate.SetFromDate.init -> void
+mk8.email.Contracts.Messaging.MailVacationUpdate.SetHtmlBody.get -> bool
+mk8.email.Contracts.Messaging.MailVacationUpdate.SetHtmlBody.init -> void
+mk8.email.Contracts.Messaging.MailVacationUpdate.SetIsEnabled.get -> bool
+mk8.email.Contracts.Messaging.MailVacationUpdate.SetIsEnabled.init -> void
+mk8.email.Contracts.Messaging.MailVacationUpdate.SetSubject.get -> bool
+mk8.email.Contracts.Messaging.MailVacationUpdate.SetSubject.init -> void
+mk8.email.Contracts.Messaging.MailVacationUpdate.SetTextBody.get -> bool
+mk8.email.Contracts.Messaging.MailVacationUpdate.SetTextBody.init -> void
+mk8.email.Contracts.Messaging.MailVacationUpdate.SetToDate.get -> bool
+mk8.email.Contracts.Messaging.MailVacationUpdate.SetToDate.init -> void
+mk8.email.Contracts.Messaging.MailVacationUpdate.Subject.get -> string?
+mk8.email.Contracts.Messaging.MailVacationUpdate.Subject.init -> void
+mk8.email.Contracts.Messaging.MailVacationUpdate.TextBody.get -> string?
+mk8.email.Contracts.Messaging.MailVacationUpdate.TextBody.init -> void
+mk8.email.Contracts.Messaging.MailVacationUpdate.ToDate.get -> System.DateTime?
+mk8.email.Contracts.Messaging.MailVacationUpdate.ToDate.init -> void
+mk8.email.Contracts.Messaging.MailVacationUpdateResult
+mk8.email.Contracts.Messaging.MailVacationUpdateResult.<Clone>$() -> mk8.email.Contracts.Messaging.MailVacationUpdateResult!
+mk8.email.Contracts.Messaging.MailVacationUpdateResult.Deconstruct(out bool Updated, out System.Collections.Generic.IReadOnlyList<string!>! InvalidProperties) -> void
+mk8.email.Contracts.Messaging.MailVacationUpdateResult.Equals(mk8.email.Contracts.Messaging.MailVacationUpdateResult? other) -> bool
+mk8.email.Contracts.Messaging.MailVacationUpdateResult.InvalidProperties.get -> System.Collections.Generic.IReadOnlyList<string!>!
+mk8.email.Contracts.Messaging.MailVacationUpdateResult.InvalidProperties.init -> void
+mk8.email.Contracts.Messaging.MailVacationUpdateResult.MailVacationUpdateResult(bool Updated, System.Collections.Generic.IReadOnlyList<string!>! InvalidProperties) -> void
+mk8.email.Contracts.Messaging.MailVacationUpdateResult.Updated.get -> bool
+mk8.email.Contracts.Messaging.MailVacationUpdateResult.Updated.init -> void
 mk8.email.Contracts.Messaging.SystemPingResult.ContractVersion.get -> string?
 mk8.email.Contracts.Messaging.SystemPingResult.ContractVersion.init -> void
 mk8.email.Contracts.Messaging.WebPushSendRequest.Deconstruct(out string! Url, out string? P256dh, out string? Auth, out System.DateTimeOffset ExpiresAt, out byte[]? Payload, out mk8.email.Contracts.Messaging.JmapPushMessage? JmapMessage) -> void
@@ -620,9 +686,21 @@ override mk8.email.Contracts.Messaging.MailVacationReadCommand.ToString() -> str
 override mk8.email.Contracts.Messaging.MailVacationReadResult.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.MailVacationReadResult.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.MailVacationReadResult.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailVacationSetCommand.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailVacationSetCommand.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailVacationSetCommand.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailVacationSetResult.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailVacationSetResult.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailVacationSetResult.ToString() -> string!
 override mk8.email.Contracts.Messaging.MailVacationSnapshot.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.MailVacationSnapshot.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.MailVacationSnapshot.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailVacationUpdate.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailVacationUpdate.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailVacationUpdate.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailVacationUpdateResult.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailVacationUpdateResult.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailVacationUpdateResult.ToString() -> string!
 static mk8.email.Contracts.Messaging.DistributedContractVersions.SupersededOperations.get -> System.Collections.Generic.IReadOnlySet<string!>!
 static mk8.email.Contracts.Messaging.JmapAccountProfile.operator !=(mk8.email.Contracts.Messaging.JmapAccountProfile? left, mk8.email.Contracts.Messaging.JmapAccountProfile? right) -> bool
 static mk8.email.Contracts.Messaging.JmapAccountProfile.operator ==(mk8.email.Contracts.Messaging.JmapAccountProfile? left, mk8.email.Contracts.Messaging.JmapAccountProfile? right) -> bool
@@ -928,5 +1006,13 @@ static mk8.email.Contracts.Messaging.MailVacationReadCommand.operator !=(mk8.ema
 static mk8.email.Contracts.Messaging.MailVacationReadCommand.operator ==(mk8.email.Contracts.Messaging.MailVacationReadCommand? left, mk8.email.Contracts.Messaging.MailVacationReadCommand? right) -> bool
 static mk8.email.Contracts.Messaging.MailVacationReadResult.operator !=(mk8.email.Contracts.Messaging.MailVacationReadResult? left, mk8.email.Contracts.Messaging.MailVacationReadResult? right) -> bool
 static mk8.email.Contracts.Messaging.MailVacationReadResult.operator ==(mk8.email.Contracts.Messaging.MailVacationReadResult? left, mk8.email.Contracts.Messaging.MailVacationReadResult? right) -> bool
+static mk8.email.Contracts.Messaging.MailVacationSetCommand.operator !=(mk8.email.Contracts.Messaging.MailVacationSetCommand? left, mk8.email.Contracts.Messaging.MailVacationSetCommand? right) -> bool
+static mk8.email.Contracts.Messaging.MailVacationSetCommand.operator ==(mk8.email.Contracts.Messaging.MailVacationSetCommand? left, mk8.email.Contracts.Messaging.MailVacationSetCommand? right) -> bool
+static mk8.email.Contracts.Messaging.MailVacationSetResult.operator !=(mk8.email.Contracts.Messaging.MailVacationSetResult? left, mk8.email.Contracts.Messaging.MailVacationSetResult? right) -> bool
+static mk8.email.Contracts.Messaging.MailVacationSetResult.operator ==(mk8.email.Contracts.Messaging.MailVacationSetResult? left, mk8.email.Contracts.Messaging.MailVacationSetResult? right) -> bool
 static mk8.email.Contracts.Messaging.MailVacationSnapshot.operator !=(mk8.email.Contracts.Messaging.MailVacationSnapshot? left, mk8.email.Contracts.Messaging.MailVacationSnapshot? right) -> bool
 static mk8.email.Contracts.Messaging.MailVacationSnapshot.operator ==(mk8.email.Contracts.Messaging.MailVacationSnapshot? left, mk8.email.Contracts.Messaging.MailVacationSnapshot? right) -> bool
+static mk8.email.Contracts.Messaging.MailVacationUpdate.operator !=(mk8.email.Contracts.Messaging.MailVacationUpdate? left, mk8.email.Contracts.Messaging.MailVacationUpdate? right) -> bool
+static mk8.email.Contracts.Messaging.MailVacationUpdate.operator ==(mk8.email.Contracts.Messaging.MailVacationUpdate? left, mk8.email.Contracts.Messaging.MailVacationUpdate? right) -> bool
+static mk8.email.Contracts.Messaging.MailVacationUpdateResult.operator !=(mk8.email.Contracts.Messaging.MailVacationUpdateResult? left, mk8.email.Contracts.Messaging.MailVacationUpdateResult? right) -> bool
+static mk8.email.Contracts.Messaging.MailVacationUpdateResult.operator ==(mk8.email.Contracts.Messaging.MailVacationUpdateResult? left, mk8.email.Contracts.Messaging.MailVacationUpdateResult? right) -> bool

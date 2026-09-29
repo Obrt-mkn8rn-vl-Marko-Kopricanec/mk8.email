@@ -25,6 +25,7 @@ public sealed class JmapRequestProcessor
     private readonly IMailThreadReader _threadReader;
     private readonly IMailSubmissionReader? _submissionReader;
     private readonly IMailBlobCopyService? _blobCopyService;
+    private readonly IMailVacationMutator? _vacationMutator;
     private readonly EmailDbContext _database;
     private readonly EnvironmentConfig _environment;
     private readonly LargeObjectTransactionEffects _blobEffects;
@@ -45,7 +46,7 @@ public sealed class JmapRequestProcessor
         ILogger<JmapRequestProcessor> logger,
         ApplicationOperationReceiptStore? receipts = null)
         : this(methods, sessions, database, environment, blobEffects, logger, receipts,
-            null, null, null, null, null, null, null, null, null)
+            null, null, null, null, null, null, null, null, null, null)
     {
     }
 
@@ -65,7 +66,8 @@ public sealed class JmapRequestProcessor
         IMailPushSubscriptionReader? pushReader,
         IMailThreadReader? threadReader,
         IMailSubmissionReader? submissionReader,
-        IMailBlobCopyService? blobCopyService)
+        IMailBlobCopyService? blobCopyService,
+        IMailVacationMutator? vacationMutator)
     {
         _methods = methods.ToDictionary(method => ValidRegisteredOperation(method.Operation, method.Feature));
         _sessions = sessions;
@@ -115,6 +117,7 @@ public sealed class JmapRequestProcessor
             _threadReader = threadReader;
         _submissionReader = submissionReader;
         _blobCopyService = blobCopyService;
+        _vacationMutator = vacationMutator;
         _database = database;
         _environment = environment;
         _blobEffects = blobEffects;
@@ -182,6 +185,9 @@ public sealed class JmapRequestProcessor
                 .ConfigureAwait(false);
         else if (command.Operation == MailOperationKind.CopyBinaryObjects && features.Contains(MailFeature.Basic))
             response = await ExecuteBlobCopyAsync(command, context, user, receiptKey, cancellationToken)
+                .ConfigureAwait(false);
+        else if (command.Operation == MailOperationKind.MutateVacationSettings && features.Contains(MailFeature.AutomaticReplies))
+            response = await ExecuteVacationSetAsync(command, context, user, receiptKey, cancellationToken)
                 .ConfigureAwait(false);
         else
         {
@@ -371,6 +377,25 @@ public sealed class JmapRequestProcessor
         }, receiptKey, cancellationToken);
     }
 
+    private Task<MailOperationResponse> ExecuteVacationSetAsync(
+        MailOperationCommand command,
+        JmapInvocationContext context,
+        AuthenticatedMailUser user,
+        ApplicationReceiptKey? receiptKey,
+        CancellationToken cancellationToken)
+    {
+        var mutation = ParseVacationSetCommand(command.Arguments);
+        var service = _vacationMutator
+            ?? throw new InvalidOperationException("The vacation mutation service is not configured.");
+        return InvokeAtomicallyAsync(command.Operation, context, async token =>
+        {
+            var result = await service.SetAsync(mutation, user, token).ConfigureAwait(false);
+            var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
+                ?? throw new InvalidOperationException("The vacation mutation service returned an incomplete result.");
+            return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
+        }, receiptKey, cancellationToken);
+    }
+
     private static MailFolderReadCommand ParseFolderCommand(JsonObject arguments)
     {
         if (arguments.Count != 3 || !arguments.ContainsKey("accountId")
@@ -523,6 +548,42 @@ public sealed class JmapRequestProcessor
         }
     }
 
+    private MailVacationSetCommand ParseVacationSetCommand(JsonObject arguments)
+    {
+        if (arguments.Count != 3 || !arguments.ContainsKey("accountId")
+            || !arguments.ContainsKey("ifInState") || arguments["ifInState"] is not null
+                && (arguments["ifInState"] is not JsonValue state
+                    || !state.TryGetValue<string>(out _))
+            || arguments["updates"] is not JsonArray updates)
+            throw NotRequest("The vacation mutation command has an invalid shape.");
+        foreach (var item in updates)
+        {
+            if (item is not JsonObject update || update.Count != 12
+                || !update.ContainsKey("setIsEnabled") || !update.ContainsKey("isEnabled")
+                || !update.ContainsKey("setFromDate") || !update.ContainsKey("fromDate")
+                || !update.ContainsKey("setToDate") || !update.ContainsKey("toDate")
+                || !update.ContainsKey("setSubject") || !update.ContainsKey("subject")
+                || !update.ContainsKey("setTextBody") || !update.ContainsKey("textBody")
+                || !update.ContainsKey("setHtmlBody") || !update.ContainsKey("htmlBody"))
+                throw NotRequest("The vacation mutation command contains an invalid update.");
+        }
+        try
+        {
+            var command = JsonSerializer.Deserialize<MailVacationSetCommand>(arguments, ReceiptJsonOptions)
+                ?? throw NotRequest("The vacation mutation command is missing.");
+            if (command.Updates is null || command.Updates.Count > _environment.Jmap.MaxObjectsInSet
+                || command.Updates.Any(update => update is null
+                    || update.FromDate is { Kind: not DateTimeKind.Utc }
+                    || update.ToDate is { Kind: not DateTimeKind.Utc }))
+                throw NotRequest("The vacation mutation command has invalid update count.");
+            return command;
+        }
+        catch (JsonException)
+        {
+            throw NotRequest("The vacation mutation command contains invalid values.");
+        }
+    }
+
     private static Dictionary<string, string> CloneCreatedIds(IReadOnlyDictionary<string, string>? values)
     {
         var createdIds = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -564,7 +625,7 @@ public sealed class JmapRequestProcessor
             throw NotRequest("The application batch contains invalid feature identifiers.");
         var features = values.ToHashSet();
         var supported = _methods.Values.Select(method => method.Feature)
-            .Append(MailFeature.Basic).ToHashSet();
+            .Append(MailFeature.Basic).Append(MailFeature.AutomaticReplies).ToHashSet();
         if (features.Any(feature => !supported.Contains(feature)))
             throw new MailApplicationException(new MailApplicationFailure(
                 MailFailureKind.UnsupportedFeature, "The requested mail features are not supported."));

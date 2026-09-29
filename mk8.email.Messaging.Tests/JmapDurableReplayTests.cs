@@ -234,6 +234,55 @@ public sealed class JmapDurableReplayTests
     }
 
     [TestMethod]
+    public async Task TypedVacationMutationUsesAzureBlobAndReplaysWithoutRepeatingChanges()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var batch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.AutomaticReplies],
+            [new JmapApplicationCall(MailOperationKind.MutateVacationSettings, new JsonObject
+            {
+                ["accountId"] = JmapId.Account(rig.InboxId),
+                ["update"] = new JsonObject
+                {
+                    ["singleton"] = new JsonObject
+                    {
+                        ["isEnabled"] = true,
+                        ["subject"] = "Away",
+                        ["textBody"] = "Back later",
+                    },
+                },
+            }, "vacation-set")]);
+        var operation = Guid.CreateVersion7();
+        var first = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual(MailOperationKind.MutateVacationSettings, first.Invocations[0].Operation);
+        Assert.IsTrue(first.Invocations[0].Arguments["updated"]!.AsObject().ContainsKey("singleton"));
+        string? originalBodyObject;
+        await using (var database = rig.Context())
+        {
+            var vacation = await database.JmapVacationResponses.SingleAsync();
+            Assert.AreEqual("Away", vacation.Subject);
+            Assert.AreEqual(LargeObjectProviders.AzureBlob, vacation.BodyObjectProvider);
+            Assert.IsNull(vacation.TextBody);
+            Assert.IsNull(vacation.HtmlBody);
+            originalBodyObject = vacation.BodyObjectName;
+            vacation.Subject = "Changed after commit";
+            await database.SaveChangesAsync();
+        }
+        var replay = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
+        await using (var database = rig.Context())
+        {
+            var vacation = await database.JmapVacationResponses.SingleAsync();
+            Assert.AreEqual("Changed after commit", vacation.Subject);
+            Assert.AreEqual(originalBodyObject, vacation.BodyObjectName);
+        }
+        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7());
+        Assert.IsTrue(fresh.Invocations[0].Arguments["updated"]!.AsObject().ContainsKey("singleton"));
+        await using var verification = rig.Context();
+        Assert.AreEqual("Away", (await verification.JmapVacationResponses.SingleAsync()).Subject);
+        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync());
+    }
+
+    [TestMethod]
     public async Task TypedPushReadReplaysItsCommittedSnapshotAcrossWorkerRetries()
     {
         await using var rig = await Rig.CreateAsync();

@@ -89,7 +89,7 @@ internal static class GatewayJmapBatchExecutor
         {
             return new("invalidArguments", null, null);
         }
-        if (!TryPrepareTypedOperation(invocation.Operation, arguments, features, maximumObjects,
+        if (!TryPrepareTypedOperation(invocation.Operation, arguments, knownEntities, features, maximumObjects,
                 maximumObjectsInSet, out var typedOperation, out var failure))
             return new(failure ?? "invalidArguments", null, null);
         var payload = typedOperation?.Payload ?? arguments;
@@ -117,6 +117,7 @@ internal static class GatewayJmapBatchExecutor
     private static bool TryPrepareTypedOperation(
         MailOperationKind operation,
         JsonObject arguments,
+        IReadOnlyDictionary<string, string> knownEntities,
         IReadOnlyList<MailFeature> features,
         int maximumObjects,
         int maximumObjectsInSet,
@@ -174,11 +175,34 @@ internal static class GatewayJmapBatchExecutor
             selection = Select<MailSubmissionReadCommand, MailSubmissionReadResult>(operation, call!.Command,
                 result => GatewaySubmissionGetCodec.Render(call, result));
         }
-        else if (operation == MailOperationKind.CopyBinaryObjects && features.Contains(MailFeature.Basic))
+        else
+            return TryPrepareTypedMutation(operation, arguments, knownEntities, features,
+                maximumObjectsInSet, out selection, out failure);
+        return true;
+    }
+
+    private static bool TryPrepareTypedMutation(
+        MailOperationKind operation,
+        JsonObject arguments,
+        IReadOnlyDictionary<string, string> knownEntities,
+        IReadOnlyList<MailFeature> features,
+        int maximumObjectsInSet,
+        out TypedOperationSelection? selection,
+        out string? failure)
+    {
+        selection = null;
+        failure = null;
+        if (operation == MailOperationKind.CopyBinaryObjects && features.Contains(MailFeature.Basic))
         {
             if (!GatewayBlobCopyCodec.TryParse(arguments, maximumObjectsInSet, out var call, out failure)) return false;
             selection = Select<MailBlobCopyCommand, MailBlobCopyResult>(operation, call!.Command,
                 result => GatewayBlobCopyCodec.Render(call, result));
+        }
+        else if (operation == MailOperationKind.MutateVacationSettings && features.Contains(MailFeature.AutomaticReplies))
+        {
+            if (!GatewayVacationSetCodec.TryParse(arguments, knownEntities, maximumObjectsInSet, out var call, out failure)) return false;
+            selection = Select<MailVacationSetCommand, MailVacationSetResult>(operation, call!.Command,
+                result => GatewayVacationSetCodec.Render(call, result));
         }
         return true;
     }

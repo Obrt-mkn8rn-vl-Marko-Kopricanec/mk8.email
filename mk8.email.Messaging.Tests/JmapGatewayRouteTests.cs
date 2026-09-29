@@ -188,7 +188,10 @@ public sealed class JmapGatewayRouteTests
                      "limit":1,"calculateTotal":true},"call-30"],
                    ["Email/queryChanges",{"accountId":"A11111111111111111111111111111111",
                      "filter":{"subject":"needle"},"sinceQueryState":"s62",
-                     "maxChanges":2,"calculateTotal":true},"call-31"]],
+                     "maxChanges":2,"calculateTotal":true},"call-31"],
+                   ["SearchSnippet/get",{"accountId":"A11111111111111111111111111111111",
+                     "filter":{"subject":"needle"},
+                     "emailIds":["E22222222222222222222222222222222","missing"]},"call-32"]],
                  "createdIds":{"made":"object-id"}}
                 """;
             using var request = new HttpRequestMessage(HttpMethod.Post, "/jmap/api")
@@ -227,10 +230,10 @@ public sealed class JmapGatewayRouteTests
             Assert.IsNotNull(jmap.Request?.Command);
             CollectionAssert.AreEqual(new[] { MailFeature.Basic, MailFeature.Messages, MailFeature.Submission,
                 MailFeature.Contacts, MailFeature.AutomaticReplies }, jmap.Request.Command.Features.ToArray());
-            Assert.AreEqual(30, jmap.Executions);
+            Assert.AreEqual(31, jmap.Executions);
             Assert.AreEqual("second", jmap.Commands[1].Arguments["collision"]!.GetValue<string>());
             Assert.IsFalse(jmap.Commands[1].Arguments.ContainsKey("#collision"));
-            Assert.AreEqual(31, jmap.Plan?.Plan?.OperationCount);
+            Assert.AreEqual(32, jmap.Plan?.Plan?.OperationCount);
             Assert.AreEqual(MailOperationKind.ReadMessages, jmap.Request.Command.Operation);
             Assert.AreEqual("text", jmap.Request.Command.Arguments["nested"]?["items"]?[2]?.GetValue<string>());
             Assert.AreEqual(1, jmap.Request.Command.Arguments["x"]!.GetValue<int>());
@@ -579,6 +582,17 @@ public sealed class JmapGatewayRouteTests
                 messageChangesResponse[1].GetProperty("removed")[0].GetString());
             Assert.AreEqual("E33333333333333333333333333333333",
                 messageChangesResponse[1].GetProperty("added")[0].GetProperty("id").GetString());
+            var snippetCommand = jmap.Commands[30];
+            Assert.AreEqual(MailOperationKind.ReadSearchSnippets, snippetCommand.Operation);
+            Assert.IsFalse(snippetCommand.Arguments.ContainsKey("filter"));
+            Assert.AreEqual("needle", snippetCommand.Arguments["terms"]![0]!.GetValue<string>());
+            Assert.AreEqual(1, snippetCommand.Arguments["messageIds"]!.AsArray().Count);
+            var snippetResponse = json.RootElement.GetProperty("methodResponses")[32];
+            Assert.AreEqual("SearchSnippet/get", snippetResponse[0].GetString());
+            Assert.AreEqual("call-32", snippetResponse[2].GetString());
+            Assert.AreEqual("<mark>needle</mark> subject",
+                snippetResponse[1].GetProperty("list")[0].GetProperty("subject").GetString());
+            Assert.AreEqual("missing", snippetResponse[1].GetProperty("notFound")[0].GetString());
 
             await using var countCommand = gatewayDataSource.CreateCommand(
                 "SELECT count(*), count(*) FILTER (WHERE metadata ->> 'layer' = 'presentation') "
@@ -587,7 +601,7 @@ public sealed class JmapGatewayRouteTests
             Assert.IsTrue(await countReader.ReadAsync(timeout.Token));
             // SSE records its headers and streamed body separately, in addition
             // to the request and two application-boundary records.
-            Assert.AreEqual(73L, countReader.GetInt64(0));
+            Assert.AreEqual(75L, countReader.GetInt64(0));
             Assert.AreEqual(7L, countReader.GetInt64(1));
 
             await using var operationCommand = gatewayDataSource.CreateCommand(
@@ -832,6 +846,16 @@ public sealed class JmapGatewayRouteTests
                 var node = JsonSerializer.SerializeToNode(changes, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
                 return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
                     OperationResult: new(new(MailOperationKind.FindMessageChanges, ApplicationValueCodec.Encode(node)),
+                        request.Command.KnownEntities!, Profile)));
+            }
+            if (request.Command.Operation == MailOperationKind.ReadSearchSnippets)
+            {
+                var snippets = new MailSearchSnippetResult(MailSearchSnippetStatus.Ok,
+                    [new(Guid.Parse("22222222-2222-2222-2222-222222222222"),
+                        "needle subject", "before needle after")]);
+                var node = JsonSerializer.SerializeToNode(snippets, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
+                    OperationResult: new(new(MailOperationKind.ReadSearchSnippets, ApplicationValueCodec.Encode(node)),
                         request.Command.KnownEntities!, Profile)));
             }
             if (request.Command.Operation == MailOperationKind.CopyContacts)

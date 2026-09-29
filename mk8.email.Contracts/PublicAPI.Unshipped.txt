@@ -1,6 +1,6 @@
 #nullable enable
-const mk8.email.Contracts.Messaging.ApplicationOperations.MailOperationExecute = "mail.operation.execute.v20" -> string!
-const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v27" -> string!
+const mk8.email.Contracts.Messaging.ApplicationOperations.MailOperationExecute = "mail.operation.execute.v21" -> string!
+const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v28" -> string!
 mk8.email.Contracts.Messaging.DistributedContractVersions
 mk8.email.Contracts.Messaging.JmapAccountProfile
 mk8.email.Contracts.Messaging.JmapAccountProfile.<Clone>$() -> mk8.email.Contracts.Messaging.JmapAccountProfile!
@@ -1124,6 +1124,43 @@ mk8.email.Contracts.Messaging.MailPushSubscriptionSnapshot.Types.get -> System.C
 mk8.email.Contracts.Messaging.MailPushSubscriptionSnapshot.Types.init -> void
 mk8.email.Contracts.Messaging.MailPushSubscriptionSnapshot.VerificationCode.get -> string?
 mk8.email.Contracts.Messaging.MailPushSubscriptionSnapshot.VerificationCode.init -> void
+mk8.email.Contracts.Messaging.MailSearchSnippetCommand
+mk8.email.Contracts.Messaging.MailSearchSnippetCommand.<Clone>$() -> mk8.email.Contracts.Messaging.MailSearchSnippetCommand!
+mk8.email.Contracts.Messaging.MailSearchSnippetCommand.AccountId.get -> System.Guid
+mk8.email.Contracts.Messaging.MailSearchSnippetCommand.AccountId.init -> void
+mk8.email.Contracts.Messaging.MailSearchSnippetCommand.CheckAccountOnly.get -> bool
+mk8.email.Contracts.Messaging.MailSearchSnippetCommand.CheckAccountOnly.init -> void
+mk8.email.Contracts.Messaging.MailSearchSnippetCommand.Deconstruct(out System.Guid AccountId, out bool CheckAccountOnly, out System.Collections.Generic.IReadOnlyList<System.Guid>! MessageIds, out System.Collections.Generic.IReadOnlyList<string!>! Terms) -> void
+mk8.email.Contracts.Messaging.MailSearchSnippetCommand.Equals(mk8.email.Contracts.Messaging.MailSearchSnippetCommand? other) -> bool
+mk8.email.Contracts.Messaging.MailSearchSnippetCommand.MailSearchSnippetCommand(System.Guid AccountId, bool CheckAccountOnly, System.Collections.Generic.IReadOnlyList<System.Guid>! MessageIds, System.Collections.Generic.IReadOnlyList<string!>! Terms) -> void
+mk8.email.Contracts.Messaging.MailSearchSnippetCommand.MessageIds.get -> System.Collections.Generic.IReadOnlyList<System.Guid>!
+mk8.email.Contracts.Messaging.MailSearchSnippetCommand.MessageIds.init -> void
+mk8.email.Contracts.Messaging.MailSearchSnippetCommand.Terms.get -> System.Collections.Generic.IReadOnlyList<string!>!
+mk8.email.Contracts.Messaging.MailSearchSnippetCommand.Terms.init -> void
+mk8.email.Contracts.Messaging.MailSearchSnippetResult
+mk8.email.Contracts.Messaging.MailSearchSnippetResult.<Clone>$() -> mk8.email.Contracts.Messaging.MailSearchSnippetResult!
+mk8.email.Contracts.Messaging.MailSearchSnippetResult.Deconstruct(out mk8.email.Contracts.Messaging.MailSearchSnippetStatus Status, out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailSearchSnippetSnapshot!>! Snippets) -> void
+mk8.email.Contracts.Messaging.MailSearchSnippetResult.Equals(mk8.email.Contracts.Messaging.MailSearchSnippetResult? other) -> bool
+mk8.email.Contracts.Messaging.MailSearchSnippetResult.MailSearchSnippetResult(mk8.email.Contracts.Messaging.MailSearchSnippetStatus Status, System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailSearchSnippetSnapshot!>! Snippets) -> void
+mk8.email.Contracts.Messaging.MailSearchSnippetResult.Snippets.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailSearchSnippetSnapshot!>!
+mk8.email.Contracts.Messaging.MailSearchSnippetResult.Snippets.init -> void
+mk8.email.Contracts.Messaging.MailSearchSnippetResult.Status.get -> mk8.email.Contracts.Messaging.MailSearchSnippetStatus
+mk8.email.Contracts.Messaging.MailSearchSnippetResult.Status.init -> void
+mk8.email.Contracts.Messaging.MailSearchSnippetSnapshot
+mk8.email.Contracts.Messaging.MailSearchSnippetSnapshot.<Clone>$() -> mk8.email.Contracts.Messaging.MailSearchSnippetSnapshot!
+mk8.email.Contracts.Messaging.MailSearchSnippetSnapshot.Deconstruct(out System.Guid MessageId, out string? SubjectText, out string? PreviewWindow) -> void
+mk8.email.Contracts.Messaging.MailSearchSnippetSnapshot.Equals(mk8.email.Contracts.Messaging.MailSearchSnippetSnapshot? other) -> bool
+mk8.email.Contracts.Messaging.MailSearchSnippetSnapshot.MailSearchSnippetSnapshot(System.Guid MessageId, string? SubjectText, string? PreviewWindow) -> void
+mk8.email.Contracts.Messaging.MailSearchSnippetSnapshot.MessageId.get -> System.Guid
+mk8.email.Contracts.Messaging.MailSearchSnippetSnapshot.MessageId.init -> void
+mk8.email.Contracts.Messaging.MailSearchSnippetSnapshot.PreviewWindow.get -> string?
+mk8.email.Contracts.Messaging.MailSearchSnippetSnapshot.PreviewWindow.init -> void
+mk8.email.Contracts.Messaging.MailSearchSnippetSnapshot.SubjectText.get -> string?
+mk8.email.Contracts.Messaging.MailSearchSnippetSnapshot.SubjectText.init -> void
+mk8.email.Contracts.Messaging.MailSearchSnippetStatus
+mk8.email.Contracts.Messaging.MailSearchSnippetStatus.AccountNotFound = 1 -> mk8.email.Contracts.Messaging.MailSearchSnippetStatus
+mk8.email.Contracts.Messaging.MailSearchSnippetStatus.Authorized = 2 -> mk8.email.Contracts.Messaging.MailSearchSnippetStatus
+mk8.email.Contracts.Messaging.MailSearchSnippetStatus.Ok = 0 -> mk8.email.Contracts.Messaging.MailSearchSnippetStatus
 mk8.email.Contracts.Messaging.MailStringCollation
 mk8.email.Contracts.Messaging.MailStringCollation.AsciiCasemap = 2 -> mk8.email.Contracts.Messaging.MailStringCollation
 mk8.email.Contracts.Messaging.MailStringCollation.AsciiNumeric = 1 -> mk8.email.Contracts.Messaging.MailStringCollation
@@ -1671,6 +1708,15 @@ override mk8.email.Contracts.Messaging.MailPushSubscriptionReadResult.ToString()
 override mk8.email.Contracts.Messaging.MailPushSubscriptionSnapshot.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.MailPushSubscriptionSnapshot.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.MailPushSubscriptionSnapshot.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailSearchSnippetCommand.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailSearchSnippetCommand.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailSearchSnippetCommand.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailSearchSnippetResult.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailSearchSnippetResult.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailSearchSnippetResult.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailSearchSnippetSnapshot.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailSearchSnippetSnapshot.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailSearchSnippetSnapshot.ToString() -> string!
 override mk8.email.Contracts.Messaging.MailSubmissionDeliverySnapshot.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.MailSubmissionDeliverySnapshot.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.MailSubmissionDeliverySnapshot.ToString() -> string!
@@ -2104,6 +2150,12 @@ static mk8.email.Contracts.Messaging.MailPushSubscriptionReadResult.operator !=(
 static mk8.email.Contracts.Messaging.MailPushSubscriptionReadResult.operator ==(mk8.email.Contracts.Messaging.MailPushSubscriptionReadResult? left, mk8.email.Contracts.Messaging.MailPushSubscriptionReadResult? right) -> bool
 static mk8.email.Contracts.Messaging.MailPushSubscriptionSnapshot.operator !=(mk8.email.Contracts.Messaging.MailPushSubscriptionSnapshot? left, mk8.email.Contracts.Messaging.MailPushSubscriptionSnapshot? right) -> bool
 static mk8.email.Contracts.Messaging.MailPushSubscriptionSnapshot.operator ==(mk8.email.Contracts.Messaging.MailPushSubscriptionSnapshot? left, mk8.email.Contracts.Messaging.MailPushSubscriptionSnapshot? right) -> bool
+static mk8.email.Contracts.Messaging.MailSearchSnippetCommand.operator !=(mk8.email.Contracts.Messaging.MailSearchSnippetCommand? left, mk8.email.Contracts.Messaging.MailSearchSnippetCommand? right) -> bool
+static mk8.email.Contracts.Messaging.MailSearchSnippetCommand.operator ==(mk8.email.Contracts.Messaging.MailSearchSnippetCommand? left, mk8.email.Contracts.Messaging.MailSearchSnippetCommand? right) -> bool
+static mk8.email.Contracts.Messaging.MailSearchSnippetResult.operator !=(mk8.email.Contracts.Messaging.MailSearchSnippetResult? left, mk8.email.Contracts.Messaging.MailSearchSnippetResult? right) -> bool
+static mk8.email.Contracts.Messaging.MailSearchSnippetResult.operator ==(mk8.email.Contracts.Messaging.MailSearchSnippetResult? left, mk8.email.Contracts.Messaging.MailSearchSnippetResult? right) -> bool
+static mk8.email.Contracts.Messaging.MailSearchSnippetSnapshot.operator !=(mk8.email.Contracts.Messaging.MailSearchSnippetSnapshot? left, mk8.email.Contracts.Messaging.MailSearchSnippetSnapshot? right) -> bool
+static mk8.email.Contracts.Messaging.MailSearchSnippetSnapshot.operator ==(mk8.email.Contracts.Messaging.MailSearchSnippetSnapshot? left, mk8.email.Contracts.Messaging.MailSearchSnippetSnapshot? right) -> bool
 static mk8.email.Contracts.Messaging.MailSubmissionDeliverySnapshot.operator !=(mk8.email.Contracts.Messaging.MailSubmissionDeliverySnapshot? left, mk8.email.Contracts.Messaging.MailSubmissionDeliverySnapshot? right) -> bool
 static mk8.email.Contracts.Messaging.MailSubmissionDeliverySnapshot.operator ==(mk8.email.Contracts.Messaging.MailSubmissionDeliverySnapshot? left, mk8.email.Contracts.Messaging.MailSubmissionDeliverySnapshot? right) -> bool
 static mk8.email.Contracts.Messaging.MailSubmissionFilter.operator !=(mk8.email.Contracts.Messaging.MailSubmissionFilter? left, mk8.email.Contracts.Messaging.MailSubmissionFilter? right) -> bool

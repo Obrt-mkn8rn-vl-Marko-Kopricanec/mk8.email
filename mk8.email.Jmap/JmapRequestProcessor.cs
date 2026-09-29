@@ -30,6 +30,7 @@ public sealed class JmapRequestProcessor
     private readonly IMailSubmissionQueryService? _submissionQueryService;
     private readonly IMailFolderQueryService? _folderQueryService;
     private readonly IMailMessageQueryService? _messageQueryService;
+    private readonly IMailSearchSnippetService? _searchSnippetService;
     private readonly IMailContactCopyService? _contactCopyService;
     private readonly IMailContactQueryService? _contactQueryService;
     private readonly IMailContactReader? _contactReader;
@@ -59,7 +60,7 @@ public sealed class JmapRequestProcessor
         ILogger<JmapRequestProcessor> logger,
         ApplicationOperationReceiptStore? receipts = null)
         : this(methods, sessions, database, environment, blobEffects, logger, receipts,
-            null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null)
+            null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null)
     {
     }
 
@@ -84,6 +85,7 @@ public sealed class JmapRequestProcessor
         IMailSubmissionQueryService? submissionQueryService,
         IMailFolderQueryService? folderQueryService,
         IMailMessageQueryService? messageQueryService,
+        IMailSearchSnippetService? searchSnippetService,
         IMailContactCopyService? contactCopyService,
         IMailContactQueryService? contactQueryService,
         IMailContactReader? contactReader,
@@ -142,6 +144,7 @@ public sealed class JmapRequestProcessor
         _submissionQueryService = submissionQueryService;
         _folderQueryService = folderQueryService;
         _messageQueryService = messageQueryService;
+        _searchSnippetService = searchSnippetService;
         _contactCopyService = contactCopyService;
         _contactQueryService = contactQueryService;
         (_contactReader, _importService) = (contactReader, importService);
@@ -234,6 +237,9 @@ public sealed class JmapRequestProcessor
                 .ConfigureAwait(false);
         else if (command.Operation == MailOperationKind.FindMessageChanges && features.Contains(MailFeature.Messages))
             response = await ExecuteMessageQueryChangesAsync(command, context, user, receiptKey, cancellationToken)
+                .ConfigureAwait(false);
+        else if (command.Operation == MailOperationKind.ReadSearchSnippets && features.Contains(MailFeature.Messages))
+            response = await ExecuteSearchSnippetsAsync(command, context, user, receiptKey, cancellationToken)
                 .ConfigureAwait(false);
         else if (command.Operation == MailOperationKind.CopyContacts && features.Contains(MailFeature.Contacts))
             response = await ExecuteContactCopyAsync(command, context, user, receiptKey, cancellationToken)
@@ -570,6 +576,25 @@ public sealed class JmapRequestProcessor
             var result = await service.QueryChangesAsync(query, user, token).ConfigureAwait(false);
             var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
                 ?? throw new InvalidOperationException("The message query service returned an incomplete result.");
+            return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
+        }, receiptKey, cancellationToken);
+    }
+
+    private Task<MailOperationResponse> ExecuteSearchSnippetsAsync(
+        MailOperationCommand command,
+        JmapInvocationContext context,
+        AuthenticatedMailUser user,
+        ApplicationReceiptKey? receiptKey,
+        CancellationToken cancellationToken)
+    {
+        var request = ParseSearchSnippetCommand(command.Arguments);
+        var service = _searchSnippetService
+            ?? throw new InvalidOperationException("The search snippet service is not configured.");
+        return InvokeAtomicallyAsync(command.Operation, context, async token =>
+        {
+            var result = await service.ReadAsync(request, user, token).ConfigureAwait(false);
+            var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
+                ?? throw new InvalidOperationException("The search snippet service returned an incomplete result.");
             return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
         }, receiptKey, cancellationToken);
     }
@@ -1116,6 +1141,29 @@ public sealed class JmapRequestProcessor
         catch (JsonException)
         {
             throw NotRequest("The message query-changes command contains invalid values.");
+        }
+    }
+
+    private MailSearchSnippetCommand ParseSearchSnippetCommand(JsonObject arguments)
+    {
+        if (arguments.Count != 4 || !arguments.ContainsKey("accountId")
+            || !arguments.ContainsKey("checkAccountOnly") || !arguments.ContainsKey("messageIds")
+            || !arguments.ContainsKey("terms"))
+            throw NotRequest("The search snippet command has an invalid shape.");
+        try
+        {
+            var request = JsonSerializer.Deserialize<MailSearchSnippetCommand>(arguments, StrictReceiptJsonOptions)
+                ?? throw NotRequest("The search snippet command is missing.");
+            if (request.MessageIds is null || request.Terms is null
+                || request.MessageIds.Count > _environment.Jmap.MaxObjectsInGet
+                || request.MessageIds.Any(id => id == Guid.Empty)
+                || request.Terms.Any(term => string.IsNullOrEmpty(term)))
+                throw NotRequest("The search snippet values are invalid.");
+            return request;
+        }
+        catch (JsonException)
+        {
+            throw NotRequest("The search snippet command contains invalid values.");
         }
     }
 

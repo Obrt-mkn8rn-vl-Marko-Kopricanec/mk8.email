@@ -32,6 +32,7 @@ public static class JmapServiceExtensions
         services.AddScoped<IMailSubmissionQueryService, MailSubmissionQueryService>();
         services.AddScoped<IMailFolderQueryService, MailFolderQueryService>();
         services.AddScoped<IMailMessageQueryService, MailMessageQueryService>();
+        services.AddScoped<IMailSearchSnippetService, MailSearchSnippetService>();
         services.AddScoped<IMailContactCopyService, MailContactCopyService>();
         services.AddScoped<IMailContactQueryService, MailContactQueryService>();
         services.AddScoped<IMailContactReader, MailContactReader>();
@@ -79,6 +80,7 @@ public static class JmapServiceExtensions
             provider.GetRequiredService<IMailSubmissionQueryService>(),
             provider.GetRequiredService<IMailFolderQueryService>(),
             provider.GetRequiredService<IMailMessageQueryService>(),
+            provider.GetRequiredService<IMailSearchSnippetService>(),
             provider.GetRequiredService<IMailContactCopyService>(),
             provider.GetRequiredService<IMailContactQueryService>(),
             provider.GetRequiredService<IMailContactReader>(),
@@ -94,7 +96,6 @@ public static class JmapServiceExtensions
         services.AddScoped<IJmapMethod, EmailGetMethod>();
         services.AddScoped<IJmapMethod>(provider => provider.GetRequiredService<EmailSetMethod>());
         services.AddScoped<IJmapMethod, EmailParseMethod>();
-        services.AddScoped<IJmapMethod, SearchSnippetGetMethod>();
         services.AddScoped<IJmapMethod, IdentitySetMethod>();
         services.AddScoped<IJmapMethod, EmailSubmissionSetMethod>();
         services.AddScoped<IJmapMethod, PushSubscriptionSetMethod>();

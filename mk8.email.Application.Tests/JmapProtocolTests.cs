@@ -3071,6 +3071,58 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task SearchSnippetFilterErrorsRemainBehindAccountAuthorization()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var response = await fixture.InvokeAsync($$$"""
+        {
+          "using": ["{{{Core}}}", "{{{Mail}}}"],
+          "methodCalls": [
+            ["SearchSnippet/get", {
+              "accountId":"A00000000000000000000000000000000",
+              "filter":{"unknownCondition":true},"emailIds":[]
+            }, "missing"],
+            ["SearchSnippet/get", {
+              "accountId":"{{{fixture.AccountId}}}",
+              "filter":{"unknownCondition":true},"emailIds":[]
+            }, "unsupported"]
+          ]
+        }
+        """);
+
+        Assert.AreEqual("accountNotFound", Arguments(response)["type"]!.GetValue<string>());
+        Assert.AreEqual("unsupportedFilter", Arguments(response, 1)["type"]!.GetValue<string>());
+    }
+
+    [TestMethod]
+    public void SearchSnippetGatewayKeepsOpaqueIdsAndRejectsUnexpectedWorkerRows()
+    {
+        var arguments = JsonNode.Parse("""
+        {"accountId":"A11111111111111111111111111111111",
+         "filter":{"operator":"AND","conditions":[
+           {"text":"needle"},{"operator":"NOT","conditions":[{"body":"blocked"}]}]},
+         "emailIds":["E22222222222222222222222222222222","opaque",
+                     "E22222222222222222222222222222222"]}
+        """)!.AsObject();
+        Assert.IsTrue(GatewaySearchSnippetCodec.TryParse(arguments, 10, out var call, out var failure), failure);
+        Assert.IsNotNull(call);
+        CollectionAssert.AreEqual(new[] { "needle" }, call.Command.Terms.ToArray());
+        Assert.HasCount(1, call.Command.MessageIds);
+        var result = new MailSearchSnippetResult(MailSearchSnippetStatus.Ok,
+            [new(Guid.Parse("22222222-2222-2222-2222-222222222222"),
+                "<needle>", "near needle")]);
+        var rendered = GatewaySearchSnippetCodec.Render(call, result).Data;
+        Assert.AreEqual("&lt;<mark>needle</mark>&gt;",
+            rendered["list"]![0]!["subject"]!.GetValue<string>());
+        Assert.AreEqual("opaque", rendered["notFound"]![0]!.GetValue<string>());
+        Assert.Throws<InvalidOperationException>(() => GatewaySearchSnippetCodec.Render(call,
+            new(MailSearchSnippetStatus.Ok,
+                [new(Guid.Parse("33333333-3333-3333-3333-333333333333"), "needle", null)])));
+        Assert.Throws<InvalidOperationException>(() => GatewaySearchSnippetCodec.Render(call,
+            new(MailSearchSnippetStatus.AccountNotFound, result.Snippets)));
+    }
+
+    [TestMethod]
     public async Task MimeProjectionPreservesNestedStructureAndResolvablePartBlobs()
     {
         await using var fixture = await JmapFixture.CreateAsync();
@@ -4877,7 +4929,8 @@ public sealed class JmapProtocolTests
             + new string('y', 79)
             + "needle"
             + new string('z', 220);
-        var snippet = JmapSearchSnippetFormatter.HighlightPreview(value, ["needle"]);
+        var window = MailSearchSnippetText.SelectPreview(value, ["needle"]);
+        var snippet = GatewaySearchSnippetFormatter.HighlightPreviewWindow(window, ["needle"]);
 
         Assert.IsNotNull(snippet);
         Assert.IsTrue(JmapJson.ContainsOnlyUnicodeScalars(snippet));

@@ -274,6 +274,12 @@ internal static class GatewayJmapBatchExecutor
             selection = Select<MailMessageQueryChangesCommand, MailMessageQueryChangesResult>(operation, call!.Command,
                 result => GatewayEmailQueryCodec.RenderChanges(call, result));
         }
+        else if (operation == MailOperationKind.ReadSearchSnippets && features.Contains(MailFeature.Messages))
+        {
+            if (!GatewaySearchSnippetCodec.TryParse(arguments, maximumObjectsInGet, out var call, out failure)) return false;
+            selection = Select<MailSearchSnippetCommand, MailSearchSnippetResult>(operation, call!.Command,
+                result => GatewaySearchSnippetCodec.Render(call, result));
+        }
         else
             return TryPrepareTypedContactOperation(operation, arguments, features,
                 maximumObjectsInGet, maximumObjectsInSet, out selection, out failure);

@@ -152,6 +152,10 @@ internal static class GatewayEmailQueryCodec
         return new(filter, sort, collapseThreads);
     }
 
+    internal static bool TryParseFilter(JsonNode? node,
+        out MailMessageFilter? filter, out string? failure) =>
+        TryFilter(node, 0, out filter, out failure);
+
     private static bool TryFilter(JsonNode? node, int depth,
         out MailMessageFilter? filter, out string? failure)
     {

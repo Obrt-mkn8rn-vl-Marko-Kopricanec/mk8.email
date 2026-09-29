@@ -18,6 +18,7 @@ public sealed class JmapRequestProcessor
     private readonly Dictionary<MailOperationKind, IJmapMethod> _methods;
     private readonly JmapAccountProfileService _sessions;
     private readonly IMailFolderReader _folderReader;
+    private readonly IMailFolderMutationService? _folderMutationService;
     private readonly IMailChangesReader _changesReader;
     private readonly IMailAddressBookReader _addressBookReader;
     private readonly IMailAddressBookMutationService? _addressBookMutationService;
@@ -69,7 +70,7 @@ public sealed class JmapRequestProcessor
         ApplicationOperationReceiptStore? receipts = null)
         : this(methods, sessions, database, environment, blobEffects, logger, receipts,
             null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
-            null, null, null)
+            null, null, null, null)
     {
     }
 
@@ -104,7 +105,8 @@ public sealed class JmapRequestProcessor
         IMailCopyService? copyService,
         IMailPushSubscriptionMutationService? pushMutationService,
         IJmapPushPresentationClient? pushDelivery,
-        IMailContactMutationService? contactMutationService)
+        IMailContactMutationService? contactMutationService,
+        IMailFolderMutationService? folderMutationService)
     {
         _methods = methods.ToDictionary(method => ValidRegisteredOperation(method.Operation, method.Feature));
         _sessions = sessions;
@@ -112,6 +114,7 @@ public sealed class JmapRequestProcessor
         var stateService = new JmapStateService(database, accountService);
         _folderReader = folderReader ?? new MailFolderReader(accountService,
             new JmapMailboxStore(database), stateService, environment);
+        _folderMutationService = folderMutationService;
         _changesReader = changesReader ?? new MailChangesReader(accountService, stateService,
             new JmapIdentityService(database, accountService), database, environment);
         _addressBookReader = addressBookReader ?? new MailAddressBookReader(database,
@@ -179,6 +182,9 @@ public sealed class JmapRequestProcessor
                 cancellationToken).ConfigureAwait(false);
         else if (command.Operation == MailOperationKind.ReadFolders && features.Contains(MailFeature.Messages))
             response = await ExecuteFoldersAsync(command, context, user, receiptKey,
+                cancellationToken).ConfigureAwait(false);
+        else if (command.Operation == MailOperationKind.MutateFolders && features.Contains(MailFeature.Messages))
+            response = await ExecuteFolderMutationAsync(command, context, receiptKey,
                 cancellationToken).ConfigureAwait(false);
         else if (MailChangeOperations.TryGetFeature(command.Operation, out var changeFeature)
             && features.Contains(changeFeature))
@@ -297,6 +303,38 @@ public sealed class JmapRequestProcessor
             var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
                 ?? throw new InvalidOperationException("The folder reader returned an incomplete result.");
             return new MailOperationResponse(MailOperationKind.ReadFolders, ApplicationValueCodec.Encode(data));
+        }, receiptKey, cancellationToken);
+    }
+
+    private Task<MailOperationResponse> ExecuteFolderMutationAsync(
+        MailOperationCommand command,
+        JmapInvocationContext context,
+        ApplicationReceiptKey? receiptKey,
+        CancellationToken cancellationToken)
+    {
+        var mutation = ParseFolderMutationCommand(command.Arguments, context);
+        var service = _folderMutationService
+            ?? throw new InvalidOperationException("The folder mutation service is not configured.");
+        return InvokeAtomicallyAsync(command.Operation, context, async token =>
+        {
+            var result = await service.MutateAsync(mutation, context, token).ConfigureAwait(false);
+            if (result.Status == MailFolderMutationStatus.Ok)
+            {
+                if (result.Created.Count != mutation.Creates.Count)
+                    throw new InvalidOperationException("The folder mutation returned incomplete creations.");
+                for (var index = 0; index < result.Created.Count; index++)
+                {
+                    var item = result.Created[index];
+                    if (!string.Equals(item.CreationId, mutation.Creates[index].CreationId,
+                            StringComparison.Ordinal))
+                        throw new InvalidOperationException("The folder mutation returned inconsistent creations.");
+                    if (item.Folder is { } folder)
+                        context.CreatedIds[item.CreationId] = JmapId.Mailbox(folder.Id);
+                }
+            }
+            var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
+                ?? throw new InvalidOperationException("The folder mutation service returned an incomplete result.");
+            return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
         }, receiptKey, cancellationToken);
     }
 
@@ -914,6 +952,47 @@ public sealed class JmapRequestProcessor
             throw NotRequest("The folder read command contains invalid values.");
         }
     }
+
+    private MailFolderMutationCommand ParseFolderMutationCommand(
+        JsonObject arguments, JmapInvocationContext context)
+    {
+        if (arguments.Count != 6 || !arguments.ContainsKey("accountId")
+            || !arguments.ContainsKey("ifInState") || !arguments.ContainsKey("removeEmailsOnDestroy")
+            || !arguments.ContainsKey("creates") || !arguments.ContainsKey("updates")
+            || !arguments.ContainsKey("destroys"))
+            throw NotRequest("The folder mutation command has an invalid shape.");
+        try
+        {
+            var mutation = JsonSerializer.Deserialize<MailFolderMutationCommand>(arguments,
+                StrictReceiptJsonOptions)
+                ?? throw NotRequest("The folder mutation command is missing.");
+            if (mutation.Creates is null || mutation.Updates is null || mutation.Destroys is null
+                || mutation.Creates.Count + mutation.Updates.Count + mutation.Destroys.Count
+                    > _environment.Jmap.MaxObjectsInSet
+                || mutation.Creates.Any(item => item is null || item.CreationId is null
+                    || !JmapId.IsValidId(item.CreationId) || item.Values is null
+                    || ApplicationValueCodec.Decode(item.Values) is not JsonObject)
+                || mutation.Creates.Select(item => item.CreationId).Distinct(StringComparer.Ordinal).Count()
+                    != mutation.Creates.Count
+                || mutation.Updates.Any(item => item is null || !ValidFolderReference(item.RequestedId, context)
+                    || item.Patch is null || ApplicationValueCodec.Decode(item.Patch) is not JsonObject)
+                || mutation.Updates.Select(item => item.RequestedId).Distinct(StringComparer.Ordinal).Count()
+                    != mutation.Updates.Count
+                || mutation.Destroys.Any(item => item is null || !ValidFolderReference(item.RequestedId, context))
+                || mutation.Destroys.Select(item => item.RequestedId).Distinct(StringComparer.Ordinal).Count()
+                    != mutation.Destroys.Count)
+                throw NotRequest("The folder mutation values are invalid.");
+            return mutation;
+        }
+        catch (Exception exception) when (exception is JsonException or InvalidOperationException)
+        {
+            throw NotRequest("The folder mutation command contains invalid values.");
+        }
+    }
+
+    private static bool ValidFolderReference(string? value, JmapInvocationContext context) =>
+        value is not null && (JmapId.IsValidId(value)
+            || context.TryGetReferenceKey(value, out var key) && JmapId.IsValidId(key));
 
     private static MailChangesCommand ParseMailChangesCommand(JsonObject arguments)
     {

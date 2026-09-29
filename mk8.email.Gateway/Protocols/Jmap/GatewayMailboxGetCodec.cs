@@ -145,7 +145,7 @@ internal static class GatewayMailboxGetCodec
         });
     }
 
-    private static JsonObject Build(MailFolderSnapshot folder, IReadOnlySet<string>? properties)
+    internal static JsonObject Build(MailFolderSnapshot folder, IReadOnlySet<string>? properties)
     {
         var result = new JsonObject { ["id"] = FormatId('M', folder.Id) };
         if (Wants("name")) result["name"] = folder.Name;

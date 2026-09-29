@@ -134,8 +134,9 @@ public sealed class JmapFeatureBoundaryTests
         await using var fixture = await JmapFixture.CreateAsync();
         using var scope = fixture.Services.CreateScope();
         var methods = scope.ServiceProvider.GetServices<IJmapMethod>().ToArray();
-        Assert.HasCount(5, methods);
+        Assert.HasCount(4, methods);
         Assert.IsNotNull(scope.ServiceProvider.GetRequiredService<IMailFolderReader>());
+        Assert.IsNotNull(scope.ServiceProvider.GetRequiredService<IMailFolderMutationService>());
         Assert.IsNotNull(scope.ServiceProvider.GetRequiredService<IMailChangesReader>());
         Assert.IsNotNull(scope.ServiceProvider.GetRequiredService<IMailAddressBookReader>());
         Assert.IsNotNull(scope.ServiceProvider.GetRequiredService<IMailAddressBookMutationService>());

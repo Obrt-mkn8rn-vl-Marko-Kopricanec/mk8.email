@@ -1019,6 +1019,38 @@ public sealed class JmapDurableReplayTests
     }
 
     [TestMethod]
+    public async Task NativeFolderMutationReplaysParentReferencesWithoutDuplicatingFolders()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var batch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Messages],
+        [
+            new(MailOperationKind.MutateFolders, new JsonObject
+            {
+                ["accountId"] = JmapId.Account(rig.InboxId),
+                ["create"] = new JsonObject
+                {
+                    ["child"] = new JsonObject { ["name"] = "Child", ["parentId"] = "#parent" },
+                    ["parent"] = new JsonObject { ["name"] = "Replay Parent" },
+                },
+            }, "folders"),
+        ], new Dictionary<string, string>());
+        var operation = Guid.CreateVersion7();
+        var first = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual(MailOperationKind.MutateFolders, first.Invocations[0].Operation);
+        var parentId = first.Invocations[0].Arguments["created"]!["parent"]!["id"]!.GetValue<string>();
+        var childId = first.Invocations[0].Arguments["created"]!["child"]!["id"]!.GetValue<string>();
+        Assert.AreEqual(parentId, first.CreatedIds!["parent"]);
+        Assert.AreEqual(childId, first.CreatedIds["child"]);
+        var replay = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
+        CollectionAssert.AreEquivalent(first.CreatedIds.ToArray(), replay.CreatedIds!.ToArray());
+        await using var database = rig.Context();
+        Assert.AreEqual(1, await database.Folders.CountAsync(folder => folder.Name == "Replay Parent"));
+        Assert.AreEqual(1, await database.Folders.CountAsync(folder => folder.Name == "Replay Parent/Child"));
+        Assert.AreEqual(1, await database.ApplicationOperationReceipts.CountAsync());
+    }
+
+    [TestMethod]
     public async Task NativeContactMutationsReplayResultsAndCreationReferencesWithoutDuplicatingData()
     {
         await using var rig = await Rig.CreateAsync();

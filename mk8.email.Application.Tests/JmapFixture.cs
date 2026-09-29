@@ -138,16 +138,8 @@ internal sealed class JmapFixture : IAsyncDisposable
 
     internal static void OverrideMethod(IServiceCollection services, IJmapMethod replacement)
     {
-        var implementation = replacement.Operation switch
-        {
-            MailOperationKind.FindFolders => null,
-            MailOperationKind.MutateFolders => typeof(MailboxSetMethod),
-            _ => throw new ArgumentException("Unsupported test handler replacement.", nameof(replacement)),
-        };
-        var descriptor = implementation is null ? null : services.Single(item => item.ServiceType == typeof(IJmapMethod)
-            && item.ImplementationType == implementation);
-        if (descriptor is not null)
-            services.Remove(descriptor);
+        if (replacement.Operation is not (MailOperationKind.FindFolders or MailOperationKind.MutateFolders))
+            throw new ArgumentException("Unsupported test handler replacement.", nameof(replacement));
         services.AddSingleton(replacement);
     }
 

@@ -10,13 +10,13 @@ using mk8.email.Infrastructure.Models;
 
 namespace mk8.email.Jmap;
 
-internal sealed class MailboxSetMethod(
+internal sealed class MailFolderMutationService(
     EmailDbContext database,
     JmapAccountService accounts,
     JmapMailboxStore mailboxes,
     JmapStateService states,
     MailboxMessageContentService content,
-    EnvironmentConfig environment) : IJmapMethod
+    EnvironmentConfig environment) : IMailFolderMutationService
 {
     private static readonly HashSet<string> JmapMailboxRoles = new HashSet<string>(
         [
@@ -28,10 +28,142 @@ internal sealed class MailboxSetMethod(
         ["name", "parentId", "role", "sortOrder", "isSubscribed"],
         StringComparer.Ordinal);
 
-    public MailOperationKind Operation => MailOperationKind.MutateFolders;
-    public MailFeature Feature => MailFeature.Messages;
+    public async Task<MailFolderMutationResult> MutateAsync(
+        MailFolderMutationCommand command,
+        JmapInvocationContext context,
+        CancellationToken cancellationToken)
+    {
+        var response = await InvokeCoreAsync(context, BuildArguments(command), cancellationToken)
+            .ConfigureAwait(false);
+        if (response.Operation == MailOperationKind.Failure)
+        {
+            return response.Arguments["type"]?.GetValue<string>() switch
+            {
+                "accountNotFound" => Empty(MailFolderMutationStatus.AccountNotFound),
+                "stateMismatch" => Empty(MailFolderMutationStatus.StateMismatch),
+                _ => throw new InvalidOperationException("The folder mutation command failed structural validation."),
+            };
+        }
+        return ReadOutcome(command, context, response.Arguments);
+    }
 
-    public async Task<JmapMethodResponse> InvokeAsync(
+    private static JsonObject BuildArguments(MailFolderMutationCommand command)
+    {
+        var create = new JsonObject();
+        foreach (var item in command.Creates)
+            create[item.CreationId] = ApplicationValueCodec.Decode(item.Values) as JsonObject
+                ?? throw new InvalidOperationException("The folder creation value is invalid.");
+        var update = new JsonObject();
+        foreach (var item in command.Updates)
+            update[item.RequestedId] = ApplicationValueCodec.Decode(item.Patch) as JsonObject
+                ?? throw new InvalidOperationException("The folder patch is invalid.");
+        var destroy = new JsonArray();
+        foreach (var item in command.Destroys)
+            destroy.Add(item.RequestedId);
+        return new JsonObject
+        {
+            ["accountId"] = JmapId.Account(command.AccountId),
+            ["ifInState"] = command.IfInState,
+            ["onDestroyRemoveEmails"] = command.RemoveEmailsOnDestroy,
+            ["create"] = create,
+            ["update"] = update,
+            ["destroy"] = destroy,
+        };
+    }
+
+    private static MailFolderMutationResult ReadOutcome(
+        MailFolderMutationCommand command, JmapInvocationContext context, JsonObject data)
+    {
+        var created = data["created"] as JsonObject;
+        var notCreated = data["notCreated"] as JsonObject;
+        var createOutcomes = command.Creates.Select(item =>
+        {
+            if (created?[item.CreationId] is JsonObject folder)
+                return new MailFolderCreateOutcome(item.CreationId, ReadCreated(folder), null);
+            if (notCreated?[item.CreationId] is JsonObject error)
+                return new MailFolderCreateOutcome(item.CreationId, null, ReadFailure(error));
+            throw new InvalidOperationException("The folder creation outcome is missing.");
+        }).ToArray();
+        var updated = data["updated"] as JsonObject;
+        var notUpdated = data["notUpdated"] as JsonObject;
+        var updateOutcomes = command.Updates.Select(item =>
+        {
+            if (notUpdated?[item.RequestedId] is JsonObject error)
+                return new MailFolderUpdateOutcome(item.RequestedId, null, ReadFailure(error));
+            var resolved = context.ResolveId(item.RequestedId);
+            if (resolved is not null && updated?.ContainsKey(resolved) == true
+                && JmapId.TryParseMailbox(resolved, out var id))
+                return new MailFolderUpdateOutcome(item.RequestedId, id, null);
+            throw new InvalidOperationException("The folder update outcome is missing.");
+        }).ToArray();
+        var destroyed = data["destroyed"] as JsonArray;
+        var notDestroyed = data["notDestroyed"] as JsonObject;
+        var orderedDestroys = new List<MailFolderDestroyOutcome>(command.Destroys.Count);
+        var found = new HashSet<string>(StringComparer.Ordinal);
+        if (destroyed is not null)
+        {
+            foreach (var node in destroyed)
+            {
+                var resolved = node?.GetValue<string>()
+                    ?? throw new InvalidOperationException("The folder deletion result is invalid.");
+                var item = command.Destroys.FirstOrDefault(candidate =>
+                    !found.Contains(candidate.RequestedId)
+                    && string.Equals(context.ResolveId(candidate.RequestedId), resolved, StringComparison.Ordinal));
+                if (item is null || !JmapId.TryParseMailbox(resolved, out var id))
+                    throw new InvalidOperationException("The folder deletion result is inconsistent.");
+                found.Add(item.RequestedId);
+                orderedDestroys.Add(new(item.RequestedId, id, null));
+            }
+        }
+        foreach (var item in command.Destroys)
+        {
+            if (found.Contains(item.RequestedId)) continue;
+            if (notDestroyed?[item.RequestedId] is not JsonObject error)
+                throw new InvalidOperationException("The folder deletion outcome is missing.");
+            orderedDestroys.Add(new(item.RequestedId, null, ReadFailure(error)));
+        }
+        return new(MailFolderMutationStatus.Ok,
+            data["oldState"]?.GetValue<string>(), data["newState"]?.GetValue<string>(),
+            createOutcomes, updateOutcomes, orderedDestroys);
+    }
+
+    private static MailFolderMutationResult Empty(MailFolderMutationStatus status) =>
+        new(status, null, null, [], [], []);
+
+    private static MailFolderCreatedSnapshot ReadCreated(JsonObject folder)
+    {
+        var id = folder["id"]?.GetValue<string>();
+        if (!JmapId.TryParseMailbox(id, out var folderId))
+            throw new InvalidOperationException("The created folder id is invalid.");
+        Guid? parentId = null;
+        if (folder["parentId"] is JsonValue parent)
+        {
+            if (!JmapId.TryParseMailbox(parent.GetValue<string>(), out var parsed))
+                throw new InvalidOperationException("The created parent id is invalid.");
+            parentId = parsed;
+        }
+        return new(folderId, folder["name"]!.GetValue<string>(), parentId,
+            folder["role"]?.GetValue<string>(), folder["sortOrder"]!.GetValue<long>(),
+            folder["isSubscribed"]!.GetValue<bool>());
+    }
+
+    private static MailFolderMutationFailure ReadFailure(JsonObject error)
+    {
+        var kind = error["type"]?.GetValue<string>() switch
+        {
+            "invalidProperties" => MailFolderMutationError.InvalidProperties,
+            "invalidPatch" => MailFolderMutationError.InvalidPatch,
+            "notFound" => MailFolderMutationError.NotFound,
+            "forbidden" => MailFolderMutationError.Forbidden,
+            "mailboxHasChild" => MailFolderMutationError.MailboxHasChild,
+            "mailboxHasEmail" => MailFolderMutationError.MailboxHasEmail,
+            _ => throw new InvalidOperationException("The folder mutation error is invalid."),
+        };
+        return new(kind, error["description"]?.GetValue<string>(),
+            (error["properties"] as JsonArray)?.Select(item => item!.GetValue<string>()).ToArray());
+    }
+
+    private async Task<JmapMethodResponse> InvokeCoreAsync(
         JmapInvocationContext context,
         JsonObject arguments,
         CancellationToken cancellationToken)
@@ -128,7 +260,6 @@ internal sealed class MailboxSetMethod(
                         var id = JmapId.Mailbox(result.Folder!.Id);
                         context.CreatedIds[item.Key] = id;
                         created[item.Key] = BuildCreatedResponse(
-                            item.Value,
                             result.Folder.Id,
                             JmapMailboxStore.LeafName(result.Folder.Name),
                             result.ParentId,
@@ -240,7 +371,7 @@ internal sealed class MailboxSetMethod(
             account.InboxId,
             JmapConstants.MailboxDataType,
             cancellationToken).ConfigureAwait(false);
-        return new JmapMethodResponse(Operation, new JsonObject
+        return new JmapMethodResponse(MailOperationKind.MutateFolders, new JsonObject
         {
             ["accountId"] = accountId,
             ["oldState"] = oldState,
@@ -725,7 +856,6 @@ internal sealed class MailboxSetMethod(
             var id = JmapId.Mailbox(plan.Node.Id);
             context.CreatedIds[plan.CreationId] = id;
             createdResponse[plan.CreationId] = BuildCreatedResponse(
-                requestedCreates[plan.CreationId],
                 plan.Node.Id,
                 plan.Node.Name,
                 plan.Node.ParentId,
@@ -1162,7 +1292,6 @@ internal sealed class MailboxSetMethod(
         role is "inbox" or "sent" or "drafts" or "trash" or "junk";
 
     private static JsonObject BuildCreatedResponse(
-        JsonObject requested,
         Guid id,
         string name,
         Guid? parentId,
@@ -1170,21 +1299,6 @@ internal sealed class MailboxSetMethod(
         long sortOrder,
         bool isSubscribed)
     {
-        var properties = new HashSet<string>(
-            ["totalEmails", "unreadEmails", "totalThreads", "unreadThreads", "myRights"],
-            StringComparer.Ordinal);
-        if (!requested.ContainsKey("parentId")) properties.Add("parentId");
-        if (!requested.ContainsKey("role")) properties.Add("role");
-        if (!requested.ContainsKey("sortOrder")) properties.Add("sortOrder");
-        if (!requested.ContainsKey("isSubscribed")) properties.Add("isSubscribed");
-
-        if (requested["name"] is JsonValue requestedNameNode
-            && requestedNameNode.TryGetValue<string>(out var requestedName)
-            && !string.Equals(requestedName, name, StringComparison.Ordinal))
-        {
-            properties.Add("name");
-        }
-
         return JmapMailboxJson.Build(
             new JmapMailboxView(
                 id,
@@ -1197,8 +1311,7 @@ internal sealed class MailboxSetMethod(
                 0,
                 0,
                 0,
-                0),
-            properties);
+                0));
     }
 
     private sealed record MailboxUpdatePlan(

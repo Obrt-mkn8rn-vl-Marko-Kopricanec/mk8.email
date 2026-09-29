@@ -4,7 +4,7 @@ Gateway parses and validates I-JSON and the outer JMAP request envelope. Its
 batch, call, result and reference-selector models exist only in Gateway, not in
 the shared durable Contracts assembly. It sends a protocol-neutral
 authentication/feature/operation-count admission plan through `mail.plan.validate`, then
-one resolved mail operation at a time through `mail.operation.execute.v25`. Worker
+one resolved mail operation at a time through `mail.operation.execute.v26`. Worker
 returns a typed operation result, domain failures, known entity mappings and an
 account profile. Gateway alone sequences the batch, handles Core/echo, and renders
 the response envelope and HTTP problems. Worker receives neither the original
@@ -20,7 +20,7 @@ wrong-case or undefined internal discriminators fail closed before any mutation.
 Handler registration rejects duplicate or invalid identifiers, and primary/additional
 result identifiers are checked before commit and on receipt replay. Opaque business
 values named `name` or `sourceName` are untouched. This is a coordinated contract
-change (`mk8.distributed.v32`), not completion of all JMAP value-shaping extraction.
+change (`mk8.distributed.v33`), not completion of all JMAP value-shaping extraction.
 
 `Mailbox/get`, `Thread/get`, `AddressBook/get`, `Identity/get`, `EmailSubmission/get`, `VacationResponse/get`,
 `PushSubscription/get` and all seven simple `/changes` methods have fully typed commands/results across this
@@ -114,6 +114,13 @@ operations, not a JMAP method body. Gateway owns the account/reference syntax,
 PatchObject parsing and SetResponse normalization maps. Worker applies card
 validation, account-wide UID locking, Blob media authorization, quotas and
 DAV persistence to those domain values.
+`Mailbox/set` now has a typed durable command and typed per-item outcomes. Gateway
+validates the method envelope, object maps, identifiers and object-count limit,
+and renders SetResponse fields, rights, state and failures from snapshots. Worker
+retains the final-state hierarchy/role planner, including atomic swaps and mixed
+create/update/destroy requests, and resolves in-call parent creation references.
+Its per-item create and PatchObject values are still encoded value trees interpreted
+inside the Worker; this is not yet the final API-agnostic value-shaping boundary.
 
 Capability URNs are also Gateway-owned. Gateway maps them into stable `MailFeature`
 identifiers; Worker enforces feature admission and method eligibility using only
@@ -134,7 +141,7 @@ business invocation runs in this path.
 Gateway also translates top-level result-reference keys and JSON-pointer syntax
 into ordered Gateway argument bindings and decoded value selectors. Gateway
 resolves these dependencies against completed, normalized results before sending
-a business command. The five remaining Worker handlers do not register or execute Core/echo. Malformed
+a business command. The four remaining Worker handlers do not register or execute Core/echo. Malformed
 references carry a deferred failure at their original binding position, so they
 remain invocation errors rather than rejecting the entire batch or changing
 which error wins. First-result selection, array wildcard flattening, strict array
@@ -145,7 +152,7 @@ Gateway also recognizes creation-reference tokens in argument keys and values an
 provides a typed alias map with each business command. Worker resolves only those
 aliases against its current known-entity map, so a create followed by a reference
 inside one operation still works without Worker parsing the JMAP `#` marker.
-The alias map is required on the v25 command. Opaque non-ID values are not rewritten.
+The alias map is required on the v26 command. Opaque non-ID values are not rewritten.
 
 Worker returns typed accounts, feature limits and change maps, never session URLs
 or event/push JSON. Gateway renders discovery documents, chooses its public URLs,
@@ -170,9 +177,9 @@ This changes the durable operation contracts. The old `jmap.api.process`,
 `mail.operation.execute.v15`, `mail.operation.execute.v16`, `mail.operation.execute.v17`,
 `mail.operation.execute.v18`, `mail.operation.execute.v19`, `mail.operation.execute.v20`,
 `mail.operation.execute.v21`, `mail.operation.execute.v22`, `mail.operation.execute.v23`,
-`mail.operation.execute.v24` operations
+`mail.operation.execute.v24`, `mail.operation.execute.v25` operations
 are unsupported. The current operations are `mail.plan.validate`,
-`mail.operation.execute.v25`, `jmap.profile.get.v2`, `jmap.upload.v2`,
+`mail.operation.execute.v26`, `jmap.profile.get.v2`, `jmap.upload.v2`,
 `jmap.download.v2`, `jmap.changes.poll.v2` and `webpush.send.v2`. Old requests must
 not be reinterpreted as new empty or incomplete data.
 Before upgrading an existing distributed installation, stop admission, drain or

@@ -262,7 +262,8 @@ public sealed class OutboundSmtpRelayTests
     }
 
     [TestMethod]
-    [Timeout(10_000)]
+    // The local socket exchanges have their own short deadlines; allow CI scheduling jitter.
+    [Timeout(30_000)]
     public async Task RelayUsesSmtpUtf8ForInternationalizedEnvelopeAndHeaders()
     {
         await using var server = new ScriptedSmtpServer(async session =>

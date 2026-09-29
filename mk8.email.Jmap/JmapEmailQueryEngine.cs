@@ -23,23 +23,6 @@ internal static partial class JmapEmailQueryEngine
         ],
         StringComparer.Ordinal);
 
-    private static readonly HashSet<string> SortProperties = new HashSet<string>(
-        [
-            "receivedAt", "size", "from", "to", "subject", "sentAt", "hasKeyword",
-            "allInThreadHaveKeyword", "someInThreadHaveKeyword",
-        ],
-        StringComparer.Ordinal);
-    private static readonly HashSet<string> MutableFilterProperties = new HashSet<string>(
-        [
-            "inMailbox", "inMailboxOtherThan", "allInThreadHaveKeyword",
-            "someInThreadHaveKeyword", "noneInThreadHaveKeyword", "hasKeyword",
-            "notKeyword",
-        ],
-        StringComparer.Ordinal);
-    private static readonly HashSet<string> ThreadFilterProperties = new HashSet<string>(
-        ["allInThreadHaveKeyword", "someInThreadHaveKeyword", "noneInThreadHaveKeyword"],
-        StringComparer.Ordinal);
-
     public static async Task<List<JmapEmailQueryItem>> LoadAsync(
         EmailDbContext database,
         MailboxMessageContentService content,
@@ -94,125 +77,6 @@ internal static partial class JmapEmailQueryEngine
             return false;
         result = items.Where(predicate).ToList();
         return true;
-    }
-
-    public static bool TryParseSort(
-        JsonNode? node,
-        out IReadOnlyList<JmapEmailComparator> result,
-        out string error)
-    {
-        error = string.Empty;
-        if (node is null)
-        {
-            result = [new JmapEmailComparator("receivedAt", false, null, null)];
-            return true;
-        }
-        if (node is not JsonArray array)
-        {
-            result = [];
-            error = "invalidArguments";
-            return false;
-        }
-
-        var comparators = new List<JmapEmailComparator>(array.Count);
-        foreach (var item in array)
-        {
-            if (item is not JsonObject comparator
-                || !JmapMethodHelpers.HasOnlyProperties(
-                    comparator,
-                    "property",
-                    "isAscending",
-                    "keyword",
-                    "collation")
-                || !JmapMethodHelpers.TryGetRequiredString(comparator, "property", out var property)
-                || !JmapMethodHelpers.TryGetOptionalBoolean(comparator, "isAscending", true, out var ascending)
-                || !JmapMethodHelpers.TryGetOptionalString(
-                    comparator,
-                    "keyword",
-                    out var keyword,
-                    allowNull: false)
-                || !JmapMethodHelpers.TryGetOptionalString(
-                    comparator,
-                    "collation",
-                    out var collation,
-                    allowNull: false))
-            {
-                result = [];
-                error = "invalidArguments";
-                return false;
-            }
-            if (!SortProperties.Contains(property))
-            {
-                result = [];
-                error = "unsupportedSort";
-                return false;
-            }
-            var needsKeyword = property is
-                "hasKeyword" or "allInThreadHaveKeyword" or "someInThreadHaveKeyword";
-            if (needsKeyword != (keyword is not null)
-                || keyword is not null && !JmapEmailCodec.IsValidKeyword(keyword.ToProtocolLowerInvariant()))
-            {
-                result = [];
-                error = "invalidArguments";
-                return false;
-            }
-            var comparesStrings = property is "from" or "to" or "subject";
-            if (comparesStrings
-                && collation is not null
-                && !JmapCollation.IsSupported(collation))
-            {
-                result = [];
-                error = "unsupportedSort";
-                return false;
-            }
-            comparators.Add(new JmapEmailComparator(property, ascending, keyword?.ToProtocolLowerInvariant(), collation));
-        }
-        result = comparators;
-        return true;
-    }
-
-    public static List<JmapEmailQueryItem> Sort(
-        IReadOnlyList<JmapEmailQueryItem> all,
-        IReadOnlyList<JmapEmailQueryItem> filtered,
-        IReadOnlyList<JmapEmailComparator> comparators)
-    {
-        var byThread = all.ToLookup(item => item.ThreadId, StringComparer.Ordinal);
-        var comparer = Comparer<JmapEmailQueryItem>.Create((left, right) =>
-        {
-            foreach (var comparator in comparators)
-            {
-                var comparison = Compare(left, right, comparator, byThread);
-                if (comparison != 0)
-                    return comparator.IsAscending ? comparison : -comparison;
-            }
-            return left.Email.Id.CompareTo(right.Email.Id);
-        });
-        return filtered.Order(comparer).ToList();
-    }
-
-    public static bool UsesMutableFilter(JsonNode? filter) =>
-        FilterUsesAnyProperty(filter, MutableFilterProperties);
-
-    public static bool UsesThreadProperties(
-        JsonNode? filter,
-        IReadOnlyList<JmapEmailComparator> comparators) =>
-        FilterUsesAnyProperty(filter, ThreadFilterProperties)
-        || comparators.Any(comparator => comparator.Property is
-            "allInThreadHaveKeyword" or "someInThreadHaveKeyword");
-
-    public static bool UsesMutableSort(IReadOnlyList<JmapEmailComparator> comparators) =>
-        comparators.Any(comparator => comparator.Property is
-            "hasKeyword" or "allInThreadHaveKeyword" or "someInThreadHaveKeyword");
-
-    private static bool FilterUsesAnyProperty(
-        JsonNode? node,
-        IReadOnlySet<string> properties)
-    {
-        if (node is not JsonObject value)
-            return false;
-        if (value["conditions"] is JsonArray conditions)
-            return conditions.Any(condition => FilterUsesAnyProperty(condition, properties));
-        return value.Any(item => properties.Contains(item.Key));
     }
 
     private static bool TryBuildPredicate(
@@ -345,29 +209,6 @@ internal static partial class JmapEmailQueryEngine
             && (body is null || MatchesText(BodyText(item), body))
             && (headerName is null || MatchesHeader(item.Message, headerName, headerText));
         return true;
-    }
-
-    private static int Compare(
-        JmapEmailQueryItem left,
-        JmapEmailQueryItem right,
-        JmapEmailComparator comparator,
-        ILookup<string, JmapEmailQueryItem> byThread)
-    {
-        return comparator.Property switch
-        {
-            "receivedAt" => left.Email.ReceivedAt.CompareTo(right.Email.ReceivedAt),
-            "size" => left.Size.CompareTo(right.Size),
-            "from" => CompareString(left.FromSortValue, right.FromSortValue, comparator.Collation),
-            "to" => CompareString(left.ToSortValue, right.ToSortValue, comparator.Collation),
-            "subject" => CompareString(BaseSubject(left.SubjectSortValue), BaseSubject(right.SubjectSortValue), comparator.Collation),
-            "sentAt" => Nullable.Compare(left.SentAtSortValue, right.SentAtSortValue),
-            "hasKeyword" => left.Keywords.Contains(comparator.Keyword!).CompareTo(right.Keywords.Contains(comparator.Keyword!)),
-            "allInThreadHaveKeyword" => byThread[left.ThreadId].All(item => item.Keywords.Contains(comparator.Keyword!))
-                .CompareTo(byThread[right.ThreadId].All(item => item.Keywords.Contains(comparator.Keyword!))),
-            "someInThreadHaveKeyword" => byThread[left.ThreadId].Any(item => item.Keywords.Contains(comparator.Keyword!))
-                .CompareTo(byThread[right.ThreadId].Any(item => item.Keywords.Contains(comparator.Keyword!))),
-            _ => 0,
-        };
     }
 
     private static string AllSearchableText(JmapEmailQueryItem item) => string.Join(
@@ -517,9 +358,6 @@ internal static partial class JmapEmailQueryEngine
     }
 
     internal static string BaseSubject(string? value) => Rfc5256.BaseSubject(value);
-
-    private static int CompareString(string left, string right, string? collation) =>
-        JmapCollation.Compare(left, right, collation);
 
     [GeneratedRegex("(?:\\\"(?:\\\\.|[^\\\"])*\\\"|'(?:\\\\.|[^'])*'|\\S+)", RegexOptions.CultureInvariant, 1000)]
     private static partial Regex SearchTokenRegex();

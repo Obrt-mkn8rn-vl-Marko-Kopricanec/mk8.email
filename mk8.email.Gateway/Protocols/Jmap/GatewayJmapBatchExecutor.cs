@@ -246,6 +246,35 @@ internal static class GatewayJmapBatchExecutor
                 result => GatewayEmailCopyCodec.RenderAdditional(call, result));
         }
         else
+            return TryPrepareTypedMessageOperation(operation, arguments, features,
+                maximumObjectsInGet, maximumObjectsInSet, out selection, out failure);
+        return true;
+    }
+
+    private static bool TryPrepareTypedMessageOperation(
+        MailOperationKind operation,
+        JsonObject arguments,
+        IReadOnlyList<MailFeature> features,
+        int maximumObjectsInGet,
+        int maximumObjectsInSet,
+        out TypedOperationSelection? selection,
+        out string? failure)
+    {
+        selection = null;
+        failure = null;
+        if (operation == MailOperationKind.FindMessages && features.Contains(MailFeature.Messages))
+        {
+            if (!GatewayEmailQueryCodec.TryParseQuery(arguments, maximumObjectsInGet, out var call, out failure)) return false;
+            selection = Select<MailMessageQueryCommand, MailMessageQueryResult>(operation, call!.Command,
+                result => GatewayEmailQueryCodec.RenderQuery(call, result));
+        }
+        else if (operation == MailOperationKind.FindMessageChanges && features.Contains(MailFeature.Messages))
+        {
+            if (!GatewayEmailQueryCodec.TryParseChanges(arguments, out var call, out failure)) return false;
+            selection = Select<MailMessageQueryChangesCommand, MailMessageQueryChangesResult>(operation, call!.Command,
+                result => GatewayEmailQueryCodec.RenderChanges(call, result));
+        }
+        else
             return TryPrepareTypedContactOperation(operation, arguments, features,
                 maximumObjectsInGet, maximumObjectsInSet, out selection, out failure);
         return true;

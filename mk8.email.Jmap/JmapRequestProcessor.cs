@@ -29,6 +29,7 @@ public sealed class JmapRequestProcessor
     private readonly IMailVacationMutator? _vacationMutator;
     private readonly IMailSubmissionQueryService? _submissionQueryService;
     private readonly IMailFolderQueryService? _folderQueryService;
+    private readonly IMailMessageQueryService? _messageQueryService;
     private readonly IMailContactCopyService? _contactCopyService;
     private readonly IMailContactQueryService? _contactQueryService;
     private readonly IMailContactReader? _contactReader;
@@ -58,7 +59,7 @@ public sealed class JmapRequestProcessor
         ILogger<JmapRequestProcessor> logger,
         ApplicationOperationReceiptStore? receipts = null)
         : this(methods, sessions, database, environment, blobEffects, logger, receipts,
-            null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null)
+            null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null)
     {
     }
 
@@ -82,6 +83,7 @@ public sealed class JmapRequestProcessor
         IMailVacationMutator? vacationMutator,
         IMailSubmissionQueryService? submissionQueryService,
         IMailFolderQueryService? folderQueryService,
+        IMailMessageQueryService? messageQueryService,
         IMailContactCopyService? contactCopyService,
         IMailContactQueryService? contactQueryService,
         IMailContactReader? contactReader,
@@ -139,6 +141,7 @@ public sealed class JmapRequestProcessor
         _vacationMutator = vacationMutator;
         _submissionQueryService = submissionQueryService;
         _folderQueryService = folderQueryService;
+        _messageQueryService = messageQueryService;
         _contactCopyService = contactCopyService;
         _contactQueryService = contactQueryService;
         (_contactReader, _importService) = (contactReader, importService);
@@ -225,6 +228,12 @@ public sealed class JmapRequestProcessor
                 .ConfigureAwait(false);
         else if (command.Operation == MailOperationKind.FindFolderChanges && features.Contains(MailFeature.Messages))
             response = await ExecuteFolderQueryChangesAsync(command, context, user, receiptKey, cancellationToken)
+                .ConfigureAwait(false);
+        else if (command.Operation == MailOperationKind.FindMessages && features.Contains(MailFeature.Messages))
+            response = await ExecuteMessageQueryAsync(command, context, user, receiptKey, cancellationToken)
+                .ConfigureAwait(false);
+        else if (command.Operation == MailOperationKind.FindMessageChanges && features.Contains(MailFeature.Messages))
+            response = await ExecuteMessageQueryChangesAsync(command, context, user, receiptKey, cancellationToken)
                 .ConfigureAwait(false);
         else if (command.Operation == MailOperationKind.CopyContacts && features.Contains(MailFeature.Contacts))
             response = await ExecuteContactCopyAsync(command, context, user, receiptKey, cancellationToken)
@@ -523,6 +532,44 @@ public sealed class JmapRequestProcessor
             var result = await service.QueryChangesAsync(query, user, token).ConfigureAwait(false);
             var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
                 ?? throw new InvalidOperationException("The folder query service returned an incomplete result.");
+            return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
+        }, receiptKey, cancellationToken);
+    }
+
+    private Task<MailOperationResponse> ExecuteMessageQueryAsync(
+        MailOperationCommand command,
+        JmapInvocationContext context,
+        AuthenticatedMailUser user,
+        ApplicationReceiptKey? receiptKey,
+        CancellationToken cancellationToken)
+    {
+        var query = ParseMessageQueryCommand(command.Arguments);
+        var service = _messageQueryService
+            ?? throw new InvalidOperationException("The message query service is not configured.");
+        return InvokeAtomicallyAsync(command.Operation, context, async token =>
+        {
+            var result = await service.QueryAsync(query, user, token).ConfigureAwait(false);
+            var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
+                ?? throw new InvalidOperationException("The message query service returned an incomplete result.");
+            return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
+        }, receiptKey, cancellationToken);
+    }
+
+    private Task<MailOperationResponse> ExecuteMessageQueryChangesAsync(
+        MailOperationCommand command,
+        JmapInvocationContext context,
+        AuthenticatedMailUser user,
+        ApplicationReceiptKey? receiptKey,
+        CancellationToken cancellationToken)
+    {
+        var query = ParseMessageQueryChangesCommand(command.Arguments);
+        var service = _messageQueryService
+            ?? throw new InvalidOperationException("The message query service is not configured.");
+        return InvokeAtomicallyAsync(command.Operation, context, async token =>
+        {
+            var result = await service.QueryChangesAsync(query, user, token).ConfigureAwait(false);
+            var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
+                ?? throw new InvalidOperationException("The message query service returned an incomplete result.");
             return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
         }, receiptKey, cancellationToken);
     }
@@ -1024,6 +1071,117 @@ public sealed class JmapRequestProcessor
             || filter.ParentConstraint != MailFolderParentConstraint.Folder && filter.ParentId is not null
             || filter.MatchNullRole && filter.Role is not null)
             throw NotRequest("The folder query condition is invalid.");
+    }
+
+    private MailMessageQueryCommand ParseMessageQueryCommand(JsonObject arguments)
+    {
+        if (arguments.Count != 7 || !arguments.ContainsKey("accountId")
+            || !arguments.ContainsKey("criteria") || !arguments.ContainsKey("checkAccountOnly")
+            || !arguments.ContainsKey("position") || !arguments.ContainsKey("anchorId")
+            || !arguments.ContainsKey("anchorOffset") || !arguments.ContainsKey("limit"))
+            throw NotRequest("The message query command has an invalid shape.");
+        try
+        {
+            var query = JsonSerializer.Deserialize<MailMessageQueryCommand>(arguments, StrictReceiptJsonOptions)
+                ?? throw NotRequest("The message query command is missing.");
+            ValidateMessageCriteria(query.Criteria);
+            if (query.Position is < -9_007_199_254_740_991L or > 9_007_199_254_740_991L
+                || query.AnchorOffset is < -9_007_199_254_740_991L or > 9_007_199_254_740_991L
+                || query.AnchorId is not null && !JmapId.IsValidId(query.AnchorId)
+                || query.Limit < 0 || query.Limit > _environment.Jmap.MaxObjectsInGet)
+                throw NotRequest("The message query window is invalid.");
+            return query;
+        }
+        catch (JsonException)
+        {
+            throw NotRequest("The message query command contains invalid values.");
+        }
+    }
+
+    private static MailMessageQueryChangesCommand ParseMessageQueryChangesCommand(JsonObject arguments)
+    {
+        if (arguments.Count != 5 || !arguments.ContainsKey("accountId")
+            || !arguments.ContainsKey("criteria") || !arguments.ContainsKey("checkAccountOnly")
+            || !arguments.ContainsKey("sinceState") || !arguments.ContainsKey("maxChanges"))
+            throw NotRequest("The message query-changes command has an invalid shape.");
+        try
+        {
+            var query = JsonSerializer.Deserialize<MailMessageQueryChangesCommand>(arguments, StrictReceiptJsonOptions)
+                ?? throw NotRequest("The message query-changes command is missing.");
+            ValidateMessageCriteria(query.Criteria);
+            if (query.SinceState is null || query.MaxChanges is < 0 or > 9_007_199_254_740_991L)
+                throw NotRequest("The message query-changes values are invalid.");
+            return query;
+        }
+        catch (JsonException)
+        {
+            throw NotRequest("The message query-changes command contains invalid values.");
+        }
+    }
+
+    private static void ValidateMessageCriteria(MailMessageQueryCriteria? criteria)
+    {
+        if (criteria?.Sort is null || criteria.Sort.Any(item => item is null
+            || !Enum.IsDefined(item.Field) || !Enum.IsDefined(item.Collation)
+            || (item.Field is MailMessageSortField.HasKeyword
+                or MailMessageSortField.AllInThreadHaveKeyword
+                or MailMessageSortField.SomeInThreadHaveKeyword) != (item.Keyword is not null)
+            || item.Keyword is not null && !JmapEmailCodec.IsValidKeyword(item.Keyword)))
+            throw NotRequest("The message query sort is invalid.");
+        ValidateMessageFilter(criteria.Filter, 0);
+    }
+
+    private static void ValidateMessageFilter(MailMessageFilter? filter, int depth)
+    {
+        if (filter is null) return;
+        if (depth > 64 || !Enum.IsDefined(filter.Operator))
+            throw NotRequest("The message query filter is invalid.");
+        if (filter.Operator != MailMessageFilterOperator.Condition)
+        {
+            if (filter.Conditions is null || filter.Terms is not null)
+                throw NotRequest("The message query operator is invalid.");
+            foreach (var child in filter.Conditions)
+                ValidateMessageFilter(child ?? throw NotRequest("The message query child is missing."), depth + 1);
+            return;
+        }
+        if (filter.Conditions is not null || filter.Terms is null)
+            throw NotRequest("The message query condition is invalid.");
+        foreach (var term in filter.Terms)
+        {
+            if (term is null || !Enum.IsDefined(term.Field)
+                || term.UtcDate is { Kind: not DateTimeKind.Utc }
+                || term.Number is < 0 or > 9_007_199_254_740_991L
+                || term.Values is not null && term.Values.Any(id => id is null || !JmapId.IsValidId(id))
+                || !ValidMessageTermShape(term))
+                throw NotRequest("The message query term is invalid.");
+        }
+    }
+
+    private static bool ValidMessageTermShape(MailMessageFilterTerm term)
+    {
+        var field = term.Field;
+        if (field == MailMessageFilterField.InMailboxOtherThan)
+            return term.Values is not null && term.Text is null && term.HeaderText is null
+                && term.UtcDate is null && term.Number is null && term.Flag is null;
+        if (field is MailMessageFilterField.Before or MailMessageFilterField.After)
+            return term.UtcDate is not null && term.Text is null && term.HeaderText is null
+                && term.Values is null && term.Number is null && term.Flag is null;
+        if (field is MailMessageFilterField.MinSize or MailMessageFilterField.MaxSize)
+            return term.Number is not null && term.Text is null && term.HeaderText is null
+                && term.Values is null && term.UtcDate is null && term.Flag is null;
+        if (field == MailMessageFilterField.HasAttachment)
+            return term.Flag is not null && term.Text is null && term.HeaderText is null
+                && term.Values is null && term.UtcDate is null && term.Number is null;
+        if (term.Text is null || term.Values is not null || term.UtcDate is not null
+            || term.Number is not null || term.Flag is not null) return false;
+        if (field == MailMessageFilterField.InMailbox && !JmapId.IsValidId(term.Text)) return false;
+        if (field is MailMessageFilterField.AllInThreadHaveKeyword
+            or MailMessageFilterField.SomeInThreadHaveKeyword
+            or MailMessageFilterField.NoneInThreadHaveKeyword
+            or MailMessageFilterField.HasKeyword
+            or MailMessageFilterField.NotKeyword
+            && !JmapEmailCodec.IsValidKeyword(term.Text)) return false;
+        return field == MailMessageFilterField.Header || term.HeaderText is null;
     }
 
     private MailContactCopyCommand ParseContactCopyCommand(JsonObject arguments)

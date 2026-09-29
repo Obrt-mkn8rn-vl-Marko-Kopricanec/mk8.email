@@ -90,28 +90,32 @@ internal static class GatewayJmapBatchExecutor
         GatewayMailboxGetCodec.Call? folderCall = null;
         GatewayMailChangesCodec.Call? changesCall = null;
         GatewayAddressBookGetCodec.Call? bookCall = null;
+        GatewayIdentityGetCodec.Call? identityCall = null;
         JsonObject payload = arguments;
         if (invocation.Operation == MailOperationKind.ReadFolders && features.Contains(MailFeature.Messages))
         {
             if (!GatewayMailboxGetCodec.TryParse(arguments, maximumObjects, out folderCall, out var failure))
                 return new(failure ?? "invalidArguments", null, null);
-            payload = JsonSerializer.SerializeToNode(folderCall!.Command, FolderJsonOptions)?.AsObject()
-                ?? throw new InvalidOperationException("Could not encode the folder read command.");
+            payload = EncodeCommand(folderCall!.Command);
         }
         else if (MailChangeOperations.TryGetFeature(invocation.Operation, out var changeFeature)
             && features.Contains(changeFeature))
         {
             if (!GatewayMailChangesCodec.TryParse(arguments, invocation.Operation, out changesCall, out var failure))
                 return new(failure ?? "invalidArguments", null, null);
-            payload = JsonSerializer.SerializeToNode(changesCall!.Command, FolderJsonOptions)?.AsObject()
-                ?? throw new InvalidOperationException("Could not encode the folder changes command.");
+            payload = EncodeCommand(changesCall!.Command);
         }
         else if (invocation.Operation == MailOperationKind.ReadAddressBooks && features.Contains(MailFeature.Contacts))
         {
             if (!GatewayAddressBookGetCodec.TryParse(arguments, maximumObjects, out bookCall, out var failure))
                 return new(failure ?? "invalidArguments", null, null);
-            payload = JsonSerializer.SerializeToNode(bookCall!.Command, FolderJsonOptions)?.AsObject()
-                ?? throw new InvalidOperationException("Could not encode the address-book read command.");
+            payload = EncodeCommand(bookCall!.Command);
+        }
+        else if (invocation.Operation == MailOperationKind.ReadSenderIdentities && features.Contains(MailFeature.Submission))
+        {
+            if (!GatewayIdentityGetCodec.TryParse(arguments, maximumObjects, out identityCall, out var failure))
+                return new(failure ?? "invalidArguments", null, null);
+            payload = EncodeCommand(identityCall!.Command);
         }
         var result = await application.ExecuteOperationAsync(new(authentication,
             new MailOperationCommand(features, invocation.Operation, payload, aliases, knownEntities)),
@@ -124,7 +128,7 @@ internal static class GatewayJmapBatchExecutor
         ValidateResponse(operation.Response);
         var displayed = new List<(MailOperationKind Operation, JsonObject Data)>
         {
-            DecodePrimary(operation.Response, folderCall, changesCall, bookCall),
+            DecodePrimary(operation.Response, folderCall, changesCall, bookCall, identityCall),
         };
         if (operation.Response.AdditionalResults is not null)
         {
@@ -134,13 +138,18 @@ internal static class GatewayJmapBatchExecutor
         return new(null, result, displayed);
     }
 
+    private static JsonObject EncodeCommand<TCommand>(TCommand command) =>
+        JsonSerializer.SerializeToNode(command, FolderJsonOptions)?.AsObject()
+        ?? throw new InvalidOperationException("Could not encode the typed read command.");
+
     private static (MailOperationKind Operation, JsonObject Data) DecodePrimary(
         MailOperationResponse response,
         GatewayMailboxGetCodec.Call? folderCall,
         GatewayMailChangesCodec.Call? changesCall,
-        GatewayAddressBookGetCodec.Call? bookCall)
+        GatewayAddressBookGetCodec.Call? bookCall,
+        GatewayIdentityGetCodec.Call? identityCall)
     {
-        if (folderCall is null && changesCall is null && bookCall is null)
+        if (folderCall is null && changesCall is null && bookCall is null && identityCall is null)
             return (response.Operation, (JsonObject)ApplicationValueCodec.Decode(response.Data)!);
         if (response.AdditionalResults is not null)
             throw new InvalidOperationException("A typed read returned unexpected additional results.");
@@ -161,6 +170,14 @@ internal static class GatewayJmapBatchExecutor
             var bookResult = ApplicationValueCodec.Decode(response.Data)?.Deserialize<MailAddressBookReadResult>(FolderJsonOptions)
                 ?? throw new InvalidOperationException("The Application returned an incomplete address-book read result.");
             return GatewayAddressBookGetCodec.Render(bookCall, bookResult);
+        }
+        if (identityCall is not null)
+        {
+            if (response.Operation != MailOperationKind.ReadSenderIdentities)
+                throw new InvalidOperationException("The Application returned a different identity read operation.");
+            var identityResult = ApplicationValueCodec.Decode(response.Data)?.Deserialize<MailIdentityReadResult>(FolderJsonOptions)
+                ?? throw new InvalidOperationException("The Application returned an incomplete identity read result.");
+            return GatewayIdentityGetCodec.Render(identityCall, identityResult);
         }
         if (response.Operation != MailOperationKind.ReadFolders)
             throw new InvalidOperationException("The Application returned a different folder read operation.");

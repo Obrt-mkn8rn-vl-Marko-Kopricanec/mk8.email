@@ -32,6 +32,34 @@ namespace mk8.email.Messaging.Tests;
 public sealed class JmapDurableReplayTests
 {
     [TestMethod]
+    public async Task TypedIdentityReadReplaysItsCommittedSnapshotAcrossWorkerRetries()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var batch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Submission],
+            [new JmapApplicationCall(MailOperationKind.ReadSenderIdentities, new JsonObject
+            {
+                ["accountId"] = JmapId.Account(rig.InboxId),
+                ["properties"] = new JsonArray("name", "email"),
+            }, "identities")]);
+        var operation = Guid.CreateVersion7();
+        var first = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual(MailOperationKind.ReadSenderIdentities, first.Invocations[0].Operation);
+        Assert.AreEqual(string.Empty, first.Invocations[0].Arguments["list"]![0]!["name"]!.GetValue<string>());
+        await using (var changed = rig.Context())
+        {
+            var identity = await changed.JmapIdentities.SingleAsync();
+            identity.Name = "Renamed sender";
+            await changed.SaveChangesAsync();
+        }
+        var replay = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
+        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7());
+        Assert.AreEqual("Renamed sender", fresh.Invocations[0].Arguments["list"]![0]!["name"]!.GetValue<string>());
+        await using var verification = rig.Context();
+        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync());
+    }
+
+    [TestMethod]
     public async Task TypedAddressBookReadReplaysItsCommittedSnapshotAcrossWorkerRetries()
     {
         await using var rig = await Rig.CreateAsync();

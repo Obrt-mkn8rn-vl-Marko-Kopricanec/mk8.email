@@ -51,6 +51,7 @@ public sealed class ApplicationRequestDispatcherTests
     [DataRow("mail.operation.execute.v3")]
     [DataRow("mail.operation.execute.v4")]
     [DataRow("mail.operation.execute.v5")]
+    [DataRow("mail.operation.execute.v6")]
     [DataRow("dav.unknown")]
     public async Task UnknownOperationReturnsAStableApplicationError(string operation)
     {

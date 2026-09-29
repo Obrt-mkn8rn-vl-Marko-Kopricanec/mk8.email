@@ -95,6 +95,70 @@ public sealed class JmapDurableReplayTests
     }
 
     [TestMethod]
+    public async Task TypedEmailImportUsesAzureContentAndReplaysWithoutDuplicatingMessage()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var folderId = Guid.CreateVersion7();
+        await using (var setup = rig.Context())
+        {
+            setup.Folders.Add(new FolderDB
+            {
+                Id = folderId,
+                InboxId = rig.InboxId,
+                Name = "Inbox",
+                UidValidity = 1,
+                NextUid = 1,
+            });
+            await setup.SaveChangesAsync();
+        }
+        const string raw = "From: sender@example.test\r\nTo: replay@example.test\r\nSubject: Imported\r\n\r\nBody";
+        string blobId;
+        using (var scope = rig.Services.CreateScope())
+        {
+            var blobs = scope.ServiceProvider.GetRequiredService<JmapBlobService>();
+            var stored = await blobs.StoreAsync(rig.InboxId, Encoding.UTF8.GetBytes(raw),
+                "message/rfc822", "import.eml", CancellationToken.None);
+            blobId = stored.BlobId;
+        }
+        var batch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Messages],
+            [new JmapApplicationCall(MailOperationKind.ImportMessages, new JsonObject
+            {
+                ["accountId"] = JmapId.Account(rig.InboxId),
+                ["emails"] = new JsonObject
+                {
+                    ["created"] = new JsonObject
+                    {
+                        ["blobId"] = blobId,
+                        ["mailboxIds"] = new JsonObject { [JmapId.Mailbox(folderId)] = true },
+                        ["keywords"] = new JsonObject { ["$seen"] = true },
+                    },
+                },
+            }, "import")], new Dictionary<string, string>());
+        var operation = Guid.CreateVersion7();
+        var first = await rig.InvokeAsync(batch, operation);
+        var emailId = first.Invocations[0].Arguments["created"]!["created"]!["id"]!.GetValue<string>();
+        Assert.AreEqual(emailId, first.CreatedIds!["created"]);
+        await using (var database = rig.Context())
+        {
+            Assert.AreEqual(1, await database.Emails.CountAsync());
+            var email = await database.Emails.SingleAsync();
+            Assert.AreEqual(LargeObjectProviders.AzureBlob, email.RawMessageObjectProvider);
+            Assert.IsNull(email.RawMessage);
+            Assert.IsTrue(email.IsRead);
+        }
+        var replay = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
+        Assert.AreEqual(emailId, replay.CreatedIds!["created"]);
+        await using (var database = rig.Context())
+            Assert.AreEqual(1, await database.Emails.CountAsync());
+        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7());
+        Assert.AreNotEqual(emailId, fresh.Invocations[0].Arguments["created"]!["created"]!["id"]!.GetValue<string>());
+        await using var final = rig.Context();
+        Assert.AreEqual(2, await final.Emails.CountAsync());
+        Assert.AreEqual(2, await final.ApplicationOperationReceipts.CountAsync());
+    }
+
+    [TestMethod]
     public async Task TypedContactCopyPreservesAccountPrecedenceAndReplaysCommittedError()
     {
         await using var rig = await Rig.CreateAsync();

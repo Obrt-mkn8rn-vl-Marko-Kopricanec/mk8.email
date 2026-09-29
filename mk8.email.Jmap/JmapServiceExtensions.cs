@@ -44,6 +44,7 @@ public static class JmapServiceExtensions
         services.AddScoped<JmapBlobLargeObjectMigrationService>();
         services.AddScoped<JmapEmailBuilder>();
         services.AddScoped<JmapEmailStore>();
+        services.AddScoped<IMailImportService, MailImportService>();
         services.AddScoped<JmapContactStore>();
         services.AddScoped<IJmapApplicationService, JmapApplicationService>();
         services.AddScoped<JmapIdentityService>();
@@ -77,7 +78,8 @@ public static class JmapServiceExtensions
             provider.GetRequiredService<IMailFolderQueryService>(),
             provider.GetRequiredService<IMailContactCopyService>(),
             provider.GetRequiredService<IMailContactQueryService>(),
-            provider.GetRequiredService<IMailContactReader>()));
+            provider.GetRequiredService<IMailContactReader>(),
+            provider.GetRequiredService<IMailImportService>()));
         AddJmapMethods(services);
         return services;
     }
@@ -89,7 +91,6 @@ public static class JmapServiceExtensions
         services.AddScoped<IJmapMethod, EmailQueryMethod>();
         services.AddScoped<IJmapMethod, EmailQueryChangesMethod>();
         services.AddScoped<IJmapMethod>(provider => provider.GetRequiredService<EmailSetMethod>());
-        services.AddScoped<IJmapMethod, EmailImportMethod>();
         services.AddScoped<IJmapMethod, EmailParseMethod>();
         services.AddScoped<IJmapMethod, EmailCopyMethod>();
         services.AddScoped<IJmapMethod, SearchSnippetGetMethod>();

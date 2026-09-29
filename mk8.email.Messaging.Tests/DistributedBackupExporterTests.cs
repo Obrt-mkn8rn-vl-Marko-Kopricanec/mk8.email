@@ -14,6 +14,7 @@ using Npgsql;
 namespace mk8.email.Messaging.Tests;
 
 [TestClass]
+[DoNotParallelize]
 [TestCategory("PostgreSQL")]
 [TestCategory("AzureBlobCompatible")]
 public sealed class DistributedBackupExporterTests
@@ -793,7 +794,9 @@ public sealed class DistributedBackupExporterTests
             ?? throw new InvalidOperationException("The archive tool did not start.");
         var output = process.StandardOutput.ReadToEndAsync();
         var error = process.StandardError.ReadToEndAsync();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        // Archive sealing and extraction sync durable files; a loaded CI disk can
+        // exceed the short subprocess budget without a hung archive process.
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(3));
         try
         {
             await process.WaitForExitAsync(deadline.Token);

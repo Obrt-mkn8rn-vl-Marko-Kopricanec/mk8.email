@@ -172,7 +172,11 @@ public sealed class JmapGatewayRouteTests
                      "sinceQueryState":"s55","maxChanges":2,"calculateTotal":true},"call-26"],
                    ["ContactCard/get",{"accountId":"A11111111111111111111111111111111",
                      "ids":["C22222222222222222222222222222222","C33333333333333333333333333333333"],
-                     "properties":["uid","name","addressBookIds"]},"call-27"]],
+                     "properties":["uid","name","addressBookIds"]},"call-27"],
+                   ["Email/import",{"accountId":"A11111111111111111111111111111111",
+                     "emails":{"draft":{"blobId":"U44444444444444444444444444444444",
+                       "mailboxIds":{"M33333333333333333333333333333333":true},
+                       "keywords":{"$seen":true},"receivedAt":"2026-09-29T12:34:56Z"}}},"call-28"]],
                  "createdIds":{"made":"object-id"}}
                 """;
             using var request = new HttpRequestMessage(HttpMethod.Post, "/jmap/api")
@@ -211,10 +215,10 @@ public sealed class JmapGatewayRouteTests
             Assert.IsNotNull(jmap.Request?.Command);
             CollectionAssert.AreEqual(new[] { MailFeature.Basic, MailFeature.Messages, MailFeature.Submission,
                 MailFeature.Contacts, MailFeature.AutomaticReplies }, jmap.Request.Command.Features.ToArray());
-            Assert.AreEqual(26, jmap.Executions);
+            Assert.AreEqual(27, jmap.Executions);
             Assert.AreEqual("second", jmap.Commands[1].Arguments["collision"]!.GetValue<string>());
             Assert.IsFalse(jmap.Commands[1].Arguments.ContainsKey("#collision"));
-            Assert.AreEqual(27, jmap.Plan?.Plan?.OperationCount);
+            Assert.AreEqual(28, jmap.Plan?.Plan?.OperationCount);
             Assert.AreEqual(MailOperationKind.FindMessages, jmap.Request.Command.Operation);
             Assert.AreEqual("text", jmap.Request.Command.Arguments["nested"]?["items"]?[2]?.GetValue<string>());
             Assert.AreEqual(1, jmap.Request.Command.Arguments["x"]!.GetValue<int>());
@@ -503,6 +507,21 @@ public sealed class JmapGatewayRouteTests
             Assert.IsFalse(contactReadResponse[1].GetProperty("list")[0].TryGetProperty("version", out _));
             Assert.AreEqual("C33333333333333333333333333333333", contactReadResponse[1]
                 .GetProperty("notFound")[0].GetString());
+            var importCommand = jmap.Commands[26];
+            Assert.AreEqual(MailOperationKind.ImportMessages, importCommand.Operation);
+            Assert.AreEqual("11111111-1111-1111-1111-111111111111",
+                importCommand.Arguments["accountId"]!.GetValue<string>());
+            Assert.AreEqual("draft", importCommand.Arguments["items"]![0]!["creationId"]!.GetValue<string>());
+            Assert.AreEqual("33333333-3333-3333-3333-333333333333",
+                importCommand.Arguments["items"]![0]!["mailboxId"]!.GetValue<string>());
+            Assert.IsFalse(importCommand.Arguments.ContainsKey("emails"));
+            var importResponse = json.RootElement.GetProperty("methodResponses")[27];
+            Assert.AreEqual("Email/import", importResponse[0].GetString());
+            Assert.AreEqual("call-28", importResponse[2].GetString());
+            Assert.AreEqual("E55555555555555555555555555555555", importResponse[1]
+                .GetProperty("created").GetProperty("draft").GetProperty("id").GetString());
+            Assert.AreEqual("B55555555555555555555555555555555", importResponse[1]
+                .GetProperty("created").GetProperty("draft").GetProperty("blobId").GetString());
 
             await using var countCommand = gatewayDataSource.CreateCommand(
                 "SELECT count(*), count(*) FILTER (WHERE metadata ->> 'layer' = 'presentation') "
@@ -511,7 +530,7 @@ public sealed class JmapGatewayRouteTests
             Assert.IsTrue(await countReader.ReadAsync(timeout.Token));
             // SSE records its headers and streamed body separately, in addition
             // to the request and two application-boundary records.
-            Assert.AreEqual(65L, countReader.GetInt64(0));
+            Assert.AreEqual(67L, countReader.GetInt64(0));
             Assert.AreEqual(7L, countReader.GetInt64(1));
 
             await using var operationCommand = gatewayDataSource.CreateCommand(
@@ -775,6 +794,16 @@ public sealed class JmapGatewayRouteTests
                 var node = JsonSerializer.SerializeToNode(read, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
                 return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
                     OperationResult: new(new(MailOperationKind.ReadContacts, ApplicationValueCodec.Encode(node)),
+                        request.Command.KnownEntities!, Profile)));
+            }
+            if (request.Command.Operation == MailOperationKind.ImportMessages)
+            {
+                var imported = new MailImportResult(MailImportStatus.Ok, "s57", "s58",
+                    [new("draft", MailImportItemError.None,
+                        Guid.Parse("55555555-5555-5555-5555-555555555555"), "thread:import", 123)]);
+                var node = JsonSerializer.SerializeToNode(imported, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
+                    OperationResult: new(new(MailOperationKind.ImportMessages, ApplicationValueCodec.Encode(node)),
                         request.Command.KnownEntities!, Profile)));
             }
             var data = (System.Text.Json.Nodes.JsonObject)request.Command.Arguments.DeepClone();

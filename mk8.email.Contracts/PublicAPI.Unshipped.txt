@@ -1,6 +1,6 @@
 #nullable enable
-const mk8.email.Contracts.Messaging.ApplicationOperations.MailOperationExecute = "mail.operation.execute.v5" -> string!
-const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v12" -> string!
+const mk8.email.Contracts.Messaging.ApplicationOperations.MailOperationExecute = "mail.operation.execute.v6" -> string!
+const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v13" -> string!
 mk8.email.Contracts.Messaging.DistributedContractVersions
 mk8.email.Contracts.Messaging.JmapAccountProfile
 mk8.email.Contracts.Messaging.JmapAccountProfile.<Clone>$() -> mk8.email.Contracts.Messaging.JmapAccountProfile!
@@ -81,6 +81,52 @@ mk8.email.Contracts.Messaging.JmapServiceLimits.MaxSizeMailboxName.get -> int
 mk8.email.Contracts.Messaging.JmapServiceLimits.MaxSizeMailboxName.init -> void
 mk8.email.Contracts.Messaging.JmapServiceLimits.MaxUploadSizeBytes.get -> long
 mk8.email.Contracts.Messaging.JmapServiceLimits.MaxUploadSizeBytes.init -> void
+mk8.email.Contracts.Messaging.MailAddressBookReadCommand
+mk8.email.Contracts.Messaging.MailAddressBookReadCommand.<Clone>$() -> mk8.email.Contracts.Messaging.MailAddressBookReadCommand!
+mk8.email.Contracts.Messaging.MailAddressBookReadCommand.AccountId.get -> System.Guid
+mk8.email.Contracts.Messaging.MailAddressBookReadCommand.AccountId.init -> void
+mk8.email.Contracts.Messaging.MailAddressBookReadCommand.AccountReferenceEligible.get -> bool
+mk8.email.Contracts.Messaging.MailAddressBookReadCommand.AccountReferenceEligible.init -> void
+mk8.email.Contracts.Messaging.MailAddressBookReadCommand.BookIds.get -> System.Collections.Generic.IReadOnlyList<System.Guid>?
+mk8.email.Contracts.Messaging.MailAddressBookReadCommand.BookIds.init -> void
+mk8.email.Contracts.Messaging.MailAddressBookReadCommand.Deconstruct(out System.Guid AccountId, out System.Collections.Generic.IReadOnlyList<System.Guid>? BookIds, out bool AccountReferenceEligible) -> void
+mk8.email.Contracts.Messaging.MailAddressBookReadCommand.Equals(mk8.email.Contracts.Messaging.MailAddressBookReadCommand? other) -> bool
+mk8.email.Contracts.Messaging.MailAddressBookReadCommand.MailAddressBookReadCommand(System.Guid AccountId, System.Collections.Generic.IReadOnlyList<System.Guid>? BookIds, bool AccountReferenceEligible) -> void
+mk8.email.Contracts.Messaging.MailAddressBookReadResult
+mk8.email.Contracts.Messaging.MailAddressBookReadResult.<Clone>$() -> mk8.email.Contracts.Messaging.MailAddressBookReadResult!
+mk8.email.Contracts.Messaging.MailAddressBookReadResult.Books.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailAddressBookSnapshot!>!
+mk8.email.Contracts.Messaging.MailAddressBookReadResult.Books.init -> void
+mk8.email.Contracts.Messaging.MailAddressBookReadResult.Deconstruct(out mk8.email.Contracts.Messaging.MailAddressBookReadStatus Status, out string? State, out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailAddressBookSnapshot!>! Books) -> void
+mk8.email.Contracts.Messaging.MailAddressBookReadResult.Equals(mk8.email.Contracts.Messaging.MailAddressBookReadResult? other) -> bool
+mk8.email.Contracts.Messaging.MailAddressBookReadResult.MailAddressBookReadResult(mk8.email.Contracts.Messaging.MailAddressBookReadStatus Status, string? State, System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailAddressBookSnapshot!>! Books) -> void
+mk8.email.Contracts.Messaging.MailAddressBookReadResult.State.get -> string?
+mk8.email.Contracts.Messaging.MailAddressBookReadResult.State.init -> void
+mk8.email.Contracts.Messaging.MailAddressBookReadResult.Status.get -> mk8.email.Contracts.Messaging.MailAddressBookReadStatus
+mk8.email.Contracts.Messaging.MailAddressBookReadResult.Status.init -> void
+mk8.email.Contracts.Messaging.MailAddressBookReadStatus
+mk8.email.Contracts.Messaging.MailAddressBookReadStatus.AccountNotFound = 1 -> mk8.email.Contracts.Messaging.MailAddressBookReadStatus
+mk8.email.Contracts.Messaging.MailAddressBookReadStatus.AccountNotSupported = 2 -> mk8.email.Contracts.Messaging.MailAddressBookReadStatus
+mk8.email.Contracts.Messaging.MailAddressBookReadStatus.Ok = 0 -> mk8.email.Contracts.Messaging.MailAddressBookReadStatus
+mk8.email.Contracts.Messaging.MailAddressBookReadStatus.RequestTooLarge = 3 -> mk8.email.Contracts.Messaging.MailAddressBookReadStatus
+mk8.email.Contracts.Messaging.MailAddressBookSnapshot
+mk8.email.Contracts.Messaging.MailAddressBookSnapshot.<Clone>$() -> mk8.email.Contracts.Messaging.MailAddressBookSnapshot!
+mk8.email.Contracts.Messaging.MailAddressBookSnapshot.Deconstruct(out System.Guid Id, out string! Name, out string? Description, out long SortOrder, out bool IsDefault, out bool IsSubscribed, out bool IsProtected) -> void
+mk8.email.Contracts.Messaging.MailAddressBookSnapshot.Description.get -> string?
+mk8.email.Contracts.Messaging.MailAddressBookSnapshot.Description.init -> void
+mk8.email.Contracts.Messaging.MailAddressBookSnapshot.Equals(mk8.email.Contracts.Messaging.MailAddressBookSnapshot? other) -> bool
+mk8.email.Contracts.Messaging.MailAddressBookSnapshot.Id.get -> System.Guid
+mk8.email.Contracts.Messaging.MailAddressBookSnapshot.Id.init -> void
+mk8.email.Contracts.Messaging.MailAddressBookSnapshot.IsDefault.get -> bool
+mk8.email.Contracts.Messaging.MailAddressBookSnapshot.IsDefault.init -> void
+mk8.email.Contracts.Messaging.MailAddressBookSnapshot.IsProtected.get -> bool
+mk8.email.Contracts.Messaging.MailAddressBookSnapshot.IsProtected.init -> void
+mk8.email.Contracts.Messaging.MailAddressBookSnapshot.IsSubscribed.get -> bool
+mk8.email.Contracts.Messaging.MailAddressBookSnapshot.IsSubscribed.init -> void
+mk8.email.Contracts.Messaging.MailAddressBookSnapshot.MailAddressBookSnapshot(System.Guid Id, string! Name, string? Description, long SortOrder, bool IsDefault, bool IsSubscribed, bool IsProtected) -> void
+mk8.email.Contracts.Messaging.MailAddressBookSnapshot.Name.get -> string!
+mk8.email.Contracts.Messaging.MailAddressBookSnapshot.Name.init -> void
+mk8.email.Contracts.Messaging.MailAddressBookSnapshot.SortOrder.get -> long
+mk8.email.Contracts.Messaging.MailAddressBookSnapshot.SortOrder.init -> void
 mk8.email.Contracts.Messaging.MailAdmissionPlan
 mk8.email.Contracts.Messaging.MailAdmissionPlan.Deconstruct(out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailFeature>! Features, out int OperationCount) -> void
 mk8.email.Contracts.Messaging.MailAdmissionPlan.Features.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailFeature>!
@@ -211,6 +257,15 @@ override mk8.email.Contracts.Messaging.JmapPushMessage.ToString() -> string!
 override mk8.email.Contracts.Messaging.JmapServiceLimits.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.JmapServiceLimits.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.JmapServiceLimits.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailAddressBookReadCommand.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailAddressBookReadCommand.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailAddressBookReadCommand.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailAddressBookReadResult.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailAddressBookReadResult.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailAddressBookReadResult.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailAddressBookSnapshot.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailAddressBookSnapshot.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailAddressBookSnapshot.ToString() -> string!
 override mk8.email.Contracts.Messaging.MailChangesCommand.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.MailChangesCommand.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.MailChangesCommand.ToString() -> string!
@@ -347,6 +402,12 @@ mk8.email.Contracts.Messaging.MailApplicationFailure.Limit.init -> void
 override mk8.email.Contracts.Messaging.MailApplicationFailure.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.MailApplicationFailure.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.MailApplicationFailure.ToString() -> string!
+static mk8.email.Contracts.Messaging.MailAddressBookReadCommand.operator !=(mk8.email.Contracts.Messaging.MailAddressBookReadCommand? left, mk8.email.Contracts.Messaging.MailAddressBookReadCommand? right) -> bool
+static mk8.email.Contracts.Messaging.MailAddressBookReadCommand.operator ==(mk8.email.Contracts.Messaging.MailAddressBookReadCommand? left, mk8.email.Contracts.Messaging.MailAddressBookReadCommand? right) -> bool
+static mk8.email.Contracts.Messaging.MailAddressBookReadResult.operator !=(mk8.email.Contracts.Messaging.MailAddressBookReadResult? left, mk8.email.Contracts.Messaging.MailAddressBookReadResult? right) -> bool
+static mk8.email.Contracts.Messaging.MailAddressBookReadResult.operator ==(mk8.email.Contracts.Messaging.MailAddressBookReadResult? left, mk8.email.Contracts.Messaging.MailAddressBookReadResult? right) -> bool
+static mk8.email.Contracts.Messaging.MailAddressBookSnapshot.operator !=(mk8.email.Contracts.Messaging.MailAddressBookSnapshot? left, mk8.email.Contracts.Messaging.MailAddressBookSnapshot? right) -> bool
+static mk8.email.Contracts.Messaging.MailAddressBookSnapshot.operator ==(mk8.email.Contracts.Messaging.MailAddressBookSnapshot? left, mk8.email.Contracts.Messaging.MailAddressBookSnapshot? right) -> bool
 static mk8.email.Contracts.Messaging.MailApplicationFailure.operator !=(mk8.email.Contracts.Messaging.MailApplicationFailure? left, mk8.email.Contracts.Messaging.MailApplicationFailure? right) -> bool
 static mk8.email.Contracts.Messaging.MailApplicationFailure.operator ==(mk8.email.Contracts.Messaging.MailApplicationFailure? left, mk8.email.Contracts.Messaging.MailApplicationFailure? right) -> bool
 const mk8.email.Contracts.Messaging.ApplicationOperations.MailPlanValidate = "mail.plan.validate" -> string!

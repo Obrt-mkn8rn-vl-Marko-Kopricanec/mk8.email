@@ -18,6 +18,7 @@ public sealed class JmapRequestProcessor
     private readonly JmapAccountProfileService _sessions;
     private readonly IMailFolderReader _folderReader;
     private readonly IMailChangesReader _changesReader;
+    private readonly IMailAddressBookReader _addressBookReader;
     private readonly EmailDbContext _database;
     private readonly EnvironmentConfig _environment;
     private readonly LargeObjectTransactionEffects _blobEffects;
@@ -37,7 +38,7 @@ public sealed class JmapRequestProcessor
         LargeObjectTransactionEffects blobEffects,
         ILogger<JmapRequestProcessor> logger,
         ApplicationOperationReceiptStore? receipts = null)
-        : this(methods, sessions, database, environment, blobEffects, logger, receipts, null, null)
+        : this(methods, sessions, database, environment, blobEffects, logger, receipts, null, null, null)
     {
     }
 
@@ -50,7 +51,8 @@ public sealed class JmapRequestProcessor
         ILogger<JmapRequestProcessor> logger,
         ApplicationOperationReceiptStore? receipts,
         IMailFolderReader? folderReader,
-        IMailChangesReader? changesReader)
+        IMailChangesReader? changesReader,
+        IMailAddressBookReader? addressBookReader)
     {
         _methods = methods.ToDictionary(method => ValidRegisteredOperation(method.Operation, method.Feature));
         _sessions = sessions;
@@ -71,6 +73,14 @@ public sealed class JmapRequestProcessor
         }
         else
             _changesReader = changesReader;
+        if (addressBookReader is null)
+        {
+            var accountService = new JmapAccountService(database);
+            _addressBookReader = new MailAddressBookReader(database, accountService,
+                new JmapStateService(database, accountService), environment);
+        }
+        else
+            _addressBookReader = addressBookReader;
         _database = database;
         _environment = environment;
         _blobEffects = blobEffects;
@@ -133,6 +143,9 @@ public sealed class JmapRequestProcessor
             && features.Contains(changeFeature))
             response = await ExecuteChangesAsync(command, context, user, receiptKey, cancellationToken)
                 .ConfigureAwait(false);
+        else if (command.Operation == MailOperationKind.ReadAddressBooks && features.Contains(MailFeature.Contacts))
+            response = await ExecuteAddressBooksAsync(command, context, user, receiptKey, cancellationToken)
+                .ConfigureAwait(false);
         else
         {
             response = EncodeResponse(JmapMethodResponse.Error("unknownMethod"));
@@ -159,6 +172,23 @@ public sealed class JmapRequestProcessor
                 .ConfigureAwait(false);
             var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
                 ?? throw new InvalidOperationException("The mail changes reader returned an incomplete result.");
+            return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
+        }, receiptKey, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<MailOperationResponse> ExecuteAddressBooksAsync(
+        MailOperationCommand command,
+        JmapInvocationContext context,
+        AuthenticatedMailUser user,
+        ApplicationReceiptKey? receiptKey,
+        CancellationToken cancellationToken)
+    {
+        var readCommand = ParseAddressBookCommand(command.Arguments);
+        return await InvokeAtomicallyAsync(command.Operation, context, async token =>
+        {
+            var result = await _addressBookReader.ReadAsync(readCommand, user, token).ConfigureAwait(false);
+            var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
+                ?? throw new InvalidOperationException("The address-book reader returned an incomplete result.");
             return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
         }, receiptKey, cancellationToken).ConfigureAwait(false);
     }
@@ -196,6 +226,22 @@ public sealed class JmapRequestProcessor
         catch (JsonException)
         {
             throw NotRequest("The mail changes command contains invalid values.");
+        }
+    }
+
+    private static MailAddressBookReadCommand ParseAddressBookCommand(JsonObject arguments)
+    {
+        if (arguments.Count != 3 || !arguments.ContainsKey("accountId")
+            || !arguments.ContainsKey("bookIds") || !arguments.ContainsKey("accountReferenceEligible"))
+            throw NotRequest("The address-book read command has an invalid shape.");
+        try
+        {
+            return JsonSerializer.Deserialize<MailAddressBookReadCommand>(arguments, ReceiptJsonOptions)
+                ?? throw NotRequest("The address-book read command is missing.");
+        }
+        catch (JsonException)
+        {
+            throw NotRequest("The address-book read command contains invalid values.");
         }
     }
 

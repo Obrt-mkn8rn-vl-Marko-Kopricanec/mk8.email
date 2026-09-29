@@ -6,7 +6,7 @@ public static class DistributedContractVersions
 {
     // Bump when the two roles' internal contract interpretation changes.
     // This is compatibility metadata, not a release hash or peer attestation.
-    public const string Current = "mk8.distributed.v12";
+    public const string Current = "mk8.distributed.v13";
 
     public static IReadOnlySet<string> SupersededOperations { get; } = new[]
     {
@@ -15,6 +15,7 @@ public static class DistributedContractVersions
         "jmap.profile.get", "jmap.upload", "jmap.download", "jmap.changes.poll",
         "jmap.session.get", "jmap.event.poll", "webpush.send", "mail.operation.execute",
         "mail.operation.execute.v2", "mail.operation.execute.v3", "mail.operation.execute.v4",
+        "mail.operation.execute.v5",
     }.ToFrozenSet(StringComparer.Ordinal);
 
     // Every batch format that can create invocation receipts, including superseded formats.
@@ -22,7 +23,7 @@ public static class DistributedContractVersions
     {
         "jmap.batch.execute.v4", "jmap.batch.execute.v5", "jmap.batch.execute.v6",
         "mail.operation.execute", "mail.operation.execute.v2", "mail.operation.execute.v3",
-        "mail.operation.execute.v4",
+        "mail.operation.execute.v4", "mail.operation.execute.v5",
         ApplicationOperations.MailOperationExecute,
     }.ToFrozenSet(StringComparer.Ordinal);
 }

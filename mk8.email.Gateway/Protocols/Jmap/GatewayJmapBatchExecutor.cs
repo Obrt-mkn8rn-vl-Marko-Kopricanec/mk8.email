@@ -89,6 +89,7 @@ internal static class GatewayJmapBatchExecutor
         }
         GatewayMailboxGetCodec.Call? folderCall = null;
         GatewayMailChangesCodec.Call? changesCall = null;
+        GatewayAddressBookGetCodec.Call? bookCall = null;
         JsonObject payload = arguments;
         if (invocation.Operation == MailOperationKind.ReadFolders && features.Contains(MailFeature.Messages))
         {
@@ -105,6 +106,13 @@ internal static class GatewayJmapBatchExecutor
             payload = JsonSerializer.SerializeToNode(changesCall!.Command, FolderJsonOptions)?.AsObject()
                 ?? throw new InvalidOperationException("Could not encode the folder changes command.");
         }
+        else if (invocation.Operation == MailOperationKind.ReadAddressBooks && features.Contains(MailFeature.Contacts))
+        {
+            if (!GatewayAddressBookGetCodec.TryParse(arguments, maximumObjects, out bookCall, out var failure))
+                return new(failure ?? "invalidArguments", null, null);
+            payload = JsonSerializer.SerializeToNode(bookCall!.Command, FolderJsonOptions)?.AsObject()
+                ?? throw new InvalidOperationException("Could not encode the address-book read command.");
+        }
         var result = await application.ExecuteOperationAsync(new(authentication,
             new MailOperationCommand(features, invocation.Operation, payload, aliases, knownEntities)),
             cancellationToken).ConfigureAwait(false);
@@ -116,7 +124,7 @@ internal static class GatewayJmapBatchExecutor
         ValidateResponse(operation.Response);
         var displayed = new List<(MailOperationKind Operation, JsonObject Data)>
         {
-            DecodePrimary(operation.Response, folderCall, changesCall),
+            DecodePrimary(operation.Response, folderCall, changesCall, bookCall),
         };
         if (operation.Response.AdditionalResults is not null)
         {
@@ -129,12 +137,13 @@ internal static class GatewayJmapBatchExecutor
     private static (MailOperationKind Operation, JsonObject Data) DecodePrimary(
         MailOperationResponse response,
         GatewayMailboxGetCodec.Call? folderCall,
-        GatewayMailChangesCodec.Call? changesCall)
+        GatewayMailChangesCodec.Call? changesCall,
+        GatewayAddressBookGetCodec.Call? bookCall)
     {
-        if (folderCall is null && changesCall is null)
+        if (folderCall is null && changesCall is null && bookCall is null)
             return (response.Operation, (JsonObject)ApplicationValueCodec.Decode(response.Data)!);
         if (response.AdditionalResults is not null)
-            throw new InvalidOperationException("A folder operation returned unexpected additional results.");
+            throw new InvalidOperationException("A typed read returned unexpected additional results.");
         if (response.Operation == MailOperationKind.Failure)
             return (response.Operation, (JsonObject)ApplicationValueCodec.Decode(response.Data)!);
         if (changesCall is not null)
@@ -144,6 +153,14 @@ internal static class GatewayJmapBatchExecutor
             var changesResult = ApplicationValueCodec.Decode(response.Data)?.Deserialize<MailChangesResult>(FolderJsonOptions)
                 ?? throw new InvalidOperationException("The Application returned an incomplete mail changes result.");
             return GatewayMailChangesCodec.Render(changesCall, changesResult);
+        }
+        if (bookCall is not null)
+        {
+            if (response.Operation != MailOperationKind.ReadAddressBooks)
+                throw new InvalidOperationException("The Application returned a different address-book read operation.");
+            var bookResult = ApplicationValueCodec.Decode(response.Data)?.Deserialize<MailAddressBookReadResult>(FolderJsonOptions)
+                ?? throw new InvalidOperationException("The Application returned an incomplete address-book read result.");
+            return GatewayAddressBookGetCodec.Render(bookCall, bookResult);
         }
         if (response.Operation != MailOperationKind.ReadFolders)
             throw new InvalidOperationException("The Application returned a different folder read operation.");

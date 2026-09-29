@@ -21,6 +21,7 @@ public static class JmapServiceExtensions
         services.AddScoped<JmapMailboxStore>();
         services.AddScoped<IMailFolderReader, MailFolderReader>();
         services.AddScoped<IMailChangesReader, MailChangesReader>();
+        services.AddScoped<IMailAddressBookReader, MailAddressBookReader>();
         services.TryAddScoped<LargeObjectTransactionEffects>();
         services.TryAddScoped<ApplicationOperationReceiptStore>();
         services.TryAddScoped<MailQueueContentService>();
@@ -51,7 +52,8 @@ public static class JmapServiceExtensions
             provider.GetRequiredService<ILogger<JmapRequestProcessor>>(),
             provider.GetRequiredService<ApplicationOperationReceiptStore>(),
             provider.GetRequiredService<IMailFolderReader>(),
-            provider.GetRequiredService<IMailChangesReader>()));
+            provider.GetRequiredService<IMailChangesReader>(),
+            provider.GetRequiredService<IMailAddressBookReader>()));
         AddJmapMethods(services);
         return services;
     }
@@ -81,7 +83,6 @@ public static class JmapServiceExtensions
         services.AddScoped<IJmapMethod, PushSubscriptionGetMethod>();
         services.AddScoped<IJmapMethod, PushSubscriptionSetMethod>();
         services.AddScoped<IJmapMethod, BlobCopyMethod>();
-        services.AddScoped<IJmapMethod, AddressBookGetMethod>();
         services.AddScoped<IJmapMethod, AddressBookSetMethod>();
         services.AddScoped<IJmapMethod, ContactCardGetMethod>();
         services.AddScoped<IJmapMethod, ContactCardQueryMethod>();

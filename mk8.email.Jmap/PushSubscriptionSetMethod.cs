@@ -222,7 +222,7 @@ internal sealed class PushSubscriptionSetMethod(
             || !JmapDate.TryParseUtcDate(requestedExpiry, out var parsedExpiry)
             || parsedExpiry.UtcDateTime != subscription.ExpiresAt)
         {
-            response["expires"] = PushSubscriptionGetMethod.FormatDate(subscription.ExpiresAt);
+            response["expires"] = JmapDate.FormatUtc(subscription.ExpiresAt);
         }
         if (!requested.ContainsKey("types"))
         {
@@ -301,7 +301,7 @@ internal sealed class PushSubscriptionSetMethod(
         ["verificationCode"] = subscription.IsVerified
             ? subscription.VerificationCode
             : null,
-        ["expires"] = PushSubscriptionGetMethod.FormatDate(subscription.ExpiresAt),
+        ["expires"] = JmapDate.FormatUtc(subscription.ExpiresAt),
         ["types"] = subscription.Types is null
             ? null
             : JmapMethodHelpers.ToJsonArray(subscription.Types),
@@ -342,7 +342,7 @@ internal sealed class PushSubscriptionSetMethod(
                 {
                     expiresAt = limited;
                     if (expiry is null || limited != expiry.Value.UtcDateTime)
-                        revised["expires"] = PushSubscriptionGetMethod.FormatDate(limited);
+                        revised["expires"] = JmapDate.FormatUtc(limited);
                 }
             }
         }

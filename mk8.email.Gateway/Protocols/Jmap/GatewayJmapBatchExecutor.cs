@@ -87,36 +87,10 @@ internal static class GatewayJmapBatchExecutor
         {
             return new("invalidArguments", null, null);
         }
-        GatewayMailboxGetCodec.Call? folderCall = null;
-        GatewayMailChangesCodec.Call? changesCall = null;
-        GatewayAddressBookGetCodec.Call? bookCall = null;
-        GatewayIdentityGetCodec.Call? identityCall = null;
-        JsonObject payload = arguments;
-        if (invocation.Operation == MailOperationKind.ReadFolders && features.Contains(MailFeature.Messages))
-        {
-            if (!GatewayMailboxGetCodec.TryParse(arguments, maximumObjects, out folderCall, out var failure))
-                return new(failure ?? "invalidArguments", null, null);
-            payload = EncodeCommand(folderCall!.Command);
-        }
-        else if (MailChangeOperations.TryGetFeature(invocation.Operation, out var changeFeature)
-            && features.Contains(changeFeature))
-        {
-            if (!GatewayMailChangesCodec.TryParse(arguments, invocation.Operation, out changesCall, out var failure))
-                return new(failure ?? "invalidArguments", null, null);
-            payload = EncodeCommand(changesCall!.Command);
-        }
-        else if (invocation.Operation == MailOperationKind.ReadAddressBooks && features.Contains(MailFeature.Contacts))
-        {
-            if (!GatewayAddressBookGetCodec.TryParse(arguments, maximumObjects, out bookCall, out var failure))
-                return new(failure ?? "invalidArguments", null, null);
-            payload = EncodeCommand(bookCall!.Command);
-        }
-        else if (invocation.Operation == MailOperationKind.ReadSenderIdentities && features.Contains(MailFeature.Submission))
-        {
-            if (!GatewayIdentityGetCodec.TryParse(arguments, maximumObjects, out identityCall, out var failure))
-                return new(failure ?? "invalidArguments", null, null);
-            payload = EncodeCommand(identityCall!.Command);
-        }
+        if (!TryPrepareTypedRead(invocation.Operation, arguments, features, maximumObjects,
+                out var typedRead, out var failure))
+            return new(failure ?? "invalidArguments", null, null);
+        var payload = typedRead?.Payload ?? arguments;
         var result = await application.ExecuteOperationAsync(new(authentication,
             new MailOperationCommand(features, invocation.Operation, payload, aliases, knownEntities)),
             cancellationToken).ConfigureAwait(false);
@@ -128,7 +102,7 @@ internal static class GatewayJmapBatchExecutor
         ValidateResponse(operation.Response);
         var displayed = new List<(MailOperationKind Operation, JsonObject Data)>
         {
-            DecodePrimary(operation.Response, folderCall, changesCall, bookCall, identityCall),
+            DecodePrimary(operation.Response, typedRead),
         };
         if (operation.Response.AdditionalResults is not null)
         {
@@ -138,53 +112,85 @@ internal static class GatewayJmapBatchExecutor
         return new(null, result, displayed);
     }
 
-    private static JsonObject EncodeCommand<TCommand>(TCommand command) =>
-        JsonSerializer.SerializeToNode(command, FolderJsonOptions)?.AsObject()
-        ?? throw new InvalidOperationException("Could not encode the typed read command.");
+    private static bool TryPrepareTypedRead(
+        MailOperationKind operation,
+        JsonObject arguments,
+        IReadOnlyList<MailFeature> features,
+        int maximumObjects,
+        out TypedReadSelection? selection,
+        out string? failure)
+    {
+        selection = null;
+        failure = null;
+        if (operation == MailOperationKind.ReadFolders && features.Contains(MailFeature.Messages))
+        {
+            if (!GatewayMailboxGetCodec.TryParse(arguments, maximumObjects, out var call, out failure)) return false;
+            selection = Select<MailFolderReadCommand, MailFolderReadResult>(operation, call!.Command,
+                result => GatewayMailboxGetCodec.Render(call, result));
+        }
+        else if (MailChangeOperations.TryGetFeature(operation, out var changeFeature)
+            && features.Contains(changeFeature))
+        {
+            if (!GatewayMailChangesCodec.TryParse(arguments, operation, out var call, out failure)) return false;
+            selection = Select<MailChangesCommand, MailChangesResult>(operation, call!.Command,
+                result => GatewayMailChangesCodec.Render(call, result));
+        }
+        else if (operation == MailOperationKind.ReadAddressBooks && features.Contains(MailFeature.Contacts))
+        {
+            if (!GatewayAddressBookGetCodec.TryParse(arguments, maximumObjects, out var call, out failure)) return false;
+            selection = Select<MailAddressBookReadCommand, MailAddressBookReadResult>(operation, call!.Command,
+                result => GatewayAddressBookGetCodec.Render(call, result));
+        }
+        else if (operation == MailOperationKind.ReadSenderIdentities && features.Contains(MailFeature.Submission))
+        {
+            if (!GatewayIdentityGetCodec.TryParse(arguments, maximumObjects, out var call, out failure)) return false;
+            selection = Select<MailIdentityReadCommand, MailIdentityReadResult>(operation, call!.Command,
+                result => GatewayIdentityGetCodec.Render(call, result));
+        }
+        else if (operation == MailOperationKind.ReadVacationSettings && features.Contains(MailFeature.AutomaticReplies))
+        {
+            if (!GatewayVacationGetCodec.TryParse(arguments, maximumObjects, out var call, out failure)) return false;
+            selection = Select<MailVacationReadCommand, MailVacationReadResult>(operation, call!.Command,
+                result => GatewayVacationGetCodec.Render(call, result));
+        }
+        else if (operation == MailOperationKind.ReadNotificationSubscriptions && features.Contains(MailFeature.Basic))
+        {
+            if (!GatewayPushSubscriptionGetCodec.TryParse(arguments, maximumObjects, out var call, out failure)) return false;
+            selection = Select<MailPushSubscriptionReadCommand, MailPushSubscriptionReadResult>(operation, call!.Command,
+                result => GatewayPushSubscriptionGetCodec.Render(call, result));
+        }
+        return true;
+    }
+
+    private static TypedReadSelection Select<TCommand, TResult>(
+        MailOperationKind operation,
+        TCommand command,
+        Func<TResult, (MailOperationKind Operation, JsonObject Data)> render) =>
+        new(operation,
+            JsonSerializer.SerializeToNode(command, FolderJsonOptions)?.AsObject()
+                ?? throw new InvalidOperationException("Could not encode the typed read command."),
+            data => render(data.Deserialize<TResult>(FolderJsonOptions)
+                ?? throw new InvalidOperationException("The Application returned an incomplete typed read result.")));
 
     private static (MailOperationKind Operation, JsonObject Data) DecodePrimary(
         MailOperationResponse response,
-        GatewayMailboxGetCodec.Call? folderCall,
-        GatewayMailChangesCodec.Call? changesCall,
-        GatewayAddressBookGetCodec.Call? bookCall,
-        GatewayIdentityGetCodec.Call? identityCall)
+        TypedReadSelection? selection)
     {
-        if (folderCall is null && changesCall is null && bookCall is null && identityCall is null)
+        if (selection is null)
             return (response.Operation, (JsonObject)ApplicationValueCodec.Decode(response.Data)!);
         if (response.AdditionalResults is not null)
             throw new InvalidOperationException("A typed read returned unexpected additional results.");
         if (response.Operation == MailOperationKind.Failure)
             return (response.Operation, (JsonObject)ApplicationValueCodec.Decode(response.Data)!);
-        if (changesCall is not null)
-        {
-            if (response.Operation != changesCall.Operation)
-                throw new InvalidOperationException("The Application returned a different mail changes operation.");
-            var changesResult = ApplicationValueCodec.Decode(response.Data)?.Deserialize<MailChangesResult>(FolderJsonOptions)
-                ?? throw new InvalidOperationException("The Application returned an incomplete mail changes result.");
-            return GatewayMailChangesCodec.Render(changesCall, changesResult);
-        }
-        if (bookCall is not null)
-        {
-            if (response.Operation != MailOperationKind.ReadAddressBooks)
-                throw new InvalidOperationException("The Application returned a different address-book read operation.");
-            var bookResult = ApplicationValueCodec.Decode(response.Data)?.Deserialize<MailAddressBookReadResult>(FolderJsonOptions)
-                ?? throw new InvalidOperationException("The Application returned an incomplete address-book read result.");
-            return GatewayAddressBookGetCodec.Render(bookCall, bookResult);
-        }
-        if (identityCall is not null)
-        {
-            if (response.Operation != MailOperationKind.ReadSenderIdentities)
-                throw new InvalidOperationException("The Application returned a different identity read operation.");
-            var identityResult = ApplicationValueCodec.Decode(response.Data)?.Deserialize<MailIdentityReadResult>(FolderJsonOptions)
-                ?? throw new InvalidOperationException("The Application returned an incomplete identity read result.");
-            return GatewayIdentityGetCodec.Render(identityCall, identityResult);
-        }
-        if (response.Operation != MailOperationKind.ReadFolders)
-            throw new InvalidOperationException("The Application returned a different folder read operation.");
-        var folderResult = ApplicationValueCodec.Decode(response.Data)?.Deserialize<MailFolderReadResult>(FolderJsonOptions)
-            ?? throw new InvalidOperationException("The Application returned an incomplete folder read result.");
-        return GatewayMailboxGetCodec.Render(folderCall!, folderResult);
+        if (response.Operation != selection.Operation)
+            throw new InvalidOperationException("The Application returned a different typed read operation.");
+        return selection.Render((JsonObject)ApplicationValueCodec.Decode(response.Data)!);
     }
+
+    private sealed record TypedReadSelection(
+        MailOperationKind Operation,
+        JsonObject Payload,
+        Func<JsonObject, (MailOperationKind Operation, JsonObject Data)> Render);
 
     private sealed record RemoteInvocation(
         string? LocalFailure,

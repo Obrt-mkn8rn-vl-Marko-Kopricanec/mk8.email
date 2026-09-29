@@ -20,6 +20,8 @@ public sealed class JmapRequestProcessor
     private readonly IMailChangesReader _changesReader;
     private readonly IMailAddressBookReader _addressBookReader;
     private readonly IMailIdentityReader _identityReader;
+    private readonly IMailVacationReader? _vacationReader;
+    private readonly IMailPushSubscriptionReader _pushReader;
     private readonly EmailDbContext _database;
     private readonly EnvironmentConfig _environment;
     private readonly LargeObjectTransactionEffects _blobEffects;
@@ -39,7 +41,8 @@ public sealed class JmapRequestProcessor
         LargeObjectTransactionEffects blobEffects,
         ILogger<JmapRequestProcessor> logger,
         ApplicationOperationReceiptStore? receipts = null)
-        : this(methods, sessions, database, environment, blobEffects, logger, receipts, null, null, null, null)
+        : this(methods, sessions, database, environment, blobEffects, logger, receipts,
+            null, null, null, null, null, null)
     {
     }
 
@@ -54,7 +57,9 @@ public sealed class JmapRequestProcessor
         IMailFolderReader? folderReader,
         IMailChangesReader? changesReader,
         IMailAddressBookReader? addressBookReader,
-        IMailIdentityReader? identityReader)
+        IMailIdentityReader? identityReader,
+        IMailVacationReader? vacationReader,
+        IMailPushSubscriptionReader? pushReader)
     {
         _methods = methods.ToDictionary(method => ValidRegisteredOperation(method.Operation, method.Feature));
         _sessions = sessions;
@@ -92,6 +97,8 @@ public sealed class JmapRequestProcessor
         }
         else
             _identityReader = identityReader;
+        _vacationReader = vacationReader;
+        _pushReader = pushReader ?? new MailPushSubscriptionReader(database, environment);
         _database = database;
         _environment = environment;
         _blobEffects = blobEffects;
@@ -130,26 +137,11 @@ public sealed class JmapRequestProcessor
             : null;
         MailOperationResponse response;
         if (_methods.TryGetValue(command.Operation, out var method) && features.Contains(method.Feature))
-        {
-            var arguments = (JsonObject)command.Arguments.DeepClone();
-            response = await InvokeAtomicallyAsync(method.Operation, context, async token =>
-            {
-                var methodResponse = await method.InvokeAsync(context, arguments, token).ConfigureAwait(false);
-                ValidateResponse(methodResponse);
-                return EncodeResponse(methodResponse);
-            }, receiptKey, cancellationToken).ConfigureAwait(false);
-        }
+            response = await ExecuteLegacyMethodAsync(method, command.Arguments, context, receiptKey,
+                cancellationToken).ConfigureAwait(false);
         else if (command.Operation == MailOperationKind.ReadFolders && features.Contains(MailFeature.Messages))
-        {
-            var folderCommand = ParseFolderCommand(command.Arguments);
-            response = await InvokeAtomicallyAsync(command.Operation, context, async token =>
-            {
-                var result = await _folderReader.ReadAsync(folderCommand, user, token).ConfigureAwait(false);
-                var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
-                    ?? throw new InvalidOperationException("The folder reader returned an incomplete result.");
-                return new MailOperationResponse(MailOperationKind.ReadFolders, ApplicationValueCodec.Encode(data));
-            }, receiptKey, cancellationToken).ConfigureAwait(false);
-        }
+            response = await ExecuteFoldersAsync(command, context, user, receiptKey,
+                cancellationToken).ConfigureAwait(false);
         else if (MailChangeOperations.TryGetFeature(command.Operation, out var changeFeature)
             && features.Contains(changeFeature))
             response = await ExecuteChangesAsync(command, context, user, receiptKey, cancellationToken)
@@ -160,12 +152,51 @@ public sealed class JmapRequestProcessor
         else if (command.Operation == MailOperationKind.ReadSenderIdentities && features.Contains(MailFeature.Submission))
             response = await ExecuteIdentitiesAsync(command, context, user, receiptKey, cancellationToken)
                 .ConfigureAwait(false);
+        else if (command.Operation == MailOperationKind.ReadVacationSettings && features.Contains(MailFeature.AutomaticReplies))
+            response = await ExecuteVacationAsync(command, context, user, receiptKey, cancellationToken)
+                .ConfigureAwait(false);
+        else if (command.Operation == MailOperationKind.ReadNotificationSubscriptions && features.Contains(MailFeature.Basic))
+            response = await ExecutePushSubscriptionsAsync(command, context, user, receiptKey, cancellationToken)
+                .ConfigureAwait(false);
         else
         {
             response = EncodeResponse(JmapMethodResponse.Error("unknownMethod"));
         }
         var profile = await _sessions.GetProfileAsync(user, cancellationToken).ConfigureAwait(false);
         return new MailOperationResult(response, createdIds, profile);
+    }
+
+    private Task<MailOperationResponse> ExecuteLegacyMethodAsync(
+        IJmapMethod method,
+        JsonObject arguments,
+        JmapInvocationContext context,
+        ApplicationReceiptKey? receiptKey,
+        CancellationToken cancellationToken)
+    {
+        var cloned = (JsonObject)arguments.DeepClone();
+        return InvokeAtomicallyAsync(method.Operation, context, async token =>
+        {
+            var methodResponse = await method.InvokeAsync(context, cloned, token).ConfigureAwait(false);
+            ValidateResponse(methodResponse);
+            return EncodeResponse(methodResponse);
+        }, receiptKey, cancellationToken);
+    }
+
+    private Task<MailOperationResponse> ExecuteFoldersAsync(
+        MailOperationCommand command,
+        JmapInvocationContext context,
+        AuthenticatedMailUser user,
+        ApplicationReceiptKey? receiptKey,
+        CancellationToken cancellationToken)
+    {
+        var folderCommand = ParseFolderCommand(command.Arguments);
+        return InvokeAtomicallyAsync(command.Operation, context, async token =>
+        {
+            var result = await _folderReader.ReadAsync(folderCommand, user, token).ConfigureAwait(false);
+            var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
+                ?? throw new InvalidOperationException("The folder reader returned an incomplete result.");
+            return new MailOperationResponse(MailOperationKind.ReadFolders, ApplicationValueCodec.Encode(data));
+        }, receiptKey, cancellationToken);
     }
 
     private async Task<MailOperationResponse> ExecuteChangesAsync(
@@ -220,6 +251,42 @@ public sealed class JmapRequestProcessor
             var result = await _identityReader.ReadAsync(readCommand, user, token).ConfigureAwait(false);
             var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
                 ?? throw new InvalidOperationException("The identity reader returned an incomplete result.");
+            return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
+        }, receiptKey, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<MailOperationResponse> ExecuteVacationAsync(
+        MailOperationCommand command,
+        JmapInvocationContext context,
+        AuthenticatedMailUser user,
+        ApplicationReceiptKey? receiptKey,
+        CancellationToken cancellationToken)
+    {
+        var readCommand = ParseVacationCommand(command.Arguments);
+        var reader = _vacationReader
+            ?? throw new InvalidOperationException("The vacation reader is not configured.");
+        return await InvokeAtomicallyAsync(command.Operation, context, async token =>
+        {
+            var result = await reader.ReadAsync(readCommand, user, token).ConfigureAwait(false);
+            var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
+                ?? throw new InvalidOperationException("The vacation reader returned an incomplete result.");
+            return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
+        }, receiptKey, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<MailOperationResponse> ExecutePushSubscriptionsAsync(
+        MailOperationCommand command,
+        JmapInvocationContext context,
+        AuthenticatedMailUser user,
+        ApplicationReceiptKey? receiptKey,
+        CancellationToken cancellationToken)
+    {
+        var readCommand = ParsePushSubscriptionCommand(command.Arguments);
+        return await InvokeAtomicallyAsync(command.Operation, context, async token =>
+        {
+            var result = await _pushReader.ReadAsync(readCommand, user, token).ConfigureAwait(false);
+            var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
+                ?? throw new InvalidOperationException("The push-subscription reader returned an incomplete result.");
             return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
         }, receiptKey, cancellationToken).ConfigureAwait(false);
     }
@@ -289,6 +356,40 @@ public sealed class JmapRequestProcessor
         catch (JsonException)
         {
             throw NotRequest("The identity read command contains invalid values.");
+        }
+    }
+
+    private static MailVacationReadCommand ParseVacationCommand(JsonObject arguments)
+    {
+        if (arguments.Count != 3 || !arguments.ContainsKey("accountId")
+            || !arguments.ContainsKey("includeSingleton") || !arguments.ContainsKey("includeBodies"))
+            throw NotRequest("The vacation read command has an invalid shape.");
+        try
+        {
+            var command = JsonSerializer.Deserialize<MailVacationReadCommand>(arguments, ReceiptJsonOptions)
+                ?? throw NotRequest("The vacation read command is missing.");
+            if (!command.IncludeSingleton && command.IncludeBodies)
+                throw NotRequest("The vacation read command has incompatible selections.");
+            return command;
+        }
+        catch (JsonException)
+        {
+            throw NotRequest("The vacation read command contains invalid values.");
+        }
+    }
+
+    private static MailPushSubscriptionReadCommand ParsePushSubscriptionCommand(JsonObject arguments)
+    {
+        if (arguments.Count != 1 || !arguments.ContainsKey("subscriptionIds"))
+            throw NotRequest("The push-subscription read command has an invalid shape.");
+        try
+        {
+            return JsonSerializer.Deserialize<MailPushSubscriptionReadCommand>(arguments, ReceiptJsonOptions)
+                ?? throw NotRequest("The push-subscription read command is missing.");
+        }
+        catch (JsonException)
+        {
+            throw NotRequest("The push-subscription read command contains invalid values.");
         }
     }
 

@@ -4,7 +4,7 @@ Gateway parses and validates I-JSON and the outer JMAP request envelope. Its
 batch, call, result and reference-selector models exist only in Gateway, not in
 the shared durable Contracts assembly. It sends a protocol-neutral
 authentication/feature/operation-count admission plan through `mail.plan.validate`, then
-one resolved mail operation at a time through `mail.operation.execute.v7`. Worker
+one resolved mail operation at a time through `mail.operation.execute.v8`. Worker
 returns a typed operation result, domain failures, known entity mappings and an
 account profile. Gateway alone sequences the batch, handles Core/echo, and renders
 the response envelope and HTTP problems. Worker receives neither the original
@@ -20,9 +20,10 @@ wrong-case or undefined internal discriminators fail closed before any mutation.
 Handler registration rejects duplicate or invalid identifiers, and primary/additional
 result identifiers are checked before commit and on receipt replay. Opaque business
 values named `name` or `sourceName` are untouched. This is a coordinated contract
-change (`mk8.distributed.v14`), not completion of all JMAP value-shaping extraction.
+change (`mk8.distributed.v15`), not completion of all JMAP value-shaping extraction.
 
-`Mailbox/get`, `AddressBook/get`, `Identity/get` and all seven simple `/changes` methods have fully typed commands/results across this
+`Mailbox/get`, `AddressBook/get`, `Identity/get`, `VacationResponse/get`,
+`PushSubscription/get` and all seven simple `/changes` methods have fully typed commands/results across this
 boundary. Gateway validates its wire arguments, resolves requested IDs and
 property selection, and sends account/folder GUIDs to Worker. Worker authorizes
 the account, loads folder state and counters, and returns domain snapshots; it
@@ -39,7 +40,9 @@ For `AddressBook/get`, Gateway validates ID/property selection and renders book
 rights; Worker checks the primary contact account, initializes its default book,
 and returns domain snapshots. For `Identity/get`, Gateway owns ID/property selection
 and address-list rendering; Worker authorizes the account, initializes the default
-identity, and returns typed identity snapshots. Other JMAP methods still have Worker-side JSON argument/result shaping and must
+identity, and returns typed identity snapshots. Gateway also renders vacation
+dates/bodies and push-subscription fields while Worker loads Blob-backed bodies
+and removes expired subscriptions. Other JMAP methods still have Worker-side JSON argument/result shaping and must
 be extracted before this migration is complete.
 
 Capability URNs are also Gateway-owned. Gateway maps them into stable `MailFeature`
@@ -61,7 +64,7 @@ business invocation runs in this path.
 Gateway also translates top-level result-reference keys and JSON-pointer syntax
 into ordered Gateway argument bindings and decoded value selectors. Gateway
 resolves these dependencies against completed, normalized results before sending
-a business command. The 28 remaining Worker handlers do not register or execute Core/echo. Malformed
+a business command. The 26 remaining Worker handlers do not register or execute Core/echo. Malformed
 references carry a deferred failure at their original binding position, so they
 remain invocation errors rather than rejecting the entire batch or changing
 which error wins. First-result selection, array wildcard flattening, strict array
@@ -72,7 +75,7 @@ Gateway also recognizes creation-reference tokens in argument keys and values an
 provides a typed alias map with each business command. Worker resolves only those
 aliases against its current known-entity map, so a create followed by a reference
 inside one operation still works without Worker parsing the JMAP `#` marker.
-The alias map is required on the v7 command. Opaque non-ID values are not rewritten.
+The alias map is required on the v8 command. Opaque non-ID values are not rewritten.
 
 Worker returns typed accounts, feature limits and change maps, never session URLs
 or event/push JSON. Gateway renders discovery documents, chooses its public URLs,
@@ -90,9 +93,10 @@ This changes the durable operation contracts. The old `jmap.api.process`,
 `jmap.batch.execute.v5`, `jmap.batch.execute.v6`, `jmap.session.get`, `jmap.event.poll`, `jmap.profile.get`,
 `jmap.upload`, `jmap.download`, `jmap.changes.poll`, `webpush.send` and
 `mail.operation.execute`, `mail.operation.execute.v2`, `mail.operation.execute.v3` and
-`mail.operation.execute.v4`, `mail.operation.execute.v5` and `mail.operation.execute.v6` operations
+`mail.operation.execute.v4`, `mail.operation.execute.v5`, `mail.operation.execute.v6` and
+`mail.operation.execute.v7` operations
 are unsupported. The current operations are `mail.plan.validate`,
-`mail.operation.execute.v7`, `jmap.profile.get.v2`, `jmap.upload.v2`,
+`mail.operation.execute.v8`, `jmap.profile.get.v2`, `jmap.upload.v2`,
 `jmap.download.v2`, `jmap.changes.poll.v2` and `webpush.send.v2`. Old requests must
 not be reinterpreted as new empty or incomplete data.
 Before upgrading an existing distributed installation, stop admission, drain or

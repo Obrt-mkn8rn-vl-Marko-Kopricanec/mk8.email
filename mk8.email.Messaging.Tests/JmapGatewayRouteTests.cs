@@ -108,7 +108,8 @@ public sealed class JmapGatewayRouteTests
             const string requestDocument =
                 """
                 {"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail",
-                          "urn:ietf:params:jmap:submission","urn:ietf:params:jmap:contacts"],
+                          "urn:ietf:params:jmap:submission","urn:ietf:params:jmap:contacts",
+                          "urn:ietf:params:jmap:vacationresponse"],
                  "methodCalls":[["Mailbox/query",{"x":1,"X":2,"nested":{"items":[1,null,"text"],"key":3,"Key":4,"reference":"#made"}},"call-1"],
                    ["Core/echo",{"#copied":{"resultOf":"call-1","name":"Mailbox/query","path":"/nested/items/2"}},"call-2"],
                    ["Mailbox/query",{"#collision":{"resultOf":"call-1","name":"Mailbox/query","path":"/�~02"}},"call-3"],
@@ -128,7 +129,12 @@ public sealed class JmapGatewayRouteTests
                      "properties":["name","myRights"]},"call-12"],
                    ["Identity/get",{"accountId":"A11111111111111111111111111111111",
                      "ids":["I22222222222222222222222222222222","I33333333333333333333333333333333"],
-                     "properties":["email","replyTo"]},"call-13"]],
+                     "properties":["email","replyTo"]},"call-13"],
+                   ["VacationResponse/get",{"accountId":"A11111111111111111111111111111111",
+                     "ids":["singleton","missing"],"properties":["isEnabled","fromDate","textBody"]},"call-14"],
+                   ["PushSubscription/get",{"ids":["P22222222222222222222222222222222",
+                     "P33333333333333333333333333333333"],
+                     "properties":["deviceClientId","expires","types"]},"call-15"]],
                  "createdIds":{"made":"object-id"}}
                 """;
             using var request = new HttpRequestMessage(HttpMethod.Post, "/jmap/api")
@@ -166,11 +172,11 @@ public sealed class JmapGatewayRouteTests
             Assert.AreEqual("route-password-secret", jmap.Request?.Authentication.Secret);
             Assert.IsNotNull(jmap.Request?.Command);
             CollectionAssert.AreEqual(new[] { MailFeature.Basic, MailFeature.Messages, MailFeature.Submission,
-                MailFeature.Contacts }, jmap.Request.Command.Features.ToArray());
-            Assert.AreEqual(12, jmap.Executions);
+                MailFeature.Contacts, MailFeature.AutomaticReplies }, jmap.Request.Command.Features.ToArray());
+            Assert.AreEqual(14, jmap.Executions);
             Assert.AreEqual("second", jmap.Commands[1].Arguments["collision"]!.GetValue<string>());
             Assert.IsFalse(jmap.Commands[1].Arguments.ContainsKey("#collision"));
-            Assert.AreEqual(13, jmap.Plan?.Plan?.OperationCount);
+            Assert.AreEqual(15, jmap.Plan?.Plan?.OperationCount);
             Assert.AreEqual(MailOperationKind.FindFolders, jmap.Request.Command.Operation);
             Assert.AreEqual("text", jmap.Request.Command.Arguments["nested"]?["items"]?[2]?.GetValue<string>());
             Assert.AreEqual(1, jmap.Request.Command.Arguments["x"]!.GetValue<int>());
@@ -270,6 +276,29 @@ public sealed class JmapGatewayRouteTests
             Assert.IsFalse(identityResponse[1].GetProperty("list")[0].TryGetProperty("name", out _));
             Assert.AreEqual("I33333333333333333333333333333333",
                 identityResponse[1].GetProperty("notFound")[0].GetString());
+            var vacationCommand = jmap.Commands[12];
+            Assert.AreEqual(MailOperationKind.ReadVacationSettings, vacationCommand.Operation);
+            Assert.IsTrue(vacationCommand.Arguments["includeSingleton"]!.GetValue<bool>());
+            Assert.IsTrue(vacationCommand.Arguments["includeBodies"]!.GetValue<bool>());
+            var vacationResponse = json.RootElement.GetProperty("methodResponses")[13];
+            Assert.AreEqual("VacationResponse/get", vacationResponse[0].GetString());
+            Assert.AreEqual("call-14", vacationResponse[2].GetString());
+            Assert.AreEqual("2026-09-29T12:34:56Z",
+                vacationResponse[1].GetProperty("list")[0].GetProperty("fromDate").GetString());
+            Assert.AreEqual("Away", vacationResponse[1].GetProperty("list")[0].GetProperty("textBody").GetString());
+            Assert.AreEqual("missing", vacationResponse[1].GetProperty("notFound")[0].GetString());
+            var pushCommand = jmap.Commands[13];
+            Assert.AreEqual(MailOperationKind.ReadNotificationSubscriptions, pushCommand.Operation);
+            Assert.AreEqual(2, pushCommand.Arguments["subscriptionIds"]!.AsArray().Count);
+            var pushResponse = json.RootElement.GetProperty("methodResponses")[14];
+            Assert.AreEqual("PushSubscription/get", pushResponse[0].GetString());
+            Assert.AreEqual("call-15", pushResponse[2].GetString());
+            Assert.AreEqual("device", pushResponse[1].GetProperty("list")[0]
+                .GetProperty("deviceClientId").GetString());
+            Assert.AreEqual("Mailbox", pushResponse[1].GetProperty("list")[0]
+                .GetProperty("types")[0].GetString());
+            Assert.AreEqual("P33333333333333333333333333333333",
+                pushResponse[1].GetProperty("notFound")[0].GetString());
 
             await using var countCommand = gatewayDataSource.CreateCommand(
                 "SELECT count(*), count(*) FILTER (WHERE metadata ->> 'layer' = 'presentation') "
@@ -278,7 +307,7 @@ public sealed class JmapGatewayRouteTests
             Assert.IsTrue(await countReader.ReadAsync(timeout.Token));
             // SSE records its headers and streamed body separately, in addition
             // to the request and two application-boundary records.
-            Assert.AreEqual(37L, countReader.GetInt64(0));
+            Assert.AreEqual(41L, countReader.GetInt64(0));
             Assert.AreEqual(7L, countReader.GetInt64(1));
 
             await using var operationCommand = gatewayDataSource.CreateCommand(
@@ -399,6 +428,28 @@ public sealed class JmapGatewayRouteTests
                 var node = JsonSerializer.SerializeToNode(identities, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
                 return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
                     OperationResult: new(new(MailOperationKind.ReadSenderIdentities, ApplicationValueCodec.Encode(node)),
+                        request.Command.KnownEntities!, Profile)));
+            }
+            if (request.Command.Operation == MailOperationKind.ReadVacationSettings)
+            {
+                var vacation = new MailVacationReadResult(MailVacationReadStatus.Ok, "s45",
+                    new MailVacationSnapshot(true,
+                        new DateTime(2026, 9, 29, 12, 34, 56, DateTimeKind.Utc),
+                        null, "Away", "Away", null));
+                var node = JsonSerializer.SerializeToNode(vacation, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
+                    OperationResult: new(new(MailOperationKind.ReadVacationSettings, ApplicationValueCodec.Encode(node)),
+                        request.Command.KnownEntities!, Profile)));
+            }
+            if (request.Command.Operation == MailOperationKind.ReadNotificationSubscriptions)
+            {
+                var subscriptions = new MailPushSubscriptionReadResult(MailPushSubscriptionReadStatus.Ok,
+                    [new MailPushSubscriptionSnapshot(Guid.Parse("22222222-2222-2222-2222-222222222222"),
+                        "device", null, new DateTime(2026, 9, 29, 12, 34, 56, DateTimeKind.Utc),
+                        ["Mailbox"])]);
+                var node = JsonSerializer.SerializeToNode(subscriptions, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
+                    OperationResult: new(new(MailOperationKind.ReadNotificationSubscriptions, ApplicationValueCodec.Encode(node)),
                         request.Command.KnownEntities!, Profile)));
             }
             var data = (System.Text.Json.Nodes.JsonObject)request.Command.Arguments.DeepClone();

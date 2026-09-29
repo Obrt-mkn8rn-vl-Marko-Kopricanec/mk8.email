@@ -32,6 +32,76 @@ namespace mk8.email.Messaging.Tests;
 public sealed class JmapDurableReplayTests
 {
     [TestMethod]
+    public async Task TypedVacationReadReplaysItsCommittedSnapshotAcrossWorkerRetries()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var batch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.AutomaticReplies],
+            [new JmapApplicationCall(MailOperationKind.ReadVacationSettings, new JsonObject
+            {
+                ["accountId"] = JmapId.Account(rig.InboxId),
+                ["properties"] = new JsonArray("subject"),
+            }, "vacation")]);
+        var operation = Guid.CreateVersion7();
+        var first = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual(MailOperationKind.ReadVacationSettings, first.Invocations[0].Operation);
+        Assert.IsNull(first.Invocations[0].Arguments["list"]![0]!["subject"]);
+        await using (var changed = rig.Context())
+        {
+            var vacation = await changed.JmapVacationResponses.SingleAsync();
+            vacation.Subject = "New subject";
+            await changed.SaveChangesAsync();
+        }
+        var replay = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
+        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7());
+        Assert.AreEqual("New subject", fresh.Invocations[0].Arguments["list"]![0]!["subject"]!.GetValue<string>());
+        await using var verification = rig.Context();
+        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync());
+    }
+
+    [TestMethod]
+    public async Task TypedPushReadReplaysItsCommittedSnapshotAcrossWorkerRetries()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var subscriptionId = Guid.CreateVersion7();
+        await using (var setup = rig.Context())
+        {
+            setup.JmapPushSubscriptions.Add(new JmapPushSubscriptionDB
+            {
+                Id = subscriptionId,
+                SubscriptionObjectId = JmapId.PushSubscription(subscriptionId),
+                UserId = rig.User.Id,
+                DeviceClientId = "initial",
+                Url = "https://push.example.test/",
+                VerificationCode = "private-code",
+                ExpiresAt = DateTime.UtcNow.AddHours(1),
+            });
+            await setup.SaveChangesAsync();
+        }
+        var batch = new JmapApplicationBatch([MailFeature.Basic],
+            [new JmapApplicationCall(MailOperationKind.ReadNotificationSubscriptions, new JsonObject
+            {
+                ["properties"] = new JsonArray("deviceClientId"),
+            }, "push")]);
+        var operation = Guid.CreateVersion7();
+        var first = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual(MailOperationKind.ReadNotificationSubscriptions, first.Invocations[0].Operation);
+        Assert.AreEqual("initial", first.Invocations[0].Arguments["list"]![0]!["deviceClientId"]!.GetValue<string>());
+        await using (var changed = rig.Context())
+        {
+            var subscription = await changed.JmapPushSubscriptions.SingleAsync();
+            subscription.DeviceClientId = "updated";
+            await changed.SaveChangesAsync();
+        }
+        var replay = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
+        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7());
+        Assert.AreEqual("updated", fresh.Invocations[0].Arguments["list"]![0]!["deviceClientId"]!.GetValue<string>());
+        await using var verification = rig.Context();
+        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync());
+    }
+
+    [TestMethod]
     public async Task TypedIdentityReadReplaysItsCommittedSnapshotAcrossWorkerRetries()
     {
         await using var rig = await Rig.CreateAsync();

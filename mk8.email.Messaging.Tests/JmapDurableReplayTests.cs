@@ -1033,6 +1033,9 @@ public sealed class JmapDurableReplayTests
         CollectionAssert.AreEquivalent(original.CreatedIds!.ToArray(), replay.CreatedIds!.ToArray());
         await using var database = rig.Context();
         Assert.AreEqual(1, await database.DavCollections.CountAsync(book => book.DisplayName == "Replay book"));
+        Assert.AreEqual(1, await database.DavCollections.CountAsync(book => book.IsDefault));
+        Assert.IsTrue(await database.DavCollections.Where(book => book.DisplayName == "Replay book")
+            .Select(book => book.IsDefault).SingleAsync());
         Assert.AreEqual(1, await database.DavResources.CountAsync(card => card.Uid == "replay-card-uid"));
         var receipts = await database.ApplicationOperationReceipts.OrderBy(receipt => receipt.OperationId).ToListAsync();
         Assert.HasCount(2, receipts);
@@ -1150,7 +1153,12 @@ public sealed class JmapDurableReplayTests
     {
         await using var rig = await Rig.CreateAsync();
         var now = DateTimeOffset.UtcNow;
-        var mutationArguments = rig.ContactsBatch().Invocations[0].Arguments;
+        var mutationArguments = JsonSerializer.SerializeToNode(
+            new MailAddressBookMutationCommand(rig.InboxId, true, null, false,
+                new MailAddressBookTarget(null, "book"),
+                [new MailAddressBookCreate("book", false,
+                    new MailAddressBookValues("Replay book", null, 0, true))], [], []),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web))!.AsObject();
         var request = new ApplicationRequest(Guid.CreateVersion7(), Guid.CreateVersion7(), 0, "jmap", ApplicationOperations.MailOperationExecute,
             "application/json", JsonSerializer.SerializeToUtf8Bytes(new MailOperationApplicationRequest(
                 new ProtocolAuthentication(ProtocolAuthenticationKinds.Password, rig.User.Username, "test"),
@@ -1493,7 +1501,7 @@ public sealed class JmapDurableReplayTests
         public JmapApplicationBatch ContactsBatch() => new([MailFeature.Basic, MailFeature.Contacts],
         [
             new(MailOperationKind.MutateAddressBooks, new JsonObject { ["accountId"] = JmapId.Account(InboxId), ["create"] = new JsonObject
-            { ["book"] = new JsonObject { ["name"] = "Replay book" } } }, "book"),
+            { ["book"] = new JsonObject { ["name"] = "Replay book" } }, ["onSuccessSetIsDefault"] = "#book" }, "book"),
             new(MailOperationKind.MutateContacts, new JsonObject { ["accountId"] = JmapId.Account(InboxId), ["create"] = new JsonObject
             { ["card"] = new JsonObject { ["@type"] = "Card", ["version"] = "1.0", ["uid"] = "replay-card-uid", ["kind"] = "individual",
                 ["name"] = new JsonObject { ["@type"] = "Name", ["full"] = "Replay person" }, ["addressBookIds"] = new JsonObject { ["#book"] = true } } } }, "card"),

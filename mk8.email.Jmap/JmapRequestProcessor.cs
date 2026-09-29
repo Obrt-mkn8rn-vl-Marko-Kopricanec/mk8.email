@@ -15,11 +15,12 @@ namespace mk8.email.Jmap;
 
 public sealed class JmapRequestProcessor
 {
-    private readonly IReadOnlyDictionary<MailOperationKind, IJmapMethod> _methods;
+    private readonly Dictionary<MailOperationKind, IJmapMethod> _methods;
     private readonly JmapAccountProfileService _sessions;
     private readonly IMailFolderReader _folderReader;
     private readonly IMailChangesReader _changesReader;
     private readonly IMailAddressBookReader _addressBookReader;
+    private readonly IMailAddressBookMutationService? _addressBookMutationService;
     private readonly IMailIdentityReader _identityReader;
     private readonly IMailIdentityMutationService? _identityMutationService;
     private readonly IMailVacationReader? _vacationReader;
@@ -61,7 +62,7 @@ public sealed class JmapRequestProcessor
         ILogger<JmapRequestProcessor> logger,
         ApplicationOperationReceiptStore? receipts = null)
         : this(methods, sessions, database, environment, blobEffects, logger, receipts,
-            null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null)
+            null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null)
     {
     }
 
@@ -76,6 +77,7 @@ public sealed class JmapRequestProcessor
         IMailFolderReader? folderReader,
         IMailChangesReader? changesReader,
         IMailAddressBookReader? addressBookReader,
+        IMailAddressBookMutationService? addressBookMutationService,
         IMailIdentityReader? identityReader,
         IMailIdentityMutationService? identityMutationService,
         IMailVacationReader? vacationReader,
@@ -96,51 +98,21 @@ public sealed class JmapRequestProcessor
     {
         _methods = methods.ToDictionary(method => ValidRegisteredOperation(method.Operation, method.Feature));
         _sessions = sessions;
-        if (folderReader is null)
-        {
-            var accountService = new JmapAccountService(database);
-            _folderReader = new MailFolderReader(accountService,
-                new JmapMailboxStore(database), new JmapStateService(database, accountService), environment);
-        }
-        else
-            _folderReader = folderReader;
-        if (changesReader is null)
-        {
-            var accountService = new JmapAccountService(database);
-            _changesReader = new MailChangesReader(accountService,
-                new JmapStateService(database, accountService),
-                new JmapIdentityService(database, accountService), database, environment);
-        }
-        else
-            _changesReader = changesReader;
-        if (addressBookReader is null)
-        {
-            var accountService = new JmapAccountService(database);
-            _addressBookReader = new MailAddressBookReader(database, accountService,
-                new JmapStateService(database, accountService), environment);
-        }
-        else
-            _addressBookReader = addressBookReader;
-        if (identityReader is null)
-        {
-            var accountService = new JmapAccountService(database);
-            _identityReader = new MailIdentityReader(database, accountService,
-                new JmapIdentityService(database, accountService),
-                new JmapStateService(database, accountService), environment);
-        }
-        else
-            _identityReader = identityReader;
+        var accountService = new JmapAccountService(database);
+        var stateService = new JmapStateService(database, accountService);
+        _folderReader = folderReader ?? new MailFolderReader(accountService,
+            new JmapMailboxStore(database), stateService, environment);
+        _changesReader = changesReader ?? new MailChangesReader(accountService, stateService,
+            new JmapIdentityService(database, accountService), database, environment);
+        _addressBookReader = addressBookReader ?? new MailAddressBookReader(database,
+            accountService, stateService, environment);
+        _addressBookMutationService = addressBookMutationService;
+        _identityReader = identityReader ?? new MailIdentityReader(database, accountService,
+            new JmapIdentityService(database, accountService), stateService, environment);
         _identityMutationService = identityMutationService;
         _vacationReader = vacationReader;
         _pushReader = pushReader ?? new MailPushSubscriptionReader(database, environment);
-        if (threadReader is null)
-        {
-            var accountService = new JmapAccountService(database);
-            _threadReader = new MailThreadReader(database, accountService,
-                new JmapStateService(database, accountService));
-        }
-        else
-            _threadReader = threadReader;
+        _threadReader = threadReader ?? new MailThreadReader(database, accountService, stateService);
         _submissionReader = submissionReader;
         _blobCopyService = blobCopyService;
         _vacationMutator = vacationMutator;
@@ -201,6 +173,9 @@ public sealed class JmapRequestProcessor
                 .ConfigureAwait(false);
         else if (command.Operation == MailOperationKind.ReadAddressBooks && features.Contains(MailFeature.Contacts))
             response = await ExecuteAddressBooksAsync(command, context, user, receiptKey, cancellationToken)
+                .ConfigureAwait(false);
+        else if (command.Operation == MailOperationKind.MutateAddressBooks && features.Contains(MailFeature.Contacts))
+            response = await ExecuteAddressBookMutationAsync(command, context, user, receiptKey, cancellationToken)
                 .ConfigureAwait(false);
         else if (command.Operation == MailOperationKind.ReadSenderIdentities && features.Contains(MailFeature.Submission))
             response = await ExecuteIdentitiesAsync(command, context, user, receiptKey, cancellationToken)
@@ -343,6 +318,38 @@ public sealed class JmapRequestProcessor
                 ?? throw new InvalidOperationException("The address-book reader returned an incomplete result.");
             return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
         }, receiptKey, cancellationToken).ConfigureAwait(false);
+    }
+
+    private Task<MailOperationResponse> ExecuteAddressBookMutationAsync(
+        MailOperationCommand command,
+        JmapInvocationContext context,
+        AuthenticatedMailUser user,
+        ApplicationReceiptKey? receiptKey,
+        CancellationToken cancellationToken)
+    {
+        var mutation = ParseAddressBookMutationCommand(command.Arguments);
+        var service = _addressBookMutationService
+            ?? throw new InvalidOperationException("The address-book mutation service is not configured.");
+        return InvokeAtomicallyAsync(command.Operation, context, async token =>
+        {
+            var result = await service.MutateAsync(mutation, user, token).ConfigureAwait(false);
+            if (result.Status == MailAddressBookMutationStatus.Ok)
+            {
+                if (result.Created.Count != mutation.Creates.Count)
+                    throw new InvalidOperationException("The address-book mutation returned incomplete creations.");
+                for (var index = 0; index < result.Created.Count; index++)
+                {
+                    var item = result.Created[index];
+                    if (!string.Equals(item.CreationId, mutation.Creates[index].CreationId, StringComparison.Ordinal))
+                        throw new InvalidOperationException("The address-book mutation returned inconsistent creations.");
+                    if (item.Error == MailAddressBookMutationError.None && item.Book is { } book)
+                        context.CreatedIds[item.CreationId] = JmapId.AddressBook(book.Id);
+                }
+            }
+            var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
+                ?? throw new InvalidOperationException("The address-book mutation service returned an incomplete result.");
+            return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
+        }, receiptKey, cancellationToken);
     }
 
     private async Task<MailOperationResponse> ExecuteIdentitiesAsync(
@@ -838,6 +845,49 @@ public sealed class JmapRequestProcessor
             throw NotRequest("The address-book read command contains invalid values.");
         }
     }
+
+    private MailAddressBookMutationCommand ParseAddressBookMutationCommand(JsonObject arguments)
+    {
+        if (arguments.Count != 8 || !arguments.ContainsKey("accountId")
+            || !arguments.ContainsKey("accountReferenceEligible") || !arguments.ContainsKey("ifInState")
+            || !arguments.ContainsKey("onDestroyRemoveContents")
+            || !arguments.ContainsKey("onSuccessSetIsDefault") || !arguments.ContainsKey("creates")
+            || !arguments.ContainsKey("updates") || !arguments.ContainsKey("destroys"))
+            throw NotRequest("The address-book mutation command has an invalid shape.");
+        try
+        {
+            var mutation = JsonSerializer.Deserialize<MailAddressBookMutationCommand>(arguments, StrictReceiptJsonOptions)
+                ?? throw NotRequest("The address-book mutation command is missing.");
+            if (mutation.Creates is null || mutation.Updates is null || mutation.Destroys is null
+                || mutation.Creates.Count + mutation.Updates.Count + mutation.Destroys.Count
+                    > _environment.Jmap.MaxObjectsInSet
+                || mutation.Creates.Any(item => item is null || item.CreationId is null
+                    || !JmapId.IsValidId(item.CreationId))
+                || mutation.Creates.Select(item => item.CreationId).Distinct(StringComparer.Ordinal).Count()
+                    != mutation.Creates.Count
+                || mutation.Updates.Any(item => item is null || !ValidBookTarget(item.RequestedId, item.Target))
+                || mutation.Updates.Select(item => item.RequestedId).Distinct(StringComparer.Ordinal).Count()
+                    != mutation.Updates.Count
+                || mutation.Destroys.Any(item => item is null || !ValidBookTarget(item.RequestedId, item.Target))
+                || mutation.Destroys.Select(item => item.RequestedId).Distinct(StringComparer.Ordinal).Count()
+                    != mutation.Destroys.Count
+                || mutation.OnSuccessSetIsDefault is { } target && !ValidBookTarget(null, target))
+                throw NotRequest("The address-book mutation values are invalid.");
+            return mutation;
+        }
+        catch (JsonException)
+        {
+            throw NotRequest("The address-book mutation command contains invalid values.");
+        }
+    }
+
+    private static bool ValidBookTarget(string? requestedId, MailAddressBookTarget? target) =>
+        target is not null
+        && (requestedId is null || JmapId.IsValidId(requestedId)
+            || requestedId.Length > 1 && requestedId[0] == '#' && JmapId.IsValidId(requestedId[1..]))
+        && target.ExistingId != Guid.Empty
+        && (target.CreatedKey is null || JmapId.IsValidId(target.CreatedKey))
+        && (target.ExistingId is null || target.CreatedKey is null);
 
     private static MailIdentityReadCommand ParseIdentityCommand(JsonObject arguments)
     {

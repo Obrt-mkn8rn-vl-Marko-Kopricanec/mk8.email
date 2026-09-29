@@ -178,33 +178,6 @@ public sealed class JmapContactStore(
         .Replace("~", "~0", StringComparison.Ordinal)
         .Replace("/", "~1", StringComparison.Ordinal);
 
-    internal static JsonObject BuildAddressBook(
-        DavCollectionDB collection,
-        IReadOnlySet<string>? properties = null)
-    {
-        var result = new JsonObject { ["id"] = JmapId.AddressBook(collection.Id) };
-        if (Wants("name")) result["name"] = collection.DisplayName;
-        if (Wants("description")) result["description"] = collection.Description;
-        if (Wants("sortOrder")) result["sortOrder"] = collection.SortOrder;
-        if (Wants("isDefault")) result["isDefault"] = collection.IsDefault;
-        if (Wants("isSubscribed")) result["isSubscribed"] = collection.IsSubscribed;
-        if (Wants("shareWith")) result["shareWith"] = null;
-        if (Wants("myRights"))
-        {
-            result["myRights"] = new JsonObject
-            {
-                ["mayRead"] = true,
-                ["mayWrite"] = true,
-                ["mayShare"] = false,
-                ["mayDelete"] = !collection.IsDefault
-                    && !string.Equals(collection.Slug, "default", StringComparison.Ordinal),
-            };
-        }
-        return result;
-
-        bool Wants(string property) => properties is null || properties.Contains(property);
-    }
-
     internal static JsonObject BuildContactCard(
         JmapContactCardView view,
         IReadOnlySet<string>? properties = null)

@@ -309,6 +309,85 @@ public sealed class JmapContactsTests
     }
 
     [TestMethod]
+    public async Task AddressBookSetPreservesPatchAssertionsAndServerNameNormalization()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var created = Arguments(await InvokeAsync(fixture, "AddressBook/set", new JsonObject
+        {
+            ["accountId"] = fixture.AccountId,
+            ["create"] = new JsonObject
+            {
+                ["new"] = new JsonObject { ["name"] = "Cafe\u0301" },
+            },
+        }));
+        var bookId = created["created"]!["new"]!["id"]!.GetValue<string>();
+        Assert.AreEqual("Café", created["created"]!["new"]!["name"]!.GetValue<string>());
+
+        var updated = Arguments(await InvokeAsync(fixture, "AddressBook/set", new JsonObject
+        {
+            ["accountId"] = fixture.AccountId,
+            ["update"] = new JsonObject
+            {
+                [bookId] = new JsonObject
+                {
+                    ["id"] = bookId,
+                    ["isDefault"] = false,
+                    ["myRights/mayRead"] = true,
+                    ["myRights/mayDelete"] = true,
+                    ["description"] = null,
+                    ["sortOrder"] = null,
+                    ["isSubscribed"] = null,
+                    ["unknown"] = null,
+                },
+            },
+        }));
+        Assert.IsNull(updated["notUpdated"]);
+        Assert.IsTrue(updated["updated"]!.AsObject().ContainsKey(bookId));
+        var read = Arguments(await InvokeAsync(fixture, "AddressBook/get", new JsonObject
+        {
+            ["accountId"] = fixture.AccountId,
+            ["ids"] = new JsonArray(bookId),
+        }));
+        Assert.AreEqual("Café", read["list"]![0]!["name"]!.GetValue<string>());
+        Assert.AreEqual(0L, read["list"]![0]!["sortOrder"]!.GetValue<long>());
+        Assert.IsTrue(read["list"]![0]!["isSubscribed"]!.GetValue<bool>());
+
+        var invalid = Arguments(await InvokeAsync(fixture, "AddressBook/set", new JsonObject
+        {
+            ["accountId"] = fixture.AccountId,
+            ["update"] = new JsonObject
+            {
+                [bookId] = new JsonObject { ["myRights/mayDelete"] = false },
+            },
+        }));
+        Assert.AreEqual("invalidProperties", invalid["notUpdated"]![bookId]!["type"]!.GetValue<string>());
+        CollectionAssert.Contains(StringValues(invalid["notUpdated"]![bookId]!["properties"]!), "myRights");
+
+        var malformed = Arguments(await InvokeAsync(fixture, "AddressBook/set", new JsonObject
+        {
+            ["accountId"] = fixture.AccountId,
+            ["update"] = new JsonObject
+            {
+                [bookId] = new JsonObject
+                {
+                    ["myRights"] = new JsonObject { ["mayDelete"] = true },
+                    ["myRights/mayDelete"] = true,
+                },
+            },
+        }));
+        Assert.AreEqual("invalidPatch", malformed["notUpdated"]![bookId]!["type"]!.GetValue<string>());
+
+        var removed = Arguments(await InvokeAsync(fixture, "AddressBook/set", new JsonObject
+        {
+            ["accountId"] = fixture.AccountId,
+            ["update"] = new JsonObject { [bookId] = new JsonObject { ["name"] = "Ignored" } },
+            ["destroy"] = new JsonArray(bookId),
+        }));
+        Assert.AreEqual("willDestroy", removed["notUpdated"]![bookId]!["type"]!.GetValue<string>());
+        CollectionAssert.AreEqual(new[] { bookId }, StringValues(removed["destroyed"]!));
+    }
+
+    [TestMethod]
     public async Task ContactCardsSupportCrudQueryChangesAndAddressBookMoves()
     {
         await using var fixture = await JmapFixture.CreateAsync();

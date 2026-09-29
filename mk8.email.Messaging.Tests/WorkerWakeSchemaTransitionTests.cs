@@ -256,6 +256,19 @@ public sealed class WorkerWakeSchemaTransitionTests
     }
 
     [TestMethod]
+    public async Task V22MailOperationsBlockLegacyWakeRollbackInEveryLeaseState()
+    {
+        await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
+            "mail.operation.execute.v22", false, false);
+        await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
+            "mail.operation.execute.v22", true, false);
+        await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
+            "mail.operation.execute.v22", false, true);
+        await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
+            "mail.operation.execute.v22", true, true);
+    }
+
+    [TestMethod]
     public async Task ReceiptAwareRollbackPreservesCommittedRows()
     {
         await using var fixture = await Fixture.CreateAsync();

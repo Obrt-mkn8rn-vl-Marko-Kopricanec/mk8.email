@@ -246,12 +246,12 @@ internal static class GatewayJmapBatchExecutor
                 result => GatewayEmailCopyCodec.RenderAdditional(call, result));
         }
         else
-            return TryPrepareTypedIdentityOrMessageOperation(operation, arguments, knownEntities, features,
+            return TryPrepareTypedMutationOrMessageOperation(operation, arguments, knownEntities, features,
                 maximumObjectsInGet, maximumObjectsInSet, out selection, out failure);
         return true;
     }
 
-    private static bool TryPrepareTypedIdentityOrMessageOperation(
+    private static bool TryPrepareTypedMutationOrMessageOperation(
         MailOperationKind operation,
         JsonObject arguments,
         IReadOnlyDictionary<string, string> knownEntities,
@@ -261,6 +261,15 @@ internal static class GatewayJmapBatchExecutor
         out TypedOperationSelection? selection,
         out string? failure)
     {
+        if (operation == MailOperationKind.MutateAddressBooks && features.Contains(MailFeature.Contacts))
+        {
+            selection = null;
+            if (!GatewayAddressBookSetCodec.TryParse(arguments, knownEntities, maximumObjectsInSet, out var call, out failure))
+                return false;
+            selection = Select<MailAddressBookMutationCommand, MailAddressBookMutationResult>(operation, call!.Command,
+                result => GatewayAddressBookSetCodec.Render(call, result));
+            return true;
+        }
         if (operation == MailOperationKind.MutateSenderIdentities && features.Contains(MailFeature.Submission))
         {
             selection = null;

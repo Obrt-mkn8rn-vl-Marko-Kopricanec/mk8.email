@@ -65,8 +65,8 @@ public sealed class JmapOperationBoundaryTests
         await using var fixture = await JmapFixture.CreateAsync();
         using var scope = fixture.Services.CreateScope();
         var methods = scope.ServiceProvider.GetServices<IJmapMethod>().ToArray();
-        Assert.HasCount(24, methods);
-        Assert.HasCount(24, methods.Select(method => method.Operation).Distinct().ToArray());
+        Assert.HasCount(23, methods);
+        Assert.HasCount(23, methods.Select(method => method.Operation).Distinct().ToArray());
         foreach (var method in methods)
             Assert.AreEqual(method.Operation, GatewayJmapOperationCodec.DecodeCall(GatewayJmapOperationCodec.Render(method.Operation)));
         CollectionAssert.AreEquivalent(Enum.GetValues<MailOperationKind>().Except([MailOperationKind.None, MailOperationKind.Failure, MailOperationKind.Echo]).ToArray(),
@@ -80,7 +80,8 @@ public sealed class JmapOperationBoundaryTests
                     MailOperationKind.ReadSubmissions,
                     MailOperationKind.ReadVacationSettings,
                     MailOperationKind.ReadNotificationSubscriptions,
-                    MailOperationKind.ReadContactChanges]).ToArray());
+                    MailOperationKind.ReadContactChanges,
+                    MailOperationKind.CopyBinaryObjects]).ToArray());
     }
 
     [TestMethod]

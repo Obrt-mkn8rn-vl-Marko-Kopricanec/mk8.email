@@ -32,6 +32,69 @@ namespace mk8.email.Messaging.Tests;
 public sealed class JmapDurableReplayTests
 {
     [TestMethod]
+    public async Task TypedBlobCopyUsesAzureStorageAndReplaysCommittedResultWithoutDuplicatingBlob()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var targetAccountId = Guid.CreateVersion7();
+        await using (var setup = rig.Context())
+        {
+            var original = await setup.Inboxes.SingleAsync();
+            setup.Inboxes.Add(new InboxDB
+            {
+                Id = targetAccountId,
+                Name = "copy-target",
+                AddressId = original.AddressId,
+                OwnerId = rig.User.Id,
+            });
+            await setup.SaveChangesAsync();
+        }
+        string sourceBlobId;
+        using (var scope = rig.Services.CreateScope())
+        {
+            var blobs = scope.ServiceProvider.GetRequiredService<JmapBlobService>();
+            var source = await blobs.StoreAsync(rig.InboxId, "copied payload"u8.ToArray(),
+                "text/plain", "payload.txt", CancellationToken.None);
+            sourceBlobId = source.BlobId;
+        }
+        var batch = new JmapApplicationBatch([MailFeature.Basic],
+            [new JmapApplicationCall(MailOperationKind.CopyBinaryObjects, new JsonObject
+            {
+                ["fromAccountId"] = JmapId.Account(rig.InboxId),
+                ["accountId"] = JmapId.Account(targetAccountId),
+                ["blobIds"] = new JsonArray(sourceBlobId, "Umissing"),
+            }, "copy")]);
+        var operation = Guid.CreateVersion7();
+        var first = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual(MailOperationKind.CopyBinaryObjects, first.Invocations[0].Operation);
+        var copiedBlobId = first.Invocations[0].Arguments["copied"]![sourceBlobId]!.GetValue<string>();
+        Assert.AreEqual("notFound", first.Invocations[0].Arguments["notCopied"]!["Umissing"]!["type"]!
+            .GetValue<string>());
+        await using (var database = rig.Context())
+        {
+            Assert.AreEqual(2, await database.JmapBlobs.CountAsync());
+            var copied = await database.JmapBlobs.SingleAsync(blob => blob.AccountId == targetAccountId);
+            Assert.AreEqual(LargeObjectProviders.AzureBlob, copied.ObjectProvider);
+            Assert.IsNull(copied.Content);
+        }
+        using (var scope = rig.Services.CreateScope())
+        {
+            var blobs = scope.ServiceProvider.GetRequiredService<JmapBlobService>();
+            var copied = await blobs.GetAsync(targetAccountId, copiedBlobId, CancellationToken.None);
+            Assert.IsNotNull(copied);
+            CollectionAssert.AreEqual("copied payload"u8.ToArray(), copied.Content);
+        }
+        var replay = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
+        await using (var database = rig.Context())
+            Assert.AreEqual(2, await database.JmapBlobs.CountAsync());
+        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7());
+        Assert.AreNotEqual(copiedBlobId, fresh.Invocations[0].Arguments["copied"]![sourceBlobId]!.GetValue<string>());
+        await using var verification = rig.Context();
+        Assert.AreEqual(3, await verification.JmapBlobs.CountAsync());
+        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync());
+    }
+
+    [TestMethod]
     public async Task TypedSubmissionReadReplaysCommittedSnapshotAcrossWorkerRetries()
     {
         await using var rig = await Rig.CreateAsync();

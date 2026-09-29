@@ -39,7 +39,8 @@ internal static class GatewayJmapBatchExecutor
             else
             {
                 var remote = await ExecuteRemoteAsync(application, authentication, batch.Features,
-                    invocation, arguments, knownEntities, profile.Limits.MaxObjectsInGet, cancellationToken)
+                    invocation, arguments, knownEntities, profile.Limits.MaxObjectsInGet,
+                    profile.Limits.MaxObjectsInSet, cancellationToken)
                     .ConfigureAwait(false);
                 if (remote.LocalFailure is not null)
                     AddFailure(remote.LocalFailure);
@@ -76,6 +77,7 @@ internal static class GatewayJmapBatchExecutor
         JsonObject arguments,
         IReadOnlyDictionary<string, string> knownEntities,
         int maximumObjects,
+        int maximumObjectsInSet,
         CancellationToken cancellationToken)
     {
         IReadOnlyDictionary<string, string> aliases;
@@ -87,10 +89,10 @@ internal static class GatewayJmapBatchExecutor
         {
             return new("invalidArguments", null, null);
         }
-        if (!TryPrepareTypedRead(invocation.Operation, arguments, features, maximumObjects,
-                out var typedRead, out var failure))
+        if (!TryPrepareTypedOperation(invocation.Operation, arguments, features, maximumObjects,
+                maximumObjectsInSet, out var typedOperation, out var failure))
             return new(failure ?? "invalidArguments", null, null);
-        var payload = typedRead?.Payload ?? arguments;
+        var payload = typedOperation?.Payload ?? arguments;
         var result = await application.ExecuteOperationAsync(new(authentication,
             new MailOperationCommand(features, invocation.Operation, payload, aliases, knownEntities)),
             cancellationToken).ConfigureAwait(false);
@@ -102,7 +104,7 @@ internal static class GatewayJmapBatchExecutor
         ValidateResponse(operation.Response);
         var displayed = new List<(MailOperationKind Operation, JsonObject Data)>
         {
-            DecodePrimary(operation.Response, typedRead),
+            DecodePrimary(operation.Response, typedOperation),
         };
         if (operation.Response.AdditionalResults is not null)
         {
@@ -112,12 +114,13 @@ internal static class GatewayJmapBatchExecutor
         return new(null, result, displayed);
     }
 
-    private static bool TryPrepareTypedRead(
+    private static bool TryPrepareTypedOperation(
         MailOperationKind operation,
         JsonObject arguments,
         IReadOnlyList<MailFeature> features,
         int maximumObjects,
-        out TypedReadSelection? selection,
+        int maximumObjectsInSet,
+        out TypedOperationSelection? selection,
         out string? failure)
     {
         selection = null;
@@ -171,35 +174,41 @@ internal static class GatewayJmapBatchExecutor
             selection = Select<MailSubmissionReadCommand, MailSubmissionReadResult>(operation, call!.Command,
                 result => GatewaySubmissionGetCodec.Render(call, result));
         }
+        else if (operation == MailOperationKind.CopyBinaryObjects && features.Contains(MailFeature.Basic))
+        {
+            if (!GatewayBlobCopyCodec.TryParse(arguments, maximumObjectsInSet, out var call, out failure)) return false;
+            selection = Select<MailBlobCopyCommand, MailBlobCopyResult>(operation, call!.Command,
+                result => GatewayBlobCopyCodec.Render(call, result));
+        }
         return true;
     }
 
-    private static TypedReadSelection Select<TCommand, TResult>(
+    private static TypedOperationSelection Select<TCommand, TResult>(
         MailOperationKind operation,
         TCommand command,
         Func<TResult, (MailOperationKind Operation, JsonObject Data)> render) =>
         new(operation,
             JsonSerializer.SerializeToNode(command, FolderJsonOptions)?.AsObject()
-                ?? throw new InvalidOperationException("Could not encode the typed read command."),
+                ?? throw new InvalidOperationException("Could not encode the typed operation command."),
             data => render(data.Deserialize<TResult>(FolderJsonOptions)
-                ?? throw new InvalidOperationException("The Application returned an incomplete typed read result.")));
+                ?? throw new InvalidOperationException("The Application returned an incomplete typed operation result.")));
 
     private static (MailOperationKind Operation, JsonObject Data) DecodePrimary(
         MailOperationResponse response,
-        TypedReadSelection? selection)
+        TypedOperationSelection? selection)
     {
         if (selection is null)
             return (response.Operation, (JsonObject)ApplicationValueCodec.Decode(response.Data)!);
         if (response.AdditionalResults is not null)
-            throw new InvalidOperationException("A typed read returned unexpected additional results.");
+            throw new InvalidOperationException("A typed operation returned unexpected additional results.");
         if (response.Operation == MailOperationKind.Failure)
             return (response.Operation, (JsonObject)ApplicationValueCodec.Decode(response.Data)!);
         if (response.Operation != selection.Operation)
-            throw new InvalidOperationException("The Application returned a different typed read operation.");
+            throw new InvalidOperationException("The Application returned a different typed operation.");
         return selection.Render((JsonObject)ApplicationValueCodec.Decode(response.Data)!);
     }
 
-    private sealed record TypedReadSelection(
+    private sealed record TypedOperationSelection(
         MailOperationKind Operation,
         JsonObject Payload,
         Func<JsonObject, (MailOperationKind Operation, JsonObject Data)> Render);

@@ -24,6 +24,7 @@ public sealed class JmapRequestProcessor
     private readonly IMailPushSubscriptionReader _pushReader;
     private readonly IMailThreadReader _threadReader;
     private readonly IMailSubmissionReader? _submissionReader;
+    private readonly IMailBlobCopyService? _blobCopyService;
     private readonly EmailDbContext _database;
     private readonly EnvironmentConfig _environment;
     private readonly LargeObjectTransactionEffects _blobEffects;
@@ -44,7 +45,7 @@ public sealed class JmapRequestProcessor
         ILogger<JmapRequestProcessor> logger,
         ApplicationOperationReceiptStore? receipts = null)
         : this(methods, sessions, database, environment, blobEffects, logger, receipts,
-            null, null, null, null, null, null, null, null)
+            null, null, null, null, null, null, null, null, null)
     {
     }
 
@@ -63,7 +64,8 @@ public sealed class JmapRequestProcessor
         IMailVacationReader? vacationReader,
         IMailPushSubscriptionReader? pushReader,
         IMailThreadReader? threadReader,
-        IMailSubmissionReader? submissionReader)
+        IMailSubmissionReader? submissionReader,
+        IMailBlobCopyService? blobCopyService)
     {
         _methods = methods.ToDictionary(method => ValidRegisteredOperation(method.Operation, method.Feature));
         _sessions = sessions;
@@ -112,6 +114,7 @@ public sealed class JmapRequestProcessor
         else
             _threadReader = threadReader;
         _submissionReader = submissionReader;
+        _blobCopyService = blobCopyService;
         _database = database;
         _environment = environment;
         _blobEffects = blobEffects;
@@ -176,6 +179,9 @@ public sealed class JmapRequestProcessor
                 .ConfigureAwait(false);
         else if (command.Operation == MailOperationKind.ReadSubmissions && features.Contains(MailFeature.Submission))
             response = await ExecuteSubmissionsAsync(command, context, user, receiptKey, cancellationToken)
+                .ConfigureAwait(false);
+        else if (command.Operation == MailOperationKind.CopyBinaryObjects && features.Contains(MailFeature.Basic))
+            response = await ExecuteBlobCopyAsync(command, context, user, receiptKey, cancellationToken)
                 .ConfigureAwait(false);
         else
         {
@@ -346,6 +352,25 @@ public sealed class JmapRequestProcessor
         }, receiptKey, cancellationToken);
     }
 
+    private Task<MailOperationResponse> ExecuteBlobCopyAsync(
+        MailOperationCommand command,
+        JmapInvocationContext context,
+        AuthenticatedMailUser user,
+        ApplicationReceiptKey? receiptKey,
+        CancellationToken cancellationToken)
+    {
+        var copyCommand = ParseBlobCopyCommand(command.Arguments);
+        var service = _blobCopyService
+            ?? throw new InvalidOperationException("The blob copy service is not configured.");
+        return InvokeAtomicallyAsync(command.Operation, context, async token =>
+        {
+            var result = await service.CopyAsync(copyCommand, user, token).ConfigureAwait(false);
+            var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
+                ?? throw new InvalidOperationException("The blob copy service returned an incomplete result.");
+            return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
+        }, receiptKey, cancellationToken);
+    }
+
     private static MailFolderReadCommand ParseFolderCommand(JsonObject arguments)
     {
         if (arguments.Count != 3 || !arguments.ContainsKey("accountId")
@@ -476,6 +501,25 @@ public sealed class JmapRequestProcessor
         catch (JsonException)
         {
             throw NotRequest("The submission read command contains invalid values.");
+        }
+    }
+
+    private static MailBlobCopyCommand ParseBlobCopyCommand(JsonObject arguments)
+    {
+        if (arguments.Count != 3 || !arguments.ContainsKey("fromAccountId")
+            || !arguments.ContainsKey("accountId") || !arguments.ContainsKey("blobIds"))
+            throw NotRequest("The blob copy command has an invalid shape.");
+        try
+        {
+            var command = JsonSerializer.Deserialize<MailBlobCopyCommand>(arguments, ReceiptJsonOptions)
+                ?? throw NotRequest("The blob copy command is missing.");
+            if (command.BlobIds is null || command.BlobIds.Any(string.IsNullOrEmpty))
+                throw NotRequest("The blob copy command contains invalid object IDs.");
+            return command;
+        }
+        catch (JsonException)
+        {
+            throw NotRequest("The blob copy command contains invalid values.");
         }
     }
 

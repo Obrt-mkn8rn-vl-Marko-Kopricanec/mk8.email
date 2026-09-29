@@ -1,6 +1,6 @@
 #nullable enable
-const mk8.email.Contracts.Messaging.ApplicationOperations.MailOperationExecute = "mail.operation.execute.v10" -> string!
-const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v17" -> string!
+const mk8.email.Contracts.Messaging.ApplicationOperations.MailOperationExecute = "mail.operation.execute.v11" -> string!
+const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v18" -> string!
 mk8.email.Contracts.Messaging.DistributedContractVersions
 mk8.email.Contracts.Messaging.JmapAccountProfile
 mk8.email.Contracts.Messaging.JmapAccountProfile.<Clone>$() -> mk8.email.Contracts.Messaging.JmapAccountProfile!
@@ -134,6 +134,46 @@ mk8.email.Contracts.Messaging.MailAdmissionPlan.Features.init -> void
 mk8.email.Contracts.Messaging.MailAdmissionPlan.MailAdmissionPlan(System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailFeature>! Features, int OperationCount) -> void
 mk8.email.Contracts.Messaging.MailAdmissionPlan.OperationCount.get -> int
 mk8.email.Contracts.Messaging.MailAdmissionPlan.OperationCount.init -> void
+mk8.email.Contracts.Messaging.MailBlobCopyCommand
+mk8.email.Contracts.Messaging.MailBlobCopyCommand.<Clone>$() -> mk8.email.Contracts.Messaging.MailBlobCopyCommand!
+mk8.email.Contracts.Messaging.MailBlobCopyCommand.AccountId.get -> System.Guid
+mk8.email.Contracts.Messaging.MailBlobCopyCommand.AccountId.init -> void
+mk8.email.Contracts.Messaging.MailBlobCopyCommand.BlobIds.get -> System.Collections.Generic.IReadOnlyList<string!>!
+mk8.email.Contracts.Messaging.MailBlobCopyCommand.BlobIds.init -> void
+mk8.email.Contracts.Messaging.MailBlobCopyCommand.Deconstruct(out System.Guid FromAccountId, out System.Guid AccountId, out System.Collections.Generic.IReadOnlyList<string!>! BlobIds) -> void
+mk8.email.Contracts.Messaging.MailBlobCopyCommand.Equals(mk8.email.Contracts.Messaging.MailBlobCopyCommand? other) -> bool
+mk8.email.Contracts.Messaging.MailBlobCopyCommand.FromAccountId.get -> System.Guid
+mk8.email.Contracts.Messaging.MailBlobCopyCommand.FromAccountId.init -> void
+mk8.email.Contracts.Messaging.MailBlobCopyCommand.MailBlobCopyCommand(System.Guid FromAccountId, System.Guid AccountId, System.Collections.Generic.IReadOnlyList<string!>! BlobIds) -> void
+mk8.email.Contracts.Messaging.MailBlobCopyItemResult
+mk8.email.Contracts.Messaging.MailBlobCopyItemResult.<Clone>$() -> mk8.email.Contracts.Messaging.MailBlobCopyItemResult!
+mk8.email.Contracts.Messaging.MailBlobCopyItemResult.BlobId.get -> string!
+mk8.email.Contracts.Messaging.MailBlobCopyItemResult.BlobId.init -> void
+mk8.email.Contracts.Messaging.MailBlobCopyItemResult.CopiedBlobId.get -> string?
+mk8.email.Contracts.Messaging.MailBlobCopyItemResult.CopiedBlobId.init -> void
+mk8.email.Contracts.Messaging.MailBlobCopyItemResult.Deconstruct(out string! BlobId, out mk8.email.Contracts.Messaging.MailBlobCopyItemStatus Status, out string? CopiedBlobId) -> void
+mk8.email.Contracts.Messaging.MailBlobCopyItemResult.Equals(mk8.email.Contracts.Messaging.MailBlobCopyItemResult? other) -> bool
+mk8.email.Contracts.Messaging.MailBlobCopyItemResult.MailBlobCopyItemResult(string! BlobId, mk8.email.Contracts.Messaging.MailBlobCopyItemStatus Status, string? CopiedBlobId) -> void
+mk8.email.Contracts.Messaging.MailBlobCopyItemResult.Status.get -> mk8.email.Contracts.Messaging.MailBlobCopyItemStatus
+mk8.email.Contracts.Messaging.MailBlobCopyItemResult.Status.init -> void
+mk8.email.Contracts.Messaging.MailBlobCopyItemStatus
+mk8.email.Contracts.Messaging.MailBlobCopyItemStatus.Copied = 0 -> mk8.email.Contracts.Messaging.MailBlobCopyItemStatus
+mk8.email.Contracts.Messaging.MailBlobCopyItemStatus.NotFound = 1 -> mk8.email.Contracts.Messaging.MailBlobCopyItemStatus
+mk8.email.Contracts.Messaging.MailBlobCopyItemStatus.TooLarge = 2 -> mk8.email.Contracts.Messaging.MailBlobCopyItemStatus
+mk8.email.Contracts.Messaging.MailBlobCopyResult
+mk8.email.Contracts.Messaging.MailBlobCopyResult.<Clone>$() -> mk8.email.Contracts.Messaging.MailBlobCopyResult!
+mk8.email.Contracts.Messaging.MailBlobCopyResult.Deconstruct(out mk8.email.Contracts.Messaging.MailBlobCopyStatus Status, out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailBlobCopyItemResult!>! Items) -> void
+mk8.email.Contracts.Messaging.MailBlobCopyResult.Equals(mk8.email.Contracts.Messaging.MailBlobCopyResult? other) -> bool
+mk8.email.Contracts.Messaging.MailBlobCopyResult.Items.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailBlobCopyItemResult!>!
+mk8.email.Contracts.Messaging.MailBlobCopyResult.Items.init -> void
+mk8.email.Contracts.Messaging.MailBlobCopyResult.MailBlobCopyResult(mk8.email.Contracts.Messaging.MailBlobCopyStatus Status, System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailBlobCopyItemResult!>! Items) -> void
+mk8.email.Contracts.Messaging.MailBlobCopyResult.Status.get -> mk8.email.Contracts.Messaging.MailBlobCopyStatus
+mk8.email.Contracts.Messaging.MailBlobCopyResult.Status.init -> void
+mk8.email.Contracts.Messaging.MailBlobCopyStatus
+mk8.email.Contracts.Messaging.MailBlobCopyStatus.AccountNotFound = 2 -> mk8.email.Contracts.Messaging.MailBlobCopyStatus
+mk8.email.Contracts.Messaging.MailBlobCopyStatus.FromAccountNotFound = 1 -> mk8.email.Contracts.Messaging.MailBlobCopyStatus
+mk8.email.Contracts.Messaging.MailBlobCopyStatus.Ok = 0 -> mk8.email.Contracts.Messaging.MailBlobCopyStatus
+mk8.email.Contracts.Messaging.MailBlobCopyStatus.RequestTooLarge = 3 -> mk8.email.Contracts.Messaging.MailBlobCopyStatus
 mk8.email.Contracts.Messaging.MailChangeOperations
 mk8.email.Contracts.Messaging.MailChangesCommand
 mk8.email.Contracts.Messaging.MailChangesCommand.<Clone>$() -> mk8.email.Contracts.Messaging.MailChangesCommand!
@@ -502,6 +542,15 @@ override mk8.email.Contracts.Messaging.MailAddressBookReadResult.ToString() -> s
 override mk8.email.Contracts.Messaging.MailAddressBookSnapshot.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.MailAddressBookSnapshot.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.MailAddressBookSnapshot.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailBlobCopyCommand.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailBlobCopyCommand.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailBlobCopyCommand.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailBlobCopyItemResult.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailBlobCopyItemResult.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailBlobCopyItemResult.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailBlobCopyResult.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailBlobCopyResult.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailBlobCopyResult.ToString() -> string!
 override mk8.email.Contracts.Messaging.MailChangesCommand.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.MailChangesCommand.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.MailChangesCommand.ToString() -> string!
@@ -750,6 +799,12 @@ mk8.email.Contracts.Messaging.MailOperationApplicationRequest.Authentication.get
 mk8.email.Contracts.Messaging.MailOperationApplicationRequest.Authentication.init -> void
 mk8.email.Contracts.Messaging.MailOperationApplicationRequest
 override mk8.email.Contracts.Messaging.MailOperationApplicationRequest.ToString() -> string!
+static mk8.email.Contracts.Messaging.MailBlobCopyCommand.operator !=(mk8.email.Contracts.Messaging.MailBlobCopyCommand? left, mk8.email.Contracts.Messaging.MailBlobCopyCommand? right) -> bool
+static mk8.email.Contracts.Messaging.MailBlobCopyCommand.operator ==(mk8.email.Contracts.Messaging.MailBlobCopyCommand? left, mk8.email.Contracts.Messaging.MailBlobCopyCommand? right) -> bool
+static mk8.email.Contracts.Messaging.MailBlobCopyItemResult.operator !=(mk8.email.Contracts.Messaging.MailBlobCopyItemResult? left, mk8.email.Contracts.Messaging.MailBlobCopyItemResult? right) -> bool
+static mk8.email.Contracts.Messaging.MailBlobCopyItemResult.operator ==(mk8.email.Contracts.Messaging.MailBlobCopyItemResult? left, mk8.email.Contracts.Messaging.MailBlobCopyItemResult? right) -> bool
+static mk8.email.Contracts.Messaging.MailBlobCopyResult.operator !=(mk8.email.Contracts.Messaging.MailBlobCopyResult? left, mk8.email.Contracts.Messaging.MailBlobCopyResult? right) -> bool
+static mk8.email.Contracts.Messaging.MailBlobCopyResult.operator ==(mk8.email.Contracts.Messaging.MailBlobCopyResult? left, mk8.email.Contracts.Messaging.MailBlobCopyResult? right) -> bool
 static mk8.email.Contracts.Messaging.MailChangeOperations.TryGetFeature(mk8.email.Contracts.Messaging.MailOperationKind operation, out mk8.email.Contracts.Messaging.MailFeature feature) -> bool
 static mk8.email.Contracts.Messaging.MailChangesCommand.operator !=(mk8.email.Contracts.Messaging.MailChangesCommand? left, mk8.email.Contracts.Messaging.MailChangesCommand? right) -> bool
 static mk8.email.Contracts.Messaging.MailChangesCommand.operator ==(mk8.email.Contracts.Messaging.MailChangesCommand? left, mk8.email.Contracts.Messaging.MailChangesCommand? right) -> bool

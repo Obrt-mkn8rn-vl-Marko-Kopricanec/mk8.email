@@ -199,6 +199,42 @@ public sealed class JmapDurableReplayTests
     }
 
     [TestMethod]
+    public async Task TypedContactReadReplaysCommittedJsContactProjection()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var created = await rig.InvokeAsync(rig.ContactsBatch(), Guid.CreateVersion7());
+        var cardId = created.Invocations[1].Arguments["created"]!["card"]!["id"]!.GetValue<string>();
+        var batch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Contacts],
+            [new JmapApplicationCall(MailOperationKind.ReadContacts, new JsonObject
+            {
+                ["accountId"] = JmapId.Account(rig.InboxId),
+                ["ids"] = new JsonArray(cardId),
+                ["properties"] = new JsonArray("uid", "name", "addressBookIds"),
+            }, "read")]);
+        var operation = Guid.CreateVersion7();
+        var first = await rig.InvokeAsync(batch, operation);
+        var firstCard = first.Invocations[0].Arguments["list"]![0]!;
+        Assert.AreEqual("Replay person", firstCard["name"]!["full"]!.GetValue<string>());
+        Assert.IsFalse(firstCard.AsObject().ContainsKey("version"));
+        Assert.IsNotNull(firstCard["addressBookIds"]);
+        var changed = await rig.InvokeAsync(new JmapApplicationBatch([MailFeature.Basic, MailFeature.Contacts],
+            [new JmapApplicationCall(MailOperationKind.MutateContacts, new JsonObject
+            {
+                ["accountId"] = JmapId.Account(rig.InboxId),
+                ["update"] = new JsonObject { [cardId] = new JsonObject
+                {
+                    ["name"] = new JsonObject { ["@type"] = "Name", ["full"] = "Updated person" },
+                } },
+            }, "update")]), Guid.CreateVersion7());
+        Assert.IsTrue(changed.Invocations[0].Arguments["updated"]!.AsObject().ContainsKey(cardId));
+        var replay = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
+        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7());
+        Assert.AreEqual("Updated person", fresh.Invocations[0].Arguments["list"]![0]!["name"]!["full"]!
+            .GetValue<string>());
+    }
+
+    [TestMethod]
     public async Task TypedSubmissionReadReplaysCommittedSnapshotAcrossWorkerRetries()
     {
         await using var rig = await Rig.CreateAsync();

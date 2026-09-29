@@ -229,6 +229,29 @@ internal static class GatewayJmapBatchExecutor
             selection = Select<MailFolderQueryChangesCommand, MailFolderQueryChangesResult>(operation, call!.Command,
                 result => GatewayFolderQueryCodec.RenderChanges(call, result));
         }
+        else
+            return TryPrepareTypedContactOperation(operation, arguments, features,
+                maximumObjectsInGet, maximumObjectsInSet, out selection, out failure);
+        return true;
+    }
+
+    private static bool TryPrepareTypedContactOperation(
+        MailOperationKind operation,
+        JsonObject arguments,
+        IReadOnlyList<MailFeature> features,
+        int maximumObjectsInGet,
+        int maximumObjectsInSet,
+        out TypedOperationSelection? selection,
+        out string? failure)
+    {
+        selection = null;
+        failure = null;
+        if (operation == MailOperationKind.ReadContacts && features.Contains(MailFeature.Contacts))
+        {
+            if (!GatewayContactCardGetCodec.TryParse(arguments, maximumObjectsInGet, out var call, out failure)) return false;
+            selection = Select<MailContactReadCommand, MailContactReadResult>(operation, call!.Command,
+                result => GatewayContactCardGetCodec.Render(call, result));
+        }
         else if (operation == MailOperationKind.CopyContacts && features.Contains(MailFeature.Contacts))
         {
             if (!GatewayContactCopyCodec.TryParse(arguments, maximumObjectsInSet, out var call, out failure)) return false;

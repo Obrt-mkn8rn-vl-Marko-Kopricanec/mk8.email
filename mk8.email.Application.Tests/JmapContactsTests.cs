@@ -1,4 +1,5 @@
 using mk8.email.Gateway.Protocols.Jmap;
+using mk8.email.Contracts.Messaging;
 using System.Text;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
@@ -15,6 +16,43 @@ public sealed class JmapContactsTests
 {
     private const string Core = GatewayJmapFeatureCodec.CoreCapability;
     private const string Contacts = GatewayJmapFeatureCodec.ContactsCapability;
+
+    [TestMethod]
+    [DataRow("uid")]
+    [DataRow("addressBookIds")]
+    [DataRow("name")]
+    [DataRow("blobId")]
+    [DataRow("Name")]
+    [DataRow("name/full")]
+    [DataRow("example.com:metadata")]
+    [DataRow("mk8.email:metadata")]
+    [DataRow("example.com:blobId")]
+    public void GatewayContactGetPropertyPolicyMatchesJsContactValidator(string property)
+    {
+        Assert.AreEqual(JmapContactValidator.IsSupportedCardProperty(property),
+            GatewayContactCardPropertyPolicy.IsSupported(property));
+    }
+
+    [TestMethod]
+    public void GatewayRejectsContactSnapshotsWithForgedOrIncompleteIdentity()
+    {
+        Assert.IsTrue(GatewayContactCardGetCodec.TryParse(new JsonObject
+        {
+            ["accountId"] = "A11111111111111111111111111111111",
+        }, 10, out var call, out _));
+        foreach (var cardJson in new[]
+        {
+            """{"@type":"Card","version":"1.0","uid":"forged"}""",
+            """{"@type":"Card","version":"1.0","uid":"indexed","id":"Cforged"}""",
+            """{"@type":"Card","uid":"indexed"}""",
+        })
+        {
+            var snapshot = new MailContactCardSnapshot(Guid.CreateVersion7(), Guid.CreateVersion7(),
+                "indexed", cardJson);
+            var result = new MailContactReadResult(MailContactReadStatus.Ok, "s1", [snapshot]);
+            Assert.ThrowsExactly<InvalidOperationException>(() => GatewayContactCardGetCodec.Render(call!, result));
+        }
+    }
 
     [TestMethod]
     public async Task SessionAdvertisesRfc9610ForThePrimaryAccount()
@@ -340,6 +378,12 @@ public sealed class JmapContactsTests
         Assert.AreEqual(
             "invalidArguments",
             Arguments(invalidProperties)["type"]!.GetValue<string>());
+        var invalidBeforeAccount = Arguments(await InvokeAsync(fixture, "ContactCard/get", new JsonObject
+        {
+            ["accountId"] = JmapId.Account(Guid.CreateVersion7()),
+            ["properties"] = new JsonArray("x-invalid-name"),
+        }));
+        Assert.AreEqual("invalidArguments", invalidBeforeAccount["type"]!.GetValue<string>());
 
         using (var scope = fixture.Services.CreateScope())
         {

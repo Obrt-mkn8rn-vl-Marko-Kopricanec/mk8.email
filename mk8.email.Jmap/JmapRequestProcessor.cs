@@ -31,6 +31,7 @@ public sealed class JmapRequestProcessor
     private readonly IMailFolderQueryService? _folderQueryService;
     private readonly IMailContactCopyService? _contactCopyService;
     private readonly IMailContactQueryService? _contactQueryService;
+    private readonly IMailContactReader? _contactReader;
     private readonly EmailDbContext _database;
     private readonly EnvironmentConfig _environment;
     private readonly LargeObjectTransactionEffects _blobEffects;
@@ -55,7 +56,7 @@ public sealed class JmapRequestProcessor
         ILogger<JmapRequestProcessor> logger,
         ApplicationOperationReceiptStore? receipts = null)
         : this(methods, sessions, database, environment, blobEffects, logger, receipts,
-            null, null, null, null, null, null, null, null, null, null, null, null, null, null)
+            null, null, null, null, null, null, null, null, null, null, null, null, null, null, null)
     {
     }
 
@@ -80,7 +81,8 @@ public sealed class JmapRequestProcessor
         IMailSubmissionQueryService? submissionQueryService,
         IMailFolderQueryService? folderQueryService,
         IMailContactCopyService? contactCopyService,
-        IMailContactQueryService? contactQueryService)
+        IMailContactQueryService? contactQueryService,
+        IMailContactReader? contactReader)
     {
         _methods = methods.ToDictionary(method => ValidRegisteredOperation(method.Operation, method.Feature));
         _sessions = sessions;
@@ -135,6 +137,7 @@ public sealed class JmapRequestProcessor
         _folderQueryService = folderQueryService;
         _contactCopyService = contactCopyService;
         _contactQueryService = contactQueryService;
+        _contactReader = contactReader;
         _database = database;
         _environment = environment;
         _blobEffects = blobEffects;
@@ -226,6 +229,9 @@ public sealed class JmapRequestProcessor
                 .ConfigureAwait(false);
         else if (command.Operation == MailOperationKind.FindContactChanges && features.Contains(MailFeature.Contacts))
             response = await ExecuteContactQueryChangesAsync(command, context, user, receiptKey, cancellationToken)
+                .ConfigureAwait(false);
+        else if (command.Operation == MailOperationKind.ReadContacts && features.Contains(MailFeature.Contacts))
+            response = await ExecuteContactsAsync(command, context, user, receiptKey, cancellationToken)
                 .ConfigureAwait(false);
         else
         {
@@ -563,6 +569,25 @@ public sealed class JmapRequestProcessor
             var result = await service.QueryChangesAsync(query, user, token).ConfigureAwait(false);
             var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
                 ?? throw new InvalidOperationException("The contact query service returned an incomplete result.");
+            return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
+        }, receiptKey, cancellationToken);
+    }
+
+    private Task<MailOperationResponse> ExecuteContactsAsync(
+        MailOperationCommand command,
+        JmapInvocationContext context,
+        AuthenticatedMailUser user,
+        ApplicationReceiptKey? receiptKey,
+        CancellationToken cancellationToken)
+    {
+        var read = ParseContactReadCommand(command.Arguments);
+        var service = _contactReader
+            ?? throw new InvalidOperationException("The contact reader is not configured.");
+        return InvokeAtomicallyAsync(command.Operation, context, async token =>
+        {
+            var result = await service.ReadAsync(read, user, token).ConfigureAwait(false);
+            var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
+                ?? throw new InvalidOperationException("The contact reader returned an incomplete result.");
             return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
         }, receiptKey, cancellationToken);
     }
@@ -1002,6 +1027,29 @@ public sealed class JmapRequestProcessor
         catch (JsonException)
         {
             throw NotRequest("The contact query-changes command contains invalid values.");
+        }
+    }
+
+    private MailContactReadCommand ParseContactReadCommand(JsonObject arguments)
+    {
+        if (arguments.Count != 4 || !arguments.ContainsKey("accountId")
+            || !arguments.ContainsKey("accountReferenceParseable")
+            || !arguments.ContainsKey("accountReferenceEligible")
+            || !arguments.ContainsKey("cardIds"))
+            throw NotRequest("The contact read command has an invalid shape.");
+        try
+        {
+            var read = JsonSerializer.Deserialize<MailContactReadCommand>(arguments, StrictReceiptJsonOptions)
+                ?? throw NotRequest("The contact read command is missing.");
+            if (read.AccountReferenceEligible && !read.AccountReferenceParseable
+                || !read.AccountReferenceParseable && read.AccountId != Guid.Empty
+                || read.CardIds?.Count > _environment.Jmap.MaxObjectsInGet)
+                throw NotRequest("The contact read values are invalid.");
+            return read;
+        }
+        catch (JsonException)
+        {
+            throw NotRequest("The contact read command contains invalid values.");
         }
     }
 

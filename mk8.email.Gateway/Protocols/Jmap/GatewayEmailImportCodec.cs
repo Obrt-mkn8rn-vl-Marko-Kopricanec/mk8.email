@@ -17,7 +17,7 @@ internal static class GatewayEmailImportCodec
         if (arguments.Any(item => item.Key is not ("accountId" or "ifInState" or "emails"))
             || arguments["accountId"] is not JsonValue accountNode
             || !accountNode.TryGetValue<string>(out var accountId) || accountId is null
-            || !TryOptionalState(arguments, out var ifInState)
+            || !TryOptionalState(arguments, "ifInState", out var ifInState)
             || arguments["emails"] is not JsonObject imports
             || imports.Any(item => !GatewayJmapBatchCodec.IsId(item.Key) || item.Value is not JsonObject))
         {
@@ -100,43 +100,43 @@ internal static class GatewayEmailImportCodec
             keywords, keywordIssue, receivedAt, invalidReceivedAt);
     }
 
-    private static (Guid? Id, MailImportMailboxIssue Issue) ParseMailbox(JsonNode? node,
+    internal static (Guid? Id, MailMessageMailboxIssue Issue) ParseMailbox(JsonNode? node,
         IReadOnlyDictionary<string, string> knownEntities)
     {
         if (node is not JsonObject map || map.Count == 0)
-            return (null, MailImportMailboxIssue.Invalid);
+            return (null, MailMessageMailboxIssue.Invalid);
         if (map.Count > 1)
-            return (null, MailImportMailboxIssue.TooMany);
+            return (null, MailMessageMailboxIssue.TooMany);
         var item = map.Single();
         var resolved = Resolve(item.Key, knownEntities);
         if (item.Value is not JsonValue value || !value.TryGetValue<bool>(out var enabled)
             || !enabled || resolved is not { Length: 33 } || resolved[0] != 'M'
             || !Guid.TryParseExact(resolved.AsSpan(1), "N", out var folderId))
-            return (null, MailImportMailboxIssue.Invalid);
-        return (folderId, MailImportMailboxIssue.None);
+            return (null, MailMessageMailboxIssue.Invalid);
+        return (folderId, MailMessageMailboxIssue.None);
     }
 
-    private static (IReadOnlyList<string> Values, MailImportKeywordIssue Issue) ParseKeywords(JsonObject item)
+    internal static (IReadOnlyList<string> Values, MailMessageKeywordIssue Issue) ParseKeywords(JsonObject item)
     {
         if (!item.TryGetPropertyValue("keywords", out var node))
-            return ([], MailImportKeywordIssue.None);
+            return ([], MailMessageKeywordIssue.None);
         if (node is not JsonObject map)
-            return ([], MailImportKeywordIssue.Invalid);
+            return ([], MailMessageKeywordIssue.Invalid);
         var result = new HashSet<string>(StringComparer.Ordinal);
         foreach (var property in map)
         {
             var keyword = CultureInfo.InvariantCulture.TextInfo.ToLower(property.Key);
             if (property.Value is not JsonValue value || !value.TryGetValue<bool>(out var enabled)
                 || !enabled || !IsValidKeyword(keyword))
-                return ([], MailImportKeywordIssue.Invalid);
+                return ([], MailMessageKeywordIssue.Invalid);
             result.Add(keyword);
         }
         return result.Count > 128
-            ? ([], MailImportKeywordIssue.TooMany)
-            : (result.ToArray(), MailImportKeywordIssue.None);
+            ? ([], MailMessageKeywordIssue.TooMany)
+            : (result.ToArray(), MailMessageKeywordIssue.None);
     }
 
-    private static DateTime? ParseReceivedAt(JsonObject item, out bool invalid)
+    internal static DateTime? ParseReceivedAt(JsonObject item, out bool invalid)
     {
         invalid = false;
         if (!item.TryGetPropertyValue("receivedAt", out var node)) return null;
@@ -146,10 +146,10 @@ internal static class GatewayEmailImportCodec
         return null;
     }
 
-    private static bool TryOptionalState(JsonObject arguments, out string? state)
+    internal static bool TryOptionalState(JsonObject arguments, string name, out string? state)
     {
         state = null;
-        return !arguments.TryGetPropertyValue("ifInState", out var node) || node is null
+        return !arguments.TryGetPropertyValue(name, out var node) || node is null
             || node is JsonValue value && value.TryGetValue(out state);
     }
 
@@ -159,11 +159,11 @@ internal static class GatewayEmailImportCodec
         && keyword.All(character => character is >= (char)0x21 and <= (char)0x7e
             && character is not ('(' or ')' or '{' or ']' or '%' or '*' or '"' or '\\'));
 
-    private static string? Resolve(string value, IReadOnlyDictionary<string, string> knownEntities) =>
+    internal static string? Resolve(string value, IReadOnlyDictionary<string, string> knownEntities) =>
         value.Length > 0 && value[0] == '#'
             ? knownEntities.GetValueOrDefault(value[1..]) : value;
 
-    private static string FormatThreadId(string stored)
+    internal static string FormatThreadId(string stored)
     {
         if (stored.Length is > 0 and < 255 && stored.All(character => char.IsAsciiLetterOrDigit(character)
                 || character is '-' or '_')) return "T" + stored;

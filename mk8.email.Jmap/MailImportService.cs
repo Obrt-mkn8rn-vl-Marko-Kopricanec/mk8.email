@@ -44,8 +44,8 @@ internal sealed class MailImportService(
             : await blobs.GetAsync(account.InboxId, item.BlobId, cancellationToken).ConfigureAwait(false);
         if (blob is null)
             return Failed(item, MailImportItemError.MissingBlob);
-        if (item.MailboxIssue != MailImportMailboxIssue.None)
-            return Failed(item, item.MailboxIssue == MailImportMailboxIssue.TooMany
+        if (item.MailboxIssue != MailMessageMailboxIssue.None)
+            return Failed(item, item.MailboxIssue == MailMessageMailboxIssue.TooMany
                 ? MailImportItemError.TooManyMailboxes : MailImportItemError.InvalidMailbox);
         if (item.MailboxId is null)
             return Failed(item, MailImportItemError.InvalidMailbox);
@@ -54,8 +54,8 @@ internal sealed class MailImportService(
             cancellationToken).ConfigureAwait(false);
         if (folder is null)
             return Failed(item, MailImportItemError.InvalidMailbox);
-        if (item.KeywordIssue != MailImportKeywordIssue.None)
-            return Failed(item, item.KeywordIssue == MailImportKeywordIssue.TooMany
+        if (item.KeywordIssue != MailMessageKeywordIssue.None)
+            return Failed(item, item.KeywordIssue == MailMessageKeywordIssue.TooMany
                 ? MailImportItemError.TooManyKeywords : MailImportItemError.InvalidKeywords);
         if (item.InvalidReceivedAt)
             return Failed(item, MailImportItemError.InvalidReceivedAt);

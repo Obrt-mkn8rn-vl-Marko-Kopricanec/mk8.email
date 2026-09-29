@@ -4,14 +4,14 @@ using System.Text.Json.Serialization;
 
 namespace mk8.email.Contracts.Messaging;
 
-public enum MailImportMailboxIssue
+public enum MailMessageMailboxIssue
 {
     None,
     Invalid,
     TooMany,
 }
 
-public enum MailImportKeywordIssue
+public enum MailMessageKeywordIssue
 {
     None,
     Invalid,
@@ -23,9 +23,9 @@ public sealed record MailImportItem(
     [property: JsonRequired] string? BlobId,
     [property: JsonRequired] bool InvalidInitialProperties,
     [property: JsonRequired] Guid? MailboxId,
-    [property: JsonRequired] MailImportMailboxIssue MailboxIssue,
+    [property: JsonRequired] MailMessageMailboxIssue MailboxIssue,
     [property: JsonRequired] IReadOnlyList<string> Keywords,
-    [property: JsonRequired] MailImportKeywordIssue KeywordIssue,
+    [property: JsonRequired] MailMessageKeywordIssue KeywordIssue,
     [property: JsonRequired] DateTime? ReceivedAt,
     [property: JsonRequired] bool InvalidReceivedAt);
 

@@ -33,6 +33,7 @@ public sealed class JmapRequestProcessor
     private readonly IMailContactQueryService? _contactQueryService;
     private readonly IMailContactReader? _contactReader;
     private readonly IMailImportService? _importService;
+    private readonly IMailCopyService? _copyService;
     private readonly EmailDbContext _database;
     private readonly EnvironmentConfig _environment;
     private readonly LargeObjectTransactionEffects _blobEffects;
@@ -57,7 +58,7 @@ public sealed class JmapRequestProcessor
         ILogger<JmapRequestProcessor> logger,
         ApplicationOperationReceiptStore? receipts = null)
         : this(methods, sessions, database, environment, blobEffects, logger, receipts,
-            null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null)
+            null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null)
     {
     }
 
@@ -84,7 +85,8 @@ public sealed class JmapRequestProcessor
         IMailContactCopyService? contactCopyService,
         IMailContactQueryService? contactQueryService,
         IMailContactReader? contactReader,
-        IMailImportService? importService)
+        IMailImportService? importService,
+        IMailCopyService? copyService)
     {
         _methods = methods.ToDictionary(method => ValidRegisteredOperation(method.Operation, method.Feature));
         _sessions = sessions;
@@ -140,6 +142,7 @@ public sealed class JmapRequestProcessor
         _contactCopyService = contactCopyService;
         _contactQueryService = contactQueryService;
         (_contactReader, _importService) = (contactReader, importService);
+        _copyService = copyService;
         _database = database;
         _environment = environment;
         _blobEffects = blobEffects;
@@ -237,6 +240,9 @@ public sealed class JmapRequestProcessor
                 .ConfigureAwait(false);
         else if (command.Operation == MailOperationKind.ImportMessages && features.Contains(MailFeature.Messages))
             response = await ExecuteImportAsync(command, context, user, receiptKey, cancellationToken)
+                .ConfigureAwait(false);
+        else if (command.Operation == MailOperationKind.CopyMessages && features.Contains(MailFeature.Messages))
+            response = await ExecuteCopyAsync(command, context, user, receiptKey, cancellationToken)
                 .ConfigureAwait(false);
         else
         {
@@ -630,6 +636,43 @@ public sealed class JmapRequestProcessor
             }
             var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
                 ?? throw new InvalidOperationException("The import service returned an incomplete result.");
+            return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
+        }, receiptKey, cancellationToken);
+    }
+
+    private Task<MailOperationResponse> ExecuteCopyAsync(
+        MailOperationCommand command,
+        JmapInvocationContext context,
+        AuthenticatedMailUser user,
+        ApplicationReceiptKey? receiptKey,
+        CancellationToken cancellationToken)
+    {
+        var copy = ParseCopyCommand(command.Arguments);
+        var service = _copyService
+            ?? throw new InvalidOperationException("The copy service is not configured.");
+        return InvokeAtomicallyAsync(command.Operation, context, async token =>
+        {
+            var result = await service.CopyAsync(copy, user, token).ConfigureAwait(false);
+            if (result.Status == MailCopyStatus.Ok)
+            {
+                if (result.Items.Count != copy.Items.Count)
+                    throw new InvalidOperationException("The copy service returned incomplete outcomes.");
+                for (var index = 0; index < copy.Items.Count; index++)
+                {
+                    var outcome = result.Items[index];
+                    if (outcome is null || !string.Equals(outcome.CreationId,
+                            copy.Items[index].CreationId, StringComparison.Ordinal))
+                        throw new InvalidOperationException("The copy service returned inconsistent outcomes.");
+                    if (outcome.Error == MailCopyItemError.None)
+                    {
+                        if (outcome.EmailId is null || outcome.EmailId == Guid.Empty)
+                            throw new InvalidOperationException("The copy service returned an invalid message identity.");
+                        context.CreatedIds[outcome.CreationId] = JmapId.Email(outcome.EmailId.Value);
+                    }
+                }
+            }
+            var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
+                ?? throw new InvalidOperationException("The copy service returned an incomplete result.");
             return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
         }, receiptKey, cancellationToken);
     }
@@ -1109,9 +1152,9 @@ public sealed class JmapRequestProcessor
                     || item.Keywords is null || !Enum.IsDefined(item.MailboxIssue)
                     || !Enum.IsDefined(item.KeywordIssue)
                     || item.ReceivedAt is { Kind: not DateTimeKind.Utc }
-                    || item.MailboxIssue == MailImportMailboxIssue.None
+                    || item.MailboxIssue == MailMessageMailboxIssue.None
                         && (item.MailboxId is null || item.MailboxId == Guid.Empty)
-                    || item.KeywordIssue == MailImportKeywordIssue.None
+                    || item.KeywordIssue == MailMessageKeywordIssue.None
                         && (item.Keywords.Count > 128 || item.Keywords.Any(keyword =>
                             keyword is null || !JmapEmailCodec.IsValidKeyword(keyword))))
                 || import.Items.Select(item => item.CreationId).Distinct(StringComparer.Ordinal).Count()
@@ -1122,6 +1165,38 @@ public sealed class JmapRequestProcessor
         catch (JsonException)
         {
             throw NotRequest("The import command contains invalid values.");
+        }
+    }
+
+    private MailCopyCommand ParseCopyCommand(JsonObject arguments)
+    {
+        if (arguments.Count != 7 || !arguments.ContainsKey("sourceAccountId")
+            || !arguments.ContainsKey("targetAccountId") || !arguments.ContainsKey("ifFromInState")
+            || !arguments.ContainsKey("ifInState") || !arguments.ContainsKey("destroyOriginal")
+            || !arguments.ContainsKey("destroyFromIfInState") || !arguments.ContainsKey("items"))
+            throw NotRequest("The copy command has an invalid shape.");
+        try
+        {
+            var copy = JsonSerializer.Deserialize<MailCopyCommand>(arguments, StrictReceiptJsonOptions)
+                ?? throw NotRequest("The copy command is missing.");
+            if (copy.Items is null || copy.Items.Count > _environment.Jmap.MaxObjectsInSet
+                || copy.Items.Any(item => item is null || item.CreationId is null
+                    || !Enum.IsDefined(item.MailboxIssue) || !Enum.IsDefined(item.KeywordIssue)
+                    || !item.InvalidInitialProperties && item.SourceEmailId is null
+                    || item.MailboxIssue == MailMessageMailboxIssue.None
+                        && (item.MailboxId is null || item.MailboxId == Guid.Empty)
+                    || item.KeywordIssue == MailMessageKeywordIssue.None && item.Keywords is not null
+                        && (item.Keywords.Count > 128 || item.Keywords.Any(keyword =>
+                            keyword is null || !JmapEmailCodec.IsValidKeyword(keyword)))
+                    || item.ReceivedAt is { Kind: not DateTimeKind.Utc })
+                || copy.Items.Select(item => item.CreationId).Distinct(StringComparer.Ordinal).Count()
+                    != copy.Items.Count)
+                throw NotRequest("The copy command contains invalid values.");
+            return copy;
+        }
+        catch (JsonException)
+        {
+            throw NotRequest("The copy command contains invalid values.");
         }
     }
 

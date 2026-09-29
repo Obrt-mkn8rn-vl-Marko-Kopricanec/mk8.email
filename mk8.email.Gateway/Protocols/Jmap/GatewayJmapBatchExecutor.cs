@@ -106,6 +106,9 @@ internal static class GatewayJmapBatchExecutor
         {
             DecodePrimary(operation.Response, typedOperation),
         };
+        if (typedOperation?.RenderAdditional is { } renderAdditional
+            && operation.Response.Operation != MailOperationKind.Failure)
+            displayed.AddRange(renderAdditional((JsonObject)ApplicationValueCodec.Decode(operation.Response.Data)!));
         if (operation.Response.AdditionalResults is not null)
         {
             foreach (var additional in operation.Response.AdditionalResults)
@@ -235,6 +238,13 @@ internal static class GatewayJmapBatchExecutor
             selection = Select<MailImportCommand, MailImportResult>(operation, call!.Command,
                 result => GatewayEmailImportCodec.Render(call, result));
         }
+        else if (operation == MailOperationKind.CopyMessages && features.Contains(MailFeature.Messages))
+        {
+            if (!GatewayEmailCopyCodec.TryParse(arguments, knownEntities, maximumObjectsInSet, out var call, out failure)) return false;
+            selection = Select<MailCopyCommand, MailCopyResult>(operation, call!.Command,
+                result => GatewayEmailCopyCodec.Render(call, result),
+                result => GatewayEmailCopyCodec.RenderAdditional(call, result));
+        }
         else
             return TryPrepareTypedContactOperation(operation, arguments, features,
                 maximumObjectsInGet, maximumObjectsInSet, out selection, out failure);
@@ -282,11 +292,14 @@ internal static class GatewayJmapBatchExecutor
     private static TypedOperationSelection Select<TCommand, TResult>(
         MailOperationKind operation,
         TCommand command,
-        Func<TResult, (MailOperationKind Operation, JsonObject Data)> render) =>
+        Func<TResult, (MailOperationKind Operation, JsonObject Data)> render,
+        Func<TResult, IReadOnlyList<(MailOperationKind Operation, JsonObject Data)>>? renderAdditional = null) =>
         new(operation,
             JsonSerializer.SerializeToNode(command, FolderJsonOptions)?.AsObject()
                 ?? throw new InvalidOperationException("Could not encode the typed operation command."),
             data => render(data.Deserialize<TResult>(FolderJsonOptions)
+                ?? throw new InvalidOperationException("The Application returned an incomplete typed operation result.")),
+            renderAdditional is null ? null : data => renderAdditional(data.Deserialize<TResult>(FolderJsonOptions)
                 ?? throw new InvalidOperationException("The Application returned an incomplete typed operation result.")));
 
     private static (MailOperationKind Operation, JsonObject Data) DecodePrimary(
@@ -307,7 +320,8 @@ internal static class GatewayJmapBatchExecutor
     private sealed record TypedOperationSelection(
         MailOperationKind Operation,
         JsonObject Payload,
-        Func<JsonObject, (MailOperationKind Operation, JsonObject Data)> Render);
+        Func<JsonObject, (MailOperationKind Operation, JsonObject Data)> Render,
+        Func<JsonObject, IReadOnlyList<(MailOperationKind Operation, JsonObject Data)>>? RenderAdditional);
 
     private sealed record RemoteInvocation(
         string? LocalFailure,

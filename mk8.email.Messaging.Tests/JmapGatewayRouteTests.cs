@@ -176,7 +176,12 @@ public sealed class JmapGatewayRouteTests
                    ["Email/import",{"accountId":"A11111111111111111111111111111111",
                      "emails":{"draft":{"blobId":"U44444444444444444444444444444444",
                        "mailboxIds":{"M33333333333333333333333333333333":true},
-                       "keywords":{"$seen":true},"receivedAt":"2026-09-29T12:34:56Z"}}},"call-28"]],
+                       "keywords":{"$seen":true},"receivedAt":"2026-09-29T12:34:56Z"}}},"call-28"],
+                   ["Email/copy",{"fromAccountId":"A11111111111111111111111111111111",
+                     "accountId":"A22222222222222222222222222222222",
+                     "create":{"copied":{"id":"E11111111111111111111111111111111",
+                       "mailboxIds":{"M33333333333333333333333333333333":true}}},
+                     "onSuccessDestroyOriginal":true},"call-29"]],
                  "createdIds":{"made":"object-id"}}
                 """;
             using var request = new HttpRequestMessage(HttpMethod.Post, "/jmap/api")
@@ -215,10 +220,10 @@ public sealed class JmapGatewayRouteTests
             Assert.IsNotNull(jmap.Request?.Command);
             CollectionAssert.AreEqual(new[] { MailFeature.Basic, MailFeature.Messages, MailFeature.Submission,
                 MailFeature.Contacts, MailFeature.AutomaticReplies }, jmap.Request.Command.Features.ToArray());
-            Assert.AreEqual(27, jmap.Executions);
+            Assert.AreEqual(28, jmap.Executions);
             Assert.AreEqual("second", jmap.Commands[1].Arguments["collision"]!.GetValue<string>());
             Assert.IsFalse(jmap.Commands[1].Arguments.ContainsKey("#collision"));
-            Assert.AreEqual(28, jmap.Plan?.Plan?.OperationCount);
+            Assert.AreEqual(29, jmap.Plan?.Plan?.OperationCount);
             Assert.AreEqual(MailOperationKind.FindMessages, jmap.Request.Command.Operation);
             Assert.AreEqual("text", jmap.Request.Command.Arguments["nested"]?["items"]?[2]?.GetValue<string>());
             Assert.AreEqual(1, jmap.Request.Command.Arguments["x"]!.GetValue<int>());
@@ -522,6 +527,24 @@ public sealed class JmapGatewayRouteTests
                 .GetProperty("created").GetProperty("draft").GetProperty("id").GetString());
             Assert.AreEqual("B55555555555555555555555555555555", importResponse[1]
                 .GetProperty("created").GetProperty("draft").GetProperty("blobId").GetString());
+            var emailCopyCommand = jmap.Commands[27];
+            Assert.AreEqual(MailOperationKind.CopyMessages, emailCopyCommand.Operation);
+            Assert.AreEqual("11111111-1111-1111-1111-111111111111",
+                emailCopyCommand.Arguments["sourceAccountId"]!.GetValue<string>());
+            Assert.AreEqual("22222222-2222-2222-2222-222222222222",
+                emailCopyCommand.Arguments["targetAccountId"]!.GetValue<string>());
+            Assert.AreEqual("11111111-1111-1111-1111-111111111111",
+                emailCopyCommand.Arguments["items"]![0]!["sourceEmailId"]!.GetValue<string>());
+            Assert.IsFalse(emailCopyCommand.Arguments.ContainsKey("create"));
+            var emailCopyResponse = json.RootElement.GetProperty("methodResponses")[28];
+            Assert.AreEqual("Email/copy", emailCopyResponse[0].GetString());
+            Assert.AreEqual("call-29", emailCopyResponse[2].GetString());
+            Assert.AreEqual("E77777777777777777777777777777777", emailCopyResponse[1]
+                .GetProperty("created").GetProperty("copied").GetProperty("id").GetString());
+            var destroyResponse = json.RootElement.GetProperty("methodResponses")[29];
+            Assert.AreEqual("Email/set", destroyResponse[0].GetString());
+            Assert.AreEqual("E11111111111111111111111111111111", destroyResponse[1]
+                .GetProperty("destroyed")[0].GetString());
 
             await using var countCommand = gatewayDataSource.CreateCommand(
                 "SELECT count(*), count(*) FILTER (WHERE metadata ->> 'layer' = 'presentation') "
@@ -530,7 +553,7 @@ public sealed class JmapGatewayRouteTests
             Assert.IsTrue(await countReader.ReadAsync(timeout.Token));
             // SSE records its headers and streamed body separately, in addition
             // to the request and two application-boundary records.
-            Assert.AreEqual(67L, countReader.GetInt64(0));
+            Assert.AreEqual(69L, countReader.GetInt64(0));
             Assert.AreEqual(7L, countReader.GetInt64(1));
 
             await using var operationCommand = gatewayDataSource.CreateCommand(
@@ -804,6 +827,18 @@ public sealed class JmapGatewayRouteTests
                 var node = JsonSerializer.SerializeToNode(imported, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
                 return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
                     OperationResult: new(new(MailOperationKind.ImportMessages, ApplicationValueCodec.Encode(node)),
+                        request.Command.KnownEntities!, Profile)));
+            }
+            if (request.Command.Operation == MailOperationKind.CopyMessages)
+            {
+                var copied = new MailCopyResult(MailCopyStatus.Ok, "s59", "s60",
+                    [new("copied", MailCopyItemError.None,
+                        Guid.Parse("77777777-7777-7777-7777-777777777777"), "thread:copy", 234)],
+                    new(MailCopyDestroyStatus.Completed, "s58", "s61",
+                        [Guid.Parse("11111111-1111-1111-1111-111111111111")], []));
+                var node = JsonSerializer.SerializeToNode(copied, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
+                    OperationResult: new(new(MailOperationKind.CopyMessages, ApplicationValueCodec.Encode(node)),
                         request.Command.KnownEntities!, Profile)));
             }
             var data = (System.Text.Json.Nodes.JsonObject)request.Command.Arguments.DeepClone();

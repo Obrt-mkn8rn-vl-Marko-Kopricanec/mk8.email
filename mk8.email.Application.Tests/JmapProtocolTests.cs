@@ -801,6 +801,108 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    public async Task EmailCopyRendersGatewayOwnedSourceDeletionAndStateMismatch()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        var targetInboxId = Guid.CreateVersion7();
+        var targetFolderId = Guid.CreateVersion7();
+        using (var scope = fixture.Services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            var original = await database.Inboxes.SingleAsync();
+            database.Inboxes.Add(new InboxDB
+            {
+                Id = targetInboxId,
+                Name = "copy-target",
+                AddressId = original.AddressId,
+                OwnerId = fixture.User.Id,
+            });
+            database.Folders.Add(new FolderDB
+            {
+                Id = targetFolderId,
+                InboxId = targetInboxId,
+                Name = "Inbox",
+                UidValidity = 1,
+                NextUid = 1,
+            });
+            await database.SaveChangesAsync();
+        }
+        var blobId = await fixture.StoreBlobAsync(Encoding.ASCII.GetBytes(
+            $"From: sender@example.test\r\nTo: {fixture.User.Username}\r\nSubject: Copy\r\n\r\nBody"));
+        var targetAccountId = JmapId.Account(targetInboxId);
+        var targetMailboxId = JmapId.Mailbox(targetFolderId);
+        async Task<string> ImportSourceAsync()
+        {
+            var response = await fixture.InvokeAsync(new JsonObject
+            {
+                ["using"] = new JsonArray(Core, Mail),
+                ["methodCalls"] = new JsonArray(new JsonArray("Email/import", new JsonObject
+                {
+                    ["accountId"] = fixture.AccountId,
+                    ["emails"] = new JsonObject
+                    {
+                        ["original"] = new JsonObject
+                        {
+                            ["blobId"] = blobId,
+                            ["mailboxIds"] = new JsonObject { [fixture.InboxMailboxId] = true },
+                        },
+                    },
+                }, "import")),
+            });
+            return Arguments(response)["created"]!["original"]!["id"]!.GetValue<string>();
+        }
+
+        async Task<JsonObject> CopyAsync(string sourceId, bool mismatch)
+        {
+            var arguments = new JsonObject
+            {
+                ["fromAccountId"] = fixture.AccountId,
+                ["accountId"] = targetAccountId,
+                ["create"] = new JsonObject
+                {
+                    ["copy"] = new JsonObject
+                    {
+                        ["id"] = sourceId,
+                        ["mailboxIds"] = new JsonObject { [targetMailboxId] = true },
+                    },
+                },
+                ["onSuccessDestroyOriginal"] = true,
+            };
+            if (mismatch)
+                arguments["destroyFromIfInState"] = "stale";
+            else
+                arguments["create"]!["copy"]!["keywords"] = new JsonObject { ["$flagged"] = true };
+            return await fixture.InvokeAsync(new JsonObject
+            {
+                ["using"] = new JsonArray(Core, Mail),
+                ["methodCalls"] = new JsonArray(new JsonArray("Email/copy", arguments, "copy")),
+            });
+        }
+
+        var sourceId = await ImportSourceAsync();
+        var copied = await CopyAsync(sourceId, mismatch: false);
+        Assert.AreEqual("Email/copy", copied["methodResponses"]![0]![0]!.GetValue<string>());
+        var copiedId = Arguments(copied)["created"]!["copy"]!["id"]!.GetValue<string>();
+        Assert.AreNotEqual(sourceId, copiedId);
+        Assert.AreEqual("Email/set", copied["methodResponses"]![1]![0]!.GetValue<string>());
+        Assert.AreEqual(sourceId, Arguments(copied, 1)["destroyed"]![0]!.GetValue<string>());
+        using (var scope = fixture.Services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            Assert.AreEqual(1, await database.Emails.CountAsync());
+            Assert.AreEqual(targetFolderId, (await database.Emails.SingleAsync()).FolderId);
+        }
+        var secondSourceId = await ImportSourceAsync();
+        var mismatched = await CopyAsync(secondSourceId, mismatch: true);
+        Assert.IsNotNull(Arguments(mismatched)["created"]!["copy"]);
+        Assert.AreEqual("error", mismatched["methodResponses"]![1]![0]!.GetValue<string>());
+        Assert.AreEqual("stateMismatch", Arguments(mismatched, 1)["type"]!.GetValue<string>());
+        using var verificationScope = fixture.Services.CreateScope();
+        var verification = verificationScope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        Assert.AreEqual(3, await verification.Emails.CountAsync());
+    }
+
+    [TestMethod]
     public async Task EmailWritesRejectNullValuesForNonNullableDefaults()
     {
         await using var fixture = await JmapFixture.CreateAsync();

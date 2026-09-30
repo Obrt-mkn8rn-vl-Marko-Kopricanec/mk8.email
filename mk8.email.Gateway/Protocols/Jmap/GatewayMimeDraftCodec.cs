@@ -3,10 +3,11 @@ using System.Text;
 using System.Text.Json.Nodes;
 using MimeKit;
 using MimeKit.Utils;
+using mk8.email.Contracts.Messaging;
 
-namespace mk8.email.Jmap;
+namespace mk8.email.Gateway.Protocols.Jmap;
 
-internal sealed class JmapEmailBuilder(JmapBlobService blobs)
+internal static class GatewayMimeDraftCodec
 {
     private const long MaximumUnsignedInt = 9_007_199_254_740_991;
 
@@ -37,182 +38,80 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
         ],
         StringComparer.Ordinal);
 
-    public async Task<JmapBuildResult> BuildAsync(
-        Guid accountId,
-        string accountAddress,
-        JmapInvocationContext context,
-        JsonObject value,
-        CancellationToken cancellationToken)
+    public static Result Parse(JsonObject value)
     {
-        var allowed = MetadataProperties
-            .Concat(ConvenienceHeaders.Keys)
+        var allowed = MetadataProperties.Concat(ConvenienceHeaders.Keys)
             .Concat(["bodyStructure", "bodyValues", "textBody", "htmlBody", "attachments"])
             .ToHashSet(StringComparer.Ordinal);
         var invalid = value.Select(item => item.Key)
-            .Where(property => !allowed.Contains(property)
-                && !property.StartsWith("header:", StringComparison.Ordinal))
+            .Where(property => !allowed.Contains(property) && !property.StartsWith("header:", StringComparison.Ordinal))
             .ToArray();
         if (invalid.Length > 0 || value.ContainsKey("headers"))
-            return JmapBuildResult.Failed("invalidProperties", properties: invalid);
-
-        var message = new MimeMessage((IEnumerable<Header>)Array.Empty<Header>());
+            return Failed("invalidProperties", properties: invalid);
+        using var message = new MimeMessage((IEnumerable<Header>)Array.Empty<Header>());
         if (!TryApplyHeaders(message, value, out var representedHeaders, out var headerError))
-        {
-            message.Dispose();
-            return JmapBuildResult.Failed("invalidProperties", headerError);
-        }
-        if (!message.Headers.Contains(HeaderId.From))
-            message.From.Add(MailboxAddress.Parse(accountAddress));
-        if (!message.Headers.Contains(HeaderId.MessageId))
-        {
-            var domain = accountAddress[(accountAddress.LastIndexOf('@') + 1)..];
-            message.MessageId = MimeUtils.GenerateMessageId(domain);
-        }
-        if (!message.Headers.Contains(HeaderId.Date))
-            message.Date = DateTimeOffset.UtcNow;
-        var rootForbiddenHeaders = representedHeaders.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        rootForbiddenHeaders.Add("From");
-        rootForbiddenHeaders.Add("Message-ID");
-        rootForbiddenHeaders.Add("Date");
-
+            return Failed("invalidProperties", headerError);
+        var forbidden = representedHeaders.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        forbidden.UnionWith(["From", "Message-ID", "Date"]);
         var bodyValues = value["bodyValues"] as JsonObject;
-        if (value.ContainsKey("bodyValues") && bodyValues is null)
-        {
-            message.Dispose();
-            return JmapBuildResult.Failed("invalidProperties", properties: ["bodyValues"]);
-        }
-        if (bodyValues is not null && !ValidateBodyValues(bodyValues))
-        {
-            message.Dispose();
-            return JmapBuildResult.Failed("invalidProperties", properties: ["bodyValues"]);
-        }
-
-        var blobReferences = EnumerateBlobReferences(value)
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
-        if (!JmapMethodHelpers.AreValidIdReferences(blobReferences, context))
-        {
-            message.Dispose();
-            return JmapBuildResult.Failed("invalidProperties", properties: ["blobId"]);
-        }
-        var unresolvedReference = blobReferences.FirstOrDefault(reference => context.ResolveId(reference) is null);
-        if (unresolvedReference is not null)
-        {
-            message.Dispose();
-            return JmapBuildResult.Failed("invalidProperties", properties: ["blobId"]);
-        }
-        var missingBlobs = new List<string>();
-        foreach (var reference in blobReferences)
-        {
-            var resolved = context.ResolveId(reference)!;
-            if (await blobs.GetAsync(accountId, resolved, cancellationToken).ConfigureAwait(false) is null)
-                missingBlobs.Add(resolved);
-        }
-        if (missingBlobs.Count > 0)
-        {
-            message.Dispose();
-            var error = JmapMethodHelpers.SetError("blobNotFound");
-            error["notFound"] = JmapMethodHelpers.ToJsonArray(missingBlobs);
-            return new JmapBuildResult(null, error);
-        }
-
+        if (value.ContainsKey("bodyValues") && bodyValues is null
+            || bodyValues is not null && !ValidateBodyValues(bodyValues))
+            return Failed("invalidProperties", properties: ["bodyValues"]);
+        var references = EnumerateBlobReferences(value).Distinct(StringComparer.Ordinal).ToArray();
+        if (references.Any(reference => !IsReference(reference)))
+            return Failed("invalidProperties", properties: ["blobId"]);
+        using var sourceReferences = new DraftPartScope();
         var partIds = new HashSet<string>(StringComparer.Ordinal);
-        MimeEntity? body;
-        if (value.TryGetPropertyValue("bodyStructure", out var bodyStructureNode))
+        PartBuildResult built;
+        if (value.TryGetPropertyValue("bodyStructure", out var node))
         {
-            if (bodyStructureNode is not JsonObject bodyStructure
-                || value.ContainsKey("textBody")
-                || value.ContainsKey("htmlBody")
-                || value.ContainsKey("attachments"))
-            {
-                message.Dispose();
-                return JmapBuildResult.Failed("invalidProperties", properties: ["bodyStructure"]);
-            }
-            var built = await BuildPartAsync(
-                accountId,
-                context,
-                bodyStructure,
-                bodyValues,
-                partIds,
-                cancellationToken,
-                rootForbiddenHeaders).ConfigureAwait(false);
-            if (built.Error is not null)
-            {
-                message.Dispose();
-                return new JmapBuildResult(null, built.Error);
-            }
-            body = built.Entity;
+            built = node is JsonObject structure && !value.ContainsKey("textBody")
+                && !value.ContainsKey("htmlBody") && !value.ContainsKey("attachments")
+                ? BuildPart(structure, bodyValues, partIds, sourceReferences, forbidden)
+                : PartBuildResult.Failed("invalidProperties", properties: ["bodyStructure"]);
         }
-        else
-        {
-            var flat = await BuildFlatBodyAsync(
-                accountId,
-                context,
-                value,
-                bodyValues,
-                partIds,
-                cancellationToken).ConfigureAwait(false);
-            if (flat.Error is not null)
-            {
-                message.Dispose();
-                return new JmapBuildResult(null, flat.Error);
-            }
-            body = flat.Entity;
-        }
-        message.Body = body ?? new TextPart("plain") { Text = string.Empty };
-
-        byte[] raw;
-        try
-        {
-            var format = FormatOptions.Default.Clone();
-            format.NewLineFormat = NewLineFormat.Dos;
-            using var stream = new MemoryStream();
-            await message.WriteToAsync(format, stream, cancellationToken).ConfigureAwait(false);
-            raw = stream.ToArray();
-        }
-        catch (Exception exception) when (exception is FormatException or InvalidOperationException)
-        {
-            message.Dispose();
-            return JmapBuildResult.Failed("invalidEmail", exception.Message);
-        }
-
-        var sender = message.From.Mailboxes.FirstOrDefault()?.Address ?? accountAddress;
-        var recipients = message.To.Mailboxes
-            .Concat(message.Cc.Mailboxes)
-            .Concat(message.Bcc.Mailboxes)
-            .Select(mailbox => mailbox.Address)
-            .ToArray();
-        var recipient = string.Join(", ", recipients);
-        if (recipient.Length > 255)
-            recipient = recipient[..255];
-        var cc = message.Cc.ToString();
-        if (cc.Length > 255)
-            cc = cc[..255];
-        var subject = message.Subject ?? string.Empty;
-        if (subject.Length > 998)
-            subject = subject[..998];
-        var messageId = $"<{message.MessageId}>";
-        var inReplyTo = message.InReplyTo;
-        if (!string.IsNullOrEmpty(inReplyTo))
-            inReplyTo = $"<{inReplyTo.Trim('<', '>')}>";
-        return new JmapBuildResult(new JmapBuiltMessage(
-            message,
-            raw,
-            sender,
-            recipient,
-            string.IsNullOrEmpty(cc) ? null : cc,
-            subject,
-            messageId,
-            inReplyTo), null);
+        else built = BuildFlatBody(value, bodyValues, partIds, sourceReferences);
+        if (built.Error is not null)
+            return new(null, ConvertFailure(built.Error), references, true);
+        message.Body = built.Entity ?? sourceReferences.Create(() => new TextPart("plain") { Text = string.Empty });
+        sourceReferences.TransferToMessage(message.Body);
+        var rows = new List<MailMimeDraftPart>();
+        var root = Capture(message.Body, rows, sourceReferences);
+        return new(new(CaptureHeaders(message.Headers), rows.ToArray(), root), null, references, true);
     }
 
-    private async Task<PartBuildResult> BuildFlatBodyAsync(
-        Guid accountId,
-        JmapInvocationContext context,
-        JsonObject value,
-        JsonObject? bodyValues,
-        ISet<string> partIds,
-        CancellationToken cancellationToken)
+    private static int Capture(MimeEntity entity, List<MailMimeDraftPart> rows,
+        DraftPartScope references)
+    {
+        var children = entity is Multipart multipart
+            ? multipart.Select(child => Capture(child, rows, references)).ToArray() : [];
+        var index = rows.Count;
+        rows.Add(new(entity.ContentType.MimeType, CaptureHeaders(entity.Headers),
+            entity is TextPart text ? text.Text : null, references.Reference(entity), children));
+        return index;
+    }
+
+    private static MailMimeHeaderSnapshot[] CaptureHeaders(HeaderList headers) =>
+        headers.Select(header => new MailMimeHeaderSnapshot(header.RawField.ToArray(), header.RawValue.ToArray())).ToArray();
+
+    internal sealed record Result(MailMimeDraft? Mime, MailMessageMutationFailure? Failure,
+        IReadOnlyList<string> BlobReferences, bool CheckBlobsBeforeFailure);
+
+    private static Result Failed(string type, string? description = null, string[]? properties = null) =>
+        new(null, ConvertFailure(SetError(type, description, properties)), [], false);
+
+    private static MailMessageMutationFailure ConvertFailure(JsonObject value) =>
+        new(string.Equals(value["type"]!.GetValue<string>(), "invalidEmail", StringComparison.Ordinal)
+            ? MailMessageMutationError.InvalidEmail : MailMessageMutationError.InvalidProperties,
+            value["description"]?.GetValue<string>(),
+            value["properties"] is JsonArray list ? list.Select(item => item!.GetValue<string>()).ToArray() : null, null);
+
+    private static bool IsReference(string value) =>
+        GatewayJmapBatchCodec.IsId(value) || value.StartsWith('#') && GatewayJmapBatchCodec.IsId(value[1..]);
+
+    private static PartBuildResult BuildFlatBody(
+        JsonObject value, JsonObject? bodyValues, ISet<string> partIds,
+        DraftPartScope sourceReferences)
     {
         if (!TryGetPartArray(value, "textBody", out var textParts)
             || !TryGetPartArray(value, "htmlBody", out var htmlParts)
@@ -229,13 +128,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
         {
             if (!HasType(textParts[0], "text/plain"))
                 return PartBuildResult.Failed("invalidProperties", properties: ["textBody"]);
-            var built = await BuildPartAsync(
-                accountId,
-                context,
-                textParts[0],
-                bodyValues,
-                partIds,
-                cancellationToken).ConfigureAwait(false);
+            var built = BuildPart(textParts[0], bodyValues, partIds, sourceReferences);
             if (built.Error is not null) return built;
             text = built.Entity;
         }
@@ -243,13 +136,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
         {
             if (!HasType(htmlParts[0], "text/html"))
                 return PartBuildResult.Failed("invalidProperties", properties: ["htmlBody"]);
-            var built = await BuildPartAsync(
-                accountId,
-                context,
-                htmlParts[0],
-                bodyValues,
-                partIds,
-                cancellationToken).ConfigureAwait(false);
+            var built = BuildPart(htmlParts[0], bodyValues, partIds, sourceReferences);
             if (built.Error is not null) return built;
             html = built.Entity;
         }
@@ -257,7 +144,9 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
         MimeEntity? body = null;
         if (text is not null && html is not null)
         {
-            var alternative = new Multipart("alternative") { text, html };
+            var alternative = sourceReferences.Create(() => new Multipart("alternative"));
+            sourceReferences.Attach(alternative, text);
+            sourceReferences.Attach(alternative, html);
             body = alternative;
         }
         else
@@ -267,34 +156,23 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
 
         if (attachmentParts is { Count: > 0 })
         {
-            var mixed = new Multipart("mixed");
+            var mixed = sourceReferences.Create(() => new Multipart("mixed"));
             if (body is not null)
-                mixed.Add(body);
+                sourceReferences.Attach(mixed, body);
             foreach (var attachment in attachmentParts)
             {
-                var built = await BuildPartAsync(
-                    accountId,
-                    context,
-                    attachment,
-                    bodyValues,
-                    partIds,
-                    cancellationToken).ConfigureAwait(false);
+                var built = BuildPart(attachment, bodyValues, partIds, sourceReferences);
                 if (built.Error is not null) return built;
-                mixed.Add(built.Entity!);
+                sourceReferences.Attach(mixed, built.Entity!);
             }
             body = mixed;
         }
         return new PartBuildResult(body, null);
     }
 
-    private async Task<PartBuildResult> BuildPartAsync(
-        Guid accountId,
-        JmapInvocationContext context,
-        JsonObject value,
-        JsonObject? bodyValues,
-        ISet<string> partIds,
-        CancellationToken cancellationToken,
-        IReadOnlySet<string>? forbiddenHeaders = null)
+    private static PartBuildResult BuildPart(
+        JsonObject value, JsonObject? bodyValues, ISet<string> partIds,
+        DraftPartScope sourceReferences, IReadOnlySet<string>? forbiddenHeaders = null)
     {
         var invalid = value.Select(item => item.Key)
             .Where(property => !BodyProperties.Contains(property)
@@ -302,15 +180,15 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
             .ToArray();
         if (invalid.Length > 0 || value.ContainsKey("headers"))
             return PartBuildResult.Failed("invalidProperties", properties: invalid);
-        if (!JmapMethodHelpers.TryGetRequiredString(value, "type", out var type)
+        if (!TryGetRequiredString(value, "type", out var type)
             || !TryMimeType(type, out var mediaType, out var mediaSubtype)
-            || !JmapMethodHelpers.TryGetOptionalString(value, "partId", out var partId)
-            || !JmapMethodHelpers.TryGetOptionalString(value, "blobId", out var blobId)
-            || !JmapMethodHelpers.TryGetOptionalString(value, "charset", out var charset)
-            || !JmapMethodHelpers.TryGetOptionalString(value, "name", out var name)
-            || !JmapMethodHelpers.TryGetOptionalString(value, "disposition", out var disposition)
-            || !JmapMethodHelpers.TryGetOptionalString(value, "cid", out var contentId)
-            || !JmapMethodHelpers.TryGetOptionalString(value, "location", out var location)
+            || !TryGetOptionalString(value, "partId", out var partId)
+            || !TryGetOptionalString(value, "blobId", out var blobId)
+            || !TryGetOptionalString(value, "charset", out var charset)
+            || !TryGetOptionalString(value, "name", out var name)
+            || !TryGetOptionalString(value, "disposition", out var disposition)
+            || !TryGetOptionalString(value, "cid", out var contentId)
+            || !TryGetOptionalString(value, "location", out var location)
             || partId is not null && blobId is not null
             || !TryValidateOptionalSize(value))
         {
@@ -319,43 +197,43 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
         if (!string.Equals(mediaType, "text", StringComparison.Ordinal) && charset is not null)
             return PartBuildResult.Failed("invalidProperties", properties: ["charset"]);
 
+        var metadata = new PartMetadata(name, disposition, contentId, location, forbiddenHeaders);
         if (string.Equals(mediaType, "multipart", StringComparison.Ordinal))
         {
             if (partId is not null || blobId is not null || value["subParts"] is not JsonArray subParts)
                 return PartBuildResult.Failed("invalidProperties");
-            var multipart = new Multipart(mediaSubtype);
-            foreach (var item in subParts)
-            {
-                if (item is not JsonObject child)
-                    return PartBuildResult.Failed("invalidProperties");
-                var built = await BuildPartAsync(
-                    accountId,
-                    context,
-                    child,
-                    bodyValues,
-                    partIds,
-                    cancellationToken).ConfigureAwait(false);
-                if (built.Error is not null)
-                    return built;
-                multipart.Add(built.Entity!);
-            }
-            if (!TryApplyPartMetadata(
-                    multipart,
-                    value,
-                    name,
-                    disposition,
-                    contentId,
-                    location,
-                    forbiddenHeaders))
-            {
-                multipart.Dispose();
-                return PartBuildResult.Failed("invalidProperties");
-            }
-            return new PartBuildResult(multipart, null);
+            return BuildMultipart(value, subParts, mediaSubtype, bodyValues, partIds, sourceReferences, metadata);
         }
         if (value.TryGetPropertyValue("subParts", out var subPartsNode) && subPartsNode is not null)
             return PartBuildResult.Failed("invalidProperties", properties: ["subParts"]);
+        return BuildLeaf(value, bodyValues, partIds, sourceReferences,
+            new(mediaType, mediaSubtype, partId, blobId, charset), metadata);
+    }
 
+    private static PartBuildResult BuildMultipart(JsonObject value, JsonArray subParts, string mediaSubtype,
+        JsonObject? bodyValues, ISet<string> partIds, DraftPartScope sourceReferences, PartMetadata metadata)
+    {
+        var multipart = sourceReferences.Create(() => new Multipart(mediaSubtype));
+        foreach (var item in subParts)
+        {
+            if (item is not JsonObject child)
+                return PartBuildResult.Failed("invalidProperties");
+            var built = BuildPart(child, bodyValues, partIds, sourceReferences);
+            if (built.Error is not null)
+                return built;
+            sourceReferences.Attach(multipart, built.Entity!);
+        }
+        if (!TryApplyPartMetadata(multipart, value, metadata))
+        {
+            return PartBuildResult.Failed("invalidProperties");
+        }
+        return new PartBuildResult(multipart, null);
+    }
+
+    private static PartBuildResult BuildLeaf(JsonObject value, JsonObject? bodyValues, ISet<string> partIds,
+        DraftPartScope sourceReferences, LeafDefinition definition, PartMetadata metadata)
+    {
+        var (mediaType, mediaSubtype, partId, blobId, charset) = definition;
         MimePart part;
         if (partId is not null)
         {
@@ -367,27 +245,20 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
             {
                 return PartBuildResult.Failed("invalidProperties");
             }
-            part = new TextPart(mediaSubtype)
+            part = sourceReferences.Create(() => new TextPart(mediaSubtype)
             {
                 Text = textValue,
                 ContentTransferEncoding = ContentEncoding.QuotedPrintable,
-            };
+            });
         }
         else if (blobId is not null)
         {
-            var resolvedBlobId = context.ResolveId(blobId);
-            if (resolvedBlobId is null)
-                return PartBuildResult.Failed("blobNotFound");
-            var blob = await blobs.GetAsync(accountId, resolvedBlobId, cancellationToken).ConfigureAwait(false);
-            if (blob is null)
-                return PartBuildResult.Failed("blobNotFound");
-            part = new MimePart(mediaType, mediaSubtype)
+            part = sourceReferences.Create(() => new MimePart(mediaType, mediaSubtype)
             {
-                Content = new MimeContent(new MemoryStream(blob.Content, writable: false), ContentEncoding.Default),
                 ContentTransferEncoding = string.Equals(mediaType, "text", StringComparison.Ordinal)
-                    ? ContentEncoding.QuotedPrintable
-                    : ContentEncoding.Base64,
-            };
+                    ? ContentEncoding.QuotedPrintable : ContentEncoding.Base64,
+            });
+            sourceReferences.AddReference(part, blobId);
         }
         else
         {
@@ -403,20 +274,11 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
             }
             catch (ArgumentException)
             {
-                part.Dispose();
                 return PartBuildResult.Failed("invalidProperties", properties: ["charset"]);
             }
         }
-        if (!TryApplyPartMetadata(
-                part,
-                value,
-                name,
-                disposition,
-                contentId,
-                location,
-                forbiddenHeaders))
+        if (!TryApplyPartMetadata(part, value, metadata))
         {
-            part.Dispose();
             return PartBuildResult.Failed("invalidProperties");
         }
         return new PartBuildResult(part, null);
@@ -425,7 +287,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
     private static bool TryApplyHeaders(
         MimeMessage message,
         JsonObject value,
-        out IReadOnlySet<string> representedHeaders,
+        out HashSet<string> representedHeaders,
         out string? error)
     {
         error = null;
@@ -480,7 +342,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
                 if (node is null) return true;
                 if (node is not JsonValue dateValue
                     || !dateValue.TryGetValue<string>(out var dateText)
-                    || !JmapDate.TryParseDate(dateText, out var date))
+                    || !GatewayDraftDateCodec.TryParseDate(dateText, out var date))
                     return false;
                 message.Date = date;
                 return true;
@@ -542,8 +404,8 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
         foreach (var item in array)
         {
             if (item is not JsonObject address
-                || !JmapMethodHelpers.TryGetRequiredString(address, "email", out var email)
-                || !JmapMethodHelpers.TryGetOptionalString(address, "name", out var name)
+                || !TryGetRequiredString(address, "email", out var email)
+                || !TryGetOptionalString(address, "name", out var name)
                 || address.Any(property => property.Key is not ("email" or "name")))
             {
                 return false;
@@ -573,13 +435,13 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
         {
             if (item is not JsonValue value
                 || !value.TryGetValue<string>(out var id)
-                || !JmapMessageId.TryParseParsedForm(id, out var parsed))
+                || !GatewayMessageId.TryParseParsedForm(id, out var parsed))
             {
                 return false;
             }
             ids.Add(parsed);
         }
-        return setter(ids);
+        return setter(ids.ToArray());
     }
 
     private static bool TryGetPartArray(
@@ -599,7 +461,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
                 return false;
             result.Add(part);
         }
-        parts = result;
+        parts = result.ToArray();
         return true;
     }
 
@@ -615,7 +477,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
     {
         mediaType = string.Empty;
         mediaSubtype = string.Empty;
-        if (!JmapMediaType.TryNormalize(value, out var normalized))
+        if (!GatewayMediaType.TryNormalize(value, out var normalized))
             return false;
         var separator = normalized.IndexOf('/', StringComparison.Ordinal);
         mediaType = normalized[..separator];
@@ -635,9 +497,9 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
     {
         text = string.Empty;
         if (bodyValues?[partId] is not JsonObject bodyValue
-            || !JmapMethodHelpers.TryGetRequiredString(bodyValue, "value", out text)
-            || !JmapMethodHelpers.TryGetOptionalBoolean(bodyValue, "isEncodingProblem", false, out var encodingProblem)
-            || !JmapMethodHelpers.TryGetOptionalBoolean(bodyValue, "isTruncated", false, out var truncated)
+            || !TryGetRequiredString(bodyValue, "value", out text)
+            || !TryGetOptionalBoolean(bodyValue, "isEncodingProblem", false, out var encodingProblem)
+            || !TryGetOptionalBoolean(bodyValue, "isTruncated", false, out var truncated)
             || bodyValue.Any(item => item.Key is not ("value" or "isEncodingProblem" or "isTruncated"))
             || encodingProblem
             || truncated)
@@ -647,15 +509,9 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
         return true;
     }
 
-    private static bool TryApplyPartMetadata(
-        MimeEntity entity,
-        JsonObject source,
-        string? name,
-        string? disposition,
-        string? contentId,
-        string? location,
-        IReadOnlySet<string>? forbiddenHeaders = null)
+    private static bool TryApplyPartMetadata(MimeEntity entity, JsonObject source, PartMetadata metadata)
     {
+        if (!TryAssignMetadata(entity, metadata) || !TryAssignLanguages(entity, source)) return false;
         var representedHeaders = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "Content-Type",
@@ -669,6 +525,26 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
         if (source.ContainsKey("location"))
             representedHeaders.Add("Content-Location");
 
+
+        foreach (var item in source.Where(item => item.Key.StartsWith("header:", StringComparison.Ordinal)))
+        {
+            if (!TryParseWritableHeaderProperty(item.Key, out var header)
+                || header.Name.Equals("Content-Transfer-Encoding", StringComparison.OrdinalIgnoreCase)
+                || representedHeaders.Contains(header.Name)
+                || metadata.ForbiddenHeaders?.Contains(header.Name) == true
+                || !representedHeaders.Add(header.Name)
+                || !TryAddHeaderValues(entity.Headers, header, item.Value))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+
+    private static bool TryAssignMetadata(MimeEntity entity, PartMetadata metadata)
+    {
+        var (name, disposition, contentId, location, _) = metadata;
         if (name is not null && entity is MimePart mimePart)
         {
             try
@@ -695,9 +571,9 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
         {
             if (disposition is not null)
             {
-                if (!IsMimeToken(disposition.ToProtocolLowerInvariant()))
+                if (!IsMimeToken(CultureInfo.InvariantCulture.TextInfo.ToLower(disposition)))
                     return false;
-                entity.ContentDisposition = new ContentDisposition(disposition.ToProtocolLowerInvariant());
+                entity.ContentDisposition = new ContentDisposition(CultureInfo.InvariantCulture.TextInfo.ToLower(disposition));
             }
             if (contentId is not null)
             {
@@ -717,6 +593,12 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
         {
             return false;
         }
+
+        return true;
+    }
+
+    private static bool TryAssignLanguages(MimeEntity entity, JsonObject source)
+    {
         if (source.TryGetPropertyValue("language", out var languageNode))
         {
             if (languageNode is not null && languageNode is not JsonArray)
@@ -728,7 +610,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
                 {
                     if (item is not JsonValue value
                         || !value.TryGetValue<string>(out var language)
-                        || !JmapLanguageTag.IsValid(language))
+                        || !GatewayLanguageTag.IsValid(language))
                     {
                         return false;
                     }
@@ -739,18 +621,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
             }
         }
 
-        foreach (var item in source.Where(item => item.Key.StartsWith("header:", StringComparison.Ordinal)))
-        {
-            if (!TryParseWritableHeaderProperty(item.Key, out var header)
-                || header.Name.Equals("Content-Transfer-Encoding", StringComparison.OrdinalIgnoreCase)
-                || representedHeaders.Contains(header.Name)
-                || forbiddenHeaders?.Contains(header.Name) == true
-                || !representedHeaders.Add(header.Name)
-                || !TryAddHeaderValues(entity.Headers, header, item.Value))
-            {
-                return false;
-            }
-        }
+
         return true;
     }
 
@@ -768,13 +639,13 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
         foreach (var item in bodyValues)
         {
             if (item.Value is not JsonObject bodyValue
-                || !JmapMethodHelpers.TryGetRequiredString(bodyValue, "value", out _)
-                || !JmapMethodHelpers.TryGetOptionalBoolean(
+                || !TryGetRequiredString(bodyValue, "value", out _)
+                || !TryGetOptionalBoolean(
                     bodyValue,
                     "isEncodingProblem",
                     false,
                     out var encodingProblem)
-                || !JmapMethodHelpers.TryGetOptionalBoolean(
+                || !TryGetOptionalBoolean(
                     bodyValue,
                     "isTruncated",
                     false,
@@ -1007,23 +878,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
             return true;
         }
         if (string.Equals(form, "GroupedAddresses", StringComparison.Ordinal))
-        {
-            if (node is not JsonArray groups) return false;
-            var addresses = new InternetAddressList();
-            foreach (var item in groups)
-            {
-                if (item is not JsonObject group
-                    || !JmapMethodHelpers.TryGetOptionalString(group, "name", out var name)
-                    || !group.TryGetPropertyValue("addresses", out var addressNode)
-                    || addressNode is null
-                    || !TryParseAddressList(addressNode, out var members)
-                    || group.Any(property => property.Key is not ("name" or "addresses"))) return false;
-                if (name is null) addresses.AddRange(members);
-                else addresses.Add(new GroupAddress(name, members));
-            }
-            value = addresses.ToString();
-            return true;
-        }
+            return TryFormatGroupedAddresses(node, out value);
         if (string.Equals(form, "MessageIds", StringComparison.Ordinal))
         {
             if (node is not JsonArray ids) return false;
@@ -1032,7 +887,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
             {
                 if (item is not JsonValue idValue
                     || !idValue.TryGetValue<string>(out var id)
-                    || !JmapMessageId.TryParseParsedForm(id, out var parsedId)) return false;
+                    || !GatewayMessageId.TryParseParsedForm(id, out var parsedId)) return false;
                 parsed.Add($"<{parsedId}>");
             }
             value = string.Join(' ', parsed);
@@ -1042,7 +897,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
         {
             if (node is not JsonValue dateValue
                 || !dateValue.TryGetValue<string>(out var text)
-                || !JmapDate.TryParseDate(text, out var date)) return false;
+                || !GatewayDraftDateCodec.TryParseDate(text, out var date)) return false;
             value = DateUtils.FormatDate(date);
             return true;
         }
@@ -1054,7 +909,7 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
             {
                 if (item is not JsonValue urlValue
                     || !urlValue.TryGetValue<string>(out var url)
-                    || !JmapHeaderUrl.IsValidParsedForm(url)) return false;
+                    || !GatewayHeaderUrl.IsValidParsedForm(url)) return false;
                 parsed.Add($"<{url}>");
             }
             value = string.Join(", ", parsed);
@@ -1062,6 +917,88 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
         }
         return false;
     }
+
+    private static bool TryFormatGroupedAddresses(JsonNode? node, out string value)
+    {
+        value = string.Empty;
+        if (node is not JsonArray groups) return false;
+        var addresses = new InternetAddressList();
+        foreach (var item in groups)
+        {
+            if (item is not JsonObject group
+                || !TryGetOptionalString(group, "name", out var name)
+                || !group.TryGetPropertyValue("addresses", out var addressNode)
+                || addressNode is null
+                || !TryParseAddressList(addressNode, out var members)
+                || group.Any(property => property.Key is not ("name" or "addresses"))) return false;
+            if (name is null) addresses.AddRange(members);
+            else addresses.Add(new GroupAddress(name, members));
+        }
+        value = addresses.ToString();
+        return true;
+    }
+
+    private static bool TryGetRequiredString(JsonObject value, string key, out string result)
+    {
+        result = string.Empty;
+        return value[key] is JsonValue node && node.TryGetValue(out result!) && result is not null;
+    }
+
+    private static bool TryGetOptionalString(JsonObject value, string key, out string? result)
+    {
+        result = null;
+        return !value.TryGetPropertyValue(key, out var node) || node is null
+            || node is JsonValue scalar && scalar.TryGetValue(out result);
+    }
+
+    private static bool TryGetOptionalBoolean(JsonObject value, string key, bool fallback, out bool result)
+    {
+        result = fallback;
+        return !value.TryGetPropertyValue(key, out var node)
+            || node is JsonValue scalar && scalar.TryGetValue(out result);
+    }
+
+    private static JsonObject SetError(string type, string? description = null, IEnumerable<string>? properties = null)
+    {
+        var result = new JsonObject { ["type"] = type };
+        if (description is not null) result["description"] = description;
+        if (properties is not null) result["properties"] = new JsonArray(properties.Select(item => (JsonNode?)JsonValue.Create(item)).ToArray());
+        return result;
+    }
+
+    private sealed class DraftPartScope : IDisposable
+    {
+        private readonly HashSet<MimeEntity> _roots = [];
+        private readonly Dictionary<MimeEntity, string> _references = [];
+
+        public T Create<T>(Func<T> create) where T : MimeEntity
+        {
+            var entity = create();
+            _roots.Add(entity);
+            return entity;
+        }
+
+        public void Attach(Multipart parent, MimeEntity child)
+        {
+            parent.Add(child);
+            _roots.Remove(child);
+        }
+
+        public void TransferToMessage(MimeEntity entity) => _roots.Remove(entity);
+        public void AddReference(MimeEntity entity, string reference) => _references.Add(entity, reference);
+        public string? Reference(MimeEntity entity) => _references.GetValueOrDefault(entity);
+
+        public void Dispose()
+        {
+            foreach (var root in _roots) root.Dispose();
+            _roots.Clear();
+        }
+    }
+
+    private sealed record PartMetadata(string? Name, string? Disposition, string? ContentId,
+        string? Location, IReadOnlySet<string>? ForbiddenHeaders);
+    private sealed record LeafDefinition(string MediaType, string MediaSubtype, string? PartId,
+        string? BlobId, string? Charset);
 
     private readonly record struct WritableHeader(string Name, string Form, bool All);
 
@@ -1071,6 +1008,6 @@ internal sealed class JmapEmailBuilder(JmapBlobService blobs)
             string type,
             string? description = null,
             IEnumerable<string>? properties = null) =>
-            new(null, JmapMethodHelpers.SetError(type, description, properties));
+            new(null, SetError(type, description, properties));
     }
 }

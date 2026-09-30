@@ -1103,7 +1103,7 @@ public sealed class JmapRequestProcessor
                     > _environment.Jmap.MaxObjectsInSet
                 || mutation.Creates.Any(item => item is null || item.CreationId is null
                     || !JmapId.IsValidId(item.CreationId) || item.Draft is null
-                    || ApplicationValueCodec.Decode(item.Draft) is not JsonObject)
+                    || !MailMimeDraftValidator.IsValid(item.Draft, context))
                 || mutation.Creates.Select(item => item.CreationId).Distinct(StringComparer.Ordinal).Count()
                     != mutation.Creates.Count
                 || mutation.Updates.Any(item => item is null || !ValidMessageReference(item.RequestedId, context)

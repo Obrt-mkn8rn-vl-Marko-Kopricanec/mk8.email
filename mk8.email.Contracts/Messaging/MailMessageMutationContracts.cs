@@ -1,4 +1,4 @@
-// Email drafts and patches remain encoded value trees until MIME construction is domainized.
+// Mutation outcome records are grouped with their typed command.
 #pragma warning disable MA0048
 using System.Text.Json.Serialization;
 
@@ -13,7 +13,7 @@ public sealed record MailMessageMutationCommand(
 
 public sealed record MailMessageCreate(
     [property: JsonRequired] string CreationId,
-    [property: JsonRequired] ApplicationValue Draft);
+    [property: JsonRequired] MailMessageDraft Draft);
 
 public sealed record MailMessageUpdate(
     [property: JsonRequired] string RequestedId,

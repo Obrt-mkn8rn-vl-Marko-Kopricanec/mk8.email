@@ -13,7 +13,7 @@ internal sealed class EmailSetMethod(
     EmailDbContext database,
     JmapAccountService accounts,
     JmapStateService states,
-    JmapEmailBuilder builder,
+    MailMimeDraftBuilder builder,
     JmapEmailStore store,
     MailboxMessageContentService content) : IMailMessageMutationService
 {
@@ -61,28 +61,25 @@ internal sealed class EmailSetMethod(
         JmapAccount account, MailMessageCreate item, JmapInvocationContext context,
         CancellationToken cancellationToken)
     {
-        if (ApplicationValueCodec.Decode(item.Draft) is not JsonObject value)
-            throw new InvalidOperationException("The message draft is not an object.");
+        var value = item.Draft;
         if (!JmapId.IsValidId(item.CreationId))
             return new(item.CreationId, null, Failure("invalidProperties"));
-        var mailbox = await ResolveMailboxAsync(account.InboxId, value["mailboxIds"], context,
+        var mailbox = await ResolveDraftMailboxAsync(account.InboxId, value, context,
             cancellationToken).ConfigureAwait(false);
         if (mailbox.Error is not null)
             return new(item.CreationId, null, Failure(mailbox.Error));
-        string? keywordError = null;
-        if (value.ContainsKey("keywords") && value["keywords"] is null
-            || !JmapEmailStore.TryParseKeywords(value["keywords"], out var keywords, out keywordError))
-            return new(item.CreationId, null, Failure(keywordError ?? "invalidProperties"));
-        if (value.ContainsKey("receivedAt") && value["receivedAt"] is null
-            || !JmapEmailStore.TryParseReceivedAt(value["receivedAt"], out var receivedAt))
+        if (value.KeywordIssue != MailMessageKeywordIssue.None)
+            return new(item.CreationId, null, Failure(value.KeywordIssue == MailMessageKeywordIssue.TooMany
+                ? "tooManyKeywords" : "invalidProperties"));
+        if (value.InvalidReceivedAt)
             return new(item.CreationId, null, Failure("invalidProperties", properties: ["receivedAt"]));
         var built = await builder.BuildAsync(account.InboxId, account.Address, context, value,
             cancellationToken).ConfigureAwait(false);
-        if (built.Error is not null)
-            return new(item.CreationId, null, Failure(built.Error));
-        using var message = built.Value!.Message;
-        var stored = await store.StoreAsync(account, mailbox.Folder!, built.Value.RawBytes,
-            keywords, receivedAt, cancellationToken).ConfigureAwait(false);
+        if (built.Failure is not null)
+            return new(item.CreationId, null, built.Failure);
+        var stored = await store.StoreAsync(account, mailbox.Folder!, built.Raw!,
+            value.Keywords.ToHashSet(StringComparer.Ordinal), value.ReceivedAt ?? DateTime.UtcNow,
+            cancellationToken).ConfigureAwait(false);
         if (stored.Error is not null)
             return new(item.CreationId, null, Failure(stored.Error));
         var email = stored.Email!;
@@ -517,6 +514,19 @@ internal sealed class EmailSetMethod(
         return folder is null
             ? MailboxResult.Failed("invalidProperties")
             : new MailboxResult(folder, null);
+    }
+
+    private async Task<MailboxResult> ResolveDraftMailboxAsync(Guid accountId, MailMessageDraft draft,
+        JmapInvocationContext context, CancellationToken cancellationToken)
+    {
+        if (draft.FolderIssue != MailMessageMailboxIssue.None)
+            return MailboxResult.Failed(draft.FolderIssue == MailMessageMailboxIssue.TooMany
+                ? "tooManyMailboxes" : "invalidProperties");
+        if (!JmapId.TryParseMailbox(context.ResolveId(draft.FolderReference!), out var folderId))
+            return MailboxResult.Failed("invalidProperties");
+        var folder = await database.Folders.FirstOrDefaultAsync(candidate => candidate.Id == folderId
+            && candidate.InboxId == accountId, cancellationToken).ConfigureAwait(false);
+        return folder is null ? MailboxResult.Failed("invalidProperties") : new(folder, null);
     }
 
     private sealed record MailboxResult(FolderDB? Folder, JsonObject? Error)

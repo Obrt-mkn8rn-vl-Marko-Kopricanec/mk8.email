@@ -50,7 +50,7 @@ public static class JmapServiceExtensions
         services.TryAddScoped<VacationResponseContentService>();
         services.AddScoped<JmapBlobService>();
         services.AddScoped<JmapBlobLargeObjectMigrationService>();
-        services.AddScoped<JmapEmailBuilder>();
+        services.AddScoped<MailMimeDraftBuilder>();
         services.AddScoped<JmapEmailStore>();
         services.AddScoped<IMailImportService, MailImportService>();
         services.AddScoped<IMailCopyService, MailCopyService>();

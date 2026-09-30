@@ -31,11 +31,35 @@ internal static class GatewayEmailSetCodec
         var parsedAccount = accountId.Length == 33 && accountId[0] == 'A'
             && Guid.TryParseExact(accountId.AsSpan(1), "N", out var id) ? id : Guid.Empty;
         call = new(new(parsedAccount, ifInState,
-            creates.Select(item => new MailMessageCreate(item.Key, ApplicationValueCodec.Encode(item.Value))).ToArray(),
+            creates.Select(item => new MailMessageCreate(item.Key, ParseDraft(item.Value))).ToArray(),
             updates.Select(item => new MailMessageUpdate(item.Key, ApplicationValueCodec.Encode(item.Value))).ToArray(),
             destroys.Distinct(StringComparer.Ordinal).Select(id => new MailMessageDestroy(id)).ToArray()),
             accountId);
         return true;
+    }
+
+    private static MailMessageDraft ParseDraft(JsonObject value)
+    {
+        string? folderReference = null;
+        var folderIssue = MailMessageMailboxIssue.Invalid;
+        if (value["mailboxIds"] is JsonObject folders)
+        {
+            if (folders.Count > 1) folderIssue = MailMessageMailboxIssue.TooMany;
+            else if (folders.Count == 1)
+            {
+                var item = folders.First();
+                if (item.Value is JsonValue flag && flag.TryGetValue<bool>(out var enabled) && enabled)
+                {
+                    folderReference = item.Key;
+                    folderIssue = MailMessageMailboxIssue.None;
+                }
+            }
+        }
+        var (keywords, keywordIssue) = GatewayEmailImportCodec.ParseKeywords(value);
+        var receivedAt = GatewayEmailImportCodec.ParseReceivedAt(value, out var invalidReceivedAt);
+        var parsed = GatewayMimeDraftCodec.Parse(value);
+        return new(folderReference, folderIssue, keywords, keywordIssue, receivedAt, invalidReceivedAt,
+            parsed.Mime, parsed.Failure, parsed.BlobReferences, parsed.CheckBlobsBeforeFailure);
     }
 
     public static (MailOperationKind Operation, JsonObject Data) Render(

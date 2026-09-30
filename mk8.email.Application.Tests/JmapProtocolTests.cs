@@ -4416,6 +4416,7 @@ public sealed class JmapProtocolTests
                 "s1")),
         });
 
+        Assert.IsNotNull(Arguments(submission)["notCreated"], submission.ToJsonString());
         var error = Arguments(submission)["notCreated"]!["legacy"]!;
         Assert.AreEqual("tooLarge", error["type"]!.GetValue<string>());
         Assert.AreEqual(maximumMessageSize, error["maxSize"]!.GetValue<int>());

@@ -270,6 +270,8 @@ internal static class GatewayJmapBatchExecutor
                 call!.Command, result => GatewayEmailSetCodec.Render(call, result));
             return true;
         }
+        if (operation == MailOperationKind.MutateSubmissions && features.Contains(MailFeature.Submission))
+            return TryPrepareSubmissionMutation(arguments, maximumObjectsInSet, out selection, out failure);
         if (operation == MailOperationKind.MutateFolders && features.Contains(MailFeature.Messages))
         {
             selection = null;
@@ -317,6 +319,19 @@ internal static class GatewayJmapBatchExecutor
         }
         return TryPrepareTypedMessageOperation(operation, arguments, features,
             maximumObjectsInGet, maximumObjectsInSet, out selection, out failure);
+    }
+
+    private static bool TryPrepareSubmissionMutation(JsonObject arguments, int maximumObjectsInSet,
+        out TypedOperationSelection? selection, out string? failure)
+    {
+        selection = null;
+        if (!GatewaySubmissionSetCodec.TryParse(arguments, maximumObjectsInSet, out var call, out failure))
+            return false;
+        selection = Select<MailSubmissionMutationCommand, MailSubmissionMutationResult>(
+            MailOperationKind.MutateSubmissions, call!.Command,
+            result => GatewaySubmissionSetCodec.Render(call, result),
+            result => GatewaySubmissionSetCodec.RenderAdditional(call, result));
+        return true;
     }
 
     private static bool TryPrepareTypedMessageOperation(

@@ -106,6 +106,85 @@ public sealed class JmapDurableReplayTests
     }
 
     [TestMethod]
+    public async Task TypedSubmissionSetAndImplicitEmailSetReplayOneCommittedAzureQueueWrite()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var draftsId = Guid.CreateVersion7();
+        await using (var setup = rig.Context())
+        {
+            setup.Folders.Add(new FolderDB
+            {
+                Id = draftsId,
+                InboxId = rig.InboxId,
+                Name = "Drafts",
+                UidValidity = 1,
+                NextUid = 1,
+            });
+            await setup.SaveChangesAsync();
+        }
+        var draft = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Messages],
+            [new JmapApplicationCall(MailOperationKind.MutateMessages, new JsonObject
+            {
+                ["accountId"] = JmapId.Account(rig.InboxId),
+                ["create"] = new JsonObject
+                {
+                    ["draft"] = new JsonObject
+                    {
+                        ["mailboxIds"] = new JsonObject { [JmapId.Mailbox(draftsId)] = true },
+                        ["from"] = new JsonArray(new JsonObject { ["email"] = rig.User.Username }),
+                        ["to"] = new JsonArray(new JsonObject { ["email"] = rig.User.Username }),
+                        ["subject"] = "Durable submission",
+                        ["bodyValues"] = new JsonObject { ["1"] = new JsonObject { ["value"] = "Blob-backed mail" } },
+                        ["textBody"] = new JsonArray(new JsonObject { ["partId"] = "1", ["type"] = "text/plain" }),
+                    },
+                },
+            }, "draft")]);
+        var createdDraft = await rig.InvokeAsync(draft, Guid.CreateVersion7());
+        var emailId = createdDraft.Invocations[0].Arguments["created"]!["draft"]!["id"]!.GetValue<string>();
+        var submission = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Submission],
+            [new JmapApplicationCall(MailOperationKind.MutateSubmissions, new JsonObject
+            {
+                ["accountId"] = JmapId.Account(rig.InboxId),
+                ["create"] = new JsonObject
+                {
+                    ["out"] = new JsonObject
+                    {
+                        ["identityId"] = JmapId.Identity(rig.InboxId),
+                        ["emailId"] = emailId,
+                    },
+                },
+                ["onSuccessUpdateEmail"] = new JsonObject
+                {
+                    ["#out"] = new JsonObject { ["keywords/$seen"] = true },
+                },
+            }, "submission")], new Dictionary<string, string>());
+        var operation = Guid.CreateVersion7();
+        var first = await rig.InvokeAsync(submission, operation);
+        Assert.HasCount(2, first.Invocations);
+        Assert.AreEqual(MailOperationKind.MutateSubmissions, first.Invocations[0].Operation);
+        Assert.AreEqual(MailOperationKind.MutateMessages, first.Invocations[1].Operation);
+        var submissionId = first.Invocations[0].Arguments["created"]!["out"]!["id"]!.GetValue<string>();
+        Assert.AreEqual(submissionId, first.CreatedIds!["out"]);
+        Assert.IsNull(first.Invocations[1].Arguments["updated"]![emailId]);
+        await using (var database = rig.Context())
+        {
+            Assert.AreEqual(1, await database.JmapEmailSubmissions.CountAsync());
+            Assert.AreEqual(1, await database.MailQueueMessages.CountAsync());
+            var queue = await database.MailQueueMessages.SingleAsync();
+            Assert.AreEqual(LargeObjectProviders.AzureBlob, queue.RawMessageObjectProvider);
+            Assert.IsNull(queue.RawMessage);
+            Assert.IsTrue((await database.Emails.SingleAsync()).IsRead);
+        }
+        var replay = await rig.InvokeAsync(submission, operation);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
+        Assert.AreEqual(submissionId, replay.CreatedIds!["out"]);
+        await using var verification = rig.Context();
+        Assert.AreEqual(1, await verification.JmapEmailSubmissions.CountAsync());
+        Assert.AreEqual(1, await verification.MailQueueMessages.CountAsync());
+        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync());
+    }
+
+    [TestMethod]
     public async Task TypedBlobCopyUsesAzureStorageAndReplaysCommittedResultWithoutDuplicatingBlob()
     {
         await using var rig = await Rig.CreateAsync();
@@ -1484,12 +1563,14 @@ public sealed class JmapDurableReplayTests
             scope.ServiceProvider.GetRequiredService<LargeObjectTransactionEffects>(),
             NullLogger<JmapRequestProcessor>.Instance,
             scope.ServiceProvider.GetRequiredService<ApplicationOperationReceiptStore>());
-        var result = await InvokeGatewayAsync(processor, new JmapApplicationBatch([MailFeature.Basic, MailFeature.Submission],
-            [new(MailOperationKind.MutateSubmissions, new JsonObject(), "mutation")], new Dictionary<string, string>()),
+        var result = await processor.ExecuteAsync(new MailOperationCommand(
+            [MailFeature.Basic, MailFeature.Submission], MailOperationKind.MutateSubmissions,
+            new JsonObject(), new Dictionary<string, string>(), new Dictionary<string, string>()),
             rig.User, Guid.CreateVersion7());
-        Assert.AreEqual(MailOperationKind.Failure, result.Invocations[0].Operation);
-        Assert.AreEqual("serverFail", result.Invocations[0].Arguments["type"]!.GetValue<string>());
-        Assert.IsFalse(result.CreatedIds!.ContainsKey("transient"));
+        Assert.AreEqual(MailOperationKind.Failure, result.Response.Operation);
+        Assert.AreEqual("serverFail", ApplicationValueCodec.Decode(result.Response.Data)!["type"]!
+            .GetValue<string>());
+        Assert.IsFalse(result.KnownEntities.ContainsKey("transient"));
         Assert.AreEqual(0, callbacks);
         await using var restored = rig.Context();
         Assert.AreEqual(rig.User.Username, (await restored.Users.SingleAsync()).Username);

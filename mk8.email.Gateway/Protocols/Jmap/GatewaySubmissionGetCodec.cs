@@ -89,7 +89,7 @@ internal static class GatewaySubmissionGetCodec
         });
     }
 
-    private static JsonObject Build(MailSubmissionSnapshot submission, IReadOnlySet<string>? properties)
+    internal static JsonObject Build(MailSubmissionSnapshot submission, IReadOnlySet<string>? properties)
     {
         var result = new JsonObject { ["id"] = FormatId(submission.Id) };
         if (Wants("identityId")) result["identityId"] = submission.IdentityId;

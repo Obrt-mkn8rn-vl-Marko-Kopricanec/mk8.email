@@ -37,6 +37,7 @@ public sealed class JmapRequestProcessor
     private readonly IMailMessageQueryService? _messageQueryService;
     private readonly IMailMessageProjectionService? _messageProjectionService;
     private readonly IMailMessageMutationService? _messageMutationService;
+    private readonly IMailSubmissionMutationService? _submissionMutationService;
     private readonly IMailSearchSnippetService? _searchSnippetService;
     private readonly IMailContactCopyService? _contactCopyService;
     private readonly IMailContactQueryService? _contactQueryService;
@@ -72,7 +73,7 @@ public sealed class JmapRequestProcessor
         ApplicationOperationReceiptStore? receipts = null)
         : this(methods, sessions, database, environment, blobEffects, logger, receipts,
             null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
-            null, null, null, null, null, null)
+            null, null, null, null, null, null, null)
     {
     }
 
@@ -110,7 +111,8 @@ public sealed class JmapRequestProcessor
         IMailContactMutationService? contactMutationService,
         IMailFolderMutationService? folderMutationService,
         IMailMessageProjectionService? messageProjectionService,
-        IMailMessageMutationService? messageMutationService)
+        IMailMessageMutationService? messageMutationService,
+        IMailSubmissionMutationService? submissionMutationService)
     {
         _methods = methods.ToDictionary(method => ValidRegisteredOperation(method.Operation, method.Feature));
         _sessions = sessions;
@@ -121,6 +123,7 @@ public sealed class JmapRequestProcessor
         _folderMutationService = folderMutationService;
         _messageProjectionService = messageProjectionService;
         _messageMutationService = messageMutationService;
+        _submissionMutationService = submissionMutationService;
         _changesReader = changesReader ?? new MailChangesReader(accountService, stateService,
             new JmapIdentityService(database, accountService), database, environment);
         _addressBookReader = addressBookReader ?? new MailAddressBookReader(database,
@@ -200,6 +203,9 @@ public sealed class JmapRequestProcessor
                 cancellationToken).ConfigureAwait(false);
         else if (command.Operation == MailOperationKind.MutateMessages && features.Contains(MailFeature.Messages))
             response = await ExecuteMessageMutationAsync(command, context, user, receiptKey,
+                cancellationToken).ConfigureAwait(false);
+        else if (command.Operation == MailOperationKind.MutateSubmissions && features.Contains(MailFeature.Submission))
+            response = await ExecuteSubmissionMutationAsync(command, context, user, receiptKey,
                 cancellationToken).ConfigureAwait(false);
         else if (MailChangeOperations.TryGetFeature(command.Operation, out var changeFeature)
             && features.Contains(changeFeature))
@@ -400,6 +406,23 @@ public sealed class JmapRequestProcessor
             var result = await service.MutateAsync(mutation, user, context, token).ConfigureAwait(false);
             var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
                 ?? throw new InvalidOperationException("The message mutator returned an incomplete result.");
+            return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
+        }, receiptKey, cancellationToken);
+    }
+
+    private Task<MailOperationResponse> ExecuteSubmissionMutationAsync(
+        MailOperationCommand command, JmapInvocationContext context,
+        AuthenticatedMailUser user, ApplicationReceiptKey? receiptKey,
+        CancellationToken cancellationToken)
+    {
+        var mutation = ParseSubmissionMutationCommand(command.Arguments, context);
+        var service = _submissionMutationService
+            ?? throw new InvalidOperationException("The submission mutation service is not configured.");
+        return InvokeAtomicallyAsync(command.Operation, context, async token =>
+        {
+            var result = await service.MutateAsync(mutation, user, context, token).ConfigureAwait(false);
+            var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
+                ?? throw new InvalidOperationException("The submission mutator returned an incomplete result.");
             return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
         }, receiptKey, cancellationToken);
     }
@@ -1109,6 +1132,53 @@ public sealed class JmapRequestProcessor
     private static bool ValidMessageReference(string? value, JmapInvocationContext context) =>
         value is not null && (JmapId.IsValidId(value)
             || context.TryGetReferenceKey(value, out var key) && JmapId.IsValidId(key));
+
+    private MailSubmissionMutationCommand ParseSubmissionMutationCommand(
+        JsonObject arguments, JmapInvocationContext context)
+    {
+        if (arguments.Count != 7 || !arguments.ContainsKey("accountId")
+            || !arguments.ContainsKey("ifInState") || !arguments.ContainsKey("creates")
+            || !arguments.ContainsKey("updates") || !arguments.ContainsKey("destroys")
+            || !arguments.ContainsKey("onSuccessUpdates")
+            || !arguments.ContainsKey("onSuccessDestroys"))
+            throw NotRequest("The submission mutation command has an invalid shape.");
+        try
+        {
+            var mutation = JsonSerializer.Deserialize<MailSubmissionMutationCommand>(arguments,
+                StrictReceiptJsonOptions)
+                ?? throw NotRequest("The submission mutation command is missing.");
+            if (mutation.Creates is null || mutation.Updates is null || mutation.Destroys is null
+                || mutation.OnSuccessUpdates is null || mutation.OnSuccessDestroys is null
+                || mutation.Creates.Count + mutation.Updates.Count + mutation.Destroys.Count
+                    > _environment.Jmap.MaxObjectsInSet
+                || mutation.Creates.Any(item => item is null || !JmapId.IsValidId(item.CreationId)
+                    || item.Draft is null || ApplicationValueCodec.Decode(item.Draft) is not JsonObject)
+                || mutation.Creates.Select(item => item.CreationId).Distinct(StringComparer.Ordinal).Count()
+                    != mutation.Creates.Count
+                || mutation.Updates.Any(item => item is null
+                    || !ValidMessageReference(item.RequestedId, context)
+                    || item.Patch is null || ApplicationValueCodec.Decode(item.Patch) is not JsonObject)
+                || mutation.Updates.Select(item => item.RequestedId).Distinct(StringComparer.Ordinal).Count()
+                    != mutation.Updates.Count
+                || mutation.Destroys.Any(item => item is null
+                    || !ValidMessageReference(item.RequestedId, context))
+                || mutation.Destroys.Select(item => item.RequestedId).Distinct(StringComparer.Ordinal).Count()
+                    != mutation.Destroys.Count
+                || mutation.OnSuccessUpdates.Any(item => item is null
+                    || !ValidMessageReference(item.RequestedSubmissionId, context)
+                    || item.Patch is null || ApplicationValueCodec.Decode(item.Patch) is not JsonObject)
+                || mutation.OnSuccessUpdates.Select(item => item.RequestedSubmissionId)
+                    .Distinct(StringComparer.Ordinal).Count() != mutation.OnSuccessUpdates.Count
+                || mutation.OnSuccessDestroys.Any(item => item is null
+                    || !ValidMessageReference(item.RequestedSubmissionId, context)))
+                throw NotRequest("The submission mutation values are invalid.");
+            return mutation;
+        }
+        catch (Exception exception) when (exception is JsonException or InvalidOperationException)
+        {
+            throw NotRequest("The submission mutation command contains invalid values.");
+        }
+    }
 
     private MailFolderMutationCommand ParseFolderMutationCommand(
         JsonObject arguments, JmapInvocationContext context)

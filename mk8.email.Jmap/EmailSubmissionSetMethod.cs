@@ -22,7 +22,7 @@ internal sealed class EmailSubmissionSetMethod(
     EmailSetMethod emailSet,
     MailQueueContentService queueContent,
     MailboxMessageContentService mailboxContent,
-    EnvironmentConfig environment) : IJmapMethod
+    EnvironmentConfig environment) : IMailSubmissionMutationService
 {
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
     private static readonly ParserOptions StrictAddressParserOptions = new()
@@ -71,223 +71,137 @@ internal sealed class EmailSubmissionSetMethod(
             ["Resent-Message-ID"] = "header:Resent-Message-ID:asMessageIds:all",
         };
 
-    public MailOperationKind Operation => MailOperationKind.MutateSubmissions;
-    public MailFeature Feature => MailFeature.Submission;
-
-    public async Task<JmapMethodResponse> InvokeAsync(
+    public async Task<MailSubmissionMutationResult> MutateAsync(
+        MailSubmissionMutationCommand command,
+        AuthenticatedMailUser user,
         JmapInvocationContext context,
-        JsonObject arguments,
         CancellationToken cancellationToken)
     {
-        if (!JmapMethodHelpers.HasOnlyProperties(
-                arguments,
-                "accountId",
-                "ifInState",
-                "create",
-                "update",
-                "destroy",
-                "onSuccessUpdateEmail",
-                "onSuccessDestroyEmail")
-            || !JmapMethodHelpers.TryGetRequiredString(arguments, "accountId", out var accountId)
-            || !JmapMethodHelpers.TryGetOptionalString(arguments, "ifInState", out var ifInState)
-            || !JmapEmailMutationHelpers.TryGetObjectMap(arguments, "create", false, out var create)
-            || !JmapEmailMutationHelpers.TryGetObjectMap(arguments, "update", false, out var update)
-            || !TryStringArray(arguments, "destroy", out var destroy)
-            || !JmapEmailMutationHelpers.TryGetObjectMap(
-                arguments,
-                "onSuccessUpdateEmail",
-                false,
-                out var onSuccessUpdate)
-            || !TryStringArray(arguments, "onSuccessDestroyEmail", out var onSuccessDestroy)
-            || !JmapMethodHelpers.AreValidCreationIds(create?.Keys)
-            || !JmapMethodHelpers.AreValidIdReferences(update?.Keys, context)
-            || !JmapMethodHelpers.AreValidIdReferences(destroy, context)
-            || !JmapMethodHelpers.AreValidIdReferences(onSuccessUpdate?.Keys, context)
-            || !JmapMethodHelpers.AreValidIdReferences(onSuccessDestroy, context))
-        {
-            return JmapMethodResponse.Error("invalidArguments");
-        }
-        var operationCount = (create?.Count ?? 0) + (update?.Count ?? 0) + (destroy?.Count ?? 0);
-        if (operationCount > environment.Jmap.MaxObjectsInSet)
-            return JmapMethodResponse.Error("requestTooLarge");
-        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
-        if (account is null) return JmapMethodResponse.Error("accountNotFound");
+        var account = await accounts.GetAccountByInboxIdAsync(user, command.AccountId, cancellationToken)
+            .ConfigureAwait(false);
+        if (account is null)
+            return new(MailSubmissionMutationStatus.AccountNotFound, null, null, [], [], [], null, null);
         await identities.EnsureDefaultAsync(account, cancellationToken).ConfigureAwait(false);
         var oldState = await states.GetStateAsync(
             account.InboxId,
             JmapConstants.EmailSubmissionDataType,
             cancellationToken).ConfigureAwait(false);
-        if (ifInState is not null && !string.Equals(ifInState, oldState, StringComparison.Ordinal))
-            return JmapMethodResponse.Error("stateMismatch");
+        if (command.IfInState is not null
+            && !string.Equals(command.IfInState, oldState, StringComparison.Ordinal))
+            return new(MailSubmissionMutationStatus.StateMismatch, null, null, [], [], [], null, null);
 
-        var created = new JsonObject();
-        var updated = new JsonObject();
-        var destroyed = new JsonArray();
-        var notCreated = new JsonObject();
-        var notUpdated = new JsonObject();
-        var notDestroyed = new JsonObject();
+        var created = new List<MailSubmissionCreateOutcome>(command.Creates.Count);
+        var updated = new List<MailSubmissionUpdateOutcome>(command.Updates.Count);
+        var destroyed = new List<MailSubmissionDestroyOutcome>(command.Destroys.Count);
         var successful = new Dictionary<string, string>(StringComparer.Ordinal);
-
-        if (create is not null)
+        foreach (var item in command.Creates)
         {
-            foreach (var item in create)
+            var draft = ApplicationValueCodec.Decode(item.Draft) as JsonObject
+                ?? throw new InvalidOperationException("The submission draft is not an object.");
+            var result = await CreateAsync(account, context, item.CreationId, draft,
+                cancellationToken).ConfigureAwait(false);
+            if (result.Error is not null)
             {
-                var result = await CreateAsync(
-                    account,
-                    context,
-                    item.Key,
-                    item.Value,
-                    cancellationToken).ConfigureAwait(false);
-                if (result.Error is not null)
-                {
-                    notCreated[item.Key] = result.Error;
-                    continue;
-                }
-                var submissionId = JmapId.Submission(result.Submission!.Id);
-                context.CreatedIds[item.Key] = submissionId;
-                created[item.Key] = await BuildCreatedResponseAsync(
-                    item.Value,
-                    result.Submission,
-                    cancellationToken).ConfigureAwait(false);
-                successful[submissionId] = result.Submission.EmailId;
+                created.Add(new(item.CreationId, null, Failure(result.Error)));
+                continue;
             }
+            var submission = result.Submission!;
+            var submissionId = JmapId.Submission(submission.Id);
+            context.CreatedIds[item.CreationId] = submissionId;
+            created.Add(new(item.CreationId, await SnapshotAsync(submission, cancellationToken)
+                .ConfigureAwait(false), null));
+            successful[submissionId] = submission.EmailId;
         }
-
-        if (update is not null)
+        foreach (var item in command.Updates)
         {
-            foreach (var item in update)
+            var resolvedId = context.ResolveId(item.RequestedId);
+            if (!JmapId.TryParseSubmission(resolvedId, out var id))
             {
-                var resolvedId = context.ResolveId(item.Key);
-                if (!JmapId.TryParseSubmission(resolvedId, out var id))
-                {
-                    notUpdated[item.Key] = JmapMethodHelpers.SetError("notFound");
-                    continue;
-                }
-                var submission = await database.JmapEmailSubmissions.SingleOrDefaultAsync(
-                    candidate => candidate.Id == id && candidate.AccountId == account.InboxId,
-                    cancellationToken).ConfigureAwait(false);
-                if (submission is null)
-                {
-                    notUpdated[item.Key] = JmapMethodHelpers.SetError("notFound");
-                    continue;
-                }
-                var current = await JmapEmailSubmissionJson.BuildAsync(
-                    database,
-                    submission,
-                    null,
-                    cancellationToken).ConfigureAwait(false);
-                if (!JmapMethodHelpers.TryApplyPatchAllowingUnchangedProperties(
-                        current,
-                        item.Value,
-                        UpdateProperties,
-                        out var patched,
-                        out var invalidProperties))
-                {
-                    notUpdated[item.Key] = JmapMethodHelpers.SetError("invalidPatch");
-                    continue;
-                }
-                if (invalidProperties.Count > 0)
-                {
-                    notUpdated[item.Key] = JmapMethodHelpers.SetError(
-                        "invalidProperties",
-                        properties: invalidProperties);
-                    continue;
-                }
-                if (!TryReadUndoStatus(patched, out var requestedStatus))
-                {
-                    notUpdated[item.Key] = JmapMethodHelpers.SetError(
-                        "invalidProperties",
-                        properties: ["undoStatus"]);
-                    continue;
-                }
-                if (string.Equals(requestedStatus, "canceled", StringComparison.Ordinal) && !string.Equals(submission.UndoStatus, "pending", StringComparison.Ordinal))
-                {
-                    notUpdated[item.Key] = JmapMethodHelpers.SetError("cannotUnsend");
-                    continue;
-                }
-                if (!string.Equals(requestedStatus, submission.UndoStatus, StringComparison.Ordinal))
-                {
-                    notUpdated[item.Key] = JmapMethodHelpers.SetError("cannotUnsend");
-                    continue;
-                }
-                updated[resolvedId!] = null;
-                successful[resolvedId!] = submission.EmailId;
+                updated.Add(new(item.RequestedId, null, Failure("notFound")));
+                continue;
             }
-        }
-
-        if (destroy is not null)
-        {
-            foreach (var requestedId in destroy.Distinct(StringComparer.Ordinal))
+            var submission = await database.JmapEmailSubmissions.SingleOrDefaultAsync(
+                candidate => candidate.Id == id && candidate.AccountId == account.InboxId,
+                cancellationToken).ConfigureAwait(false);
+            if (submission is null)
             {
-                var resolvedId = context.ResolveId(requestedId);
-                if (!JmapId.TryParseSubmission(resolvedId, out var id))
-                {
-                    notDestroyed[requestedId] = JmapMethodHelpers.SetError("notFound");
-                    continue;
-                }
-                var submission = await database.JmapEmailSubmissions.SingleOrDefaultAsync(
-                    candidate => candidate.Id == id && candidate.AccountId == account.InboxId,
-                    cancellationToken).ConfigureAwait(false);
-                if (submission is null)
-                {
-                    notDestroyed[requestedId] = JmapMethodHelpers.SetError("notFound");
-                    continue;
-                }
-                successful[resolvedId!] = submission.EmailId;
-                database.JmapEmailSubmissions.Remove(submission);
-                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-                destroyed.Add(resolvedId);
+                updated.Add(new(item.RequestedId, null, Failure("notFound")));
+                continue;
             }
+            var current = await JmapEmailSubmissionJson.BuildAsync(database, submission, null,
+                cancellationToken).ConfigureAwait(false);
+            var patch = ApplicationValueCodec.Decode(item.Patch) as JsonObject
+                ?? throw new InvalidOperationException("The submission patch is not an object.");
+            if (!JmapMethodHelpers.TryApplyPatchAllowingUnchangedProperties(
+                    current, patch, UpdateProperties, out var patched, out var invalidProperties))
+            {
+                updated.Add(new(item.RequestedId, null, Failure("invalidPatch")));
+                continue;
+            }
+            if (invalidProperties.Count > 0)
+            {
+                updated.Add(new(item.RequestedId, null,
+                    Failure("invalidProperties", invalidProperties)));
+                continue;
+            }
+            if (!TryReadUndoStatus(patched, out var requestedStatus))
+            {
+                updated.Add(new(item.RequestedId, null,
+                    Failure("invalidProperties", ["undoStatus"])));
+                continue;
+            }
+            if (string.Equals(requestedStatus, "canceled", StringComparison.Ordinal)
+                && !string.Equals(submission.UndoStatus, "pending", StringComparison.Ordinal)
+                || !string.Equals(requestedStatus, submission.UndoStatus, StringComparison.Ordinal))
+            {
+                updated.Add(new(item.RequestedId, null, Failure("cannotUnsend")));
+                continue;
+            }
+            updated.Add(new(item.RequestedId, id, null));
+            successful[resolvedId!] = submission.EmailId;
         }
-
-        var response = new JsonObject
+        foreach (var item in command.Destroys)
         {
-            ["accountId"] = accountId,
-            ["oldState"] = oldState,
-            ["newState"] = await states.GetStateAsync(
-                account.InboxId,
-                JmapConstants.EmailSubmissionDataType,
-                cancellationToken).ConfigureAwait(false),
-            ["created"] = created.Count == 0 ? null : created,
-            ["updated"] = updated.Count == 0 ? null : updated,
-            ["destroyed"] = destroyed.Count == 0 ? null : destroyed,
-            ["notCreated"] = notCreated.Count == 0 ? null : notCreated,
-            ["notUpdated"] = notUpdated.Count == 0 ? null : notUpdated,
-            ["notDestroyed"] = notDestroyed.Count == 0 ? null : notDestroyed,
-        };
-
-        var implicitArguments = BuildImplicitEmailSet(
-            accountId,
-            context,
-            successful,
-            onSuccessUpdate,
-            onSuccessDestroy);
-        if (implicitArguments is null)
-            return new JmapMethodResponse(Operation, response);
-        var implicitResponse = await emailSet.InvokeImplicitAsync(context, implicitArguments, cancellationToken)
-            .ConfigureAwait(false);
-        return new JmapMethodResponse(Operation, response, [implicitResponse]);
+            var resolvedId = context.ResolveId(item.RequestedId);
+            if (!JmapId.TryParseSubmission(resolvedId, out var id))
+            {
+                destroyed.Add(new(item.RequestedId, null, Failure("notFound")));
+                continue;
+            }
+            var submission = await database.JmapEmailSubmissions.SingleOrDefaultAsync(
+                candidate => candidate.Id == id && candidate.AccountId == account.InboxId,
+                cancellationToken).ConfigureAwait(false);
+            if (submission is null)
+            {
+                destroyed.Add(new(item.RequestedId, null, Failure("notFound")));
+                continue;
+            }
+            successful[resolvedId!] = submission.EmailId;
+            database.JmapEmailSubmissions.Remove(submission);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            destroyed.Add(new(item.RequestedId, id, null));
+        }
+        var newState = await states.GetStateAsync(account.InboxId,
+            JmapConstants.EmailSubmissionDataType, cancellationToken).ConfigureAwait(false);
+        var implicitCommand = BuildImplicitEmailSet(command, context, successful);
+        var implicitResult = implicitCommand is null ? null
+            : await emailSet.MutateAsync(implicitCommand, user, context, cancellationToken)
+                .ConfigureAwait(false);
+        return new(MailSubmissionMutationStatus.Ok, oldState, newState,
+            created, updated, destroyed, implicitCommand, implicitResult);
     }
 
-    private async Task<JsonObject> BuildCreatedResponseAsync(
-        JsonObject requested,
-        JmapEmailSubmissionDB submission,
-        CancellationToken cancellationToken)
+    private async Task<MailSubmissionSnapshot> SnapshotAsync(
+        JmapEmailSubmissionDB submission, CancellationToken cancellationToken)
     {
-        var response = await JmapEmailSubmissionJson.BuildAsync(
-            database,
-            submission,
-            null,
-            cancellationToken).ConfigureAwait(false);
-
-        response.Remove("identityId");
-        response.Remove("emailId");
-        if (requested["envelope"] is { } requestedEnvelope
-            && JsonNode.DeepEquals(requestedEnvelope, response["envelope"]))
-        {
-            response.Remove("envelope");
-        }
-        return response;
+        var recipients = await database.MailQueueRecipients.AsNoTracking()
+            .Where(recipient => recipient.MessageId == submission.QueueId)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        return new(submission.Id, submission.IdentityId, submission.EmailId,
+            submission.ThreadId, submission.EnvelopeJson, submission.EnvelopeSender,
+            submission.EnvelopeRecipients.ToArray(), submission.SendAt, submission.UndoStatus,
+            recipients.Select(recipient => new MailSubmissionDeliverySnapshot(recipient.Recipient,
+                MailSubmissionDeliveryState.Pending, null)).ToArray());
     }
 
     private async Task<SubmissionCreateResult> CreateAsync(
@@ -1107,70 +1021,69 @@ internal sealed class EmailSubmissionSetMethod(
         return true;
     }
 
-    private static JsonObject? BuildImplicitEmailSet(
-        string accountId,
+    private static MailMessageMutationCommand? BuildImplicitEmailSet(
+        MailSubmissionMutationCommand command,
         JmapInvocationContext context,
-        Dictionary<string, string> successful,
-        IReadOnlyDictionary<string, JsonObject>? updates,
-        IReadOnlyList<string>? destroys)
+        Dictionary<string, string> successful)
     {
-        var emailUpdates = new JsonObject();
-        if (updates is not null)
+        var emailUpdates = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+        foreach (var item in command.OnSuccessUpdates)
         {
-            foreach (var item in updates)
-            {
-                var submissionId = context.ResolveId(item.Key);
-                if (submissionId is null || !successful.TryGetValue(submissionId, out var emailId))
-                    continue;
-                if (emailUpdates[emailId] is not JsonObject combined)
-                {
-                    combined = new JsonObject();
-                    emailUpdates[emailId] = combined;
-                }
-                foreach (var patch in item.Value)
-                    combined[patch.Key] = patch.Value?.DeepClone();
-            }
+            var submissionId = context.ResolveId(item.RequestedSubmissionId);
+            if (submissionId is null || !successful.TryGetValue(submissionId, out var emailId))
+                continue;
+            if (!emailUpdates.TryGetValue(emailId, out var combined))
+                emailUpdates[emailId] = combined = new JsonObject();
+            var value = ApplicationValueCodec.Decode(item.Patch) as JsonObject
+                ?? throw new InvalidOperationException("The implicit email patch is not an object.");
+            foreach (var patch in value)
+                combined[patch.Key] = patch.Value?.DeepClone();
         }
-        var emailDestroys = new JsonArray();
-        if (destroys is not null)
+        var emailDestroys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var item in command.OnSuccessDestroys)
         {
-            foreach (var item in destroys)
-            {
-                var submissionId = context.ResolveId(item);
-                if (submissionId is not null
-                    && successful.TryGetValue(submissionId, out var emailId)
-                    && !emailDestroys.Any(node => string.Equals(node?.GetValue<string>(), emailId, StringComparison.Ordinal)))
-                    emailDestroys.Add(emailId);
-            }
+            var submissionId = context.ResolveId(item.RequestedSubmissionId);
+            if (submissionId is not null && successful.TryGetValue(submissionId, out var emailId))
+                emailDestroys.Add(emailId);
         }
         if (emailUpdates.Count == 0 && emailDestroys.Count == 0)
             return null;
-        return new JsonObject
-        {
-            ["accountId"] = accountId,
-            ["update"] = emailUpdates.Count == 0 ? null : emailUpdates,
-            ["destroy"] = emailDestroys.Count == 0 ? null : emailDestroys,
-        };
+        return new(command.AccountId, null, [], emailUpdates.Select(item =>
+            new MailMessageUpdate(item.Key, ApplicationValueCodec.Encode(item.Value))).ToArray(),
+            emailDestroys.Select(id => new MailMessageDestroy(id)).ToArray());
     }
 
-    private static bool TryStringArray(
-        JsonObject arguments,
-        string name,
-        out IReadOnlyList<string>? values)
+    private static MailSubmissionMutationFailure Failure(string type,
+        IReadOnlyList<string>? properties = null) =>
+        new(ParseError(type), null, properties, null, null, null);
+
+    private static MailSubmissionMutationFailure Failure(JsonObject error)
     {
-        values = null;
-        if (!arguments.TryGetPropertyValue(name, out var node) || node is null) return true;
-        if (node is not JsonArray array) return false;
-        var result = new List<string>();
-        foreach (var item in array)
-        {
-            if (item is not JsonValue value || !value.TryGetValue<string>(out var text) || text is null)
-                return false;
-            result.Add(text);
-        }
-        values = result;
-        return true;
+        var type = error["type"]?.GetValue<string>()
+            ?? throw new InvalidOperationException("The submission failure is missing its kind.");
+        return new(ParseError(type), error["description"]?.GetValue<string>(),
+            ReadStrings(error["properties"]), ReadStrings(error["invalidRecipients"]),
+            error["maxSize"]?.GetValue<int>(), error["maxRecipients"]?.GetValue<int>());
     }
+
+    private static IReadOnlyList<string>? ReadStrings(JsonNode? node) =>
+        node is JsonArray array ? array.Select(item => item!.GetValue<string>()).ToArray() : null;
+
+    private static MailSubmissionMutationError ParseError(string type) => type switch
+    {
+        "invalidProperties" => MailSubmissionMutationError.InvalidProperties,
+        "invalidPatch" => MailSubmissionMutationError.InvalidPatch,
+        "notFound" => MailSubmissionMutationError.NotFound,
+        "cannotUnsend" => MailSubmissionMutationError.CannotUnsend,
+        "invalidEmail" => MailSubmissionMutationError.InvalidEmail,
+        "forbiddenFrom" => MailSubmissionMutationError.ForbiddenFrom,
+        "forbiddenMailFrom" => MailSubmissionMutationError.ForbiddenMailFrom,
+        "noRecipients" => MailSubmissionMutationError.NoRecipients,
+        "tooManyRecipients" => MailSubmissionMutationError.TooManyRecipients,
+        "invalidRecipients" => MailSubmissionMutationError.InvalidRecipients,
+        "tooLarge" => MailSubmissionMutationError.TooLarge,
+        _ => throw new InvalidOperationException("The submission failure has an unknown kind."),
+    };
 
     private sealed record SubmissionCreateResult(JmapEmailSubmissionDB? Submission, JsonObject? Error)
     {

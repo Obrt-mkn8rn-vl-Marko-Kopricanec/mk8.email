@@ -66,6 +66,7 @@ public static class JmapServiceExtensions
         services.AddHostedService(provider => provider.GetRequiredService<JmapPushWorker>());
         services.AddScoped<EmailSetMethod>();
         services.AddScoped<IMailMessageMutationService>(provider => provider.GetRequiredService<EmailSetMethod>());
+        services.AddScoped<IMailSubmissionMutationService, EmailSubmissionSetMethod>();
         services.AddScoped<JmapRequestProcessor>(provider => new JmapRequestProcessor(
             provider.GetRequiredService<IEnumerable<IJmapMethod>>(),
             provider.GetRequiredService<JmapAccountProfileService>(),
@@ -100,13 +101,8 @@ public static class JmapServiceExtensions
             provider.GetRequiredService<IMailContactMutationService>(),
             provider.GetRequiredService<IMailFolderMutationService>(),
             provider.GetRequiredService<IMailMessageProjectionService>(),
-            provider.GetRequiredService<IMailMessageMutationService>()));
-        AddJmapMethods(services);
+            provider.GetRequiredService<IMailMessageMutationService>(),
+            provider.GetRequiredService<IMailSubmissionMutationService>()));
         return services;
-    }
-
-    private static void AddJmapMethods(IServiceCollection services)
-    {
-        services.AddScoped<IJmapMethod, EmailSubmissionSetMethod>();
     }
 }

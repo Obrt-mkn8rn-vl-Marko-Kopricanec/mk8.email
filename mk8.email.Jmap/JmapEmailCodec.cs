@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using MimeKit;
 using MimeKit.Utils;
+using mk8.email.Contracts.Messaging;
 using mk8.email.Infrastructure.Models;
 
 namespace mk8.email.Jmap;
@@ -425,6 +426,36 @@ internal static partial class JmapEmailCodec
         if (!requested.Contains("id") && storedEmail is not null)
             result["id"] = JmapId.Email(storedEmail.Id);
         return result;
+    }
+
+    internal static MailMessageSnapshot Capture(MimeMessage message, Guid contentSourceId,
+        long rawSize, bool includeText, EmailDB? stored = null, string? uploadedContentId = null,
+        string? partPrefix = null)
+    {
+        var metadata = stored is null ? null : new MailStoredMessageSnapshot(stored.Id, stored.FolderId,
+            stored.ThreadObjectId ?? stored.Id.ToString("N"), BuildKeywords(stored).Select(item => item.Key).ToArray(),
+            stored.SizeBytes > 0 ? stored.SizeBytes : rawSize,
+            stored.ReceivedAt.Kind == DateTimeKind.Utc ? stored.ReceivedAt : stored.ReceivedAt.ToUniversalTime());
+        var body = BuildParts(message.Body, contentSourceId, partPrefix);
+        var parts = new List<MailMimePartSnapshot>();
+        var root = body is null ? (int?)null : CapturePart(body, includeText, parts);
+        return new(contentSourceId, uploadedContentId, partPrefix, rawSize, metadata,
+            CaptureHeaders(MessageHeaders(message)), root, parts.ToArray());
+    }
+
+    private static MailMimeHeaderSnapshot[] CaptureHeaders(IEnumerable<Header> headers) =>
+        headers.Select(header => new MailMimeHeaderSnapshot(header.RawField.ToArray(), header.RawValue.ToArray())).ToArray();
+
+    private static int CapturePart(PartDescriptor part, bool includeText, List<MailMimePartSnapshot> parts)
+    {
+        var (text, encodingProblem) = includeText && part.Type.StartsWith("text/", StringComparison.Ordinal)
+            ? DecodeText(part) : ((string?)null, false);
+        var children = part.SubParts.Select(child => CapturePart(child, includeText, parts)).ToArray();
+        var index = parts.Count;
+        parts.Add(new(part.PartId, part.Bytes.LongLength, CaptureHeaders(part.Entity.Headers), part.Name, part.Type,
+            part.Charset, part.Disposition, part.ContentId, part.Language, part.Location, text, encodingProblem,
+            children));
+        return index;
     }
 
     public static bool TryValidateProperties(

@@ -33,14 +33,14 @@ internal sealed class MailMessageProjectionService(
         var emails = await query.ToListAsync(cancellationToken).ConfigureAwait(false);
         if (command.MessageIds is null && emails.Count > environment.Jmap.MaxObjectsInGet)
             return new(MailMessageReadStatus.RequestTooLarge, null, []);
-        var projection = Project(command.Projection);
         var messages = new List<MailMessageProjectedItem>(emails.Count);
-        foreach (var email in emails)
+        for (var index = 0; index < emails.Count; index++)
         {
+            var email = emails[index];
             var raw = await content.ReadAsync(email, cancellationToken).ConfigureAwait(false);
             using var message = JmapEmailCodec.Parse(raw);
-            var value = JmapEmailCodec.BuildEmail(message, projection, email.Id, email);
-            messages.Add(new(email.Id, ApplicationValueCodec.Encode(value)));
+            var value = JmapEmailCodec.Capture(message, email.Id, raw.LongLength, command.IncludeText, email);
+            messages.Add(new(email.Id, value));
         }
         var state = await states.GetStateAsync(account.InboxId, JmapConstants.EmailDataType,
             cancellationToken).ConfigureAwait(false);
@@ -54,7 +54,6 @@ internal sealed class MailMessageProjectionService(
         var account = await accounts.GetAccountByInboxIdAsync(user, command.AccountId, cancellationToken)
             .ConfigureAwait(false);
         if (account is null) return new(MailMessageParseStatus.AccountNotFound, []);
-        var projection = Project(command.Projection);
         var items = new List<MailMessageParseItem>(command.BlobIds.Count);
         foreach (var blobId in command.BlobIds.Distinct(StringComparer.Ordinal))
         {
@@ -67,11 +66,9 @@ internal sealed class MailMessageProjectionService(
             try
             {
                 using var message = JmapEmailCodec.Parse(blob.Content);
-                var value = JmapEmailCodec.BuildEmail(message, projection, blob.SourceId,
-                    uploadedBlobId: blobId, rawSize: blob.Content.LongLength,
-                    blobPartPrefix: blob.PartPrefix);
-                items.Add(new(blobId, MailMessageParseItemStatus.Parsed,
-                    ApplicationValueCodec.Encode(value)));
+                var value = JmapEmailCodec.Capture(message, blob.SourceId, blob.Content.LongLength,
+                    command.IncludeText, uploadedContentId: blobId, partPrefix: blob.PartPrefix);
+                items.Add(new(blobId, MailMessageParseItemStatus.Parsed, value));
             }
             catch (FormatException)
             {
@@ -81,7 +78,4 @@ internal sealed class MailMessageProjectionService(
         return new(MailMessageParseStatus.Ok, items);
     }
 
-    private static JmapEmailProjectionOptions Project(MailMessageProjectionOptions projection) =>
-        new(projection.Properties, projection.BodyProperties, projection.FetchTextBodyValues,
-            projection.FetchHtmlBodyValues, projection.FetchAllBodyValues, projection.MaxBodyValueBytes);
 }

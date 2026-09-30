@@ -1045,15 +1045,14 @@ public sealed class JmapRequestProcessor
     private MailMessageReadCommand ParseMessageReadCommand(JsonObject arguments)
     {
         if (arguments.Count != 3 || !arguments.ContainsKey("accountId")
-            || !arguments.ContainsKey("messageIds") || !arguments.ContainsKey("projection"))
+            || !arguments.ContainsKey("messageIds") || !arguments.ContainsKey("includeText"))
             throw NotRequest("The message read command has an invalid shape.");
         try
         {
             var read = JsonSerializer.Deserialize<MailMessageReadCommand>(arguments,
                 StrictReceiptJsonOptions)
                 ?? throw NotRequest("The message read command is missing.");
-            if (!ValidMessageProjection(read.Projection)
-                || read.MessageIds is not null && (read.MessageIds.Count > _environment.Jmap.MaxObjectsInGet
+            if (read.MessageIds is not null && (read.MessageIds.Count > _environment.Jmap.MaxObjectsInGet
                     || read.MessageIds.Contains(Guid.Empty)))
                 throw NotRequest("The message read values are invalid.");
             return read;
@@ -1067,14 +1066,14 @@ public sealed class JmapRequestProcessor
     private MailMessageParseCommand ParseMessageParseCommand(JsonObject arguments)
     {
         if (arguments.Count != 3 || !arguments.ContainsKey("accountId")
-            || !arguments.ContainsKey("blobIds") || !arguments.ContainsKey("projection"))
+            || !arguments.ContainsKey("blobIds") || !arguments.ContainsKey("includeText"))
             throw NotRequest("The message parse command has an invalid shape.");
         try
         {
             var parse = JsonSerializer.Deserialize<MailMessageParseCommand>(arguments,
                 StrictReceiptJsonOptions)
                 ?? throw NotRequest("The message parse command is missing.");
-            if (!ValidMessageProjection(parse.Projection) || parse.BlobIds is null
+            if (parse.BlobIds is null
                 || parse.BlobIds.Count > _environment.Jmap.MaxObjectsInGet
                 || parse.BlobIds.Any(id => id is null || !JmapId.IsValidId(id))
                 || parse.BlobIds.Distinct(StringComparer.Ordinal).Count() != parse.BlobIds.Count)
@@ -1086,12 +1085,6 @@ public sealed class JmapRequestProcessor
             throw NotRequest("The message parse command contains invalid values.");
         }
     }
-
-    private static bool ValidMessageProjection(MailMessageProjectionOptions? projection) =>
-        projection is not null && projection.Properties is not null && projection.BodyProperties is not null
-        && projection.MaxBodyValueBytes >= 0
-        && JmapEmailCodec.TryValidateProperties(projection.Properties, bodyProperties: false, out _)
-        && JmapEmailCodec.TryValidateProperties(projection.BodyProperties, bodyProperties: true, out _);
 
     private MailMessageMutationCommand ParseMessageMutationCommand(
         JsonObject arguments, JmapInvocationContext context)

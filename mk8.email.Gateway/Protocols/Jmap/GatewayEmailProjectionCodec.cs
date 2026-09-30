@@ -42,7 +42,7 @@ internal static class GatewayEmailProjectionCodec
     ], StringComparer.Ordinal);
 
     public static bool TryParse(JsonObject arguments, bool allowNullProperties,
-        IReadOnlyList<string> defaults, out MailMessageProjectionOptions options)
+        IReadOnlyList<string> defaults, out GatewayEmailProjectionOptions options)
     {
         options = null!;
         if (!TryStringArray(arguments, "properties", allowNullProperties, out var properties)

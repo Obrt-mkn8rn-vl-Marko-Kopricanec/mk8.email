@@ -683,8 +683,8 @@ public sealed class JmapGatewayRouteTests
             Assert.AreEqual("missing", messageReadResponse[1].GetProperty("notFound")[0].GetString());
             var messageParseCommand = jmap.Commands[37];
             Assert.AreEqual(MailOperationKind.ParseMessages, messageParseCommand.Operation);
-            Assert.AreEqual("subject", messageParseCommand.Arguments["projection"]!["properties"]![0]!
-                .GetValue<string>());
+            Assert.IsFalse(messageParseCommand.Arguments.ContainsKey("projection"));
+            Assert.IsFalse(messageParseCommand.Arguments["includeText"]!.GetValue<bool>());
             var messageParseResponse = json.RootElement.GetProperty("methodResponses")[39];
             Assert.AreEqual("Email/parse", messageParseResponse[0].GetString());
             Assert.AreEqual("Parsed Subject", messageParseResponse[1].GetProperty("parsed")
@@ -750,6 +750,12 @@ public sealed class JmapGatewayRouteTests
 
     private sealed class StubJmapApplicationService : IJmapApplicationService
     {
+        private static MailMessageSnapshot Snapshot(Guid? id, string subject, string? uploaded = null) =>
+            new(id ?? Guid.Parse("44444444-4444-4444-4444-444444444444"), uploaded, null, 20,
+                id is { } storedId ? new(storedId, Guid.Parse("55555555-5555-5555-5555-555555555555"),
+                    "thread", [], 20, new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)) : null,
+                [new("Subject"u8.ToArray(), Encoding.UTF8.GetBytes(" " + subject + "\r\n"))], null, []);
+
         internal static JmapApplicationProfile Profile { get; } = new("remote-worker",
             new JmapServiceLimits(10000, 1, 10000, 1, 64, 500, 500, 32, 255, 10000,
                 ["i;ascii-numeric"], ["receivedAt"]), []);
@@ -1046,14 +1052,9 @@ public sealed class JmapGatewayRouteTests
             }
             if (request.Command.Operation == MailOperationKind.ReadMessages)
             {
-                var value = new JsonObject
-                {
-                    ["id"] = "E22222222222222222222222222222222",
-                    ["subject"] = "Route Subject",
-                };
+                var id = Guid.Parse("22222222-2222-2222-2222-222222222222");
                 var read = new MailMessageReadResult(MailMessageReadStatus.Ok, "s72",
-                    [new(Guid.Parse("22222222-2222-2222-2222-222222222222"),
-                        ApplicationValueCodec.Encode(value))]);
+                    [new(id, Snapshot(id, "Route Subject"))]);
                 var node = JsonSerializer.SerializeToNode(read, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
                 return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
                     OperationResult: new(new(MailOperationKind.ReadMessages, ApplicationValueCodec.Encode(node)),
@@ -1061,11 +1062,10 @@ public sealed class JmapGatewayRouteTests
             }
             if (request.Command.Operation == MailOperationKind.ParseMessages)
             {
-                var value = new JsonObject { ["subject"] = "Parsed Subject" };
                 var parsed = new MailMessageParseResult(MailMessageParseStatus.Ok,
                 [
                     new("U44444444444444444444444444444444", MailMessageParseItemStatus.Parsed,
-                        ApplicationValueCodec.Encode(value)),
+                        Snapshot(null, "Parsed Subject", "U44444444444444444444444444444444")),
                     new("Umissing", MailMessageParseItemStatus.NotFound, null),
                 ]);
                 var node = JsonSerializer.SerializeToNode(parsed, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;

@@ -6,9 +6,10 @@ namespace mk8.email.Gateway.Protocols.Jmap;
 internal static class GatewayEmailReadCodec
 {
     internal sealed record GetCall(MailMessageReadCommand Command, string AccountId,
-        IReadOnlyList<string>? RequestedIds, int MaximumObjects);
+        IReadOnlyList<string>? RequestedIds, int MaximumObjects, GatewayEmailProjectionOptions Projection);
 
-    internal sealed record ParseCall(MailMessageParseCommand Command, string AccountId);
+    internal sealed record ParseCall(MailMessageParseCommand Command, string AccountId,
+        GatewayEmailProjectionOptions Projection);
 
     public static bool TryParseGet(JsonObject arguments, int maximumObjects,
         out GetCall? call, out string? failure)
@@ -32,8 +33,8 @@ internal static class GatewayEmailReadCodec
         }
         var ids = requestedIds?.Select(ParseEmail).Where(id => id != Guid.Empty)
             .Distinct().ToArray();
-        call = new(new(ParseAccount(accountId), ids, projection), accountId,
-            requestedIds?.Distinct(StringComparer.Ordinal).ToArray(), maximumObjects);
+        call = new(new(ParseAccount(accountId), ids, NeedsText(projection)), accountId,
+            requestedIds?.Distinct(StringComparer.Ordinal).ToArray(), maximumObjects, projection);
         return true;
     }
 
@@ -58,7 +59,7 @@ internal static class GatewayEmailReadCodec
             return false;
         }
         call = new(new(ParseAccount(accountId), ids.Distinct(StringComparer.Ordinal).ToArray(),
-            projection), accountId);
+            NeedsText(projection)), accountId, projection);
         return true;
     }
 
@@ -81,12 +82,9 @@ internal static class GatewayEmailReadCodec
         {
             if (item is null || item.MessageId == Guid.Empty || item.Value is null
                 || requested is not null && !requested.Contains(item.MessageId)
-                || ApplicationValueCodec.Decode(item.Value) is not JsonObject value
-                || value["id"] is { } projectedId
-                    && (projectedId is not JsonValue idNode
-                        || !idNode.TryGetValue<string>(out var id)
-                        || !string.Equals(id, FormatEmail(item.MessageId), StringComparison.Ordinal))
-                || !byId.TryAdd(item.MessageId, value))
+                || item.Value.Stored?.Id != item.MessageId
+                || item.Value.ContentSourceId != item.MessageId
+                || !byId.TryAdd(item.MessageId, GatewayEmailValueCodec.BuildEmail(item.Value, call.Projection)))
                 throw new InvalidOperationException("The Application returned an unexpected message.");
         }
         var list = new JsonArray();
@@ -134,8 +132,10 @@ internal static class GatewayEmailReadCodec
             switch (item.Status)
             {
                 case MailMessageParseItemStatus.Parsed:
-                    parsed[item.BlobId] = ApplicationValueCodec.Decode(item.Value!) as JsonObject
-                        ?? throw new InvalidOperationException("The Application returned an invalid parsed message.");
+                    if (item.Value!.Stored is not null
+                        || !string.Equals(item.Value.UploadedContentId, item.BlobId, StringComparison.Ordinal))
+                        throw new InvalidOperationException("The Application returned an invalid parsed MIME snapshot.");
+                    parsed[item.BlobId] = GatewayEmailValueCodec.BuildEmail(item.Value, call.Projection);
                     break;
                 case MailMessageParseItemStatus.NotParsable:
                     notParsable.Add(item.BlobId);
@@ -158,6 +158,11 @@ internal static class GatewayEmailReadCodec
         arguments.All(item => item.Key is "accountId" or "properties" or "bodyProperties"
             or "fetchTextBodyValues" or "fetchHTMLBodyValues" or "fetchAllBodyValues"
             or "maxBodyValueBytes" || string.Equals(item.Key, parse ? "blobIds" : "ids", StringComparison.Ordinal));
+
+    private static bool NeedsText(GatewayEmailProjectionOptions options) =>
+        options.Properties.Contains("preview", StringComparer.Ordinal)
+        || options.Properties.Contains("bodyValues", StringComparer.Ordinal)
+            && (options.FetchTextBodyValues || options.FetchHtmlBodyValues || options.FetchAllBodyValues);
 
     private static bool TryIds(JsonObject arguments, string name, bool nullable,
         out IReadOnlyList<string>? values)

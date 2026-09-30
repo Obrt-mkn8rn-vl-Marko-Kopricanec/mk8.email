@@ -1,5 +1,6 @@
 /docs/internal
 /deploy/secrets/
+/artifacts/test-results/
 
 ## This is mostly just takekazuomi's gitignore
 ## Except I may add or remove lines for my own convenience.

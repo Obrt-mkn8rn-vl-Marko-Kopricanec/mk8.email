@@ -70,6 +70,8 @@ public sealed class DistributedContractCompatibilityTests
     [DataRow("mail.operation.execute.v17", false, true)]
     [DataRow("mail.operation.execute.v18", false, false)]
     [DataRow("mail.operation.execute.v18", false, true)]
+    [DataRow("mail.operation.execute.v26", false, false)]
+    [DataRow("mail.operation.execute.v26", false, true)]
     [DataRow("jmap.profile.get", false, false)]
     [DataRow("jmap.profile.get", false, true)]
     [DataRow("jmap.upload", false, false)]
@@ -228,6 +230,17 @@ public sealed class DistributedContractCompatibilityTests
             "mail.operation.execute.v25", false, true);
         await ElapsedLegacyDeadlinesRemainBlockedAndAreNotAutomaticallyExpired(
             "mail.operation.execute.v25", false);
+    }
+
+    [TestMethod]
+    public async Task V26MailOperationsAreBlockedBeforeV27Dispatch()
+    {
+        await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
+            "mail.operation.execute.v26", false, false);
+        await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
+            "mail.operation.execute.v26", false, true);
+        await ElapsedLegacyDeadlinesRemainBlockedAndAreNotAutomaticallyExpired(
+            "mail.operation.execute.v26", false);
     }
 
     [TestMethod]

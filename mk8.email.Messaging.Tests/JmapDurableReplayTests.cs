@@ -159,6 +159,80 @@ public sealed class JmapDurableReplayTests
     }
 
     [TestMethod]
+    public async Task TypedEmailReadAndParseReplayAzureBackedProjectionSnapshots()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var folderId = Guid.CreateVersion7();
+        await using (var setup = rig.Context())
+        {
+            setup.Folders.Add(new FolderDB
+            {
+                Id = folderId,
+                InboxId = rig.InboxId,
+                Name = "Inbox",
+                UidValidity = 1,
+                NextUid = 1,
+            });
+            await setup.SaveChangesAsync();
+        }
+        const string raw = "From: sender@example.test\r\nTo: replay@example.test\r\nSubject: Azure projection\r\n\r\nBody";
+        string blobId;
+        using (var scope = rig.Services.CreateScope())
+        {
+            var blobs = scope.ServiceProvider.GetRequiredService<JmapBlobService>();
+            blobId = (await blobs.StoreAsync(rig.InboxId, Encoding.UTF8.GetBytes(raw),
+                "message/rfc822", "projection.eml", CancellationToken.None)).BlobId;
+        }
+        var imported = await rig.InvokeAsync(new JmapApplicationBatch([MailFeature.Basic, MailFeature.Messages],
+            [new JmapApplicationCall(MailOperationKind.ImportMessages, new JsonObject
+            {
+                ["accountId"] = JmapId.Account(rig.InboxId),
+                ["emails"] = new JsonObject
+                {
+                    ["created"] = new JsonObject
+                    {
+                        ["blobId"] = blobId,
+                        ["mailboxIds"] = new JsonObject { [JmapId.Mailbox(folderId)] = true },
+                    },
+                },
+            }, "import")], new Dictionary<string, string>()), Guid.CreateVersion7());
+        var emailId = imported.Invocations[0].Arguments["created"]!["created"]!["id"]!.GetValue<string>();
+        var read = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Messages],
+            [new JmapApplicationCall(MailOperationKind.ReadMessages, new JsonObject
+            {
+                ["accountId"] = JmapId.Account(rig.InboxId),
+                ["ids"] = new JsonArray(emailId, "missing"),
+                ["properties"] = new JsonArray("id", "subject"),
+            }, "read")]);
+        var readOperation = Guid.CreateVersion7();
+        var firstRead = await rig.InvokeAsync(read, readOperation);
+        Assert.AreEqual("Azure projection", firstRead.Invocations[0].Arguments["list"]![0]!["subject"]!
+            .GetValue<string>());
+        Assert.AreEqual("missing", firstRead.Invocations[0].Arguments["notFound"]![0]!.GetValue<string>());
+        var replayRead = await rig.InvokeAsync(read, readOperation);
+        Assert.AreEqual(JsonSerializer.Serialize(firstRead.Invocations), JsonSerializer.Serialize(replayRead.Invocations));
+        var parse = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Messages],
+            [new JmapApplicationCall(MailOperationKind.ParseMessages, new JsonObject
+            {
+                ["accountId"] = JmapId.Account(rig.InboxId),
+                ["blobIds"] = new JsonArray(blobId, "Umissing"),
+                ["properties"] = new JsonArray("subject"),
+            }, "parse")]);
+        var parseOperation = Guid.CreateVersion7();
+        var firstParse = await rig.InvokeAsync(parse, parseOperation);
+        Assert.AreEqual("Azure projection", firstParse.Invocations[0].Arguments["parsed"]![blobId]!["subject"]!
+            .GetValue<string>());
+        Assert.AreEqual("Umissing", firstParse.Invocations[0].Arguments["notFound"]![0]!.GetValue<string>());
+        var replayParse = await rig.InvokeAsync(parse, parseOperation);
+        Assert.AreEqual(JsonSerializer.Serialize(firstParse.Invocations), JsonSerializer.Serialize(replayParse.Invocations));
+        await using var verification = rig.Context();
+        var stored = await verification.Emails.SingleAsync();
+        Assert.AreEqual(LargeObjectProviders.AzureBlob, stored.RawMessageObjectProvider);
+        Assert.IsNull(stored.RawMessage);
+        Assert.AreEqual(3, await verification.ApplicationOperationReceipts.CountAsync());
+    }
+
+    [TestMethod]
     public async Task TypedEmailCopyReplaysCommittedCopyAndSourceDeletionWithoutRepeatingEither()
     {
         await using var rig = await Rig.CreateAsync();

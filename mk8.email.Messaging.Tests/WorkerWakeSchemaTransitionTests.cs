@@ -186,6 +186,10 @@ public sealed class WorkerWakeSchemaTransitionTests
     [DataRow("mail.operation.execute.v18", true, false)]
     [DataRow("mail.operation.execute.v18", false, true)]
     [DataRow("mail.operation.execute.v18", true, true)]
+    [DataRow("mail.operation.execute.v26", false, false)]
+    [DataRow("mail.operation.execute.v26", true, false)]
+    [DataRow("mail.operation.execute.v26", false, true)]
+    [DataRow("mail.operation.execute.v26", true, true)]
     [DataRow(ApplicationOperations.MailOperationExecute, false, false)]
     [DataRow(ApplicationOperations.MailOperationExecute, true, false)]
     [DataRow(ApplicationOperations.MailOperationExecute, false, true)]
@@ -305,6 +309,19 @@ public sealed class WorkerWakeSchemaTransitionTests
             "mail.operation.execute.v25", false, true);
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
             "mail.operation.execute.v25", true, true);
+    }
+
+    [TestMethod]
+    public async Task V26MailOperationsBlockLegacyWakeRollbackInEveryLeaseState()
+    {
+        await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
+            "mail.operation.execute.v26", false, false);
+        await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
+            "mail.operation.execute.v26", true, false);
+        await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
+            "mail.operation.execute.v26", false, true);
+        await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
+            "mail.operation.execute.v26", true, true);
     }
 
     [TestMethod]

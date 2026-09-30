@@ -35,6 +35,7 @@ public sealed class JmapRequestProcessor
     private readonly IMailSubmissionQueryService? _submissionQueryService;
     private readonly IMailFolderQueryService? _folderQueryService;
     private readonly IMailMessageQueryService? _messageQueryService;
+    private readonly IMailMessageProjectionService? _messageProjectionService;
     private readonly IMailSearchSnippetService? _searchSnippetService;
     private readonly IMailContactCopyService? _contactCopyService;
     private readonly IMailContactQueryService? _contactQueryService;
@@ -70,7 +71,7 @@ public sealed class JmapRequestProcessor
         ApplicationOperationReceiptStore? receipts = null)
         : this(methods, sessions, database, environment, blobEffects, logger, receipts,
             null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
-            null, null, null, null)
+            null, null, null, null, null)
     {
     }
 
@@ -106,7 +107,8 @@ public sealed class JmapRequestProcessor
         IMailPushSubscriptionMutationService? pushMutationService,
         IJmapPushPresentationClient? pushDelivery,
         IMailContactMutationService? contactMutationService,
-        IMailFolderMutationService? folderMutationService)
+        IMailFolderMutationService? folderMutationService,
+        IMailMessageProjectionService? messageProjectionService)
     {
         _methods = methods.ToDictionary(method => ValidRegisteredOperation(method.Operation, method.Feature));
         _sessions = sessions;
@@ -115,6 +117,7 @@ public sealed class JmapRequestProcessor
         _folderReader = folderReader ?? new MailFolderReader(accountService,
             new JmapMailboxStore(database), stateService, environment);
         _folderMutationService = folderMutationService;
+        _messageProjectionService = messageProjectionService;
         _changesReader = changesReader ?? new MailChangesReader(accountService, stateService,
             new JmapIdentityService(database, accountService), database, environment);
         _addressBookReader = addressBookReader ?? new MailAddressBookReader(database,
@@ -185,6 +188,12 @@ public sealed class JmapRequestProcessor
                 cancellationToken).ConfigureAwait(false);
         else if (command.Operation == MailOperationKind.MutateFolders && features.Contains(MailFeature.Messages))
             response = await ExecuteFolderMutationAsync(command, context, receiptKey,
+                cancellationToken).ConfigureAwait(false);
+        else if (command.Operation == MailOperationKind.ReadMessages && features.Contains(MailFeature.Messages))
+            response = await ExecuteMessageReadAsync(command, context, user, receiptKey,
+                cancellationToken).ConfigureAwait(false);
+        else if (command.Operation == MailOperationKind.ParseMessages && features.Contains(MailFeature.Messages))
+            response = await ExecuteMessageParseAsync(command, context, user, receiptKey,
                 cancellationToken).ConfigureAwait(false);
         else if (MailChangeOperations.TryGetFeature(command.Operation, out var changeFeature)
             && features.Contains(changeFeature))
@@ -334,6 +343,40 @@ public sealed class JmapRequestProcessor
             }
             var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
                 ?? throw new InvalidOperationException("The folder mutation service returned an incomplete result.");
+            return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
+        }, receiptKey, cancellationToken);
+    }
+
+    private Task<MailOperationResponse> ExecuteMessageReadAsync(
+        MailOperationCommand command, JmapInvocationContext context,
+        AuthenticatedMailUser user, ApplicationReceiptKey? receiptKey,
+        CancellationToken cancellationToken)
+    {
+        var read = ParseMessageReadCommand(command.Arguments);
+        var service = _messageProjectionService
+            ?? throw new InvalidOperationException("The message projection service is not configured.");
+        return InvokeAtomicallyAsync(command.Operation, context, async token =>
+        {
+            var result = await service.ReadAsync(read, user, token).ConfigureAwait(false);
+            var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
+                ?? throw new InvalidOperationException("The message reader returned an incomplete result.");
+            return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
+        }, receiptKey, cancellationToken);
+    }
+
+    private Task<MailOperationResponse> ExecuteMessageParseAsync(
+        MailOperationCommand command, JmapInvocationContext context,
+        AuthenticatedMailUser user, ApplicationReceiptKey? receiptKey,
+        CancellationToken cancellationToken)
+    {
+        var parse = ParseMessageParseCommand(command.Arguments);
+        var service = _messageProjectionService
+            ?? throw new InvalidOperationException("The message projection service is not configured.");
+        return InvokeAtomicallyAsync(command.Operation, context, async token =>
+        {
+            var result = await service.ParseAsync(parse, user, token).ConfigureAwait(false);
+            var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
+                ?? throw new InvalidOperationException("The message parser returned an incomplete result.");
             return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
         }, receiptKey, cancellationToken);
     }
@@ -952,6 +995,57 @@ public sealed class JmapRequestProcessor
             throw NotRequest("The folder read command contains invalid values.");
         }
     }
+
+    private MailMessageReadCommand ParseMessageReadCommand(JsonObject arguments)
+    {
+        if (arguments.Count != 3 || !arguments.ContainsKey("accountId")
+            || !arguments.ContainsKey("messageIds") || !arguments.ContainsKey("projection"))
+            throw NotRequest("The message read command has an invalid shape.");
+        try
+        {
+            var read = JsonSerializer.Deserialize<MailMessageReadCommand>(arguments,
+                StrictReceiptJsonOptions)
+                ?? throw NotRequest("The message read command is missing.");
+            if (!ValidMessageProjection(read.Projection)
+                || read.MessageIds is not null && (read.MessageIds.Count > _environment.Jmap.MaxObjectsInGet
+                    || read.MessageIds.Contains(Guid.Empty)))
+                throw NotRequest("The message read values are invalid.");
+            return read;
+        }
+        catch (JsonException)
+        {
+            throw NotRequest("The message read command contains invalid values.");
+        }
+    }
+
+    private MailMessageParseCommand ParseMessageParseCommand(JsonObject arguments)
+    {
+        if (arguments.Count != 3 || !arguments.ContainsKey("accountId")
+            || !arguments.ContainsKey("blobIds") || !arguments.ContainsKey("projection"))
+            throw NotRequest("The message parse command has an invalid shape.");
+        try
+        {
+            var parse = JsonSerializer.Deserialize<MailMessageParseCommand>(arguments,
+                StrictReceiptJsonOptions)
+                ?? throw NotRequest("The message parse command is missing.");
+            if (!ValidMessageProjection(parse.Projection) || parse.BlobIds is null
+                || parse.BlobIds.Count > _environment.Jmap.MaxObjectsInGet
+                || parse.BlobIds.Any(id => id is null || !JmapId.IsValidId(id))
+                || parse.BlobIds.Distinct(StringComparer.Ordinal).Count() != parse.BlobIds.Count)
+                throw NotRequest("The message parse values are invalid.");
+            return parse;
+        }
+        catch (JsonException)
+        {
+            throw NotRequest("The message parse command contains invalid values.");
+        }
+    }
+
+    private static bool ValidMessageProjection(MailMessageProjectionOptions? projection) =>
+        projection is not null && projection.Properties is not null && projection.BodyProperties is not null
+        && projection.MaxBodyValueBytes >= 0
+        && JmapEmailCodec.TryValidateProperties(projection.Properties, bodyProperties: false, out _)
+        && JmapEmailCodec.TryValidateProperties(projection.BodyProperties, bodyProperties: true, out _);
 
     private MailFolderMutationCommand ParseFolderMutationCommand(
         JsonObject arguments, JmapInvocationContext context)
@@ -1952,7 +2046,8 @@ public sealed class JmapRequestProcessor
             throw NotRequest("The application batch contains invalid feature identifiers.");
         var features = values.ToHashSet();
         var supported = _methods.Values.Select(method => method.Feature)
-            .Concat([MailFeature.Basic, MailFeature.AutomaticReplies, MailFeature.Contacts]).ToHashSet();
+            .Concat([MailFeature.Basic, MailFeature.Messages, MailFeature.Submission,
+                MailFeature.AutomaticReplies, MailFeature.Contacts]).ToHashSet();
         if (features.Any(feature => !supported.Contains(feature)))
             throw new MailApplicationException(new MailApplicationFailure(
                 MailFailureKind.UnsupportedFeature, "The requested mail features are not supported."));

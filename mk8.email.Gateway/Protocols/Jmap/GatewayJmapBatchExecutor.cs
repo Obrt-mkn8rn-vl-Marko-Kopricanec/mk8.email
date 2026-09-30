@@ -321,7 +321,21 @@ internal static class GatewayJmapBatchExecutor
     {
         selection = null;
         failure = null;
-        if (operation == MailOperationKind.FindMessages && features.Contains(MailFeature.Messages))
+        if (operation == MailOperationKind.ReadMessages && features.Contains(MailFeature.Messages))
+        {
+            if (!GatewayEmailReadCodec.TryParseGet(arguments, maximumObjectsInGet, out var call, out failure))
+                return false;
+            selection = Select<MailMessageReadCommand, MailMessageReadResult>(operation, call!.Command,
+                result => GatewayEmailReadCodec.RenderGet(call, result));
+        }
+        else if (operation == MailOperationKind.ParseMessages && features.Contains(MailFeature.Messages))
+        {
+            if (!GatewayEmailReadCodec.TryParseParse(arguments, maximumObjectsInGet, out var call, out failure))
+                return false;
+            selection = Select<MailMessageParseCommand, MailMessageParseResult>(operation, call!.Command,
+                result => GatewayEmailReadCodec.RenderParse(call, result));
+        }
+        else if (operation == MailOperationKind.FindMessages && features.Contains(MailFeature.Messages))
         {
             if (!GatewayEmailQueryCodec.TryParseQuery(arguments, maximumObjectsInGet, out var call, out failure)) return false;
             selection = Select<MailMessageQueryCommand, MailMessageQueryResult>(operation, call!.Command,

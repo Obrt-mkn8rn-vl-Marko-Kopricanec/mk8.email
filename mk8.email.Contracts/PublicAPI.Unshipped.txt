@@ -1,6 +1,6 @@
 #nullable enable
-const mk8.email.Contracts.Messaging.ApplicationOperations.MailOperationExecute = "mail.operation.execute.v26" -> string!
-const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v33" -> string!
+const mk8.email.Contracts.Messaging.ApplicationOperations.MailOperationExecute = "mail.operation.execute.v27" -> string!
+const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v34" -> string!
 mk8.email.Contracts.Messaging.DistributedContractVersions
 mk8.email.Contracts.Messaging.JmapAccountProfile
 mk8.email.Contracts.Messaging.JmapAccountProfile.<Clone>$() -> mk8.email.Contracts.Messaging.JmapAccountProfile!
@@ -1635,6 +1635,70 @@ mk8.email.Contracts.Messaging.MailMessageMailboxIssue
 mk8.email.Contracts.Messaging.MailMessageMailboxIssue.Invalid = 1 -> mk8.email.Contracts.Messaging.MailMessageMailboxIssue
 mk8.email.Contracts.Messaging.MailMessageMailboxIssue.None = 0 -> mk8.email.Contracts.Messaging.MailMessageMailboxIssue
 mk8.email.Contracts.Messaging.MailMessageMailboxIssue.TooMany = 2 -> mk8.email.Contracts.Messaging.MailMessageMailboxIssue
+mk8.email.Contracts.Messaging.MailMessageParseCommand
+mk8.email.Contracts.Messaging.MailMessageParseCommand.<Clone>$() -> mk8.email.Contracts.Messaging.MailMessageParseCommand!
+mk8.email.Contracts.Messaging.MailMessageParseCommand.AccountId.get -> System.Guid
+mk8.email.Contracts.Messaging.MailMessageParseCommand.AccountId.init -> void
+mk8.email.Contracts.Messaging.MailMessageParseCommand.BlobIds.get -> System.Collections.Generic.IReadOnlyList<string!>!
+mk8.email.Contracts.Messaging.MailMessageParseCommand.BlobIds.init -> void
+mk8.email.Contracts.Messaging.MailMessageParseCommand.Deconstruct(out System.Guid AccountId, out System.Collections.Generic.IReadOnlyList<string!>! BlobIds, out mk8.email.Contracts.Messaging.MailMessageProjectionOptions! Projection) -> void
+mk8.email.Contracts.Messaging.MailMessageParseCommand.Equals(mk8.email.Contracts.Messaging.MailMessageParseCommand? other) -> bool
+mk8.email.Contracts.Messaging.MailMessageParseCommand.MailMessageParseCommand(System.Guid AccountId, System.Collections.Generic.IReadOnlyList<string!>! BlobIds, mk8.email.Contracts.Messaging.MailMessageProjectionOptions! Projection) -> void
+mk8.email.Contracts.Messaging.MailMessageParseCommand.Projection.get -> mk8.email.Contracts.Messaging.MailMessageProjectionOptions!
+mk8.email.Contracts.Messaging.MailMessageParseCommand.Projection.init -> void
+mk8.email.Contracts.Messaging.MailMessageParseItem
+mk8.email.Contracts.Messaging.MailMessageParseItem.<Clone>$() -> mk8.email.Contracts.Messaging.MailMessageParseItem!
+mk8.email.Contracts.Messaging.MailMessageParseItem.BlobId.get -> string!
+mk8.email.Contracts.Messaging.MailMessageParseItem.BlobId.init -> void
+mk8.email.Contracts.Messaging.MailMessageParseItem.Deconstruct(out string! BlobId, out mk8.email.Contracts.Messaging.MailMessageParseItemStatus Status, out mk8.email.Contracts.Messaging.ApplicationValue? Value) -> void
+mk8.email.Contracts.Messaging.MailMessageParseItem.Equals(mk8.email.Contracts.Messaging.MailMessageParseItem? other) -> bool
+mk8.email.Contracts.Messaging.MailMessageParseItem.MailMessageParseItem(string! BlobId, mk8.email.Contracts.Messaging.MailMessageParseItemStatus Status, mk8.email.Contracts.Messaging.ApplicationValue? Value) -> void
+mk8.email.Contracts.Messaging.MailMessageParseItem.Status.get -> mk8.email.Contracts.Messaging.MailMessageParseItemStatus
+mk8.email.Contracts.Messaging.MailMessageParseItem.Status.init -> void
+mk8.email.Contracts.Messaging.MailMessageParseItem.Value.get -> mk8.email.Contracts.Messaging.ApplicationValue?
+mk8.email.Contracts.Messaging.MailMessageParseItem.Value.init -> void
+mk8.email.Contracts.Messaging.MailMessageParseItemStatus
+mk8.email.Contracts.Messaging.MailMessageParseItemStatus.NotFound = 1 -> mk8.email.Contracts.Messaging.MailMessageParseItemStatus
+mk8.email.Contracts.Messaging.MailMessageParseItemStatus.NotParsable = 2 -> mk8.email.Contracts.Messaging.MailMessageParseItemStatus
+mk8.email.Contracts.Messaging.MailMessageParseItemStatus.Parsed = 0 -> mk8.email.Contracts.Messaging.MailMessageParseItemStatus
+mk8.email.Contracts.Messaging.MailMessageParseResult
+mk8.email.Contracts.Messaging.MailMessageParseResult.<Clone>$() -> mk8.email.Contracts.Messaging.MailMessageParseResult!
+mk8.email.Contracts.Messaging.MailMessageParseResult.Deconstruct(out mk8.email.Contracts.Messaging.MailMessageParseStatus Status, out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailMessageParseItem!>! Items) -> void
+mk8.email.Contracts.Messaging.MailMessageParseResult.Equals(mk8.email.Contracts.Messaging.MailMessageParseResult? other) -> bool
+mk8.email.Contracts.Messaging.MailMessageParseResult.Items.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailMessageParseItem!>!
+mk8.email.Contracts.Messaging.MailMessageParseResult.Items.init -> void
+mk8.email.Contracts.Messaging.MailMessageParseResult.MailMessageParseResult(mk8.email.Contracts.Messaging.MailMessageParseStatus Status, System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailMessageParseItem!>! Items) -> void
+mk8.email.Contracts.Messaging.MailMessageParseResult.Status.get -> mk8.email.Contracts.Messaging.MailMessageParseStatus
+mk8.email.Contracts.Messaging.MailMessageParseResult.Status.init -> void
+mk8.email.Contracts.Messaging.MailMessageParseStatus
+mk8.email.Contracts.Messaging.MailMessageParseStatus.AccountNotFound = 1 -> mk8.email.Contracts.Messaging.MailMessageParseStatus
+mk8.email.Contracts.Messaging.MailMessageParseStatus.Ok = 0 -> mk8.email.Contracts.Messaging.MailMessageParseStatus
+mk8.email.Contracts.Messaging.MailMessageProjectedItem
+mk8.email.Contracts.Messaging.MailMessageProjectedItem.<Clone>$() -> mk8.email.Contracts.Messaging.MailMessageProjectedItem!
+mk8.email.Contracts.Messaging.MailMessageProjectedItem.Deconstruct(out System.Guid MessageId, out mk8.email.Contracts.Messaging.ApplicationValue! Value) -> void
+mk8.email.Contracts.Messaging.MailMessageProjectedItem.Equals(mk8.email.Contracts.Messaging.MailMessageProjectedItem? other) -> bool
+mk8.email.Contracts.Messaging.MailMessageProjectedItem.MailMessageProjectedItem(System.Guid MessageId, mk8.email.Contracts.Messaging.ApplicationValue! Value) -> void
+mk8.email.Contracts.Messaging.MailMessageProjectedItem.MessageId.get -> System.Guid
+mk8.email.Contracts.Messaging.MailMessageProjectedItem.MessageId.init -> void
+mk8.email.Contracts.Messaging.MailMessageProjectedItem.Value.get -> mk8.email.Contracts.Messaging.ApplicationValue!
+mk8.email.Contracts.Messaging.MailMessageProjectedItem.Value.init -> void
+mk8.email.Contracts.Messaging.MailMessageProjectionOptions
+mk8.email.Contracts.Messaging.MailMessageProjectionOptions.<Clone>$() -> mk8.email.Contracts.Messaging.MailMessageProjectionOptions!
+mk8.email.Contracts.Messaging.MailMessageProjectionOptions.BodyProperties.get -> System.Collections.Generic.IReadOnlyList<string!>!
+mk8.email.Contracts.Messaging.MailMessageProjectionOptions.BodyProperties.init -> void
+mk8.email.Contracts.Messaging.MailMessageProjectionOptions.Deconstruct(out System.Collections.Generic.IReadOnlyList<string!>! Properties, out System.Collections.Generic.IReadOnlyList<string!>! BodyProperties, out bool FetchTextBodyValues, out bool FetchHtmlBodyValues, out bool FetchAllBodyValues, out int MaxBodyValueBytes) -> void
+mk8.email.Contracts.Messaging.MailMessageProjectionOptions.Equals(mk8.email.Contracts.Messaging.MailMessageProjectionOptions? other) -> bool
+mk8.email.Contracts.Messaging.MailMessageProjectionOptions.FetchAllBodyValues.get -> bool
+mk8.email.Contracts.Messaging.MailMessageProjectionOptions.FetchAllBodyValues.init -> void
+mk8.email.Contracts.Messaging.MailMessageProjectionOptions.FetchHtmlBodyValues.get -> bool
+mk8.email.Contracts.Messaging.MailMessageProjectionOptions.FetchHtmlBodyValues.init -> void
+mk8.email.Contracts.Messaging.MailMessageProjectionOptions.FetchTextBodyValues.get -> bool
+mk8.email.Contracts.Messaging.MailMessageProjectionOptions.FetchTextBodyValues.init -> void
+mk8.email.Contracts.Messaging.MailMessageProjectionOptions.MailMessageProjectionOptions(System.Collections.Generic.IReadOnlyList<string!>! Properties, System.Collections.Generic.IReadOnlyList<string!>! BodyProperties, bool FetchTextBodyValues, bool FetchHtmlBodyValues, bool FetchAllBodyValues, int MaxBodyValueBytes) -> void
+mk8.email.Contracts.Messaging.MailMessageProjectionOptions.MaxBodyValueBytes.get -> int
+mk8.email.Contracts.Messaging.MailMessageProjectionOptions.MaxBodyValueBytes.init -> void
+mk8.email.Contracts.Messaging.MailMessageProjectionOptions.Properties.get -> System.Collections.Generic.IReadOnlyList<string!>!
+mk8.email.Contracts.Messaging.MailMessageProjectionOptions.Properties.init -> void
 mk8.email.Contracts.Messaging.MailMessageQueryChangesCommand
 mk8.email.Contracts.Messaging.MailMessageQueryChangesCommand.<Clone>$() -> mk8.email.Contracts.Messaging.MailMessageQueryChangesCommand!
 mk8.email.Contracts.Messaging.MailMessageQueryChangesCommand.AccountId.get -> System.Guid
@@ -1717,6 +1781,32 @@ mk8.email.Contracts.Messaging.MailMessageQueryStatus.Authorized = 2 -> mk8.email
 mk8.email.Contracts.Messaging.MailMessageQueryStatus.CannotCalculateChanges = 4 -> mk8.email.Contracts.Messaging.MailMessageQueryStatus
 mk8.email.Contracts.Messaging.MailMessageQueryStatus.Ok = 0 -> mk8.email.Contracts.Messaging.MailMessageQueryStatus
 mk8.email.Contracts.Messaging.MailMessageQueryStatus.TooManyChanges = 5 -> mk8.email.Contracts.Messaging.MailMessageQueryStatus
+mk8.email.Contracts.Messaging.MailMessageReadCommand
+mk8.email.Contracts.Messaging.MailMessageReadCommand.<Clone>$() -> mk8.email.Contracts.Messaging.MailMessageReadCommand!
+mk8.email.Contracts.Messaging.MailMessageReadCommand.AccountId.get -> System.Guid
+mk8.email.Contracts.Messaging.MailMessageReadCommand.AccountId.init -> void
+mk8.email.Contracts.Messaging.MailMessageReadCommand.Deconstruct(out System.Guid AccountId, out System.Collections.Generic.IReadOnlyList<System.Guid>? MessageIds, out mk8.email.Contracts.Messaging.MailMessageProjectionOptions! Projection) -> void
+mk8.email.Contracts.Messaging.MailMessageReadCommand.Equals(mk8.email.Contracts.Messaging.MailMessageReadCommand? other) -> bool
+mk8.email.Contracts.Messaging.MailMessageReadCommand.MailMessageReadCommand(System.Guid AccountId, System.Collections.Generic.IReadOnlyList<System.Guid>? MessageIds, mk8.email.Contracts.Messaging.MailMessageProjectionOptions! Projection) -> void
+mk8.email.Contracts.Messaging.MailMessageReadCommand.MessageIds.get -> System.Collections.Generic.IReadOnlyList<System.Guid>?
+mk8.email.Contracts.Messaging.MailMessageReadCommand.MessageIds.init -> void
+mk8.email.Contracts.Messaging.MailMessageReadCommand.Projection.get -> mk8.email.Contracts.Messaging.MailMessageProjectionOptions!
+mk8.email.Contracts.Messaging.MailMessageReadCommand.Projection.init -> void
+mk8.email.Contracts.Messaging.MailMessageReadResult
+mk8.email.Contracts.Messaging.MailMessageReadResult.<Clone>$() -> mk8.email.Contracts.Messaging.MailMessageReadResult!
+mk8.email.Contracts.Messaging.MailMessageReadResult.Deconstruct(out mk8.email.Contracts.Messaging.MailMessageReadStatus Status, out string? State, out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailMessageProjectedItem!>! Messages) -> void
+mk8.email.Contracts.Messaging.MailMessageReadResult.Equals(mk8.email.Contracts.Messaging.MailMessageReadResult? other) -> bool
+mk8.email.Contracts.Messaging.MailMessageReadResult.MailMessageReadResult(mk8.email.Contracts.Messaging.MailMessageReadStatus Status, string? State, System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailMessageProjectedItem!>! Messages) -> void
+mk8.email.Contracts.Messaging.MailMessageReadResult.Messages.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailMessageProjectedItem!>!
+mk8.email.Contracts.Messaging.MailMessageReadResult.Messages.init -> void
+mk8.email.Contracts.Messaging.MailMessageReadResult.State.get -> string?
+mk8.email.Contracts.Messaging.MailMessageReadResult.State.init -> void
+mk8.email.Contracts.Messaging.MailMessageReadResult.Status.get -> mk8.email.Contracts.Messaging.MailMessageReadStatus
+mk8.email.Contracts.Messaging.MailMessageReadResult.Status.init -> void
+mk8.email.Contracts.Messaging.MailMessageReadStatus
+mk8.email.Contracts.Messaging.MailMessageReadStatus.AccountNotFound = 1 -> mk8.email.Contracts.Messaging.MailMessageReadStatus
+mk8.email.Contracts.Messaging.MailMessageReadStatus.Ok = 0 -> mk8.email.Contracts.Messaging.MailMessageReadStatus
+mk8.email.Contracts.Messaging.MailMessageReadStatus.RequestTooLarge = 2 -> mk8.email.Contracts.Messaging.MailMessageReadStatus
 mk8.email.Contracts.Messaging.MailMessageSort
 mk8.email.Contracts.Messaging.MailMessageSort.<Clone>$() -> mk8.email.Contracts.Messaging.MailMessageSort!
 mk8.email.Contracts.Messaging.MailMessageSort.Collation.get -> mk8.email.Contracts.Messaging.MailStringCollation
@@ -2653,6 +2743,21 @@ override mk8.email.Contracts.Messaging.MailMessageFilterTerm.ToString() -> strin
 override mk8.email.Contracts.Messaging.MailMessageIndexedId.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.MailMessageIndexedId.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.MailMessageIndexedId.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailMessageParseCommand.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailMessageParseCommand.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailMessageParseCommand.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailMessageParseItem.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailMessageParseItem.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailMessageParseItem.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailMessageParseResult.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailMessageParseResult.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailMessageParseResult.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailMessageProjectedItem.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailMessageProjectedItem.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailMessageProjectedItem.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailMessageProjectionOptions.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailMessageProjectionOptions.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailMessageProjectionOptions.ToString() -> string!
 override mk8.email.Contracts.Messaging.MailMessageQueryChangesCommand.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.MailMessageQueryChangesCommand.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.MailMessageQueryChangesCommand.ToString() -> string!
@@ -2668,6 +2773,12 @@ override mk8.email.Contracts.Messaging.MailMessageQueryCriteria.ToString() -> st
 override mk8.email.Contracts.Messaging.MailMessageQueryResult.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.MailMessageQueryResult.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.MailMessageQueryResult.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailMessageReadCommand.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailMessageReadCommand.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailMessageReadCommand.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailMessageReadResult.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailMessageReadResult.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailMessageReadResult.ToString() -> string!
 override mk8.email.Contracts.Messaging.MailMessageSort.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.MailMessageSort.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.MailMessageSort.ToString() -> string!
@@ -3151,6 +3262,16 @@ static mk8.email.Contracts.Messaging.MailMessageFilterTerm.operator !=(mk8.email
 static mk8.email.Contracts.Messaging.MailMessageFilterTerm.operator ==(mk8.email.Contracts.Messaging.MailMessageFilterTerm? left, mk8.email.Contracts.Messaging.MailMessageFilterTerm? right) -> bool
 static mk8.email.Contracts.Messaging.MailMessageIndexedId.operator !=(mk8.email.Contracts.Messaging.MailMessageIndexedId? left, mk8.email.Contracts.Messaging.MailMessageIndexedId? right) -> bool
 static mk8.email.Contracts.Messaging.MailMessageIndexedId.operator ==(mk8.email.Contracts.Messaging.MailMessageIndexedId? left, mk8.email.Contracts.Messaging.MailMessageIndexedId? right) -> bool
+static mk8.email.Contracts.Messaging.MailMessageParseCommand.operator !=(mk8.email.Contracts.Messaging.MailMessageParseCommand? left, mk8.email.Contracts.Messaging.MailMessageParseCommand? right) -> bool
+static mk8.email.Contracts.Messaging.MailMessageParseCommand.operator ==(mk8.email.Contracts.Messaging.MailMessageParseCommand? left, mk8.email.Contracts.Messaging.MailMessageParseCommand? right) -> bool
+static mk8.email.Contracts.Messaging.MailMessageParseItem.operator !=(mk8.email.Contracts.Messaging.MailMessageParseItem? left, mk8.email.Contracts.Messaging.MailMessageParseItem? right) -> bool
+static mk8.email.Contracts.Messaging.MailMessageParseItem.operator ==(mk8.email.Contracts.Messaging.MailMessageParseItem? left, mk8.email.Contracts.Messaging.MailMessageParseItem? right) -> bool
+static mk8.email.Contracts.Messaging.MailMessageParseResult.operator !=(mk8.email.Contracts.Messaging.MailMessageParseResult? left, mk8.email.Contracts.Messaging.MailMessageParseResult? right) -> bool
+static mk8.email.Contracts.Messaging.MailMessageParseResult.operator ==(mk8.email.Contracts.Messaging.MailMessageParseResult? left, mk8.email.Contracts.Messaging.MailMessageParseResult? right) -> bool
+static mk8.email.Contracts.Messaging.MailMessageProjectedItem.operator !=(mk8.email.Contracts.Messaging.MailMessageProjectedItem? left, mk8.email.Contracts.Messaging.MailMessageProjectedItem? right) -> bool
+static mk8.email.Contracts.Messaging.MailMessageProjectedItem.operator ==(mk8.email.Contracts.Messaging.MailMessageProjectedItem? left, mk8.email.Contracts.Messaging.MailMessageProjectedItem? right) -> bool
+static mk8.email.Contracts.Messaging.MailMessageProjectionOptions.operator !=(mk8.email.Contracts.Messaging.MailMessageProjectionOptions? left, mk8.email.Contracts.Messaging.MailMessageProjectionOptions? right) -> bool
+static mk8.email.Contracts.Messaging.MailMessageProjectionOptions.operator ==(mk8.email.Contracts.Messaging.MailMessageProjectionOptions? left, mk8.email.Contracts.Messaging.MailMessageProjectionOptions? right) -> bool
 static mk8.email.Contracts.Messaging.MailMessageQueryChangesCommand.operator !=(mk8.email.Contracts.Messaging.MailMessageQueryChangesCommand? left, mk8.email.Contracts.Messaging.MailMessageQueryChangesCommand? right) -> bool
 static mk8.email.Contracts.Messaging.MailMessageQueryChangesCommand.operator ==(mk8.email.Contracts.Messaging.MailMessageQueryChangesCommand? left, mk8.email.Contracts.Messaging.MailMessageQueryChangesCommand? right) -> bool
 static mk8.email.Contracts.Messaging.MailMessageQueryChangesResult.operator !=(mk8.email.Contracts.Messaging.MailMessageQueryChangesResult? left, mk8.email.Contracts.Messaging.MailMessageQueryChangesResult? right) -> bool
@@ -3161,6 +3282,10 @@ static mk8.email.Contracts.Messaging.MailMessageQueryCriteria.operator !=(mk8.em
 static mk8.email.Contracts.Messaging.MailMessageQueryCriteria.operator ==(mk8.email.Contracts.Messaging.MailMessageQueryCriteria? left, mk8.email.Contracts.Messaging.MailMessageQueryCriteria? right) -> bool
 static mk8.email.Contracts.Messaging.MailMessageQueryResult.operator !=(mk8.email.Contracts.Messaging.MailMessageQueryResult? left, mk8.email.Contracts.Messaging.MailMessageQueryResult? right) -> bool
 static mk8.email.Contracts.Messaging.MailMessageQueryResult.operator ==(mk8.email.Contracts.Messaging.MailMessageQueryResult? left, mk8.email.Contracts.Messaging.MailMessageQueryResult? right) -> bool
+static mk8.email.Contracts.Messaging.MailMessageReadCommand.operator !=(mk8.email.Contracts.Messaging.MailMessageReadCommand? left, mk8.email.Contracts.Messaging.MailMessageReadCommand? right) -> bool
+static mk8.email.Contracts.Messaging.MailMessageReadCommand.operator ==(mk8.email.Contracts.Messaging.MailMessageReadCommand? left, mk8.email.Contracts.Messaging.MailMessageReadCommand? right) -> bool
+static mk8.email.Contracts.Messaging.MailMessageReadResult.operator !=(mk8.email.Contracts.Messaging.MailMessageReadResult? left, mk8.email.Contracts.Messaging.MailMessageReadResult? right) -> bool
+static mk8.email.Contracts.Messaging.MailMessageReadResult.operator ==(mk8.email.Contracts.Messaging.MailMessageReadResult? left, mk8.email.Contracts.Messaging.MailMessageReadResult? right) -> bool
 static mk8.email.Contracts.Messaging.MailMessageSort.operator !=(mk8.email.Contracts.Messaging.MailMessageSort? left, mk8.email.Contracts.Messaging.MailMessageSort? right) -> bool
 static mk8.email.Contracts.Messaging.MailMessageSort.operator ==(mk8.email.Contracts.Messaging.MailMessageSort? left, mk8.email.Contracts.Messaging.MailMessageSort? right) -> bool
 static mk8.email.Contracts.Messaging.MailOperationApplicationRequest.operator !=(mk8.email.Contracts.Messaging.MailOperationApplicationRequest? left, mk8.email.Contracts.Messaging.MailOperationApplicationRequest? right) -> bool

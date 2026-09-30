@@ -3,7 +3,10 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using mk8.email.Application.Interfaces;
+using mk8.email.Application.Services;
+using mk8.email.Configuration;
 using mk8.email.Contracts.Messaging;
 using mk8.email.Gateway.Protocols.Jmap;
 using mk8.email.Infrastructure.Data;
@@ -134,7 +137,7 @@ public sealed class JmapFeatureBoundaryTests
         await using var fixture = await JmapFixture.CreateAsync();
         using var scope = fixture.Services.CreateScope();
         var methods = scope.ServiceProvider.GetServices<IJmapMethod>().ToArray();
-        Assert.HasCount(4, methods);
+        Assert.HasCount(2, methods);
         Assert.IsNotNull(scope.ServiceProvider.GetRequiredService<IMailFolderReader>());
         Assert.IsNotNull(scope.ServiceProvider.GetRequiredService<IMailFolderMutationService>());
         Assert.IsNotNull(scope.ServiceProvider.GetRequiredService<IMailChangesReader>());
@@ -152,6 +155,7 @@ public sealed class JmapFeatureBoundaryTests
         Assert.IsNotNull(scope.ServiceProvider.GetRequiredService<IMailSubmissionQueryService>());
         Assert.IsNotNull(scope.ServiceProvider.GetRequiredService<IMailFolderQueryService>());
         Assert.IsNotNull(scope.ServiceProvider.GetRequiredService<IMailMessageQueryService>());
+        Assert.IsNotNull(scope.ServiceProvider.GetRequiredService<IMailMessageProjectionService>());
         Assert.IsNotNull(scope.ServiceProvider.GetRequiredService<IMailSearchSnippetService>());
         Assert.IsNotNull(scope.ServiceProvider.GetRequiredService<IMailContactCopyService>());
         Assert.IsNotNull(scope.ServiceProvider.GetRequiredService<IMailContactQueryService>());
@@ -164,6 +168,21 @@ public sealed class JmapFeatureBoundaryTests
             methods.Select(method => method.Feature)
                 .Concat([MailFeature.AutomaticReplies, MailFeature.Basic, MailFeature.Contacts])
                 .Distinct().ToArray());
+    }
+
+    [TestMethod]
+    public async Task TypedMailAndSubmissionCapabilitiesDoNotDependOnLegacyHandlers()
+    {
+        await using var fixture = await JmapFixture.CreateAsync();
+        using var scope = fixture.Services.CreateScope();
+        var services = scope.ServiceProvider;
+        var processor = new JmapRequestProcessor([],
+            services.GetRequiredService<JmapAccountProfileService>(),
+            services.GetRequiredService<EmailDbContext>(),
+            services.GetRequiredService<EnvironmentConfig>(),
+            services.GetRequiredService<LargeObjectTransactionEffects>(),
+            NullLogger<JmapRequestProcessor>.Instance);
+        processor.ValidatePlan(new([MailFeature.Basic, MailFeature.Messages, MailFeature.Submission], 0));
     }
 
     [TestMethod]

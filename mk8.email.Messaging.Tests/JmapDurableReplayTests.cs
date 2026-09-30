@@ -6,6 +6,7 @@ using Azure.Storage.Blobs.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using mk8.email.Application.Interfaces;
 using mk8.email.Application.Services;
@@ -1151,6 +1152,52 @@ public sealed class JmapDurableReplayTests
     }
 
     [TestMethod]
+    public async Task TypedFolderMutationReplaysCreationAndAtomicNameSwapInPostgres()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var batch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Messages],
+        [
+            new(MailOperationKind.MutateFolders, new JsonObject
+            {
+                ["accountId"] = JmapId.Account(rig.InboxId),
+                ["create"] = new JsonObject
+                {
+                    ["alpha"] = new JsonObject { ["name"] = "Alpha", ["role"] = "flagged" },
+                    ["beta"] = new JsonObject { ["name"] = "Beta", ["role"] = "important" },
+                },
+            }, "create"),
+            new(MailOperationKind.MutateFolders, new JsonObject
+            {
+                ["accountId"] = JmapId.Account(rig.InboxId),
+                ["update"] = new JsonObject
+                {
+                    ["#alpha"] = new JsonObject { ["name"] = "Beta", ["role"] = "important" },
+                    ["#beta"] = new JsonObject { ["name"] = "Alpha", ["role"] = "flagged" },
+                },
+            }, "swap"),
+        ]);
+        var operation = Guid.CreateVersion7();
+        var first = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual(MailOperationKind.MutateFolders, first.Invocations[0].Operation);
+        Assert.AreEqual(MailOperationKind.MutateFolders, first.Invocations[1].Operation,
+            first.Invocations[1].Arguments.ToJsonString());
+        Assert.IsNull(first.Invocations[0].Arguments["notCreated"]);
+        Assert.IsNull(first.Invocations[1].Arguments["notUpdated"]);
+        var alphaId = first.Invocations[0].Arguments["created"]!["alpha"]!["id"]!.GetValue<string>();
+        var betaId = first.Invocations[0].Arguments["created"]!["beta"]!["id"]!.GetValue<string>();
+        Assert.IsTrue(JmapId.TryParseMailbox(alphaId, out var alpha));
+        Assert.IsTrue(JmapId.TryParseMailbox(betaId, out var beta));
+        var replay = await rig.InvokeAsync(batch, operation);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
+        await using var verification = rig.Context();
+        Assert.AreEqual("Beta", (await verification.Folders.SingleAsync(folder => folder.Id == alpha)).Name);
+        Assert.AreEqual("Alpha", (await verification.Folders.SingleAsync(folder => folder.Id == beta)).Name);
+        Assert.AreEqual(1, await verification.Folders.CountAsync(folder => folder.InboxId == rig.InboxId && folder.Name == "Alpha"));
+        Assert.AreEqual(1, await verification.Folders.CountAsync(folder => folder.InboxId == rig.InboxId && folder.Name == "Beta"));
+        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync());
+    }
+
+    [TestMethod]
     public async Task TypedFolderQueryReplaysCommittedFilteredOrderAcrossWorkerRetries()
     {
         await using var rig = await Rig.CreateAsync();
@@ -1738,7 +1785,8 @@ public sealed class JmapDurableReplayTests
                 Jmap = new JmapConfig { EnableJmap = true },
                 Smtp = new SmtpConfig { Hostname = "email.example.test" }
             };
-            var services = new ServiceCollection().AddLogging().AddSingleton(environment).AddSingleton<ILargeObjectStore>(objects)
+            var services = new ServiceCollection().AddLogging(builder => builder.AddConsole().SetMinimumLevel(LogLevel.Error))
+                .AddSingleton(environment).AddSingleton<ILargeObjectStore>(objects)
                 .AddSingleton<IStoredContentProtector>(new MessagingStoredContentProtector(protector))
                 .AddSingleton<IDurablePresentationEffectSink>(sink).AddSingleton<IMailAuthenticator>(new Authenticator(user));
             services.AddDbContext<EmailDbContext>(builder =>

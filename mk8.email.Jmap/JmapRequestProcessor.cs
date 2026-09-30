@@ -1197,12 +1197,17 @@ public sealed class JmapRequestProcessor
                 || mutation.Creates.Count + mutation.Updates.Count + mutation.Destroys.Count
                     > _environment.Jmap.MaxObjectsInSet
                 || mutation.Creates.Any(item => item is null || item.CreationId is null
-                    || !JmapId.IsValidId(item.CreationId) || item.Values is null
-                    || ApplicationValueCodec.Decode(item.Values) is not JsonObject)
+                    || !JmapId.IsValidId(item.CreationId)
+                    || (item.Values is null) == (item.Failure is null)
+                    || item.Values is { Name: null } || !ValidFolderInputFailure(item.Failure))
                 || mutation.Creates.Select(item => item.CreationId).Distinct(StringComparer.Ordinal).Count()
                     != mutation.Creates.Count
                 || mutation.Updates.Any(item => item is null || !ValidFolderReference(item.RequestedId, context)
-                    || item.Patch is null || ApplicationValueCodec.Decode(item.Patch) is not JsonObject)
+                    || item.Patch is null || item.Patch.Expectations is null
+                    || (item.Patch.Fields & ~(MailFolderFields.Name | MailFolderFields.Parent | MailFolderFields.Role
+                        | MailFolderFields.SortOrder | MailFolderFields.Subscription)) != MailFolderFields.None
+                    || item.Patch.Expectations.Any(expected => expected is null || !Enum.IsDefined(expected.Field))
+                    || item.Patch.Values is { Name: null } || !ValidFolderInputFailure(item.Patch.Failure))
                 || mutation.Updates.Select(item => item.RequestedId).Distinct(StringComparer.Ordinal).Count()
                     != mutation.Updates.Count
                 || mutation.Destroys.Any(item => item is null || !ValidFolderReference(item.RequestedId, context))
@@ -1220,6 +1225,9 @@ public sealed class JmapRequestProcessor
     private static bool ValidFolderReference(string? value, JmapInvocationContext context) =>
         value is not null && (JmapId.IsValidId(value)
             || context.TryGetReferenceKey(value, out var key) && JmapId.IsValidId(key));
+
+    private static bool ValidFolderInputFailure(MailFolderMutationFailure? failure) =>
+        failure is null || failure.Error is MailFolderMutationError.InvalidProperties or MailFolderMutationError.InvalidPatch;
 
     private static MailChangesCommand ParseMailChangesCommand(JsonObject arguments)
     {

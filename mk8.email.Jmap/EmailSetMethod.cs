@@ -2,9 +2,9 @@ using mk8.email.Contracts.Messaging;
 using System.Text.Json.Nodes;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
+using mk8.email.Application.Interfaces;
 using mk8.email.Application.Services;
 using mk8.email.Infrastructure.Data;
-using mk8.email.Configuration;
 using mk8.email.Infrastructure.Models;
 
 namespace mk8.email.Jmap;
@@ -15,186 +15,205 @@ internal sealed class EmailSetMethod(
     JmapStateService states,
     JmapEmailBuilder builder,
     JmapEmailStore store,
-    MailboxMessageContentService content,
-    EnvironmentConfig environment) : IJmapMethod
+    MailboxMessageContentService content) : IMailMessageMutationService
 {
     private static readonly HashSet<string> MutableProperties = new HashSet<string>(
         ["mailboxIds", "keywords"],
         StringComparer.Ordinal);
 
-    public MailOperationKind Operation => MailOperationKind.MutateMessages;
-    public MailFeature Feature => MailFeature.Messages;
-
-    public async Task<JmapMethodResponse> InvokeAsync(
+    public async Task<MailMessageMutationResult> MutateAsync(
+        MailMessageMutationCommand command,
+        AuthenticatedMailUser user,
         JmapInvocationContext context,
-        JsonObject arguments,
         CancellationToken cancellationToken)
     {
-        if (!JmapMethodHelpers.HasOnlyProperties(
-                arguments,
-                "accountId",
-                "ifInState",
-                "create",
-                "update",
-                "destroy")
-            || !JmapMethodHelpers.TryGetRequiredString(arguments, "accountId", out var accountId)
-            || !JmapMethodHelpers.TryGetOptionalString(arguments, "ifInState", out var ifInState)
-            || !TryGetObjectMap(arguments, "create", out var create)
-            || !TryGetObjectMap(arguments, "update", out var update)
-            || !TryGetDestroy(arguments, out var destroy)
-            || !JmapMethodHelpers.AreValidCreationIds(create?.Keys)
-            || !JmapMethodHelpers.AreValidIdReferences(update?.Keys, context)
-            || !JmapMethodHelpers.AreValidIdReferences(destroy, context))
-        {
-            return JmapMethodResponse.Error("invalidArguments");
-        }
-        var operationCount = (create?.Count ?? 0) + (update?.Count ?? 0) + (destroy?.Count ?? 0);
-        if (operationCount > environment.Jmap.MaxObjectsInSet)
-            return JmapMethodResponse.Error("requestTooLarge");
-
-        var account = await accounts.GetAccountAsync(context.User, accountId, cancellationToken).ConfigureAwait(false);
+        var account = await accounts.GetAccountByInboxIdAsync(user, command.AccountId, cancellationToken)
+            .ConfigureAwait(false);
         if (account is null)
-            return JmapMethodResponse.Error("accountNotFound");
+            return new(MailMessageMutationStatus.AccountNotFound, null, null, [], [], []);
         var oldState = await states.GetStateAsync(
             account.InboxId,
             JmapConstants.EmailDataType,
             cancellationToken).ConfigureAwait(false);
-        if (ifInState is not null && !string.Equals(ifInState, oldState, StringComparison.Ordinal))
-            return JmapMethodResponse.Error("stateMismatch");
+        if (command.IfInState is not null
+            && !string.Equals(command.IfInState, oldState, StringComparison.Ordinal))
+            return new(MailMessageMutationStatus.StateMismatch, null, null, [], [], []);
 
-        var created = new JsonObject();
-        var updated = new JsonObject();
-        var destroyed = new JsonArray();
-        var notCreated = new JsonObject();
-        var notUpdated = new JsonObject();
-        var notDestroyed = new JsonObject();
-
-        if (create is not null)
-        {
-            foreach (var item in create)
-            {
-                if (!JmapId.IsValidId(item.Key))
-                {
-                    notCreated[item.Key] = JmapMethodHelpers.SetError("invalidProperties");
-                    continue;
-                }
-                var mailbox = await ResolveMailboxAsync(
-                    account.InboxId,
-                    item.Value["mailboxIds"],
-                    context,
-                    cancellationToken).ConfigureAwait(false);
-                if (mailbox.Error is not null)
-                {
-                    notCreated[item.Key] = mailbox.Error;
-                    continue;
-                }
-                string? keywordError = null;
-                if (item.Value.ContainsKey("keywords") && item.Value["keywords"] is null
-                    || !JmapEmailStore.TryParseKeywords(
-                        item.Value["keywords"],
-                        out var keywords,
-                        out keywordError))
-                {
-                    notCreated[item.Key] = JmapMethodHelpers.SetError(keywordError ?? "invalidProperties");
-                    continue;
-                }
-                if (item.Value.ContainsKey("receivedAt") && item.Value["receivedAt"] is null
-                    || !JmapEmailStore.TryParseReceivedAt(item.Value["receivedAt"], out var receivedAt))
-                {
-                    notCreated[item.Key] = JmapMethodHelpers.SetError(
-                        "invalidProperties",
-                        properties: ["receivedAt"]);
-                    continue;
-                }
-
-                var built = await builder.BuildAsync(
-                    account.InboxId,
-                    account.Address,
-                    context,
-                    item.Value,
-                    cancellationToken).ConfigureAwait(false);
-                if (built.Error is not null)
-                {
-                    notCreated[item.Key] = built.Error;
-                    continue;
-                }
-                using var message = built.Value!.Message;
-                var stored = await store.StoreAsync(
-                    account,
-                    mailbox.Folder!,
-                    built.Value.RawBytes,
-                    keywords,
-                    receivedAt,
-                    cancellationToken).ConfigureAwait(false);
-                if (stored.Error is not null)
-                {
-                    notCreated[item.Key] = stored.Error;
-                    continue;
-                }
-                var email = stored.Email!;
-                var id = JmapId.Email(email.Id);
-                context.CreatedIds[item.Key] = id;
-                created[item.Key] = CreatedEmail(email);
-            }
-        }
-
-        if (update is not null)
-        {
-            foreach (var item in update)
-            {
-                var resolvedId = context.ResolveId(item.Key);
-                if (!JmapId.TryParseEmail(resolvedId, out var emailId))
-                {
-                    notUpdated[item.Key] = JmapMethodHelpers.SetError("notFound");
-                    continue;
-                }
-                var error = await UpdateAsync(
-                    account.InboxId,
-                    emailId,
-                    context,
-                    item.Value,
-                    cancellationToken).ConfigureAwait(false);
-                if (error is null)
-                    updated[resolvedId!] = null;
-                else
-                    notUpdated[item.Key] = error;
-            }
-        }
-
-        if (destroy is not null)
-        {
-            foreach (var requestedId in destroy.Distinct(StringComparer.Ordinal))
-            {
-                var resolvedId = context.ResolveId(requestedId);
-                if (!JmapId.TryParseEmail(resolvedId, out var emailId))
-                {
-                    notDestroyed[requestedId] = JmapMethodHelpers.SetError("notFound");
-                    continue;
-                }
-                var error = await DestroyAsync(account.InboxId, emailId, cancellationToken).ConfigureAwait(false);
-                if (error is null)
-                    destroyed.Add(resolvedId);
-                else
-                    notDestroyed[requestedId] = error;
-            }
-        }
-
+        var created = new List<MailMessageCreateOutcome>(command.Creates.Count);
+        var updated = new List<MailMessageUpdateOutcome>(command.Updates.Count);
+        var destroyed = new List<MailMessageDestroyOutcome>(command.Destroys.Count);
+        foreach (var item in command.Creates)
+            created.Add(await CreateAsync(account, item, context, cancellationToken).ConfigureAwait(false));
+        foreach (var item in command.Updates)
+            updated.Add(await UpdateOneAsync(account.InboxId, item, context, cancellationToken)
+                .ConfigureAwait(false));
+        foreach (var item in command.Destroys)
+            destroyed.Add(await DestroyOneAsync(account.InboxId, item, context, cancellationToken)
+                .ConfigureAwait(false));
         var newState = await states.GetStateAsync(
             account.InboxId,
             JmapConstants.EmailDataType,
             cancellationToken).ConfigureAwait(false);
-        return new JmapMethodResponse(Operation, new JsonObject
+        return new(MailMessageMutationStatus.Ok, oldState, newState, created, updated, destroyed);
+    }
+
+    private async Task<MailMessageCreateOutcome> CreateAsync(
+        JmapAccount account, MailMessageCreate item, JmapInvocationContext context,
+        CancellationToken cancellationToken)
+    {
+        if (ApplicationValueCodec.Decode(item.Draft) is not JsonObject value)
+            throw new InvalidOperationException("The message draft is not an object.");
+        if (!JmapId.IsValidId(item.CreationId))
+            return new(item.CreationId, null, Failure("invalidProperties"));
+        var mailbox = await ResolveMailboxAsync(account.InboxId, value["mailboxIds"], context,
+            cancellationToken).ConfigureAwait(false);
+        if (mailbox.Error is not null)
+            return new(item.CreationId, null, Failure(mailbox.Error));
+        string? keywordError = null;
+        if (value.ContainsKey("keywords") && value["keywords"] is null
+            || !JmapEmailStore.TryParseKeywords(value["keywords"], out var keywords, out keywordError))
+            return new(item.CreationId, null, Failure(keywordError ?? "invalidProperties"));
+        if (value.ContainsKey("receivedAt") && value["receivedAt"] is null
+            || !JmapEmailStore.TryParseReceivedAt(value["receivedAt"], out var receivedAt))
+            return new(item.CreationId, null, Failure("invalidProperties", properties: ["receivedAt"]));
+        var built = await builder.BuildAsync(account.InboxId, account.Address, context, value,
+            cancellationToken).ConfigureAwait(false);
+        if (built.Error is not null)
+            return new(item.CreationId, null, Failure(built.Error));
+        using var message = built.Value!.Message;
+        var stored = await store.StoreAsync(account, mailbox.Folder!, built.Value.RawBytes,
+            keywords, receivedAt, cancellationToken).ConfigureAwait(false);
+        if (stored.Error is not null)
+            return new(item.CreationId, null, Failure(stored.Error));
+        var email = stored.Email!;
+        context.CreatedIds[item.CreationId] = JmapId.Email(email.Id);
+        return new(item.CreationId, new(email.Id,
+            email.ThreadObjectId ?? email.Id.ToString("N"), email.SizeBytes), null);
+    }
+
+    private async Task<MailMessageUpdateOutcome> UpdateOneAsync(
+        Guid accountId, MailMessageUpdate item, JmapInvocationContext context,
+        CancellationToken cancellationToken)
+    {
+        var resolvedId = context.ResolveId(item.RequestedId);
+        if (!JmapId.TryParseEmail(resolvedId, out var emailId))
+            return new(item.RequestedId, null, Failure("notFound"));
+        if (ApplicationValueCodec.Decode(item.Patch) is not JsonObject patch)
+            throw new InvalidOperationException("The message patch is not an object.");
+        var error = await UpdateAsync(accountId, emailId, context, patch, cancellationToken)
+            .ConfigureAwait(false);
+        return error is null
+            ? new(item.RequestedId, emailId, null)
+            : new(item.RequestedId, null, Failure(error));
+    }
+
+    private async Task<MailMessageDestroyOutcome> DestroyOneAsync(
+        Guid accountId, MailMessageDestroy item, JmapInvocationContext context,
+        CancellationToken cancellationToken)
+    {
+        var resolvedId = context.ResolveId(item.RequestedId);
+        if (!JmapId.TryParseEmail(resolvedId, out var emailId))
+            return new(item.RequestedId, null, Failure("notFound"));
+        var error = await DestroyAsync(accountId, emailId, cancellationToken).ConfigureAwait(false);
+        return error is null
+            ? new(item.RequestedId, emailId, null)
+            : new(item.RequestedId, null, Failure(error));
+    }
+
+    private static MailMessageMutationFailure Failure(
+        string type, string? description = null, IReadOnlyList<string>? properties = null) =>
+        new(ParseError(type), description, properties, null);
+
+    private static MailMessageMutationFailure Failure(JsonObject error)
+    {
+        var type = error["type"]?.GetValue<string>()
+            ?? throw new InvalidOperationException("The message operation returned an error without a kind.");
+        return new(ParseError(type), error["description"]?.GetValue<string>(),
+            ReadStrings(error["properties"]), ReadStrings(error["notFound"]));
+    }
+
+    private static MailMessageMutationError ParseError(string type) => type switch
+    {
+        "invalidProperties" => MailMessageMutationError.InvalidProperties,
+        "invalidPatch" => MailMessageMutationError.InvalidPatch,
+        "notFound" => MailMessageMutationError.NotFound,
+        "tooManyMailboxes" => MailMessageMutationError.TooManyMailboxes,
+        "blobNotFound" => MailMessageMutationError.BlobNotFound,
+        "tooManyKeywords" => MailMessageMutationError.TooManyKeywords,
+        "invalidEmail" => MailMessageMutationError.InvalidEmail,
+        "tooLarge" => MailMessageMutationError.TooLarge,
+        "overQuota" => MailMessageMutationError.OverQuota,
+        _ => throw new InvalidOperationException("The message operation returned an unknown error kind."),
+    };
+
+    private static IReadOnlyList<string>? ReadStrings(JsonNode? value) =>
+        value is JsonArray array ? array.Select(item => item!.GetValue<string>()).ToArray() : null;
+
+    // Temporary adapter for EmailSubmission/set's implicit Email/set result.
+    internal async Task<JmapMethodResponse> InvokeImplicitAsync(
+        JmapInvocationContext context, JsonObject arguments, CancellationToken cancellationToken)
+    {
+        if (arguments["accountId"] is not JsonValue accountNode
+            || !accountNode.TryGetValue<string>(out var accountId)
+            || !JmapId.TryParseAccount(accountId, out var accountGuid))
+            throw new InvalidOperationException("The implicit message account is invalid.");
+        var updateMap = arguments["update"] as JsonObject;
+        var destroyIds = arguments["destroy"] as JsonArray;
+        var command = new MailMessageMutationCommand(accountGuid, null, [],
+            updateMap?.Select(item => new MailMessageUpdate(item.Key,
+                ApplicationValueCodec.Encode(item.Value))).ToArray() ?? [],
+            destroyIds?.Select(item => new MailMessageDestroy(item!.GetValue<string>())).ToArray() ?? []);
+        var result = await MutateAsync(command, context.User, context, cancellationToken).ConfigureAwait(false);
+        if (result.Status != MailMessageMutationStatus.Ok)
+            return JmapMethodResponse.Error(result.Status == MailMessageMutationStatus.AccountNotFound
+                ? "accountNotFound" : "stateMismatch");
+        var updated = new JsonObject();
+        var notUpdated = new JsonObject();
+        foreach (var item in result.Updated)
+        {
+            if (item.Failure is null) updated[JmapId.Email(item.MessageId!.Value)] = null;
+            else notUpdated[item.RequestedId] = RenderLegacyFailure(item.Failure);
+        }
+        var destroyed = new JsonArray();
+        var notDestroyed = new JsonObject();
+        foreach (var item in result.Destroyed)
+        {
+            if (item.Failure is null) destroyed.Add(JmapId.Email(item.MessageId!.Value));
+            else notDestroyed[item.RequestedId] = RenderLegacyFailure(item.Failure);
+        }
+        return new JmapMethodResponse(MailOperationKind.MutateMessages, new JsonObject
         {
             ["accountId"] = accountId,
-            ["oldState"] = oldState,
-            ["newState"] = newState,
-            ["created"] = created.Count == 0 ? null : created,
+            ["oldState"] = result.OldState,
+            ["newState"] = result.NewState,
+            ["created"] = null,
             ["updated"] = updated.Count == 0 ? null : updated,
             ["destroyed"] = destroyed.Count == 0 ? null : destroyed,
-            ["notCreated"] = notCreated.Count == 0 ? null : notCreated,
+            ["notCreated"] = null,
             ["notUpdated"] = notUpdated.Count == 0 ? null : notUpdated,
             ["notDestroyed"] = notDestroyed.Count == 0 ? null : notDestroyed,
         });
+    }
+
+    private static JsonObject RenderLegacyFailure(MailMessageMutationFailure failure)
+    {
+        var type = failure.Error switch
+        {
+            MailMessageMutationError.InvalidProperties => "invalidProperties",
+            MailMessageMutationError.InvalidPatch => "invalidPatch",
+            MailMessageMutationError.NotFound => "notFound",
+            MailMessageMutationError.TooManyMailboxes => "tooManyMailboxes",
+            MailMessageMutationError.BlobNotFound => "blobNotFound",
+            MailMessageMutationError.TooManyKeywords => "tooManyKeywords",
+            MailMessageMutationError.InvalidEmail => "invalidEmail",
+            MailMessageMutationError.TooLarge => "tooLarge",
+            MailMessageMutationError.OverQuota => "overQuota",
+            _ => throw new InvalidOperationException("The implicit message mutation returned an invalid failure."),
+        };
+        var error = JmapMethodHelpers.SetError(type, failure.Description, failure.Properties);
+        if (failure.MissingBlobIds is not null)
+            error["notFound"] = JmapMethodHelpers.ToJsonArray(failure.MissingBlobIds);
+        return error;
     }
 
     private async Task<JsonObject?> UpdateAsync(
@@ -565,59 +584,6 @@ internal sealed class EmailSetMethod(
         return folder is null
             ? MailboxResult.Failed("invalidProperties")
             : new MailboxResult(folder, null);
-    }
-
-    private static JsonObject CreatedEmail(EmailDB email) => new()
-    {
-        ["id"] = JmapId.Email(email.Id),
-        ["blobId"] = JmapId.RawBlob(email.Id),
-        ["threadId"] = JmapId.Thread(email.ThreadObjectId ?? email.Id.ToString("N")),
-        ["size"] = email.SizeBytes,
-    };
-
-    private static bool TryGetObjectMap(
-        JsonObject arguments,
-        string name,
-        out IReadOnlyDictionary<string, JsonObject>? values)
-    {
-        values = null;
-        if (!arguments.TryGetPropertyValue(name, out var node) || node is null)
-            return true;
-        if (node is not JsonObject map)
-            return false;
-        var result = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
-        foreach (var item in map)
-        {
-            if (item.Value is not JsonObject value)
-                return false;
-            result[item.Key] = value;
-        }
-        values = result;
-        return true;
-    }
-
-    private static bool TryGetDestroy(
-        JsonObject arguments,
-        out IReadOnlyList<string>? values)
-    {
-        values = null;
-        if (!arguments.TryGetPropertyValue("destroy", out var node) || node is null)
-            return true;
-        if (node is not JsonArray array)
-            return false;
-        var result = new List<string>(array.Count);
-        foreach (var item in array)
-        {
-            if (item is not JsonValue value
-                || !value.TryGetValue<string>(out var id)
-                || id is null)
-            {
-                return false;
-            }
-            result.Add(id);
-        }
-        values = result;
-        return true;
     }
 
     private sealed record MailboxResult(FolderDB? Folder, JsonObject? Error)

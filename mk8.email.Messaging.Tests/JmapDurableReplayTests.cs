@@ -32,6 +32,80 @@ namespace mk8.email.Messaging.Tests;
 public sealed class JmapDurableReplayTests
 {
     [TestMethod]
+    public async Task TypedEmailSetCreateUpdateDestroyReplaysWithoutDuplicatingAzureContent()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var folderId = Guid.CreateVersion7();
+        await using (var setup = rig.Context())
+        {
+            setup.Folders.Add(new FolderDB
+            {
+                Id = folderId,
+                InboxId = rig.InboxId,
+                Name = "Drafts",
+                UidValidity = 1,
+                NextUid = 1,
+            });
+            await setup.SaveChangesAsync();
+        }
+        var create = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Messages],
+            [new JmapApplicationCall(MailOperationKind.MutateMessages, new JsonObject
+            {
+                ["accountId"] = JmapId.Account(rig.InboxId),
+                ["create"] = new JsonObject
+                {
+                    ["draft"] = new JsonObject
+                    {
+                        ["mailboxIds"] = new JsonObject { [JmapId.Mailbox(folderId)] = true },
+                        ["subject"] = "Durable draft",
+                        ["bodyValues"] = new JsonObject { ["1"] = new JsonObject { ["value"] = "Stored in Blob" } },
+                        ["textBody"] = new JsonArray(new JsonObject { ["partId"] = "1", ["type"] = "text/plain" }),
+                    },
+                },
+            }, "create")], new Dictionary<string, string>());
+        var createOperation = Guid.CreateVersion7();
+        var firstCreate = await rig.InvokeAsync(create, createOperation);
+        var emailId = firstCreate.Invocations[0].Arguments["created"]!["draft"]!["id"]!.GetValue<string>();
+        Assert.AreEqual(emailId, firstCreate.CreatedIds!["draft"]);
+        var replayCreate = await rig.InvokeAsync(create, createOperation);
+        Assert.AreEqual(JsonSerializer.Serialize(firstCreate.Invocations), JsonSerializer.Serialize(replayCreate.Invocations));
+        await using (var database = rig.Context())
+        {
+            var stored = await database.Emails.SingleAsync();
+            Assert.AreEqual(LargeObjectProviders.AzureBlob, stored.RawMessageObjectProvider);
+            Assert.IsNull(stored.RawMessage);
+            Assert.IsFalse(stored.IsRead);
+        }
+        var update = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Messages],
+            [new JmapApplicationCall(MailOperationKind.MutateMessages, new JsonObject
+            {
+                ["accountId"] = JmapId.Account(rig.InboxId),
+                ["update"] = new JsonObject { [emailId] = new JsonObject { ["keywords/$seen"] = true } },
+            }, "update")]);
+        var updateOperation = Guid.CreateVersion7();
+        var firstUpdate = await rig.InvokeAsync(update, updateOperation);
+        Assert.IsNull(firstUpdate.Invocations[0].Arguments["updated"]![emailId]);
+        var replayUpdate = await rig.InvokeAsync(update, updateOperation);
+        Assert.AreEqual(JsonSerializer.Serialize(firstUpdate.Invocations), JsonSerializer.Serialize(replayUpdate.Invocations));
+        await using (var database = rig.Context())
+            Assert.IsTrue((await database.Emails.SingleAsync()).IsRead);
+        var destroy = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Messages],
+            [new JmapApplicationCall(MailOperationKind.MutateMessages, new JsonObject
+            {
+                ["accountId"] = JmapId.Account(rig.InboxId),
+                ["destroy"] = new JsonArray(emailId),
+            }, "destroy")]);
+        var destroyOperation = Guid.CreateVersion7();
+        var firstDestroy = await rig.InvokeAsync(destroy, destroyOperation);
+        Assert.AreEqual(emailId, firstDestroy.Invocations[0].Arguments["destroyed"]![0]!.GetValue<string>());
+        var replayDestroy = await rig.InvokeAsync(destroy, destroyOperation);
+        Assert.AreEqual(JsonSerializer.Serialize(firstDestroy.Invocations), JsonSerializer.Serialize(replayDestroy.Invocations));
+        await using var verification = rig.Context();
+        Assert.AreEqual(0, await verification.Emails.CountAsync());
+        Assert.AreEqual(3, await verification.ApplicationOperationReceipts.CountAsync());
+    }
+
+    [TestMethod]
     public async Task TypedBlobCopyUsesAzureStorageAndReplaysCommittedResultWithoutDuplicatingBlob()
     {
         await using var rig = await Rig.CreateAsync();

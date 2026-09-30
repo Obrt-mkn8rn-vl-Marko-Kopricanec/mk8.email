@@ -98,7 +98,7 @@ internal static class GatewayThreadGetCodec
         });
     }
 
-    private static string FormatThreadId(string storedThreadId)
+    internal static string FormatThreadId(string storedThreadId)
     {
         if (storedThreadId.Length is > 0 and < 255
             && storedThreadId.All(character => char.IsAsciiLetterOrDigit(character)

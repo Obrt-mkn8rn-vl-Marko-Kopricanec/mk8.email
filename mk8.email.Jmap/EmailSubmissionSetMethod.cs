@@ -264,7 +264,8 @@ internal sealed class EmailSubmissionSetMethod(
             onSuccessDestroy);
         if (implicitArguments is null)
             return new JmapMethodResponse(Operation, response);
-        var implicitResponse = await emailSet.InvokeAsync(context, implicitArguments, cancellationToken).ConfigureAwait(false);
+        var implicitResponse = await emailSet.InvokeImplicitAsync(context, implicitArguments, cancellationToken)
+            .ConfigureAwait(false);
         return new JmapMethodResponse(Operation, response, [implicitResponse]);
     }
 

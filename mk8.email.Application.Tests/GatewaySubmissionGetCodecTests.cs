@@ -32,7 +32,7 @@ public sealed class GatewaySubmissionGetCodecTests
 
         var snapshot = new MailSubmissionSnapshot(Guid.Parse("22222222-2222-2222-2222-222222222222"),
             "I11111111111111111111111111111111", "E11111111111111111111111111111111",
-            "Tthread", "{\"mailFrom\":{\"email\":\"sender@example.test\",\"parameters\":{\"SIZE\":\"12\"}},\"rcptTo\":[]}",
+            "Tthread", new(new("sender@example.test", new Dictionary<string, string> { ["SIZE"] = "12" }), []),
             "sender@example.test", ["recipient@example.test"],
             new DateTime(2026, 9, 29, 12, 34, 56, DateTimeKind.Utc), "final",
             [new MailSubmissionDeliverySnapshot("recipient@example.test",
@@ -56,7 +56,7 @@ public sealed class GatewaySubmissionGetCodecTests
     }
 
     [TestMethod]
-    public void GatewayFallsBackForDamagedEnvelopeCacheAndSkipsUnselectedDelivery()
+    public void GatewayUsesIndexedEnvelopeWhenOptionalSnapshotIsAbsentAndSkipsUnselectedDelivery()
     {
         var arguments = new JsonObject
         {
@@ -68,7 +68,7 @@ public sealed class GatewaySubmissionGetCodecTests
         var result = GatewaySubmissionGetCodec.Render(call,
             new MailSubmissionReadResult(MailSubmissionReadStatus.Ok, "s1",
                 [new MailSubmissionSnapshot(Guid.Parse("22222222-2222-2222-2222-222222222222"),
-                    "I1", "E1", "T1", "{bad", "sender@example.test",
+                    "I1", "E1", "T1", null, "sender@example.test",
                     ["recipient@example.test"], DateTime.UtcNow, "final", null)]));
         var submission = result.Data["list"]![0]!.AsObject();
         Assert.IsFalse(submission.ContainsKey("deliveryStatus"));

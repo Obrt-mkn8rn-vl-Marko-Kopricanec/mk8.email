@@ -1,5 +1,178 @@
 #nullable enable
+mk8.email.Contracts.Messaging.MailSubmissionCreate.Deconstruct(out string! CreationId, out mk8.email.Contracts.Messaging.MailSubmissionDraft! Draft) -> void
+mk8.email.Contracts.Messaging.MailSubmissionUpdate.Deconstruct(out string! RequestedId, out mk8.email.Contracts.Messaging.MailSubmissionPatch! Patch) -> void
+mk8.email.Contracts.Messaging.MailSubmissionMutationFailure.Deconstruct(out mk8.email.Contracts.Messaging.MailSubmissionMutationError Error, out string? Description, out System.Collections.Generic.IReadOnlyList<string!>? Properties, out System.Collections.Generic.IReadOnlyList<string!>? InvalidRecipients, out long? MaxSize, out int? MaxRecipients, out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailSubmissionEmailIssue>? EmailIssues) -> void
+mk8.email.Contracts.Messaging.MailSubmissionSnapshot.Deconstruct(out System.Guid Id, out string! IdentityId, out string! EmailId, out string! ThreadId, out mk8.email.Contracts.Messaging.MailSubmissionEnvelope? Envelope, out string! EnvelopeSender, out System.Collections.Generic.IReadOnlyList<string!>! EnvelopeRecipients, out System.DateTime SendAt, out string! UndoStatus, out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailSubmissionDeliverySnapshot!>? DeliveryRecipients) -> void
+const mk8.email.Contracts.Messaging.ApplicationOperations.MailOperationExecute = "mail.operation.execute.v34" -> string!
+const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v41" -> string!
+mk8.email.Contracts.Messaging.MailEnvelopeAddress
+mk8.email.Contracts.Messaging.MailEnvelopeAddress.<Clone>$() -> mk8.email.Contracts.Messaging.MailEnvelopeAddress!
+mk8.email.Contracts.Messaging.MailEnvelopeAddress.Address.get -> string!
+mk8.email.Contracts.Messaging.MailEnvelopeAddress.Address.init -> void
+mk8.email.Contracts.Messaging.MailEnvelopeAddress.Deconstruct(out string! Address, out System.Collections.Generic.IReadOnlyDictionary<string!, string!>? Parameters) -> void
+mk8.email.Contracts.Messaging.MailEnvelopeAddress.Equals(mk8.email.Contracts.Messaging.MailEnvelopeAddress? other) -> bool
+mk8.email.Contracts.Messaging.MailEnvelopeAddress.MailEnvelopeAddress(string! Address, System.Collections.Generic.IReadOnlyDictionary<string!, string!>? Parameters) -> void
+mk8.email.Contracts.Messaging.MailEnvelopeAddress.Parameters.get -> System.Collections.Generic.IReadOnlyDictionary<string!, string!>?
+mk8.email.Contracts.Messaging.MailEnvelopeAddress.Parameters.init -> void
+mk8.email.Contracts.Messaging.MailEnvelopeAddressDraft
+mk8.email.Contracts.Messaging.MailEnvelopeAddressDraft.<Clone>$() -> mk8.email.Contracts.Messaging.MailEnvelopeAddressDraft!
+mk8.email.Contracts.Messaging.MailEnvelopeAddressDraft.Address.get -> string!
+mk8.email.Contracts.Messaging.MailEnvelopeAddressDraft.Address.init -> void
+mk8.email.Contracts.Messaging.MailEnvelopeAddressDraft.Deconstruct(out string! Address, out System.Collections.Generic.IReadOnlyDictionary<string!, string!>? Parameters, out mk8.email.Contracts.Messaging.MailEnvelopeAddressIssue Issue) -> void
+mk8.email.Contracts.Messaging.MailEnvelopeAddressDraft.Equals(mk8.email.Contracts.Messaging.MailEnvelopeAddressDraft? other) -> bool
+mk8.email.Contracts.Messaging.MailEnvelopeAddressDraft.Issue.get -> mk8.email.Contracts.Messaging.MailEnvelopeAddressIssue
+mk8.email.Contracts.Messaging.MailEnvelopeAddressDraft.Issue.init -> void
+mk8.email.Contracts.Messaging.MailEnvelopeAddressDraft.MailEnvelopeAddressDraft(string! Address, System.Collections.Generic.IReadOnlyDictionary<string!, string!>? Parameters, mk8.email.Contracts.Messaging.MailEnvelopeAddressIssue Issue) -> void
+mk8.email.Contracts.Messaging.MailEnvelopeAddressDraft.Parameters.get -> System.Collections.Generic.IReadOnlyDictionary<string!, string!>?
+mk8.email.Contracts.Messaging.MailEnvelopeAddressDraft.Parameters.init -> void
+mk8.email.Contracts.Messaging.MailEnvelopeAddressIssue
+mk8.email.Contracts.Messaging.MailEnvelopeAddressIssue.InvalidAddress = 2 -> mk8.email.Contracts.Messaging.MailEnvelopeAddressIssue
+mk8.email.Contracts.Messaging.MailEnvelopeAddressIssue.InvalidParameters = 3 -> mk8.email.Contracts.Messaging.MailEnvelopeAddressIssue
+mk8.email.Contracts.Messaging.MailEnvelopeAddressIssue.InvalidShape = 1 -> mk8.email.Contracts.Messaging.MailEnvelopeAddressIssue
+mk8.email.Contracts.Messaging.MailEnvelopeAddressIssue.None = 0 -> mk8.email.Contracts.Messaging.MailEnvelopeAddressIssue
+mk8.email.Contracts.Messaging.MailSubmissionAssertion
+mk8.email.Contracts.Messaging.MailSubmissionAssertion.<Clone>$() -> mk8.email.Contracts.Messaging.MailSubmissionAssertion!
+mk8.email.Contracts.Messaging.MailSubmissionAssertion.Changes.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailMessageValueChange!>!
+mk8.email.Contracts.Messaging.MailSubmissionAssertion.Changes.init -> void
+mk8.email.Contracts.Messaging.MailSubmissionAssertion.Deconstruct(out string! Label, out mk8.email.Contracts.Messaging.MailSubmissionObservationField Field, out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailMessageValueChange!>! Changes) -> void
+mk8.email.Contracts.Messaging.MailSubmissionAssertion.Equals(mk8.email.Contracts.Messaging.MailSubmissionAssertion? other) -> bool
+mk8.email.Contracts.Messaging.MailSubmissionAssertion.Field.get -> mk8.email.Contracts.Messaging.MailSubmissionObservationField
+mk8.email.Contracts.Messaging.MailSubmissionAssertion.Field.init -> void
+mk8.email.Contracts.Messaging.MailSubmissionAssertion.Label.get -> string!
+mk8.email.Contracts.Messaging.MailSubmissionAssertion.Label.init -> void
+mk8.email.Contracts.Messaging.MailSubmissionAssertion.MailSubmissionAssertion(string! Label, mk8.email.Contracts.Messaging.MailSubmissionObservationField Field, System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailMessageValueChange!>! Changes) -> void
+mk8.email.Contracts.Messaging.MailSubmissionCreate.<Clone>$() -> mk8.email.Contracts.Messaging.MailSubmissionCreate!
+mk8.email.Contracts.Messaging.MailSubmissionCreate.Draft.get -> mk8.email.Contracts.Messaging.MailSubmissionDraft!
+mk8.email.Contracts.Messaging.MailSubmissionCreate.Equals(mk8.email.Contracts.Messaging.MailSubmissionCreate? other) -> bool
+mk8.email.Contracts.Messaging.MailSubmissionCreate.MailSubmissionCreate(string! CreationId, mk8.email.Contracts.Messaging.MailSubmissionDraft! Draft) -> void
+mk8.email.Contracts.Messaging.MailSubmissionDraft
+mk8.email.Contracts.Messaging.MailSubmissionDraft.<Clone>$() -> mk8.email.Contracts.Messaging.MailSubmissionDraft!
+mk8.email.Contracts.Messaging.MailSubmissionDraft.Deconstruct(out string? IdentityReference, out string? MessageReference, out bool InvalidFields, out mk8.email.Contracts.Messaging.MailSubmissionEnvelopeDraft? Envelope) -> void
+mk8.email.Contracts.Messaging.MailSubmissionDraft.Envelope.get -> mk8.email.Contracts.Messaging.MailSubmissionEnvelopeDraft?
+mk8.email.Contracts.Messaging.MailSubmissionDraft.Envelope.init -> void
+mk8.email.Contracts.Messaging.MailSubmissionDraft.Equals(mk8.email.Contracts.Messaging.MailSubmissionDraft? other) -> bool
+mk8.email.Contracts.Messaging.MailSubmissionDraft.IdentityReference.get -> string?
+mk8.email.Contracts.Messaging.MailSubmissionDraft.IdentityReference.init -> void
+mk8.email.Contracts.Messaging.MailSubmissionDraft.InvalidFields.get -> bool
+mk8.email.Contracts.Messaging.MailSubmissionDraft.InvalidFields.init -> void
+mk8.email.Contracts.Messaging.MailSubmissionDraft.MailSubmissionDraft(string? IdentityReference, string? MessageReference, bool InvalidFields, mk8.email.Contracts.Messaging.MailSubmissionEnvelopeDraft? Envelope) -> void
+mk8.email.Contracts.Messaging.MailSubmissionDraft.MessageReference.get -> string?
+mk8.email.Contracts.Messaging.MailSubmissionDraft.MessageReference.init -> void
+mk8.email.Contracts.Messaging.MailSubmissionEmailIssue
+mk8.email.Contracts.Messaging.MailSubmissionEmailIssue.Bcc = 8 -> mk8.email.Contracts.Messaging.MailSubmissionEmailIssue
+mk8.email.Contracts.Messaging.MailSubmissionEmailIssue.BodyTree = 1 -> mk8.email.Contracts.Messaging.MailSubmissionEmailIssue
+mk8.email.Contracts.Messaging.MailSubmissionEmailIssue.Cc = 7 -> mk8.email.Contracts.Messaging.MailSubmissionEmailIssue
+mk8.email.Contracts.Messaging.MailSubmissionEmailIssue.From = 3 -> mk8.email.Contracts.Messaging.MailSubmissionEmailIssue
+mk8.email.Contracts.Messaging.MailSubmissionEmailIssue.HeaderDate = 2 -> mk8.email.Contracts.Messaging.MailSubmissionEmailIssue
+mk8.email.Contracts.Messaging.MailSubmissionEmailIssue.InReplyTo = 10 -> mk8.email.Contracts.Messaging.MailSubmissionEmailIssue
+mk8.email.Contracts.Messaging.MailSubmissionEmailIssue.MessageId = 9 -> mk8.email.Contracts.Messaging.MailSubmissionEmailIssue
+mk8.email.Contracts.Messaging.MailSubmissionEmailIssue.RawHeaders = 0 -> mk8.email.Contracts.Messaging.MailSubmissionEmailIssue
+mk8.email.Contracts.Messaging.MailSubmissionEmailIssue.References = 11 -> mk8.email.Contracts.Messaging.MailSubmissionEmailIssue
+mk8.email.Contracts.Messaging.MailSubmissionEmailIssue.ReplyTo = 5 -> mk8.email.Contracts.Messaging.MailSubmissionEmailIssue
+mk8.email.Contracts.Messaging.MailSubmissionEmailIssue.ResentBcc = 18 -> mk8.email.Contracts.Messaging.MailSubmissionEmailIssue
+mk8.email.Contracts.Messaging.MailSubmissionEmailIssue.ResentCc = 17 -> mk8.email.Contracts.Messaging.MailSubmissionEmailIssue
+mk8.email.Contracts.Messaging.MailSubmissionEmailIssue.ResentDate = 13 -> mk8.email.Contracts.Messaging.MailSubmissionEmailIssue
+mk8.email.Contracts.Messaging.MailSubmissionEmailIssue.ResentFrom = 14 -> mk8.email.Contracts.Messaging.MailSubmissionEmailIssue
+mk8.email.Contracts.Messaging.MailSubmissionEmailIssue.ResentMessageId = 19 -> mk8.email.Contracts.Messaging.MailSubmissionEmailIssue
+mk8.email.Contracts.Messaging.MailSubmissionEmailIssue.ResentReplyTo = 20 -> mk8.email.Contracts.Messaging.MailSubmissionEmailIssue
+mk8.email.Contracts.Messaging.MailSubmissionEmailIssue.ResentSender = 15 -> mk8.email.Contracts.Messaging.MailSubmissionEmailIssue
+mk8.email.Contracts.Messaging.MailSubmissionEmailIssue.ResentTo = 16 -> mk8.email.Contracts.Messaging.MailSubmissionEmailIssue
+mk8.email.Contracts.Messaging.MailSubmissionEmailIssue.Sender = 4 -> mk8.email.Contracts.Messaging.MailSubmissionEmailIssue
+mk8.email.Contracts.Messaging.MailSubmissionEmailIssue.Subject = 12 -> mk8.email.Contracts.Messaging.MailSubmissionEmailIssue
+mk8.email.Contracts.Messaging.MailSubmissionEmailIssue.To = 6 -> mk8.email.Contracts.Messaging.MailSubmissionEmailIssue
+mk8.email.Contracts.Messaging.MailSubmissionEnvelope
+mk8.email.Contracts.Messaging.MailSubmissionEnvelope.<Clone>$() -> mk8.email.Contracts.Messaging.MailSubmissionEnvelope!
+mk8.email.Contracts.Messaging.MailSubmissionEnvelope.Deconstruct(out mk8.email.Contracts.Messaging.MailEnvelopeAddress! Sender, out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailEnvelopeAddress!>! Recipients) -> void
+mk8.email.Contracts.Messaging.MailSubmissionEnvelope.Equals(mk8.email.Contracts.Messaging.MailSubmissionEnvelope? other) -> bool
+mk8.email.Contracts.Messaging.MailSubmissionEnvelope.MailSubmissionEnvelope(mk8.email.Contracts.Messaging.MailEnvelopeAddress! Sender, System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailEnvelopeAddress!>! Recipients) -> void
+mk8.email.Contracts.Messaging.MailSubmissionEnvelope.Recipients.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailEnvelopeAddress!>!
+mk8.email.Contracts.Messaging.MailSubmissionEnvelope.Recipients.init -> void
+mk8.email.Contracts.Messaging.MailSubmissionEnvelope.Sender.get -> mk8.email.Contracts.Messaging.MailEnvelopeAddress!
+mk8.email.Contracts.Messaging.MailSubmissionEnvelope.Sender.init -> void
+mk8.email.Contracts.Messaging.MailSubmissionEnvelopeDraft
+mk8.email.Contracts.Messaging.MailSubmissionEnvelopeDraft.<Clone>$() -> mk8.email.Contracts.Messaging.MailSubmissionEnvelopeDraft!
+mk8.email.Contracts.Messaging.MailSubmissionEnvelopeDraft.Deconstruct(out mk8.email.Contracts.Messaging.MailEnvelopeAddressDraft! Sender, out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailEnvelopeAddressDraft!>! Recipients, out bool InvalidShape) -> void
+mk8.email.Contracts.Messaging.MailSubmissionEnvelopeDraft.Equals(mk8.email.Contracts.Messaging.MailSubmissionEnvelopeDraft? other) -> bool
+mk8.email.Contracts.Messaging.MailSubmissionEnvelopeDraft.InvalidShape.get -> bool
+mk8.email.Contracts.Messaging.MailSubmissionEnvelopeDraft.InvalidShape.init -> void
+mk8.email.Contracts.Messaging.MailSubmissionEnvelopeDraft.MailSubmissionEnvelopeDraft(mk8.email.Contracts.Messaging.MailEnvelopeAddressDraft! Sender, System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailEnvelopeAddressDraft!>! Recipients, bool InvalidShape) -> void
+mk8.email.Contracts.Messaging.MailSubmissionEnvelopeDraft.Recipients.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailEnvelopeAddressDraft!>!
+mk8.email.Contracts.Messaging.MailSubmissionEnvelopeDraft.Recipients.init -> void
+mk8.email.Contracts.Messaging.MailSubmissionEnvelopeDraft.Sender.get -> mk8.email.Contracts.Messaging.MailEnvelopeAddressDraft!
+mk8.email.Contracts.Messaging.MailSubmissionEnvelopeDraft.Sender.init -> void
+mk8.email.Contracts.Messaging.MailSubmissionMutationFailure.<Clone>$() -> mk8.email.Contracts.Messaging.MailSubmissionMutationFailure!
+mk8.email.Contracts.Messaging.MailSubmissionMutationFailure.EmailIssues.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailSubmissionEmailIssue>?
+mk8.email.Contracts.Messaging.MailSubmissionMutationFailure.EmailIssues.init -> void
+mk8.email.Contracts.Messaging.MailSubmissionMutationFailure.Equals(mk8.email.Contracts.Messaging.MailSubmissionMutationFailure? other) -> bool
+mk8.email.Contracts.Messaging.MailSubmissionMutationFailure.MailSubmissionMutationFailure(mk8.email.Contracts.Messaging.MailSubmissionMutationError Error, string? Description, System.Collections.Generic.IReadOnlyList<string!>? Properties, System.Collections.Generic.IReadOnlyList<string!>? InvalidRecipients, long? MaxSize, int? MaxRecipients, System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailSubmissionEmailIssue>? EmailIssues = null) -> void
+mk8.email.Contracts.Messaging.MailSubmissionObservationField
+mk8.email.Contracts.Messaging.MailSubmissionObservationField.Delivery = 8 -> mk8.email.Contracts.Messaging.MailSubmissionObservationField
+mk8.email.Contracts.Messaging.MailSubmissionObservationField.DeliveryReceipts = 9 -> mk8.email.Contracts.Messaging.MailSubmissionObservationField
+mk8.email.Contracts.Messaging.MailSubmissionObservationField.Envelope = 5 -> mk8.email.Contracts.Messaging.MailSubmissionObservationField
+mk8.email.Contracts.Messaging.MailSubmissionObservationField.Id = 1 -> mk8.email.Contracts.Messaging.MailSubmissionObservationField
+mk8.email.Contracts.Messaging.MailSubmissionObservationField.IdentityReference = 2 -> mk8.email.Contracts.Messaging.MailSubmissionObservationField
+mk8.email.Contracts.Messaging.MailSubmissionObservationField.MessageReference = 3 -> mk8.email.Contracts.Messaging.MailSubmissionObservationField
+mk8.email.Contracts.Messaging.MailSubmissionObservationField.ReadReceipts = 10 -> mk8.email.Contracts.Messaging.MailSubmissionObservationField
+mk8.email.Contracts.Messaging.MailSubmissionObservationField.SendTime = 6 -> mk8.email.Contracts.Messaging.MailSubmissionObservationField
+mk8.email.Contracts.Messaging.MailSubmissionObservationField.ThreadReference = 4 -> mk8.email.Contracts.Messaging.MailSubmissionObservationField
+mk8.email.Contracts.Messaging.MailSubmissionObservationField.UndoState = 7 -> mk8.email.Contracts.Messaging.MailSubmissionObservationField
+mk8.email.Contracts.Messaging.MailSubmissionObservationField.Unknown = 0 -> mk8.email.Contracts.Messaging.MailSubmissionObservationField
+mk8.email.Contracts.Messaging.MailSubmissionPatch
+mk8.email.Contracts.Messaging.MailSubmissionPatch.<Clone>$() -> mk8.email.Contracts.Messaging.MailSubmissionPatch!
+mk8.email.Contracts.Messaging.MailSubmissionPatch.Assertions.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailSubmissionAssertion!>!
+mk8.email.Contracts.Messaging.MailSubmissionPatch.Assertions.init -> void
+mk8.email.Contracts.Messaging.MailSubmissionPatch.Deconstruct(out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailSubmissionAssertion!>! Assertions, out mk8.email.Contracts.Messaging.MailSubmissionMutationFailure? Failure) -> void
+mk8.email.Contracts.Messaging.MailSubmissionPatch.Equals(mk8.email.Contracts.Messaging.MailSubmissionPatch? other) -> bool
+mk8.email.Contracts.Messaging.MailSubmissionPatch.Failure.get -> mk8.email.Contracts.Messaging.MailSubmissionMutationFailure?
+mk8.email.Contracts.Messaging.MailSubmissionPatch.Failure.init -> void
+mk8.email.Contracts.Messaging.MailSubmissionPatch.MailSubmissionPatch(System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailSubmissionAssertion!>! Assertions, mk8.email.Contracts.Messaging.MailSubmissionMutationFailure? Failure) -> void
+mk8.email.Contracts.Messaging.MailSubmissionSnapshot.<Clone>$() -> mk8.email.Contracts.Messaging.MailSubmissionSnapshot!
+mk8.email.Contracts.Messaging.MailSubmissionSnapshot.Envelope.get -> mk8.email.Contracts.Messaging.MailSubmissionEnvelope?
+mk8.email.Contracts.Messaging.MailSubmissionSnapshot.Envelope.init -> void
+mk8.email.Contracts.Messaging.MailSubmissionSnapshot.Equals(mk8.email.Contracts.Messaging.MailSubmissionSnapshot? other) -> bool
+mk8.email.Contracts.Messaging.MailSubmissionSnapshot.MailSubmissionSnapshot(System.Guid Id, string! IdentityId, string! EmailId, string! ThreadId, mk8.email.Contracts.Messaging.MailSubmissionEnvelope? Envelope, string! EnvelopeSender, System.Collections.Generic.IReadOnlyList<string!>! EnvelopeRecipients, System.DateTime SendAt, string! UndoStatus, System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailSubmissionDeliverySnapshot!>? DeliveryRecipients) -> void
+mk8.email.Contracts.Messaging.MailSubmissionUpdate.<Clone>$() -> mk8.email.Contracts.Messaging.MailSubmissionUpdate!
+mk8.email.Contracts.Messaging.MailSubmissionUpdate.Equals(mk8.email.Contracts.Messaging.MailSubmissionUpdate? other) -> bool
+mk8.email.Contracts.Messaging.MailSubmissionUpdate.MailSubmissionUpdate(string! RequestedId, mk8.email.Contracts.Messaging.MailSubmissionPatch! Patch) -> void
+mk8.email.Contracts.Messaging.MailSubmissionUpdate.Patch.get -> mk8.email.Contracts.Messaging.MailSubmissionPatch!
+override mk8.email.Contracts.Messaging.MailEnvelopeAddress.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailEnvelopeAddress.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailEnvelopeAddress.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailEnvelopeAddressDraft.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailEnvelopeAddressDraft.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailEnvelopeAddressDraft.ToString() -> string!
 override mk8.email.Contracts.Messaging.MailMessageUpdate.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailSubmissionAssertion.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailSubmissionAssertion.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailSubmissionAssertion.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailSubmissionCreate.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailSubmissionCreate.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailSubmissionCreate.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailSubmissionDraft.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailSubmissionDraft.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailSubmissionDraft.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailSubmissionEnvelope.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailSubmissionEnvelope.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailSubmissionEnvelope.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailSubmissionEnvelopeDraft.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailSubmissionEnvelopeDraft.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailSubmissionEnvelopeDraft.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailSubmissionMutationFailure.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailSubmissionMutationFailure.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailSubmissionMutationFailure.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailSubmissionPatch.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailSubmissionPatch.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailSubmissionPatch.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailSubmissionSnapshot.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailSubmissionSnapshot.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailSubmissionSnapshot.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailSubmissionUpdate.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailSubmissionUpdate.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailSubmissionUpdate.ToString() -> string!
+static mk8.email.Contracts.Messaging.MailEnvelopeAddress.operator !=(mk8.email.Contracts.Messaging.MailEnvelopeAddress? left, mk8.email.Contracts.Messaging.MailEnvelopeAddress? right) -> bool
+static mk8.email.Contracts.Messaging.MailEnvelopeAddress.operator ==(mk8.email.Contracts.Messaging.MailEnvelopeAddress? left, mk8.email.Contracts.Messaging.MailEnvelopeAddress? right) -> bool
+static mk8.email.Contracts.Messaging.MailEnvelopeAddressDraft.operator !=(mk8.email.Contracts.Messaging.MailEnvelopeAddressDraft? left, mk8.email.Contracts.Messaging.MailEnvelopeAddressDraft? right) -> bool
+static mk8.email.Contracts.Messaging.MailEnvelopeAddressDraft.operator ==(mk8.email.Contracts.Messaging.MailEnvelopeAddressDraft? left, mk8.email.Contracts.Messaging.MailEnvelopeAddressDraft? right) -> bool
 static mk8.email.Contracts.Messaging.MailMessageUpdate.operator !=(mk8.email.Contracts.Messaging.MailMessageUpdate? left, mk8.email.Contracts.Messaging.MailMessageUpdate? right) -> bool
 static mk8.email.Contracts.Messaging.MailMessageUpdate.operator ==(mk8.email.Contracts.Messaging.MailMessageUpdate? left, mk8.email.Contracts.Messaging.MailMessageUpdate? right) -> bool
 override mk8.email.Contracts.Messaging.MailMessageUpdate.GetHashCode() -> int
@@ -7,14 +180,18 @@ override mk8.email.Contracts.Messaging.MailMessageUpdate.Equals(object? obj) -> 
 mk8.email.Contracts.Messaging.MailMessageUpdate.Equals(mk8.email.Contracts.Messaging.MailMessageUpdate? other) -> bool
 mk8.email.Contracts.Messaging.MailMessageUpdate.<Clone>$() -> mk8.email.Contracts.Messaging.MailMessageUpdate!
 override mk8.email.Contracts.Messaging.MailSubmissionEmailUpdate.ToString() -> string!
+static mk8.email.Contracts.Messaging.MailSubmissionAssertion.operator !=(mk8.email.Contracts.Messaging.MailSubmissionAssertion? left, mk8.email.Contracts.Messaging.MailSubmissionAssertion? right) -> bool
+static mk8.email.Contracts.Messaging.MailSubmissionAssertion.operator ==(mk8.email.Contracts.Messaging.MailSubmissionAssertion? left, mk8.email.Contracts.Messaging.MailSubmissionAssertion? right) -> bool
+static mk8.email.Contracts.Messaging.MailSubmissionCreate.operator !=(mk8.email.Contracts.Messaging.MailSubmissionCreate? left, mk8.email.Contracts.Messaging.MailSubmissionCreate? right) -> bool
+static mk8.email.Contracts.Messaging.MailSubmissionCreate.operator ==(mk8.email.Contracts.Messaging.MailSubmissionCreate? left, mk8.email.Contracts.Messaging.MailSubmissionCreate? right) -> bool
+static mk8.email.Contracts.Messaging.MailSubmissionDraft.operator !=(mk8.email.Contracts.Messaging.MailSubmissionDraft? left, mk8.email.Contracts.Messaging.MailSubmissionDraft? right) -> bool
+static mk8.email.Contracts.Messaging.MailSubmissionDraft.operator ==(mk8.email.Contracts.Messaging.MailSubmissionDraft? left, mk8.email.Contracts.Messaging.MailSubmissionDraft? right) -> bool
 static mk8.email.Contracts.Messaging.MailSubmissionEmailUpdate.operator !=(mk8.email.Contracts.Messaging.MailSubmissionEmailUpdate? left, mk8.email.Contracts.Messaging.MailSubmissionEmailUpdate? right) -> bool
 static mk8.email.Contracts.Messaging.MailSubmissionEmailUpdate.operator ==(mk8.email.Contracts.Messaging.MailSubmissionEmailUpdate? left, mk8.email.Contracts.Messaging.MailSubmissionEmailUpdate? right) -> bool
 override mk8.email.Contracts.Messaging.MailSubmissionEmailUpdate.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.MailSubmissionEmailUpdate.Equals(object? obj) -> bool
 mk8.email.Contracts.Messaging.MailSubmissionEmailUpdate.Equals(mk8.email.Contracts.Messaging.MailSubmissionEmailUpdate? other) -> bool
 mk8.email.Contracts.Messaging.MailSubmissionEmailUpdate.<Clone>$() -> mk8.email.Contracts.Messaging.MailSubmissionEmailUpdate!
-const mk8.email.Contracts.Messaging.ApplicationOperations.MailOperationExecute = "mail.operation.execute.v33" -> string!
-const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v40" -> string!
 mk8.email.Contracts.Messaging.MailHeaderObservation
 mk8.email.Contracts.Messaging.MailHeaderObservation.<Clone>$() -> mk8.email.Contracts.Messaging.MailHeaderObservation!
 mk8.email.Contracts.Messaging.MailHeaderObservation.All.get -> bool
@@ -2660,14 +2837,9 @@ mk8.email.Contracts.Messaging.MailStringCollation.AsciiCasemap = 2 -> mk8.email.
 mk8.email.Contracts.Messaging.MailStringCollation.AsciiNumeric = 1 -> mk8.email.Contracts.Messaging.MailStringCollation
 mk8.email.Contracts.Messaging.MailStringCollation.UnicodeCasemap = 0 -> mk8.email.Contracts.Messaging.MailStringCollation
 mk8.email.Contracts.Messaging.MailSubmissionCreate
-mk8.email.Contracts.Messaging.MailSubmissionCreate.<Clone>$() -> mk8.email.Contracts.Messaging.MailSubmissionCreate!
 mk8.email.Contracts.Messaging.MailSubmissionCreate.CreationId.get -> string!
 mk8.email.Contracts.Messaging.MailSubmissionCreate.CreationId.init -> void
-mk8.email.Contracts.Messaging.MailSubmissionCreate.Deconstruct(out string! CreationId, out mk8.email.Contracts.Messaging.ApplicationValue! Draft) -> void
-mk8.email.Contracts.Messaging.MailSubmissionCreate.Draft.get -> mk8.email.Contracts.Messaging.ApplicationValue!
 mk8.email.Contracts.Messaging.MailSubmissionCreate.Draft.init -> void
-mk8.email.Contracts.Messaging.MailSubmissionCreate.Equals(mk8.email.Contracts.Messaging.MailSubmissionCreate? other) -> bool
-mk8.email.Contracts.Messaging.MailSubmissionCreate.MailSubmissionCreate(string! CreationId, mk8.email.Contracts.Messaging.ApplicationValue! Draft) -> void
 mk8.email.Contracts.Messaging.MailSubmissionCreateOutcome
 mk8.email.Contracts.Messaging.MailSubmissionCreateOutcome.<Clone>$() -> mk8.email.Contracts.Messaging.MailSubmissionCreateOutcome!
 mk8.email.Contracts.Messaging.MailSubmissionCreateOutcome.CreationId.get -> string!
@@ -2793,16 +2965,12 @@ mk8.email.Contracts.Messaging.MailSubmissionMutationError.NotFound = 3 -> mk8.em
 mk8.email.Contracts.Messaging.MailSubmissionMutationError.TooLarge = 11 -> mk8.email.Contracts.Messaging.MailSubmissionMutationError
 mk8.email.Contracts.Messaging.MailSubmissionMutationError.TooManyRecipients = 9 -> mk8.email.Contracts.Messaging.MailSubmissionMutationError
 mk8.email.Contracts.Messaging.MailSubmissionMutationFailure
-mk8.email.Contracts.Messaging.MailSubmissionMutationFailure.<Clone>$() -> mk8.email.Contracts.Messaging.MailSubmissionMutationFailure!
-mk8.email.Contracts.Messaging.MailSubmissionMutationFailure.Deconstruct(out mk8.email.Contracts.Messaging.MailSubmissionMutationError Error, out string? Description, out System.Collections.Generic.IReadOnlyList<string!>? Properties, out System.Collections.Generic.IReadOnlyList<string!>? InvalidRecipients, out long? MaxSize, out int? MaxRecipients) -> void
 mk8.email.Contracts.Messaging.MailSubmissionMutationFailure.Description.get -> string?
 mk8.email.Contracts.Messaging.MailSubmissionMutationFailure.Description.init -> void
-mk8.email.Contracts.Messaging.MailSubmissionMutationFailure.Equals(mk8.email.Contracts.Messaging.MailSubmissionMutationFailure? other) -> bool
 mk8.email.Contracts.Messaging.MailSubmissionMutationFailure.Error.get -> mk8.email.Contracts.Messaging.MailSubmissionMutationError
 mk8.email.Contracts.Messaging.MailSubmissionMutationFailure.Error.init -> void
 mk8.email.Contracts.Messaging.MailSubmissionMutationFailure.InvalidRecipients.get -> System.Collections.Generic.IReadOnlyList<string!>?
 mk8.email.Contracts.Messaging.MailSubmissionMutationFailure.InvalidRecipients.init -> void
-mk8.email.Contracts.Messaging.MailSubmissionMutationFailure.MailSubmissionMutationFailure(mk8.email.Contracts.Messaging.MailSubmissionMutationError Error, string? Description, System.Collections.Generic.IReadOnlyList<string!>? Properties, System.Collections.Generic.IReadOnlyList<string!>? InvalidRecipients, long? MaxSize, int? MaxRecipients) -> void
 mk8.email.Contracts.Messaging.MailSubmissionMutationFailure.MaxRecipients.get -> int?
 mk8.email.Contracts.Messaging.MailSubmissionMutationFailure.MaxRecipients.init -> void
 mk8.email.Contracts.Messaging.MailSubmissionMutationFailure.MaxSize.get -> long?
@@ -2943,24 +3111,18 @@ mk8.email.Contracts.Messaging.MailSubmissionReadStatus.AccountNotFound = 1 -> mk
 mk8.email.Contracts.Messaging.MailSubmissionReadStatus.Ok = 0 -> mk8.email.Contracts.Messaging.MailSubmissionReadStatus
 mk8.email.Contracts.Messaging.MailSubmissionReadStatus.RequestTooLarge = 2 -> mk8.email.Contracts.Messaging.MailSubmissionReadStatus
 mk8.email.Contracts.Messaging.MailSubmissionSnapshot
-mk8.email.Contracts.Messaging.MailSubmissionSnapshot.<Clone>$() -> mk8.email.Contracts.Messaging.MailSubmissionSnapshot!
-mk8.email.Contracts.Messaging.MailSubmissionSnapshot.Deconstruct(out System.Guid Id, out string! IdentityId, out string! EmailId, out string! ThreadId, out string? EnvelopeJson, out string! EnvelopeSender, out System.Collections.Generic.IReadOnlyList<string!>! EnvelopeRecipients, out System.DateTime SendAt, out string! UndoStatus, out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailSubmissionDeliverySnapshot!>? DeliveryRecipients) -> void
 mk8.email.Contracts.Messaging.MailSubmissionSnapshot.DeliveryRecipients.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailSubmissionDeliverySnapshot!>?
 mk8.email.Contracts.Messaging.MailSubmissionSnapshot.DeliveryRecipients.init -> void
 mk8.email.Contracts.Messaging.MailSubmissionSnapshot.EmailId.get -> string!
 mk8.email.Contracts.Messaging.MailSubmissionSnapshot.EmailId.init -> void
-mk8.email.Contracts.Messaging.MailSubmissionSnapshot.EnvelopeJson.get -> string?
-mk8.email.Contracts.Messaging.MailSubmissionSnapshot.EnvelopeJson.init -> void
 mk8.email.Contracts.Messaging.MailSubmissionSnapshot.EnvelopeRecipients.get -> System.Collections.Generic.IReadOnlyList<string!>!
 mk8.email.Contracts.Messaging.MailSubmissionSnapshot.EnvelopeRecipients.init -> void
 mk8.email.Contracts.Messaging.MailSubmissionSnapshot.EnvelopeSender.get -> string!
 mk8.email.Contracts.Messaging.MailSubmissionSnapshot.EnvelopeSender.init -> void
-mk8.email.Contracts.Messaging.MailSubmissionSnapshot.Equals(mk8.email.Contracts.Messaging.MailSubmissionSnapshot? other) -> bool
 mk8.email.Contracts.Messaging.MailSubmissionSnapshot.Id.get -> System.Guid
 mk8.email.Contracts.Messaging.MailSubmissionSnapshot.Id.init -> void
 mk8.email.Contracts.Messaging.MailSubmissionSnapshot.IdentityId.get -> string!
 mk8.email.Contracts.Messaging.MailSubmissionSnapshot.IdentityId.init -> void
-mk8.email.Contracts.Messaging.MailSubmissionSnapshot.MailSubmissionSnapshot(System.Guid Id, string! IdentityId, string! EmailId, string! ThreadId, string? EnvelopeJson, string! EnvelopeSender, System.Collections.Generic.IReadOnlyList<string!>! EnvelopeRecipients, System.DateTime SendAt, string! UndoStatus, System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailSubmissionDeliverySnapshot!>? DeliveryRecipients) -> void
 mk8.email.Contracts.Messaging.MailSubmissionSnapshot.SendAt.get -> System.DateTime
 mk8.email.Contracts.Messaging.MailSubmissionSnapshot.SendAt.init -> void
 mk8.email.Contracts.Messaging.MailSubmissionSnapshot.ThreadId.get -> string!
@@ -2983,11 +3145,6 @@ mk8.email.Contracts.Messaging.MailSubmissionSortField.EmailId = 1 -> mk8.email.C
 mk8.email.Contracts.Messaging.MailSubmissionSortField.SentAt = 0 -> mk8.email.Contracts.Messaging.MailSubmissionSortField
 mk8.email.Contracts.Messaging.MailSubmissionSortField.ThreadId = 2 -> mk8.email.Contracts.Messaging.MailSubmissionSortField
 mk8.email.Contracts.Messaging.MailSubmissionUpdate
-mk8.email.Contracts.Messaging.MailSubmissionUpdate.<Clone>$() -> mk8.email.Contracts.Messaging.MailSubmissionUpdate!
-mk8.email.Contracts.Messaging.MailSubmissionUpdate.Deconstruct(out string! RequestedId, out mk8.email.Contracts.Messaging.ApplicationValue! Patch) -> void
-mk8.email.Contracts.Messaging.MailSubmissionUpdate.Equals(mk8.email.Contracts.Messaging.MailSubmissionUpdate? other) -> bool
-mk8.email.Contracts.Messaging.MailSubmissionUpdate.MailSubmissionUpdate(string! RequestedId, mk8.email.Contracts.Messaging.ApplicationValue! Patch) -> void
-mk8.email.Contracts.Messaging.MailSubmissionUpdate.Patch.get -> mk8.email.Contracts.Messaging.ApplicationValue!
 mk8.email.Contracts.Messaging.MailSubmissionUpdate.Patch.init -> void
 mk8.email.Contracts.Messaging.MailSubmissionUpdate.RequestedId.get -> string!
 mk8.email.Contracts.Messaging.MailSubmissionUpdate.RequestedId.init -> void
@@ -3563,9 +3720,6 @@ override mk8.email.Contracts.Messaging.MailSearchSnippetSnapshot.ToString() -> s
 override mk8.email.Contracts.Messaging.MailStoredMessageSnapshot.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.MailStoredMessageSnapshot.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.MailStoredMessageSnapshot.ToString() -> string!
-override mk8.email.Contracts.Messaging.MailSubmissionCreate.Equals(object? obj) -> bool
-override mk8.email.Contracts.Messaging.MailSubmissionCreate.GetHashCode() -> int
-override mk8.email.Contracts.Messaging.MailSubmissionCreate.ToString() -> string!
 override mk8.email.Contracts.Messaging.MailSubmissionCreateOutcome.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.MailSubmissionCreateOutcome.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.MailSubmissionCreateOutcome.ToString() -> string!
@@ -3590,9 +3744,6 @@ override mk8.email.Contracts.Messaging.MailSubmissionIndexedId.ToString() -> str
 override mk8.email.Contracts.Messaging.MailSubmissionMutationCommand.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.MailSubmissionMutationCommand.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.MailSubmissionMutationCommand.ToString() -> string!
-override mk8.email.Contracts.Messaging.MailSubmissionMutationFailure.Equals(object? obj) -> bool
-override mk8.email.Contracts.Messaging.MailSubmissionMutationFailure.GetHashCode() -> int
-override mk8.email.Contracts.Messaging.MailSubmissionMutationFailure.ToString() -> string!
 override mk8.email.Contracts.Messaging.MailSubmissionMutationResult.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.MailSubmissionMutationResult.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.MailSubmissionMutationResult.ToString() -> string!
@@ -3617,15 +3768,9 @@ override mk8.email.Contracts.Messaging.MailSubmissionReadCommand.ToString() -> s
 override mk8.email.Contracts.Messaging.MailSubmissionReadResult.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.MailSubmissionReadResult.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.MailSubmissionReadResult.ToString() -> string!
-override mk8.email.Contracts.Messaging.MailSubmissionSnapshot.Equals(object? obj) -> bool
-override mk8.email.Contracts.Messaging.MailSubmissionSnapshot.GetHashCode() -> int
-override mk8.email.Contracts.Messaging.MailSubmissionSnapshot.ToString() -> string!
 override mk8.email.Contracts.Messaging.MailSubmissionSort.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.MailSubmissionSort.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.MailSubmissionSort.ToString() -> string!
-override mk8.email.Contracts.Messaging.MailSubmissionUpdate.Equals(object? obj) -> bool
-override mk8.email.Contracts.Messaging.MailSubmissionUpdate.GetHashCode() -> int
-override mk8.email.Contracts.Messaging.MailSubmissionUpdate.ToString() -> string!
 override mk8.email.Contracts.Messaging.MailSubmissionUpdateOutcome.Equals(object? obj) -> bool
 override mk8.email.Contracts.Messaging.MailSubmissionUpdateOutcome.GetHashCode() -> int
 override mk8.email.Contracts.Messaging.MailSubmissionUpdateOutcome.ToString() -> string!
@@ -4172,8 +4317,6 @@ static mk8.email.Contracts.Messaging.MailSearchSnippetSnapshot.operator !=(mk8.e
 static mk8.email.Contracts.Messaging.MailSearchSnippetSnapshot.operator ==(mk8.email.Contracts.Messaging.MailSearchSnippetSnapshot? left, mk8.email.Contracts.Messaging.MailSearchSnippetSnapshot? right) -> bool
 static mk8.email.Contracts.Messaging.MailStoredMessageSnapshot.operator !=(mk8.email.Contracts.Messaging.MailStoredMessageSnapshot? left, mk8.email.Contracts.Messaging.MailStoredMessageSnapshot? right) -> bool
 static mk8.email.Contracts.Messaging.MailStoredMessageSnapshot.operator ==(mk8.email.Contracts.Messaging.MailStoredMessageSnapshot? left, mk8.email.Contracts.Messaging.MailStoredMessageSnapshot? right) -> bool
-static mk8.email.Contracts.Messaging.MailSubmissionCreate.operator !=(mk8.email.Contracts.Messaging.MailSubmissionCreate? left, mk8.email.Contracts.Messaging.MailSubmissionCreate? right) -> bool
-static mk8.email.Contracts.Messaging.MailSubmissionCreate.operator ==(mk8.email.Contracts.Messaging.MailSubmissionCreate? left, mk8.email.Contracts.Messaging.MailSubmissionCreate? right) -> bool
 static mk8.email.Contracts.Messaging.MailSubmissionCreateOutcome.operator !=(mk8.email.Contracts.Messaging.MailSubmissionCreateOutcome? left, mk8.email.Contracts.Messaging.MailSubmissionCreateOutcome? right) -> bool
 static mk8.email.Contracts.Messaging.MailSubmissionCreateOutcome.operator ==(mk8.email.Contracts.Messaging.MailSubmissionCreateOutcome? left, mk8.email.Contracts.Messaging.MailSubmissionCreateOutcome? right) -> bool
 static mk8.email.Contracts.Messaging.MailSubmissionDeliverySnapshot.operator !=(mk8.email.Contracts.Messaging.MailSubmissionDeliverySnapshot? left, mk8.email.Contracts.Messaging.MailSubmissionDeliverySnapshot? right) -> bool
@@ -4184,6 +4327,10 @@ static mk8.email.Contracts.Messaging.MailSubmissionDestroyOutcome.operator !=(mk
 static mk8.email.Contracts.Messaging.MailSubmissionDestroyOutcome.operator ==(mk8.email.Contracts.Messaging.MailSubmissionDestroyOutcome? left, mk8.email.Contracts.Messaging.MailSubmissionDestroyOutcome? right) -> bool
 static mk8.email.Contracts.Messaging.MailSubmissionEmailDestroy.operator !=(mk8.email.Contracts.Messaging.MailSubmissionEmailDestroy? left, mk8.email.Contracts.Messaging.MailSubmissionEmailDestroy? right) -> bool
 static mk8.email.Contracts.Messaging.MailSubmissionEmailDestroy.operator ==(mk8.email.Contracts.Messaging.MailSubmissionEmailDestroy? left, mk8.email.Contracts.Messaging.MailSubmissionEmailDestroy? right) -> bool
+static mk8.email.Contracts.Messaging.MailSubmissionEnvelope.operator !=(mk8.email.Contracts.Messaging.MailSubmissionEnvelope? left, mk8.email.Contracts.Messaging.MailSubmissionEnvelope? right) -> bool
+static mk8.email.Contracts.Messaging.MailSubmissionEnvelope.operator ==(mk8.email.Contracts.Messaging.MailSubmissionEnvelope? left, mk8.email.Contracts.Messaging.MailSubmissionEnvelope? right) -> bool
+static mk8.email.Contracts.Messaging.MailSubmissionEnvelopeDraft.operator !=(mk8.email.Contracts.Messaging.MailSubmissionEnvelopeDraft? left, mk8.email.Contracts.Messaging.MailSubmissionEnvelopeDraft? right) -> bool
+static mk8.email.Contracts.Messaging.MailSubmissionEnvelopeDraft.operator ==(mk8.email.Contracts.Messaging.MailSubmissionEnvelopeDraft? left, mk8.email.Contracts.Messaging.MailSubmissionEnvelopeDraft? right) -> bool
 static mk8.email.Contracts.Messaging.MailSubmissionFilter.operator !=(mk8.email.Contracts.Messaging.MailSubmissionFilter? left, mk8.email.Contracts.Messaging.MailSubmissionFilter? right) -> bool
 static mk8.email.Contracts.Messaging.MailSubmissionFilter.operator ==(mk8.email.Contracts.Messaging.MailSubmissionFilter? left, mk8.email.Contracts.Messaging.MailSubmissionFilter? right) -> bool
 static mk8.email.Contracts.Messaging.MailSubmissionIndexedId.operator !=(mk8.email.Contracts.Messaging.MailSubmissionIndexedId? left, mk8.email.Contracts.Messaging.MailSubmissionIndexedId? right) -> bool
@@ -4194,6 +4341,8 @@ static mk8.email.Contracts.Messaging.MailSubmissionMutationFailure.operator !=(m
 static mk8.email.Contracts.Messaging.MailSubmissionMutationFailure.operator ==(mk8.email.Contracts.Messaging.MailSubmissionMutationFailure? left, mk8.email.Contracts.Messaging.MailSubmissionMutationFailure? right) -> bool
 static mk8.email.Contracts.Messaging.MailSubmissionMutationResult.operator !=(mk8.email.Contracts.Messaging.MailSubmissionMutationResult? left, mk8.email.Contracts.Messaging.MailSubmissionMutationResult? right) -> bool
 static mk8.email.Contracts.Messaging.MailSubmissionMutationResult.operator ==(mk8.email.Contracts.Messaging.MailSubmissionMutationResult? left, mk8.email.Contracts.Messaging.MailSubmissionMutationResult? right) -> bool
+static mk8.email.Contracts.Messaging.MailSubmissionPatch.operator !=(mk8.email.Contracts.Messaging.MailSubmissionPatch? left, mk8.email.Contracts.Messaging.MailSubmissionPatch? right) -> bool
+static mk8.email.Contracts.Messaging.MailSubmissionPatch.operator ==(mk8.email.Contracts.Messaging.MailSubmissionPatch? left, mk8.email.Contracts.Messaging.MailSubmissionPatch? right) -> bool
 static mk8.email.Contracts.Messaging.MailSubmissionQueryChangesCommand.operator !=(mk8.email.Contracts.Messaging.MailSubmissionQueryChangesCommand? left, mk8.email.Contracts.Messaging.MailSubmissionQueryChangesCommand? right) -> bool
 static mk8.email.Contracts.Messaging.MailSubmissionQueryChangesCommand.operator ==(mk8.email.Contracts.Messaging.MailSubmissionQueryChangesCommand? left, mk8.email.Contracts.Messaging.MailSubmissionQueryChangesCommand? right) -> bool
 static mk8.email.Contracts.Messaging.MailSubmissionQueryChangesResult.operator !=(mk8.email.Contracts.Messaging.MailSubmissionQueryChangesResult? left, mk8.email.Contracts.Messaging.MailSubmissionQueryChangesResult? right) -> bool

@@ -263,7 +263,7 @@ internal static class GatewayEmailPatchCodec
         return Decode(separator < 0 ? key : key[..separator]);
     }
 
-    private static bool TryPaths(JsonObject patch, out string[][] paths)
+    internal static bool TryPaths(JsonObject patch, out string[][] paths)
     {
         var parsed = new List<string[]>();
         foreach (var item in patch)

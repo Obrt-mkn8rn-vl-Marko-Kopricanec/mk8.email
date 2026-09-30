@@ -4,7 +4,7 @@ Gateway parses and validates I-JSON and the outer JMAP request envelope. Its
 batch, call, result and reference-selector models exist only in Gateway, not in
 the shared durable Contracts assembly. It sends a protocol-neutral
 authentication/feature/operation-count admission plan through `mail.plan.validate`, then
-one resolved mail operation at a time through `mail.operation.execute.v32`. Worker
+one resolved mail operation at a time through `mail.operation.execute.v34`. Worker
 returns a typed operation result, domain failures, known entity mappings and an
 account profile. Gateway alone sequences the batch, handles Core/echo, and renders
 the response envelope and HTTP problems. Worker receives neither the original
@@ -20,7 +20,7 @@ wrong-case or undefined internal discriminators fail closed before any mutation.
 Handler registration rejects duplicate or invalid identifiers, and primary/additional
 result identifiers are checked before commit and on receipt replay. Opaque business
 values named `name` or `sourceName` are untouched. This is a coordinated contract
-change (`mk8.distributed.v39`), not completion of all JMAP value-shaping extraction.
+change (`mk8.distributed.v41`), not evidence that the final analyzer/review gates pass.
 
 `Mailbox/get`, `Thread/get`, `AddressBook/get`, `Identity/get`, `EmailSubmission/get`, `VacationResponse/get`,
 `PushSubscription/get` and all seven simple `/changes` methods have fully typed commands/results across this
@@ -52,8 +52,7 @@ results. `VacationResponse/set` now sends typed field-presence updates after Gat
 checks JMAP patch paths, immutable fields, creation references and per-item wire errors.
 Worker authorizes the account, checks state, applies each valid update against the
 current Blob-backed response inside the receipt transaction and reports domain
-validation outcomes; Gateway renders SetResponse maps and errors. Other JMAP
-methods still have Worker-side JSON argument/result shaping and must be extracted.
+validation outcomes; Gateway renders SetResponse maps and errors.
 `EmailSubmission/query` and `/queryChanges` now use typed recursive filters and
 comparators. Gateway checks the wire syntax and renders paging, anchor errors and
 query deltas; Worker authorizes the account before any deferred filter/sort error,
@@ -133,9 +132,7 @@ needed, and stored message metadata. Binary attachment payloads do not cross thi
 boundary; their content remains behind authorized Azure-backed Blob IDs.
 Gateway renders the complete inner Email value as well as ordered results and
 missing/invalid IDs. The encrypted receipt freezes the MIME snapshot for retries
-independently of later message/blob deletion. Worker still uses its old JMAP
-projection in Email/set immutable-field checks; that remaining mutation path is
-not represented as completed by this read-path extraction.
+independently of later message/blob deletion.
 Email creation values now contain typed folder references, keywords, received dates
 and a flat MIME draft. Gateway validates JMAP header/body syntax and creates
 raw MIME header snapshots, decoded inline text and blob references. Worker
@@ -145,18 +142,31 @@ Azure-backed content. Missing-blob error precedence is retained even for a
 later-invalid body. Part rows and their ownership are validated without parsing
 a JMAP draft body. Gateway disposes partially built draft trees on every path.
 Worker's former JSON draft builder and its wire-specific result types are removed.
-Message update patches and immutable assertions remain a separate migration.
+Message updates now contain typed map changes and immutable observations with
+decoded relative paths and canonical domain values. Gateway owns PatchObject
+grammar, header selectors, body-field inference and output conventions. Worker
+verifies domain observations against stored MIME without rendering an Email value.
+Opaque labels correlate failures only. Submission on-success updates use typed
+fragments with last-write-wins and cross-fragment path conflict handling. The
+unused Worker Email renderer and projection-options type are removed.
 `Email/set` now sends typed account, state and per-item mutation commands. Gateway
 validates the method envelope, object map/reference syntax and count limit, then
 renders SetResponse success/failure maps and created message fields from typed
 outcomes. Worker retains account authorization, MIME construction, Azure Blob
-storage, mailbox/keyword policy and transactional state changes. Message patch
-values still arrive as encoded trees interpreted by Worker. `EmailSubmission/set`
+storage, mailbox/keyword policy and transactional state changes. `EmailSubmission/set`
 now uses a typed command and outcomes; Gateway renders its SetResponse and the
 implicit `Email/set` response, while Worker preserves their atomic business
-effects and durable receipt. The submission draft and immutable-field patch
-checks still use encoded value trees and a Worker-side JMAP projection. These
-are outstanding API-neutrality boundaries, not final presentation ownership.
+effects and durable receipt. Submission drafts now carry typed identity/message
+references and SMTP envelope values; Gateway parses wire shape and parameters,
+while Worker verifies the actual message size, MIME validity, sender authorization
+and recipient policy. Immutable updates use typed domain observations, including
+delivery assertions compiled from SMTP reply text in Gateway. Worker reports typed
+MIME issues for Gateway to render. The old submission JSON renderer is removed.
+Envelope snapshots are typed. An Infrastructure storage-only codec retains the
+historical optional cache encoding for safe binary rollback, without exposing that
+encoding through domain snapshots, and falls back to indexed values for damaged
+caches. PostgreSQL-generated submission timestamps are aligned
+to microseconds so creation responses and persisted immutable values agree.
 
 Capability URNs are also Gateway-owned. Gateway maps them into stable `MailFeature`
 identifiers; Worker enforces feature admission and method eligibility using only
@@ -188,7 +198,7 @@ Gateway also recognizes creation-reference tokens in argument keys and values an
 provides a typed alias map with each business command. Worker resolves only those
 aliases against its current known-entity map, so a create followed by a reference
 inside one operation still works without Worker parsing the JMAP `#` marker.
-The alias map is required on the v32 command. Opaque non-ID values are not rewritten.
+The alias map is required on the v34 command. Opaque non-ID values are not rewritten.
 
 Worker returns typed accounts, feature limits and change maps, never session URLs
 or event/push JSON. Gateway renders discovery documents, chooses its public URLs,
@@ -216,9 +226,9 @@ This changes the durable operation contracts. The old `jmap.api.process`,
 `mail.operation.execute.v24`, `mail.operation.execute.v25`,
 `mail.operation.execute.v26`, `mail.operation.execute.v27`,
 `mail.operation.execute.v28`, `mail.operation.execute.v29`, `mail.operation.execute.v30`,
-`mail.operation.execute.v31` operations
+`mail.operation.execute.v31`, `mail.operation.execute.v32`, `mail.operation.execute.v33` operations
 are unsupported. The current operations are `mail.plan.validate`,
-`mail.operation.execute.v32`, `jmap.profile.get.v2`, `jmap.upload.v2`,
+`mail.operation.execute.v34`, `jmap.profile.get.v2`, `jmap.upload.v2`,
 `jmap.download.v2`, `jmap.changes.poll.v2` and `webpush.send.v2`. Old requests must
 not be reinterpreted as new empty or incomplete data.
 Before upgrading an existing distributed installation, stop admission, drain or

@@ -1,5 +1,4 @@
 using System.Collections.Frozen;
-using System.Text.Json;
 using System.Text.Json.Nodes;
 using mk8.email.Contracts.Messaging;
 
@@ -108,38 +107,31 @@ internal static class GatewaySubmissionGetCodec
 
     private static JsonObject BuildEnvelope(MailSubmissionSnapshot submission)
     {
-        if (submission.EnvelopeJson is not null)
+        var envelope = submission.Envelope ?? new MailSubmissionEnvelope(
+            new(submission.EnvelopeSender, null),
+            submission.EnvelopeRecipients.Select(address => new MailEnvelopeAddress(address, null)).ToArray());
+        return new()
         {
-            try
-            {
-                if (JsonNode.Parse(submission.EnvelopeJson) is JsonObject stored)
-                    return stored;
-            }
-            catch (JsonException)
-            {
-                // Older or damaged optional cache values use the indexed envelope.
-            }
-        }
-        var recipients = new JsonArray();
-        for (var index = 0; index < submission.EnvelopeRecipients.Count; index++)
-        {
-            if (submission.EnvelopeRecipients[index] is null)
-                throw new InvalidOperationException("The Application returned an invalid envelope recipient.");
-            recipients.Add(new JsonObject
-            {
-                ["email"] = submission.EnvelopeRecipients[index],
-                ["parameters"] = null,
-            });
-        }
-        return new JsonObject
-        {
-            ["mailFrom"] = new JsonObject
-            {
-                ["email"] = submission.EnvelopeSender,
-                ["parameters"] = null,
-            },
-            ["rcptTo"] = recipients,
+            ["mailFrom"] = BuildAddress(envelope.Sender),
+            ["rcptTo"] = new JsonArray(envelope.Recipients.Select(BuildAddress).Cast<JsonNode?>().ToArray()),
         };
+    }
+
+    private static JsonObject BuildAddress(MailEnvelopeAddress address)
+    {
+        if (address is null || address.Address is null)
+            throw new InvalidOperationException("The Application returned an invalid envelope address.");
+        JsonObject? parameters = null;
+        if (address.Parameters is not null)
+        {
+            parameters = new();
+            foreach (var item in address.Parameters)
+            {
+                if (item.Value is null) throw new InvalidOperationException("The Application returned an invalid envelope parameter.");
+                parameters[item.Key] = item.Value;
+            }
+        }
+        return new() { ["email"] = address.Address, ["parameters"] = parameters };
     }
 
     private static JsonObject? BuildDeliveryStatus(IReadOnlyList<MailSubmissionDeliverySnapshot>? recipients)

@@ -36,7 +36,7 @@ public sealed record MailSubmissionSnapshot(
     string IdentityId,
     string EmailId,
     string ThreadId,
-    string? EnvelopeJson,
+    MailSubmissionEnvelope? Envelope,
     string EnvelopeSender,
     IReadOnlyList<string> EnvelopeRecipients,
     DateTime SendAt,

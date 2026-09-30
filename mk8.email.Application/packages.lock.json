@@ -252,7 +252,8 @@
         "dependencies": {
           "Microsoft.EntityFrameworkCore": "[10.0.4, )",
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.1, )",
-          "mk8.email.Configuration": "[1.0.0, )"
+          "mk8.email.Configuration": "[1.0.0, )",
+          "mk8.email.Contracts": "[1.0.0, )"
         }
       },
       "mk8.email.mailwire": {

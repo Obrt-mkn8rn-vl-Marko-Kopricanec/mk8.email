@@ -91,7 +91,7 @@ internal static class MailMessageAssertions
             && value["Incomplete"] is JsonValue incompleteNode && incompleteNode.TryGetValue(out incomplete);
     }
 
-    private static bool TryApply(JsonNode? original, IReadOnlyList<MailMessageValueChange> changes, out JsonNode? result)
+    internal static bool TryApply(JsonNode? original, IReadOnlyList<MailMessageValueChange> changes, out JsonNode? result)
     {
         var wrapper = new JsonObject { ["Observed"] = original?.DeepClone() };
         foreach (var change in changes)

@@ -259,14 +259,10 @@ public sealed class JmapGatewayRouteTests
             Assert.IsFalse(jmap.Commands[1].Arguments.ContainsKey("#ifInState"));
             Assert.AreEqual(40, jmap.Plan?.Plan?.OperationCount);
             Assert.AreEqual(MailOperationKind.MutateSubmissions, jmap.Request.Command.Operation);
-            var routedDraft = ApplicationValueCodec.Decode(JsonSerializer.Deserialize<MailSubmissionMutationCommand>(
-                jmap.Request.Command.Arguments, new JsonSerializerOptions(JsonSerializerDefaults.Web))!.Creates[0].Draft)!;
-            Assert.AreEqual("text", routedDraft["nested"]?["items"]?[2]?.GetValue<string>());
-            Assert.AreEqual(1, routedDraft["x"]!.GetValue<int>());
-            Assert.AreEqual(2, routedDraft["X"]!.GetValue<int>());
-            Assert.AreEqual(3, routedDraft["nested"]!["key"]!.GetValue<int>());
-            Assert.AreEqual(4, routedDraft["nested"]!["Key"]!.GetValue<int>());
-            Assert.AreEqual("#made", routedDraft["nested"]!["reference"]!.GetValue<string>());
+            var routedDraft = JsonSerializer.Deserialize<MailSubmissionMutationCommand>(
+                jmap.Request.Command.Arguments, new JsonSerializerOptions(JsonSerializerDefaults.Web))!.Creates[0].Draft;
+            Assert.IsTrue(routedDraft.InvalidFields);
+            Assert.IsNull(routedDraft.MessageReference);
             Assert.AreEqual("made", jmap.Request.Command.ReferenceAliases["#made"]);
             Assert.AreEqual("object-id", jmap.Request.Command.KnownEntities?["made"]);
             var invocation = json.RootElement.GetProperty("methodResponses")[0];
@@ -890,7 +886,7 @@ public sealed class JmapGatewayRouteTests
                 var submissions = new MailSubmissionReadResult(MailSubmissionReadStatus.Ok, "s47",
                     [new MailSubmissionSnapshot(Guid.Parse("22222222-2222-2222-2222-222222222222"),
                         "I11111111111111111111111111111111", "E11111111111111111111111111111111",
-                        "TYyE", "{\"mailFrom\":{\"email\":\"sender@example.test\",\"parameters\":{\"SIZE\":\"12\"}},\"rcptTo\":[]}",
+                        "TYyE", new(new("sender@example.test", new Dictionary<string, string> { ["SIZE"] = "12" }), []),
                         "sender@example.test", ["recipient@example.test"],
                         new DateTime(2026, 9, 29, 12, 34, 56, DateTimeKind.Utc), "final",
                         [new MailSubmissionDeliverySnapshot("recipient@example.test",

@@ -35,8 +35,8 @@ internal static class GatewaySubmissionSetCodec
         var parsedAccount = accountId.Length == 33 && accountId[0] == 'A'
             && Guid.TryParseExact(accountId.AsSpan(1), "N", out var id) ? id : Guid.Empty;
         call = new(new(parsedAccount, ifInState,
-            creates.Select(item => new MailSubmissionCreate(item.Key, ApplicationValueCodec.Encode(item.Value))).ToArray(),
-            updates.Select(item => new MailSubmissionUpdate(item.Key, ApplicationValueCodec.Encode(item.Value))).ToArray(),
+            creates.Select(item => new MailSubmissionCreate(item.Key, GatewaySubmissionMutationCodec.Draft(item.Value))).ToArray(),
+            updates.Select(item => new MailSubmissionUpdate(item.Key, GatewaySubmissionMutationCodec.Patch(item.Value))).ToArray(),
             destroys.Distinct(StringComparer.Ordinal).Select(value => new MailSubmissionDestroy(value)).ToArray(),
             onSuccessUpdates.Select(item => new MailSubmissionEmailUpdate(item.Key,
                 GatewayEmailPatchCodec.ParseFragments(item.Value))).ToArray(),
@@ -188,6 +188,12 @@ internal static class GatewaySubmissionSetCodec
         var error = new JsonObject { ["type"] = type };
         if (!string.IsNullOrWhiteSpace(failure.Description)) error["description"] = failure.Description;
         if (failure.Properties is not null) error["properties"] = ToArray(failure.Properties);
+        if (failure.EmailIssues is not null)
+        {
+            if (failure.Error != MailSubmissionMutationError.InvalidEmail || failure.Properties is not null)
+                throw new InvalidOperationException("The Application returned inconsistent MIME issues.");
+            error["properties"] = ToArray(failure.EmailIssues.Select(EmailIssue).Order(StringComparer.Ordinal));
+        }
         if (failure.InvalidRecipients is not null) error["invalidRecipients"] = ToArray(failure.InvalidRecipients);
         if (failure.MaxSize is not null) error["maxSize"] = checked((int)failure.MaxSize.Value);
         if (failure.MaxRecipients is not null) error["maxRecipients"] = failure.MaxRecipients.Value;
@@ -200,6 +206,32 @@ internal static class GatewaySubmissionSetCodec
         foreach (var value in values) result.Add(value);
         return result;
     }
+
+    private static string EmailIssue(MailSubmissionEmailIssue issue) => issue switch
+    {
+        MailSubmissionEmailIssue.RawHeaders => "headers",
+        MailSubmissionEmailIssue.BodyTree => "bodyStructure",
+        MailSubmissionEmailIssue.HeaderDate => "sentAt",
+        MailSubmissionEmailIssue.From => "from",
+        MailSubmissionEmailIssue.Sender => "sender",
+        MailSubmissionEmailIssue.ReplyTo => "replyTo",
+        MailSubmissionEmailIssue.To => "to",
+        MailSubmissionEmailIssue.Cc => "cc",
+        MailSubmissionEmailIssue.Bcc => "bcc",
+        MailSubmissionEmailIssue.MessageId => "messageId",
+        MailSubmissionEmailIssue.InReplyTo => "inReplyTo",
+        MailSubmissionEmailIssue.References => "references",
+        MailSubmissionEmailIssue.Subject => "subject",
+        MailSubmissionEmailIssue.ResentDate => "header:Resent-Date:asDate:all",
+        MailSubmissionEmailIssue.ResentFrom => "header:Resent-From:asAddresses:all",
+        MailSubmissionEmailIssue.ResentSender => "header:Resent-Sender:asAddresses:all",
+        MailSubmissionEmailIssue.ResentTo => "header:Resent-To:asAddresses:all",
+        MailSubmissionEmailIssue.ResentCc => "header:Resent-Cc:asAddresses:all",
+        MailSubmissionEmailIssue.ResentBcc => "header:Resent-Bcc:asAddresses:all",
+        MailSubmissionEmailIssue.ResentMessageId => "header:Resent-Message-ID:asMessageIds:all",
+        MailSubmissionEmailIssue.ResentReplyTo => "header:Resent-Reply-To:asAddresses:all",
+        _ => throw new InvalidOperationException("The Application returned an unknown MIME issue."),
+    };
 
     private static bool TryMap(JsonObject arguments, string name, bool creation,
         out Dictionary<string, JsonObject> result)

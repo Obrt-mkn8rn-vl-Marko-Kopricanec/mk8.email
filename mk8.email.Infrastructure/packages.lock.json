@@ -348,6 +348,9 @@
         "dependencies": {
           "Npgsql": "[10.0.2, )"
         }
+      },
+      "mk8.email.contracts": {
+        "type": "Project"
       }
     }
   }

@@ -15,8 +15,8 @@ public sealed class GatewaySubmissionSetCodecTests
     {
         var envelope = new JsonObject
         {
-            ["mailFrom"] = new JsonObject { ["email"] = "sender@example.test" },
-            ["rcptTo"] = new JsonArray(new JsonObject { ["email"] = "to@example.test" }),
+            ["mailFrom"] = new JsonObject { ["email"] = "sender@example.test", ["parameters"] = null },
+            ["rcptTo"] = new JsonArray(new JsonObject { ["email"] = "to@example.test", ["parameters"] = null }),
         };
         var arguments = new JsonObject
         {
@@ -47,13 +47,12 @@ public sealed class GatewaySubmissionSetCodecTests
         Assert.HasCount(1, call.Command.Creates);
         Assert.HasCount(1, call.Command.Destroys);
         Assert.HasCount(1, call.Command.OnSuccessUpdates);
-        Assert.AreEqual("sender@example.test", ApplicationValueCodec.Decode(call.Command.Creates[0].Draft)!
-            ["envelope"]!["mailFrom"]!["email"]!.GetValue<string>());
+        Assert.AreEqual("sender@example.test", call.Command.Creates[0].Draft.Envelope!.Sender.Address);
 
         var createdId = Guid.Parse("55555555-5555-5555-5555-555555555555");
         var created = new MailSubmissionSnapshot(createdId,
             "I33333333333333333333333333333333", "E44444444444444444444444444444444",
-            "T44444444444444444444444444444444", envelope.ToJsonString(),
+            "T44444444444444444444444444444444", new(new("sender@example.test", null), [new("to@example.test", null)]),
             "sender@example.test", ["to@example.test"],
             new DateTime(2026, 9, 30, 12, 0, 0, DateTimeKind.Utc), "final",
             [new("to@example.test", MailSubmissionDeliveryState.Pending, null)]);

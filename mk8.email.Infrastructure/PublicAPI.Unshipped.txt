@@ -38,3 +38,6 @@ mk8.email.Infrastructure.Models.JmapVacationResponseDB.BodyObjectSha256.get -> s
 mk8.email.Infrastructure.Models.JmapVacationResponseDB.BodyObjectSha256.set -> void
 mk8.email.Infrastructure.Models.JmapVacationResponseDB.BodySizeBytes.get -> int
 mk8.email.Infrastructure.Models.JmapVacationResponseDB.BodySizeBytes.set -> void
+mk8.email.Infrastructure.Models.MailSubmissionEnvelopeCache
+static mk8.email.Infrastructure.Models.MailSubmissionEnvelopeCache.Encode(mk8.email.Contracts.Messaging.MailSubmissionEnvelope! value) -> string!
+static mk8.email.Infrastructure.Models.MailSubmissionEnvelopeCache.Read(mk8.email.Infrastructure.Models.JmapEmailSubmissionDB! row) -> mk8.email.Contracts.Messaging.MailSubmissionEnvelope!

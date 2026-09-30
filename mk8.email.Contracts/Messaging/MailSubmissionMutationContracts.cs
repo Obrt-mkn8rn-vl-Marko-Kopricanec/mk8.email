@@ -1,4 +1,4 @@
-// Submission drafts and patches remain encoded value trees during the boundary migration.
+// Submission commands and correlated outcomes constitute one transport contract.
 #pragma warning disable MA0048
 using System.Text.Json.Serialization;
 
@@ -15,11 +15,11 @@ public sealed record MailSubmissionMutationCommand(
 
 public sealed record MailSubmissionCreate(
     [property: JsonRequired] string CreationId,
-    [property: JsonRequired] ApplicationValue Draft);
+    [property: JsonRequired] MailSubmissionDraft Draft);
 
 public sealed record MailSubmissionUpdate(
     [property: JsonRequired] string RequestedId,
-    [property: JsonRequired] ApplicationValue Patch);
+    [property: JsonRequired] MailSubmissionPatch Patch);
 
 public sealed record MailSubmissionDestroy([property: JsonRequired] string RequestedId);
 
@@ -53,7 +53,8 @@ public sealed record MailSubmissionMutationFailure(
     IReadOnlyList<string>? Properties,
     IReadOnlyList<string>? InvalidRecipients,
     long? MaxSize,
-    int? MaxRecipients);
+    int? MaxRecipients,
+    IReadOnlyList<MailSubmissionEmailIssue>? EmailIssues = null);
 
 public sealed record MailSubmissionCreateOutcome(
     [property: JsonRequired] string CreationId,

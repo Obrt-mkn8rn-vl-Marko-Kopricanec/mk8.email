@@ -184,6 +184,9 @@ public sealed class JmapDurableReplayTests
         {
             Assert.AreEqual(1, await database.JmapEmailSubmissions.CountAsync());
             Assert.AreEqual(1, await database.MailQueueMessages.CountAsync());
+            var persisted = await database.JmapEmailSubmissions.SingleAsync();
+            Assert.AreEqual(GatewayJmapDateCodec.FormatUtc(persisted.SendAt),
+                first.Invocations[0].Arguments["created"]!["out"]!["sendAt"]!.GetValue<string>());
             var queue = await database.MailQueueMessages.SingleAsync();
             Assert.AreEqual(LargeObjectProviders.AzureBlob, queue.RawMessageObjectProvider);
             Assert.IsNull(queue.RawMessage);
@@ -192,10 +195,26 @@ public sealed class JmapDurableReplayTests
         var replay = await rig.InvokeAsync(submission, operation);
         Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
         Assert.AreEqual(submissionId, replay.CreatedIds!["out"]);
+        var assertionUpdate = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Submission],
+            [new JmapApplicationCall(MailOperationKind.MutateSubmissions, new JsonObject
+            {
+                ["accountId"] = JmapId.Account(rig.InboxId),
+                ["update"] = new JsonObject { [submissionId] = first.Invocations[0].Arguments["created"]!["out"]!.DeepClone() },
+                ["onSuccessUpdateEmail"] = new JsonObject
+                    { [submissionId] = new JsonObject { ["keywords/$flagged"] = true } },
+            }, "assertion")]);
+        var updateOperation = Guid.CreateVersion7();
+        var firstUpdate = await rig.InvokeAsync(assertionUpdate, updateOperation);
+        Assert.IsNull(firstUpdate.Invocations[0].Arguments["notUpdated"], firstUpdate.Invocations[0].Arguments.ToJsonString());
+        Assert.IsNotNull(firstUpdate.Invocations[0].Arguments["updated"], firstUpdate.Invocations[0].Arguments.ToJsonString());
+        Assert.IsNull(firstUpdate.Invocations[0].Arguments["updated"]![submissionId]);
+        var replayUpdate = await rig.InvokeAsync(assertionUpdate, updateOperation);
+        Assert.AreEqual(JsonSerializer.Serialize(firstUpdate.Invocations), JsonSerializer.Serialize(replayUpdate.Invocations));
         await using var verification = rig.Context();
         Assert.AreEqual(1, await verification.JmapEmailSubmissions.CountAsync());
         Assert.AreEqual(1, await verification.MailQueueMessages.CountAsync());
-        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync());
+        Assert.IsTrue((await verification.Emails.SingleAsync()).IsFlagged);
+        Assert.AreEqual(3, await verification.ApplicationOperationReceipts.CountAsync());
     }
 
     [TestMethod]

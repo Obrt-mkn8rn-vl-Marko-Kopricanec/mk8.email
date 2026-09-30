@@ -1145,12 +1145,12 @@ public sealed class JmapRequestProcessor
                 || mutation.Creates.Count + mutation.Updates.Count + mutation.Destroys.Count
                     > _environment.Jmap.MaxObjectsInSet
                 || mutation.Creates.Any(item => item is null || !JmapId.IsValidId(item.CreationId)
-                    || item.Draft is null || ApplicationValueCodec.Decode(item.Draft) is not JsonObject)
+                    || item.Draft is null || !MailSubmissionMutationValidator.ValidDraft(item.Draft))
                 || mutation.Creates.Select(item => item.CreationId).Distinct(StringComparer.Ordinal).Count()
                     != mutation.Creates.Count
                 || mutation.Updates.Any(item => item is null
                     || !ValidMessageReference(item.RequestedId, context)
-                    || item.Patch is null || ApplicationValueCodec.Decode(item.Patch) is not JsonObject)
+                    || item.Patch is null || !MailSubmissionMutationValidator.ValidPatch(item.Patch))
                 || mutation.Updates.Select(item => item.RequestedId).Distinct(StringComparer.Ordinal).Count()
                     != mutation.Updates.Count
                 || mutation.Destroys.Any(item => item is null

@@ -46,6 +46,7 @@ internal sealed class JmapConcurrencyLimiter : IDisposable
 
     private sealed class Lease(SemaphoreSlim semaphore) : IDisposable
     {
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Usage", "CA2213", Justification = "The parent limiter owns and disposes this shared semaphore; a lease only releases its slot.")]
         private SemaphoreSlim? _semaphore = semaphore;
 
         public void Dispose() => Interlocked.Exchange(ref _semaphore, null)?.Release();

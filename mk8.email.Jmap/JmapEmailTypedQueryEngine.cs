@@ -1,7 +1,9 @@
+using System.Diagnostics.CodeAnalysis;
 using mk8.email.Contracts.Messaging;
 
 namespace mk8.email.Jmap;
 
+[SuppressMessage("Style", "MA0048", Justification = "This partial query engine is split by typed filter policy and MIME loading responsibilities.")]
 internal static partial class JmapEmailQueryEngine
 {
     public static List<JmapEmailQueryItem> Filter(

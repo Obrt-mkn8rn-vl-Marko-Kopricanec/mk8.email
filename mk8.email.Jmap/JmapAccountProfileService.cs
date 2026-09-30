@@ -14,6 +14,7 @@ public sealed class JmapAccountProfileService(
         AuthenticatedMailUser user,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(user);
         await contacts.EnsureDefaultAddressBookAsync(user, cancellationToken).ConfigureAwait(false);
         var accessible = await accounts.GetAccountsAsync(user, cancellationToken).ConfigureAwait(false);
         var profiles = new JmapAccountProfile[accessible.Count];

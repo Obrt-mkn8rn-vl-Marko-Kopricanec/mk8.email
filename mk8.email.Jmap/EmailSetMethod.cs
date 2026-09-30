@@ -146,7 +146,7 @@ internal sealed class EmailSetMethod(
         _ => throw new InvalidOperationException("The message operation returned an unknown error kind."),
     };
 
-    private static IReadOnlyList<string>? ReadStrings(JsonNode? value) =>
+    private static string[]? ReadStrings(JsonNode? value) =>
         value is JsonArray array ? array.Select(item => item!.GetValue<string>()).ToArray() : null;
 
     private async Task<JsonObject?> UpdateAsync(

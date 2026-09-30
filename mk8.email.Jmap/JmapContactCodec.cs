@@ -428,7 +428,8 @@ internal static class JmapContactCodec
         if (contexts.Count > 0)
             result["contexts"] = contexts;
         if (property.Parameters.TryGetValue("PREF", out var pref)
-            && int.TryParse(pref, out var preference)
+            && int.TryParse(pref, System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out var preference)
             && preference > 0)
         {
             result["pref"] = preference;
@@ -483,7 +484,8 @@ internal static class JmapContactCodec
         if (contexts.Count > 0)
             result["contexts"] = contexts;
         if (property.Parameters.TryGetValue("PREF", out var pref)
-            && int.TryParse(pref, out var preference)
+            && int.TryParse(pref, System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out var preference)
             && preference is >= 1 and <= 100)
         {
             result["pref"] = preference;

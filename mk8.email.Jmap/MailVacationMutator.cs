@@ -40,7 +40,7 @@ internal sealed class MailVacationMutator(
             var textBody = update.SetTextBody ? update.TextBody : currentBodies.TextBody;
             var htmlBody = update.SetHtmlBody ? update.HtmlBody : currentBodies.HtmlBody;
             var invalid = Validate(subject, textBody, htmlBody, environment.Limits.MaxMessageSizeBytes);
-            if (invalid.Count > 0)
+            if (invalid.Length > 0)
             {
                 outcomes.Add(new(false, invalid));
                 continue;
@@ -59,7 +59,7 @@ internal sealed class MailVacationMutator(
         return new(MailVacationSetStatus.Ok, oldState, newState, outcomes.ToArray());
     }
 
-    private static IReadOnlyList<string> Validate(string? subject, string? textBody,
+    private static string[] Validate(string? subject, string? textBody,
         string? htmlBody, int maximumBodyBytes)
     {
         var invalid = new List<string>();

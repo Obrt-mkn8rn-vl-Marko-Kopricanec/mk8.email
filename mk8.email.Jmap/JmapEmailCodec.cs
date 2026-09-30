@@ -1001,7 +1001,8 @@ internal static partial class JmapEmailCodec
         IReadOnlyList<PartDescriptor> textParts,
         IReadOnlyList<PartDescriptor> htmlParts)
     {
-        var source = textParts.FirstOrDefault() ?? htmlParts.FirstOrDefault();
+        var source = textParts.Count > 0 ? textParts[0]
+            : htmlParts.Count > 0 ? htmlParts[0] : null;
         if (source is null)
             return string.Empty;
         var value = DecodeText(source).Text;

@@ -120,7 +120,7 @@ public static class JmapId
 
     public static bool IsValidId(string value)
     {
-        if (value.Length is < 1 or > 255)
+        if (string.IsNullOrEmpty(value) || value.Length > 255)
             return false;
 
         foreach (var character in value)

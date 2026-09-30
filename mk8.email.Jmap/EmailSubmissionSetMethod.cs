@@ -1066,7 +1066,7 @@ internal sealed class EmailSubmissionSetMethod(
             error["maxSize"]?.GetValue<int>(), error["maxRecipients"]?.GetValue<int>());
     }
 
-    private static IReadOnlyList<string>? ReadStrings(JsonNode? node) =>
+    private static string[]? ReadStrings(JsonNode? node) =>
         node is JsonArray array ? array.Select(item => item!.GetValue<string>()).ToArray() : null;
 
     private static MailSubmissionMutationError ParseError(string type) => type switch

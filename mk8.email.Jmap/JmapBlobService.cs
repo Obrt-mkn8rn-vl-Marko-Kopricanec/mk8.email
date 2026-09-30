@@ -411,6 +411,8 @@ public sealed class JmapBlobService(
                 && !email.IsDeleted,
                 cancellationToken);
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1032", Justification = "Only an ambiguous database commit with its cause may construct this private sentinel.")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1064", Justification = "This private transaction sentinel must not be exposed as a public exception.")]
     private sealed class JmapBlobCommitOutcomeUnknownException(Exception innerException)
         : Exception("The JMAP blob database commit outcome is unknown.", innerException);
 }

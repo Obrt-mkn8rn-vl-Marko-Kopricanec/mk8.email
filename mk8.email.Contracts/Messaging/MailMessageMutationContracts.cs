@@ -17,7 +17,7 @@ public sealed record MailMessageCreate(
 
 public sealed record MailMessageUpdate(
     [property: JsonRequired] string RequestedId,
-    [property: JsonRequired] ApplicationValue Patch);
+    [property: JsonRequired] MailMessagePatch Patch);
 
 public sealed record MailMessageDestroy([property: JsonRequired] string RequestedId);
 

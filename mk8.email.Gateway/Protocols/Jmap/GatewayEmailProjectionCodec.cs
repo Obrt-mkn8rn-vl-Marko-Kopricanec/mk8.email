@@ -21,7 +21,7 @@ internal static class GatewayEmailProjectionCodec
         "preview", "bodyValues", "textBody", "htmlBody", "attachments",
     ];
 
-    private static readonly IReadOnlyList<string> BodyDefaults =
+    internal static readonly IReadOnlyList<string> BodyDefaults =
     [
         "partId", "blobId", "size", "name", "type", "charset",
         "disposition", "cid", "language", "location",
@@ -105,7 +105,7 @@ internal static class GatewayEmailProjectionCodec
         return false;
     }
 
-    private static bool IsValidProperty(string property, bool body) =>
+    internal static bool IsValidProperty(string property, bool body) =>
         (body ? BodyProperties : MessageProperties).Contains(property)
         || TryParseHeaderProperty(property);
 
@@ -120,7 +120,8 @@ internal static class GatewayEmailProjectionCodec
         {
             var formName = remainder[(asIndex + 3)..];
             remainder = remainder[..asIndex];
-            if (!Enum.TryParse(formName, ignoreCase: false, out form)) return false;
+            if (formName is not ("Raw" or "Text" or "Addresses" or "GroupedAddresses" or "MessageIds" or "Date" or "URLs")
+                || !Enum.TryParse(formName, ignoreCase: false, out form)) return false;
         }
         return remainder.Length > 0
             && remainder.All(character => character is >= (char)33 and <= (char)126 && character != ':')

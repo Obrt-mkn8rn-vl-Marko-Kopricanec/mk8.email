@@ -1,7 +1,6 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using MimeKit;
 using MimeKit.Utils;
@@ -12,42 +11,6 @@ namespace mk8.email.Jmap;
 
 internal static partial class JmapEmailCodec
 {
-    public static readonly IReadOnlyList<string> DefaultProperties =
-    [
-        "id", "blobId", "threadId", "mailboxIds", "keywords", "size",
-        "receivedAt", "messageId", "inReplyTo", "references", "sender",
-        "from", "to", "cc", "bcc", "replyTo", "subject", "sentAt",
-        "hasAttachment", "preview", "bodyValues", "textBody", "htmlBody",
-        "attachments",
-    ];
-
-    public static readonly IReadOnlyList<string> ParseDefaultProperties =
-    [
-        "messageId", "inReplyTo", "references", "sender", "from", "to",
-        "cc", "bcc", "replyTo", "subject", "sentAt", "hasAttachment",
-        "preview", "bodyValues", "textBody", "htmlBody", "attachments",
-    ];
-
-    public static readonly IReadOnlyList<string> DefaultBodyProperties =
-    [
-        "partId", "blobId", "size", "name", "type", "charset",
-        "disposition", "cid", "language", "location",
-    ];
-
-    private static readonly HashSet<string> FixedProperties = new HashSet<string>(
-        DefaultProperties.Concat(["headers", "bodyStructure"]),
-        StringComparer.Ordinal);
-
-    private static readonly HashSet<string> FixedBodyProperties = new HashSet<string>(
-        DefaultBodyProperties.Concat(["headers", "subParts"]),
-        StringComparer.Ordinal);
-
-    public static bool IsValidProperty(string property) =>
-        FixedProperties.Contains(property) || TryParseHeaderProperty(property, out _);
-
-    public static bool IsValidBodyProperty(string property) =>
-        FixedBodyProperties.Contains(property) || TryParseHeaderProperty(property, out _);
-
     public static byte[] GetRawBytes(EmailDB email)
     {
         if (email.RawMessage is not null)
@@ -289,154 +252,15 @@ internal static partial class JmapEmailCodec
         return true;
     }
 
-    public static JsonObject BuildEmail(
-        MimeMessage message,
-        JmapEmailProjectionOptions options,
-        Guid blobSourceId,
-        EmailDB? storedEmail = null,
-        string? uploadedBlobId = null,
-        long? rawSize = null,
-        string? blobPartPrefix = null)
-    {
-        var requested = options.Properties.ToHashSet(StringComparer.Ordinal);
-        var parts = BuildParts(message.Body, blobSourceId, blobPartPrefix);
-        var selection = SelectBodyParts(parts);
-        var leafParts = selection.LeafParts;
-        var textCandidates = selection.TextCandidates;
-        var htmlCandidates = selection.HtmlCandidates;
-        var textBody = selection.TextBody;
-        var htmlBody = selection.HtmlBody;
-        var attachments = selection.Attachments;
-        var headers = MessageHeaders(message);
-        var result = new JsonObject();
-        foreach (var property in options.Properties)
-        {
-            switch (property)
-            {
-                case "id":
-                    result[property] = storedEmail is null ? null : JmapId.Email(storedEmail.Id);
-                    break;
-                case "blobId":
-                    result[property] = storedEmail is null
-                        ? uploadedBlobId
-                        : JmapId.RawBlob(storedEmail.Id);
-                    break;
-                case "threadId":
-                    result[property] = storedEmail is null
-                        ? null
-                        : JmapId.Thread(storedEmail.ThreadObjectId ?? storedEmail.Id.ToString("N"));
-                    break;
-                case "mailboxIds":
-                    result[property] = storedEmail is null
-                        ? null
-                        : new JsonObject { [JmapId.Mailbox(storedEmail.FolderId)] = true };
-                    break;
-                case "keywords":
-                    result[property] = storedEmail is null ? null : BuildKeywords(storedEmail);
-                    break;
-                case "size":
-                    result[property] = storedEmail is null
-                        ? rawSize ?? message.Headers.Count + GetEntitySize(message.Body)
-                        : storedEmail.SizeBytes > 0
-                            ? storedEmail.SizeBytes
-                            : GetRawBytes(storedEmail).Length;
-                    break;
-                case "receivedAt":
-                    result[property] = storedEmail is null
-                        ? null
-                        : FormatUtcDate(storedEmail.ReceivedAt);
-                    break;
-                case "headers":
-                    result[property] = BuildHeaders(headers);
-                    break;
-                case "messageId":
-                    result[property] = HeaderValue(headers, "Message-ID", HeaderForm.MessageIds, false);
-                    break;
-                case "inReplyTo":
-                    result[property] = HeaderValue(headers, "In-Reply-To", HeaderForm.MessageIds, false);
-                    break;
-                case "references":
-                    result[property] = HeaderValue(headers, "References", HeaderForm.MessageIds, false);
-                    break;
-                case "sender":
-                    result[property] = HeaderValue(headers, "Sender", HeaderForm.Addresses, false);
-                    break;
-                case "from":
-                    result[property] = HeaderValue(headers, "From", HeaderForm.Addresses, false);
-                    break;
-                case "to":
-                    result[property] = HeaderValue(headers, "To", HeaderForm.Addresses, false);
-                    break;
-                case "cc":
-                    result[property] = HeaderValue(headers, "Cc", HeaderForm.Addresses, false);
-                    break;
-                case "bcc":
-                    result[property] = HeaderValue(headers, "Bcc", HeaderForm.Addresses, false);
-                    break;
-                case "replyTo":
-                    result[property] = HeaderValue(headers, "Reply-To", HeaderForm.Addresses, false);
-                    break;
-                case "subject":
-                    result[property] = HeaderValue(headers, "Subject", HeaderForm.Text, false);
-                    break;
-                case "sentAt":
-                    result[property] = HeaderValue(headers, "Date", HeaderForm.Date, false);
-                    break;
-                case "bodyStructure":
-                    result[property] = parts is null
-                        ? null
-                        : BuildPartJson(parts, options.BodyProperties, includeSubParts: true);
-                    break;
-                case "bodyValues":
-                    result[property] = BuildBodyValues(
-                        leafParts,
-                        textBody,
-                        htmlBody,
-                        options);
-                    break;
-                case "textBody":
-                    result[property] = BuildPartList(textBody, options.BodyProperties);
-                    break;
-                case "htmlBody":
-                    result[property] = BuildPartList(htmlBody, options.BodyProperties);
-                    break;
-                case "attachments":
-                    result[property] = BuildPartList(attachments, options.BodyProperties);
-                    break;
-                case "hasAttachment":
-                    result[property] = attachments.Any(part =>
-                        !string.Equals(part.Disposition, "inline", StringComparison.OrdinalIgnoreCase));
-                    break;
-                case "preview":
-                    result[property] = BuildPreview(textCandidates, htmlCandidates);
-                    break;
-                default:
-                    if (TryParseHeaderProperty(property, out var headerProperty))
-                    {
-                        result[property] = HeaderValue(
-                            headers,
-                            headerProperty.Name,
-                            headerProperty.Form,
-                            headerProperty.All);
-                    }
-                    break;
-            }
-        }
-
-        if (!requested.Contains("id") && storedEmail is not null)
-            result["id"] = JmapId.Email(storedEmail.Id);
-        return result;
-    }
-
     internal static MailMessageSnapshot Capture(MimeMessage message, Guid contentSourceId,
         long rawSize, bool includeText, EmailDB? stored = null, string? uploadedContentId = null,
         string? partPrefix = null)
     {
         var metadata = stored is null ? null : new MailStoredMessageSnapshot(stored.Id, stored.FolderId,
-            stored.ThreadObjectId ?? stored.Id.ToString("N"), BuildKeywords(stored).Select(item => item.Key).ToArray(),
+            stored.ThreadObjectId ?? stored.Id.ToString("N"), MailMessageFlagMutations.Keywords(stored).ToArray(),
             stored.SizeBytes > 0 ? stored.SizeBytes : rawSize,
             stored.ReceivedAt.Kind == DateTimeKind.Utc ? stored.ReceivedAt : stored.ReceivedAt.ToUniversalTime());
-        var body = BuildParts(message.Body, contentSourceId, partPrefix);
+        var body = BuildParts(message.Body);
         var parts = new List<MailMimePartSnapshot>();
         var root = body is null ? (int?)null : CapturePart(body, includeText, parts);
         return new(contentSourceId, uploadedContentId, partPrefix, rawSize, metadata,
@@ -458,32 +282,6 @@ internal static partial class JmapEmailCodec
         return index;
     }
 
-    public static bool TryValidateProperties(
-        IReadOnlyList<string> properties,
-        bool bodyProperties,
-        out string? invalidProperty)
-    {
-        invalidProperty = properties.FirstOrDefault(property =>
-            bodyProperties ? !IsValidBodyProperty(property) : !IsValidProperty(property));
-        return invalidProperty is null;
-    }
-
-    public static JsonObject BuildKeywords(EmailDB email)
-    {
-        var result = new JsonObject();
-        if (email.IsRead) result["$seen"] = true;
-        if (email.IsFlagged) result["$flagged"] = true;
-        if (email.IsDraft) result["$draft"] = true;
-        if (email.IsAnswered) result["$answered"] = true;
-        foreach (var keyword in email.Keywords ?? [])
-        {
-            var normalized = keyword.ToProtocolLowerInvariant();
-            if (IsValidKeyword(normalized) && !result.ContainsKey(normalized))
-                result[normalized] = true;
-        }
-        return result;
-    }
-
     public static bool IsValidKeyword(string keyword) =>
         keyword.Length is >= 1 and <= 255
         && !string.Equals(keyword, "$recent", StringComparison.OrdinalIgnoreCase)
@@ -491,15 +289,9 @@ internal static partial class JmapEmailCodec
             && character is not ('(' or ')' or '{' or ']'
                 or '%' or '*' or '"' or '\\'));
 
-    public static string FormatUtcDate(DateTime value) =>
-        JmapDate.FormatUtc(value);
-
-    public static string FormatDate(DateTimeOffset value) =>
-        JmapDate.FormatDate(value);
-
     public static bool HasAttachment(MimeMessage message)
     {
-        var selection = SelectBodyParts(BuildParts(message.Body, Guid.Empty, blobPartPrefix: null));
+        var selection = SelectBodyParts(BuildParts(message.Body));
         return selection.Attachments.Any(part =>
             !string.Equals(part.Disposition, "inline", StringComparison.OrdinalIgnoreCase));
     }
@@ -526,10 +318,7 @@ internal static partial class JmapEmailCodec
                 ]);
             }
 
-            foreach (var part in Flatten(BuildParts(
-                         current.Message.Body,
-                         Guid.Empty,
-                         blobPartPrefix: null)))
+            foreach (var part in Flatten(BuildParts(current.Message.Body)))
             {
                 if (part.PartId is not null
                     && part.Type.StartsWith("text/", StringComparison.Ordinal))
@@ -564,19 +353,14 @@ internal static partial class JmapEmailCodec
         }
     }
 
-    private static PartDescriptor? BuildParts(
-        MimeEntity? entity,
-        Guid blobSourceId,
-        string? blobPartPrefix) =>
+    private static PartDescriptor? BuildParts(MimeEntity? entity) =>
         entity is null
             ? null
-            : BuildPart(entity, "1", blobSourceId, blobPartPrefix, isRoot: true);
+            : BuildPart(entity, "1", isRoot: true);
 
     private static PartDescriptor BuildPart(
         MimeEntity entity,
         string path,
-        Guid blobSourceId,
-        string? blobPartPrefix,
         bool isRoot)
     {
         var subParts = new List<PartDescriptor>();
@@ -590,8 +374,6 @@ internal static partial class JmapEmailCodec
                 subParts.Add(BuildPart(
                     multipart[index],
                     childPath,
-                    blobSourceId,
-                    blobPartPrefix,
                     isRoot: false));
             }
         }
@@ -619,11 +401,6 @@ internal static partial class JmapEmailCodec
         return new PartDescriptor(
             entity,
             partId,
-            partId is null
-                ? null
-                : JmapId.BodyPartBlob(
-                    blobSourceId,
-                    blobPartPrefix is null ? partId : $"{blobPartPrefix}!{partId}"),
             bytes,
             fileName,
             type,
@@ -653,15 +430,6 @@ internal static partial class JmapEmailCodec
         using var output = new MemoryStream();
         part.Content.DecodeTo(output);
         return output.ToArray();
-    }
-
-    private static int GetEntitySize(MimeEntity? entity)
-    {
-        if (entity is null)
-            return 0;
-        using var stream = new MemoryStream();
-        entity.WriteTo(stream);
-        return checked((int)Math.Min(stream.Length, int.MaxValue));
     }
 
     private static IEnumerable<PartDescriptor> Flatten(PartDescriptor? root)
@@ -800,108 +568,6 @@ internal static partial class JmapEmailCodec
             htmlBody.AddRange(textBody.Skip(textLength));
     }
 
-    private static JsonArray BuildPartList(
-        IEnumerable<PartDescriptor> parts,
-        IReadOnlyList<string> properties,
-        bool includeSubParts = false)
-    {
-        var result = new JsonArray();
-        foreach (var part in parts)
-            result.Add(BuildPartJson(part, properties, includeSubParts));
-        return result;
-    }
-
-    private static JsonObject BuildPartJson(
-        PartDescriptor part,
-        IReadOnlyList<string> properties,
-        bool includeSubParts)
-    {
-        var result = new JsonObject();
-        foreach (var property in properties)
-        {
-            switch (property)
-            {
-                case "partId": result[property] = part.PartId; break;
-                case "blobId": result[property] = part.BlobId; break;
-                case "size": result[property] = part.Bytes.Length; break;
-                case "headers": result[property] = BuildHeaders(part.Entity.Headers); break;
-                case "name": result[property] = part.Name; break;
-                case "type": result[property] = part.Type; break;
-                case "charset": result[property] = part.Charset; break;
-                case "disposition": result[property] = part.Disposition; break;
-                case "cid": result[property] = part.ContentId; break;
-                case "language":
-                    result[property] = part.Language is null
-                        ? null
-                        : JmapMethodHelpers.ToJsonArray(part.Language);
-                    break;
-                case "location": result[property] = part.Location; break;
-                case "subParts":
-                    result[property] = part.SubParts.Count == 0
-                        ? null
-                        : includeSubParts
-                            ? BuildPartList(part.SubParts, properties, includeSubParts: true)
-                            : null;
-                    break;
-                default:
-                    if (TryParseHeaderProperty(property, out var headerProperty))
-                    {
-                        result[property] = HeaderValue(
-                            part.Entity.Headers,
-                            headerProperty.Name,
-                            headerProperty.Form,
-                            headerProperty.All);
-                    }
-                    break;
-            }
-        }
-        if (includeSubParts && part.SubParts.Count > 0 && !result.ContainsKey("subParts"))
-            result["subParts"] = BuildPartList(part.SubParts, properties, includeSubParts: true);
-        return result;
-    }
-
-    private static JsonObject BuildBodyValues(
-        IReadOnlyList<PartDescriptor> allParts,
-        IReadOnlyList<PartDescriptor> textBody,
-        IReadOnlyList<PartDescriptor> htmlBody,
-        JmapEmailProjectionOptions options)
-    {
-        var selected = new HashSet<string>(StringComparer.Ordinal);
-        if (options.FetchAllBodyValues)
-        {
-            foreach (var part in allParts.Where(part => part.Type.StartsWith("text/", StringComparison.Ordinal)))
-                selected.Add(part.PartId!);
-        }
-        if (options.FetchTextBodyValues)
-        {
-            foreach (var part in textBody.Where(part => part.Type.StartsWith("text/", StringComparison.Ordinal)))
-                selected.Add(part.PartId!);
-        }
-        if (options.FetchHtmlBodyValues)
-        {
-            foreach (var part in htmlBody.Where(part => part.Type.StartsWith("text/", StringComparison.Ordinal)))
-                selected.Add(part.PartId!);
-        }
-
-        var result = new JsonObject();
-        foreach (var part in allParts.Where(part => part.PartId is not null && selected.Contains(part.PartId)))
-        {
-            var (text, encodingProblem) = DecodeText(part);
-            text = text.Replace("\r\n", "\n", StringComparison.Ordinal);
-            var truncated = TruncateUtf8(
-                text,
-                options.MaxBodyValueBytes,
-                avoidOpenHtmlTag: string.Equals(part.Type, "text/html", StringComparison.Ordinal));
-            result[part.PartId!] = new JsonObject
-            {
-                ["value"] = truncated.Value,
-                ["isEncodingProblem"] = encodingProblem,
-                ["isTruncated"] = truncated.IsTruncated,
-            };
-        }
-        return result;
-    }
-
     private static (string Text, bool EncodingProblem) DecodeText(PartDescriptor part)
     {
         var transferEncodingProblem = HasUnknownTransferEncoding(part.Entity);
@@ -941,119 +607,6 @@ internal static partial class JmapEmailCodec
         return value.Trim().ToProtocolLowerInvariant() is not (
             "7bit" or "8bit" or "binary" or "base64" or "quoted-printable"
             or "uuencode" or "x-uuencode" or "uue" or "x-uue");
-    }
-
-    private static (string Value, bool IsTruncated) TruncateUtf8(
-        string value,
-        int maximumBytes,
-        bool avoidOpenHtmlTag)
-    {
-        if (maximumBytes <= 0 || Encoding.UTF8.GetByteCount(value) <= maximumBytes)
-            return (value, false);
-        var usedBytes = 0;
-        var usedCharacters = 0;
-        foreach (var rune in value.EnumerateRunes())
-        {
-            if (usedBytes + rune.Utf8SequenceLength > maximumBytes)
-                break;
-            usedBytes += rune.Utf8SequenceLength;
-            usedCharacters += rune.Utf16SequenceLength;
-        }
-
-        if (avoidOpenHtmlTag)
-        {
-            var openTagStart = FindOpenHtmlTagStart(value, usedCharacters);
-            if (openTagStart >= 0)
-                usedCharacters = openTagStart;
-        }
-        return (value[..usedCharacters], true);
-    }
-
-    private static int FindOpenHtmlTagStart(string value, int endExclusive)
-    {
-        var tagStart = -1;
-        var quote = '\0';
-        var comment = false;
-        for (var index = 0; index < endExclusive; index++)
-        {
-            var character = value[index];
-            if (tagStart < 0)
-            {
-                if (character != '<' || !LooksLikeHtmlTag(value, index))
-                    continue;
-                tagStart = index;
-                comment = index + 3 < value.Length
-                    && value[index + 1] == '!'
-                    && value[index + 2] == '-'
-                    && value[index + 3] == '-';
-                continue;
-            }
-
-            if (comment)
-            {
-                if (character == '-'
-                    && index + 2 < endExclusive
-                    && value[index + 1] == '-'
-                    && value[index + 2] == '>')
-                {
-                    tagStart = -1;
-                    comment = false;
-                    index += 2;
-                }
-                continue;
-            }
-
-            if (quote != '\0')
-            {
-                if (character == quote)
-                    quote = '\0';
-                continue;
-            }
-            if (character is '\'' or '"')
-            {
-                quote = character;
-                continue;
-            }
-            if (character == '>')
-                tagStart = -1;
-        }
-        return tagStart;
-    }
-
-    private static bool LooksLikeHtmlTag(string value, int index)
-    {
-        if (index + 1 >= value.Length)
-            return false;
-        var next = value[index + 1];
-        return char.IsAsciiLetter(next) || next is '/' or '!' or '?';
-    }
-
-    private static string BuildPreview(
-        IReadOnlyList<PartDescriptor> textParts,
-        IReadOnlyList<PartDescriptor> htmlParts)
-    {
-        var source = textParts.Count > 0 ? textParts[0]
-            : htmlParts.Count > 0 ? htmlParts[0] : null;
-        if (source is null)
-            return string.Empty;
-        var value = DecodeText(source).Text;
-        if (string.Equals(source.Type, "text/html", StringComparison.Ordinal))
-            value = JmapHtmlText.Extract(value);
-        value = WhiteSpaceRegex().Replace(value, " ").Trim();
-        return TruncateRunes(value, 256);
-    }
-
-    private static string TruncateRunes(string value, int maximumRunes)
-    {
-        var builder = new StringBuilder();
-        var count = 0;
-        foreach (var rune in value.EnumerateRunes())
-        {
-            if (count++ == maximumRunes)
-                break;
-            builder.Append(rune.ToString());
-        }
-        return builder.ToString();
     }
 
     internal static IReadOnlyList<Header> MessageHeaders(MimeMessage message) =>
@@ -1104,56 +657,6 @@ internal static partial class JmapEmailCodec
     private static Header? LastHeader(MimeMessage message, string name) =>
         MessageHeaders(message)
             .LastOrDefault(header => header.Field.Equals(name, StringComparison.OrdinalIgnoreCase));
-
-    private static JsonArray BuildHeaders(IEnumerable<Header> headers)
-    {
-        var result = new JsonArray();
-        foreach (var header in headers)
-        {
-            result.Add(new JsonObject
-            {
-                ["name"] = header.Field,
-                ["value"] = RawHeaderValue(header),
-            });
-        }
-        return result;
-    }
-
-    private static JsonNode? HeaderValue(
-        IEnumerable<Header> headers,
-        string name,
-        HeaderForm form,
-        bool all)
-    {
-        var matching = headers
-            .Where(header => header.Field.Equals(name, StringComparison.OrdinalIgnoreCase))
-            .ToArray();
-        if (all)
-        {
-            var result = new JsonArray();
-            foreach (var header in matching)
-                result.Add(ParseHeaderValue(header, form));
-            return result;
-        }
-        return matching.Length == 0 ? null : ParseHeaderValue(matching[^1], form);
-    }
-
-    private static JsonNode? ParseHeaderValue(Header header, HeaderForm form)
-    {
-        return form switch
-        {
-            HeaderForm.Raw => JsonValue.Create(RawHeaderValue(header)),
-            HeaderForm.Text => JsonValue.Create(NormalizeDecodedHeaderText(header)),
-            HeaderForm.Addresses => ParseAddresses(header, grouped: false),
-            HeaderForm.GroupedAddresses => ParseAddresses(header, grouped: true),
-            HeaderForm.MessageIds => ParseMessageIds(header.Value),
-            HeaderForm.Date => DateUtils.TryParse(header.Value, out var date)
-                ? JsonValue.Create(FormatDate(date))
-                : null,
-            HeaderForm.URLs => ParseUrls(header.Value),
-            _ => null,
-        };
-    }
 
     private static string NormalizeDecodedHeaderText(Header header)
     {
@@ -1224,84 +727,6 @@ internal static partial class JmapEmailCodec
             : (value, null);
     }
 
-    private static string RawHeaderValue(Header header)
-    {
-        var value = Encoding.UTF8.GetString(header.RawValue)
-            .TrimEnd('\r', '\n')
-            .Replace("\0", string.Empty, StringComparison.Ordinal);
-        return value;
-    }
-
-    private static JsonArray? ParseAddresses(Header header, bool grouped)
-    {
-        var (value, rawTabMarker) = ProtectRawHeaderTabs(header);
-        value = NormalizeDecodedHeaderText(value);
-        if (!InternetAddressList.TryParse(value, out var addresses))
-            return null;
-        if (!grouped)
-        {
-            var flattened = new JsonArray();
-            foreach (var mailbox in addresses.Mailboxes)
-                flattened.Add(BuildAddress(mailbox, rawTabMarker));
-            return flattened;
-        }
-
-        var groups = new JsonArray();
-        var ungrouped = new List<MailboxAddress>();
-        foreach (var address in addresses)
-        {
-            if (address is MailboxAddress mailbox)
-            {
-                ungrouped.Add(mailbox);
-                continue;
-            }
-            FlushUngrouped();
-            if (address is GroupAddress group)
-            {
-                var groupName = NormalizeAddressText(group.Name, rawTabMarker);
-                groups.Add(new JsonObject
-                {
-                    ["name"] = string.IsNullOrEmpty(groupName) ? null : groupName,
-                    ["addresses"] = BuildAddressArray(group.Members.Mailboxes, rawTabMarker),
-                });
-            }
-        }
-        FlushUngrouped();
-        return groups;
-
-        void FlushUngrouped()
-        {
-            if (ungrouped.Count == 0)
-                return;
-            groups.Add(new JsonObject
-            {
-                ["name"] = null,
-                ["addresses"] = BuildAddressArray(ungrouped, rawTabMarker),
-            });
-            ungrouped.Clear();
-        }
-    }
-
-    private static JsonArray BuildAddressArray(
-        IEnumerable<MailboxAddress> mailboxes,
-        string? rawTabMarker)
-    {
-        var result = new JsonArray();
-        foreach (var mailbox in mailboxes)
-            result.Add(BuildAddress(mailbox, rawTabMarker));
-        return result;
-    }
-
-    private static JsonObject BuildAddress(MailboxAddress mailbox, string? rawTabMarker)
-    {
-        var name = NormalizeAddressText(mailbox.Name, rawTabMarker);
-        return new JsonObject
-        {
-            ["name"] = string.IsNullOrEmpty(name) ? null : name,
-            ["email"] = mailbox.Address,
-        };
-    }
-
     private static string NormalizeAddressText(string? value, string? rawTabMarker)
     {
         var normalized = NormalizeDecodedHeaderText(value);
@@ -1328,9 +753,9 @@ internal static partial class JmapEmailCodec
         return result.ToString();
     }
 
-    private static JsonArray? ParseMessageIds(string value)
+    private static List<string>? ParseMessageIds(string value)
     {
-        var result = new JsonArray();
+        var result = new List<string>();
         var index = 0;
         while (index < value.Length)
         {
@@ -1350,7 +775,7 @@ internal static partial class JmapEmailCodec
 
     internal static bool IsValidMessageIdsHeader(string value, bool requireSingle)
     {
-        var parsed = ParseMessageIds(value) as JsonArray;
+        var parsed = ParseMessageIds(value);
         return parsed is not null && (!requireSingle || parsed.Count == 1);
     }
 
@@ -1380,39 +805,6 @@ internal static partial class JmapEmailCodec
             }
         }
         return false;
-    }
-
-    private static JsonArray? ParseUrls(string value)
-    {
-        var result = new JsonArray();
-        var index = 0;
-        if (!TrySkipHeaderCfws(value, ref index))
-            return null;
-
-        while (index < value.Length)
-        {
-            if (value[index] != '<')
-                return result.Count == 0 ? null : result;
-
-            var close = value.IndexOf('>', ++index);
-            if (close < 0)
-                return null;
-            var url = RemoveListHeaderWhitespace(value[index..close]);
-            if (!JmapHeaderUrl.IsValidParsedForm(url))
-                return null;
-            result.Add(url);
-
-            index = close + 1;
-            if (!TrySkipHeaderCfws(value, ref index) || index == value.Length)
-                return result;
-            if (value[index] != ',')
-                return result;
-
-            index++;
-            if (!TrySkipHeaderCfws(value, ref index) || index == value.Length)
-                return result;
-        }
-        return result.Count == 0 ? null : result;
     }
 
     private static bool TrySkipHeaderCfws(string value, ref int index)
@@ -1456,87 +848,6 @@ internal static partial class JmapEmailCodec
         return TrySkipHeaderCfws(value, ref index) && index == value.Length;
     }
 
-    private static string RemoveListHeaderWhitespace(string value)
-    {
-        var builder = new StringBuilder(value.Length);
-        foreach (var character in value)
-        {
-            if (character is not (' ' or '\t' or '\r' or '\n'))
-                builder.Append(character);
-        }
-        return builder.ToString();
-    }
-
-    private static bool TryParseHeaderProperty(
-        string property,
-        out HeaderProperty parsed)
-    {
-        parsed = default;
-        if (!property.StartsWith("header:", StringComparison.Ordinal))
-            return false;
-        var remainder = property[7..];
-        var all = remainder.EndsWith(":all", StringComparison.Ordinal);
-        if (all)
-            remainder = remainder[..^4];
-
-        var form = HeaderForm.Raw;
-        var asIndex = remainder.LastIndexOf(":as", StringComparison.Ordinal);
-        if (asIndex >= 0)
-        {
-            var formName = remainder[(asIndex + 3)..];
-            remainder = remainder[..asIndex];
-            if (!Enum.TryParse(formName, ignoreCase: false, out form))
-                return false;
-        }
-        if (remainder.Length == 0
-            || remainder.Any(character => character is < (char)33 or > (char)126 || character == ':')
-            || !IsAllowedHeaderForm(remainder, form))
-        {
-            return false;
-        }
-
-        parsed = new HeaderProperty(remainder, form, all);
-        return true;
-    }
-
-    private static bool IsAllowedHeaderForm(string name, HeaderForm form)
-    {
-        if (form == HeaderForm.Raw)
-            return true;
-        var normalized = name.ToUpperInvariant();
-        return form switch
-        {
-            HeaderForm.Text => normalized is "SUBJECT" or "COMMENTS" or "KEYWORDS" or "LIST-ID"
-                || !KnownHeaderNames.Contains(normalized),
-            HeaderForm.Addresses or HeaderForm.GroupedAddresses => normalized is
-                "FROM" or "SENDER" or "REPLY-TO" or "TO" or "CC" or "BCC"
-                or "RESENT-FROM" or "RESENT-SENDER" or "RESENT-REPLY-TO"
-                or "RESENT-TO" or "RESENT-CC" or "RESENT-BCC"
-                || !KnownHeaderNames.Contains(normalized),
-            HeaderForm.MessageIds => normalized is
-                "MESSAGE-ID" or "IN-REPLY-TO" or "REFERENCES" or "RESENT-MESSAGE-ID"
-                || !KnownHeaderNames.Contains(normalized),
-            HeaderForm.Date => normalized is "DATE" or "RESENT-DATE"
-                || !KnownHeaderNames.Contains(normalized),
-            HeaderForm.URLs => normalized is
-                "LIST-HELP" or "LIST-UNSUBSCRIBE" or "LIST-SUBSCRIBE" or "LIST-POST"
-                or "LIST-OWNER" or "LIST-ARCHIVE"
-                || !KnownHeaderNames.Contains(normalized),
-            _ => false,
-        };
-    }
-
-    private static readonly HashSet<string> KnownHeaderNames = new HashSet<string>(
-        [
-            "DATE", "FROM", "SENDER", "REPLY-TO", "TO", "CC", "BCC",
-            "MESSAGE-ID", "IN-REPLY-TO", "REFERENCES", "SUBJECT", "COMMENTS",
-            "KEYWORDS", "RESENT-DATE", "RESENT-FROM", "RESENT-SENDER",
-            "RESENT-REPLY-TO", "RESENT-TO", "RESENT-CC", "RESENT-BCC", "RESENT-MESSAGE-ID",
-            "RETURN-PATH", "RECEIVED", "LIST-HELP", "LIST-UNSUBSCRIBE", "LIST-SUBSCRIBE",
-            "LIST-POST", "LIST-OWNER", "LIST-ARCHIVE",
-        ],
-        StringComparer.Ordinal);
-
     private static string BuildFallbackMessage(EmailDB email)
     {
         var builder = new StringBuilder()
@@ -1561,23 +872,9 @@ internal static partial class JmapEmailCodec
     [GeneratedRegex("\\s+", RegexOptions.CultureInvariant, 1000)]
     private static partial Regex WhiteSpaceRegex();
 
-    private enum HeaderForm
-    {
-        Raw,
-        Text,
-        Addresses,
-        GroupedAddresses,
-        MessageIds,
-        Date,
-        URLs,
-    }
-
-    private readonly record struct HeaderProperty(string Name, HeaderForm Form, bool All);
-
     private sealed record PartDescriptor(
         MimeEntity Entity,
         string? PartId,
-        string? BlobId,
         byte[] Bytes,
         string? Name,
         string Type,

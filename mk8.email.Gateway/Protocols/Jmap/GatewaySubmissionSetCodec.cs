@@ -39,7 +39,7 @@ internal static class GatewaySubmissionSetCodec
             updates.Select(item => new MailSubmissionUpdate(item.Key, ApplicationValueCodec.Encode(item.Value))).ToArray(),
             destroys.Distinct(StringComparer.Ordinal).Select(value => new MailSubmissionDestroy(value)).ToArray(),
             onSuccessUpdates.Select(item => new MailSubmissionEmailUpdate(item.Key,
-                ApplicationValueCodec.Encode(item.Value))).ToArray(),
+                GatewayEmailPatchCodec.ParseFragments(item.Value))).ToArray(),
             onSuccessDestroys.Select(value => new MailSubmissionEmailDestroy(value)).ToArray()),
             accountId, creates);
         return true;

@@ -1,6 +1,6 @@
 using System.Text;
+using System.Security.Cryptography;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using mk8.email.Contracts.Messaging;
 using mk8.email.Gateway.Protocols.Jmap;
 using mk8.email.Infrastructure.Models;
@@ -21,19 +21,17 @@ public sealed class JmapMimeSnapshotBoundaryTests
             + "--b\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=large.bin\r\n"
             + "Content-Transfer-Encoding: base64\r\n\r\n" + binary + "\r\n--b--\r\n");
         using var message = JmapEmailCodec.Parse(raw);
-        var id = Guid.CreateVersion7();
+        var id = Guid.Parse("11111111-1111-1111-1111-111111111111");
         var stored = new EmailDB
         {
             Id = id,
-            FolderId = Guid.CreateVersion7(),
+            FolderId = Guid.Parse("22222222-2222-2222-2222-222222222222"),
             SizeBytes = raw.Length,
             ReceivedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc),
             ThreadObjectId = "thread/opaque"
         };
-        var properties = JmapEmailCodec.DefaultProperties.Concat(["headers", "bodyStructure", "header:X-Test:asText"]).ToArray();
-        var bodyProperties = JmapEmailCodec.DefaultBodyProperties.Concat(["headers", "header:Content-Type"]).ToArray();
-        var prior = JmapEmailCodec.BuildEmail(message,
-            new(properties, bodyProperties, true, false, false, 10), id, stored);
+        var properties = GatewayEmailProjectionCodec.GetDefaults.Concat(["headers", "bodyStructure", "header:X-Test:asText"]).ToArray();
+        var bodyProperties = GatewayEmailProjectionCodec.BodyDefaults.Concat(["headers", "header:Content-Type"]).ToArray();
         var snapshot = JmapEmailCodec.Capture(message, id, raw.Length, true, stored);
         Assert.IsNotNull(snapshot.RootPart);
         var attachment = snapshot.Parts[snapshot.Parts[snapshot.RootPart.Value].Children[1]];
@@ -44,7 +42,9 @@ public sealed class JmapMimeSnapshotBoundaryTests
         var restored = JsonSerializer.Deserialize<MailMessageSnapshot>(json, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
         var rendered = GatewayEmailValueCodec.BuildEmail(restored,
             new(properties, bodyProperties, true, false, false, 10));
-        Assert.IsTrue(JsonNode.DeepEquals(prior, rendered), rendered.ToJsonString());
+        // Frozen from the former Worker renderer before removing protocol presentation from it.
+        Assert.AreEqual("AE48376C548CB00B655AFBF86CDC8C92ED5ADAC9555FE7601AFE0F7C1FD4C2BE",
+            Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(rendered.ToJsonString()))));
     }
 
     [TestMethod]

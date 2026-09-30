@@ -32,7 +32,7 @@ internal static class GatewayEmailSetCodec
             && Guid.TryParseExact(accountId.AsSpan(1), "N", out var id) ? id : Guid.Empty;
         call = new(new(parsedAccount, ifInState,
             creates.Select(item => new MailMessageCreate(item.Key, ParseDraft(item.Value))).ToArray(),
-            updates.Select(item => new MailMessageUpdate(item.Key, ApplicationValueCodec.Encode(item.Value))).ToArray(),
+            updates.Select(item => new MailMessageUpdate(item.Key, GatewayEmailPatchCodec.Parse(item.Value))).ToArray(),
             destroys.Distinct(StringComparer.Ordinal).Select(id => new MailMessageDestroy(id)).ToArray()),
             accountId);
         return true;

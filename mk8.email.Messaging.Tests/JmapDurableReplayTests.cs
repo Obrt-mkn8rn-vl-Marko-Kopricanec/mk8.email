@@ -81,7 +81,15 @@ public sealed class JmapDurableReplayTests
             [new JmapApplicationCall(MailOperationKind.MutateMessages, new JsonObject
             {
                 ["accountId"] = JmapId.Account(rig.InboxId),
-                ["update"] = new JsonObject { [emailId] = new JsonObject { ["keywords/$seen"] = true } },
+                ["update"] = new JsonObject
+                {
+                    [emailId] = new JsonObject
+                    {
+                        ["keywords/$seen"] = true,
+                        ["subject"] = "Durable draft",
+                        ["bodyValues/1/value"] = "Stored in Blob",
+                    },
+                },
             }, "update")]);
         var updateOperation = Guid.CreateVersion7();
         var firstUpdate = await rig.InvokeAsync(update, updateOperation);
@@ -156,7 +164,12 @@ public sealed class JmapDurableReplayTests
                 },
                 ["onSuccessUpdateEmail"] = new JsonObject
                 {
-                    ["#out"] = new JsonObject { ["keywords/$seen"] = true },
+                    ["#out"] = new JsonObject
+                    {
+                        ["keywords/$seen"] = true,
+                        ["subject"] = "Durable submission",
+                        ["bodyValues/1/value"] = "Blob-backed mail",
+                    },
                 },
             }, "submission")], new Dictionary<string, string>());
         var operation = Guid.CreateVersion7();

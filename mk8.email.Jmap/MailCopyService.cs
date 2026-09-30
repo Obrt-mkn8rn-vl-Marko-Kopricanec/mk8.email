@@ -81,7 +81,7 @@ internal sealed class MailCopyService(
         if (item.InvalidReceivedAt)
             return Failed(item, MailCopyItemError.InvalidReceivedAt);
         var keywords = item.Keywords is null
-            ? JmapEmailCodec.BuildKeywords(source).Select(property => property.Key).ToHashSet(StringComparer.Ordinal)
+            ? MailMessageFlagMutations.Keywords(source)
             : item.Keywords.ToHashSet(StringComparer.Ordinal);
         var raw = await content.ReadAsync(source, cancellationToken).ConfigureAwait(false);
         var stored = await store.StoreAsync(targetAccount, folder, raw, keywords,

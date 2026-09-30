@@ -28,7 +28,7 @@ internal static class JmapEmailSubmissionJson
         if (Wants("threadId")) result["threadId"] = submission.ThreadId;
         if (Wants("envelope"))
             result["envelope"] = BuildEnvelope(submission);
-        if (Wants("sendAt")) result["sendAt"] = JmapEmailCodec.FormatUtcDate(submission.SendAt);
+        if (Wants("sendAt")) result["sendAt"] = JmapDate.FormatUtc(submission.SendAt);
         if (Wants("undoStatus")) result["undoStatus"] = submission.UndoStatus;
         if (Wants("deliveryStatus"))
             result["deliveryStatus"] = await DeliveryStatusAsync(database, submission, cancellationToken).ConfigureAwait(false);

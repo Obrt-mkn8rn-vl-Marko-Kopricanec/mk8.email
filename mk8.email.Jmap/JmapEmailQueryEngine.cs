@@ -26,9 +26,7 @@ internal static partial class JmapEmailQueryEngine
                 var email = emails[emailIndex];
                 var rawMessage = await content.ReadAsync(email, cancellationToken).ConfigureAwait(false);
                 var message = JmapEmailCodec.Parse(rawMessage);
-                var keywords = JmapEmailCodec.BuildKeywords(email)
-                    .Select(item => item.Key)
-                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var keywords = new HashSet<string>(MailMessageFlagMutations.Keywords(email), StringComparer.OrdinalIgnoreCase);
                 result.Add(new JmapEmailQueryItem(
                     email,
                     message,

@@ -1107,7 +1107,7 @@ public sealed class JmapRequestProcessor
                 || mutation.Creates.Select(item => item.CreationId).Distinct(StringComparer.Ordinal).Count()
                     != mutation.Creates.Count
                 || mutation.Updates.Any(item => item is null || !ValidMessageReference(item.RequestedId, context)
-                    || item.Patch is null || ApplicationValueCodec.Decode(item.Patch) is not JsonObject)
+                    || item.Patch is null || !MailMessagePatchValidator.IsValid(item.Patch))
                 || mutation.Updates.Select(item => item.RequestedId).Distinct(StringComparer.Ordinal).Count()
                     != mutation.Updates.Count
                 || mutation.Destroys.Any(item => item is null || !ValidMessageReference(item.RequestedId, context))
@@ -1159,7 +1159,7 @@ public sealed class JmapRequestProcessor
                     != mutation.Destroys.Count
                 || mutation.OnSuccessUpdates.Any(item => item is null
                     || !ValidMessageReference(item.RequestedSubmissionId, context)
-                    || item.Patch is null || ApplicationValueCodec.Decode(item.Patch) is not JsonObject)
+                    || !MailMessagePatchValidator.ValidFragments(item.Fragments))
                 || mutation.OnSuccessUpdates.Select(item => item.RequestedSubmissionId)
                     .Distinct(StringComparer.Ordinal).Count() != mutation.OnSuccessUpdates.Count
                 || mutation.OnSuccessDestroys.Any(item => item is null

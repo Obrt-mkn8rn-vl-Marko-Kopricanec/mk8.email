@@ -59,7 +59,7 @@ public sealed class GatewaySubmissionSetCodecTests
             [new("to@example.test", MailSubmissionDeliveryState.Pending, null)]);
         var implicitCommand = new MailMessageMutationCommand(call.Command.AccountId, null, [],
             [new("E44444444444444444444444444444444",
-                ApplicationValueCodec.Encode(new JsonObject { ["keywords/$seen"] = true }))], []);
+                GatewayEmailPatchCodec.Parse(new JsonObject { ["keywords/$seen"] = true }))], []);
         var implicitResult = new MailMessageMutationResult(MailMessageMutationStatus.Ok, "e1", "e2",
             [], [new("E44444444444444444444444444444444",
                 Guid.Parse("44444444-4444-4444-4444-444444444444"), null)], []);

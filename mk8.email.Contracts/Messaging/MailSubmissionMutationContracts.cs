@@ -25,7 +25,7 @@ public sealed record MailSubmissionDestroy([property: JsonRequired] string Reque
 
 public sealed record MailSubmissionEmailUpdate(
     [property: JsonRequired] string RequestedSubmissionId,
-    [property: JsonRequired] ApplicationValue Patch);
+    [property: JsonRequired] IReadOnlyList<MailMessagePatchFragment> Fragments);
 
 public sealed record MailSubmissionEmailDestroy([property: JsonRequired] string RequestedSubmissionId);
 

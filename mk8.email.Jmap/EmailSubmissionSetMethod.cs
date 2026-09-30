@@ -1026,18 +1026,15 @@ internal sealed class EmailSubmissionSetMethod(
         JmapInvocationContext context,
         Dictionary<string, string> successful)
     {
-        var emailUpdates = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+        var emailUpdates = new Dictionary<string, List<MailMessagePatchFragment>>(StringComparer.Ordinal);
         foreach (var item in command.OnSuccessUpdates)
         {
             var submissionId = context.ResolveId(item.RequestedSubmissionId);
             if (submissionId is null || !successful.TryGetValue(submissionId, out var emailId))
                 continue;
             if (!emailUpdates.TryGetValue(emailId, out var combined))
-                emailUpdates[emailId] = combined = new JsonObject();
-            var value = ApplicationValueCodec.Decode(item.Patch) as JsonObject
-                ?? throw new InvalidOperationException("The implicit email patch is not an object.");
-            foreach (var patch in value)
-                combined[patch.Key] = patch.Value?.DeepClone();
+                emailUpdates[emailId] = combined = [];
+            combined.AddRange(item.Fragments);
         }
         var emailDestroys = new HashSet<string>(StringComparer.Ordinal);
         foreach (var item in command.OnSuccessDestroys)
@@ -1049,7 +1046,7 @@ internal sealed class EmailSubmissionSetMethod(
         if (emailUpdates.Count == 0 && emailDestroys.Count == 0)
             return null;
         return new(command.AccountId, null, [], emailUpdates.Select(item =>
-            new MailMessageUpdate(item.Key, ApplicationValueCodec.Encode(item.Value))).ToArray(),
+            new MailMessageUpdate(item.Key, MailMessagePatchMerger.Merge(item.Value))).ToArray(),
             emailDestroys.Select(id => new MailMessageDestroy(id)).ToArray());
     }
 

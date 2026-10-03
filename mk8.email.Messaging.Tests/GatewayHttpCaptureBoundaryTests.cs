@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Azure.Storage.Blobs;
@@ -12,6 +13,7 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -22,7 +24,9 @@ using mk8.email.Configuration;
 using mk8.email.Contracts.Messaging;
 using mk8.email.Gateway.ApplicationBridge;
 using mk8.email.Gateway.Protocols;
+using mk8.email.Gateway.Protocols.Dav;
 using mk8.email.Gateway.Protocols.Jmap;
+using mk8.email.Gateway.Protocols.OAuth;
 using mk8.email.Gateway.Security;
 using mk8.email.Storage;
 using Npgsql;
@@ -70,15 +74,18 @@ internal sealed class GatewayHttpCaptureBoundaryTests
     }
 
     [TestMethod]
-    public async Task ProductionChunkedKestrelRejectsBeforeRemainingBodyOrTerminatorArrive()
+    [DataRow("/oauth/token", false)]
+    [DataRow("/OAuth/TOKEN/", false)]
+    [DataRow("/OAuth/TOKEN/", true)]
+    public async Task ProductionChunkedKestrelRejectsBeforeRemainingBodyOrTerminatorArrive(string path, bool ordinaryClient)
     {
-        var fixture = await CaptureFixture.CreateAsync().ConfigureAwait(false);
+        var fixture = await CaptureFixture.CreateAsync(ordinaryClient).ConfigureAwait(false);
         await using var fixtureLifetime = fixture.ConfigureAwait(false);
-        using var connection = new TcpClient();
+        using var connection = new TcpClient(new IPEndPoint(IPAddress.Parse(ordinaryClient ? "127.0.0.2" : "127.0.0.1"), 0));
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await connection.ConnectAsync(fixture.Address.Host, fixture.Address.Port, deadline.Token).ConfigureAwait(false);
         var stream = connection.GetStream();
-        var headers = Encoding.ASCII.GetBytes("POST /oauth/token HTTP/1.1\r\nHost: localhost\r\n"
+        var headers = Encoding.ASCII.GetBytes($"POST {path} HTTP/1.1\r\nHost: localhost\r\n"
             + "X-Forwarded-Proto: https\r\nContent-Type: application/x-www-form-urlencoded\r\n"
             + "Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n10001\r\n");
         await stream.WriteAsync(headers, deadline.Token).ConfigureAwait(false);
@@ -98,7 +105,7 @@ internal sealed class GatewayHttpCaptureBoundaryTests
         Assert.AreEqual(contentLength, await reader.ReadBlockAsync(bodyCharacters.AsMemory(), deadline.Token).ConfigureAwait(false));
         var body = new string(bodyCharacters);
         StringAssert.Contains(body, "invalid_request", StringComparison.Ordinal);
-        await fixture.AssertRecordedResponseAsync("oauth", "/oauth/token", 413, body, rejection: true).ConfigureAwait(false);
+        await fixture.AssertRecordedResponseAsync("oauth", path, 413, body, rejection: true).ConfigureAwait(false);
         Assert.AreEqual(0, fixture.EndpointCalls);
         await fixture.AssertNoWorkerRequestsAsync().ConfigureAwait(false);
     }
@@ -143,7 +150,7 @@ internal sealed class GatewayHttpCaptureBoundaryTests
         await fixture.AssertPayloadBudgetsAndBlobReferencesAsync().ConfigureAwait(false);
     }
 
-    private sealed class CaptureFixture : IAsyncDisposable
+    internal sealed class CaptureFixture : IAsyncDisposable
     {
         internal const int UploadBytes = 2 * 1024 * 1024;
         private readonly PostgresTestDatabase _database;
@@ -155,10 +162,12 @@ internal sealed class GatewayHttpCaptureBoundaryTests
         private readonly WebApplication _host;
         private readonly PostgresGatewayTrafficJournal _journal;
         private readonly int _maximumPayloadBytes;
+        private readonly SocketsHttpHandler _clientHandler;
 
         private CaptureFixture(PostgresTestDatabase database, NpgsqlDataSource dataSource, AesGcmPayloadProtector protector,
             BlobContainerClient container, ServiceProvider workerProvider, ApplicationRequestWorker worker,
-            WebApplication host, PostgresGatewayTrafficJournal journal, UploadApplication application, int maximumPayloadBytes)
+            WebApplication host, PostgresGatewayTrafficJournal journal, UploadApplication application, int maximumPayloadBytes,
+            bool ordinaryClient, FaultingJournal faultingJournal)
         {
             _database = database;
             _dataSource = dataSource;
@@ -170,8 +179,14 @@ internal sealed class GatewayHttpCaptureBoundaryTests
             _journal = journal;
             Application = application;
             _maximumPayloadBytes = maximumPayloadBytes;
+            Faults = faultingJournal;
             Address = new Uri(host.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
-            Client = new HttpClient { BaseAddress = Address, Timeout = TimeSpan.FromSeconds(15) };
+            _clientHandler = new SocketsHttpHandler
+            {
+                AllowAutoRedirect = false,
+                ConnectCallback = (context, cancellationToken) => ConnectAsync(context, ordinaryClient, cancellationToken),
+            };
+            Client = new HttpClient(_clientHandler, disposeHandler: false) { BaseAddress = Address, Timeout = TimeSpan.FromSeconds(15) };
             Client.DefaultRequestHeaders.Add("X-Forwarded-Proto", "https");
             Client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", "dGVzdDp0ZXN0LXByb3RvY29sLXNlY3JldA==");
         }
@@ -179,10 +194,12 @@ internal sealed class GatewayHttpCaptureBoundaryTests
         public Uri Address { get; }
         public HttpClient Client { get; }
         public UploadApplication Application { get; }
+        public FaultingJournal Faults { get; }
+        public TaskCompletionSource EventHandlerCompleted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public int EndpointCalls { get; private set; }
         private int ErrorPageCalls { get; set; }
 
-        public static async Task<CaptureFixture> CreateAsync()
+        public static async Task<CaptureFixture> CreateAsync(bool ordinaryClient = false, long? failSequence = null)
         {
             var database = await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false);
             var blobConnection = Environment.GetEnvironmentVariable("MK8_EMAIL_TEST_AZURE_BLOB_CONNECTION");
@@ -203,6 +220,7 @@ internal sealed class GatewayHttpCaptureBoundaryTests
             };
             var bus = new PostgresApplicationBus(dataSource, protector, options, largeObjectStore: store);
             var journal = new PostgresGatewayTrafficJournal(dataSource, protector, options, store);
+            var faultingJournal = new FaultingJournal(journal, failSequence);
             var application = new UploadApplication();
             var provider = new ServiceCollection().AddSingleton<IJmapApplicationService>(application)
                 .AddScoped<IApplicationRequestDispatcher>(services => new ApplicationRequestDispatcher(services)).BuildServiceProvider();
@@ -211,17 +229,59 @@ internal sealed class GatewayHttpCaptureBoundaryTests
             var environment = CreateEnvironment(maximumPayloadBytes, blobConnection);
             Assert.HasCount(0, environment.Validate(role: EnvironmentValidationRole.Gateway));
             Assert.HasCount(0, environment.Validate(role: EnvironmentValidationRole.ApplicationWorker));
-            var host = BuildProductionHost(environment, bus, journal);
-            host.Use((context, next) => context.Request.Headers.ContainsKey("X-Test-Failure")
-                ? throw new InvalidOperationException("deliberate secret exception") : next(context));
+            var host = BuildProductionHost(environment, bus, faultingJournal);
             CaptureFixture? fixture = null;
-            host.MapPost("/oauth/token", () => { fixture!.EndpointCalls++; return Results.Json(new { ok = true }); });
-            host.MapGet("/Error", () => { fixture!.ErrorPageCalls++; return Results.Content("ADMIN ERROR HTML", "text/html"); });
-            host.MapJmapEndpoints();
+            MapProtocolRoutes(host, () => fixture!);
             await worker.StartAsync(CancellationToken.None).ConfigureAwait(false);
             await host.StartAsync(CancellationToken.None).ConfigureAwait(false);
-            fixture = new CaptureFixture(database, dataSource, protector, container, provider, worker, host, journal, application, maximumPayloadBytes);
+            fixture = new CaptureFixture(database, dataSource, protector, container, provider, worker, host, journal, application,
+                maximumPayloadBytes, ordinaryClient, faultingJournal);
             return fixture;
+        }
+
+        private static void MapProtocolRoutes(WebApplication host, Func<CaptureFixture> getFixture)
+        {
+            host.Use(async (context, next) =>
+            {
+                getFixture().EndpointCalls++;
+                if (context.Request.Headers.ContainsKey("X-Test-Failure"))
+                    throw new InvalidOperationException("deliberate secret exception");
+                if (context.Request.Headers.ContainsKey("X-Test-Unavailable"))
+                    throw new GatewayApplicationException("application-timeout", "deliberate secret exception", isUnavailable: true);
+                try
+                {
+                    await next(context).ConfigureAwait(false);
+                }
+                finally
+                {
+                    if (GatewayProtocolPaths.IsStreaming(context.Request.Path))
+                        getFixture().EventHandlerCompleted.TrySetResult();
+                }
+            });
+            host.MapGet("/Error", () => { getFixture().ErrorPageCalls++; return Results.Content("ADMIN ERROR HTML", "text/html"); });
+            host.MapGet("/admin-canary", () => Results.Json(new { ok = true }));
+            host.MapJmapEndpoints();
+            host.MapOAuthEndpoints();
+            host.MapDavEndpoints();
+        }
+
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA2000", Justification = "The returned NetworkStream explicitly owns the Socket; every construction/connect failure disposes it in catch. HttpClient owns the returned stream and the fixture disposes its client/handler after each real-peer test.")]
+        private static async ValueTask<Stream> ConnectAsync(SocketsHttpConnectionContext context, bool ordinaryClient,
+            CancellationToken cancellationToken)
+        {
+            var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+            try
+            {
+                // These are real TCP peers: .1 is an allowed administrator, .2 is not.
+                socket.Bind(new IPEndPoint(IPAddress.Parse(ordinaryClient ? "127.0.0.2" : "127.0.0.1"), 0));
+                await socket.ConnectAsync(context.DnsEndPoint, cancellationToken).ConfigureAwait(false);
+                return new NetworkStream(socket, ownsSocket: true);
+            }
+            catch
+            {
+                socket.Dispose();
+                throw;
+            }
         }
 
         private static WebApplication BuildProductionHost(EnvironmentConfig environment,
@@ -238,14 +298,20 @@ internal sealed class GatewayHttpCaptureBoundaryTests
             builder.Services.AddSingleton(environment).AddSingleton(environment.Admin).AddSingleton<AdminNetworkPolicy>();
             builder.Services.AddSingleton<IApplicationRequestClient>(bus).AddSingleton<IGatewayTrafficJournal>(journal);
             builder.Services.AddGatewayApplicationClient();
+            builder.Services.AddSingleton<GatewayDavStore>();
             builder.Services.AddDataProtection().UseEphemeralDataProtectionProvider();
             builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme).AddCookie();
             builder.Services.AddAuthorization();
-            builder.Services.AddRateLimiter(_ => { });
+            builder.Services.AddRateLimiter(limits =>
+            {
+                limits.AddConcurrencyLimiter("oauth-token", options => options.PermitLimit = 10);
+                limits.AddConcurrencyLimiter("oauth-authorize", options => options.PermitLimit = 10);
+            });
             builder.Services.Configure<ForwardedHeadersOptions>(forwarded =>
             {
                 forwarded.ForwardedHeaders = ForwardedHeaders.XForwardedProto;
                 forwarded.KnownProxies.Add(IPAddress.Loopback);
+                forwarded.KnownProxies.Add(IPAddress.Parse("127.0.0.2"));
             });
             var host = builder.Build();
             GatewayHttpPipeline.Configure(host); // The identical Production pipeline used by Program.cs.
@@ -262,7 +328,7 @@ internal sealed class GatewayHttpCaptureBoundaryTests
             Limits = new LimitsConfig { MaxMessageSizeBytes = 1_048_576 },
             Admin = new AdminConfig
             {
-                AllowedNetworks = ["127.0.0.0/8"],
+                AllowedNetworks = ["127.0.0.1/32"],
                 DataProtectionKeyPath = "/tmp/mk8-capture-keys",
                 AuditLogPath = "/tmp/mk8-capture-audit",
                 HealthStatusPath = "/tmp/mk8-capture-health"
@@ -275,14 +341,32 @@ internal sealed class GatewayHttpCaptureBoundaryTests
                 InlinePayloadThresholdBytes = 1024
             },
             ObjectStorage = new ObjectStorageConfig { ConnectionString = blobConnection },
+            OAuth = CreateOAuthConfig(),
         };
 
-        public async Task AssertRecordedResponseAsync(string protocol, string path, int status, string body, bool rejection)
+        private static OAuthConfig CreateOAuthConfig()
+        {
+            using var signingKey = RSA.Create(2048);
+            return new OAuthConfig { EnableOAuth = true, EnableOpenIdConnect = true, SigningKey = signingKey.ExportRSAPrivateKeyPem() };
+        }
+
+        public async Task AssertAdminBoundaryAsync(bool ordinaryClient)
+        {
+            using var response = await Client.GetAsync(new Uri("/admin-canary", UriKind.Relative)).ConfigureAwait(false);
+            Assert.AreEqual(ordinaryClient ? HttpStatusCode.NotFound : HttpStatusCode.OK, response.StatusCode);
+        }
+
+        public async Task<IReadOnlyList<GatewayTrafficRecord>> ReadPresentationSessionAsync()
         {
             var command = _dataSource.CreateCommand("SELECT session_id FROM gateway_traffic_records WHERE sequence = 0 AND metadata->>'layer' = 'presentation' ORDER BY recorded_at DESC LIMIT 1");
             await using var commandLifetime = command.ConfigureAwait(false);
             var sessionId = (Guid)(await command.ExecuteScalarAsync().ConfigureAwait(false))!;
-            var records = await _journal.ReadSessionAsync(sessionId).ConfigureAwait(false);
+            return await _journal.ReadSessionAsync(sessionId).ConfigureAwait(false);
+        }
+
+        public async Task AssertRecordedResponseAsync(string protocol, string path, int status, string body, bool rejection)
+        {
+            var records = await ReadPresentationSessionAsync().ConfigureAwait(false);
             Assert.HasCount(2, records);
             Assert.IsTrue(records.All(record => string.Equals(record.Protocol, protocol, StringComparison.Ordinal)));
             Assert.AreEqual(GatewayTrafficDirections.Inbound, records[0].Direction, StringComparer.Ordinal);
@@ -346,6 +430,8 @@ internal sealed class GatewayHttpCaptureBoundaryTests
         public async ValueTask DisposeAsync()
         {
             Client.Dispose();
+            _clientHandler.Dispose();
+            Application.ReleasePoll(changes: false);
             await _host.StopAsync().ConfigureAwait(false);
             await _host.DisposeAsync().ConfigureAwait(false);
             await _worker.StopAsync(CancellationToken.None).ConfigureAwait(false);
@@ -358,8 +444,10 @@ internal sealed class GatewayHttpCaptureBoundaryTests
         }
     }
 
-    private sealed class UploadApplication : IJmapApplicationService
+    internal sealed class UploadApplication : IJmapApplicationService
     {
+        private readonly TaskCompletionSource<JmapApplicationResult> _nextPoll = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource PollWaiting { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public int UploadCalls { get; private set; }
         public byte[]? Content { get; private set; }
         public Task<JmapApplicationResult> GetProfileAsync(JmapProfileApplicationRequest request, CancellationToken cancellationToken = default) =>
@@ -375,6 +463,42 @@ internal sealed class GatewayHttpCaptureBoundaryTests
             Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, Content: Content, ContentType: "application/octet-stream"));
         public Task<JmapApplicationResult> ValidatePlanAsync(MailPlanApplicationRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<JmapApplicationResult> ExecuteOperationAsync(MailOperationApplicationRequest request, Guid operationId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<JmapApplicationResult> PollChangesAsync(JmapChangesApplicationRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<JmapApplicationResult> PollChangesAsync(JmapChangesApplicationRequest request, CancellationToken cancellationToken = default)
+        {
+            if (request.AfterCursor is null)
+                return Task.FromResult(StateResult(1));
+            PollWaiting.TrySetResult();
+            return _nextPoll.Task.WaitAsync(cancellationToken);
+        }
+
+        public void ReleasePoll(bool changes) => _nextPoll.TrySetResult(changes
+            ? StateResult(2) : new JmapApplicationResult(JmapApplicationOutcomes.Ok, Cursor: 2));
+
+        private static JmapApplicationResult StateResult(long cursor) => new(JmapApplicationOutcomes.Ok, Cursor: cursor,
+            Changes: new JmapApplicationChanges(new Dictionary<string, IReadOnlyDictionary<string, string>>(StringComparer.Ordinal)
+            {
+                ["account"] = new Dictionary<string, string>(StringComparer.Ordinal) { ["Email"] = $"state-{cursor}" },
+            }));
+    }
+
+    internal sealed class FaultingJournal(PostgresGatewayTrafficJournal journal, long? failSequence) : IGatewayTrafficJournal
+    {
+        public bool FailNextChunk { get; set; }
+        public TaskCompletionSource<GatewayTrafficRecord> Failure { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task AppendAsync(GatewayTrafficRecord record, CancellationToken cancellationToken = default)
+        {
+            if (record.Metadata.TryGetValue("layer", out var layer) && string.Equals(layer, "presentation", StringComparison.Ordinal)
+                && string.Equals(record.Direction, GatewayTrafficDirections.Outbound, StringComparison.Ordinal)
+                && (record.Sequence == failSequence || (FailNextChunk && record.Sequence >= 2)))
+            {
+                Failure.TrySetResult(record);
+                throw new InvalidOperationException("Deliberate journal write failure.");
+            }
+            return journal.AppendAsync(record, cancellationToken);
+        }
+
+        public Task<IReadOnlyList<GatewayTrafficRecord>> ReadSessionAsync(Guid sessionId, CancellationToken cancellationToken = default) =>
+            journal.ReadSessionAsync(sessionId, cancellationToken);
     }
 }

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using mk8.email.Gateway.Protocols;
 
 namespace mk8.email.Gateway.ApplicationBridge;
 
@@ -23,7 +24,7 @@ public sealed class GatewayApplicationFailureMiddleware(
             context.Response.Headers.CacheControl = "no-store";
             if (exception.IsUnavailable)
                 context.Response.Headers.RetryAfter = "5";
-            if (context.Request.Path.StartsWithSegments("/oauth", StringComparison.Ordinal))
+            if (GatewayProtocolPaths.IsOAuth(context.Request.Path))
             {
                 context.Response.ContentType = "application/json; charset=utf-8";
                 await JsonSerializer.SerializeAsync(

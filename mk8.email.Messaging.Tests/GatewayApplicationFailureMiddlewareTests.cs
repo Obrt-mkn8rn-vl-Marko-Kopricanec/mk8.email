@@ -15,10 +15,13 @@ namespace mk8.email.Messaging.Tests;
 internal sealed class GatewayApplicationFailureMiddlewareTests
 {
     [TestMethod]
-    public async Task OfflineApplicationReturnsStableOAuthAvailabilityError()
+    [DataRow("/oauth/token")]
+    [DataRow("/OAuth/TOKEN/")]
+    [DataRow("/.WELL-KNOWN/OAUTH-AUTHORIZATION-SERVER/")]
+    public async Task OfflineApplicationReturnsStableOAuthAvailabilityError(string path)
     {
         var context = new DefaultHttpContext();
-        context.Request.Path = "/oauth/token";
+        context.Request.Path = path;
         context.Response.Body = new MemoryStream();
         var middleware = new GatewayApplicationFailureMiddleware(
             _ => throw new GatewayApplicationException(

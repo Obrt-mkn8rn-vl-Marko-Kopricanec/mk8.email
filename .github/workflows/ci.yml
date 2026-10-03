@@ -152,9 +152,11 @@ jobs:
           PYTHONPYCACHEPREFIX="$RUNNER_TEMP/mk8email-pycache" \
             python3 -m py_compile \
               deploy/scripts/extract-distributed-snapshot-tar.py \
+              deploy/tests/release_archive_smoke.py deploy/tests/test_release_archive_smoke.py \
               deploy/tests/dashboard_smoke.py deploy/tests/distributed_config_smoke.py \
               deploy/tests/mail_smoke.py deploy/tests/multi_domain_smoke.py
           python3 deploy/tests/distributed_config_smoke.py
+          python3 -m unittest discover -s deploy/tests -p test_release_archive_smoke.py
           sh deploy/tests/gateway_database_access_smoke deploy/scripts/configure-gateway-database-access deploy/postgresql/restricted-role-posture.sql
           sh deploy/tests/wake_database_access_smoke deploy/scripts/configure-wake-database-access deploy/postgresql/restricted-role-posture.sql
           sh deploy/tests/container_on_demand_smoke \
@@ -254,9 +256,13 @@ jobs:
       - name: Publish Application Worker
         run: dotnet publish mk8.email.Application.Worker/mk8.email.Application.Worker.csproj --configuration Release --no-build --output artifacts/worker --property:UseAppHost=false
 
+      - name: Publish Wake supervisor
+        run: dotnet publish mk8.email.Wake/mk8.email.Wake.csproj --configuration Release --no-build --output artifacts/wake --property:UseAppHost=false
+
       - name: Package release
         run: |
-          tar --create --gzip --file=artifacts/mk8email-linux-x64.tar.gz --directory=artifacts cli admin worker
+          tar --create --gzip --file=artifacts/mk8email-linux-x64.tar.gz --directory=artifacts cli admin worker wake
+          python3 deploy/tests/release_archive_smoke.py artifacts/mk8email-linux-x64.tar.gz
           sha256sum artifacts/mk8email-linux-x64.tar.gz > artifacts/mk8email-linux-x64.tar.gz.sha256
 
       - name: Save evidence and release

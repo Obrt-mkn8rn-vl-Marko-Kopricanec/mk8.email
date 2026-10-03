@@ -13,46 +13,49 @@ namespace mk8.email.Application.Tests;
 
 [TestClass]
 [DoNotParallelize]
-public sealed class DavProtocolTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class DavProtocolTests
 {
     private static readonly XNamespace Dav = "DAV:";
     private static readonly XNamespace CalDav = "urn:ietf:params:xml:ns:caldav";
     private static readonly XNamespace CardDav = "urn:ietf:params:xml:ns:carddav";
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The DiscoveryAuthenticatesAndPublishesPrincipalAndDefaultHomes scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task DiscoveryAuthenticatesAndPublishesPrincipalAndDefaultHomes()
     {
-        await using var fixture = await DavFixture.CreateAsync();
+        var fixture = (await DavFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
 
         using var options = await fixture.SendAsync(
             "OPTIONS",
             "/dav/",
-            authenticate: false);
+            authenticate: false).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.OK, options.StatusCode);
-        StringAssert.Contains(options.Headers.GetValues("DAV").Single(), "calendar-access");
-        StringAssert.Contains(options.Headers.GetValues("DAV").Single(), "calendar-schedule");
-        StringAssert.Contains(options.Headers.GetValues("DAV").Single(), "addressbook");
-        StringAssert.Contains(options.Headers.GetValues("DAV").Single(), "access-control");
-        StringAssert.Contains(options.Content.Headers.Allow.ToString(), "REPORT");
-        StringAssert.Contains(options.Content.Headers.Allow.ToString(), "ACL");
+        StringAssert.Contains(options.Headers.GetValues("DAV").Single(), "calendar-access", StringComparison.Ordinal);
+        StringAssert.Contains(options.Headers.GetValues("DAV").Single(), "calendar-schedule", StringComparison.Ordinal);
+        StringAssert.Contains(options.Headers.GetValues("DAV").Single(), "addressbook", StringComparison.Ordinal);
+        StringAssert.Contains(options.Headers.GetValues("DAV").Single(), "access-control", StringComparison.Ordinal);
+        StringAssert.Contains(options.Content.Headers.Allow.ToString(), "REPORT", StringComparison.Ordinal);
+        StringAssert.Contains(options.Content.Headers.Allow.ToString(), "ACL", StringComparison.Ordinal);
 
         using var redirect = await fixture.SendAsync(
             "PROPFIND",
             "/.well-known/caldav",
             headers: Header("Depth", "0"),
-            authenticate: false);
+            authenticate: false).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.MovedPermanently, redirect.StatusCode);
-        Assert.AreEqual("/dav/", redirect.Headers.Location?.OriginalString);
+        Assert.AreEqual("/dav/", redirect.Headers.Location?.OriginalString, StringComparer.Ordinal);
 
         using var unauthorized = await fixture.SendAsync(
             "PROPFIND",
             "/dav/",
             headers: Header("Depth", "0"),
-            authenticate: false);
+            authenticate: false).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.Unauthorized, unauthorized.StatusCode);
         StringAssert.Contains(
             unauthorized.Headers.WwwAuthenticate.Single().ToString(),
-            "mk8.email DAV");
+            "mk8.email DAV", StringComparison.Ordinal);
 
         using var discovery = await fixture.SendAsync(
             "PROPFIND",
@@ -60,9 +63,9 @@ public sealed class DavProtocolTests
             Propfind(
                 "<D:current-user-principal/><C:calendar-home-set/>" +
                 "<A:addressbook-home-set/><D:resourcetype/>"),
-            headers: Header("Depth", "1"));
+            headers: Header("Depth", "1")).ConfigureAwait(false);
         Assert.AreEqual((HttpStatusCode)207, discovery.StatusCode);
-        var discoveryXml = await ReadXmlAsync(discovery);
+        var discoveryXml = await ReadXmlAsync(discovery).ConfigureAwait(false);
         var hrefs = Hrefs(discoveryXml);
         CollectionAssert.IsSubsetOf(
             new[]
@@ -78,9 +81,9 @@ public sealed class DavProtocolTests
             "PROPFIND",
             fixture.CalendarHomePath,
             Propfind("<D:displayname/><D:resourcetype/><D:sync-token/>"),
-            headers: Header("Depth", "1"));
+            headers: Header("Depth", "1")).ConfigureAwait(false);
         Assert.AreEqual((HttpStatusCode)207, calendars.StatusCode);
-        var calendarXml = await ReadXmlAsync(calendars);
+        var calendarXml = await ReadXmlAsync(calendars).ConfigureAwait(false);
         Assert.IsTrue(Hrefs(calendarXml).Contains(fixture.CalendarHomePath + "default/"));
         Assert.IsNotNull(calendarXml.Descendants(CalDav + "calendar").SingleOrDefault());
 
@@ -88,9 +91,9 @@ public sealed class DavProtocolTests
             "PROPFIND",
             fixture.AddressBookHomePath,
             Propfind("<D:displayname/><D:resourcetype/><D:sync-token/>"),
-            headers: Header("Depth", "1"));
+            headers: Header("Depth", "1")).ConfigureAwait(false);
         Assert.AreEqual((HttpStatusCode)207, addressBooks.StatusCode);
-        var addressBookXml = await ReadXmlAsync(addressBooks);
+        var addressBookXml = await ReadXmlAsync(addressBooks).ConfigureAwait(false);
         Assert.IsTrue(Hrefs(addressBookXml).Contains(fixture.AddressBookHomePath + "default/"));
         Assert.IsNotNull(addressBookXml.Descendants(CardDav + "addressbook").SingleOrDefault());
 
@@ -98,27 +101,29 @@ public sealed class DavProtocolTests
             "PROPFIND",
             fixture.PrincipalPath,
             Propfind("<C:schedule-inbox-URL/><C:schedule-outbox-URL/><C:calendar-user-address-set/>"),
-            headers: Header("Depth", "0"));
+            headers: Header("Depth", "0")).ConfigureAwait(false);
         Assert.AreEqual((HttpStatusCode)207, scheduling.StatusCode);
-        var schedulingXml = await ReadXmlAsync(scheduling);
+        var schedulingXml = await ReadXmlAsync(scheduling).ConfigureAwait(false);
         Assert.AreEqual(
             fixture.SchedulingInboxPath,
             schedulingXml.Descendants(CalDav + "schedule-inbox-URL")
-                .Single().Element(Dav + "href")?.Value);
+                .Single().Element(Dav + "href")?.Value, StringComparer.Ordinal);
         Assert.AreEqual(
             fixture.SchedulingOutboxPath,
             schedulingXml.Descendants(CalDav + "schedule-outbox-URL")
-                .Single().Element(Dav + "href")?.Value);
+                .Single().Element(Dav + "href")?.Value, StringComparer.Ordinal);
         Assert.AreEqual(
-            $"mailto:{fixture.PrimaryAddress}",
+            $"mailto:{DavFixture.PrimaryAddress}",
             schedulingXml.Descendants(CalDav + "calendar-user-address-set")
-                .Single().Element(Dav + "href")?.Value);
+                .Single().Element(Dav + "href")?.Value, StringComparer.Ordinal);
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The CalDavSupportsCollectionResourceQueryAndIncrementalSyncLifecycle scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task CalDavSupportsCollectionResourceQueryAndIncrementalSyncLifecycle()
     {
-        await using var fixture = await DavFixture.CreateAsync();
+        var fixture = (await DavFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var collection = fixture.CalendarHomePath + "team/";
         var resource = collection + "planning.ics";
 
@@ -136,7 +141,7 @@ public sealed class DavProtocolTests
         using var createdCollection = await fixture.SendAsync(
             "MKCALENDAR",
             collection,
-            createCollection);
+            createCollection).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.Created, createdCollection.StatusCode);
 
         const string calendar = """
@@ -166,7 +171,7 @@ public sealed class DavProtocolTests
             resource,
             calendar,
             "text/calendar; charset=utf-8",
-            Header("If-None-Match", "*"));
+            Header("If-None-Match", "*")).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.Created, created.StatusCode);
         var firstEtag = created.Headers.ETag?.Tag;
         Assert.IsNotNull(firstEtag);
@@ -175,9 +180,9 @@ public sealed class DavProtocolTests
         {
             var stored = await scope.ServiceProvider.GetRequiredService<EmailDbContext>()
                 .DavResources.AsNoTracking()
-                .SingleAsync(candidate => candidate.ResourceName == "planning.ics");
+                .SingleAsync(candidate => candidate.ResourceName == "planning.ics").ConfigureAwait(false);
             Assert.IsNull(stored.Content);
-            Assert.AreEqual("azure-blob", stored.ObjectProvider);
+            Assert.AreEqual("azure-blob", stored.ObjectProvider, StringComparer.Ordinal);
             firstObjectName = stored.ObjectName
                 ?? throw new AssertFailedException("The DAV object name is missing.");
             Assert.IsTrue(scope.ServiceProvider.GetRequiredService<InMemoryLargeObjectStore>()
@@ -189,13 +194,13 @@ public sealed class DavProtocolTests
             resource,
             calendar,
             "text/calendar; charset=utf-8",
-            Header("If-None-Match", "*"));
+            Header("If-None-Match", "*")).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.PreconditionFailed, duplicateCreate.StatusCode);
 
-        using var get = await fixture.SendAsync("GET", resource);
+        using var get = await fixture.SendAsync("GET", resource).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.OK, get.StatusCode);
-        Assert.AreEqual(calendar, await get.Content.ReadAsStringAsync());
-        Assert.AreEqual(firstEtag, get.Headers.ETag?.Tag);
+        Assert.AreEqual(calendar, await get.Content.ReadAsStringAsync().ConfigureAwait(false), StringComparer.Ordinal);
+        Assert.AreEqual(firstEtag, get.Headers.ETag?.Tag, StringComparer.Ordinal);
 
         const string query = """
         <C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
@@ -207,11 +212,11 @@ public sealed class DavProtocolTests
             "REPORT",
             collection,
             query,
-            headers: Header("Depth", "1"));
+            headers: Header("Depth", "1")).ConfigureAwait(false);
         Assert.AreEqual((HttpStatusCode)207, queried.StatusCode);
-        var queryXml = await ReadXmlAsync(queried);
+        var queryXml = await ReadXmlAsync(queried).ConfigureAwait(false);
         Assert.IsTrue(Hrefs(queryXml).Contains(resource));
-        StringAssert.Contains(queryXml.Descendants(CalDav + "calendar-data").Single().Value, "RRULE:FREQ=WEEKLY");
+        StringAssert.Contains(queryXml.Descendants(CalDav + "calendar-data").Single().Value, "RRULE:FREQ=WEEKLY", StringComparison.Ordinal);
 
         const string multiget = """
         <C:calendar-multiget xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
@@ -222,16 +227,16 @@ public sealed class DavProtocolTests
         using var multi = await fixture.SendAsync(
             "REPORT",
             collection,
-            string.Format(System.Globalization.CultureInfo.InvariantCulture, multiget, resource));
+            string.Format(System.Globalization.CultureInfo.InvariantCulture, multiget, resource)).ConfigureAwait(false);
         Assert.AreEqual((HttpStatusCode)207, multi.StatusCode);
-        Assert.IsTrue(Hrefs(await ReadXmlAsync(multi)).Contains(resource));
+        Assert.IsTrue(Hrefs(await ReadXmlAsync(multi).ConfigureAwait(false)).Contains(resource));
 
         using var initialSync = await fixture.SendAsync(
             "REPORT",
             collection,
-            SyncReport(string.Empty));
+            SyncReport(string.Empty)).ConfigureAwait(false);
         Assert.AreEqual((HttpStatusCode)207, initialSync.StatusCode);
-        var initialSyncXml = await ReadXmlAsync(initialSync);
+        var initialSyncXml = await ReadXmlAsync(initialSync).ConfigureAwait(false);
         var initialToken = initialSyncXml.Root!.Element(Dav + "sync-token")!.Value;
         Assert.IsTrue(Hrefs(initialSyncXml).Contains(resource));
 
@@ -244,7 +249,7 @@ public sealed class DavProtocolTests
             resource,
             updatedCalendar,
             "text/calendar; charset=utf-8",
-            Header("If-Match", "\"not-the-current-etag\""));
+            Header("If-Match", "\"not-the-current-etag\"")).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.PreconditionFailed, failedUpdate.StatusCode);
         Assert.AreEqual(
             1,
@@ -255,18 +260,18 @@ public sealed class DavProtocolTests
             resource,
             updatedCalendar,
             "text/calendar; charset=utf-8",
-            Header("If-Match", firstEtag));
+            Header("If-Match", firstEtag)).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.NoContent, updated.StatusCode);
         var secondEtag = updated.Headers.ETag?.Tag;
         Assert.IsNotNull(secondEtag);
-        Assert.AreNotEqual(firstEtag, secondEtag);
+        Assert.AreNotEqual(firstEtag, secondEtag, StringComparer.Ordinal);
         using (var scope = fixture.Services.CreateScope())
         {
             var stored = await scope.ServiceProvider.GetRequiredService<EmailDbContext>()
                 .DavResources.AsNoTracking()
-                .SingleAsync(candidate => candidate.ResourceName == "planning.ics");
+                .SingleAsync(candidate => candidate.ResourceName == "planning.ics").ConfigureAwait(false);
             Assert.IsNull(stored.Content);
-            Assert.AreNotEqual(firstObjectName, stored.ObjectName);
+            Assert.AreNotEqual(firstObjectName, stored.ObjectName, StringComparer.Ordinal);
             var objects = scope.ServiceProvider.GetRequiredService<InMemoryLargeObjectStore>();
             Assert.AreEqual(1, objects.Count);
             Assert.IsFalse(objects.Contains(firstObjectName));
@@ -276,7 +281,7 @@ public sealed class DavProtocolTests
         using var deleted = await fixture.SendAsync(
             "DELETE",
             resource,
-            headers: Header("If-Match", secondEtag));
+            headers: Header("If-Match", secondEtag)).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.NoContent, deleted.StatusCode);
         Assert.AreEqual(
             0,
@@ -285,21 +290,23 @@ public sealed class DavProtocolTests
         using var delta = await fixture.SendAsync(
             "REPORT",
             collection,
-            SyncReport(initialToken));
+            SyncReport(initialToken)).ConfigureAwait(false);
         Assert.AreEqual((HttpStatusCode)207, delta.StatusCode);
-        var deltaXml = await ReadXmlAsync(delta);
+        var deltaXml = await ReadXmlAsync(delta).ConfigureAwait(false);
         var deletedResponse = deltaXml.Descendants(Dav + "response")
-            .Single(element => element.Element(Dav + "href")?.Value == resource);
-        StringAssert.Contains(deletedResponse.Element(Dav + "status")!.Value, "404");
+            .Single(element => string.Equals(element.Element(Dav + "href")?.Value, resource, StringComparison.Ordinal));
+        StringAssert.Contains(deletedResponse.Element(Dav + "status")!.Value, "404", StringComparison.Ordinal);
         Assert.AreNotEqual(
             initialToken,
-            deltaXml.Root!.Element(Dav + "sync-token")!.Value);
+            deltaXml.Root!.Element(Dav + "sync-token")!.Value, StringComparer.Ordinal);
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The CardDavSupportsContactsGroupsFiltersMetadataAndTenantIsolation scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task CardDavSupportsContactsGroupsFiltersMetadataAndTenantIsolation()
     {
-        await using var fixture = await DavFixture.CreateAsync();
+        var fixture = (await DavFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var collection = fixture.AddressBookHomePath + "directory/";
         var alicePath = collection + "alice.vcf";
         var groupPath = collection + "engineering.vcf";
@@ -313,7 +320,7 @@ public sealed class DavProtocolTests
           </D:prop></D:set>
         </D:mkcol>
         """;
-        using var createdCollection = await fixture.SendAsync("MKCOL", collection, extendedMkCol);
+        using var createdCollection = await fixture.SendAsync("MKCOL", collection, extendedMkCol).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.Created, createdCollection.StatusCode);
 
         const string alice = """
@@ -332,7 +339,7 @@ public sealed class DavProtocolTests
             alicePath,
             alice,
             "text/vcard; charset=utf-8",
-            Header("If-None-Match", "*"));
+            Header("If-None-Match", "*")).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.Created, createdAlice.StatusCode);
 
         const string group = """
@@ -349,7 +356,7 @@ public sealed class DavProtocolTests
             groupPath,
             group,
             "text/vcard; charset=utf-8",
-            Header("If-None-Match", "*"));
+            Header("If-None-Match", "*")).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.Created, createdGroup.StatusCode);
 
         const string query = """
@@ -358,11 +365,11 @@ public sealed class DavProtocolTests
           <A:filter test="anyof"><A:prop-filter name="EMAIL"><A:text-match match-type="contains">example.net</A:text-match></A:prop-filter></A:filter>
         </A:addressbook-query>
         """;
-        using var queryResponse = await fixture.SendAsync("REPORT", collection, query);
+        using var queryResponse = await fixture.SendAsync("REPORT", collection, query).ConfigureAwait(false);
         Assert.AreEqual((HttpStatusCode)207, queryResponse.StatusCode);
-        var queryXml = await ReadXmlAsync(queryResponse);
+        var queryXml = await ReadXmlAsync(queryResponse).ConfigureAwait(false);
         CollectionAssert.AreEqual(new[] { alicePath }, Hrefs(queryXml));
-        StringAssert.Contains(queryXml.Descendants(CardDav + "address-data").Single().Value, "FN:Alice Example");
+        StringAssert.Contains(queryXml.Descendants(CardDav + "address-data").Single().Value, "FN:Alice Example", StringComparison.Ordinal);
 
         const string duplicateUid = """
         BEGIN:VCARD
@@ -375,40 +382,42 @@ public sealed class DavProtocolTests
             "PUT",
             collection + "duplicate.vcf",
             duplicateUid,
-            "text/x-vcard");
+            "text/x-vcard").ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.Conflict, conflict.StatusCode);
-        Assert.IsNotNull((await ReadXmlAsync(conflict)).Descendants(CardDav + "no-uid-conflict").SingleOrDefault());
+        Assert.IsNotNull((await ReadXmlAsync(conflict).ConfigureAwait(false)).Descendants(CardDav + "no-uid-conflict").SingleOrDefault());
 
         const string patch = """
         <D:propertyupdate xmlns:D="DAV:" xmlns:A="urn:ietf:params:xml:ns:carddav">
           <D:set><D:prop><D:displayname>Updated directory</D:displayname><A:addressbook-description>Managed contacts</A:addressbook-description></D:prop></D:set>
         </D:propertyupdate>
         """;
-        using var patched = await fixture.SendAsync("PROPPATCH", collection, patch);
+        using var patched = await fixture.SendAsync("PROPPATCH", collection, patch).ConfigureAwait(false);
         Assert.AreEqual((HttpStatusCode)207, patched.StatusCode);
 
         using var properties = await fixture.SendAsync(
             "PROPFIND",
             collection,
             Propfind("<D:displayname/><A:addressbook-description/>"),
-            headers: Header("Depth", "0"));
-        var propertyXml = await ReadXmlAsync(properties);
-        Assert.AreEqual("Updated directory", propertyXml.Descendants(Dav + "displayname").Single().Value);
-        Assert.AreEqual("Managed contacts", propertyXml.Descendants(CardDav + "addressbook-description").Single().Value);
+            headers: Header("Depth", "0")).ConfigureAwait(false);
+        var propertyXml = await ReadXmlAsync(properties).ConfigureAwait(false);
+        Assert.AreEqual("Updated directory", propertyXml.Descendants(Dav + "displayname").Single().Value, StringComparer.Ordinal);
+        Assert.AreEqual("Managed contacts", propertyXml.Descendants(CardDav + "addressbook-description").Single().Value, StringComparer.Ordinal);
 
         var foreignPath = $"/dav/addressbooks/{Guid.CreateVersion7():N}/default/";
         using var foreign = await fixture.SendAsync(
             "PROPFIND",
             foreignPath,
             Propfind("<D:displayname/>"),
-            headers: Header("Depth", "0"));
+            headers: Header("Depth", "0")).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.NotFound, foreign.StatusCode);
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The CardDavHttpAndJmapHttpRoundTripRfc9555ContactData scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task CardDavHttpAndJmapHttpRoundTripRfc9555ContactData()
     {
-        await using var fixture = await DavFixture.CreateAsync();
+        var fixture = (await DavFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var collection = fixture.AddressBookHomePath + "jmap-roundtrip/";
         const string createAddressBook = """
             <D:mkcol xmlns:D="DAV:" xmlns:A="urn:ietf:params:xml:ns:carddav">
@@ -421,7 +430,7 @@ public sealed class DavProtocolTests
         using var createdAddressBook = await fixture.SendAsync(
             "MKCOL",
             collection,
-            createAddressBook);
+            createAddressBook).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.Created, createdAddressBook.StatusCode);
 
         const string vcard = """
@@ -441,7 +450,7 @@ public sealed class DavProtocolTests
             resource,
             vcard,
             "text/vcard; charset=utf-8",
-            Header("If-None-Match", "*"));
+            Header("If-None-Match", "*")).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.Created, created.StatusCode);
 
         var query = await fixture.SendJmapAsync(new JsonObject
@@ -455,7 +464,7 @@ public sealed class DavProtocolTests
                     ["filter"] = new JsonObject { ["uid"] = "carddav-http-roundtrip" },
                 },
                 "q1")),
-        });
+        }).ConfigureAwait(false);
         var queryArguments = query["methodResponses"]!.AsArray()[0]!.AsArray()[1]!.AsObject();
         var cardId = queryArguments["ids"]!.AsArray().Single()!.GetValue<string>();
 
@@ -470,19 +479,15 @@ public sealed class DavProtocolTests
                     ["ids"] = new JsonArray(cardId),
                 },
                 "g1")),
-        });
+        }).ConfigureAwait(false);
         var card = get["methodResponses"]!.AsArray()[0]!.AsArray()[1]!["list"]![0]!;
-        Assert.AreEqual("Dr. John Philip Stevenson Jr.", card["name"]!["full"]!.GetValue<string>());
+        Assert.AreEqual("Dr. John Philip Stevenson Jr.", card["name"]!["full"]!.GetValue<string>(), StringComparer.Ordinal);
         CollectionAssert.AreEqual(
-            new[]
-            {
-                "surname", "given", "given2", "given2", "title", "credential",
-                "credential", "generation",
-            },
+            ExpectedVector1,
             card["name"]!["components"]!.AsArray()
                 .Select(component => component!["kind"]!.GetValue<string>()).ToArray());
         CollectionAssert.AreEqual(
-            new[] { "North American Division", "Marketing" },
+            ExpectedVector2,
             card["organizations"]!.AsObject().Single().Value!["units"]!.AsArray()
                 .Select(unit => unit!["name"]!.GetValue<string>()).ToArray());
 
@@ -500,13 +505,13 @@ public sealed class DavProtocolTests
                     },
                 },
                 "s1")),
-        });
+        }).ConfigureAwait(false);
         var updateArguments = update["methodResponses"]!.AsArray()[0]!.AsArray()[1]!;
         Assert.IsTrue(updateArguments["updated"]!.AsObject().ContainsKey(cardId));
 
-        using var readBack = await fixture.SendAsync("GET", resource);
+        using var readBack = await fixture.SendAsync("GET", resource).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.OK, readBack.StatusCode);
-        StringAssert.Contains(await readBack.Content.ReadAsStringAsync(), "FN:Updated over JMAP");
+        StringAssert.Contains(await readBack.Content.ReadAsStringAsync().ConfigureAwait(false), "FN:Updated over JMAP", StringComparison.Ordinal);
 
         const string invalidMember = """
             BEGIN:VCARD
@@ -521,14 +526,16 @@ public sealed class DavProtocolTests
             "PUT",
             collection + "invalid.vcf",
             invalidMember,
-            "text/vcard; charset=utf-8");
+            "text/vcard; charset=utf-8").ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.UnsupportedMediaType, rejected.StatusCode);
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The CardDavEmbeddedJsContactCannotForgeUidOrLocalizedBlobAccess scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task CardDavEmbeddedJsContactCannotForgeUidOrLocalizedBlobAccess()
     {
-        await using var fixture = await DavFixture.CreateAsync();
+        var fixture = (await DavFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var collection = fixture.AddressBookHomePath + "embedded-guards/";
         const string createAddressBook = """
             <D:mkcol xmlns:D="DAV:" xmlns:A="urn:ietf:params:xml:ns:carddav">
@@ -538,7 +545,7 @@ public sealed class DavProtocolTests
               </D:prop></D:set>
             </D:mkcol>
             """;
-        using var createdAddressBook = await fixture.SendAsync("MKCOL", collection, createAddressBook);
+        using var createdAddressBook = await fixture.SendAsync("MKCOL", collection, createAddressBook).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.Created, createdAddressBook.StatusCode);
 
         var duplicateEmbedded = new JsonObject
@@ -553,12 +560,12 @@ public sealed class DavProtocolTests
             "PUT",
             collection + "first.vcf",
             ForgedVCard("indexed-first-uid", "Indexed First", duplicateEmbedded),
-            "text/vcard; charset=utf-8");
+            "text/vcard; charset=utf-8").ConfigureAwait(false);
         using var second = await fixture.SendAsync(
             "PUT",
             collection + "second.vcf",
             ForgedVCard("indexed-second-uid", "Indexed Second", duplicateEmbedded),
-            "text/vcard; charset=utf-8");
+            "text/vcard; charset=utf-8").ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.Created, first.StatusCode);
         Assert.AreEqual(HttpStatusCode.Created, second.StatusCode);
 
@@ -578,7 +585,7 @@ public sealed class DavProtocolTests
                 "Indexed Semantic",
                 mismatchedProjection,
                 includeProdId: true),
-            "text/vcard; charset=utf-8");
+            "text/vcard; charset=utf-8").ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.Created, semantic.StatusCode);
 
         var blobId = JmapId.UploadedBlob(Guid.CreateVersion7());
@@ -608,7 +615,7 @@ public sealed class DavProtocolTests
             "PUT",
             collection + "localized.vcf",
             ForgedVCard("indexed-localized-uid", "Indexed Localized", localizedBlob, includeProdId: true),
-            "text/vcard; charset=utf-8");
+            "text/vcard; charset=utf-8").ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.Created, localized.StatusCode);
 
         var response = await fixture.SendJmapAsync(new JsonObject
@@ -620,7 +627,7 @@ public sealed class DavProtocolTests
                 Query("second", "indexed-second-uid"),
                 Query("semantic", "indexed-semantic-uid"),
                 Query("localized", "indexed-localized-uid")),
-        });
+        }).ConfigureAwait(false);
         var methodResponses = response["methodResponses"]!.AsArray();
         Assert.AreEqual(0, methodResponses[0]![1]!["ids"]!.AsArray().Count);
         Assert.AreEqual(1, methodResponses[1]![1]!["ids"]!.AsArray().Count);
@@ -639,13 +646,12 @@ public sealed class DavProtocolTests
                     ["ids"] = new JsonArray(semanticId, localizedId),
                 },
                 "get")),
-        });
+        }).ConfigureAwait(false);
         var projected = get["methodResponses"]![0]![1]!["list"]!.AsArray();
-        var semanticProjection = projected.Single(card =>
-            card!["uid"]!.GetValue<string>() == "indexed-semantic-uid")!;
-        Assert.AreEqual("Indexed Semantic", semanticProjection["name"]!["full"]!.GetValue<string>());
+        var semanticProjection = projected.Single(card => string.Equals(card!["uid"]!.GetValue<string>(), "indexed-semantic-uid", StringComparison.Ordinal))!;
+        Assert.AreEqual("Indexed Semantic", semanticProjection["name"]!["full"]!.GetValue<string>(), StringComparer.Ordinal);
         var localizedProjection = projected.Single(card =>
-            card!["uid"]!.GetValue<string>() == "indexed-localized-uid")!;
+            string.Equals(card!["uid"]!.GetValue<string>(), "indexed-localized-uid", StringComparison.Ordinal))!;
         Assert.IsNull(localizedProjection["localizations"]);
         Assert.IsNull(localizedProjection["media"]);
 
@@ -660,9 +666,11 @@ public sealed class DavProtocolTests
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The CardDavEmbeddedJsContactRejectsLeafPatchedLocalizedBlobIds scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task CardDavEmbeddedJsContactRejectsLeafPatchedLocalizedBlobIds()
     {
-        await using var fixture = await DavFixture.CreateAsync();
+        var fixture = (await DavFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var collection = fixture.AddressBookHomePath + "embedded-leaf-guards/";
         const string createAddressBook = """
             <D:mkcol xmlns:D="DAV:" xmlns:A="urn:ietf:params:xml:ns:carddav">
@@ -672,7 +680,7 @@ public sealed class DavProtocolTests
               </D:prop></D:set>
             </D:mkcol>
             """;
-        using var createdAddressBook = await fixture.SendAsync("MKCOL", collection, createAddressBook);
+        using var createdAddressBook = await fixture.SendAsync("MKCOL", collection, createAddressBook).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.Created, createdAddressBook.StatusCode);
 
         const string safeUid = "leaf-safe-uid";
@@ -707,22 +715,22 @@ public sealed class DavProtocolTests
                 safeEmbedded,
                 includeProdId: true,
                 additionalCoreLines: [$"PHOTO;PROP-ID=photo:{safeBaseUri}"]),
-            "text/vcard; charset=utf-8");
+            "text/vcard; charset=utf-8").ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.Created, safePut.StatusCode);
 
-        var foreignBlobId = await fixture.StoreBlobAsync([0x47, 0x49, 0x46], "image/gif");
-        var expiredBlobId = await fixture.StoreBlobAsync([0x89, 0x50, 0x4e, 0x47], "image/png");
+        var foreignBlobId = await fixture.StoreBlobAsync([0x47, 0x49, 0x46], "image/gif").ConfigureAwait(false);
+        var expiredBlobId = await fixture.StoreBlobAsync([0x89, 0x50, 0x4e, 0x47], "image/png").ConfigureAwait(false);
         var wrongTypeBlobId = await fixture.StoreBlobAsync(
             Encoding.ASCII.GetBytes("not an image"),
-            "application/pdf");
+            "application/pdf").ConfigureAwait(false);
         using (var scope = fixture.Services.CreateScope())
         {
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-            var foreign = await database.JmapBlobs.SingleAsync(blob => blob.BlobId == foreignBlobId);
+            var foreign = await database.JmapBlobs.SingleAsync(blob => blob.BlobId == foreignBlobId).ConfigureAwait(false);
             foreign.AccountId = Guid.CreateVersion7();
-            var expired = await database.JmapBlobs.SingleAsync(blob => blob.BlobId == expiredBlobId);
+            var expired = await database.JmapBlobs.SingleAsync(blob => blob.BlobId == expiredBlobId).ConfigureAwait(false);
             expired.ExpiresAt = DateTime.UtcNow.AddMinutes(-1);
-            await database.SaveChangesAsync();
+            await database.SaveChangesAsync().ConfigureAwait(false);
         }
 
         var cases = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -770,7 +778,7 @@ public sealed class DavProtocolTests
                     embedded,
                     includeProdId: true,
                     additionalCoreLines: [$"PHOTO;PROP-ID=photo:{baseUri}"]),
-                "text/vcard; charset=utf-8");
+                "text/vcard; charset=utf-8").ConfigureAwait(false);
             Assert.AreEqual(HttpStatusCode.Created, put.StatusCode, item.Key);
         }
 
@@ -784,7 +792,7 @@ public sealed class DavProtocolTests
                     ["accountId"] = fixture.AccountId,
                 },
                 "query")),
-        });
+        }).ConfigureAwait(false);
         var ids = query["methodResponses"]![0]![1]!["ids"]!.AsArray();
         Assert.AreEqual(cases.Count + 1, ids.Count);
 
@@ -799,20 +807,20 @@ public sealed class DavProtocolTests
                     ["ids"] = ids.DeepClone(),
                 },
                 "get")),
-        });
+        }).ConfigureAwait(false);
         var cards = get["methodResponses"]![0]![1]!["list"]!.AsArray();
         Assert.AreEqual(cases.Count + 1, cards.Count);
-        var safeCard = cards.Single(value => value!["uid"]!.GetValue<string>() == safeUid)!;
+        var safeCard = cards.Single(value => string.Equals(value!["uid"]!.GetValue<string>(), safeUid, StringComparison.Ordinal))!;
         Assert.AreEqual(
             safeLocalizedUri,
-            safeCard["localizations"]!["fr"]!["media/photo/uri"]!.GetValue<string>());
+            safeCard["localizations"]!["fr"]!["media/photo/uri"]!.GetValue<string>(), StringComparer.Ordinal);
         foreach (var item in cases)
         {
             var uid = $"leaf-{item.Key}-uid";
-            var card = cards.Single(value => value!["uid"]!.GetValue<string>() == uid)!;
+            var card = cards.Single(value => string.Equals(value!["uid"]!.GetValue<string>(), uid, StringComparison.Ordinal))!;
             Assert.IsNull(card["localizations"], item.Key);
             var photo = card["media"]!["photo"]!;
-            Assert.AreEqual($"https://example.net/{item.Key}.png", photo["uri"]!.GetValue<string>());
+            Assert.AreEqual($"https://example.net/{item.Key}.png", photo["uri"]!.GetValue<string>(), StringComparer.Ordinal);
             Assert.IsNull(photo["blobId"], item.Key);
         }
     }
@@ -846,17 +854,19 @@ public sealed class DavProtocolTests
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The DavAclSharesCalendarsAndAddressBooksWithEnforcedPrivileges scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task DavAclSharesCalendarsAndAddressBooksWithEnforcedPrivileges()
     {
-        await using var fixture = await DavFixture.CreateAsync();
+        var fixture = (await DavFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
 
         using var searchableProperties = await fixture.SendAsync(
             "REPORT",
             "/dav/principals/",
             "<D:principal-search-property-set xmlns:D=\"DAV:\"/>",
-            headers: Header("Depth", "0"));
+            headers: Header("Depth", "0")).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.OK, searchableProperties.StatusCode);
-        Assert.IsTrue((await ReadXmlAsync(searchableProperties))
+        Assert.IsTrue((await ReadXmlAsync(searchableProperties).ConfigureAwait(false))
             .Descendants(Dav + "displayname").Any());
 
         const string principalSearch = """
@@ -872,9 +882,9 @@ public sealed class DavProtocolTests
             "REPORT",
             "/dav/principals/",
             principalSearch,
-            headers: Header("Depth", "0"));
+            headers: Header("Depth", "0")).ConfigureAwait(false);
         Assert.AreEqual((HttpStatusCode)207, searched.StatusCode);
-        var searchXml = await ReadXmlAsync(searched);
+        var searchXml = await ReadXmlAsync(searched).ConfigureAwait(false);
         CollectionAssert.AreEqual(
             new[] { fixture.AttendeePrincipalPath },
             Hrefs(searchXml));
@@ -888,7 +898,7 @@ public sealed class DavProtocolTests
         using var createdCalendar = await fixture.SendAsync(
             "MKCALENDAR",
             calendarCollection,
-            createCalendar);
+            createCalendar).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.Created, createdCalendar.StatusCode);
 
         const string eventOne = """
@@ -908,60 +918,60 @@ public sealed class DavProtocolTests
             "PUT",
             calendarCollection + "one.ics",
             eventOne,
-            "text/calendar; charset=utf-8");
+            "text/calendar; charset=utf-8").ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.Created, createdEvent.StatusCode);
 
         using var grantedRead = await fixture.SendAsync(
             "ACL",
             calendarCollection,
-            Acl(fixture.AttendeePrincipalPath, writable: false));
+            Acl(fixture.AttendeePrincipalPath, writable: false)).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.OK, grantedRead.StatusCode);
 
         using var crossTenantGrant = await fixture.SendAsync(
             "ACL",
             calendarCollection,
-            Acl(fixture.OutsiderPrincipalPath, writable: false));
+            Acl(fixture.OutsiderPrincipalPath, writable: false)).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.Forbidden, crossTenantGrant.StatusCode);
-        Assert.IsTrue((await ReadXmlAsync(crossTenantGrant))
+        Assert.IsTrue((await ReadXmlAsync(crossTenantGrant).ConfigureAwait(false))
             .Descendants(Dav + "allowed-principal").Any());
 
         using var ownerAcl = await fixture.SendAsync(
             "PROPFIND",
             calendarCollection,
             Propfind("<D:acl/><D:acl-restrictions/><D:current-user-privilege-set/>"),
-            headers: Header("Depth", "0"));
+            headers: Header("Depth", "0")).ConfigureAwait(false);
         Assert.AreEqual((HttpStatusCode)207, ownerAcl.StatusCode);
-        var ownerAclXml = await ReadXmlAsync(ownerAcl);
+        var ownerAclXml = await ReadXmlAsync(ownerAcl).ConfigureAwait(false);
         Assert.IsTrue(ownerAclXml.Descendants(Dav + "protected").Any());
         Assert.IsTrue(ownerAclXml.Descendants(Dav + "grant-only").Any());
         Assert.IsTrue(ownerAclXml.Descendants(Dav + "href")
-            .Any(element => element.Value == fixture.AttendeePrincipalPath));
+            .Any(element => string.Equals(element.Value, fixture.AttendeePrincipalPath, StringComparison.Ordinal)));
         Assert.IsTrue(ownerAclXml.Descendants(Dav + "write-acl").Any());
 
         using var attendeeCalendars = await fixture.SendAsAttendeeAsync(
             "PROPFIND",
             fixture.AttendeeCalendarHomePath,
             Propfind("<D:displayname/><D:resourcetype/><D:owner/><D:current-user-privilege-set/>"),
-            headers: Header("Depth", "1"));
+            headers: Header("Depth", "1")).ConfigureAwait(false);
         Assert.AreEqual((HttpStatusCode)207, attendeeCalendars.StatusCode);
-        var attendeeCalendarXml = await ReadXmlAsync(attendeeCalendars);
+        var attendeeCalendarXml = await ReadXmlAsync(attendeeCalendars).ConfigureAwait(false);
         var sharedCalendarResponse = ResponseWithDisplayName(
             attendeeCalendarXml,
             "Shared team calendar");
         var sharedCalendarHref = sharedCalendarResponse.Element(Dav + "href")!.Value;
-        StringAssert.StartsWith(sharedCalendarHref, fixture.AttendeeCalendarHomePath + "shared-");
+        StringAssert.StartsWith(sharedCalendarHref, fixture.AttendeeCalendarHomePath + "shared-", StringComparison.Ordinal);
         Assert.AreEqual(
             fixture.PrincipalPath,
             sharedCalendarResponse.Descendants(Dav + "owner").Single()
-                .Element(Dav + "href")?.Value);
+                .Element(Dav + "href")?.Value, StringComparer.Ordinal);
         Assert.IsTrue(sharedCalendarResponse.Descendants(Dav + "read").Any());
         Assert.IsFalse(sharedCalendarResponse.Descendants(Dav + "write").Any());
 
         using var attendeeRead = await fixture.SendAsAttendeeAsync(
             "GET",
-            sharedCalendarHref + "one.ics");
+            sharedCalendarHref + "one.ics").ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.OK, attendeeRead.StatusCode);
-        StringAssert.Contains(await attendeeRead.Content.ReadAsStringAsync(), "Shared event one");
+        StringAssert.Contains(await attendeeRead.Content.ReadAsStringAsync().ConfigureAwait(false), "Shared event one", StringComparison.Ordinal);
 
         const string eventTwo = """
         BEGIN:VCALENDAR
@@ -980,13 +990,13 @@ public sealed class DavProtocolTests
             "PUT",
             sharedCalendarHref + "two.ics",
             eventTwo,
-            "text/calendar; charset=utf-8");
+            "text/calendar; charset=utf-8").ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.Forbidden, readOnlyWrite.StatusCode);
 
         using var grantedWrite = await fixture.SendAsync(
             "ACL",
             calendarCollection,
-            Acl(fixture.AttendeePrincipalPath, writable: true));
+            Acl(fixture.AttendeePrincipalPath, writable: true)).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.OK, grantedWrite.StatusCode);
         const string sharedPropertyPatch = """
         <D:propertyupdate xmlns:D="DAV:">
@@ -996,17 +1006,17 @@ public sealed class DavProtocolTests
         using var attendeePropertyWrite = await fixture.SendAsAttendeeAsync(
             "PROPPATCH",
             sharedCalendarHref,
-            sharedPropertyPatch);
+            sharedPropertyPatch).ConfigureAwait(false);
         Assert.AreEqual((HttpStatusCode)207, attendeePropertyWrite.StatusCode);
         using var attendeeWrite = await fixture.SendAsAttendeeAsync(
             "PUT",
             sharedCalendarHref + "two.ics",
             eventTwo,
-            "text/calendar; charset=utf-8");
+            "text/calendar; charset=utf-8").ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.Created, attendeeWrite.StatusCode);
         using var ownerReadsSharedWrite = await fixture.SendAsync(
             "GET",
-            calendarCollection + "two.ics");
+            calendarCollection + "two.ics").ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.OK, ownerReadsSharedWrite.StatusCode);
 
         var addressBookCollection = fixture.AddressBookHomePath + "directory-shared/";
@@ -1021,20 +1031,20 @@ public sealed class DavProtocolTests
         using var createdAddressBook = await fixture.SendAsync(
             "MKCOL",
             addressBookCollection,
-            createAddressBook);
+            createAddressBook).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.Created, createdAddressBook.StatusCode);
         using var sharedAddressBook = await fixture.SendAsync(
             "ACL",
             addressBookCollection,
-            Acl(fixture.AttendeePrincipalPath, writable: true));
+            Acl(fixture.AttendeePrincipalPath, writable: true)).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.OK, sharedAddressBook.StatusCode);
 
         using var attendeeAddressBooks = await fixture.SendAsAttendeeAsync(
             "PROPFIND",
             fixture.AttendeeAddressBookHomePath,
             Propfind("<D:displayname/><D:resourcetype/><D:current-user-privilege-set/>"),
-            headers: Header("Depth", "1"));
-        var attendeeAddressBookXml = await ReadXmlAsync(attendeeAddressBooks);
+            headers: Header("Depth", "1")).ConfigureAwait(false);
+        var attendeeAddressBookXml = await ReadXmlAsync(attendeeAddressBooks).ConfigureAwait(false);
         var sharedAddressBookHref = ResponseWithDisplayName(
             attendeeAddressBookXml,
             "Shared directory").Element(Dav + "href")!.Value;
@@ -1051,41 +1061,43 @@ public sealed class DavProtocolTests
             "PUT",
             sharedAddressBookHref + "shared.vcf",
             contact,
-            "text/vcard; charset=utf-8");
+            "text/vcard; charset=utf-8").ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.Created, attendeeContactWrite.StatusCode);
         using var ownerReadsContact = await fixture.SendAsync(
             "GET",
-            addressBookCollection + "shared.vcf");
+            addressBookCollection + "shared.vcf").ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.OK, ownerReadsContact.StatusCode);
 
         using var attendeeUnsubscribes = await fixture.SendAsAttendeeAsync(
             "DELETE",
-            sharedAddressBookHref);
+            sharedAddressBookHref).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.NoContent, attendeeUnsubscribes.StatusCode);
         using var ownerStillReadsContact = await fixture.SendAsync(
             "GET",
-            addressBookCollection + "shared.vcf");
+            addressBookCollection + "shared.vcf").ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.OK, ownerStillReadsContact.StatusCode);
         using var removedBinding = await fixture.SendAsAttendeeAsync(
             "GET",
-            sharedAddressBookHref + "shared.vcf");
+            sharedAddressBookHref + "shared.vcf").ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.NotFound, removedBinding.StatusCode);
 
         using var revokedCalendar = await fixture.SendAsync(
             "ACL",
             calendarCollection,
-            "<D:acl xmlns:D=\"DAV:\"/>");
+            "<D:acl xmlns:D=\"DAV:\"/>").ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.OK, revokedCalendar.StatusCode);
         using var revokedRead = await fixture.SendAsAttendeeAsync(
             "GET",
-            sharedCalendarHref + "one.ics");
+            sharedCalendarHref + "one.ics").ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.NotFound, revokedRead.StatusCode);
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The CalDavSchedulingDeliversLocalInvitationsRepliesAndExternalImip scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task CalDavSchedulingDeliversLocalInvitationsRepliesAndExternalImip()
     {
-        await using var fixture = await DavFixture.CreateAsync();
+        var fixture = (await DavFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         const string external = "external.attendee@example.net";
         var invitation = $$"""
         BEGIN:VCALENDAR
@@ -1097,8 +1109,8 @@ public sealed class DavProtocolTests
         DTSTAMP:20260921T080000Z
         DTSTART:20261001T100000Z
         DTEND:20261001T110000Z
-        ORGANIZER:mailto:{{fixture.PrimaryAddress}}
-        ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:{{fixture.AttendeeAddress}}
+        ORGANIZER:mailto:{{DavFixture.PrimaryAddress}}
+        ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:{{DavFixture.AttendeeAddress}}
         ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:{{external}}
         SUMMARY:Scheduling delivery
         END:VEVENT
@@ -1109,13 +1121,13 @@ public sealed class DavProtocolTests
             fixture.SchedulingOutboxPath,
             invitation,
             "text/calendar; charset=utf-8; method=REQUEST",
-            new Dictionary<string, string>
+            new Dictionary<string, string>(StringComparer.Ordinal)
             {
-                ["Originator"] = $"mailto:{fixture.PrimaryAddress}",
-                ["Recipient"] = $"mailto:{fixture.AttendeeAddress}, mailto:{external}",
-            });
+                ["Originator"] = $"mailto:{DavFixture.PrimaryAddress}",
+                ["Recipient"] = $"mailto:{DavFixture.AttendeeAddress}, mailto:{external}",
+            }).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.OK, sent.StatusCode);
-        var sentXml = await ReadXmlAsync(sent);
+        var sentXml = await ReadXmlAsync(sent).ConfigureAwait(false);
         Assert.AreEqual(2, sentXml.Descendants(CalDav + "response").Count());
         Assert.IsTrue(sentXml.Descendants(CalDav + "request-status")
             .All(status => status.Value.StartsWith("2.0", StringComparison.Ordinal)));
@@ -1124,24 +1136,24 @@ public sealed class DavProtocolTests
             "PROPFIND",
             fixture.AttendeeSchedulingInboxPath,
             Propfind("<D:resourcetype/><D:getetag/><C:calendar-data/>"),
-            headers: Header("Depth", "1"));
+            headers: Header("Depth", "1")).ConfigureAwait(false);
         Assert.AreEqual((HttpStatusCode)207, attendeeInbox.StatusCode);
-        var attendeeInboxXml = await ReadXmlAsync(attendeeInbox);
+        var attendeeInboxXml = await ReadXmlAsync(attendeeInbox).ConfigureAwait(false);
         Assert.IsNotNull(attendeeInboxXml.Descendants(CalDav + "schedule-inbox").SingleOrDefault());
         var invitationPath = Hrefs(attendeeInboxXml)
             .Single(href => href.EndsWith(".ics", StringComparison.Ordinal));
-        using var storedInvitation = await fixture.SendAsAttendeeAsync("GET", invitationPath);
+        using var storedInvitation = await fixture.SendAsAttendeeAsync("GET", invitationPath).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.OK, storedInvitation.StatusCode);
         StringAssert.Contains(
-            await storedInvitation.Content.ReadAsStringAsync(),
-            "METHOD:REQUEST");
+            await storedInvitation.Content.ReadAsStringAsync().ConfigureAwait(false),
+            "METHOD:REQUEST", StringComparison.Ordinal);
 
         var queued = fixture.QueuedSubmissions.Single();
-        Assert.AreEqual(fixture.PrimaryAddress, queued.EnvelopeSender);
-        Assert.AreEqual(external, queued.Recipients.Single().Address);
+        Assert.AreEqual(DavFixture.PrimaryAddress, queued.EnvelopeSender, StringComparer.Ordinal);
+        Assert.AreEqual(external, queued.Recipients.Single().Address, StringComparer.Ordinal);
         Assert.IsFalse(queued.Recipients.Single().IsLocal);
-        StringAssert.Contains(queued.RawMessage, "METHOD:REQUEST");
-        StringAssert.Contains(queued.RawMessage, "text/calendar");
+        StringAssert.Contains(queued.RawMessage, "METHOD:REQUEST", StringComparison.Ordinal);
+        StringAssert.Contains(queued.RawMessage, "text/calendar", StringComparison.Ordinal);
 
         var reply = $$"""
         BEGIN:VCALENDAR
@@ -1153,8 +1165,8 @@ public sealed class DavProtocolTests
         DTSTAMP:20260921T081500Z
         DTSTART:20261001T100000Z
         DTEND:20261001T110000Z
-        ORGANIZER:mailto:{{fixture.PrimaryAddress}}
-        ATTENDEE;PARTSTAT=ACCEPTED:mailto:{{fixture.AttendeeAddress}}
+        ORGANIZER:mailto:{{DavFixture.PrimaryAddress}}
+        ATTENDEE;PARTSTAT=ACCEPTED:mailto:{{DavFixture.AttendeeAddress}}
         SUMMARY:Scheduling delivery
         END:VEVENT
         END:VCALENDAR
@@ -1164,50 +1176,52 @@ public sealed class DavProtocolTests
             fixture.AttendeeCalendarHomePath + "schedule-outbox/",
             reply,
             "text/calendar; charset=utf-8; method=REPLY",
-            new Dictionary<string, string>
+            new Dictionary<string, string>(StringComparer.Ordinal)
             {
-                ["Originator"] = $"mailto:{fixture.AttendeeAddress}",
-                ["Recipient"] = $"mailto:{fixture.PrimaryAddress}",
-            });
+                ["Originator"] = $"mailto:{DavFixture.AttendeeAddress}",
+                ["Recipient"] = $"mailto:{DavFixture.PrimaryAddress}",
+            }).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.OK, replied.StatusCode);
 
         using var organizerInbox = await fixture.SendAsync(
             "PROPFIND",
             fixture.SchedulingInboxPath,
             Propfind("<D:getetag/>"),
-            headers: Header("Depth", "1"));
+            headers: Header("Depth", "1")).ConfigureAwait(false);
         Assert.AreEqual((HttpStatusCode)207, organizerInbox.StatusCode);
-        var replyPath = Hrefs(await ReadXmlAsync(organizerInbox))
+        var replyPath = Hrefs(await ReadXmlAsync(organizerInbox).ConfigureAwait(false))
             .Single(href => href.EndsWith(".ics", StringComparison.Ordinal));
-        using var storedReply = await fixture.SendAsync("GET", replyPath);
+        using var storedReply = await fixture.SendAsync("GET", replyPath).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.OK, storedReply.StatusCode);
         StringAssert.Contains(
-            await storedReply.Content.ReadAsStringAsync(),
-            "PARTSTAT=ACCEPTED");
+            await storedReply.Content.ReadAsStringAsync().ConfigureAwait(false),
+            "PARTSTAT=ACCEPTED", StringComparison.Ordinal);
 
         using var forged = await fixture.SendAsync(
             "POST",
             fixture.SchedulingOutboxPath,
             invitation,
             "text/calendar; method=REQUEST",
-            new Dictionary<string, string>
+            new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 ["Originator"] = "mailto:forged@mk8n.com",
-                ["Recipient"] = $"mailto:{fixture.AttendeeAddress}",
-            });
+                ["Recipient"] = $"mailto:{DavFixture.AttendeeAddress}",
+            }).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.Forbidden, forged.StatusCode);
         Assert.AreEqual(1, fixture.QueuedSubmissions.Count);
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The CalDavSchedulingAnswersRecurrenceAwareFreeBusyQueries scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task CalDavSchedulingAnswersRecurrenceAwareFreeBusyQueries()
     {
-        await using var fixture = await DavFixture.CreateAsync();
+        var fixture = (await DavFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         using var discover = await fixture.SendAsAttendeeAsync(
             "PROPFIND",
             fixture.AttendeeCalendarHomePath,
             Propfind("<D:displayname/>"),
-            headers: Header("Depth", "1"));
+            headers: Header("Depth", "1")).ConfigureAwait(false);
         Assert.AreEqual((HttpStatusCode)207, discover.StatusCode);
 
         const string recurringEvent = """
@@ -1230,7 +1244,7 @@ public sealed class DavProtocolTests
             fixture.AttendeeCalendarHomePath + "default/recurring.ics",
             recurringEvent,
             "text/calendar; charset=utf-8",
-            Header("If-None-Match", "*"));
+            Header("If-None-Match", "*")).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.Created, created.StatusCode);
 
         const string daylightSavingEvent = """
@@ -1252,7 +1266,7 @@ public sealed class DavProtocolTests
             fixture.AttendeeCalendarHomePath + "default/daylight-saving.ics",
             daylightSavingEvent,
             "text/calendar; charset=utf-8",
-            Header("If-None-Match", "*"));
+            Header("If-None-Match", "*")).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.Created, createdDaylightSaving.StatusCode);
 
         const string lastWeekdayEvent = """
@@ -1274,7 +1288,7 @@ public sealed class DavProtocolTests
             fixture.AttendeeCalendarHomePath + "default/last-weekday.ics",
             lastWeekdayEvent,
             "text/calendar; charset=utf-8",
-            Header("If-None-Match", "*"));
+            Header("If-None-Match", "*")).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.Created, createdLastWeekday.StatusCode);
 
         var freeBusyRequest = $$"""
@@ -1287,8 +1301,8 @@ public sealed class DavProtocolTests
         DTSTAMP:20260921T090000Z
         DTSTART:20261001T000000Z
         DTEND:20261101T000000Z
-        ORGANIZER:mailto:{{fixture.PrimaryAddress}}
-        ATTENDEE:mailto:{{fixture.AttendeeAddress}}
+        ORGANIZER:mailto:{{DavFixture.PrimaryAddress}}
+        ATTENDEE:mailto:{{DavFixture.AttendeeAddress}}
         END:VFREEBUSY
         END:VCALENDAR
         """;
@@ -1297,30 +1311,30 @@ public sealed class DavProtocolTests
             fixture.SchedulingOutboxPath,
             freeBusyRequest,
             "text/calendar; charset=utf-8; method=REQUEST",
-            new Dictionary<string, string>
+            new Dictionary<string, string>(StringComparer.Ordinal)
             {
-                ["Originator"] = $"mailto:{fixture.PrimaryAddress}",
-                ["Recipient"] = $"mailto:{fixture.AttendeeAddress}",
-            });
+                ["Originator"] = $"mailto:{DavFixture.PrimaryAddress}",
+                ["Recipient"] = $"mailto:{DavFixture.AttendeeAddress}",
+            }).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
-        var responseXml = await ReadXmlAsync(response);
+        var responseXml = await ReadXmlAsync(response).ConfigureAwait(false);
         Assert.AreEqual(
             "2.0;Success",
-            responseXml.Descendants(CalDav + "request-status").Single().Value);
+            responseXml.Descendants(CalDav + "request-status").Single().Value, StringComparer.Ordinal);
         var freeBusy = responseXml.Descendants(CalDav + "calendar-data").Single().Value;
-        StringAssert.Contains(freeBusy, "METHOD:REPLY");
-        StringAssert.Contains(freeBusy, "FREEBUSY;FBTYPE=BUSY:20261001T100000Z/20261001T110000Z");
-        StringAssert.Contains(freeBusy, "FREEBUSY;FBTYPE=BUSY:20261015T100000Z/20261015T110000Z");
-        StringAssert.Contains(freeBusy, "FREEBUSY;FBTYPE=BUSY:20261018T080000Z/20261018T090000Z");
-        StringAssert.Contains(freeBusy, "FREEBUSY;FBTYPE=BUSY:20261025T090000Z/20261025T100000Z");
-        StringAssert.Contains(freeBusy, "FREEBUSY;FBTYPE=BUSY:20261030T140000Z/20261030T143000Z");
+        StringAssert.Contains(freeBusy, "METHOD:REPLY", StringComparison.Ordinal);
+        StringAssert.Contains(freeBusy, "FREEBUSY;FBTYPE=BUSY:20261001T100000Z/20261001T110000Z", StringComparison.Ordinal);
+        StringAssert.Contains(freeBusy, "FREEBUSY;FBTYPE=BUSY:20261015T100000Z/20261015T110000Z", StringComparison.Ordinal);
+        StringAssert.Contains(freeBusy, "FREEBUSY;FBTYPE=BUSY:20261018T080000Z/20261018T090000Z", StringComparison.Ordinal);
+        StringAssert.Contains(freeBusy, "FREEBUSY;FBTYPE=BUSY:20261025T090000Z/20261025T100000Z", StringComparison.Ordinal);
+        StringAssert.Contains(freeBusy, "FREEBUSY;FBTYPE=BUSY:20261030T140000Z/20261030T143000Z", StringComparison.Ordinal);
         Assert.IsFalse(freeBusy.Contains("20261008T100000Z", StringComparison.Ordinal));
     }
 
-    private static IReadOnlyDictionary<string, string> Header(string name, string? value)
+    private static Dictionary<string, string> Header(string name, string? value)
     {
         Assert.IsNotNull(value);
-        return new Dictionary<string, string> { [name] = value };
+        return new Dictionary<string, string>(StringComparer.Ordinal) { [name] = value };
     }
 
     private static string Propfind(string properties) => $$"""
@@ -1352,10 +1366,10 @@ public sealed class DavProtocolTests
     private static XElement ResponseWithDisplayName(XDocument document, string displayName) =>
         document.Descendants(Dav + "response").Single(response =>
             response.Descendants(Dav + "displayname")
-                .Any(element => element.Value == displayName));
+                .Any(element => string.Equals(element.Value, displayName, StringComparison.Ordinal)));
 
     private static async Task<XDocument> ReadXmlAsync(HttpResponseMessage response) =>
-        XDocument.Parse(await response.Content.ReadAsStringAsync());
+        XDocument.Parse(await response.Content.ReadAsStringAsync().ConfigureAwait(false));
 
     private static string[] Hrefs(XDocument document) => document
         .Descendants(Dav + "response")
@@ -1363,4 +1377,10 @@ public sealed class DavProtocolTests
         .Where(value => value is not null)
         .Cast<string>()
         .ToArray();
+    private static readonly string[] ExpectedVector1 = new[]
+                {
+                "surname", "given", "given2", "given2", "title", "credential",
+                "credential", "generation",
+            };
+    private static readonly string[] ExpectedVector2 = new[] { "North American Division", "Marketing" };
 }

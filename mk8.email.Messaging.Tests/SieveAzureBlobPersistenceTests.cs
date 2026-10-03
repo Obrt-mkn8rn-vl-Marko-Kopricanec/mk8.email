@@ -17,12 +17,15 @@ namespace mk8.email.Messaging.Tests;
 [DoNotParallelize]
 [TestCategory("PostgreSQL")]
 [TestCategory("AzureBlobCompatible")]
-public sealed class SieveAzureBlobPersistenceTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class SieveAzureBlobPersistenceTests
 {
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ConcurrentLegacyMigrationExternalizesScriptsAndRejectsInlineRows scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task ConcurrentLegacyMigrationExternalizesScriptsAndRejectsInlineRows()
     {
-        await using var databaseServer = await RequirePostgresAsync();
+        var databaseServer = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseServerLifetime = databaseServer.ConfigureAwait(false);
         var client = new BlobServiceClient(RequireAzureBlobConnection());
         var containerName = $"mk8-sieve-{Guid.NewGuid():N}";
         var container = client.GetBlobContainerClient(containerName);
@@ -32,13 +35,14 @@ public sealed class SieveAzureBlobPersistenceTests
         var userId = await SeedLegacySchemaAsync(
             databaseServer.ConnectionString,
             scriptId,
-            original);
+            original).ConfigureAwait(false);
 
         try
         {
             async Task MigrateAsync()
             {
-                await using var context = CreateContext(databaseServer.ConnectionString);
+                var context = CreateContext(databaseServer.ConnectionString);
+                await using var contextLifetime = context.ConfigureAwait(false);
                 var effects = CreateEffects(store);
                 await new SieveScriptLargeObjectMigrationService(
                     context,
@@ -46,20 +50,21 @@ public sealed class SieveAzureBlobPersistenceTests
                     new SieveScriptContentService(store, effects),
                     effects,
                     NullLogger<SieveScriptLargeObjectMigrationService>.Instance)
-                    .MigrateAsync();
+                    .MigrateAsync().ConfigureAwait(false);
             }
 
-            await Task.WhenAll(MigrateAsync(), MigrateAsync());
+            await Task.WhenAll(MigrateAsync(), MigrateAsync()).ConfigureAwait(false);
 
-            await using var verification = CreateContext(databaseServer.ConnectionString);
+            var verification = CreateContext(databaseServer.ConnectionString);
+            await using var verificationLifetime = verification.ConfigureAwait(false);
             var migrated = await verification.SieveScripts.AsNoTracking()
-                .SingleAsync(script => script.Id == scriptId);
+                .SingleAsync(script => script.Id == scriptId).ConfigureAwait(false);
             Assert.IsNull(migrated.Content);
-            Assert.AreEqual(LargeObjectProviders.AzureBlob, migrated.ObjectProvider);
+            Assert.AreEqual(LargeObjectProviders.AzureBlob, migrated.ObjectProvider, StringComparer.Ordinal);
             Assert.AreEqual(Encoding.UTF8.GetByteCount(original), migrated.SizeBytes);
             Assert.AreEqual(
                 Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(original))),
-                migrated.ObjectSha256);
+                migrated.ObjectSha256, StringComparer.Ordinal);
             Assert.IsTrue(migrated.ObjectName?.StartsWith(
                 $"sieve/scripts/{scriptId:N}/{migrated.ObjectSha256}/",
                 StringComparison.Ordinal) == true);
@@ -67,8 +72,8 @@ public sealed class SieveAzureBlobPersistenceTests
             Assert.AreEqual(
                 original,
                 await new SieveScriptContentService(store, CreateEffects(store))
-                    .ReadAsync(migrated, CancellationToken.None));
-            Assert.HasCount(1, await GetBlobNamesAsync(container, scriptId));
+                    .ReadAsync(migrated, CancellationToken.None).ConfigureAwait(false), StringComparer.Ordinal);
+            Assert.HasCount(1, await GetBlobNamesAsync(container, scriptId).ConfigureAwait(false));
 
             var exception = await Assert.ThrowsExactlyAsync<PostgresException>(() =>
                 InsertInlineAsync(
@@ -76,36 +81,39 @@ public sealed class SieveAzureBlobPersistenceTests
                     userId,
                     Guid.CreateVersion7(),
                     "forbidden",
-                    "keep;"));
-            Assert.AreEqual(PostgresErrorCodes.CheckViolation, exception.SqlState);
+                    "keep;")).ConfigureAwait(false);
+            Assert.AreEqual(PostgresErrorCodes.CheckViolation, exception.SqlState, StringComparer.Ordinal);
         }
         finally
         {
-            await container.DeleteIfExistsAsync();
+            await container.DeleteIfExistsAsync().ConfigureAwait(false);
         }
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ScriptWriteReplacementAndDeletionKeepOneExternalObject scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task ScriptWriteReplacementAndDeletionKeepOneExternalObject()
     {
-        await using var databaseServer = await RequirePostgresAsync();
+        var databaseServer = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseServerLifetime = databaseServer.ConfigureAwait(false);
         var client = new BlobServiceClient(RequireAzureBlobConnection());
         var containerName = $"mk8-sieve-{Guid.NewGuid():N}";
         var container = client.GetBlobContainerClient(containerName);
         var store = CreateStore(client, containerName);
         Guid userId;
-        await using (var setup = CreateContext(databaseServer.ConnectionString))
         {
-            await setup.Database.EnsureCreatedAsync();
+            var setup = CreateContext(databaseServer.ConnectionString);
+            await using var setupLifetime = setup.ConfigureAwait(false);
+            await setup.Database.EnsureCreatedAsync().ConfigureAwait(false);
             userId = Guid.CreateVersion7();
-            setup.Users.Add(new UserDB
+            await (setup.Users.AddAsync(new UserDB
             {
                 Id = userId,
                 Username = $"sieve-{userId:N}@example.test",
                 PasswordHash = "unused",
                 Role = "User",
-            });
-            await setup.SaveChangesAsync();
+            })).ConfigureAwait(false);
+            await setup.SaveChangesAsync().ConfigureAwait(false);
             var effects = CreateEffects(store);
             await new SieveScriptLargeObjectMigrationService(
                 setup,
@@ -113,58 +121,61 @@ public sealed class SieveAzureBlobPersistenceTests
                 new SieveScriptContentService(store, effects),
                 effects,
                 NullLogger<SieveScriptLargeObjectMigrationService>.Instance)
-                .MigrateAsync();
+                .MigrateAsync().ConfigureAwait(false);
         }
 
         try
         {
             Guid scriptId;
-            await using (var context = CreateContext(databaseServer.ConnectionString))
             {
+                var context = CreateContext(databaseServer.ConnectionString);
+                await using var contextLifetime = context.ConfigureAwait(false);
                 var effects = CreateEffects(store);
                 var service = new SieveScriptService(
                     context,
                     new SieveScriptContentService(store, effects),
                     effects,
                     NullLogger<SieveScriptService>.Instance);
-                Assert.IsTrue((await service.PutAsync(userId, "primary", "keep;")).Succeeded);
-                Assert.AreEqual("keep;", (await service.GetAsync(userId, "primary"))?.Content);
+                Assert.IsTrue((await service.PutAsync(userId, "primary", "keep;").ConfigureAwait(false)).Succeeded);
+                Assert.AreEqual("keep;", (await service.GetAsync(userId, "primary").ConfigureAwait(false))?.Content, StringComparer.Ordinal);
                 scriptId = await context.SieveScripts
                     .Where(script => script.UserId == userId)
                     .Select(script => script.Id)
-                    .SingleAsync();
+                    .SingleAsync().ConfigureAwait(false);
             }
-            Assert.HasCount(1, await GetBlobNamesAsync(container, scriptId));
+            Assert.HasCount(1, await GetBlobNamesAsync(container, scriptId).ConfigureAwait(false));
 
-            await using (var context = CreateContext(databaseServer.ConnectionString))
             {
+                var context = CreateContext(databaseServer.ConnectionString);
+                await using var contextLifetime = context.ConfigureAwait(false);
                 var effects = CreateEffects(store);
                 var service = new SieveScriptService(
                     context,
                     new SieveScriptContentService(store, effects),
                     effects,
                     NullLogger<SieveScriptService>.Instance);
-                Assert.IsTrue((await service.PutAsync(userId, "primary", "discard;")).Succeeded);
-                Assert.AreEqual("discard;", (await service.GetAsync(userId, "primary"))?.Content);
+                Assert.IsTrue((await service.PutAsync(userId, "primary", "discard;").ConfigureAwait(false)).Succeeded);
+                Assert.AreEqual("discard;", (await service.GetAsync(userId, "primary").ConfigureAwait(false))?.Content, StringComparer.Ordinal);
             }
-            Assert.HasCount(1, await GetBlobNamesAsync(container, scriptId));
+            Assert.HasCount(1, await GetBlobNamesAsync(container, scriptId).ConfigureAwait(false));
 
-            await using (var context = CreateContext(databaseServer.ConnectionString))
             {
+                var context = CreateContext(databaseServer.ConnectionString);
+                await using var contextLifetime = context.ConfigureAwait(false);
                 var effects = CreateEffects(store);
                 var service = new SieveScriptService(
                     context,
                     new SieveScriptContentService(store, effects),
                     effects,
                     NullLogger<SieveScriptService>.Instance);
-                Assert.IsTrue((await service.DeleteAsync(userId, "primary")).Succeeded);
-                Assert.IsNull(await service.GetAsync(userId, "primary"));
+                Assert.IsTrue((await service.DeleteAsync(userId, "primary").ConfigureAwait(false)).Succeeded);
+                Assert.IsNull(await service.GetAsync(userId, "primary").ConfigureAwait(false));
             }
-            Assert.HasCount(0, await GetBlobNamesAsync(container, scriptId));
+            Assert.HasCount(0, await GetBlobNamesAsync(container, scriptId).ConfigureAwait(false));
         }
         finally
         {
-            await container.DeleteIfExistsAsync();
+            await container.DeleteIfExistsAsync().ConfigureAwait(false);
         }
     }
 
@@ -189,20 +200,20 @@ public sealed class SieveAzureBlobPersistenceTests
                 new SieveScriptContentService(store, rollbackEffects)
                     .SetAsync(rolledBack, "keep;", CancellationToken.None),
                 new SieveScriptContentService(store, commitEffects)
-                    .SetAsync(committed, "keep;", CancellationToken.None));
-            Assert.HasCount(2, await GetBlobNamesAsync(container, scriptId));
+                    .SetAsync(committed, "keep;", CancellationToken.None)).ConfigureAwait(false);
+            Assert.HasCount(2, await GetBlobNamesAsync(container, scriptId).ConfigureAwait(false));
 
-            await rollbackEffects.RollbackAsync(rollbackMarker);
-            await commitEffects.CommitAsync(commitMarker);
-            Assert.HasCount(1, await GetBlobNamesAsync(container, scriptId));
+            await rollbackEffects.RollbackAsync(rollbackMarker).ConfigureAwait(false);
+            await commitEffects.CommitAsync(commitMarker).ConfigureAwait(false);
+            Assert.HasCount(1, await GetBlobNamesAsync(container, scriptId).ConfigureAwait(false));
             Assert.AreEqual(
                 "keep;",
                 await new SieveScriptContentService(store, CreateEffects(store))
-                    .ReadAsync(committed, CancellationToken.None));
+                    .ReadAsync(committed, CancellationToken.None).ConfigureAwait(false), StringComparer.Ordinal);
         }
         finally
         {
-            await container.DeleteIfExistsAsync();
+            await container.DeleteIfExistsAsync().ConfigureAwait(false);
         }
     }
 
@@ -212,24 +223,25 @@ public sealed class SieveAzureBlobPersistenceTests
         string scriptContent)
     {
         var userId = Guid.CreateVersion7();
-        await using (var context = CreateContext(connectionString))
         {
-            await context.Database.EnsureCreatedAsync();
-            context.Users.Add(new UserDB
+            var context = CreateContext(connectionString);
+            await using var contextLifetime = context.ConfigureAwait(false);
+            await context.Database.EnsureCreatedAsync().ConfigureAwait(false);
+            await (context.Users.AddAsync(new UserDB
             {
                 Id = userId,
                 Username = $"legacy-sieve-{userId:N}@example.test",
                 PasswordHash = "unused",
                 Role = "User",
-            });
-            context.SieveScripts.Add(new SieveScriptDB
+            })).ConfigureAwait(false);
+            await (context.SieveScripts.AddAsync(new SieveScriptDB
             {
                 Id = scriptId,
                 UserId = userId,
                 Name = "legacy",
                 Content = scriptContent,
-            });
-            await context.SaveChangesAsync();
+            })).ConfigureAwait(false);
+            await context.SaveChangesAsync().ConfigureAwait(false);
             await context.Database.ExecuteSqlRawAsync(
                 """
                 ALTER TABLE sieve_scripts
@@ -239,10 +251,13 @@ public sealed class SieveAzureBlobPersistenceTests
                     DROP COLUMN object_sha256,
                     DROP COLUMN object_etag,
                     ALTER COLUMN content SET NOT NULL;
-                """);
+                """).ConfigureAwait(false);
         }
-        await using (var migrationContext = CreateContext(connectionString))
-            await new MailRuntimeSchemaService(migrationContext).EnsureAsync();
+        {
+            var migrationContext = CreateContext(connectionString);
+            await using var migrationContextLifetime = migrationContext.ConfigureAwait(false);
+            await new MailRuntimeSchemaService(migrationContext).EnsureAsync().ConfigureAwait(false);
+        }
         return userId;
     }
 
@@ -253,9 +268,11 @@ public sealed class SieveAzureBlobPersistenceTests
         string name,
         string body)
     {
-        await using var connection = new NpgsqlConnection(connectionString);
-        await connection.OpenAsync();
-        await using var command = connection.CreateCommand();
+        var connection = new NpgsqlConnection(connectionString);
+        await using var connectionLifetime = connection.ConfigureAwait(false);
+        await connection.OpenAsync().ConfigureAwait(false);
+        var command = connection.CreateCommand();
+        await using var commandLifetime = command.ConfigureAwait(false);
         command.CommandText =
             """
             INSERT INTO sieve_scripts (
@@ -267,7 +284,7 @@ public sealed class SieveAzureBlobPersistenceTests
         command.Parameters.AddWithValue("name", name);
         command.Parameters.AddWithValue("content", body);
         command.Parameters.AddWithValue("now", DateTime.UtcNow);
-        await command.ExecuteNonQueryAsync();
+        await command.ExecuteNonQueryAsync().ConfigureAwait(false);
     }
 
     private static async Task<List<string>> GetBlobNamesAsync(
@@ -279,7 +296,7 @@ public sealed class SieveAzureBlobPersistenceTests
                            BlobTraits.None,
                            BlobStates.None,
                            $"objects/sieve/scripts/{scriptId:N}/",
-                           CancellationToken.None))
+                           CancellationToken.None).ConfigureAwait(false))
         {
             names.Add(item.Name);
         }
@@ -308,7 +325,7 @@ public sealed class SieveAzureBlobPersistenceTests
 
     private static async Task<PostgresTestDatabase> RequirePostgresAsync()
     {
-        var database = await PostgresTestDatabase.TryCreateAsync();
+        var database = await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false);
         if (database is null)
         {
             Assert.Inconclusive(

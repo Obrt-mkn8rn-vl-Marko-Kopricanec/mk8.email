@@ -7,26 +7,31 @@ namespace mk8.email.Messaging.Tests;
 
 [TestClass]
 [TestCategory("PostgreSQL")]
-public sealed class PostgresMessagingTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class PostgresMessagingTests
 {
     [TestMethod]
     public async Task TransportControlReportsAvailabilityOnlyAfterSchemaProvisioning()
     {
-        await using var database = await RequirePostgresAsync();
-        await using var dataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        var database = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        var dataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var dataSourceLifetime = dataSource.ConfigureAwait(false);
         var transport = new PostgresApplicationTransportControl(dataSource);
 
-        Assert.IsFalse(await transport.IsAvailableAsync());
-        await PostgresMessagingSchema.EnsureAsync(dataSource);
-        Assert.IsTrue(await transport.IsAvailableAsync());
+        Assert.IsFalse(await transport.IsAvailableAsync().ConfigureAwait(false));
+        await PostgresMessagingSchema.EnsureAsync(dataSource).ConfigureAwait(false);
+        Assert.IsTrue(await transport.IsAvailableAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task GatewayJournalRecordsEncryptedBidirectionalTraffic()
     {
-        await using var database = await RequirePostgresAsync();
-        await using var dataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await PostgresMessagingSchema.EnsureAsync(dataSource);
+        var database = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        var dataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var dataSourceLifetime = dataSource.ConfigureAwait(false);
+        await PostgresMessagingSchema.EnsureAsync(dataSource).ConfigureAwait(false);
         using var protector = AesGcmPayloadProtectorTests.CreateProtector("test", "journal-key");
         var journal = new PostgresGatewayTrafficJournal(dataSource, protector);
         var sessionId = Guid.CreateVersion7();
@@ -42,7 +47,7 @@ public sealed class PostgresMessagingTests
             "imap",
             "application/octet-stream",
             inboundPayload,
-            new Dictionary<string, string> { ["remote-address"] = "192.0.2.4" },
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["remote-address"] = "192.0.2.4" },
             now,
             requestId);
         var outbound = new GatewayTrafficRecord(
@@ -53,54 +58,58 @@ public sealed class PostgresMessagingTests
             "imap",
             "application/octet-stream",
             outboundPayload,
-            new Dictionary<string, string>(),
+            new Dictionary<string, string>(StringComparer.Ordinal),
             now.AddMilliseconds(1),
             requestId);
 
-        await journal.AppendAsync(inbound);
-        await journal.AppendAsync(inbound);
-        await journal.AppendAsync(outbound);
+        await journal.AppendAsync(inbound).ConfigureAwait(false);
+        await journal.AppendAsync(inbound).ConfigureAwait(false);
+        await journal.AppendAsync(outbound).ConfigureAwait(false);
 
-        var records = await journal.ReadSessionAsync(sessionId);
+        var records = await journal.ReadSessionAsync(sessionId).ConfigureAwait(false);
         Assert.HasCount(2, records);
         CollectionAssert.AreEqual(inboundPayload, records[0].Payload);
         CollectionAssert.AreEqual(outboundPayload, records[1].Payload);
-        Assert.AreEqual(GatewayTrafficDirections.Inbound, records[0].Direction);
-        Assert.AreEqual(GatewayTrafficDirections.Outbound, records[1].Direction);
+        Assert.AreEqual(GatewayTrafficDirections.Inbound, records[0].Direction, StringComparer.Ordinal);
+        Assert.AreEqual(GatewayTrafficDirections.Outbound, records[1].Direction, StringComparer.Ordinal);
         Assert.AreEqual(requestId, records[0].ApplicationRequestId);
 
-        await using var ciphertextCommand = dataSource.CreateCommand(
+        var ciphertextCommand = dataSource.CreateCommand(
             "SELECT payload_inline FROM gateway_traffic_records WHERE id = @id");
+        await using var ciphertextCommandLifetime = ciphertextCommand.ConfigureAwait(false);
         ciphertextCommand.Parameters.AddWithValue("id", NpgsqlDbType.Uuid, inbound.Id);
-        var ciphertext = (byte[])(await ciphertextCommand.ExecuteScalarAsync()
+        var ciphertext = (byte[])(await ciphertextCommand.ExecuteScalarAsync().ConfigureAwait(false)
             ?? throw new AssertFailedException("The encrypted traffic record is missing."));
         Assert.IsFalse(ciphertext.AsSpan().SequenceEqual(inboundPayload));
         Assert.IsFalse(Encoding.UTF8.GetString(ciphertext).Contains("secret-value", StringComparison.Ordinal));
 
         var conflicting = inbound with { Id = Guid.CreateVersion7(), Payload = [1, 2, 3] };
         await Assert.ThrowsExactlyAsync<InvalidOperationException>(
-            () => journal.AppendAsync(conflicting));
+            () => journal.AppendAsync(conflicting)).ConfigureAwait(false);
     }
 
     [TestMethod]
     public async Task RequestSurvivesAbsentWorkerAndCompletesAcrossConnections()
     {
-        await using var database = await RequirePostgresAsync();
-        await using var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await PostgresMessagingSchema.EnsureAsync(gatewayDataSource);
+        var database = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var gatewayDataSourceLifetime = gatewayDataSource.ConfigureAwait(false);
+        await PostgresMessagingSchema.EnsureAsync(gatewayDataSource).ConfigureAwait(false);
         using var gatewayProtector = AesGcmPayloadProtectorTests.CreateProtector("test", "bus-key");
         var gateway = new PostgresApplicationBus(gatewayDataSource, gatewayProtector);
         var request = NewRequest("queued while application is offline");
 
-        await gateway.EnqueueAsync(request);
+        await gateway.EnqueueAsync(request).ConfigureAwait(false);
         Assert.AreEqual(
             ApplicationExchangeStates.Pending,
-            (await gateway.GetAsync(request.Id))?.State);
+            (await gateway.GetAsync(request.Id).ConfigureAwait(false))?.State, StringComparer.Ordinal);
 
-        await using var workerDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        var workerDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var workerDataSourceLifetime = workerDataSource.ConfigureAwait(false);
         using var workerProtector = AesGcmPayloadProtectorTests.CreateProtector("test", "bus-key");
         var worker = new PostgresApplicationBus(workerDataSource, workerProtector);
-        var lease = await worker.TryClaimAsync("worker@example-1");
+        var lease = await worker.TryClaimAsync("worker@example-1").ConfigureAwait(false);
         Assert.IsNotNull(lease);
         CollectionAssert.AreEqual(request.Payload, lease.Request.Payload);
         Assert.AreEqual(1, lease.AttemptCount);
@@ -108,33 +117,38 @@ public sealed class PostgresMessagingTests
             request.Id,
             "application/json",
             Encoding.UTF8.GetBytes("{\"accepted\":true}"),
-            new Dictionary<string, string> { ["result"] = "accepted" });
-        await worker.CompleteAsync(lease, response);
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["result"] = "accepted" });
+        await worker.CompleteAsync(lease, response).ConfigureAwait(false);
 
-        var received = await gateway.WaitForResponseAsync(request.Id, request.Deadline);
+        var received = await gateway.WaitForResponseAsync(request.Id, request.Deadline).ConfigureAwait(false);
         CollectionAssert.AreEqual(response.Payload, received.Payload);
-        Assert.AreEqual("accepted", received.Metadata["result"]);
-        var snapshot = await gateway.GetAsync(request.Id);
-        Assert.AreEqual(ApplicationExchangeStates.Completed, snapshot?.State);
-        Assert.AreEqual("worker@example-1", lease.WorkerId);
+        Assert.AreEqual("accepted", received.Metadata["result"], StringComparer.Ordinal);
+        var snapshot = await gateway.GetAsync(request.Id).ConfigureAwait(false);
+        Assert.AreEqual(ApplicationExchangeStates.Completed, snapshot?.State, StringComparer.Ordinal);
+        Assert.AreEqual("worker@example-1", lease.WorkerId, StringComparer.Ordinal);
 
-        await using var encrypted = gatewayDataSource.CreateCommand(
+        var encrypted = gatewayDataSource.CreateCommand(
             "SELECT request_payload_inline, response_payload_inline "
             + "FROM application_requests WHERE id = @id");
+        await using var encryptedLifetime = encrypted.ConfigureAwait(false);
         encrypted.Parameters.AddWithValue("id", NpgsqlDbType.Uuid, request.Id);
-        await using var reader = await encrypted.ExecuteReaderAsync();
-        Assert.IsTrue(await reader.ReadAsync());
-        Assert.IsFalse(reader.GetFieldValue<byte[]>(0).AsSpan().SequenceEqual(request.Payload));
-        Assert.IsFalse(reader.GetFieldValue<byte[]>(1).AsSpan().SequenceEqual(response.Payload));
+        var reader = (await encrypted.ExecuteReaderAsync().ConfigureAwait(false));
+        await using var readerLifetime = reader.ConfigureAwait(false);
+        Assert.IsTrue(await reader.ReadAsync().ConfigureAwait(false));
+        Assert.IsFalse((await (reader.GetFieldValueAsync<byte[]>(0)).ConfigureAwait(false)).AsSpan().SequenceEqual(request.Payload));
+        Assert.IsFalse((await (reader.GetFieldValueAsync<byte[]>(1)).ConfigureAwait(false)).AsSpan().SequenceEqual(response.Payload));
     }
 
     [TestMethod]
     public async Task RequestReplyUsesNotificationsWithoutSharingAProcess()
     {
-        await using var database = await RequirePostgresAsync();
-        await using var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await using var workerDataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await PostgresMessagingSchema.EnsureAsync(gatewayDataSource);
+        var database = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var gatewayDataSourceLifetime = gatewayDataSource.ConfigureAwait(false);
+        var workerDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var workerDataSourceLifetime = workerDataSource.ConfigureAwait(false);
+        await PostgresMessagingSchema.EnsureAsync(gatewayDataSource).ConfigureAwait(false);
         using var gatewayProtector = AesGcmPayloadProtectorTests.CreateProtector("test", "notify-key");
         using var workerProtector = AesGcmPayloadProtectorTests.CreateProtector("test", "notify-key");
         var options = new PostgresMessagingOptions
@@ -148,27 +162,29 @@ public sealed class PostgresMessagingTests
 
         var workerTask = worker.WaitForRequestAsync("worker@example-2", timeout.Token);
         var responseTask = gateway.SendAsync(request, timeout.Token);
-        var lease = await workerTask;
+        var lease = await workerTask.ConfigureAwait(false);
         await worker.CompleteAsync(
             lease,
             new ApplicationResponse(
                 request.Id,
                 "application/json",
                 Encoding.UTF8.GetBytes("{\"ok\":true}"),
-                new Dictionary<string, string>()),
-            timeout.Token);
-        var response = await responseTask;
+                new Dictionary<string, string>(StringComparer.Ordinal)),
+            timeout.Token).ConfigureAwait(false);
+        var response = await responseTask.ConfigureAwait(false);
 
         Assert.AreEqual(request.Id, response.RequestId);
-        Assert.AreEqual("{\"ok\":true}", Encoding.UTF8.GetString(response.Payload));
+        Assert.AreEqual("{\"ok\":true}", Encoding.UTF8.GetString(response.Payload), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task IdleRequestWaitCanBeCancelledAfterTimedFallbackScans()
     {
-        await using var database = await RequirePostgresAsync();
-        await using var dataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await PostgresMessagingSchema.EnsureAsync(dataSource);
+        var database = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        var dataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var dataSourceLifetime = dataSource.ConfigureAwait(false);
+        await PostgresMessagingSchema.EnsureAsync(dataSource).ConfigureAwait(false);
         using var protector = AesGcmPayloadProtectorTests.CreateProtector("test", "idle-wait-key");
         var options = new PostgresMessagingOptions
         {
@@ -179,15 +195,17 @@ public sealed class PostgresMessagingTests
 
         await Assert.ThrowsAsync<OperationCanceledException>(
             () => bus.WaitForRequestAsync("worker@example-idle", cancellation.Token)
-                .WaitAsync(TimeSpan.FromSeconds(5)));
+                .WaitAsync(TimeSpan.FromSeconds(5))).ConfigureAwait(false);
     }
 
     [TestMethod]
     public async Task PendingResponseExpiresAfterTimedFallbackScans()
     {
-        await using var database = await RequirePostgresAsync();
-        await using var dataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await PostgresMessagingSchema.EnsureAsync(dataSource);
+        var database = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        var dataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var dataSourceLifetime = dataSource.ConfigureAwait(false);
+        await PostgresMessagingSchema.EnsureAsync(dataSource).ConfigureAwait(false);
         using var protector = AesGcmPayloadProtectorTests.CreateProtector("test", "response-wait-key");
         var options = new PostgresMessagingOptions
         {
@@ -198,41 +216,44 @@ public sealed class PostgresMessagingTests
         {
             Deadline = DateTimeOffset.UtcNow.AddMilliseconds(600),
         };
-        await bus.EnqueueAsync(request);
+        await bus.EnqueueAsync(request).ConfigureAwait(false);
 
         await Assert.ThrowsExactlyAsync<ApplicationRequestExpiredException>(
             () => bus.WaitForResponseAsync(request.Id, request.Deadline)
-                .WaitAsync(TimeSpan.FromSeconds(5)));
+                .WaitAsync(TimeSpan.FromSeconds(5))).ConfigureAwait(false);
     }
 
     [TestMethod]
     public async Task ConcurrentWorkersClaimARequestOnlyOnceAndExpiredLeaseRecovers()
     {
-        await using var database = await RequirePostgresAsync();
-        await using var dataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await PostgresMessagingSchema.EnsureAsync(dataSource);
+        var database = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        var dataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var dataSourceLifetime = dataSource.ConfigureAwait(false);
+        await PostgresMessagingSchema.EnsureAsync(dataSource).ConfigureAwait(false);
         using var protector = AesGcmPayloadProtectorTests.CreateProtector("test", "lease-key");
         var bus = new PostgresApplicationBus(dataSource, protector);
         var request = NewRequest("claim once");
-        await bus.EnqueueAsync(request);
+        await bus.EnqueueAsync(request).ConfigureAwait(false);
 
         var claims = await Task.WhenAll(
             bus.TryClaimAsync("worker@example-a"),
-            bus.TryClaimAsync("worker@example-b"));
+            bus.TryClaimAsync("worker@example-b")).ConfigureAwait(false);
         var first = claims.Single(claim => claim is not null)!;
         Assert.AreEqual(1, claims.Count(claim => claim is not null));
 
-        await using (var expire = dataSource.CreateCommand(
-            "UPDATE application_requests SET lease_expires_at = clock_timestamp() - interval '1 second' "
-            + "WHERE id = @id"))
         {
+            var expire = dataSource.CreateCommand(
+            "UPDATE application_requests SET lease_expires_at = clock_timestamp() - interval '1 second' "
+            + "WHERE id = @id");
+            await using var expireLifetime = expire.ConfigureAwait(false);
             expire.Parameters.AddWithValue("id", NpgsqlDbType.Uuid, request.Id);
-            Assert.AreEqual(1, await expire.ExecuteNonQueryAsync());
+            Assert.AreEqual(1, await expire.ExecuteNonQueryAsync().ConfigureAwait(false));
         }
-        var recovered = await bus.TryClaimAsync("worker@example-recovery");
+        var recovered = await bus.TryClaimAsync("worker@example-recovery").ConfigureAwait(false);
         Assert.IsNotNull(recovered);
         Assert.AreEqual(2, recovered.AttemptCount);
-        Assert.AreEqual("worker@example-recovery", recovered.WorkerId);
+        Assert.AreEqual("worker@example-recovery", recovered.WorkerId, StringComparer.Ordinal);
         await Assert.ThrowsExactlyAsync<ApplicationRequestLeaseLostException>(
             () => bus.CompleteAsync(
                 first,
@@ -240,36 +261,40 @@ public sealed class PostgresMessagingTests
                     request.Id,
                     "application/json",
                     [],
-                    new Dictionary<string, string>())));
+                    new Dictionary<string, string>(StringComparer.Ordinal)))).ConfigureAwait(false);
     }
 
     [TestMethod]
     public async Task WorkerFailureIsDurableAndPropagatesToGateway()
     {
-        await using var database = await RequirePostgresAsync();
-        await using var dataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await PostgresMessagingSchema.EnsureAsync(dataSource);
+        var database = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        var dataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var dataSourceLifetime = dataSource.ConfigureAwait(false);
+        await PostgresMessagingSchema.EnsureAsync(dataSource).ConfigureAwait(false);
         using var protector = AesGcmPayloadProtectorTests.CreateProtector("test", "failure-key");
         var bus = new PostgresApplicationBus(dataSource, protector);
         var request = NewRequest("failing request");
-        await bus.EnqueueAsync(request);
-        var lease = await bus.TryClaimAsync("worker@example-failure");
+        await bus.EnqueueAsync(request).ConfigureAwait(false);
+        var lease = await bus.TryClaimAsync("worker@example-failure").ConfigureAwait(false);
         Assert.IsNotNull(lease);
-        await bus.FailAsync(lease, "application-unavailable", "The domain service is unavailable.");
+        await bus.FailAsync(lease, "application-unavailable", "The domain service is unavailable.").ConfigureAwait(false);
 
         var exception = await Assert.ThrowsExactlyAsync<ApplicationRequestFailedException>(
-            () => bus.WaitForResponseAsync(request.Id, request.Deadline));
+            () => bus.WaitForResponseAsync(request.Id, request.Deadline)).ConfigureAwait(false);
         Assert.AreEqual(request.Id, exception.RequestId);
-        Assert.AreEqual("application-unavailable", exception.ErrorCode);
-        Assert.AreEqual("The domain service is unavailable.", exception.Message);
+        Assert.AreEqual("application-unavailable", exception.ErrorCode, StringComparer.Ordinal);
+        Assert.AreEqual("The domain service is unavailable.", exception.Message, StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task LargeTrafficUsesAzureBlobProtocolAndCleansUpConflictUpload()
     {
-        await using var database = await RequirePostgresAsync();
-        await using var dataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await PostgresMessagingSchema.EnsureAsync(dataSource);
+        var database = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        var dataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var dataSourceLifetime = dataSource.ConfigureAwait(false);
+        await PostgresMessagingSchema.EnsureAsync(dataSource).ConfigureAwait(false);
         using var protector = AesGcmPayloadProtectorTests.CreateProtector("test", "traffic-blob-key");
         var store = new InMemoryLargeObjectStore();
         var options = LargeObjectOptions();
@@ -283,37 +308,42 @@ public sealed class PostgresMessagingTests
             "smtp",
             "message/rfc822",
             payload,
-            new Dictionary<string, string>(),
+            new Dictionary<string, string>(StringComparer.Ordinal),
             DateTimeOffset.UtcNow);
 
-        await journal.AppendAsync(record);
-        await journal.AppendAsync(record);
+        await journal.AppendAsync(record).ConfigureAwait(false);
+        await journal.AppendAsync(record).ConfigureAwait(false);
 
-        var roundTrip = await journal.ReadSessionAsync(record.SessionId);
+        var roundTrip = await journal.ReadSessionAsync(record.SessionId).ConfigureAwait(false);
         Assert.HasCount(1, roundTrip);
         CollectionAssert.AreEqual(payload, roundTrip[0].Payload);
         Assert.AreEqual(2, store.PutCount);
         Assert.AreEqual(1, store.DeleteCount);
         Assert.AreEqual(1, store.ObjectCount);
 
-        await using var command = dataSource.CreateCommand(
+        var command = dataSource.CreateCommand(
             "SELECT payload_inline, payload_blob_provider, payload_blob_name "
             + "FROM gateway_traffic_records WHERE id = @id");
+        await using var commandLifetime = command.ConfigureAwait(false);
         command.Parameters.AddWithValue("id", NpgsqlDbType.Uuid, record.Id);
-        await using var reader = await command.ExecuteReaderAsync();
-        Assert.IsTrue(await reader.ReadAsync());
-        Assert.IsTrue(reader.IsDBNull(0));
-        Assert.AreEqual("azure-blob", reader.GetString(1));
-        StringAssert.StartsWith(reader.GetString(2), "messaging/v1/gateway-traffic/");
+        var reader = (await command.ExecuteReaderAsync().ConfigureAwait(false));
+        await using var readerLifetime = reader.ConfigureAwait(false);
+        Assert.IsTrue(await reader.ReadAsync().ConfigureAwait(false));
+        Assert.IsTrue(await (reader.IsDBNullAsync(0)).ConfigureAwait(false));
+        Assert.AreEqual("azure-blob", reader.GetString(1), StringComparer.Ordinal);
+        StringAssert.StartsWith(reader.GetString(2), "messaging/v1/gateway-traffic/", StringComparison.Ordinal);
     }
 
     [TestMethod]
     public async Task LargeRequestAndResponseRoundTripAcrossSeparateBusInstances()
     {
-        await using var database = await RequirePostgresAsync();
-        await using var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await using var workerDataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await PostgresMessagingSchema.EnsureAsync(gatewayDataSource);
+        var database = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var gatewayDataSourceLifetime = gatewayDataSource.ConfigureAwait(false);
+        var workerDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var workerDataSourceLifetime = workerDataSource.ConfigureAwait(false);
+        await PostgresMessagingSchema.EnsureAsync(gatewayDataSource).ConfigureAwait(false);
         using var gatewayProtector = AesGcmPayloadProtectorTests.CreateProtector("test", "queue-blob-key");
         using var workerProtector = AesGcmPayloadProtectorTests.CreateProtector("test", "queue-blob-key");
         var store = new InMemoryLargeObjectStore();
@@ -332,8 +362,8 @@ public sealed class PostgresMessagingTests
         var responsePayload = Enumerable.Repeat((byte)0xa5, 768).ToArray();
         var request = NewRequest(requestPayload);
 
-        await gateway.EnqueueAsync(request);
-        var lease = await worker.TryClaimAsync("worker@remote-host");
+        await gateway.EnqueueAsync(request).ConfigureAwait(false);
+        var lease = await worker.TryClaimAsync("worker@remote-host").ConfigureAwait(false);
         Assert.IsNotNull(lease);
         CollectionAssert.AreEqual(requestPayload, lease.Request.Payload);
         await worker.CompleteAsync(
@@ -342,30 +372,34 @@ public sealed class PostgresMessagingTests
                 request.Id,
                 "application/octet-stream",
                 responsePayload,
-                new Dictionary<string, string>()));
+                new Dictionary<string, string>(StringComparer.Ordinal))).ConfigureAwait(false);
 
-        var response = await gateway.WaitForResponseAsync(request.Id, request.Deadline);
+        var response = await gateway.WaitForResponseAsync(request.Id, request.Deadline).ConfigureAwait(false);
         CollectionAssert.AreEqual(responsePayload, response.Payload);
         Assert.AreEqual(2, store.ObjectCount);
-        await using var command = gatewayDataSource.CreateCommand(
+        var command = gatewayDataSource.CreateCommand(
             "SELECT request_payload_inline, request_payload_blob_provider, "
             + "response_payload_inline, response_payload_blob_provider "
             + "FROM application_requests WHERE id = @id");
+        await using var commandLifetime = command.ConfigureAwait(false);
         command.Parameters.AddWithValue("id", NpgsqlDbType.Uuid, request.Id);
-        await using var reader = await command.ExecuteReaderAsync();
-        Assert.IsTrue(await reader.ReadAsync());
-        Assert.IsTrue(reader.IsDBNull(0));
-        Assert.AreEqual("azure-blob", reader.GetString(1));
-        Assert.IsTrue(reader.IsDBNull(2));
-        Assert.AreEqual("azure-blob", reader.GetString(3));
+        var reader = (await command.ExecuteReaderAsync().ConfigureAwait(false));
+        await using var readerLifetime = reader.ConfigureAwait(false);
+        Assert.IsTrue(await reader.ReadAsync().ConfigureAwait(false));
+        Assert.IsTrue(await (reader.IsDBNullAsync(0)).ConfigureAwait(false));
+        Assert.AreEqual("azure-blob", reader.GetString(1), StringComparer.Ordinal);
+        Assert.IsTrue(await (reader.IsDBNullAsync(2)).ConfigureAwait(false));
+        Assert.AreEqual("azure-blob", reader.GetString(3), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task MissingOrTamperedLargeObjectFailsClosed()
     {
-        await using var database = await RequirePostgresAsync();
-        await using var dataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await PostgresMessagingSchema.EnsureAsync(dataSource);
+        var database = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        var dataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var dataSourceLifetime = dataSource.ConfigureAwait(false);
+        await PostgresMessagingSchema.EnsureAsync(dataSource).ConfigureAwait(false);
         using var protector = AesGcmPayloadProtectorTests.CreateProtector("test", "missing-blob-key");
         var store = new InMemoryLargeObjectStore();
         var bus = new PostgresApplicationBus(
@@ -374,30 +408,33 @@ public sealed class PostgresMessagingTests
             LargeObjectOptions(),
             largeObjectStore: store);
         var request = NewRequest(Enumerable.Repeat((byte)0x41, 512).ToArray());
-        await bus.EnqueueAsync(request);
-        var objectName = await ReadRequestObjectNameAsync(dataSource, request.Id);
+        await bus.EnqueueAsync(request).ConfigureAwait(false);
+        var objectName = await ReadRequestObjectNameAsync(dataSource, request.Id).ConfigureAwait(false);
 
         store.Corrupt(objectName);
         await Assert.ThrowsExactlyAsync<InvalidOperationException>(
-            () => bus.GetAsync(request.Id));
+            () => bus.GetAsync(request.Id)).ConfigureAwait(false);
         store.Remove(objectName);
         await Assert.ThrowsExactlyAsync<InvalidOperationException>(
-            () => bus.GetAsync(request.Id));
+            () => bus.GetAsync(request.Id)).ConfigureAwait(false);
     }
 
     [TestMethod]
     public async Task LargePayloadCannotFallBackToPostgresWhenBlobStoreIsUnavailable()
     {
-        await using var database = await RequirePostgresAsync();
-        await using var dataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await PostgresMessagingSchema.EnsureAsync(dataSource);
+        var database = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        var dataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var dataSourceLifetime = dataSource.ConfigureAwait(false);
+        await PostgresMessagingSchema.EnsureAsync(dataSource).ConfigureAwait(false);
         using var protector = AesGcmPayloadProtectorTests.CreateProtector("test", "required-blob-key");
         var bus = new PostgresApplicationBus(dataSource, protector, LargeObjectOptions());
         var request = NewRequest(Enumerable.Repeat((byte)0x42, 512).ToArray());
 
-        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => bus.EnqueueAsync(request));
-        await using var command = dataSource.CreateCommand("SELECT count(*) FROM application_requests");
-        Assert.AreEqual(0L, await command.ExecuteScalarAsync());
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => bus.EnqueueAsync(request)).ConfigureAwait(false);
+        var command = dataSource.CreateCommand("SELECT count(*) FROM application_requests");
+        await using var commandLifetime = command.ConfigureAwait(false);
+        Assert.AreEqual(0L, await command.ExecuteScalarAsync().ConfigureAwait(false));
     }
 
     private static ApplicationRequest NewRequest(string payload)
@@ -414,7 +451,7 @@ public sealed class PostgresMessagingTests
             "accounts.create",
             "application/json",
             payload,
-            new Dictionary<string, string> { ["trace-id"] = Guid.NewGuid().ToString("N") },
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["trace-id"] = Guid.NewGuid().ToString("N") },
             now,
             now.AddMinutes(1),
             Guid.NewGuid().ToString("N"));
@@ -430,16 +467,17 @@ public sealed class PostgresMessagingTests
         NpgsqlDataSource dataSource,
         Guid requestId)
     {
-        await using var command = dataSource.CreateCommand(
+        var command = dataSource.CreateCommand(
             "SELECT request_payload_blob_name FROM application_requests WHERE id = @id");
+        await using var commandLifetime = command.ConfigureAwait(false);
         command.Parameters.AddWithValue("id", NpgsqlDbType.Uuid, requestId);
-        return (string)(await command.ExecuteScalarAsync()
+        return (string)(await command.ExecuteScalarAsync().ConfigureAwait(false)
             ?? throw new AssertFailedException("The request large-object reference is missing."));
     }
 
     private static async Task<PostgresTestDatabase> RequirePostgresAsync()
     {
-        var database = await PostgresTestDatabase.TryCreateAsync();
+        var database = await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false);
         if (database is null)
         {
             Assert.Inconclusive(

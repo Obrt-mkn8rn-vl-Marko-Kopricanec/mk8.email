@@ -7,7 +7,8 @@ using mk8.email.Jmap;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class GatewaySubmissionQueryCodecTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class GatewaySubmissionQueryCodecTests
 {
     private const string AccountId = "A11111111111111111111111111111111";
     private const string SubmissionId = "S22222222222222222222222222222222";
@@ -38,7 +39,7 @@ public sealed class GatewaySubmissionQueryCodecTests
         Assert.AreEqual(MailOperationKind.FindSubmissions, response.Operation);
         Assert.AreEqual(7, response.Data["total"]!.GetValue<int>());
         Assert.AreEqual(2, response.Data["limit"]!.GetValue<int>());
-        Assert.AreEqual(SubmissionId, response.Data["ids"]![0]!.GetValue<string>());
+        Assert.AreEqual(SubmissionId, response.Data["ids"]![0]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -53,19 +54,19 @@ public sealed class GatewaySubmissionQueryCodecTests
         Assert.IsTrue(GatewaySubmissionQueryCodec.TryParseQuery(arguments, 2, out var call, out _));
         Assert.AreEqual(Guid.Empty, call!.Command.AccountId);
         Assert.IsTrue(call.Command.CheckAccountOnly);
-        Assert.AreEqual("unsupportedFilter", call.DeferredError);
+        Assert.AreEqual("unsupportedFilter", call.DeferredError, StringComparer.Ordinal);
         var denied = GatewaySubmissionQueryCodec.RenderQuery(call,
             new MailSubmissionQueryResult(MailSubmissionQueryStatus.AccountNotFound, null, 0, [], 0));
-        Assert.AreEqual("accountNotFound", denied.Data["type"]!.GetValue<string>());
+        Assert.AreEqual("accountNotFound", denied.Data["type"]!.GetValue<string>(), StringComparer.Ordinal);
         var authorized = GatewaySubmissionQueryCodec.RenderQuery(call,
             new MailSubmissionQueryResult(MailSubmissionQueryStatus.Authorized, null, 0, [], 0));
-        Assert.AreEqual("unsupportedFilter", authorized.Data["type"]!.GetValue<string>());
+        Assert.AreEqual("unsupportedFilter", authorized.Data["type"]!.GetValue<string>(), StringComparer.Ordinal);
         arguments["filter"] = new JsonObject();
         Assert.IsTrue(GatewaySubmissionQueryCodec.TryParseQuery(arguments, 2, out call, out _));
-        Assert.AreEqual("unsupportedSort", call!.DeferredError);
+        Assert.AreEqual("unsupportedSort", call!.DeferredError, StringComparer.Ordinal);
         arguments["sort"] = new JsonArray(new JsonObject { ["property"] = "sentAt", ["collation"] = null });
         Assert.IsTrue(GatewaySubmissionQueryCodec.TryParseQuery(arguments, 2, out call, out _));
-        Assert.AreEqual("invalidArguments", call!.DeferredError);
+        Assert.AreEqual("invalidArguments", call!.DeferredError, StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -87,9 +88,9 @@ public sealed class GatewaySubmissionQueryCodecTests
             new MailSubmissionQueryChangesResult(MailSubmissionQueryStatus.Ok, "s2",
                 [SubmissionId], [new(Guid.Parse("33333333-3333-3333-3333-333333333333"), 4)], 8));
         Assert.AreEqual(MailOperationKind.FindSubmissionChanges, rendered.Operation);
-        Assert.AreEqual("s1", rendered.Data["oldQueryState"]!.GetValue<string>());
-        Assert.AreEqual(SubmissionId, rendered.Data["removed"]![0]!.GetValue<string>());
-        Assert.AreEqual("S33333333333333333333333333333333", rendered.Data["added"]![0]!["id"]!.GetValue<string>());
+        Assert.AreEqual("s1", rendered.Data["oldQueryState"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual(SubmissionId, rendered.Data["removed"]![0]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("S33333333333333333333333333333333", rendered.Data["added"]![0]!["id"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(4, rendered.Data["added"]![0]!["index"]!.GetValue<int>());
         Assert.AreEqual(8, rendered.Data["total"]!.GetValue<int>());
     }
@@ -105,10 +106,10 @@ public sealed class GatewaySubmissionQueryCodecTests
             ["filter"] = new JsonObject { ["identityIds"] = new JsonArray("bad/id") },
         };
         Assert.IsTrue(GatewaySubmissionQueryCodec.TryParseQuery(arguments, 10, out var call, out _));
-        Assert.AreEqual("invalidArguments", call!.DeferredError);
+        Assert.AreEqual("invalidArguments", call!.DeferredError, StringComparer.Ordinal);
         arguments["anchor"] = null;
         Assert.IsFalse(GatewaySubmissionQueryCodec.TryParseQuery(arguments, 10, out _, out var failure));
-        Assert.AreEqual("invalidArguments", failure);
+        Assert.AreEqual("invalidArguments", failure, StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -131,7 +132,8 @@ public sealed class GatewaySubmissionQueryCodecTests
     [TestMethod]
     public async Task WorkerRejectsExtraTypedQueryFields()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         using var scope = fixture.Services.CreateScope();
         var processor = scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>();
         var command = new MailOperationCommand([MailFeature.Basic, MailFeature.Submission],
@@ -145,9 +147,9 @@ public sealed class GatewaySubmissionQueryCodecTests
                 ["anchorOffset"] = 0,
                 ["limit"] = 10,
                 ["extra"] = true,
-            }, new Dictionary<string, string>());
+            }, new Dictionary<string, string>(StringComparer.Ordinal));
         var failure = await Assert.ThrowsAsync<MailApplicationException>(() =>
-            processor.ExecuteAsync(command, fixture.User, null));
+            processor.ExecuteAsync(command, fixture.User, null)).ConfigureAwait(false);
         Assert.AreEqual(MailFailureKind.MalformedBatch, failure.Failure.Kind);
     }
 }

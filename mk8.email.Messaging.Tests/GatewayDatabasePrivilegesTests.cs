@@ -7,19 +7,28 @@ namespace mk8.email.Messaging.Tests;
 
 [TestClass]
 [TestCategory("PostgreSQL")]
-public sealed class GatewayDatabasePrivilegesTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class GatewayDatabasePrivilegesTests
 {
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The GatewayTransportWorksWithoutSchemaOrApplicationTablePrivileges scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task GatewayTransportWorksWithoutSchemaOrApplicationTablePrivileges()
     {
-        await using var database = await RequirePostgresAsync();
-        await using var adminDataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await PostgresMessagingSchema.EnsureAsync(adminDataSource);
+        var database = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        var adminDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var adminDataSourceLifetime = adminDataSource.ConfigureAwait(false);
+        await PostgresMessagingSchema.EnsureAsync(adminDataSource).ConfigureAwait(false);
         var role = $"mk8_gateway_test_{Guid.NewGuid():N}";
         var password = Guid.NewGuid().ToString("N");
-        await using var admin = await adminDataSource.OpenConnectionAsync();
-        await using (var setup = admin.CreateCommand())
+        var admin = (await adminDataSource.OpenConnectionAsync().ConfigureAwait(false));
+        await using var adminLifetime = admin.ConfigureAwait(false);
         {
+            var setup = admin.CreateCommand();
+            await using var setupLifetime = setup.ConfigureAwait(false);
+
+            // Test-only DDL uses quoted GUID-generated identifiers or fixed tracked SQL; PostgreSQL identifiers cannot be value parameters.
+#pragma warning disable CA2100
             setup.CommandText = $"""
                 REVOKE ALL ON DATABASE "{database.DatabaseName}" FROM PUBLIC;
                 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
@@ -32,32 +41,47 @@ public sealed class GatewayDatabasePrivilegesTests
                 CREATE ROLE "{role}" LOGIN PASSWORD '{password}'
                     NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT;
                 """;
-            await setup.ExecuteNonQueryAsync();
+
+#pragma warning restore CA2100
+
+            await setup.ExecuteNonQueryAsync().ConfigureAwait(false);
         }
 
         try
         {
-            await using (var baseGrants = admin.CreateCommand())
             {
+                var baseGrants = admin.CreateCommand();
+                await using var baseGrantsLifetime = baseGrants.ConfigureAwait(false);
+
+                // Test-only DDL uses quoted GUID-generated identifiers or fixed tracked SQL; PostgreSQL identifiers cannot be value parameters.
+#pragma warning disable CA2100
                 baseGrants.CommandText = $"""
                     GRANT CONNECT ON DATABASE "{database.DatabaseName}" TO "{role}";
                     GRANT USAGE ON SCHEMA public TO "{role}";
                     """;
-                await baseGrants.ExecuteNonQueryAsync();
+
+#pragma warning restore CA2100
+
+                await baseGrants.ExecuteNonQueryAsync().ConfigureAwait(false);
             }
             var gatewayConnection = new NpgsqlConnectionStringBuilder(database.ConnectionString)
             {
                 Username = role,
                 Password = password,
             };
-            await using (var gatewayDataSource = NpgsqlDataSource.Create(gatewayConnection.ConnectionString))
             {
+                var gatewayDataSource = NpgsqlDataSource.Create(gatewayConnection.ConnectionString);
+                await using var gatewayDataSourceLifetime = gatewayDataSource.ConfigureAwait(false);
                 var transport = new PostgresApplicationTransportControl(gatewayDataSource);
-                Assert.IsFalse(await transport.IsAvailableAsync());
+                Assert.IsFalse(await transport.IsAvailableAsync().ConfigureAwait(false));
                 await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
-                    GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource));
-                await using (var grant = admin.CreateCommand())
+                    GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource)).ConfigureAwait(false);
                 {
+                    var grant = admin.CreateCommand();
+                    await using var grantLifetime = grant.ConfigureAwait(false);
+
+                    // Test-only DDL uses quoted GUID-generated identifiers or fixed tracked SQL; PostgreSQL identifiers cannot be value parameters.
+#pragma warning disable CA2100
                     grant.CommandText = $"""
                         GRANT SELECT, INSERT ON TABLE
                             gateway_traffic_records TO "{role}";
@@ -68,69 +92,138 @@ public sealed class GatewayDatabasePrivilegesTests
                         GRANT SELECT (state) ON TABLE
                             mk8_restore_state TO "{role}";
                         """;
-                    await grant.ExecuteNonQueryAsync();
+
+#pragma warning restore CA2100
+
+                    await grant.ExecuteNonQueryAsync().ConfigureAwait(false);
                 }
-                Assert.IsTrue(await transport.IsAvailableAsync());
-                await GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource);
-                await DistributedRestoreActivationGuard.RequireReadyAsync(gatewayDataSource);
-                await using (var privateMarker = gatewayDataSource.CreateCommand(
-                                 "SELECT database_sha256 FROM mk8_restore_state"))
+                Assert.IsTrue(await transport.IsAvailableAsync().ConfigureAwait(false));
+                await GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource).ConfigureAwait(false);
+                await DistributedRestoreActivationGuard.RequireReadyAsync(gatewayDataSource).ConfigureAwait(false);
                 {
+                    var privateMarker = gatewayDataSource.CreateCommand(
+                                 "SELECT database_sha256 FROM mk8_restore_state");
+                    await using var privateMarkerLifetime = privateMarker.ConfigureAwait(false);
                     var error = await Assert.ThrowsExactlyAsync<PostgresException>(
-                        () => privateMarker.ExecuteScalarAsync());
-                    Assert.AreEqual(PostgresErrorCodes.InsufficientPrivilege, error.SqlState);
+                        () => privateMarker.ExecuteScalarAsync()).ConfigureAwait(false);
+                    Assert.AreEqual(PostgresErrorCodes.InsufficientPrivilege, error.SqlState, StringComparer.Ordinal);
                 }
-                await using (var excessMarkerGrant = admin.CreateCommand())
                 {
+                    var excessMarkerGrant = admin.CreateCommand();
+                    await using var excessMarkerGrantLifetime = excessMarkerGrant.ConfigureAwait(false);
+
+                    // Test-only DDL uses quoted GUID-generated identifiers or fixed tracked SQL; PostgreSQL identifiers cannot be value parameters.
+#pragma warning disable CA2100
                     excessMarkerGrant.CommandText =
                         $"GRANT UPDATE (state) ON mk8_restore_state TO \"{role}\"";
-                    await excessMarkerGrant.ExecuteNonQueryAsync();
+
+#pragma warning restore CA2100
+
+                    await excessMarkerGrant.ExecuteNonQueryAsync().ConfigureAwait(false);
                     await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
-                        GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource));
+                        GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource)).ConfigureAwait(false);
+
+                    // Test-only DDL uses quoted GUID-generated identifiers or fixed tracked SQL; PostgreSQL identifiers cannot be value parameters.
+#pragma warning disable CA2100
                     excessMarkerGrant.CommandText =
                         $"REVOKE UPDATE (state) ON mk8_restore_state FROM \"{role}\"";
-                    await excessMarkerGrant.ExecuteNonQueryAsync();
-                    await GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource);
+
+#pragma warning restore CA2100
+
+                    await excessMarkerGrant.ExecuteNonQueryAsync().ConfigureAwait(false);
+                    await GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource).ConfigureAwait(false);
+
+                    // Test-only DDL uses quoted GUID-generated identifiers or fixed tracked SQL; PostgreSQL identifiers cannot be value parameters.
+#pragma warning disable CA2100
                     excessMarkerGrant.CommandText =
                         $"GRANT SELECT (database_sha256) ON mk8_restore_state TO \"{role}\"";
-                    await excessMarkerGrant.ExecuteNonQueryAsync();
+
+#pragma warning restore CA2100
+
+                    await excessMarkerGrant.ExecuteNonQueryAsync().ConfigureAwait(false);
                     await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
-                        GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource));
+                        GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource)).ConfigureAwait(false);
+
+                    // Test-only DDL uses quoted GUID-generated identifiers or fixed tracked SQL; PostgreSQL identifiers cannot be value parameters.
+#pragma warning disable CA2100
                     excessMarkerGrant.CommandText =
                         $"REVOKE SELECT (database_sha256) ON mk8_restore_state FROM \"{role}\"";
-                    await excessMarkerGrant.ExecuteNonQueryAsync();
+
+#pragma warning restore CA2100
+
+                    await excessMarkerGrant.ExecuteNonQueryAsync().ConfigureAwait(false);
                 }
-                await using (var excessGrant = admin.CreateCommand())
                 {
+                    var excessGrant = admin.CreateCommand();
+                    await using var excessGrantLifetime = excessGrant.ConfigureAwait(false);
+
+                    // Test-only DDL uses quoted GUID-generated identifiers or fixed tracked SQL; PostgreSQL identifiers cannot be value parameters.
+#pragma warning disable CA2100
                     excessGrant.CommandText = $"GRANT SELECT ON private_application_state TO \"{role}\"";
-                    await excessGrant.ExecuteNonQueryAsync();
+
+#pragma warning restore CA2100
+
+                    await excessGrant.ExecuteNonQueryAsync().ConfigureAwait(false);
                     await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
-                        GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource));
+                        GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource)).ConfigureAwait(false);
+
+                    // Test-only DDL uses quoted GUID-generated identifiers or fixed tracked SQL; PostgreSQL identifiers cannot be value parameters.
+#pragma warning disable CA2100
                     excessGrant.CommandText = $"REVOKE SELECT ON private_application_state FROM \"{role}\"";
-                    await excessGrant.ExecuteNonQueryAsync();
+
+#pragma warning restore CA2100
+
+                    await excessGrant.ExecuteNonQueryAsync().ConfigureAwait(false);
                 }
-                await GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource);
-                await using (var excessSchemaGrant = admin.CreateCommand())
+                await GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource).ConfigureAwait(false);
                 {
+                    var excessSchemaGrant = admin.CreateCommand();
+                    await using var excessSchemaGrantLifetime = excessSchemaGrant.ConfigureAwait(false);
+
+                    // Test-only DDL uses quoted GUID-generated identifiers or fixed tracked SQL; PostgreSQL identifiers cannot be value parameters.
+#pragma warning disable CA2100
                     excessSchemaGrant.CommandText = $"GRANT CREATE ON SCHEMA public TO \"{role}\"";
-                    await excessSchemaGrant.ExecuteNonQueryAsync();
+
+#pragma warning restore CA2100
+
+                    await excessSchemaGrant.ExecuteNonQueryAsync().ConfigureAwait(false);
                     await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
-                        GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource));
+                        GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource)).ConfigureAwait(false);
+
+                    // Test-only DDL uses quoted GUID-generated identifiers or fixed tracked SQL; PostgreSQL identifiers cannot be value parameters.
+#pragma warning disable CA2100
                     excessSchemaGrant.CommandText = $"REVOKE CREATE ON SCHEMA public FROM \"{role}\"";
-                    await excessSchemaGrant.ExecuteNonQueryAsync();
+
+#pragma warning restore CA2100
+
+                    await excessSchemaGrant.ExecuteNonQueryAsync().ConfigureAwait(false);
                 }
-                await GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource);
-                await using (var excessControlGrant = admin.CreateCommand())
+                await GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource).ConfigureAwait(false);
                 {
+                    var excessControlGrant = admin.CreateCommand();
+                    await using var excessControlGrantLifetime = excessControlGrant.ConfigureAwait(false);
+
+                    // Test-only DDL uses quoted GUID-generated identifiers or fixed tracked SQL; PostgreSQL identifiers cannot be value parameters.
+#pragma warning disable CA2100
                     excessControlGrant.CommandText = $"GRANT DELETE ON gateway_traffic_records TO \"{role}\"";
-                    await excessControlGrant.ExecuteNonQueryAsync();
+
+#pragma warning restore CA2100
+
+                    await excessControlGrant.ExecuteNonQueryAsync().ConfigureAwait(false);
                     await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
-                        GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource));
+                        GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource)).ConfigureAwait(false);
+
+                    // Test-only DDL uses quoted GUID-generated identifiers or fixed tracked SQL; PostgreSQL identifiers cannot be value parameters.
+#pragma warning disable CA2100
                     excessControlGrant.CommandText = $"REVOKE DELETE ON gateway_traffic_records FROM \"{role}\"";
-                    await excessControlGrant.ExecuteNonQueryAsync();
+
+#pragma warning restore CA2100
+
+                    await excessControlGrant.ExecuteNonQueryAsync().ConfigureAwait(false);
                 }
-                await GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource);
-                await using (var forbiddenControlWrites = gatewayDataSource.CreateCommand(
+                await GatewayDatabasePrivilegeProbe.ProbeAsync(gatewayDataSource).ConfigureAwait(false);
+                {
+                    var forbiddenControlWrites = gatewayDataSource.CreateCommand(
                                  """
                                  SELECT has_table_privilege(current_user,
                                      'gateway_traffic_records', 'UPDATE')
@@ -138,28 +231,31 @@ public sealed class GatewayDatabasePrivilegesTests
                                          'application_requests', 'DELETE')
                                      OR has_table_privilege(current_user,
                                          'presentation_requests', 'DELETE')
-                                 """))
-                {
-                    Assert.AreEqual(false, await forbiddenControlWrites.ExecuteScalarAsync());
+                                 """);
+                    await using var forbiddenControlWritesLifetime = forbiddenControlWrites.ConfigureAwait(false);
+                    Assert.AreEqual(false, await forbiddenControlWrites.ExecuteScalarAsync().ConfigureAwait(false));
                 }
-                await using (var privileges = gatewayDataSource.CreateCommand(
-                                 "SELECT has_schema_privilege(current_user, 'public', 'CREATE')"))
                 {
-                    Assert.AreEqual(false, await privileges.ExecuteScalarAsync());
+                    var privileges = gatewayDataSource.CreateCommand(
+                                 "SELECT has_schema_privilege(current_user, 'public', 'CREATE')");
+                    await using var privilegesLifetime = privileges.ConfigureAwait(false);
+                    Assert.AreEqual(false, await privileges.ExecuteScalarAsync().ConfigureAwait(false));
                 }
-                await using (var forbidden = gatewayDataSource.CreateCommand(
-                                 "SELECT id FROM private_application_state"))
                 {
+                    var forbidden = gatewayDataSource.CreateCommand(
+                                 "SELECT id FROM private_application_state");
+                    await using var forbiddenLifetime = forbidden.ConfigureAwait(false);
                     var error = await Assert.ThrowsExactlyAsync<PostgresException>(
-                        () => forbidden.ExecuteScalarAsync());
-                    Assert.AreEqual(PostgresErrorCodes.InsufficientPrivilege, error.SqlState);
+                        () => forbidden.ExecuteScalarAsync()).ConfigureAwait(false);
+                    Assert.AreEqual(PostgresErrorCodes.InsufficientPrivilege, error.SqlState, StringComparer.Ordinal);
                 }
-                await using (var forbiddenSchema = gatewayDataSource.CreateCommand(
-                                 "CREATE TABLE unauthorized_gateway_schema_change (id integer)"))
                 {
+                    var forbiddenSchema = gatewayDataSource.CreateCommand(
+                                 "CREATE TABLE unauthorized_gateway_schema_change (id integer)");
+                    await using var forbiddenSchemaLifetime = forbiddenSchema.ConfigureAwait(false);
                     var error = await Assert.ThrowsExactlyAsync<PostgresException>(
-                        () => forbiddenSchema.ExecuteNonQueryAsync());
-                    Assert.AreEqual(PostgresErrorCodes.InsufficientPrivilege, error.SqlState);
+                        () => forbiddenSchema.ExecuteNonQueryAsync()).ConfigureAwait(false);
+                    Assert.AreEqual(PostgresErrorCodes.InsufficientPrivilege, error.SqlState, StringComparer.Ordinal);
                 }
 
                 using var protector = AesGcmPayloadProtectorTests.CreateProtector(
@@ -173,34 +269,36 @@ public sealed class GatewayDatabasePrivilegesTests
                     "smtp",
                     "application/octet-stream",
                     Encoding.ASCII.GetBytes("EHLO client.example\r\n"),
-                    new Dictionary<string, string>(),
+                    new Dictionary<string, string>(StringComparer.Ordinal),
                     DateTimeOffset.UtcNow);
                 var journal = new RestoreAwareGatewayTrafficJournal(
                     gatewayDataSource,
                     new PostgresGatewayTrafficJournal(gatewayDataSource, protector));
-                await journal.AppendAsync(record);
-                Assert.HasCount(1, await journal.ReadSessionAsync(sessionId));
+                await journal.AppendAsync(record).ConfigureAwait(false);
+                Assert.HasCount(1, await journal.ReadSessionAsync(sessionId).ConfigureAwait(false));
 
                 var guardedTransport = new RestoreAwareApplicationTransportControl(
                     gatewayDataSource, transport);
-                Assert.IsTrue(await guardedTransport.IsAvailableAsync());
-                await using (var pending = admin.CreateCommand())
+                Assert.IsTrue(await guardedTransport.IsAvailableAsync().ConfigureAwait(false));
                 {
+                    var pending = admin.CreateCommand();
+                    await using var pendingLifetime = pending.ConfigureAwait(false);
                     pending.CommandText =
                         "UPDATE mk8_restore_state SET state = 'pending' WHERE id = 1";
-                    await pending.ExecuteNonQueryAsync();
+                    await pending.ExecuteNonQueryAsync().ConfigureAwait(false);
                 }
-                Assert.IsFalse(await guardedTransport.IsAvailableAsync());
+                Assert.IsFalse(await guardedTransport.IsAvailableAsync().ConfigureAwait(false));
                 await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
-                    journal.AppendAsync(record with { Id = Guid.CreateVersion7(), Sequence = 1 }));
-                await using (var complete = admin.CreateCommand())
+                    journal.AppendAsync(record with { Id = Guid.CreateVersion7(), Sequence = 1 })).ConfigureAwait(false);
                 {
+                    var complete = admin.CreateCommand();
+                    await using var completeLifetime = complete.ConfigureAwait(false);
                     complete.CommandText =
                         "UPDATE mk8_restore_state SET state = 'complete' WHERE id = 1";
-                    await complete.ExecuteNonQueryAsync();
+                    await complete.ExecuteNonQueryAsync().ConfigureAwait(false);
                 }
-                Assert.IsTrue(await guardedTransport.IsAvailableAsync());
-                Assert.HasCount(1, await journal.ReadSessionAsync(sessionId));
+                Assert.IsTrue(await guardedTransport.IsAvailableAsync().ConfigureAwait(false));
+                Assert.HasCount(1, await journal.ReadSessionAsync(sessionId).ConfigureAwait(false));
 
                 var now = DateTimeOffset.UtcNow;
                 var request = new ApplicationRequest(
@@ -211,13 +309,13 @@ public sealed class GatewayDatabasePrivilegesTests
                     "smtp.recipient.check",
                     "application/json",
                     Encoding.ASCII.GetBytes("{}"),
-                    new Dictionary<string, string>(),
+                    new Dictionary<string, string>(StringComparer.Ordinal),
                     now,
                     now.AddMinutes(1));
                 var requests = new PostgresApplicationBus(gatewayDataSource, protector);
-                await requests.EnqueueAsync(request);
+                await requests.EnqueueAsync(request).ConfigureAwait(false);
                 Assert.AreEqual(ApplicationExchangeStates.Pending,
-                    (await requests.GetAsync(request.Id))?.State);
+                    (await requests.GetAsync(request.Id).ConfigureAwait(false))?.State, StringComparer.Ordinal);
 
                 var reverseRequest = request with
                 {
@@ -227,9 +325,9 @@ public sealed class GatewayDatabasePrivilegesTests
                     Operation = "smtp.deliver",
                 };
                 var adminPresentation = new PostgresPresentationBus(adminDataSource, protector);
-                await adminPresentation.EnqueueAsync(reverseRequest);
+                await adminPresentation.EnqueueAsync(reverseRequest).ConfigureAwait(false);
                 var presentation = new PostgresPresentationBus(gatewayDataSource, protector);
-                var lease = await presentation.TryClaimAsync("gateway@test");
+                var lease = await presentation.TryClaimAsync("gateway@test").ConfigureAwait(false);
                 Assert.IsNotNull(lease);
                 Assert.AreEqual(reverseRequest.Id, lease.Request.Id);
                 await presentation.CompleteAsync(
@@ -238,27 +336,34 @@ public sealed class GatewayDatabasePrivilegesTests
                         reverseRequest.Id,
                         "application/json",
                         Encoding.ASCII.GetBytes("{}"),
-                        new Dictionary<string, string>()));
+                        new Dictionary<string, string>(StringComparer.Ordinal))).ConfigureAwait(false);
 
                 var maildrop = new PostgresPop3MaildropLeaseStore(gatewayDataSource);
                 var acquired = await maildrop.TryAcquireAsync(
-                    Guid.CreateVersion7(), TimeSpan.FromMinutes(1));
+                    Guid.CreateVersion7(), TimeSpan.FromMinutes(1)).ConfigureAwait(false);
                 Assert.IsNotNull(acquired);
-                Assert.IsTrue(await maildrop.RenewAsync(acquired, TimeSpan.FromMinutes(1)));
-                await maildrop.ReleaseAsync(acquired);
+                Assert.IsTrue(await maildrop.RenewAsync(acquired, TimeSpan.FromMinutes(1)).ConfigureAwait(false));
+                await maildrop.ReleaseAsync(acquired).ConfigureAwait(false);
             }
         }
         finally
         {
-            await using var cleanup = admin.CreateCommand();
+            var cleanup = admin.CreateCommand();
+            await using var cleanupLifetime = cleanup.ConfigureAwait(false);
+
+            // Test-only DDL uses quoted GUID-generated identifiers or fixed tracked SQL; PostgreSQL identifiers cannot be value parameters.
+#pragma warning disable CA2100
             cleanup.CommandText = $"DROP OWNED BY \"{role}\"; DROP ROLE \"{role}\";";
-            await cleanup.ExecuteNonQueryAsync();
+
+#pragma warning restore CA2100
+
+            await cleanup.ExecuteNonQueryAsync().ConfigureAwait(false);
         }
     }
 
     private static async Task<PostgresTestDatabase> RequirePostgresAsync()
     {
-        var database = await PostgresTestDatabase.TryCreateAsync();
+        var database = await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false);
         if (database is null)
         {
             Assert.Inconclusive(

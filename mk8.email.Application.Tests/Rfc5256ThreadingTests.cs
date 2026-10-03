@@ -3,7 +3,8 @@ using mk8.email.Application.Protocol;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class Rfc5256ThreadingTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class Rfc5256ThreadingTests
 {
     [TestMethod]
     public void MessageIdNormalizationUnquotesButRemainsCaseSensitive()
@@ -20,15 +21,15 @@ public sealed class Rfc5256ThreadingTests
             "<01kf8jceocbs0045ps@xxx.yyy.com>");
 
         Assert.HasCount(1, quoted);
-        Assert.AreEqual(quoted[0], unquoted[0]);
-        Assert.AreEqual(escaped[0], dotted[0]);
+        Assert.AreEqual(quoted[0], unquoted[0], StringComparer.Ordinal);
+        Assert.AreEqual(escaped[0], dotted[0], StringComparer.Ordinal);
         Assert.HasCount(1, quotedAtSign);
         Assert.IsEmpty(Rfc5256Threading.ParseMessageIds("<a@b@example.net>"));
-        Assert.AreNotEqual(quotedAtSign[0], unquoted[0]);
-        Assert.AreNotEqual(quoted[0], differentCase[0]);
+        Assert.AreNotEqual(quotedAtSign[0], unquoted[0], StringComparer.Ordinal);
+        Assert.AreNotEqual(quoted[0], differentCase[0], StringComparer.Ordinal);
         Assert.AreEqual(
             unquoted[0],
-            Rfc5256Threading.ParseFirstMessageId("01KF8JCEOCBS0045PS@xxx.yyy.com"));
+            Rfc5256Threading.ParseFirstMessageId("01KF8JCEOCBS0045PS@xxx.yyy.com"), StringComparer.Ordinal);
         Assert.IsEmpty(Rfc5256Threading.ParseMessageIds(
             "noise <without-domain> <@example.net> <local@>"));
     }
@@ -50,7 +51,7 @@ public sealed class Rfc5256ThreadingTests
 
         Assert.AreEqual(
             "(1 (2 3)(4))((5)(6))(8 7)",
-            Rfc5256Threading.BuildReferences(messages));
+            Rfc5256Threading.BuildReferences(messages), StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -68,7 +69,7 @@ public sealed class Rfc5256ThreadingTests
 
         Assert.AreEqual(
             "(1 2)(3)(4)(5)",
-            Rfc5256Threading.BuildReferences(messages));
+            Rfc5256Threading.BuildReferences(messages), StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -85,7 +86,7 @@ public sealed class Rfc5256ThreadingTests
 
         Assert.AreEqual(
             "(1 4 2)(3)",
-            Rfc5256Threading.BuildReferences(messages));
+            Rfc5256Threading.BuildReferences(messages), StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -104,7 +105,7 @@ public sealed class Rfc5256ThreadingTests
 
         Assert.AreEqual(
             "((1 2)(3))(5 4)(6)(7)",
-            Rfc5256Threading.BuildReferences(messages));
+            Rfc5256Threading.BuildReferences(messages), StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -121,7 +122,7 @@ public sealed class Rfc5256ThreadingTests
 
         Assert.AreEqual(
             "((1)(2)(3)(4)(5))",
-            Rfc5256Threading.BuildReferences(messages));
+            Rfc5256Threading.BuildReferences(messages), StringComparer.Ordinal);
     }
 
     [TestMethod]

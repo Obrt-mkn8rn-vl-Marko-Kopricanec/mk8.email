@@ -6,7 +6,8 @@ using mk8.email.Gateway.Protocols.Jmap;
 namespace mk8.email.Messaging.Tests;
 
 [TestClass]
-public sealed class ApplicationValueCodecTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class ApplicationValueCodecTests
 {
     private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web) { MaxDepth = 256 };
 
@@ -22,9 +23,9 @@ public sealed class ApplicationValueCodecTests
         var text = codePoint <= char.MaxValue ? new string((char)codePoint, 1) : char.ConvertFromUtf32(codePoint);
         var source = new JsonObject { [text] = text, ["array"] = new JsonArray(text, null, true, 1.25) };
         var restored = RoundTrip(source);
-        Assert.AreEqual(text, restored.First().Key);
-        Assert.AreEqual(text, restored[text]!.GetValue<string>());
-        Assert.AreEqual(text, restored["array"]![0]!.GetValue<string>());
+        Assert.AreEqual(text, restored.First().Key, StringComparer.Ordinal);
+        Assert.AreEqual(text, restored[text]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual(text, restored["array"]![0]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.IsTrue(JsonNode.DeepEquals(GatewayJmapJson.SanitizeResponse(source), GatewayJmapJson.SanitizeResponse(restored)));
     }
 
@@ -42,9 +43,9 @@ public sealed class ApplicationValueCodecTests
         var restored = RoundTrip(source);
         CollectionAssert.AreEqual(source.Select(member => member.Key).ToArray(), restored.Select(member => member.Key).ToArray());
         var display = GatewayJmapJson.SanitizeResponse(restored);
-        Assert.AreEqual("first", display["\ufffd"]!.GetValue<string>());
-        Assert.AreEqual("second", display["\ufffd~2"]!.GetValue<string>());
-        Assert.AreEqual("third", display["\ufffd~3"]!.GetValue<string>());
+        Assert.AreEqual("first", display["\ufffd"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("second", display["\ufffd~2"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("third", display["\ufffd~3"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(1, display["x"]!.GetValue<int>());
         Assert.AreEqual(2, display["X"]!.GetValue<int>());
     }
@@ -64,9 +65,9 @@ public sealed class ApplicationValueCodecTests
             ["null"] = null
         };
         var result = RoundTrip(source);
-        Assert.AreEqual("2026-09-27T00:00:00+00:00", result["date"]!.GetValue<string>());
-        Assert.AreEqual("\ud800", result["char"]!.GetValue<string>());
-        Assert.AreEqual("1e-300", result["number"]!.ToJsonString());
+        Assert.AreEqual("2026-09-27T00:00:00+00:00", result["date"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("\ud800", result["char"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("1e-300", result["number"]!.ToJsonString(), StringComparer.Ordinal);
         Assert.IsFalse(result["bool"]!.GetValue<bool>());
         Assert.IsNull(result["null"]);
         Assert.AreEqual(0, result["object"]!.AsObject().Count);
@@ -105,7 +106,7 @@ public sealed class ApplicationValueCodecTests
         var bytes = JsonSerializer.SerializeToUtf8Bytes(ApplicationValueCodec.Encode(source), Options);
         Assert.IsTrue(bytes.Length < 26 * 1024 * 1024);
         var restored = ApplicationValueCodec.Decode(JsonSerializer.Deserialize<ApplicationValue>(bytes, Options)!)!;
-        Assert.AreEqual(source["body"]!.GetValue<string>(), restored["body"]!.GetValue<string>());
+        Assert.AreEqual(source["body"]!.GetValue<string>(), restored["body"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]

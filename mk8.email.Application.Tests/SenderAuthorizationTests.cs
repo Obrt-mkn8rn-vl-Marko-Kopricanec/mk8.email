@@ -6,7 +6,8 @@ using mk8.email.Infrastructure.Models;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class SenderAuthorizationTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class SenderAuthorizationTests : IDisposable
 {
     private const string TestUsername = "user@mk8n.com";
     private EmailDbContext _database = null!;
@@ -57,27 +58,29 @@ public sealed class SenderAuthorizationTests
     }
 
     [TestCleanup]
-    public async Task Cleanup() => await _database.DisposeAsync();
+    public void Cleanup() => Dispose();
+
+    public void Dispose() => _database?.Dispose();
 
     [TestMethod]
     public async Task ActiveOwnedAddressIsAuthorizedWithoutCaseSensitivity()
     {
-        Assert.IsTrue(await _service.CanSendAsAsync(TestUsername, "User@MK8N.COM"));
+        Assert.IsTrue(await _service.CanSendAsAsync(TestUsername, "User@MK8N.COM").ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task UnownedOrInactiveAddressIsRejected()
     {
-        Assert.IsFalse(await _service.CanSendAsAsync(TestUsername, "other@mk8n.com"));
+        Assert.IsFalse(await _service.CanSendAsAsync(TestUsername, "other@mk8n.com").ConfigureAwait(false));
 
         _address.IsActive = false;
-        await _database.SaveChangesAsync();
-        Assert.IsFalse(await _service.CanSendAsAsync(TestUsername, TestUsername));
+        await _database.SaveChangesAsync().ConfigureAwait(false);
+        Assert.IsFalse(await _service.CanSendAsAsync(TestUsername, TestUsername).ConfigureAwait(false));
 
         _address.IsActive = true;
         _company.IsActive = false;
-        await _database.SaveChangesAsync();
-        Assert.IsFalse(await _service.CanSendAsAsync(TestUsername, TestUsername));
+        await _database.SaveChangesAsync().ConfigureAwait(false);
+        Assert.IsFalse(await _service.CanSendAsAsync(TestUsername, TestUsername).ConfigureAwait(false));
     }
 
     [TestMethod]

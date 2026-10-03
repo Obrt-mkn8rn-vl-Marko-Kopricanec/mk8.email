@@ -11,7 +11,8 @@ using mk8.email.Gateway.Protocols.Jmap;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class HttpBearerAuthenticationTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class HttpBearerAuthenticationTests
 {
     [TestMethod]
     public async Task GatewayParsesJmapBearerAndForwardsDavBearerToWorker()
@@ -26,8 +27,8 @@ public sealed class HttpBearerAuthenticationTests
             jmapContext.Request,
             environment,
             out var jmapAuthentication));
-        Assert.AreEqual(ProtocolAuthenticationKinds.BearerToken, jmapAuthentication.Kind);
-        Assert.AreEqual("access-token", jmapAuthentication.Secret);
+        Assert.AreEqual(ProtocolAuthenticationKinds.BearerToken, jmapAuthentication.Kind, StringComparer.Ordinal);
+        Assert.AreEqual("access-token", jmapAuthentication.Secret, StringComparer.Ordinal);
 
         var transport = new RecordingDavTransport();
         var davContext = CreateContext();
@@ -35,24 +36,26 @@ public sealed class HttpBearerAuthenticationTests
             davContext,
             new GatewayDavStore(transport),
             environment,
-            CancellationToken.None);
+            CancellationToken.None).ConfigureAwait(false);
         Assert.IsNotNull(davUser);
-        Assert.AreEqual(ApplicationOperations.DavAuthenticate, transport.LastOperation);
+        Assert.AreEqual(ApplicationOperations.DavAuthenticate, transport.LastOperation, StringComparer.Ordinal);
         var forwarded = transport.LastAuthentication;
         Assert.IsNotNull(forwarded);
-        Assert.AreEqual(ProtocolAuthenticationKinds.BearerToken, forwarded.Kind);
-        Assert.AreEqual("access-token", forwarded.Secret);
+        Assert.AreEqual(ProtocolAuthenticationKinds.BearerToken, forwarded.Kind, StringComparer.Ordinal);
+        Assert.AreEqual("access-token", forwarded.Secret, StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task DavApplicationAuthenticatesBearerWithDavScope()
     {
-        await using var fixture = await DavFixture.CreateAsync();
+        var fixture = (await DavFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         using var scope = fixture.Services.CreateScope();
         var tokenService = new RecordingOAuthTokenService();
-        await using var services = new ServiceCollection()
+        var services = new ServiceCollection()
             .AddSingleton<IOAuthTokenService>(tokenService)
             .BuildServiceProvider();
+        await using var servicesLifetime = services.ConfigureAwait(false);
         var application = new DavApplicationService(
             scope.ServiceProvider.GetRequiredService<DavStore>(),
             scope.ServiceProvider.GetRequiredService<DavSchedulingService>(),
@@ -62,10 +65,10 @@ public sealed class HttpBearerAuthenticationTests
         var result = await application.AuthenticateAsync(
             new DavAuthenticationRequest(new ProtocolAuthentication(
                 ProtocolAuthenticationKinds.BearerToken, null, "access-token")),
-            CancellationToken.None);
+            CancellationToken.None).ConfigureAwait(false);
 
         Assert.IsNotNull(result.Value);
-        Assert.AreEqual("dav", tokenService.LastScope);
+        Assert.AreEqual("dav", tokenService.LastScope, StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -88,7 +91,7 @@ public sealed class HttpBearerAuthenticationTests
         await GatewayDavHttpAuthentication.WriteUnauthorizedAsync(
             davContext,
             environment,
-            CancellationToken.None);
+            CancellationToken.None).ConfigureAwait(false);
         var davChallenges = davContext.Response.Headers.WWWAuthenticate.ToArray();
         CollectionAssert.Contains(davChallenges, "Bearer realm=\"mk8.email DAV\"");
         CollectionAssert.Contains(
@@ -114,7 +117,7 @@ public sealed class HttpBearerAuthenticationTests
             TRequest value,
             CancellationToken cancellationToken = default)
         {
-            Assert.AreEqual("dav", protocol);
+            Assert.AreEqual("dav", protocol, StringComparer.Ordinal);
             LastOperation = operation;
             LastAuthentication = Assert.IsInstanceOfType<DavAuthenticationRequest>(value).Authentication;
             return Task.FromResult((TResponse)(object)new DavLookupResult<DavUser>(
@@ -133,8 +136,8 @@ public sealed class HttpBearerAuthenticationTests
         {
             LastScope = requiredScope;
             return Task.FromResult<AuthenticatedMailUser?>(
-                accessToken == "access-token"
-                    ? new(Guid.CreateVersion7(), "user@example.com")
+string.Equals(accessToken, "access-token"
+, StringComparison.Ordinal) ? new(Guid.CreateVersion7(), "user@example.com")
                     : null);
         }
 

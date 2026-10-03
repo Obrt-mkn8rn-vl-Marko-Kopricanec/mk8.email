@@ -4,9 +4,11 @@ using mk8.email.Jmap;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class JmapContactValidatorTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class JmapContactValidatorTests
 {
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The Rfc9553RegisteredObjectsAndEnumsAreValidatedRecursively scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public void Rfc9553RegisteredObjectsAndEnumsAreValidatedRecursively()
     {
         var card = JsonNode.Parse(
@@ -162,6 +164,7 @@ public sealed class JmapContactValidatorTests
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The Rfc9553RegisteredNamesTypesEnumsAndDependenciesRejectInvalidValues scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public void Rfc9553RegisteredNamesTypesEnumsAndDependenciesRejectInvalidValues()
     {
         AssertInvalid("name", card => card["name"] = new JsonObject

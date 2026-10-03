@@ -10,82 +10,86 @@ using mk8.email.Infrastructure.Models;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class MailAdministrationTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class MailAdministrationTests
 {
     [TestMethod]
     public async Task CatchAllAcceptsAndDeliversAnUndefinedAddress()
     {
-        await using var database = CreateDatabase();
+        var database = CreateDatabase();
+        await using var databaseLifetime = database.ConfigureAwait(false);
         var administration = new MailAdministrationService(database);
-        Assert.IsTrue((await administration.EnsureDomainAsync("mk8n", "mk8n.com")).Succeeded);
+        Assert.IsTrue((await administration.EnsureDomainAsync("mk8n", "mk8n.com").ConfigureAwait(false)).Succeeded);
         Assert.IsTrue((await administration.CreateAccountAsync(
             "admin@mk8n.com",
             "administrator-password-value",
-            UserRole.SuperAdmin)).Succeeded);
+            UserRole.SuperAdmin).ConfigureAwait(false)).Succeeded);
         Assert.IsTrue((await administration.CreateAccountAsync(
             "mk8n@mk8n.com",
             "mailbox-password-value",
-            UserRole.User)).Succeeded);
+            UserRole.User).ConfigureAwait(false)).Succeeded);
         Assert.IsTrue((await administration.SetCatchAllAsync(
             "mk8n.com",
-            "mk8n@mk8n.com")).Succeeded);
-        Assert.IsTrue((await administration.SetDomainActiveAsync("mk8n.com", true)).Succeeded);
+            "mk8n@mk8n.com").ConfigureAwait(false)).Succeeded);
+        Assert.IsTrue((await administration.SetDomainActiveAsync("mk8n.com", true).ConfigureAwait(false)).Succeeded);
 
         var mail = CreateEmailService(database);
-        Assert.IsTrue(await mail.CanReceiveAsync("undefined@mk8n.com"));
+        Assert.IsTrue(await mail.CanReceiveAsync("undefined@mk8n.com").ConfigureAwait(false));
         Assert.IsTrue(await mail.DeliverAsync(
             "sender@example.net",
             "undefined@mk8n.com",
-            "From: sender@example.net\r\nTo: undefined@mk8n.com\r\nSubject: route test\r\n\r\nbody\r\n"));
+            "From: sender@example.net\r\nTo: undefined@mk8n.com\r\nSubject: route test\r\n\r\nbody\r\n").ConfigureAwait(false));
 
-        var delivered = await database.Emails.Include(message => message.Folder).SingleAsync();
-        var target = await database.Inboxes.SingleAsync(inbox => inbox.Name == "mk8n");
+        var delivered = await database.Emails.Include(message => message.Folder).SingleAsync().ConfigureAwait(false);
+        var target = await database.Inboxes.SingleAsync(inbox => inbox.Name == "mk8n").ConfigureAwait(false);
         Assert.AreEqual(target.Id, delivered.Folder.InboxId);
     }
 
     [TestMethod]
     public async Task ExactAccountTakesPriorityOverCatchAll()
     {
-        await using var database = CreateDatabase();
+        var database = CreateDatabase();
+        await using var databaseLifetime = database.ConfigureAwait(false);
         var administration = new MailAdministrationService(database);
-        await administration.EnsureDomainAsync("mk8n", "mk8n.com");
+        await administration.EnsureDomainAsync("mk8n", "mk8n.com").ConfigureAwait(false);
         await administration.CreateAccountAsync(
             "admin@mk8n.com",
             "administrator-password-value",
-            UserRole.SuperAdmin);
+            UserRole.SuperAdmin).ConfigureAwait(false);
         await administration.CreateAccountAsync(
             "mk8n@mk8n.com",
             "mailbox-password-value",
-            UserRole.User);
-        await administration.SetCatchAllAsync("mk8n.com", "mk8n@mk8n.com");
-        await administration.SetDomainActiveAsync("mk8n.com", true);
+            UserRole.User).ConfigureAwait(false);
+        await administration.SetCatchAllAsync("mk8n.com", "mk8n@mk8n.com").ConfigureAwait(false);
+        await administration.SetDomainActiveAsync("mk8n.com", true).ConfigureAwait(false);
 
         var mail = CreateEmailService(database);
         Assert.IsTrue(await mail.DeliverAsync(
             "sender@example.net",
             "admin@mk8n.com",
-            "From: sender@example.net\r\nTo: admin@mk8n.com\r\nSubject: exact test\r\n\r\nbody\r\n"));
+            "From: sender@example.net\r\nTo: admin@mk8n.com\r\nSubject: exact test\r\n\r\nbody\r\n").ConfigureAwait(false));
 
-        var delivered = await database.Emails.Include(message => message.Folder).SingleAsync();
-        var target = await database.Inboxes.SingleAsync(inbox => inbox.Name == "admin");
+        var delivered = await database.Emails.Include(message => message.Folder).SingleAsync().ConfigureAwait(false);
+        var target = await database.Inboxes.SingleAsync(inbox => inbox.Name == "admin").ConfigureAwait(false);
         Assert.AreEqual(target.Id, delivered.Folder.InboxId);
     }
 
     [TestMethod]
     public async Task DeliveryThreadsRepliesWithinTheDestinationAccount()
     {
-        await using var database = CreateDatabase();
+        var database = CreateDatabase();
+        await using var databaseLifetime = database.ConfigureAwait(false);
         var administration = new MailAdministrationService(database);
-        await administration.EnsureDomainAsync("Example", "example.com");
+        await administration.EnsureDomainAsync("Example", "example.com").ConfigureAwait(false);
         await administration.CreateAccountAsync(
             "alice@example.com",
             "alice-password-value",
-            UserRole.User);
+            UserRole.User).ConfigureAwait(false);
         await administration.CreateAccountAsync(
             "bob@example.com",
             "bob-password-value",
-            UserRole.User);
-        await administration.SetDomainActiveAsync("example.com", true);
+            UserRole.User).ConfigureAwait(false);
+        await administration.SetDomainActiveAsync("example.com", true).ConfigureAwait(false);
 
         const string originalMessageId = "<shared-original@example.net>";
         var mail = CreateEmailService(database);
@@ -93,18 +97,18 @@ public sealed class MailAdministrationTests
             "sender@example.net",
             "alice@example.com",
             $"From: sender@example.net\r\nTo: alice@example.com\r\n"
-                + $"Message-ID: {originalMessageId}\r\nSubject: original\r\n\r\nbody\r\n"));
+                + $"Message-ID: {originalMessageId}\r\nSubject: original\r\n\r\nbody\r\n").ConfigureAwait(false));
         Assert.IsTrue(await mail.DeliverAsync(
             "sender@example.net",
             "bob@example.com",
             $"From: sender@example.net\r\nTo: bob@example.com\r\n"
-                + $"Message-ID: {originalMessageId}\r\nSubject: original\r\n\r\nbody\r\n"));
+                + $"Message-ID: {originalMessageId}\r\nSubject: original\r\n\r\nbody\r\n").ConfigureAwait(false));
         Assert.IsTrue(await mail.DeliverAsync(
             "sender@example.net",
             "bob@example.com",
             "From: sender@example.net\r\nTo: bob@example.com\r\n"
                 + "Message-ID: <reply@example.net>\r\n"
-                + $"In-Reply-To: {originalMessageId}\r\nSubject: Re: original\r\n\r\nreply\r\n"));
+                + $"In-Reply-To: {originalMessageId}\r\nSubject: Re: original\r\n\r\nreply\r\n").ConfigureAwait(false));
 
         var messages = await database.Emails
             .AsNoTracking()
@@ -114,137 +118,142 @@ public sealed class MailAdministrationTests
                 email.MessageId,
                 email.ThreadObjectId,
             })
-            .ToListAsync();
-        var aliceOriginal = messages.Single(message => message.Account == "alice");
-        var bobMessages = messages.Where(message => message.Account == "bob").ToArray();
-        var bobOriginal = bobMessages.Single(message => message.MessageId == originalMessageId);
-        var bobReply = bobMessages.Single(message => message.MessageId == "<reply@example.net>");
+            .ToListAsync().ConfigureAwait(false);
+        var aliceOriginal = messages.Single(message => string.Equals(message.Account, "alice", StringComparison.Ordinal));
+        var bobMessages = messages.Where(message => string.Equals(message.Account, "bob", StringComparison.Ordinal)).ToArray();
+        var bobOriginal = bobMessages.Single(message => string.Equals(message.MessageId, originalMessageId, StringComparison.Ordinal));
+        var bobReply = bobMessages.Single(message => string.Equals(message.MessageId, "<reply@example.net>", StringComparison.Ordinal));
 
-        Assert.AreNotEqual(aliceOriginal.ThreadObjectId, bobOriginal.ThreadObjectId);
-        Assert.AreEqual(bobOriginal.ThreadObjectId, bobReply.ThreadObjectId);
+        Assert.AreNotEqual(aliceOriginal.ThreadObjectId, bobOriginal.ThreadObjectId, StringComparer.Ordinal);
+        Assert.AreEqual(bobOriginal.ThreadObjectId, bobReply.ThreadObjectId, StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task ProvisioningRejectsUnsafeMailboxNames()
     {
-        await using var database = CreateDatabase();
+        var database = CreateDatabase();
+        await using var databaseLifetime = database.ConfigureAwait(false);
         var administration = new MailAdministrationService(database);
-        await administration.EnsureDomainAsync("mk8n", "mk8n.com");
+        await administration.EnsureDomainAsync("mk8n", "mk8n.com").ConfigureAwait(false);
 
         var result = await administration.CreateAccountAsync(
             "../admin@mk8n.com",
             "administrator-password-value",
-            UserRole.SuperAdmin);
+            UserRole.SuperAdmin).ConfigureAwait(false);
 
         Assert.IsFalse(result.Succeeded);
-        Assert.AreEqual(0, await database.Users.CountAsync());
+        Assert.AreEqual(0, await database.Users.CountAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task NewDomainCanBeConfiguredButCannotReceiveBeforeActivation()
     {
-        await using var database = CreateDatabase();
+        var database = CreateDatabase();
+        await using var databaseLifetime = database.ConfigureAwait(false);
         var administration = new MailAdministrationService(database);
         var mail = CreateEmailService(database);
 
-        Assert.IsTrue((await administration.EnsureDomainAsync("Example", "example.com")).Succeeded);
+        Assert.IsTrue((await administration.EnsureDomainAsync("Example", "example.com").ConfigureAwait(false)).Succeeded);
         Assert.IsTrue((await administration.CreateAccountAsync(
             "postmaster@example.com",
             "postmaster-password-value",
-            UserRole.User)).Succeeded);
+            UserRole.User).ConfigureAwait(false)).Succeeded);
         Assert.IsTrue((await administration.SetCatchAllAsync(
             "example.com",
-            "postmaster@example.com")).Succeeded);
-        Assert.IsFalse(await mail.CanReceiveAsync("unknown@example.com"));
+            "postmaster@example.com").ConfigureAwait(false)).Succeeded);
+        Assert.IsFalse(await mail.CanReceiveAsync("unknown@example.com").ConfigureAwait(false));
 
-        Assert.IsTrue((await administration.SetDomainActiveAsync("example.com", true)).Succeeded);
-        Assert.IsTrue(await mail.CanReceiveAsync("unknown@example.com"));
+        Assert.IsTrue((await administration.SetDomainActiveAsync("example.com", true).ConfigureAwait(false)).Succeeded);
+        Assert.IsTrue(await mail.CanReceiveAsync("unknown@example.com").ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task DomainActivationDoesNotChangeAnotherDomain()
     {
-        await using var database = CreateDatabase();
+        var database = CreateDatabase();
+        await using var databaseLifetime = database.ConfigureAwait(false);
         var administration = new MailAdministrationService(database);
         var mail = CreateEmailService(database);
 
-        await administration.EnsureDomainAsync("Example", "example.com");
+        await administration.EnsureDomainAsync("Example", "example.com").ConfigureAwait(false);
         await administration.CreateAccountAsync(
             "postmaster@example.com",
             "postmaster-password-value",
-            UserRole.User);
-        await administration.EnsureDomainAsync("Example", "example.net");
+            UserRole.User).ConfigureAwait(false);
+        await administration.EnsureDomainAsync("Example", "example.net").ConfigureAwait(false);
         await administration.CreateAccountAsync(
             "postmaster@example.net",
             "postmaster-password-value",
-            UserRole.User);
+            UserRole.User).ConfigureAwait(false);
 
-        Assert.IsTrue((await administration.SetDomainActiveAsync("example.com", true)).Succeeded);
-        Assert.IsTrue(await mail.CanReceiveAsync("postmaster@example.com"));
-        Assert.IsFalse(await mail.CanReceiveAsync("postmaster@example.net"));
+        Assert.IsTrue((await administration.SetDomainActiveAsync("example.com", true).ConfigureAwait(false)).Succeeded);
+        Assert.IsTrue(await mail.CanReceiveAsync("postmaster@example.com").ConfigureAwait(false));
+        Assert.IsFalse(await mail.CanReceiveAsync("postmaster@example.net").ConfigureAwait(false));
 
-        Assert.IsTrue((await administration.SetDomainActiveAsync("example.net", true)).Succeeded);
-        Assert.IsTrue((await administration.SetDomainActiveAsync("example.com", false)).Succeeded);
-        Assert.IsFalse(await mail.CanReceiveAsync("postmaster@example.com"));
-        Assert.IsTrue(await mail.CanReceiveAsync("postmaster@example.net"));
+        Assert.IsTrue((await administration.SetDomainActiveAsync("example.net", true).ConfigureAwait(false)).Succeeded);
+        Assert.IsTrue((await administration.SetDomainActiveAsync("example.com", false).ConfigureAwait(false)).Succeeded);
+        Assert.IsFalse(await mail.CanReceiveAsync("postmaster@example.com").ConfigureAwait(false));
+        Assert.IsTrue(await mail.CanReceiveAsync("postmaster@example.net").ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task DomainDeactivationRevokesJmapPushSubscriptionsForItsAccountsOnly()
     {
-        await using var database = CreateDatabase();
+        var database = CreateDatabase();
+        await using var databaseLifetime = database.ConfigureAwait(false);
         var administration = new MailAdministrationService(database);
-        await administration.EnsureDomainAsync("Example", "example.com");
+        await administration.EnsureDomainAsync("Example", "example.com").ConfigureAwait(false);
         await administration.CreateAccountAsync(
             "postmaster@example.com",
             "postmaster-password-value",
-            UserRole.User);
-        await administration.EnsureDomainAsync("Example", "example.net");
+            UserRole.User).ConfigureAwait(false);
+        await administration.EnsureDomainAsync("Example", "example.net").ConfigureAwait(false);
         await administration.CreateAccountAsync(
             "postmaster@example.net",
             "postmaster-password-value",
-            UserRole.User);
-        await administration.SetDomainActiveAsync("example.com", true);
-        await administration.SetDomainActiveAsync("example.net", true);
+            UserRole.User).ConfigureAwait(false);
+        await administration.SetDomainActiveAsync("example.com", true).ConfigureAwait(false);
+        await administration.SetDomainActiveAsync("example.net", true).ConfigureAwait(false);
 
         var revokedUserId = await database.Users
             .Where(user => user.Username == "postmaster@example.com")
             .Select(user => user.Id)
-            .SingleAsync();
+            .SingleAsync().ConfigureAwait(false);
         var retainedUserId = await database.Users
             .Where(user => user.Username == "postmaster@example.net")
             .Select(user => user.Id)
-            .SingleAsync();
+            .SingleAsync().ConfigureAwait(false);
         var revokedSubscription = CreatePushSubscription(revokedUserId, "revoked");
         var retainedSubscription = CreatePushSubscription(retainedUserId, "retained");
-        database.JmapPushSubscriptions.AddRange(revokedSubscription, retainedSubscription);
-        await database.SaveChangesAsync();
+        await (database.JmapPushSubscriptions.AddRangeAsync(revokedSubscription, retainedSubscription)).ConfigureAwait(false);
+        await database.SaveChangesAsync().ConfigureAwait(false);
 
-        Assert.IsTrue((await administration.SetDomainActiveAsync("example.com", false)).Succeeded);
+        Assert.IsTrue((await administration.SetDomainActiveAsync("example.com", false).ConfigureAwait(false)).Succeeded);
 
-        var remaining = await database.JmapPushSubscriptions.AsNoTracking().SingleAsync();
+        var remaining = await database.JmapPushSubscriptions.AsNoTracking().SingleAsync().ConfigureAwait(false);
         Assert.AreEqual(retainedSubscription.Id, remaining.Id);
-        Assert.AreEqual(string.Empty, revokedSubscription.Url);
+        Assert.AreEqual(string.Empty, revokedSubscription.Url, StringComparer.Ordinal);
         Assert.IsNull(revokedSubscription.KeysJson);
     }
 
     [TestMethod]
     public async Task UserQuotaIncludesEveryOwnedInbox()
     {
-        await using var database = CreateDatabase();
+        var database = CreateDatabase();
+        await using var databaseLifetime = database.ConfigureAwait(false);
         var administration = new MailAdministrationService(database);
-        await administration.EnsureDomainAsync("Test Company", "mk8n.com");
-        await administration.EnsureDomainAsync("Test Company", "example.com");
+        await administration.EnsureDomainAsync("Test Company", "mk8n.com").ConfigureAwait(false);
+        await administration.EnsureDomainAsync("Test Company", "example.com").ConfigureAwait(false);
         await administration.CreateAccountAsync(
             "user@mk8n.com",
             "mailbox-password-value",
-            UserRole.User);
-        await administration.SetDomainActiveAsync("mk8n.com", true);
-        await administration.SetDomainActiveAsync("example.com", true);
+            UserRole.User).ConfigureAwait(false);
+        await administration.SetDomainActiveAsync("mk8n.com", true).ConfigureAwait(false);
+        await administration.SetDomainActiveAsync("example.com", true).ConfigureAwait(false);
 
-        var user = await database.Users.SingleAsync();
-        var secondAddress = await database.Addresses.SingleAsync(item => item.Domain == "example.com");
-        var primaryFolder = await database.Folders.SingleAsync(item => item.Name == DefaultFolders.Inbox);
+        var user = await database.Users.SingleAsync().ConfigureAwait(false);
+        var secondAddress = await database.Addresses.SingleAsync(item => item.Domain == "example.com").ConfigureAwait(false);
+        var primaryFolder = await database.Folders.SingleAsync(item => item.Name == DefaultFolders.Inbox).ConfigureAwait(false);
         var secondInbox = new InboxDB
         {
             Id = Guid.CreateVersion7(),
@@ -252,13 +261,13 @@ public sealed class MailAdministrationTests
             AddressId = secondAddress.Id,
             OwnerId = user.Id,
         };
-        database.Inboxes.Add(secondInbox);
-        database.Folders.Add(new FolderDB
+        await (database.Inboxes.AddAsync(secondInbox)).ConfigureAwait(false);
+        await (database.Folders.AddAsync(new FolderDB
         {
             Id = Guid.CreateVersion7(),
             Name = DefaultFolders.Inbox,
             Inbox = secondInbox,
-        });
+        })).ConfigureAwait(false);
 
         const string rawMessage =
             "From: sender@example.net\r\n" +
@@ -268,7 +277,7 @@ public sealed class MailAdministrationTests
         user.QuotaBytes = rawMessage.Length + 50;
         primaryFolder.NextUid = 2;
         primaryFolder.HighestModSeq = 1;
-        database.Emails.Add(new EmailDB
+        await (database.Emails.AddAsync(new EmailDB
         {
             Id = Guid.CreateVersion7(),
             Sender = "sender@example.net",
@@ -280,15 +289,15 @@ public sealed class MailAdministrationTests
             Uid = 1,
             ModSeq = 1,
             FolderId = primaryFolder.Id,
-        });
-        await database.SaveChangesAsync();
+        })).ConfigureAwait(false);
+        await database.SaveChangesAsync().ConfigureAwait(false);
 
         var mail = CreateEmailService(database);
         Assert.IsFalse(await mail.DeliverAsync(
             "sender@example.net",
             "user@example.com",
-            rawMessage));
-        Assert.AreEqual(1, await database.Emails.CountAsync());
+            rawMessage).ConfigureAwait(false));
+        Assert.AreEqual(1, await database.Emails.CountAsync().ConfigureAwait(false));
     }
 
     private static EmailDbContext CreateDatabase()

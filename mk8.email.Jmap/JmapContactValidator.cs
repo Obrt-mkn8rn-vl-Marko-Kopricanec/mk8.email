@@ -224,7 +224,13 @@ internal static class JmapContactValidator
             invalid.Add("members");
         }
         ValidateTrueSet(card, "keywords", invalid);
+        ValidateContactFields(card, invalid);
+        if (validateLocalizations)
+            ValidateLocalizations(card, invalid);
+    }
 
+    private static void ValidateContactFields(JsonObject card, HashSet<string> invalid)
+    {
         ValidateObject(card, "name", ValidateName, invalid);
         ValidateObject(card, "speakToAs", ValidateSpeakToAs, invalid);
         ValidateStringObjectMap(card, "relatedTo", ValidateRelation, invalid);
@@ -245,8 +251,6 @@ internal static class JmapContactValidator
         ValidateIdObjectMap(card, "anniversaries", ValidateAnniversary, invalid);
         ValidateIdObjectMap(card, "notes", ValidateNote, invalid);
         ValidateIdObjectMap(card, "personalInfo", ValidatePersonalInfo, invalid);
-        if (validateLocalizations)
-            ValidateLocalizations(card, invalid);
     }
 
     private static bool ValidateRelation(JsonObject value) =>
@@ -312,6 +316,11 @@ internal static class JmapContactValidator
         {
             return false;
         }
+        return ValidateNameSortOrder(value, componentKinds);
+    }
+
+    private static bool ValidateNameSortOrder(JsonObject value, HashSet<string> componentKinds)
+    {
         if (!value.TryGetPropertyValue("sortAs", out var sortAsNode))
             return true;
         return sortAsNode is JsonObject sortAs
@@ -489,6 +498,11 @@ internal static class JmapContactValidator
         if (componentsNode is not JsonArray { Count: > 0 } components)
             return false;
 
+        return ValidateAddressComponents(value, components);
+    }
+
+    private static bool ValidateAddressComponents(JsonObject value, JsonArray components)
+    {
         var isOrdered = value["isOrdered"]?.GetValue<bool>() ?? false;
         var hasNonSeparator = false;
         var hasPhonetic = false;
@@ -963,6 +977,11 @@ internal static class JmapContactValidator
                 return false;
             index++;
         }
+        return ValidateLanguageTagTail(subtags, index);
+    }
+
+    private static bool ValidateLanguageTagTail(string[] subtags, int index)
+    {
         var extensions = new HashSet<char>();
         while (index < subtags.Length
             && subtags[index].Length == 1

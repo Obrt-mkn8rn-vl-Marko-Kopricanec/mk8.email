@@ -10,7 +10,8 @@ namespace mk8.email.Messaging.Tests;
 
 [TestClass]
 [TestCategory("PostgreSQL")]
-public sealed class JmapAccountAsyncPostgresTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class JmapAccountAsyncPostgresTests
 {
     [TestMethod]
     [Timeout(90_000)]
@@ -20,7 +21,8 @@ public sealed class JmapAccountAsyncPostgresTests
     [DataRow("contactError")]
     public async Task AccountQueriesDoNotRequireTheCallersSynchronizationContext(string operation)
     {
-        await using var server = await PostgresTestDatabase.TryCreateAsync();
+        var server = (await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false));
+        await using var serverLifetime = new NullableAsyncDisposable(server).ConfigureAwait(false);
         if (server is null)
         {
             Assert.Inconclusive("Set MK8_EMAIL_TEST_POSTGRES to a PostgreSQL admin connection string.");
@@ -29,13 +31,14 @@ public sealed class JmapAccountAsyncPostgresTests
         var gate = new GatedReaderInterceptor();
         var options = new DbContextOptionsBuilder<EmailDbContext>()
             .UseNpgsql(server.ConnectionString).AddInterceptors(gate).Options;
-        await using var database = new EmailDbContext(options);
-        var inbox = await SeedAccountAsync(database);
+        var database = new EmailDbContext(options);
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        var inbox = await SeedAccountAsync(database).ConfigureAwait(false);
         var user = new AuthenticatedMailUser(inbox.OwnerId, inbox.Owner.Username);
         var application = new JmapAccountService(database);
         var context = new RecordingSynchronizationContext();
         gate.Armed = true;
-        var pending = StartUnderContext(context, () => operation switch
+        var pending = StartUnderContextAsync(context, () => operation switch
         {
             "accounts" => application.GetAccountsAsync(user),
             "account" => application.GetAccountAsync(user, JmapId.Account(inbox.Id)),
@@ -51,13 +54,13 @@ public sealed class JmapAccountAsyncPostgresTests
         {
             gate.Release();
         }
-        await pending;
+        await pending.ConfigureAwait(false);
         Assert.AreEqual(1, gate.GatedQueries);
         Assert.AreEqual(0, context.PostCount);
-        await AssertResultAsync(pending, inbox.Id);
+        await AssertResultAsync(pending, inbox.Id).ConfigureAwait(false);
     }
 
-    private static Task StartUnderContext(SynchronizationContext context, Func<Task> start)
+    private static Task StartUnderContextAsync(SynchronizationContext context, Func<Task> start)
     {
         var previous = SynchronizationContext.Current;
         SynchronizationContext.SetSynchronizationContext(context);
@@ -87,7 +90,7 @@ public sealed class JmapAccountAsyncPostgresTests
         }
         else if (completed is Task<string> error)
         {
-            Assert.AreEqual("accountNotSupportedByMethod", await error.ConfigureAwait(false));
+            Assert.AreEqual("accountNotSupportedByMethod", await error.ConfigureAwait(false), StringComparer.Ordinal);
         }
         else
         {
@@ -97,7 +100,7 @@ public sealed class JmapAccountAsyncPostgresTests
 
     private static async Task<InboxDB> SeedAccountAsync(EmailDbContext database)
     {
-        await database.Database.EnsureCreatedAsync();
+        await database.Database.EnsureCreatedAsync().ConfigureAwait(false);
         var company = new CompanyDB { Id = Guid.CreateVersion7(), Name = "JMAP async boundary" };
         var inbox = new InboxDB
         {
@@ -118,8 +121,8 @@ public sealed class JmapAccountAsyncPostgresTests
                 Company = company,
             },
         };
-        database.Inboxes.Add(inbox);
-        await database.SaveChangesAsync();
+        await database.Inboxes.AddAsync(inbox).ConfigureAwait(false);
+        await database.SaveChangesAsync().ConfigureAwait(false);
         return inbox;
     }
 

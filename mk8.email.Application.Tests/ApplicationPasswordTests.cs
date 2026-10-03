@@ -8,7 +8,8 @@ using mk8.email.Utils;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class ApplicationPasswordTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class ApplicationPasswordTests
 {
     private const string Username = "user@example.com";
     private const string AccountPassword = "primary-account-password";
@@ -16,27 +17,28 @@ public sealed class ApplicationPasswordTests
     [TestMethod]
     public async Task GeneratedPasswordAuthenticatesAndRecordsItsLastUse()
     {
-        await using var database = CreateDatabase();
+        var database = CreateDatabase();
+        await using var databaseLifetime = database.ConfigureAwait(false);
         var service = new ApplicationPasswordService(database);
 
-        var created = await service.CreateAsync("USER@EXAMPLE.COM", " Thunderbird laptop ");
+        var created = await service.CreateAsync("USER@EXAMPLE.COM", " Thunderbird laptop ").ConfigureAwait(false);
 
         Assert.IsTrue(created.Succeeded);
         Assert.IsNotNull(created.Id);
         Assert.IsNotNull(created.Password);
-        StringAssert.StartsWith(created.Password, $"mk8_{created.Id:N}_");
+        StringAssert.StartsWith(created.Password, $"mk8_{created.Id:N}_", StringComparison.Ordinal);
         Assert.AreEqual(64, created.Password.Length);
-        var stored = await database.ApplicationPasswords.SingleAsync();
-        Assert.AreEqual("Thunderbird laptop", stored.Name);
-        Assert.AreNotEqual(created.Password, stored.PasswordHash);
+        var stored = await database.ApplicationPasswords.SingleAsync().ConfigureAwait(false);
+        Assert.AreEqual("Thunderbird laptop", stored.Name, StringComparer.Ordinal);
+        Assert.AreNotEqual(created.Password, stored.PasswordHash, StringComparer.Ordinal);
 
         var authenticated = await new MailAuthenticator(database)
-            .AuthenticateAsync(Username, created.Password);
+            .AuthenticateAsync(Username, created.Password).ConfigureAwait(false);
         var primaryAuthentication = await new MailAuthenticator(database)
-            .AuthenticatePrimaryAsync(Username, created.Password);
+            .AuthenticatePrimaryAsync(Username, created.Password).ConfigureAwait(false);
 
         Assert.IsNotNull(authenticated);
-        Assert.AreEqual(Username, authenticated.Username);
+        Assert.AreEqual(Username, authenticated.Username, StringComparer.Ordinal);
         Assert.IsNull(primaryAuthentication);
         Assert.IsNotNull(stored.LastUsedAt);
     }
@@ -44,17 +46,18 @@ public sealed class ApplicationPasswordTests
     [TestMethod]
     public async Task RevocationInvalidatesOnlyTheSelectedPassword()
     {
-        await using var database = CreateDatabase();
+        var database = CreateDatabase();
+        await using var databaseLifetime = database.ConfigureAwait(false);
         var service = new ApplicationPasswordService(database);
-        var revoked = await service.CreateAsync(Username, "Old phone");
-        var retained = await service.CreateAsync(Username, "Current laptop");
+        var revoked = await service.CreateAsync(Username, "Old phone").ConfigureAwait(false);
+        var retained = await service.CreateAsync(Username, "Current laptop").ConfigureAwait(false);
 
-        Assert.IsTrue(await service.RevokeAsync(Username, revoked.Id!.Value));
+        Assert.IsTrue(await service.RevokeAsync(Username, revoked.Id!.Value).ConfigureAwait(false));
 
         var authenticator = new MailAuthenticator(database);
-        Assert.IsNull(await authenticator.AuthenticateAsync(Username, revoked.Password!));
-        Assert.IsNotNull(await authenticator.AuthenticateAsync(Username, retained.Password!));
-        var listed = await service.ListAsync(Username);
+        Assert.IsNull(await authenticator.AuthenticateAsync(Username, revoked.Password!).ConfigureAwait(false));
+        Assert.IsNotNull(await authenticator.AuthenticateAsync(Username, retained.Password!).ConfigureAwait(false));
+        var listed = await service.ListAsync(Username).ConfigureAwait(false);
         Assert.AreEqual(2, listed.Count);
         Assert.IsNotNull(listed.Single(item => item.Id == revoked.Id).RevokedAt);
         Assert.IsNull(listed.Single(item => item.Id == retained.Id).RevokedAt);
@@ -63,32 +66,34 @@ public sealed class ApplicationPasswordTests
     [TestMethod]
     public async Task PasswordResetRevokesEveryApplicationPassword()
     {
-        await using var database = CreateDatabase();
+        var database = CreateDatabase();
+        await using var databaseLifetime = database.ConfigureAwait(false);
         var service = new ApplicationPasswordService(database);
-        var created = await service.CreateAsync(Username, "Thunderbird");
-        var userId = await database.Users.Select(user => user.Id).SingleAsync();
+        var created = await service.CreateAsync(Username, "Thunderbird").ConfigureAwait(false);
+        var userId = await database.Users.Select(user => user.Id).SingleAsync().ConfigureAwait(false);
 
         var result = await new MailAdministrationService(database)
-            .ResetPasswordAsync(userId, "replacement-account-password");
+            .ResetPasswordAsync(userId, "replacement-account-password").ConfigureAwait(false);
 
         Assert.IsTrue(result.Succeeded);
         Assert.IsNull(await new MailAuthenticator(database)
-            .AuthenticateAsync(Username, created.Password!));
-        Assert.IsNotNull((await service.ListAsync(Username)).Single().RevokedAt);
+            .AuthenticateAsync(Username, created.Password!).ConfigureAwait(false));
+        Assert.IsNotNull((await service.ListAsync(Username).ConfigureAwait(false)).Single().RevokedAt);
     }
 
     [TestMethod]
     public async Task UnknownOrInactiveAccountCannotCreatePassword()
     {
-        await using var database = CreateDatabase();
+        var database = CreateDatabase();
+        await using var databaseLifetime = database.ConfigureAwait(false);
         var service = new ApplicationPasswordService(database);
 
-        Assert.IsFalse((await service.CreateAsync("missing@example.com", "Laptop")).Succeeded);
-        var user = await database.Users.SingleAsync();
+        Assert.IsFalse((await service.CreateAsync("missing@example.com", "Laptop").ConfigureAwait(false)).Succeeded);
+        var user = await database.Users.SingleAsync().ConfigureAwait(false);
         user.IsActive = false;
-        await database.SaveChangesAsync();
-        Assert.IsFalse((await service.CreateAsync(Username, "Laptop")).Succeeded);
-        Assert.AreEqual(0, await database.ApplicationPasswords.CountAsync());
+        await database.SaveChangesAsync().ConfigureAwait(false);
+        Assert.IsFalse((await service.CreateAsync(Username, "Laptop").ConfigureAwait(false)).Succeeded);
+        Assert.AreEqual(0, await database.ApplicationPasswords.CountAsync().ConfigureAwait(false));
     }
 
     private static EmailDbContext CreateDatabase()

@@ -14,7 +14,8 @@ using mk8.email.Infrastructure.Models;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class VacationResponderTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class VacationResponderTests
 {
     private const string AccountAddress = "admin@mk8n.com";
     private const string AliasAddress = "support@mk8n.com";
@@ -30,7 +31,8 @@ public sealed class VacationResponderTests
     [DataRow(8, false, true)]
     public async Task RepeatSuppressionRetainsDeliveryAndSevenDayBoundaries(int days, bool replay, bool queued)
     {
-        await using var fixture = await VacationFixture.CreateAsync(includeAlias: false).ConfigureAwait(false);
+        var fixture = (await VacationFixture.CreateAsync(includeAlias: false).ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var accountId = (await fixture.Database.JmapVacationResponses.SingleAsync().ConfigureAwait(false)).AccountId;
         var previousId = Guid.CreateVersion7();
         var previousTime = Now.UtcDateTime.AddDays(-days);
@@ -42,7 +44,7 @@ public sealed class VacationResponderTests
             LastDeliveryId = previousId,
             LastSentAt = previousTime,
         };
-        fixture.Database.JmapVacationReplies.Add(reply);
+        await (fixture.Database.JmapVacationReplies.AddAsync(reply)).ConfigureAwait(false);
         await fixture.Database.SaveChangesAsync().ConfigureAwait(false);
         var deliveryId = replay ? previousId : Guid.CreateVersion7();
         Assert.IsTrue(await fixture.Responder.QueueResponseAsync(
@@ -57,21 +59,22 @@ public sealed class VacationResponderTests
     [DataRow(true)]
     public async Task OversizedResponseDoesNotCreateOrChangeReplyHistory(bool existingReply)
     {
-        await using var fixture = await VacationFixture.CreateAsync(
-            includeAlias: false, maxMessageSizeBytes: 1).ConfigureAwait(false);
+        var fixture = (await VacationFixture.CreateAsync(
+            includeAlias: false, maxMessageSizeBytes: 1).ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var accountId = (await fixture.Database.JmapVacationResponses.SingleAsync().ConfigureAwait(false)).AccountId;
         var previousId = Guid.CreateVersion7();
         var previousTime = Now.UtcDateTime.AddDays(-8);
         if (existingReply)
         {
-            fixture.Database.JmapVacationReplies.Add(new JmapVacationReplyDB
+            await (fixture.Database.JmapVacationReplies.AddAsync(new JmapVacationReplyDB
             {
                 Id = Guid.CreateVersion7(),
                 AccountId = accountId,
                 SenderAddress = SenderAddress,
                 LastDeliveryId = previousId,
                 LastSentAt = previousTime,
-            });
+            })).ConfigureAwait(false);
             await fixture.Database.SaveChangesAsync().ConfigureAwait(false);
         }
         Assert.IsTrue(await fixture.Responder.QueueResponseAsync(SenderAddress, AccountAddress,
@@ -95,7 +98,8 @@ public sealed class VacationResponderTests
     public async Task ResponseRetainsEnablementAndHalfOpenDateWindow(
         int? fromMinutes, int? toMinutes, bool enabled, bool queued)
     {
-        await using var fixture = await VacationFixture.CreateAsync(includeAlias: false).ConfigureAwait(false);
+        var fixture = (await VacationFixture.CreateAsync(includeAlias: false).ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var settings = await fixture.Database.JmapVacationResponses.SingleAsync().ConfigureAwait(false);
         settings.IsEnabled = enabled;
         settings.FromDate = fromMinutes is null ? null : Now.UtcDateTime.AddMinutes(fromMinutes.Value);
@@ -110,7 +114,8 @@ public sealed class VacationResponderTests
     [TestMethod]
     public async Task ResponseIsSuppressedWhenTheRecipientIsNotNamed()
     {
-        await using var fixture = await VacationFixture.CreateAsync(includeAlias: false);
+        var fixture = (await VacationFixture.CreateAsync(includeAlias: false).ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var rawMessage =
             "From: sender@example.net\r\n" +
             "To: another@example.org\r\n" +
@@ -122,16 +127,17 @@ public sealed class VacationResponderTests
             AccountAddress,
             rawMessage,
             DefaultFolders.Inbox,
-            Guid.CreateVersion7()));
+            Guid.CreateVersion7()).ConfigureAwait(false));
 
         Assert.IsNull(fixture.Queue.Submission);
-        Assert.AreEqual(0, await fixture.Database.JmapVacationReplies.CountAsync());
+        Assert.AreEqual(0, await fixture.Database.JmapVacationReplies.CountAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task ResponseRecognizesDeliveredAliasesInResentRecipientHeaders()
     {
-        await using var fixture = await VacationFixture.CreateAsync(includeAlias: true);
+        var fixture = (await VacationFixture.CreateAsync(includeAlias: true).ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var rawMessage =
             "From: sender@example.net\r\n" +
             "To: another@example.org\r\n" +
@@ -146,22 +152,22 @@ public sealed class VacationResponderTests
             AliasAddress,
             rawMessage,
             DefaultFolders.Inbox,
-            Guid.CreateVersion7()));
+            Guid.CreateVersion7()).ConfigureAwait(false));
 
         var submission = fixture.Queue.Submission;
         Assert.IsNotNull(submission);
-        Assert.AreEqual(string.Empty, submission.EnvelopeSender);
-        Assert.AreEqual(SenderAddress, submission.Recipients.Single().Address);
+        Assert.AreEqual(string.Empty, submission.EnvelopeSender, StringComparer.Ordinal);
+        Assert.AreEqual(SenderAddress, submission.Recipients.Single().Address, StringComparer.Ordinal);
         Assert.IsFalse(submission.Recipients.Single().IsLocal);
 
-        using var response = MimeMessage.Load(
-            new MemoryStream(Encoding.Latin1.GetBytes(submission.RawMessage)));
-        Assert.AreEqual(AccountAddress, response.From.Mailboxes.Single().Address);
-        Assert.AreEqual("auto-replied", response.Headers[HeaderId.AutoSubmitted]);
-        Assert.AreEqual("Auto: alias check", response.Subject);
-        Assert.AreEqual("original@example.net", response.InReplyTo);
+        using var response = await MimeMessage.LoadAsync(
+            new MemoryStream(Encoding.Latin1.GetBytes(submission.RawMessage))).ConfigureAwait(false);
+        Assert.AreEqual(AccountAddress, response.From.Mailboxes.Single().Address, StringComparer.Ordinal);
+        Assert.AreEqual("auto-replied", response.Headers[HeaderId.AutoSubmitted], StringComparer.Ordinal);
+        Assert.AreEqual("Auto: alias check", response.Subject, StringComparer.Ordinal);
+        Assert.AreEqual("original@example.net", response.InReplyTo, StringComparer.Ordinal);
         CollectionAssert.AreEqual(
-            new[] { "root@example.net", "ancestor@example.net", "original@example.net" },
+            ExpectedVector1,
             response.References.ToArray());
         Assert.AreEqual(1, fixture.Database.JmapVacationReplies.Local.Count);
     }
@@ -169,7 +175,8 @@ public sealed class VacationResponderTests
     [TestMethod]
     public async Task ResponseBuildsReferencesFromInReplyToWhenNoReferencesArePresent()
     {
-        await using var fixture = await VacationFixture.CreateAsync(includeAlias: false);
+        var fixture = (await VacationFixture.CreateAsync(includeAlias: false).ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var rawMessage =
             "From: sender@example.net\r\n" +
             "To: admin@mk8n.com\r\n" +
@@ -183,25 +190,26 @@ public sealed class VacationResponderTests
             AccountAddress,
             rawMessage,
             DefaultFolders.Inbox,
-            Guid.CreateVersion7()));
+            Guid.CreateVersion7()).ConfigureAwait(false));
 
-        using var response = MimeMessage.Load(new MemoryStream(
-            Encoding.Latin1.GetBytes(fixture.Queue.Submission!.RawMessage)));
+        using var response = await MimeMessage.LoadAsync(new MemoryStream(
+            Encoding.Latin1.GetBytes(fixture.Queue.Submission!.RawMessage))).ConfigureAwait(false);
         CollectionAssert.AreEqual(
-            new[] { "root@example.net", "original@example.net" },
+            ExpectedVector2,
             response.References.ToArray());
     }
 
     [TestMethod]
     public async Task ResponseReadsExternalVacationBody()
     {
-        await using var fixture = await VacationFixture.CreateAsync(includeAlias: false);
-        var settings = await fixture.Database.JmapVacationResponses.SingleAsync();
+        var fixture = (await VacationFixture.CreateAsync(includeAlias: false).ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
+        var settings = await fixture.Database.JmapVacationResponses.SingleAsync().ConfigureAwait(false);
         var marker = fixture.Effects.Mark();
         await fixture.Content.SetAsync(
-            settings, "Blob-backed vacation response", null, CancellationToken.None);
-        await fixture.Database.SaveChangesAsync();
-        await fixture.Effects.CommitAsync(marker);
+            settings, "Blob-backed vacation response", null, CancellationToken.None).ConfigureAwait(false);
+        await fixture.Database.SaveChangesAsync().ConfigureAwait(false);
+        await fixture.Effects.CommitAsync(marker).ConfigureAwait(false);
         Assert.IsNull(settings.TextBody);
 
         Assert.IsTrue(await fixture.Responder.QueueResponseAsync(
@@ -209,18 +217,19 @@ public sealed class VacationResponderTests
             AccountAddress,
             "From: sender@example.net\r\nTo: admin@mk8n.com\r\nSubject: Away\r\n\r\nbody\r\n",
             DefaultFolders.Inbox,
-            Guid.CreateVersion7()));
+            Guid.CreateVersion7()).ConfigureAwait(false));
 
-        using var response = MimeMessage.Load(new MemoryStream(
-            Encoding.Latin1.GetBytes(fixture.Queue.Submission!.RawMessage)));
+        using var response = await MimeMessage.LoadAsync(new MemoryStream(
+            Encoding.Latin1.GetBytes(fixture.Queue.Submission!.RawMessage))).ConfigureAwait(false);
         Assert.IsNotNull(response.TextBody);
-        Assert.AreEqual("Blob-backed vacation response", response.TextBody.TrimEnd('\r', '\n'));
+        Assert.AreEqual("Blob-backed vacation response", response.TextBody.TrimEnd('\r', '\n'), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task ParameterizedManualAutoSubmittedHeaderStillReceivesAResponse()
     {
-        await using var fixture = await VacationFixture.CreateAsync(includeAlias: false);
+        var fixture = (await VacationFixture.CreateAsync(includeAlias: false).ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var rawMessage =
             "From: sender@example.net\r\n" +
             "To: admin@mk8n.com\r\n" +
@@ -233,7 +242,7 @@ public sealed class VacationResponderTests
             AccountAddress,
             rawMessage,
             DefaultFolders.Inbox,
-            Guid.CreateVersion7()));
+            Guid.CreateVersion7()).ConfigureAwait(false));
 
         Assert.IsNotNull(fixture.Queue.Submission);
     }
@@ -241,7 +250,8 @@ public sealed class VacationResponderTests
     [TestMethod]
     public async Task AnyAutomaticAutoSubmittedHeaderSuppressesAResponse()
     {
-        await using var fixture = await VacationFixture.CreateAsync(includeAlias: false);
+        var fixture = (await VacationFixture.CreateAsync(includeAlias: false).ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var rawMessage =
             "From: sender@example.net\r\n" +
             "To: admin@mk8n.com\r\n" +
@@ -255,16 +265,17 @@ public sealed class VacationResponderTests
             AccountAddress,
             rawMessage,
             DefaultFolders.Inbox,
-            Guid.CreateVersion7()));
+            Guid.CreateVersion7()).ConfigureAwait(false));
 
         Assert.IsNull(fixture.Queue.Submission);
-        Assert.AreEqual(0, await fixture.Database.JmapVacationReplies.CountAsync());
+        Assert.AreEqual(0, await fixture.Database.JmapVacationReplies.CountAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task RepeatSuppressionUsesCultureInvariantSenderKeys()
     {
-        await using var fixture = await VacationFixture.CreateAsync(includeAlias: true);
+        var fixture = (await VacationFixture.CreateAsync(includeAlias: true).ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         const string sender = "INFO@example.net";
         var rawMessage =
             "From: INFO@example.net\r\n" +
@@ -280,23 +291,23 @@ public sealed class VacationResponderTests
                 AliasAddress,
                 rawMessage,
                 DefaultFolders.Inbox,
-                Guid.CreateVersion7()));
+                Guid.CreateVersion7()).ConfigureAwait(false));
             Assert.IsNotNull(fixture.Queue.Submission);
-            await fixture.Database.SaveChangesAsync();
+            await fixture.Database.SaveChangesAsync().ConfigureAwait(false);
             Assert.IsTrue(await fixture.Responder.QueueResponseAsync(
                 sender,
                 AliasAddress,
                 rawMessage,
                 DefaultFolders.Inbox,
-                Guid.CreateVersion7()));
-            await fixture.Database.SaveChangesAsync();
+                Guid.CreateVersion7()).ConfigureAwait(false));
+            await fixture.Database.SaveChangesAsync().ConfigureAwait(false);
         }
         finally
         {
             CultureInfo.CurrentCulture = originalCulture;
         }
 
-        Assert.AreEqual(1, await fixture.Database.JmapVacationReplies.CountAsync());
+        Assert.AreEqual(1, await fixture.Database.JmapVacationReplies.CountAsync().ConfigureAwait(false));
     }
 
     private sealed class VacationFixture(
@@ -318,8 +329,34 @@ public sealed class VacationResponderTests
                 .UseInMemoryDatabase($"vacation-{Guid.NewGuid():N}")
                 .ConfigureWarnings(warnings => warnings.Ignore(InMemoryEventId.TransactionIgnoredWarning))
                 .Options;
-            var database = new EmailDbContext(options);
-            await database.Database.EnsureCreatedAsync();
+
+            // The returned fixture owns this allocation; finally releases untransferred resources if initialization fails.
+#pragma warning disable CA2000
+            EmailDbContext? database = new EmailDbContext(options);
+
+#pragma warning restore CA2000
+
+            try
+            {
+                await SeedAsync(database, includeAlias).ConfigureAwait(false);
+                var fixture = BuildFixture(database, maxMessageSizeBytes);
+                database = null;
+                return fixture;
+            }
+            finally
+            {
+
+                // Successful transfer clears the resource; initialization exceptions leave it non-null for finally cleanup.
+#pragma warning disable CA1508
+                if (database is not null) await database.DisposeAsync().ConfigureAwait(false);
+
+#pragma warning restore CA1508
+            }
+        }
+
+        private static async Task SeedAsync(EmailDbContext database, bool includeAlias)
+        {
+            await database.Database.EnsureCreatedAsync().ConfigureAwait(false);
 
             var company = new CompanyDB
             {
@@ -347,26 +384,31 @@ public sealed class VacationResponderTests
                 Address = address,
                 Owner = user,
             };
-            database.Inboxes.Add(account);
+            await database.Inboxes.AddAsync(account).ConfigureAwait(false);
             if (includeAlias)
             {
-                database.Inboxes.Add(new InboxDB
+                await database.Inboxes.AddAsync(new InboxDB
                 {
                     Id = Guid.CreateVersion7(),
                     Name = "support",
                     Address = address,
                     Owner = user,
                     AliasForInbox = account,
-                });
+                }).ConfigureAwait(false);
             }
-            database.JmapVacationResponses.Add(new JmapVacationResponseDB
+            await database.JmapVacationResponses.AddAsync(new JmapVacationResponseDB
             {
                 AccountId = account.Id,
                 IsEnabled = true,
                 TextBody = "I am away.",
-            });
-            await database.SaveChangesAsync();
+            }).ConfigureAwait(false);
+            await database.SaveChangesAsync().ConfigureAwait(false);
 
+
+        }
+
+        private static VacationFixture BuildFixture(EmailDbContext database, int maxMessageSizeBytes)
+        {
             var queue = new CapturingQueue();
             var environment = new EnvironmentConfig
             {
@@ -417,4 +459,6 @@ public sealed class VacationResponderTests
     {
         public override DateTimeOffset GetUtcNow() => now;
     }
+    private static readonly string[] ExpectedVector1 = new[] { "root@example.net", "ancestor@example.net", "original@example.net" };
+    private static readonly string[] ExpectedVector2 = new[] { "root@example.net", "original@example.net" };
 }

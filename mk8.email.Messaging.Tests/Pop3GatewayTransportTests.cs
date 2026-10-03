@@ -22,22 +22,27 @@ namespace mk8.email.Messaging.Tests;
 
 [TestClass]
 [TestCategory("PostgreSQL")]
-public sealed class Pop3GatewayTransportTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class Pop3GatewayTransportTests
 {
     [TestMethod]
     [Timeout(30_000)]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The TlsPop3CrossesRemoteWorkerAndLocksMaildropAcrossSessions scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task TlsPop3CrossesRemoteWorkerAndLocksMaildropAcrossSessions()
     {
-        await using var database = await PostgresTestDatabase.TryCreateAsync();
+        var database = (await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false));
+        await using var databaseLifetime = new NullableAsyncDisposable(database).ConfigureAwait(false);
         if (database is null)
         {
             Assert.Inconclusive("Set MK8_EMAIL_TEST_POSTGRES to a PostgreSQL admin connection string.");
             return;
         }
 
-        await using var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await using var workerDataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await PostgresMessagingSchema.EnsureAsync(gatewayDataSource);
+        var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var gatewayDataSourceLifetime = gatewayDataSource.ConfigureAwait(false);
+        var workerDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var workerDataSourceLifetime = workerDataSource.ConfigureAwait(false);
+        await PostgresMessagingSchema.EnsureAsync(gatewayDataSource).ConfigureAwait(false);
         using var gatewayProtector = AesGcmPayloadProtectorTests.CreateProtector(
             "test", "pop3-route-key");
         using var workerProtector = AesGcmPayloadProtectorTests.CreateProtector(
@@ -53,11 +58,12 @@ public sealed class Pop3GatewayTransportTests
         var journal = new PostgresGatewayTrafficJournal(
             gatewayDataSource, gatewayProtector, options);
         var application = new StubPop3Application();
-        await using var workerProvider = new ServiceCollection()
+        var workerProvider = new ServiceCollection()
             .AddSingleton<IPop3ApplicationService>(application)
             .AddScoped<IApplicationRequestDispatcher>(provider =>
                 new ApplicationRequestDispatcher(provider))
             .BuildServiceProvider();
+        await using var workerProviderLifetime = workerProvider.ConfigureAwait(false);
         var worker = new ApplicationRequestWorker(
             workerBus,
             workerProvider.GetRequiredService<IServiceScopeFactory>(),
@@ -68,11 +74,14 @@ public sealed class Pop3GatewayTransportTests
             journal,
             new GatewayApplicationOptions(
                 "gateway@pop3-test-host", TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(5)));
-        await using var gatewayProvider = new ServiceCollection()
+        var gatewayProvider = new ServiceCollection()
             .AddSingleton<IPop3ApplicationService>(new GatewayPop3ApplicationService(transport))
             .BuildServiceProvider();
+        await using var gatewayProviderLifetime = gatewayProvider.ConfigureAwait(false);
         var port = ReservePort();
         var certificatePath = CreateCertificate();
+        using var expectedCertificate = X509CertificateLoader.LoadPkcs12FromFile(certificatePath, password: null);
+        var expectedPin = expectedCertificate.GetCertHashString(HashAlgorithmName.SHA256);
         var environment = new EnvironmentConfig
         {
             Smtp = new SmtpConfig { Hostname = "email.example.test" },
@@ -96,83 +105,89 @@ public sealed class Pop3GatewayTransportTests
             new PostgresPop3MaildropLeaseStore(gatewayDataSource),
             journal);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
-        await worker.StartAsync(timeout.Token);
-        await listener.StartAsync(timeout.Token);
+        await worker.StartAsync(timeout.Token).ConfigureAwait(false);
+        await listener.StartAsync(timeout.Token).ConfigureAwait(false);
         try
         {
-            using var firstClient = await ConnectAsync(port, timeout.Token);
-            using var firstTls = await StartTlsAsync(firstClient, timeout.Token);
-            await WriteLineAsync(firstTls, "USER user@example.test", timeout.Token);
-            Assert.IsTrue((await ReadLineAsync(firstTls, timeout.Token)).StartsWith("+OK", StringComparison.Ordinal));
-            await WriteLineAsync(firstTls, "PASS pop3-secret", timeout.Token);
-            StringAssert.Contains(await ReadLineAsync(firstTls, timeout.Token), "maildrop has 1 messages");
+            using var firstClient = await ConnectAsync(port, timeout.Token).ConfigureAwait(false);
+            using var firstTls = await StartTlsAsync(firstClient, expectedPin, timeout.Token).ConfigureAwait(false);
+            await WriteLineAsync(firstTls, "USER user@example.test", timeout.Token).ConfigureAwait(false);
+            Assert.IsTrue((await ReadLineAsync(firstTls, timeout.Token).ConfigureAwait(false)).StartsWith("+OK", StringComparison.Ordinal));
+            await WriteLineAsync(firstTls, "PASS pop3-secret", timeout.Token).ConfigureAwait(false);
+            StringAssert.Contains(await ReadLineAsync(firstTls, timeout.Token).ConfigureAwait(false), "maildrop has 1 messages", StringComparison.Ordinal);
 
-            using var secondClient = await ConnectAsync(port, timeout.Token);
-            using var secondTls = await StartTlsAsync(secondClient, timeout.Token);
-            await WriteLineAsync(secondTls, "USER user@example.test", timeout.Token);
-            Assert.IsTrue((await ReadLineAsync(secondTls, timeout.Token)).StartsWith("+OK", StringComparison.Ordinal));
-            await WriteLineAsync(secondTls, "PASS pop3-secret", timeout.Token);
-            StringAssert.Contains(await ReadLineAsync(secondTls, timeout.Token), "[IN-USE]");
+            using var secondClient = await ConnectAsync(port, timeout.Token).ConfigureAwait(false);
+            using var secondTls = await StartTlsAsync(secondClient, expectedPin, timeout.Token).ConfigureAwait(false);
+            await WriteLineAsync(secondTls, "USER user@example.test", timeout.Token).ConfigureAwait(false);
+            Assert.IsTrue((await ReadLineAsync(secondTls, timeout.Token).ConfigureAwait(false)).StartsWith("+OK", StringComparison.Ordinal));
+            await WriteLineAsync(secondTls, "PASS pop3-secret", timeout.Token).ConfigureAwait(false);
+            StringAssert.Contains(await ReadLineAsync(secondTls, timeout.Token).ConfigureAwait(false), "[IN-USE]", StringComparison.Ordinal);
 
-            await WriteLineAsync(firstTls, "STAT", timeout.Token);
-            StringAssert.Contains(await ReadLineAsync(firstTls, timeout.Token), "+OK 1 ");
-            await WriteLineAsync(firstTls, "RETR 1", timeout.Token);
-            Assert.IsTrue((await ReadLineAsync(firstTls, timeout.Token)).StartsWith("+OK ", StringComparison.Ordinal));
+            await WriteLineAsync(firstTls, "STAT", timeout.Token).ConfigureAwait(false);
+            StringAssert.Contains(await ReadLineAsync(firstTls, timeout.Token).ConfigureAwait(false), "+OK 1 ", StringComparison.Ordinal);
+            await WriteLineAsync(firstTls, "RETR 1", timeout.Token).ConfigureAwait(false);
+            Assert.IsTrue((await ReadLineAsync(firstTls, timeout.Token).ConfigureAwait(false)).StartsWith("+OK ", StringComparison.Ordinal));
             var body = new List<string>();
             while (true)
             {
-                var line = await ReadLineAsync(firstTls, timeout.Token);
-                if (line == ".")
+                var line = await ReadLineAsync(firstTls, timeout.Token).ConfigureAwait(false);
+                if (string.Equals(line, ".", StringComparison.Ordinal))
                     break;
                 body.Add(line);
             }
             CollectionAssert.Contains(body, "..body");
-            await WriteLineAsync(firstTls, "DELE 1", timeout.Token);
-            Assert.IsTrue((await ReadLineAsync(firstTls, timeout.Token)).StartsWith("+OK ", StringComparison.Ordinal));
-            await WriteLineAsync(firstTls, "QUIT", timeout.Token);
-            StringAssert.Contains(await ReadLineAsync(firstTls, timeout.Token), "1 messages deleted");
+            await WriteLineAsync(firstTls, "DELE 1", timeout.Token).ConfigureAwait(false);
+            Assert.IsTrue((await ReadLineAsync(firstTls, timeout.Token).ConfigureAwait(false)).StartsWith("+OK ", StringComparison.Ordinal));
+            await WriteLineAsync(firstTls, "QUIT", timeout.Token).ConfigureAwait(false);
+            StringAssert.Contains(await ReadLineAsync(firstTls, timeout.Token).ConfigureAwait(false), "1 messages deleted", StringComparison.Ordinal);
             CollectionAssert.AreEqual(new[] { application.MessageId }, application.DeletedIds);
 
-            await WriteLineAsync(secondTls, "PASS pop3-secret", timeout.Token);
-            StringAssert.Contains(await ReadLineAsync(secondTls, timeout.Token), "maildrop has 1 messages");
-            await WriteLineAsync(secondTls, "QUIT", timeout.Token);
-            Assert.IsTrue((await ReadLineAsync(secondTls, timeout.Token)).StartsWith("+OK ", StringComparison.Ordinal));
+            await WriteLineAsync(secondTls, "PASS pop3-secret", timeout.Token).ConfigureAwait(false);
+            StringAssert.Contains(await ReadLineAsync(secondTls, timeout.Token).ConfigureAwait(false), "maildrop has 1 messages", StringComparison.Ordinal);
+            await WriteLineAsync(secondTls, "QUIT", timeout.Token).ConfigureAwait(false);
+            Assert.IsTrue((await ReadLineAsync(secondTls, timeout.Token).ConfigureAwait(false)).StartsWith("+OK ", StringComparison.Ordinal));
 
-            await using var operations = gatewayDataSource.CreateCommand(
+            var operations = gatewayDataSource.CreateCommand(
                 "SELECT operation FROM application_requests ORDER BY created_at");
-            await using var operationReader = await operations.ExecuteReaderAsync(timeout.Token);
+            await using var operationsLifetime = operations.ConfigureAwait(false);
+            var operationReader = (await operations.ExecuteReaderAsync(timeout.Token).ConfigureAwait(false));
+            await using var operationReaderLifetime = operationReader.ConfigureAwait(false);
             var observed = new List<string>();
-            while (await operationReader.ReadAsync(timeout.Token))
+            while (await operationReader.ReadAsync(timeout.Token).ConfigureAwait(false))
                 observed.Add(operationReader.GetString(0));
             CollectionAssert.Contains(observed, ApplicationOperations.Pop3AuthenticatePassword);
             CollectionAssert.Contains(observed, ApplicationOperations.Pop3ListMaildrop);
             CollectionAssert.Contains(observed, ApplicationOperations.Pop3GetMessage);
             CollectionAssert.Contains(observed, ApplicationOperations.Pop3CommitDeletes);
 
-            await using var traffic = gatewayDataSource.CreateCommand(
+            var traffic = gatewayDataSource.CreateCommand(
                 "SELECT count(*), count(*) FILTER (WHERE application_request_id IS NULL) "
                 + "FROM gateway_traffic_records WHERE protocol = 'pop3'");
-            await using var trafficReader = await traffic.ExecuteReaderAsync(timeout.Token);
-            Assert.IsTrue(await trafficReader.ReadAsync(timeout.Token));
+            await using var trafficLifetime = traffic.ConfigureAwait(false);
+            var trafficReader = (await traffic.ExecuteReaderAsync(timeout.Token).ConfigureAwait(false));
+            await using var trafficReaderLifetime = trafficReader.ConfigureAwait(false);
+            Assert.IsTrue(await trafficReader.ReadAsync(timeout.Token).ConfigureAwait(false));
             Assert.IsTrue(trafficReader.GetInt64(0) >= 8);
             Assert.IsTrue(trafficReader.GetInt64(1) >= 4);
 
-            await using var ciphertext = gatewayDataSource.CreateCommand(
+            var ciphertext = gatewayDataSource.CreateCommand(
                 "SELECT payload_inline FROM gateway_traffic_records "
                 + "WHERE protocol = 'pop3' AND payload_inline IS NOT NULL");
-            await using var ciphertextReader = await ciphertext.ExecuteReaderAsync(timeout.Token);
-            while (await ciphertextReader.ReadAsync(timeout.Token))
+            await using var ciphertextLifetime = ciphertext.ConfigureAwait(false);
+            var ciphertextReader = (await ciphertext.ExecuteReaderAsync(timeout.Token).ConfigureAwait(false));
+            await using var ciphertextReaderLifetime = ciphertextReader.ConfigureAwait(false);
+            while (await ciphertextReader.ReadAsync(timeout.Token).ConfigureAwait(false))
             {
                 Assert.IsFalse(Encoding.UTF8.GetString(
-                    ciphertextReader.GetFieldValue<byte[]>(0))
+await (ciphertextReader.GetFieldValueAsync<byte[]>(0)).ConfigureAwait(false))
                     .Contains("pop3-secret", StringComparison.Ordinal));
             }
         }
         finally
         {
-            await listener.StopAsync(CancellationToken.None);
+            await listener.StopAsync(CancellationToken.None).ConfigureAwait(false);
             listener.Dispose();
-            await worker.StopAsync(CancellationToken.None);
+            await worker.StopAsync(CancellationToken.None).ConfigureAwait(false);
             worker.Dispose();
             File.Delete(certificatePath);
         }
@@ -180,22 +195,26 @@ public sealed class Pop3GatewayTransportTests
 
     private static async Task<SslStream> StartTlsAsync(
         TcpClient client,
+        string expectedPin,
         CancellationToken cancellationToken)
     {
         var network = client.GetStream();
-        Assert.IsTrue((await ReadLineAsync(network, cancellationToken)).StartsWith("+OK ", StringComparison.Ordinal));
-        await WriteLineAsync(network, "STLS", cancellationToken);
-        StringAssert.Contains(await ReadLineAsync(network, cancellationToken), "Begin TLS negotiation");
-        var tls = new SslStream(network, leaveInnerStreamOpen: false, (_, _, _, _) => true);
+        Assert.IsTrue((await ReadLineAsync(network, cancellationToken).ConfigureAwait(false)).StartsWith("+OK ", StringComparison.Ordinal));
+        await WriteLineAsync(network, "STLS", cancellationToken).ConfigureAwait(false);
+        StringAssert.Contains(await ReadLineAsync(network, cancellationToken).ConfigureAwait(false), "Begin TLS negotiation", StringComparison.Ordinal);
+        var tls = new SslStream(network, leaveInnerStreamOpen: false, (_, certificate, _, errors) =>
+            certificate is not null
+            && errors is SslPolicyErrors.None or SslPolicyErrors.RemoteCertificateChainErrors
+            && string.Equals(certificate.GetCertHashString(HashAlgorithmName.SHA256), expectedPin, StringComparison.Ordinal));
         await tls.AuthenticateAsClientAsync(
             new SslClientAuthenticationOptions { TargetHost = "email.example.test" },
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         return tls;
     }
 
     private static int ReservePort()
     {
-        var listener = new TcpListener(IPAddress.Loopback, 0);
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         listener.Stop();
@@ -224,13 +243,13 @@ public sealed class Pop3GatewayTransportTests
             var client = new TcpClient();
             try
             {
-                await client.ConnectAsync(IPAddress.Loopback, port, cancellationToken);
+                await client.ConnectAsync(IPAddress.Loopback, port, cancellationToken).ConfigureAwait(false);
                 return client;
             }
             catch (SocketException)
             {
                 client.Dispose();
-                await Task.Delay(20, cancellationToken);
+                await Task.Delay(20, cancellationToken).ConfigureAwait(false);
             }
         }
     }
@@ -239,7 +258,7 @@ public sealed class Pop3GatewayTransportTests
     {
         var bytes = new List<byte>();
         var single = new byte[1];
-        while (await stream.ReadAsync(single, cancellationToken) != 0)
+        while (await stream.ReadAsync(single, cancellationToken).ConfigureAwait(false) != 0)
         {
             if (single[0] == '\n')
             {
@@ -256,7 +275,7 @@ public sealed class Pop3GatewayTransportTests
         Stream stream,
         string line,
         CancellationToken cancellationToken) =>
-        await stream.WriteAsync(Encoding.UTF8.GetBytes(line + "\r\n"), cancellationToken);
+        await stream.WriteAsync(Encoding.UTF8.GetBytes(line + "\r\n"), cancellationToken).ConfigureAwait(false);
 
     private sealed class StubPop3Application : IPop3ApplicationService
     {
@@ -269,8 +288,8 @@ public sealed class Pop3GatewayTransportTests
         public Task<Pop3IdentityResult> AuthenticatePasswordAsync(
             Pop3PasswordAuthentication request,
             CancellationToken cancellationToken = default) =>
-            Task.FromResult(request.Username == "user@example.test" && request.Password == "pop3-secret"
-                ? new Pop3IdentityResult(UserId, request.Username)
+            Task.FromResult(string.Equals(request.Username, "user@example.test", StringComparison.Ordinal) && string.Equals(request.Password, "pop3-secret"
+, StringComparison.Ordinal) ? new Pop3IdentityResult(UserId, request.Username)
                 : new Pop3IdentityResult(null, null));
 
         public Task<Pop3IdentityResult> AuthenticateOAuthAsync(

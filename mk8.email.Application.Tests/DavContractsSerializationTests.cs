@@ -4,7 +4,8 @@ using mk8.email.Dav;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class DavContractsSerializationTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class DavContractsSerializationTests
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -18,9 +19,9 @@ public sealed class DavContractsSerializationTests
             DavCollectionKind.Calendar, "calendar", "Calendar", "Description", "#123456",
             2, ["VEVENT", "VTODO"], 17, DateTime.UtcNow, DateTime.UtcNow);
         var content = new DavContentInfo(
-            "calendar-uid", "text/calendar", new HashSet<string> { "VEVENT" },
+            "calendar-uid", "text/calendar", new HashSet<string>(StringComparer.Ordinal) { "VEVENT" },
             "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n",
-            new Dictionary<string, IReadOnlyList<string>> { ["UID"] = ["calendar-uid"] });
+            new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal) { ["UID"] = ["calendar-uid"] });
 
         var restoredCollection = JsonSerializer.Deserialize<DavCollection>(
             JsonSerializer.Serialize(collection, JsonOptions), JsonOptions);
@@ -29,13 +30,13 @@ public sealed class DavContractsSerializationTests
 
         Assert.IsNotNull(restoredCollection);
         Assert.AreEqual(collection.Id, restoredCollection.Id);
-        Assert.AreEqual(collection.HrefSlug, restoredCollection.HrefSlug);
+        Assert.AreEqual(collection.HrefSlug, restoredCollection.HrefSlug, StringComparer.Ordinal);
         Assert.AreEqual(DavCollectionAccess.ReadOnly, restoredCollection.Shares[0].Access);
         Assert.IsTrue(restoredCollection.CanWrite);
         Assert.IsNotNull(restoredContent);
-        Assert.AreEqual(content.Uid, restoredContent.Uid);
+        Assert.AreEqual(content.Uid, restoredContent.Uid, StringComparer.Ordinal);
         CollectionAssert.Contains(restoredContent.Components.ToArray(), "VEVENT");
-        Assert.AreEqual("calendar-uid", restoredContent.Properties["UID"][0]);
+        Assert.AreEqual("calendar-uid", restoredContent.Properties["UID"][0], StringComparer.Ordinal);
     }
 
     [TestMethod]

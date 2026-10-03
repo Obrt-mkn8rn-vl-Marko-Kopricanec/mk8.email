@@ -17,7 +17,8 @@ using mk8.email.Messaging;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class JmapProtocolTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class JmapProtocolTests
 {
     private const string Core = "urn:ietf:params:jmap:core";
     private const string Mail = "urn:ietf:params:jmap:mail";
@@ -25,10 +26,12 @@ public sealed class JmapProtocolTests
     private const string Vacation = "urn:ietf:params:jmap:vacationresponse";
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The MailboxLifecycleProducesChangesAndEnforcesRegisteredRoles scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task MailboxLifecycleProducesChangesAndEnforcesRegisteredRoles()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
-        var oldState = await GetStateAsync(fixture, JmapConstants.MailboxDataType);
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
+        var oldState = await GetStateAsync(fixture, JmapConstants.MailboxDataType).ConfigureAwait(false);
         var create = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
@@ -40,7 +43,7 @@ public sealed class JmapProtocolTests
             }
           }, "c1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var created = Arguments(create)["created"]!.AsObject();
         var parentId = created["parent"]!["id"]!.GetValue<string>();
         var childId = created["child"]!["id"]!.GetValue<string>();
@@ -56,8 +59,8 @@ public sealed class JmapProtocolTests
             "calculateTotal": true
           }, "q1"]]
         }
-        """);
-        Assert.AreEqual(parentId, Arguments(query)["ids"]![0]!.GetValue<string>());
+        """).ConfigureAwait(false);
+        Assert.AreEqual(parentId, Arguments(query)["ids"]![0]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(1, Arguments(query)["total"]!.GetValue<int>());
 
         var changes = await fixture.InvokeAsync($$$"""
@@ -67,7 +70,7 @@ public sealed class JmapProtocolTests
             "accountId": "{{{fixture.AccountId}}}", "sinceState":"{{{oldState}}}"
           }, "ch1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var createdIds = Arguments(changes)["created"]!.AsArray()
             .Select(node => node!.GetValue<string>())
             .ToHashSet(StringComparer.Ordinal);
@@ -81,10 +84,10 @@ public sealed class JmapProtocolTests
             "create": {"bad":{"name":"Bad role", "role":"made-up"}}
           }, "m2"]]
         }
-        """);
+        """).ConfigureAwait(false);
         Assert.AreEqual(
             "invalidProperties",
-            Arguments(invalidRole)["notCreated"]!["bad"]!["type"]!.GetValue<string>());
+            Arguments(invalidRole)["notCreated"]!["bad"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
 
         var protectedParent = await fixture.InvokeAsync($$$"""
         {
@@ -93,10 +96,10 @@ public sealed class JmapProtocolTests
             "accountId": "{{{fixture.AccountId}}}", "destroy":["{{{parentId}}}"]
           }, "m3"]]
         }
-        """);
+        """).ConfigureAwait(false);
         Assert.AreEqual(
             "mailboxHasChild",
-            Arguments(protectedParent)["notDestroyed"]![parentId]!["type"]!.GetValue<string>());
+            Arguments(protectedParent)["notDestroyed"]![parentId]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
 
         var destroy = await fixture.InvokeAsync($$$"""
         {
@@ -105,7 +108,7 @@ public sealed class JmapProtocolTests
             "accountId": "{{{fixture.AccountId}}}", "destroy":["{{{parentId}}}", "{{{childId}}}"]
           }, "m4"]]
         }
-        """);
+        """).ConfigureAwait(false);
         CollectionAssert.AreEqual(
             new[] { childId, parentId },
             Arguments(destroy)["destroyed"]!.AsArray()
@@ -113,9 +116,11 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The MailboxQueryChangesReturnsOrderedCreateUpdateAndDestroyDeltas scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task MailboxQueryChangesReturnsOrderedCreateUpdateAndDestroyDeltas()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var sort = "\"sort\":[{\"property\":\"name\",\"isAscending\":true}]";
         var initial = await fixture.InvokeAsync($$$"""
         {
@@ -124,7 +129,7 @@ public sealed class JmapProtocolTests
             "accountId":"{{{fixture.AccountId}}}", {{{sort}}}, "calculateTotal":true
           }, "q1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         Assert.IsTrue(Arguments(initial)["canCalculateChanges"]!.GetValue<bool>());
         var initialState = Arguments(initial)["queryState"]!.GetValue<string>();
 
@@ -136,7 +141,7 @@ public sealed class JmapProtocolTests
             "create":{"mailbox":{"name":"Zulu query delta"}}
           }, "s1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var mailboxId = Arguments(create)["created"]!["mailbox"]!["id"]!.GetValue<string>();
 
         var createdChanges = await fixture.InvokeAsync($$$"""
@@ -147,10 +152,10 @@ public sealed class JmapProtocolTests
             "sinceQueryState":"{{{initialState}}}", "calculateTotal":true
           }, "qc1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var createdArguments = Arguments(createdChanges);
         Assert.AreEqual(0, createdArguments["removed"]!.AsArray().Count);
-        Assert.AreEqual(mailboxId, createdArguments["added"]![0]!["id"]!.GetValue<string>());
+        Assert.AreEqual(mailboxId, createdArguments["added"]![0]!["id"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(
             createdArguments["total"]!.GetValue<int>() - 1,
             createdArguments["added"]![0]!["index"]!.GetValue<int>());
@@ -164,7 +169,7 @@ public sealed class JmapProtocolTests
             "update":{"{{{mailboxId}}}":{"name":"Aardvark query delta"}}
           }, "s2"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var limited = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
@@ -173,9 +178,9 @@ public sealed class JmapProtocolTests
             "sinceQueryState":"{{{createdState}}}", "maxChanges":1
           }, "qc2"]]
         }
-        """);
-        Assert.AreEqual("error", limited["methodResponses"]![0]![0]!.GetValue<string>());
-        Assert.AreEqual("tooManyChanges", Arguments(limited)["type"]!.GetValue<string>());
+        """).ConfigureAwait(false);
+        Assert.AreEqual("error", limited["methodResponses"]![0]![0]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("tooManyChanges", Arguments(limited)["type"]!.GetValue<string>(), StringComparer.Ordinal);
 
         var updatedChanges = await fixture.InvokeAsync($$$"""
         {
@@ -185,13 +190,13 @@ public sealed class JmapProtocolTests
             "sinceQueryState":"{{{createdState}}}", "upToId":"{{{mailboxId}}}"
           }, "qc3"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var updatedArguments = Arguments(updatedChanges);
         CollectionAssert.AreEqual(
             new[] { mailboxId },
             updatedArguments["removed"]!.AsArray()
                 .Select(node => node!.GetValue<string>()).ToArray());
-        Assert.AreEqual(mailboxId, updatedArguments["added"]![0]!["id"]!.GetValue<string>());
+        Assert.AreEqual(mailboxId, updatedArguments["added"]![0]!["id"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(0, updatedArguments["added"]![0]!["index"]!.GetValue<int>());
         var updatedState = updatedArguments["newQueryState"]!.GetValue<string>();
 
@@ -202,7 +207,7 @@ public sealed class JmapProtocolTests
             "accountId":"{{{fixture.AccountId}}}", "destroy":["{{{mailboxId}}}"]
           }, "s3"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var destroyedChanges = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
@@ -211,7 +216,7 @@ public sealed class JmapProtocolTests
             "sinceQueryState":"{{{updatedState}}}"
           }, "qc4"]]
         }
-        """);
+        """).ConfigureAwait(false);
         CollectionAssert.AreEqual(
             new[] { mailboxId },
             Arguments(destroyedChanges)["removed"]!.AsArray()
@@ -225,14 +230,15 @@ public sealed class JmapProtocolTests
             "accountId":"{{{fixture.AccountId}}}", "sortAsTree":true
           }, "q2"]]
         }
-        """);
+        """).ConfigureAwait(false);
         Assert.IsFalse(Arguments(tree)["canCalculateChanges"]!.GetValue<bool>());
     }
 
     [TestMethod]
     public async Task MailboxNamesMustUseNetUnicode()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var response = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
@@ -245,11 +251,11 @@ public sealed class JmapProtocolTests
             }
           }, "m1"]]
         }
-        """);
+        """).ConfigureAwait(false);
 
         var notCreated = Arguments(response)["notCreated"]!.AsObject();
-        Assert.AreEqual("invalidProperties", notCreated["bom"]!["type"]!.GetValue<string>());
-        Assert.AreEqual("invalidProperties", notCreated["unassigned"]!["type"]!.GetValue<string>());
+        Assert.AreEqual("invalidProperties", notCreated["bom"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("invalidProperties", notCreated["unassigned"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
         var mailboxId = Arguments(response)["created"]!["normalized"]!["id"]!.GetValue<string>();
 
         var get = await fixture.InvokeAsync($$$"""
@@ -260,14 +266,16 @@ public sealed class JmapProtocolTests
             "properties":["name"]
           }, "g1"]]
         }
-        """);
-        Assert.AreEqual("Caf\u00e9", Arguments(get)["list"]![0]!["name"]!.GetValue<string>());
+        """).ConfigureAwait(false);
+        Assert.AreEqual("Caf\u00e9", Arguments(get)["list"]![0]!["name"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The MailboxSetReturnsOnlyServerSetDefaultedAndChangedProperties scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task MailboxSetReturnsOnlyServerSetDefaultedAndChangedProperties()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var batch = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
@@ -285,7 +293,7 @@ public sealed class JmapProtocolTests
             }
           }, "m1"]]
         }
-        """);
+        """).ConfigureAwait(false);
 
         var created = Arguments(batch)["created"]!.AsObject();
         var serverSet = new[]
@@ -296,7 +304,7 @@ public sealed class JmapProtocolTests
             serverSet,
             created["explicit"]!.AsObject().Select(property => property.Key).ToArray());
         CollectionAssert.AreEquivalent(
-            serverSet.Concat(new[] { "parentId", "role", "sortOrder", "isSubscribed" }).ToArray(),
+            serverSet.Concat(ExpectedVector1).ToArray(),
             created["defaults"]!.AsObject().Select(property => property.Key).ToArray());
         Assert.AreEqual(0, created["defaults"]!["totalEmails"]!.GetValue<int>());
         Assert.AreEqual(0, created["defaults"]!["unreadEmails"]!.GetValue<int>());
@@ -322,7 +330,7 @@ public sealed class JmapProtocolTests
             }}
           }, "m2"]]
         }
-        """);
+        """).ConfigureAwait(false);
         CollectionAssert.AreEquivalent(
             serverSet,
             Arguments(single)["created"]!["single"]!.AsObject()
@@ -332,7 +340,8 @@ public sealed class JmapProtocolTests
     [TestMethod]
     public async Task MailboxSortOrderIsLimitedToTheRfc8621Range()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var response = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
@@ -344,12 +353,12 @@ public sealed class JmapProtocolTests
               }
             }, "m1"]]
         }
-        """);
+        """).ConfigureAwait(false);
 
         var mailboxId = Arguments(response)["created"]!["maximum"]!["id"]!.GetValue<string>();
         Assert.AreEqual(
             "invalidProperties",
-            Arguments(response)["notCreated"]!["tooLarge"]!["type"]!.GetValue<string>());
+            Arguments(response)["notCreated"]!["tooLarge"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
 
         var get = await fixture.InvokeAsync($$$"""
         {
@@ -360,15 +369,16 @@ public sealed class JmapProtocolTests
             "properties": ["sortOrder"]
           }, "g1"]]
         }
-        """);
-        Assert.AreEqual(mailboxId, Arguments(get)["list"]![0]!["id"]!.GetValue<string>());
+        """).ConfigureAwait(false);
+        Assert.AreEqual(mailboxId, Arguments(get)["list"]![0]!["id"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(int.MaxValue, Arguments(get)["list"]![0]!["sortOrder"]!.GetValue<long>());
     }
 
     [TestMethod]
     public async Task CreationIdsAreNotAcceptedAsOrdinaryReadOrQueryIds()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var response = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}", "{{{Submission}}}"],
@@ -390,23 +400,24 @@ public sealed class JmapProtocolTests
             }, "q3"]
           ]
         }
-        """);
+        """).ConfigureAwait(false);
 
         for (var index = 0; index < 4; index++)
         {
             Assert.AreEqual(
                 "error",
-                response["methodResponses"]![index]![0]!.GetValue<string>());
+                response["methodResponses"]![index]![0]!.GetValue<string>(), StringComparer.Ordinal);
             Assert.AreEqual(
                 "invalidArguments",
-                Arguments(response, index)["type"]!.GetValue<string>());
+                Arguments(response, index)["type"]!.GetValue<string>(), StringComparer.Ordinal);
         }
     }
 
     [TestMethod]
     public async Task QueryComparatorsRejectNullStringProperties()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var response = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}", "{{{Submission}}}"],
@@ -429,23 +440,24 @@ public sealed class JmapProtocolTests
             }, "s1"]
           ]
         }
-        """);
+        """).ConfigureAwait(false);
 
         var methodResponses = response["methodResponses"]!.AsArray();
         Assert.AreEqual(4, methodResponses.Count);
         foreach (var methodResponse in methodResponses)
         {
-            Assert.AreEqual("error", methodResponse![0]!.GetValue<string>());
+            Assert.AreEqual("error", methodResponse![0]!.GetValue<string>(), StringComparer.Ordinal);
             Assert.AreEqual(
                 "invalidArguments",
-                methodResponse[1]!["type"]!.GetValue<string>());
+                methodResponse[1]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
         }
     }
 
     [TestMethod]
     public async Task QueryFiltersAcceptValidUnknownIds()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var create = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
@@ -460,7 +472,7 @@ public sealed class JmapProtocolTests
             }
           }, "s1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var emailId = Arguments(create)["created"]!["email"]!["id"]!.GetValue<string>();
 
         var response = await fixture.InvokeAsync($$$"""
@@ -481,13 +493,13 @@ public sealed class JmapProtocolTests
             }, "q3"]
           ]
         }
-        """);
+        """).ConfigureAwait(false);
 
-        Assert.AreEqual("Mailbox/query", response["methodResponses"]![0]![0]!.GetValue<string>());
+        Assert.AreEqual("Mailbox/query", response["methodResponses"]![0]![0]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(0, Arguments(response, 0)["ids"]!.AsArray().Count);
-        Assert.AreEqual("Email/query", response["methodResponses"]![1]![0]!.GetValue<string>());
+        Assert.AreEqual("Email/query", response["methodResponses"]![1]![0]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(0, Arguments(response, 1)["ids"]!.AsArray().Count);
-        Assert.AreEqual("Email/query", response["methodResponses"]![2]![0]!.GetValue<string>());
+        Assert.AreEqual("Email/query", response["methodResponses"]![2]![0]!.GetValue<string>(), StringComparer.Ordinal);
         CollectionAssert.AreEqual(
             new[] { emailId },
             Arguments(response, 2)["ids"]!.AsArray()
@@ -498,13 +510,14 @@ public sealed class JmapProtocolTests
     [TestMethod]
     public async Task MailboxWithNullRoleDoesNotInferOneFromItsName()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         using (var scope = fixture.Services.CreateScope())
         {
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-            var sent = await database.Folders.SingleAsync(folder => folder.Id == fixture.SentFolderId);
+            var sent = await database.Folders.SingleAsync(folder => folder.Id == fixture.SentFolderId).ConfigureAwait(false);
             database.Folders.Remove(sent);
-            await database.SaveChangesAsync();
+            await database.SaveChangesAsync().ConfigureAwait(false);
         }
 
         var create = await fixture.InvokeAsync($$$"""
@@ -515,7 +528,7 @@ public sealed class JmapProtocolTests
             "create": {"sentByName":{"name":"Sent", "role":null}}
           }, "m1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var mailboxId = Arguments(create)["created"]!["sentByName"]!["id"]!.GetValue<string>();
         Assert.IsNull(Arguments(create)["created"]!["sentByName"]!["role"]);
 
@@ -527,22 +540,24 @@ public sealed class JmapProtocolTests
             "properties":["id", "name", "role"]
           }, "g1"]]
         }
-        """);
+        """).ConfigureAwait(false);
 
         Assert.IsNull(Arguments(get)["list"]![0]!["role"]);
         Assert.IsTrue(JmapId.TryParseMailbox(mailboxId, out var folderId));
         using var verificationScope = fixture.Services.CreateScope();
         var stored = await verificationScope.ServiceProvider.GetRequiredService<EmailDbContext>()
             .Folders.AsNoTracking()
-            .SingleAsync(folder => folder.Id == folderId);
+            .SingleAsync(folder => folder.Id == folderId).ConfigureAwait(false);
         Assert.IsNull(stored.JmapRole);
         Assert.IsTrue(stored.SuppressDefaultJmapRole);
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The MailboxSetUsesFinalStateForSwapsAndAcceptsGetObjects scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task MailboxSetUsesFinalStateForSwapsAndAcceptsGetObjects()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var create = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
@@ -554,7 +569,7 @@ public sealed class JmapProtocolTests
             }
           }, "m1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var created = Arguments(create)["created"]!.AsObject();
         var alphaId = created["alpha"]!["id"]!.GetValue<string>();
         var betaId = created["beta"]!["id"]!.GetValue<string>();
@@ -567,7 +582,7 @@ public sealed class JmapProtocolTests
             "ids": ["{{{alphaId}}}", "{{{betaId}}}"]
           }, "g1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var mailboxes = Arguments(get)["list"]!.AsArray()
             .Select(node => node!.AsObject())
             .ToDictionary(mailbox => mailbox["id"]!.GetValue<string>(), StringComparer.Ordinal);
@@ -585,7 +600,7 @@ public sealed class JmapProtocolTests
                     ["update"] = new JsonObject { [alphaId] = alphaRoundTrip },
                 },
                 "m2")),
-        });
+        }).ConfigureAwait(false);
         Assert.IsNull(Arguments(roundTripUpdate)["notUpdated"]);
         Assert.IsTrue(Arguments(roundTripUpdate)["updated"]!.AsObject().ContainsKey(alphaId));
 
@@ -611,7 +626,7 @@ public sealed class JmapProtocolTests
                     },
                 },
                 "m3")),
-        });
+        }).ConfigureAwait(false);
         Assert.IsNull(Arguments(swap)["notUpdated"]);
         CollectionAssert.AreEquivalent(
             new[] { alphaId, betaId },
@@ -625,21 +640,23 @@ public sealed class JmapProtocolTests
             "ids": ["{{{alphaId}}}", "{{{betaId}}}"]
           }, "g2"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var swapped = Arguments(verify)["list"]!.AsArray()
             .Select(node => node!.AsObject())
             .ToDictionary(mailbox => mailbox["id"]!.GetValue<string>(), StringComparer.Ordinal);
-        Assert.AreEqual("Beta", swapped[alphaId]["name"]!.GetValue<string>());
-        Assert.AreEqual("important", swapped[alphaId]["role"]!.GetValue<string>());
+        Assert.AreEqual("Beta", swapped[alphaId]["name"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("important", swapped[alphaId]["role"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(11L, swapped[alphaId]["sortOrder"]!.GetValue<long>());
-        Assert.AreEqual("Alpha", swapped[betaId]["name"]!.GetValue<string>());
-        Assert.AreEqual("flagged", swapped[betaId]["role"]!.GetValue<string>());
+        Assert.AreEqual("Alpha", swapped[betaId]["name"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("flagged", swapped[betaId]["role"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The MailboxSetUsesFinalStateAcrossCreatesUpdatesAndDestroys scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task MailboxSetUsesFinalStateAcrossCreatesUpdatesAndDestroys()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var seed = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
@@ -651,7 +668,7 @@ public sealed class JmapProtocolTests
             }
           }, "m1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var seeded = Arguments(seed)["created"]!.AsObject();
         var moveId = seeded["move"]!["id"]!.GetValue<string>();
         var removeId = seeded["remove"]!["id"]!.GetValue<string>();
@@ -671,7 +688,7 @@ public sealed class JmapProtocolTests
             "destroy": ["{{{removeId}}}"]
           }, "m2"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var arguments = Arguments(replace);
         Assert.IsNull(arguments["notCreated"]);
         Assert.IsNull(arguments["notUpdated"]);
@@ -694,16 +711,16 @@ public sealed class JmapProtocolTests
             "ids": ["{{{moveId}}}", "{{{removeId}}}", "{{{reusedUpdateId}}}", "{{{reusedDestroyId}}}"]
           }, "g1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var byId = Arguments(verify)["list"]!.AsArray()
             .Select(node => node!.AsObject())
             .ToDictionary(mailbox => mailbox["id"]!.GetValue<string>(), StringComparer.Ordinal);
-        Assert.AreEqual("Moved", byId[moveId]["name"]!.GetValue<string>());
-        Assert.AreEqual("archive", byId[moveId]["role"]!.GetValue<string>());
-        Assert.AreEqual("Taken", byId[reusedUpdateId]["name"]!.GetValue<string>());
-        Assert.AreEqual("flagged", byId[reusedUpdateId]["role"]!.GetValue<string>());
-        Assert.AreEqual("Removed", byId[reusedDestroyId]["name"]!.GetValue<string>());
-        Assert.AreEqual("important", byId[reusedDestroyId]["role"]!.GetValue<string>());
+        Assert.AreEqual("Moved", byId[moveId]["name"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("archive", byId[moveId]["role"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("Taken", byId[reusedUpdateId]["name"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("flagged", byId[reusedUpdateId]["role"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("Removed", byId[reusedDestroyId]["name"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("important", byId[reusedDestroyId]["role"]!.GetValue<string>(), StringComparer.Ordinal);
         CollectionAssert.AreEqual(
             new[] { removeId },
             Arguments(verify)["notFound"]!.AsArray()
@@ -721,7 +738,7 @@ public sealed class JmapProtocolTests
             }
           }, "m3"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var secondSeeded = Arguments(secondSeed)["created"]!.AsObject();
         var shiftId = secondSeeded["shift"]!["id"]!.GetValue<string>();
         var vacateId = secondSeeded["vacate"]!["id"]!.GetValue<string>();
@@ -736,7 +753,7 @@ public sealed class JmapProtocolTests
             "destroy": ["{{{vacateId}}}"]
           }, "m4"]]
         }
-        """);
+        """).ConfigureAwait(false);
         Assert.IsNull(Arguments(updateIntoDestroyedValues)["notUpdated"]);
         Assert.IsNull(Arguments(updateIntoDestroyedValues)["notDestroyed"]);
         Assert.IsTrue(Arguments(updateIntoDestroyedValues)["updated"]!
@@ -751,12 +768,13 @@ public sealed class JmapProtocolTests
     [TestMethod]
     public async Task ImportedEmailPreservesExactRawOctets()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var raw = Encoding.Latin1.GetBytes(
             $"From: sender@example.net\nTo: {fixture.User.Username}\n"
             + "Date: Sun, 20 Sep 2026 10:00:00 +0000\n"
             + "Subject: Exact raw bytes\n\nbody with LF only\n");
-        var uploadBlobId = await fixture.StoreBlobAsync(raw);
+        var uploadBlobId = await fixture.StoreBlobAsync(raw).ConfigureAwait(false);
         var import = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
@@ -766,7 +784,7 @@ public sealed class JmapProtocolTests
               "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true} } }
           }, "i1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var emailId = Arguments(import)["created"]!["raw"]!["id"]!.GetValue<string>();
         var get = await fixture.InvokeAsync($$$"""
         {
@@ -776,7 +794,7 @@ public sealed class JmapProtocolTests
             "properties":["id", "blobId", "size"]
           }, "g1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var email = Arguments(get)["list"]![0]!;
         Assert.AreEqual(raw.LongLength, email["size"]!.GetValue<long>());
 
@@ -785,50 +803,52 @@ public sealed class JmapProtocolTests
             .GetAsync(
                 fixture.InboxId,
                 email["blobId"]!.GetValue<string>(),
-                CancellationToken.None);
+                CancellationToken.None).ConfigureAwait(false);
         Assert.IsNotNull(storedBlob);
         CollectionAssert.AreEqual(raw, storedBlob.Content);
         Assert.IsTrue(JmapId.TryParseEmail(emailId, out var storedEmailId));
         var storedEmail = await scope.ServiceProvider.GetRequiredService<EmailDbContext>()
-            .Emails.AsNoTracking().SingleAsync(message => message.Id == storedEmailId);
+            .Emails.AsNoTracking().SingleAsync(message => message.Id == storedEmailId).ConfigureAwait(false);
         Assert.IsNull(storedEmail.RawMessage);
-        Assert.AreEqual(LargeObjectProviders.AzureBlob, storedEmail.RawMessageObjectProvider);
+        Assert.AreEqual(LargeObjectProviders.AzureBlob, storedEmail.RawMessageObjectProvider, StringComparer.Ordinal);
         Assert.IsNotNull(storedEmail.RawMessageObjectName);
         var storedRaw = await scope.ServiceProvider
             .GetRequiredService<MailboxMessageContentService>()
-            .ReadAsync(storedEmail, CancellationToken.None);
+            .ReadAsync(storedEmail, CancellationToken.None).ConfigureAwait(false);
         CollectionAssert.AreEqual(raw, storedRaw);
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The EmailCopyRendersGatewayOwnedSourceDeletionAndStateMismatch scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task EmailCopyRendersGatewayOwnedSourceDeletionAndStateMismatch()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var targetInboxId = Guid.CreateVersion7();
         var targetFolderId = Guid.CreateVersion7();
         using (var scope = fixture.Services.CreateScope())
         {
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-            var original = await database.Inboxes.SingleAsync();
-            database.Inboxes.Add(new InboxDB
+            var original = await database.Inboxes.SingleAsync().ConfigureAwait(false);
+            await database.Inboxes.AddAsync(new InboxDB
             {
                 Id = targetInboxId,
                 Name = "copy-target",
                 AddressId = original.AddressId,
                 OwnerId = fixture.User.Id,
-            });
-            database.Folders.Add(new FolderDB
+            }).ConfigureAwait(false);
+            await database.Folders.AddAsync(new FolderDB
             {
                 Id = targetFolderId,
                 InboxId = targetInboxId,
                 Name = "Inbox",
                 UidValidity = 1,
                 NextUid = 1,
-            });
-            await database.SaveChangesAsync();
+            }).ConfigureAwait(false);
+            await database.SaveChangesAsync().ConfigureAwait(false);
         }
         var blobId = await fixture.StoreBlobAsync(Encoding.ASCII.GetBytes(
-            $"From: sender@example.test\r\nTo: {fixture.User.Username}\r\nSubject: Copy\r\n\r\nBody"));
+            $"From: sender@example.test\r\nTo: {fixture.User.Username}\r\nSubject: Copy\r\n\r\nBody")).ConfigureAwait(false);
         var targetAccountId = JmapId.Account(targetInboxId);
         var targetMailboxId = JmapId.Mailbox(targetFolderId);
         async Task<string> ImportSourceAsync()
@@ -848,7 +868,7 @@ public sealed class JmapProtocolTests
                         },
                     },
                 }, "import")),
-            });
+            }).ConfigureAwait(false);
             return Arguments(response)["created"]!["original"]!["id"]!.GetValue<string>();
         }
 
@@ -876,38 +896,40 @@ public sealed class JmapProtocolTests
             {
                 ["using"] = new JsonArray(Core, Mail),
                 ["methodCalls"] = new JsonArray(new JsonArray("Email/copy", arguments, "copy")),
-            });
+            }).ConfigureAwait(false);
         }
 
-        var sourceId = await ImportSourceAsync();
-        var copied = await CopyAsync(sourceId, mismatch: false);
-        Assert.AreEqual("Email/copy", copied["methodResponses"]![0]![0]!.GetValue<string>());
+        var sourceId = await ImportSourceAsync().ConfigureAwait(false);
+        var copied = await CopyAsync(sourceId, mismatch: false).ConfigureAwait(false);
+        Assert.AreEqual("Email/copy", copied["methodResponses"]![0]![0]!.GetValue<string>(), StringComparer.Ordinal);
         var copiedId = Arguments(copied)["created"]!["copy"]!["id"]!.GetValue<string>();
-        Assert.AreNotEqual(sourceId, copiedId);
-        Assert.AreEqual("Email/set", copied["methodResponses"]![1]![0]!.GetValue<string>());
-        Assert.AreEqual(sourceId, Arguments(copied, 1)["destroyed"]![0]!.GetValue<string>());
+        Assert.AreNotEqual(sourceId, copiedId, StringComparer.Ordinal);
+        Assert.AreEqual("Email/set", copied["methodResponses"]![1]![0]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual(sourceId, Arguments(copied, 1)["destroyed"]![0]!.GetValue<string>(), StringComparer.Ordinal);
         using (var scope = fixture.Services.CreateScope())
         {
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-            Assert.AreEqual(1, await database.Emails.CountAsync());
-            Assert.AreEqual(targetFolderId, (await database.Emails.SingleAsync()).FolderId);
+            Assert.AreEqual(1, await database.Emails.CountAsync().ConfigureAwait(false));
+            Assert.AreEqual(targetFolderId, (await database.Emails.SingleAsync().ConfigureAwait(false)).FolderId);
         }
-        var secondSourceId = await ImportSourceAsync();
-        var mismatched = await CopyAsync(secondSourceId, mismatch: true);
+        var secondSourceId = await ImportSourceAsync().ConfigureAwait(false);
+        var mismatched = await CopyAsync(secondSourceId, mismatch: true).ConfigureAwait(false);
         Assert.IsNotNull(Arguments(mismatched)["created"]!["copy"]);
-        Assert.AreEqual("error", mismatched["methodResponses"]![1]![0]!.GetValue<string>());
-        Assert.AreEqual("stateMismatch", Arguments(mismatched, 1)["type"]!.GetValue<string>());
+        Assert.AreEqual("error", mismatched["methodResponses"]![1]![0]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("stateMismatch", Arguments(mismatched, 1)["type"]!.GetValue<string>(), StringComparer.Ordinal);
         using var verificationScope = fixture.Services.CreateScope();
         var verification = verificationScope.ServiceProvider.GetRequiredService<EmailDbContext>();
-        Assert.AreEqual(3, await verification.Emails.CountAsync());
+        Assert.AreEqual(3, await verification.Emails.CountAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The EmailWritesRejectNullValuesForNonNullableDefaults scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task EmailWritesRejectNullValuesForNonNullableDefaults()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var blobId = await fixture.StoreBlobAsync(Encoding.ASCII.GetBytes(
-            $"From: sender@example.net\r\nTo: {fixture.User.Username}\r\n\r\nbody"));
+            $"From: sender@example.net\r\nTo: {fixture.User.Username}\r\n\r\nbody")).ConfigureAwait(false);
 
         var response = await fixture.InvokeAsync($$$"""
         {
@@ -956,25 +978,27 @@ public sealed class JmapProtocolTests
             }, "i1"]
           ]
         }
-        """);
+        """).ConfigureAwait(false);
 
         foreach (var index in new[] { 0, 1 })
         {
             var arguments = Arguments(response, index);
             Assert.AreEqual(
                 "invalidProperties",
-                arguments["notCreated"]!["nullKeywords"]!["type"]!.GetValue<string>());
+                arguments["notCreated"]!["nullKeywords"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
             Assert.AreEqual(
                 "invalidProperties",
-                arguments["notCreated"]!["nullReceivedAt"]!["type"]!.GetValue<string>());
+                arguments["notCreated"]!["nullReceivedAt"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
             Assert.IsNotNull(arguments["created"]!["defaults"]);
         }
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The EmailKeywordsFollowTheImapCompatibleCharacterSet scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task EmailKeywordsFollowTheImapCompatibleCharacterSet()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var create = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
@@ -1019,18 +1043,18 @@ public sealed class JmapProtocolTests
             }
           }, "s1"]]
         }
-        """);
+        """).ConfigureAwait(false);
 
         var emailId = Arguments(create)["created"]!["valid"]!["id"]!.GetValue<string>();
         Assert.AreEqual(
             "invalidProperties",
-            Arguments(create)["notCreated"]!["reserved"]!["type"]!.GetValue<string>());
+            Arguments(create)["notCreated"]!["reserved"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(
             "invalidProperties",
-            Arguments(create)["notCreated"]!["leftBrace"]!["type"]!.GetValue<string>());
+            Arguments(create)["notCreated"]!["leftBrace"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(
             "invalidProperties",
-            Arguments(create)["notCreated"]!["rightBracket"]!["type"]!.GetValue<string>());
+            Arguments(create)["notCreated"]!["rightBracket"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.IsNotNull(Arguments(create)["created"]!["leftBracket"]);
         Assert.IsNotNull(Arguments(create)["created"]!["rightBrace"]);
 
@@ -1044,18 +1068,18 @@ public sealed class JmapProtocolTests
             }
           }, "s2"]]
         }
-        """);
+        """).ConfigureAwait(false);
         Assert.AreEqual(
             "invalidProperties",
-            Arguments(update)["notUpdated"]![emailId]!["type"]!.GetValue<string>());
+            Arguments(update)["notUpdated"]![emailId]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
 
         Assert.IsTrue(JmapId.TryParseEmail(emailId, out var storedEmailId));
         using (var scope = fixture.Services.CreateScope())
         {
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-            var email = await database.Emails.SingleAsync(candidate => candidate.Id == storedEmailId);
+            var email = await database.Emails.SingleAsync(candidate => candidate.Id == storedEmailId).ConfigureAwait(false);
             email.Keywords = ["$recent", "custom"];
-            await database.SaveChangesAsync();
+            await database.SaveChangesAsync().ConfigureAwait(false);
         }
 
         var get = await fixture.InvokeAsync($$$"""
@@ -1066,7 +1090,7 @@ public sealed class JmapProtocolTests
             "properties":["keywords"]
           }, "g1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var keywords = Arguments(get)["list"]![0]!["keywords"]!.AsObject();
         Assert.IsFalse(keywords.ContainsKey("$recent"));
         Assert.IsTrue(keywords["custom"]!.GetValue<bool>());
@@ -1075,12 +1099,13 @@ public sealed class JmapProtocolTests
     [TestMethod]
     public async Task EmailReadsFailInsteadOfHidingCorruptStoredRecords()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var emailId = Guid.CreateVersion7();
         using (var scope = fixture.Services.CreateScope())
         {
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-            database.Emails.Add(new EmailDB
+            await database.Emails.AddAsync(new EmailDB
             {
                 Id = emailId,
                 Sender = "sender@example.net",
@@ -1092,8 +1117,8 @@ public sealed class JmapProtocolTests
                 ReceivedAt = DateTime.UtcNow,
                 FolderId = fixture.InboxFolderId,
                 Uid = 100,
-            });
-            await database.SaveChangesAsync();
+            }).ConfigureAwait(false);
+            await database.SaveChangesAsync().ConfigureAwait(false);
         }
 
         var response = await fixture.InvokeAsync($$$"""
@@ -1110,18 +1135,19 @@ public sealed class JmapProtocolTests
             }, "q1"]
           ]
         }
-        """);
+        """).ConfigureAwait(false);
 
-        Assert.AreEqual("error", response["methodResponses"]![0]![0]!.GetValue<string>());
-        Assert.AreEqual("serverFail", Arguments(response)["type"]!.GetValue<string>());
-        Assert.AreEqual("error", response["methodResponses"]![1]![0]!.GetValue<string>());
-        Assert.AreEqual("serverFail", Arguments(response, 1)["type"]!.GetValue<string>());
+        Assert.AreEqual("error", response["methodResponses"]![0]![0]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("serverFail", Arguments(response)["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("error", response["methodResponses"]![1]![0]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("serverFail", Arguments(response, 1)["type"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task EmailBodyValuesReportMalformedCharsetData()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var prefix = Encoding.ASCII.GetBytes(
             "From: sender@example.net\r\n"
             + $"To: {fixture.User.Username}\r\n"
@@ -1131,7 +1157,7 @@ public sealed class JmapProtocolTests
             + "before ");
         var suffix = Encoding.ASCII.GetBytes(" after\r\n");
         var raw = prefix.Concat(new byte[] { 0xc3, 0x28 }).Concat(suffix).ToArray();
-        var blobId = await fixture.StoreBlobAsync(raw);
+        var blobId = await fixture.StoreBlobAsync(raw).ConfigureAwait(false);
 
         var response = await fixture.InvokeAsync($$$"""
         {
@@ -1143,20 +1169,21 @@ public sealed class JmapProtocolTests
             "fetchTextBodyValues": true
           }, "p1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var parsed = Arguments(response)["parsed"]![blobId]!;
         var partId = parsed["textBody"]![0]!["partId"]!.GetValue<string>();
         var bodyValue = parsed["bodyValues"]![partId]!;
         Assert.IsTrue(bodyValue["isEncodingProblem"]!.GetValue<bool>());
-        StringAssert.Contains(bodyValue["value"]!.GetValue<string>(), "\ufffd(");
+        StringAssert.Contains(bodyValue["value"]!.GetValue<string>(), "\ufffd(", StringComparison.Ordinal);
     }
 
     [TestMethod]
     public async Task EmailParseRejectsNullPropertiesButEmailGetAcceptsThem()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var blobId = await fixture.StoreBlobAsync(Encoding.ASCII.GetBytes(
-            $"From: sender@example.net\r\nTo: {fixture.User.Username}\r\n\r\nbody"));
+            $"From: sender@example.net\r\nTo: {fixture.User.Username}\r\n\r\nbody")).ConfigureAwait(false);
 
         var response = await fixture.InvokeAsync($$$"""
         {
@@ -1174,23 +1201,24 @@ public sealed class JmapProtocolTests
             }, "g1"]
           ]
         }
-        """);
+        """).ConfigureAwait(false);
 
-        Assert.AreEqual("error", response["methodResponses"]![0]![0]!.GetValue<string>());
-        Assert.AreEqual("invalidArguments", Arguments(response)["type"]!.GetValue<string>());
-        Assert.AreEqual("Email/get", response["methodResponses"]![1]![0]!.GetValue<string>());
+        Assert.AreEqual("error", response["methodResponses"]![0]![0]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("invalidArguments", Arguments(response)["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("Email/get", response["methodResponses"]![1]![0]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task HtmlBodyValueTruncationStopsBeforeAnOpenTag()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var raw = Encoding.ASCII.GetBytes(
             "From: sender@example.net\r\n"
             + $"To: {fixture.User.Username}\r\n"
             + "Content-Type: text/html; charset=us-ascii\r\n\r\n"
             + "<p>Hello</p><a title=\"1 > 0\" href=\"https://example.com\">world</a>");
-        var blobId = await fixture.StoreBlobAsync(raw);
+        var blobId = await fixture.StoreBlobAsync(raw).ConfigureAwait(false);
 
         var response = await fixture.InvokeAsync($$$"""
         {
@@ -1203,12 +1231,12 @@ public sealed class JmapProtocolTests
             "maxBodyValueBytes": 30
           }, "p1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var parsed = Arguments(response)["parsed"]![blobId]!;
         var partId = parsed["htmlBody"]![0]!["partId"]!.GetValue<string>();
         var bodyValue = parsed["bodyValues"]![partId]!;
         var value = bodyValue["value"]!.GetValue<string>();
-        Assert.AreEqual("<p>Hello</p>", value);
+        Assert.AreEqual("<p>Hello</p>", value, StringComparer.Ordinal);
         Assert.IsTrue(bodyValue["isTruncated"]!.GetValue<bool>());
         Assert.IsTrue(Encoding.UTF8.GetByteCount(value) <= 30);
     }
@@ -1216,7 +1244,8 @@ public sealed class JmapProtocolTests
     [TestMethod]
     public async Task EmailParsedHeaderTextDropsDecodedControlsAndNormalizesUnicode()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         const string decodedSubject = "Clean\0\u0001\t Cafe\u0301";
         const string decodedName = "Sender Cafe\u0301";
         var encodedSubject = Convert.ToBase64String(Encoding.UTF8.GetBytes(decodedSubject));
@@ -1225,7 +1254,7 @@ public sealed class JmapProtocolTests
             $"From: =?utf-8?B?{encodedName}?= <sender@example.net>\r\n"
             + $"To: {fixture.User.Username}\r\n"
             + $"Subject: =?utf-8?B?{encodedSubject}?=\r\n\r\nbody");
-        var blobId = await fixture.StoreBlobAsync(raw);
+        var blobId = await fixture.StoreBlobAsync(raw).ConfigureAwait(false);
 
         var response = await fixture.InvokeAsync($$$"""
         {
@@ -1236,30 +1265,31 @@ public sealed class JmapProtocolTests
             "properties": ["subject", "header:Subject:asText", "from"]
           }, "p1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var parsed = Arguments(response)["parsed"]![blobId]!;
         var expectedSubject = "Clean Cafe\u0301".Normalize(NormalizationForm.FormC);
         var expectedName = decodedName.Normalize(NormalizationForm.FormC);
-        Assert.AreEqual(expectedSubject, parsed["subject"]!.GetValue<string>());
+        Assert.AreEqual(expectedSubject, parsed["subject"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(
             expectedSubject,
-            parsed["header:Subject:asText"]!.GetValue<string>());
+            parsed["header:Subject:asText"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(
             expectedName,
-            parsed["from"]![0]!["name"]!.GetValue<string>());
+            parsed["from"]![0]!["name"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task EmailParsedHeaderTextPreservesUnfoldedHorizontalTabs()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var raw = Encoding.ASCII.GetBytes(
             "From: sender@example.net\r\n"
             + $"To: {fixture.User.Username}\r\n"
             + "Subject:  First\r\n\tSecond\tThird\r\n"
             + "Comments: =?utf-8?B?Rmlyc3Q=?=\r\n"
             + "\t=?utf-8?B?U2Vjb25k?=\r\n\r\nbody");
-        var blobId = await fixture.StoreBlobAsync(raw);
+        var blobId = await fixture.StoreBlobAsync(raw).ConfigureAwait(false);
 
         var response = await fixture.InvokeAsync($$$"""
         {
@@ -1274,27 +1304,28 @@ public sealed class JmapProtocolTests
             ]
           }, "p1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var parsed = Arguments(response)["parsed"]![blobId]!;
-        Assert.AreEqual("First\tSecond\tThird", parsed["subject"]!.GetValue<string>());
+        Assert.AreEqual("First\tSecond\tThird", parsed["subject"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(
             "First\tSecond\tThird",
-            parsed["header:Subject:asText"]!.GetValue<string>());
+            parsed["header:Subject:asText"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(
             "FirstSecond",
-            parsed["header:Comments:asText"]!.GetValue<string>());
+            parsed["header:Comments:asText"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task EmailParsedAddressesPreserveRawButNotEncodedHorizontalTabs()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var encodedName = Convert.ToBase64String(Encoding.UTF8.GetBytes("Encoded\tTab"));
         var raw = Encoding.ASCII.GetBytes(
             "From: \"Raw\tTab\" <raw@example.net>, "
             + $"=?utf-8?B?{encodedName}?= <encoded@example.net>\r\n"
             + $"To: {fixture.User.Username}\r\n\r\nbody");
-        var blobId = await fixture.StoreBlobAsync(raw);
+        var blobId = await fixture.StoreBlobAsync(raw).ConfigureAwait(false);
 
         var response = await fixture.InvokeAsync($$$"""
         {
@@ -1305,16 +1336,17 @@ public sealed class JmapProtocolTests
             "properties": ["from"]
           }, "p1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var addresses = Arguments(response)["parsed"]![blobId]!["from"]!.AsArray();
-        Assert.AreEqual("Raw\tTab", addresses[0]!["name"]!.GetValue<string>());
-        Assert.AreEqual("EncodedTab", addresses[1]!["name"]!.GetValue<string>());
+        Assert.AreEqual("Raw\tTab", addresses[0]!["name"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("EncodedTab", addresses[1]!["name"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task EmailParsedMessageIdsUseRfc5322Syntax()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var raw = Encoding.ASCII.GetBytes(
             "From: sender@example.net\r\n"
             + $"To: {fixture.User.Username}\r\n"
@@ -1322,7 +1354,7 @@ public sealed class JmapProtocolTests
             + "References: (first) <valid@example.test>\r\n"
             + " <\"quoted local\"@example.test>\r\n"
             + "Resent-Message-ID: <valid@example.test> invalid\r\n\r\nbody");
-        var blobId = await fixture.StoreBlobAsync(raw);
+        var blobId = await fixture.StoreBlobAsync(raw).ConfigureAwait(false);
 
         var response = await fixture.InvokeAsync($$$"""
         {
@@ -1337,11 +1369,11 @@ public sealed class JmapProtocolTests
             ]
           }, "p1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var parsed = Arguments(response)["parsed"]![blobId]!;
         Assert.IsNull(parsed["messageId"]);
         CollectionAssert.AreEqual(
-            new[] { "valid@example.test", "\"quoted local\"@example.test" },
+            ExpectedVector2,
             parsed["references"]!.AsArray()
                 .Select(node => node!.GetValue<string>())
                 .ToArray());
@@ -1351,7 +1383,8 @@ public sealed class JmapProtocolTests
     [TestMethod]
     public async Task EmailParsedUrlsRejectInvalidBracketedValues()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var raw = Encoding.ASCII.GetBytes(
             "From: sender@example.net\r\n"
             + $"To: {fixture.User.Username}\r\n"
@@ -1360,7 +1393,7 @@ public sealed class JmapProtocolTests
             + "List-Subscribe: <https://example.test/sub scribe>\r\n"
             + "List-Owner: invalid <mailto:owner@example.test>\r\n"
             + "List-Archive: <https://example.test/first>, invalid, <https://example.test/last>\r\n\r\nbody");
-        var blobId = await fixture.StoreBlobAsync(raw);
+        var blobId = await fixture.StoreBlobAsync(raw).ConfigureAwait(false);
 
         var response = await fixture.InvokeAsync($$$"""
         {
@@ -1377,22 +1410,22 @@ public sealed class JmapProtocolTests
             ]
           }, "p1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var parsed = Arguments(response)["parsed"]![blobId]!;
         Assert.IsNull(parsed["header:List-Unsubscribe:asURLs"]);
         CollectionAssert.AreEqual(
-            new[] { "https://example.test/help", "mailto:help@example.test" },
+            ExpectedVector3,
             parsed["header:List-Help:asURLs"]!.AsArray()
                 .Select(node => node!.GetValue<string>())
                 .ToArray());
         CollectionAssert.AreEqual(
-            new[] { "https://example.test/subscribe" },
+            ExpectedVector4,
             parsed["header:List-Subscribe:asURLs"]!.AsArray()
                 .Select(node => node!.GetValue<string>())
                 .ToArray());
         Assert.IsNull(parsed["header:List-Owner:asURLs"]);
         CollectionAssert.AreEqual(
-            new[] { "https://example.test/first" },
+            ExpectedVector5,
             parsed["header:List-Archive:asURLs"]!.AsArray()
                 .Select(node => node!.GetValue<string>())
                 .ToArray());
@@ -1401,13 +1434,14 @@ public sealed class JmapProtocolTests
     [TestMethod]
     public async Task EmailParsedDatesUseRfc5322Syntax()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var raw = Encoding.ASCII.GetBytes(
             "From: sender@example.net\r\n"
             + $"To: {fixture.User.Username}\r\n"
             + "Date: 2026-01-02T03:04:05Z\r\n"
             + "Resent-Date: Fri, 2 Jan 2026 03:04:05 +0000\r\n\r\nbody");
-        var blobId = await fixture.StoreBlobAsync(raw);
+        var blobId = await fixture.StoreBlobAsync(raw).ConfigureAwait(false);
 
         var response = await fixture.InvokeAsync($$$"""
         {
@@ -1418,18 +1452,19 @@ public sealed class JmapProtocolTests
             "properties": ["sentAt", "header:Resent-Date:asDate"]
           }, "p1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var parsed = Arguments(response)["parsed"]![blobId]!;
         Assert.IsNull(parsed["sentAt"]);
         Assert.AreEqual(
             "2026-01-02T03:04:05Z",
-            parsed["header:Resent-Date:asDate"]!.GetValue<string>());
+            parsed["header:Resent-Date:asDate"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task EmailCreationPreservesParsedDateOffsets()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var create = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
@@ -1444,7 +1479,7 @@ public sealed class JmapProtocolTests
             }}
           }, "s1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var emailId = Arguments(create)["created"]!["dated"]!["id"]!.GetValue<string>();
         var response = await fixture.InvokeAsync($$$"""
         {
@@ -1455,21 +1490,22 @@ public sealed class JmapProtocolTests
             "properties":["sentAt", "header:Resent-Date:asDate"]
           }, "g1"]]
         }
-        """);
+        """).ConfigureAwait(false);
 
         var email = Arguments(response)["list"]![0]!;
         Assert.AreEqual(
             "2026-01-02T03:04:05+02:30",
-            email["sentAt"]!.GetValue<string>());
+            email["sentAt"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(
             "2026-01-03T04:05:06-05:00",
-            email["header:Resent-Date:asDate"]!.GetValue<string>());
+            email["header:Resent-Date:asDate"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task EmailCreationPreservesRawHeadersAndRejectsHeaderInjection()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var response = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
@@ -1494,12 +1530,12 @@ public sealed class JmapProtocolTests
             }
           }, "s1"]]
         }
-        """);
+        """).ConfigureAwait(false);
 
         var rawId = Arguments(response)["created"]!["raw"]!["id"]!.GetValue<string>();
         Assert.AreEqual(
             "invalidProperties",
-            Arguments(response)["notCreated"]!["injection"]!["type"]!.GetValue<string>());
+            Arguments(response)["notCreated"]!["injection"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
 
         var get = await fixture.InvokeAsync($$$"""
         {
@@ -1509,11 +1545,11 @@ public sealed class JmapProtocolTests
             "properties":["header:X-Raw", "header:X-Raw:all"]
           }, "g1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var email = Arguments(get)["list"]![0]!;
-        Assert.AreEqual("second", email["header:X-Raw"]!.GetValue<string>());
+        Assert.AreEqual("second", email["header:X-Raw"]!.GetValue<string>(), StringComparer.Ordinal);
         CollectionAssert.AreEqual(
-            new[] { " \t=?UTF-8?Q?already_encoded?=\r\n\tcontinued", "second" },
+            ExpectedVector6,
             email["header:X-Raw:all"]!.AsArray()
                 .Select(node => node!.GetValue<string>())
                 .ToArray());
@@ -1522,7 +1558,8 @@ public sealed class JmapProtocolTests
     [TestMethod]
     public async Task EmailCreationDoesNotDuplicateGenericConvenienceHeaders()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var create = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
@@ -1539,7 +1576,7 @@ public sealed class JmapProtocolTests
             }}
           }, "s1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var emailId = Arguments(create)["created"]!["generic"]!["id"]!.GetValue<string>();
 
         var get = await fixture.InvokeAsync($$$"""
@@ -1555,7 +1592,7 @@ public sealed class JmapProtocolTests
             ]
           }, "g1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var email = Arguments(get)["list"]![0]!;
         Assert.AreEqual(1, email["header:From:asAddresses:all"]!.AsArray().Count);
         Assert.AreEqual(1, email["header:Subject:asText:all"]!.AsArray().Count);
@@ -1563,21 +1600,22 @@ public sealed class JmapProtocolTests
         Assert.AreEqual(1, email["header:Message-ID:asMessageIds:all"]!.AsArray().Count);
         Assert.AreEqual(
             "author@example.test",
-            email["header:From:asAddresses:all"]![0]![0]!["email"]!.GetValue<string>());
+            email["header:From:asAddresses:all"]![0]![0]!["email"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(
             "generic@example.test",
-            email["header:Message-ID:asMessageIds:all"]![0]![0]!.GetValue<string>());
+            email["header:Message-ID:asMessageIds:all"]![0]![0]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task DeletingLegacyEmailWithNullThreadDestroysItsFallbackThread()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var create = await CreateTextEmailAsync(
             fixture,
             "legacyThread",
             "Legacy thread",
-            "body");
+            "body").ConfigureAwait(false);
         var emailId = Arguments(create)["created"]!["legacyThread"]!["id"]!
             .GetValue<string>();
         Assert.IsTrue(JmapId.TryParseEmail(emailId, out var databaseId));
@@ -1587,14 +1625,14 @@ public sealed class JmapProtocolTests
         using (var scope = fixture.Services.CreateScope())
         {
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-            var email = await database.Emails.SingleAsync(item => item.Id == databaseId);
+            var email = await database.Emails.SingleAsync(item => item.Id == databaseId).ConfigureAwait(false);
             email.ThreadObjectId = null;
-            await database.SaveChangesAsync();
+            await database.SaveChangesAsync().ConfigureAwait(false);
             beforeDelete = await scope.ServiceProvider.GetRequiredService<JmapStateService>()
-                .GetStateAsync(fixture.InboxId, JmapConstants.ThreadDataType);
+                .GetStateAsync(fixture.InboxId, JmapConstants.ThreadDataType).ConfigureAwait(false);
 
             database.Emails.Remove(email);
-            await database.SaveChangesAsync();
+            await database.SaveChangesAsync().ConfigureAwait(false);
         }
 
         var changes = await fixture.InvokeAsync($$$"""
@@ -1605,7 +1643,7 @@ public sealed class JmapProtocolTests
             "sinceState":"{{{beforeDelete}}}"
           },"c1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         CollectionAssert.AreEqual(
             new[] { fallbackThreadId },
             Arguments(changes)["destroyed"]!.AsArray()
@@ -1614,22 +1652,24 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The EmailLifecycleProjectsMimeAndPreservesImapState scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task EmailLifecycleProjectsMimeAndPreservesImapState()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
-        var oldState = await GetStateAsync(fixture, JmapConstants.EmailDataType);
-        var create = await CreateTextEmailAsync(fixture, "draft1", "JMAP lifecycle", "Hello from JMAP");
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
+        var oldState = await GetStateAsync(fixture, JmapConstants.EmailDataType).ConfigureAwait(false);
+        var create = await CreateTextEmailAsync(fixture, "draft1", "JMAP lifecycle", "Hello from JMAP").ConfigureAwait(false);
         var emailId = Arguments(create)["created"]!["draft1"]!["id"]!.GetValue<string>();
         var threadId = Arguments(create)["created"]!["draft1"]!["threadId"]!.GetValue<string>();
 
         using (var scope = fixture.Services.CreateScope())
         {
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-            var stored = await database.Emails.Include(email => email.Folder).SingleAsync();
+            var stored = await database.Emails.Include(email => email.Folder).SingleAsync().ConfigureAwait(false);
             Assert.AreEqual(1, stored.Uid);
             Assert.IsTrue(stored.ModSeq > 0);
             Assert.AreEqual(fixture.InboxFolderId, stored.FolderId);
-            StringAssert.Contains(stored.RawHeaders!, "Subject: JMAP lifecycle");
+            StringAssert.Contains(stored.RawHeaders!, "Subject: JMAP lifecycle", StringComparison.Ordinal);
         }
 
         var get = await fixture.InvokeAsync($$$"""
@@ -1644,11 +1684,11 @@ public sealed class JmapProtocolTests
             "maxBodyValueBytes":5
           }, "g1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var email = Arguments(get)["list"]![0]!.AsObject();
-        Assert.AreEqual("JMAP lifecycle", email["subject"]!.GetValue<string>());
-        Assert.AreEqual("JMAP lifecycle", email["header:Subject:asText"]!.GetValue<string>());
-        Assert.AreEqual("Hello", email["bodyValues"]!["1"]!["value"]!.GetValue<string>());
+        Assert.AreEqual("JMAP lifecycle", email["subject"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("JMAP lifecycle", email["header:Subject:asText"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("Hello", email["bodyValues"]!["1"]!["value"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.IsTrue(email["bodyValues"]!["1"]!["isTruncated"]!.GetValue<bool>());
         Assert.IsTrue(email["keywords"]!["$draft"]!.GetValue<bool>());
 
@@ -1662,8 +1702,8 @@ public sealed class JmapProtocolTests
             "calculateTotal":true
           }, "q1"]]
         }
-        """);
-        Assert.AreEqual(emailId, Arguments(query)["ids"]![0]!.GetValue<string>());
+        """).ConfigureAwait(false);
+        Assert.AreEqual(emailId, Arguments(query)["ids"]![0]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(1, Arguments(query)["total"]!.GetValue<int>());
 
         var updateObject = (JsonObject)email.DeepClone();
@@ -1680,7 +1720,7 @@ public sealed class JmapProtocolTests
                     ["update"] = new JsonObject { [emailId] = updateObject },
                 },
                 "s2")),
-        });
+        }).ConfigureAwait(false);
         Assert.IsTrue(Arguments(update)["updated"]!.AsObject().ContainsKey(emailId));
         var updatedState = Arguments(update)["newState"]!.GetValue<string>();
 
@@ -1697,19 +1737,19 @@ public sealed class JmapProtocolTests
                     ["update"] = new JsonObject { [emailId] = changedSubject },
                 },
                 "s2b")),
-        });
+        }).ConfigureAwait(false);
         Assert.AreEqual(
             "invalidProperties",
-            Arguments(invalidUpdate)["notUpdated"]![emailId]!["type"]!.GetValue<string>());
+            Arguments(invalidUpdate)["notUpdated"]![emailId]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
 
         using (var scope = fixture.Services.CreateScope())
         {
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-            var stored = await database.Emails.SingleAsync();
+            var stored = await database.Emails.SingleAsync().ConfigureAwait(false);
             Assert.AreEqual(fixture.DraftsFolderId, stored.FolderId);
             Assert.AreEqual(1, stored.Uid);
             Assert.IsTrue(stored.IsRead);
-            Assert.AreEqual(1, await database.ExpungedUids.CountAsync());
+            Assert.AreEqual(1, await database.ExpungedUids.CountAsync().ConfigureAwait(false));
         }
 
         var changes = await fixture.InvokeAsync($$$"""
@@ -1721,11 +1761,11 @@ public sealed class JmapProtocolTests
             "accountId":"{{{fixture.AccountId}}}", "ids":["{{{threadId}}}"]
           }, "t1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         CollectionAssert.Contains(
             Arguments(changes)["created"]!.AsArray().Select(node => node!.GetValue<string>()).ToArray(),
             emailId);
-        Assert.AreEqual(emailId, Arguments(changes, 1)["list"]![0]!["emailIds"]![0]!.GetValue<string>());
+        Assert.AreEqual(emailId, Arguments(changes, 1)["list"]![0]!["emailIds"]![0]!.GetValue<string>(), StringComparer.Ordinal);
 
         var destroy = await fixture.InvokeAsync($$$"""
         {
@@ -1736,15 +1776,17 @@ public sealed class JmapProtocolTests
             "accountId":"{{{fixture.AccountId}}}", "sinceState":"{{{updatedState}}}"
           }, "ch2"]]
         }
-        """);
-        Assert.AreEqual(emailId, Arguments(destroy)["destroyed"]![0]!.GetValue<string>());
-        Assert.AreEqual(emailId, Arguments(destroy, 1)["destroyed"]![0]!.GetValue<string>());
+        """).ConfigureAwait(false);
+        Assert.AreEqual(emailId, Arguments(destroy)["destroyed"]![0]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual(emailId, Arguments(destroy, 1)["destroyed"]![0]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The EmailQueryChangesReturnsOrderedCreateUpdateAndDestroyDeltas scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task EmailQueryChangesReturnsOrderedCreateUpdateAndDestroyDeltas()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         const string sort = "\"sort\":[{\"property\":\"hasKeyword\","
             + "\"keyword\":\"$flagged\",\"isAscending\":true}]";
         var initial = await fixture.InvokeAsync($$$"""
@@ -1754,7 +1796,7 @@ public sealed class JmapProtocolTests
             "accountId":"{{{fixture.AccountId}}}",{{{sort}}}
           },"q1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         Assert.IsTrue(Arguments(initial)["canCalculateChanges"]!.GetValue<bool>());
         var initialState = Arguments(initial)["queryState"]!.GetValue<string>();
 
@@ -1762,7 +1804,7 @@ public sealed class JmapProtocolTests
             fixture,
             "queryDelta",
             "Query delta",
-            "body");
+            "body").ConfigureAwait(false);
         var emailId = Arguments(create)["created"]!["queryDelta"]!["id"]!.GetValue<string>();
         var createdChanges = await fixture.InvokeAsync($$$"""
         {
@@ -1772,10 +1814,10 @@ public sealed class JmapProtocolTests
             "sinceQueryState":"{{{initialState}}}","calculateTotal":true
           },"qc1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var createdArguments = Arguments(createdChanges);
         Assert.AreEqual(0, createdArguments["removed"]!.AsArray().Count);
-        Assert.AreEqual(emailId, createdArguments["added"]![0]!["id"]!.GetValue<string>());
+        Assert.AreEqual(emailId, createdArguments["added"]![0]!["id"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(0, createdArguments["added"]![0]!["index"]!.GetValue<int>());
         Assert.AreEqual(1, createdArguments["total"]!.GetValue<int>());
         var createdState = createdArguments["newQueryState"]!.GetValue<string>();
@@ -1788,7 +1830,7 @@ public sealed class JmapProtocolTests
             "update":{"{{{emailId}}}":{"keywords/$flagged":true}}
           },"s1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var limited = await fixture.InvokeAsync($$$"""
         {
           "using":["{{{Core}}}","{{{Mail}}}"],
@@ -1797,8 +1839,8 @@ public sealed class JmapProtocolTests
             "sinceQueryState":"{{{createdState}}}","maxChanges":1
           },"qc2"]]
         }
-        """);
-        Assert.AreEqual("tooManyChanges", Arguments(limited)["type"]!.GetValue<string>());
+        """).ConfigureAwait(false);
+        Assert.AreEqual("tooManyChanges", Arguments(limited)["type"]!.GetValue<string>(), StringComparer.Ordinal);
 
         var updatedChanges = await fixture.InvokeAsync($$$"""
         {
@@ -1808,13 +1850,13 @@ public sealed class JmapProtocolTests
             "sinceQueryState":"{{{createdState}}}"
           },"qc3"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var updatedArguments = Arguments(updatedChanges);
         CollectionAssert.AreEqual(
             new[] { emailId },
             updatedArguments["removed"]!.AsArray()
                 .Select(node => node!.GetValue<string>()).ToArray());
-        Assert.AreEqual(emailId, updatedArguments["added"]![0]!["id"]!.GetValue<string>());
+        Assert.AreEqual(emailId, updatedArguments["added"]![0]!["id"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(0, updatedArguments["added"]![0]!["index"]!.GetValue<int>());
         var updatedState = updatedArguments["newQueryState"]!.GetValue<string>();
 
@@ -1825,7 +1867,7 @@ public sealed class JmapProtocolTests
             "accountId":"{{{fixture.AccountId}}}","destroy":["{{{emailId}}}"]
           },"s2"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var destroyedChanges = await fixture.InvokeAsync($$$"""
         {
           "using":["{{{Core}}}","{{{Mail}}}"],
@@ -1834,7 +1876,7 @@ public sealed class JmapProtocolTests
             "sinceQueryState":"{{{updatedState}}}"
           },"qc4"]]
         }
-        """);
+        """).ConfigureAwait(false);
         CollectionAssert.AreEqual(
             new[] { emailId },
             Arguments(destroyedChanges)["removed"]!.AsArray()
@@ -1843,11 +1885,13 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The EmailQueryChangesRecalculatesEveryEmailAffectedByThreadKeywords scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task EmailQueryChangesRecalculatesEveryEmailAffectedByThreadKeywords()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
-        var first = await CreateTextEmailAsync(fixture, "first", "Thread first", "first");
-        var second = await CreateTextEmailAsync(fixture, "second", "Thread second", "second");
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
+        var first = await CreateTextEmailAsync(fixture, "first", "Thread first", "first").ConfigureAwait(false);
+        var second = await CreateTextEmailAsync(fixture, "second", "Thread second", "second").ConfigureAwait(false);
         var firstId = Arguments(first)["created"]!["first"]!["id"]!.GetValue<string>();
         var secondId = Arguments(second)["created"]!["second"]!["id"]!.GetValue<string>();
         Assert.IsTrue(JmapId.TryParseEmail(firstId, out var firstDatabaseId));
@@ -1857,11 +1901,11 @@ public sealed class JmapProtocolTests
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
             var emails = await database.Emails
                 .Where(email => email.Id == firstDatabaseId || email.Id == secondDatabaseId)
-                .ToListAsync();
+                .ToListAsync().ConfigureAwait(false);
             var threadId = Guid.CreateVersion7().ToString("N");
             foreach (var email in emails)
                 email.ThreadObjectId = threadId;
-            await database.SaveChangesAsync();
+            await database.SaveChangesAsync().ConfigureAwait(false);
         }
 
         var initial = await fixture.InvokeAsync($$$"""
@@ -1872,7 +1916,7 @@ public sealed class JmapProtocolTests
             "filter":{"someInThreadHaveKeyword":"$flagged"}
           },"q1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         Assert.AreEqual(0, Arguments(initial)["ids"]!.AsArray().Count);
         var initialState = Arguments(initial)["queryState"]!.GetValue<string>();
 
@@ -1884,7 +1928,7 @@ public sealed class JmapProtocolTests
             "update":{"{{{firstId}}}":{"keywords/$flagged":true}}
           },"s1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var changes = await fixture.InvokeAsync($$$"""
         {
           "using":["{{{Core}}}","{{{Mail}}}"],
@@ -1894,7 +1938,7 @@ public sealed class JmapProtocolTests
             "sinceQueryState":"{{{initialState}}}"
           },"qc1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var arguments = Arguments(changes);
         CollectionAssert.AreEquivalent(
             new[] { firstId, secondId },
@@ -1905,15 +1949,17 @@ public sealed class JmapProtocolTests
             arguments["added"]!.AsArray()
                 .Select(node => node!["id"]!.GetValue<string>()).ToArray());
         CollectionAssert.AreEqual(
-            new[] { 0, 1 },
+            ExpectedVector7,
             arguments["added"]!.AsArray()
                 .Select(node => node!["index"]!.GetValue<int>()).ToArray());
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The EmailSubmissionQueryChangesReturnsImmutableQueryDeltas scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task EmailSubmissionQueryChangesReturnsImmutableQueryDeltas()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var initial = await fixture.InvokeAsync($$$"""
         {
           "using":["{{{Core}}}","{{{Submission}}}"],
@@ -1922,7 +1968,7 @@ public sealed class JmapProtocolTests
             "sort":[{"property":"sentAt","isAscending":true}]
           },"q1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         Assert.IsTrue(Arguments(initial)["canCalculateChanges"]!.GetValue<bool>());
         var initialState = Arguments(initial)["queryState"]!.GetValue<string>();
 
@@ -1931,7 +1977,7 @@ public sealed class JmapProtocolTests
         using (var scope = fixture.Services.CreateScope())
         {
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-            database.JmapEmailSubmissions.Add(new JmapEmailSubmissionDB
+            await database.JmapEmailSubmissions.AddAsync(new JmapEmailSubmissionDB
             {
                 Id = submissionId,
                 SubmissionObjectId = submissionObjectId,
@@ -1943,8 +1989,8 @@ public sealed class JmapProtocolTests
                 EnvelopeSender = fixture.User.Username,
                 EnvelopeRecipients = ["recipient@example.net"],
                 SendAt = new DateTime(2026, 9, 20, 12, 0, 0, DateTimeKind.Utc),
-            });
-            await database.SaveChangesAsync();
+            }).ConfigureAwait(false);
+            await database.SaveChangesAsync().ConfigureAwait(false);
         }
 
         var limited = await fixture.InvokeAsync($$$"""
@@ -1956,8 +2002,8 @@ public sealed class JmapProtocolTests
             "sinceQueryState":"{{{initialState}}}","maxChanges":0
           },"qc1"]]
         }
-        """);
-        Assert.AreEqual("tooManyChanges", Arguments(limited)["type"]!.GetValue<string>());
+        """).ConfigureAwait(false);
+        Assert.AreEqual("tooManyChanges", Arguments(limited)["type"]!.GetValue<string>(), StringComparer.Ordinal);
 
         var createdChanges = await fixture.InvokeAsync($$$"""
         {
@@ -1968,10 +2014,10 @@ public sealed class JmapProtocolTests
             "sinceQueryState":"{{{initialState}}}","calculateTotal":true
           },"qc2"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var createdArguments = Arguments(createdChanges);
         Assert.AreEqual(0, createdArguments["removed"]!.AsArray().Count);
-        Assert.AreEqual(submissionObjectId, createdArguments["added"]![0]!["id"]!.GetValue<string>());
+        Assert.AreEqual(submissionObjectId, createdArguments["added"]![0]!["id"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(0, createdArguments["added"]![0]!["index"]!.GetValue<int>());
         Assert.AreEqual(1, createdArguments["total"]!.GetValue<int>());
         var createdState = createdArguments["newQueryState"]!.GetValue<string>();
@@ -1979,9 +2025,9 @@ public sealed class JmapProtocolTests
         using (var scope = fixture.Services.CreateScope())
         {
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-            var submission = await database.JmapEmailSubmissions.SingleAsync();
+            var submission = await database.JmapEmailSubmissions.SingleAsync().ConfigureAwait(false);
             submission.UpdatedAt = submission.UpdatedAt.AddSeconds(1);
-            await database.SaveChangesAsync();
+            await database.SaveChangesAsync().ConfigureAwait(false);
         }
         var unchangedQuery = await fixture.InvokeAsync($$$"""
         {
@@ -1992,11 +2038,11 @@ public sealed class JmapProtocolTests
             "sinceQueryState":"{{{createdState}}}"
           },"qc3"]]
         }
-        """);
+        """).ConfigureAwait(false);
         Assert.AreEqual(0, Arguments(unchangedQuery)["removed"]!.AsArray().Count);
         Assert.AreEqual(0, Arguments(unchangedQuery)["added"]!.AsArray().Count);
         var updatedState = Arguments(unchangedQuery)["newQueryState"]!.GetValue<string>();
-        Assert.AreNotEqual(createdState, updatedState);
+        Assert.AreNotEqual(createdState, updatedState, StringComparer.Ordinal);
 
         await fixture.InvokeAsync($$$"""
         {
@@ -2005,7 +2051,7 @@ public sealed class JmapProtocolTests
             "accountId":"{{{fixture.AccountId}}}","destroy":["{{{submissionObjectId}}}"]
           },"s1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var destroyedChanges = await fixture.InvokeAsync($$$"""
         {
           "using":["{{{Core}}}","{{{Submission}}}"],
@@ -2015,7 +2061,7 @@ public sealed class JmapProtocolTests
             "sinceQueryState":"{{{updatedState}}}"
           },"qc4"]]
         }
-        """);
+        """).ConfigureAwait(false);
         CollectionAssert.AreEqual(
             new[] { submissionObjectId },
             Arguments(destroyedChanges)["removed"]!.AsArray()
@@ -2024,10 +2070,12 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The EmailCreationRejectsAmbiguousHeadersAndInvalidBodyParts scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task EmailCreationRejectsAmbiguousHeadersAndInvalidBodyParts()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
-        var existingBlob = await fixture.StoreBlobAsync([1, 2, 3], "application/octet-stream");
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
+        var existingBlob = await fixture.StoreBlobAsync([1, 2, 3], "application/octet-stream").ConfigureAwait(false);
         var missingOne = JmapId.UploadedBlob(Guid.CreateVersion7());
         var missingTwo = JmapId.UploadedBlob(Guid.CreateVersion7());
         var response = await fixture.InvokeAsync($$$"""
@@ -2151,29 +2199,29 @@ public sealed class JmapProtocolTests
             }
           }, "s1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var failures = Arguments(response)["notCreated"]!.AsObject();
-        Assert.AreEqual("invalidProperties", failures["wrongForm"]!["type"]!.GetValue<string>());
-        Assert.AreEqual("invalidProperties", failures["duplicateRoot"]!["type"]!.GetValue<string>());
-        Assert.AreEqual("invalidProperties", failures["partSize"]!["type"]!.GetValue<string>());
-        Assert.AreEqual("invalidProperties", failures["partCharsetNull"]!["type"]!.GetValue<string>());
-        Assert.AreEqual("invalidProperties", failures["emptyTextBody"]!["type"]!.GetValue<string>());
-        Assert.AreEqual("invalidProperties", failures["nullTextBody"]!["type"]!.GetValue<string>());
-        Assert.AreEqual("invalidProperties", failures["invalidBodyValue"]!["type"]!.GetValue<string>());
-        Assert.AreEqual("invalidProperties", failures["nonTextCharset"]!["type"]!.GetValue<string>());
-        Assert.AreEqual("invalidProperties", failures["invalidBlobSize"]!["type"]!.GetValue<string>());
-        Assert.AreEqual("invalidProperties", failures["malformedBlobId"]!["type"]!.GetValue<string>());
+        Assert.AreEqual("invalidProperties", failures["wrongForm"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("invalidProperties", failures["duplicateRoot"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("invalidProperties", failures["partSize"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("invalidProperties", failures["partCharsetNull"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("invalidProperties", failures["emptyTextBody"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("invalidProperties", failures["nullTextBody"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("invalidProperties", failures["invalidBodyValue"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("invalidProperties", failures["nonTextCharset"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("invalidProperties", failures["invalidBlobSize"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("invalidProperties", failures["malformedBlobId"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
         CollectionAssert.Contains(
             failures["malformedBlobId"]!["properties"]!.AsArray()
                 .Select(node => node!.GetValue<string>()).ToArray(),
             "blobId");
-        Assert.AreEqual("invalidProperties", failures["invalidMessageId"]!["type"]!.GetValue<string>());
-        Assert.AreEqual("invalidProperties", failures["invalidParsedHeader"]!["type"]!.GetValue<string>());
-        Assert.AreEqual("invalidProperties", failures["missingGroupedAddresses"]!["type"]!.GetValue<string>());
-        Assert.AreEqual("invalidProperties", failures["nullGroupedAddresses"]!["type"]!.GetValue<string>());
-        Assert.AreEqual("invalidProperties", failures["duplicateNullPartHeader"]!["type"]!.GetValue<string>());
-        Assert.AreEqual("invalidProperties", failures["duplicatePartId"]!["type"]!.GetValue<string>());
-        Assert.AreEqual("blobNotFound", failures["allMissingBlobs"]!["type"]!.GetValue<string>());
+        Assert.AreEqual("invalidProperties", failures["invalidMessageId"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("invalidProperties", failures["invalidParsedHeader"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("invalidProperties", failures["missingGroupedAddresses"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("invalidProperties", failures["nullGroupedAddresses"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("invalidProperties", failures["duplicateNullPartHeader"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("invalidProperties", failures["duplicatePartId"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("blobNotFound", failures["allMissingBlobs"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
         CollectionAssert.AreEquivalent(
             new[] { missingOne, missingTwo },
             failures["allMissingBlobs"]!["notFound"]!.AsArray()
@@ -2184,7 +2232,8 @@ public sealed class JmapProtocolTests
     [TestMethod]
     public async Task EmailCreationPreservesMultipleInReplyToMessageIds()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var create = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
@@ -2198,7 +2247,7 @@ public sealed class JmapProtocolTests
             }}
           }, "s1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var emailId = Arguments(create)["created"]!["reply"]!["id"]!.GetValue<string>();
 
         var get = await fixture.InvokeAsync($$$"""
@@ -2210,7 +2259,7 @@ public sealed class JmapProtocolTests
             "properties":["inReplyTo", "header:In-Reply-To:asMessageIds"]
           }, "g1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var email = Arguments(get)["list"]![0]!;
         var expected = new[] { "first@example.test", "second@example.test" };
         CollectionAssert.AreEqual(
@@ -2226,7 +2275,8 @@ public sealed class JmapProtocolTests
     [TestMethod]
     public async Task EmailCreationPreservesMultipartNames()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var create = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
@@ -2243,7 +2293,7 @@ public sealed class JmapProtocolTests
             }}
           }, "s1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var emailId = Arguments(create)["created"]!["multipartName"]!["id"]!.GetValue<string>();
 
         var get = await fixture.InvokeAsync($$$"""
@@ -2256,17 +2306,19 @@ public sealed class JmapProtocolTests
             "bodyProperties":["name", "type", "subParts"]
           }, "g1"]]
         }
-        """);
+        """).ConfigureAwait(false);
 
         var bodyStructure = Arguments(get)["list"]![0]!["bodyStructure"]!;
-        Assert.AreEqual("related content", bodyStructure["name"]!.GetValue<string>());
-        Assert.AreEqual("multipart/related", bodyStructure["type"]!.GetValue<string>());
+        Assert.AreEqual("related content", bodyStructure["name"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("multipart/related", bodyStructure["type"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The EmailCreationDefersInvalidSenderAndMessageIdCardinalityUntilSubmission scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task EmailCreationDefersInvalidSenderAndMessageIdCardinalityUntilSubmission()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var create = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
@@ -2286,7 +2338,7 @@ public sealed class JmapProtocolTests
             }}
           }, "s1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var emailId = Arguments(create)["created"]!["draft"]!["id"]!.GetValue<string>();
 
         var get = await fixture.InvokeAsync($$$"""
@@ -2297,15 +2349,15 @@ public sealed class JmapProtocolTests
             "properties":["sender", "messageId"]
           }, "g1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var email = Arguments(get)["list"]![0]!;
         CollectionAssert.AreEqual(
-            new[] { "first@example.test", "second@example.test" },
+            ExpectedVector8,
             email["sender"]!.AsArray()
                 .Select(node => node!["email"]!.GetValue<string>())
                 .ToArray());
         CollectionAssert.AreEqual(
-            new[] { "first@example.test", "second@example.test" },
+            ExpectedVector8,
             email["messageId"]!.AsArray().Select(node => node!.GetValue<string>()).ToArray());
 
         var identities = await fixture.InvokeAsync($$$"""
@@ -2313,7 +2365,7 @@ public sealed class JmapProtocolTests
           "using": ["{{{Core}}}", "{{{Submission}}}"],
           "methodCalls": [["Identity/get", {"accountId":"{{{fixture.AccountId}}}"}, "i1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var identityId = Arguments(identities)["list"]![0]!["id"]!.GetValue<string>();
         var submission = await fixture.InvokeAsync($$$"""
         {
@@ -2327,18 +2379,19 @@ public sealed class JmapProtocolTests
             }}
           }, "e1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var error = Arguments(submission)["notCreated"]!["send"]!;
-        Assert.AreEqual("invalidEmail", error["type"]!.GetValue<string>());
+        Assert.AreEqual("invalidEmail", error["type"]!.GetValue<string>(), StringComparer.Ordinal);
         CollectionAssert.AreEquivalent(
-            new[] { "messageId", "sender" },
+            ExpectedVector9,
             error["properties"]!.AsArray().Select(node => node!.GetValue<string>()).ToArray());
     }
 
     [TestMethod]
     public async Task EmailCreationPreservesExplicitEmptyConvenienceHeaders()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var create = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
@@ -2353,7 +2406,7 @@ public sealed class JmapProtocolTests
             }}
           }, "s1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var emailId = Arguments(create)["created"]!["draft"]!["id"]!.GetValue<string>();
 
         var get = await fixture.InvokeAsync($$$"""
@@ -2364,7 +2417,7 @@ public sealed class JmapProtocolTests
             "properties":["headers"]
           }, "g1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var names = Arguments(get)["list"]![0]!["headers"]!.AsArray()
             .Select(node => node!["name"]!.GetValue<string>())
             .ToArray();
@@ -2382,9 +2435,11 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The MimeHeadersSupportPermittedParsedForms scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task MimeHeadersSupportPermittedParsedForms()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var create = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
@@ -2401,7 +2456,7 @@ public sealed class JmapProtocolTests
             }}
           }, "s1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var emailId = Arguments(create)["created"]!["mime"]!["id"]!.GetValue<string>();
 
         var get = await fixture.InvokeAsync($$$"""
@@ -2414,19 +2469,19 @@ public sealed class JmapProtocolTests
             "bodyProperties":["cid", "header:Content-ID:asMessageIds"]
           }, "g1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var email = Arguments(get)["list"]![0]!;
         StringAssert.StartsWith(
             email["header:Content-Type:asText"]!.GetValue<string>(),
-            "text/plain");
+            "text/plain", StringComparison.Ordinal);
         var headerNames = email["headers"]!.AsArray()
             .Select(header => header!["name"]!.GetValue<string>())
             .ToArray();
         CollectionAssert.Contains(headerNames, "Content-Type");
         CollectionAssert.Contains(headerNames, "Content-ID");
-        Assert.AreEqual("part@example.test", email["bodyStructure"]!["cid"]!.GetValue<string>());
+        Assert.AreEqual("part@example.test", email["bodyStructure"]!["cid"]!.GetValue<string>(), StringComparer.Ordinal);
         CollectionAssert.AreEqual(
-            new[] { "part@example.test" },
+            ExpectedVector10,
             email["bodyStructure"]!["header:Content-ID:asMessageIds"]!.AsArray()
                 .Select(node => node!.GetValue<string>())
                 .ToArray());
@@ -2439,7 +2494,7 @@ public sealed class JmapProtocolTests
             "filter":{"header":["Content-Type", "text/plain"]}
           }, "q1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         CollectionAssert.AreEqual(
             new[] { emailId },
             Arguments(query)["ids"]!.AsArray()
@@ -2448,9 +2503,11 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The EmailQueryUsesAllHeadersForTextAndLastProjectedHeaderForSort scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task EmailQueryUsesAllHeadersForTextAndLastProjectedHeaderForSort()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var duplicateHeaders = Encoding.ASCII.GetBytes(
             "From: Zulu First <zulu-first@example.test>\r\n"
             + "From: Adam Last <adam-late@example.test>\r\n"
@@ -2469,8 +2526,8 @@ public sealed class JmapProtocolTests
             + "Date: Sun, 20 Sep 2026 11:00:00 +0000\r\n"
             + "Message-ID: <middle-query@example.test>\r\n"
             + "Content-Type: text/plain; charset=us-ascii\r\n\r\nbody");
-        var duplicateBlobId = await fixture.StoreBlobAsync(duplicateHeaders);
-        var middleBlobId = await fixture.StoreBlobAsync(middleHeaders);
+        var duplicateBlobId = await fixture.StoreBlobAsync(duplicateHeaders).ConfigureAwait(false);
+        var middleBlobId = await fixture.StoreBlobAsync(middleHeaders).ConfigureAwait(false);
 
         var import = await fixture.InvokeAsync($$$"""
         {
@@ -2485,7 +2542,7 @@ public sealed class JmapProtocolTests
             }
           }, "i1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var duplicateId = Arguments(import)["created"]!["duplicate"]!["id"]!.GetValue<string>();
         var middleId = Arguments(import)["created"]!["middle"]!["id"]!.GetValue<string>();
 
@@ -2517,13 +2574,13 @@ public sealed class JmapProtocolTests
             }, "q6"]
           ]
         }
-        """);
+        """).ConfigureAwait(false);
 
         var projected = Arguments(response)["list"]![0]!;
-        Assert.AreEqual("Adam Last", projected["from"]![0]!["name"]!.GetValue<string>());
-        Assert.AreEqual("Adam Last", projected["to"]![0]!["name"]!.GetValue<string>());
-        Assert.AreEqual("Alpha-last subject", projected["subject"]!.GetValue<string>());
-        Assert.AreEqual("2026-09-20T10:00:00Z", projected["sentAt"]!.GetValue<string>());
+        Assert.AreEqual("Adam Last", projected["from"]![0]!["name"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("Adam Last", projected["to"]![0]!["name"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("Alpha-last subject", projected["subject"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("2026-09-20T10:00:00Z", projected["sentAt"]!.GetValue<string>(), StringComparer.Ordinal);
         CollectionAssert.AreEqual(new[] { duplicateId }, QueryIds(response, 1));
         CollectionAssert.AreEqual(new[] { duplicateId }, QueryIds(response, 2));
         for (var index = 3; index <= 6; index++)
@@ -2536,9 +2593,11 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The EmailQueryUsesTheProjectedSizeForLegacyRows scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task EmailQueryUsesTheProjectedSizeForLegacyRows()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var legacyId = Guid.CreateVersion7();
         var currentId = Guid.CreateVersion7();
         var legacyRaw = Encoding.ASCII.GetBytes(
@@ -2554,7 +2613,7 @@ public sealed class JmapProtocolTests
         using (var scope = fixture.Services.CreateScope())
         {
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-            database.Emails.AddRange(
+            await database.Emails.AddRangeAsync(
                 new EmailDB
                 {
                     Id = legacyId,
@@ -2582,8 +2641,8 @@ public sealed class JmapProtocolTests
                     FolderId = fixture.InboxFolderId,
                     Uid = 201,
                     ThreadObjectId = Guid.CreateVersion7().ToString("N"),
-                });
-            await database.SaveChangesAsync();
+                }).ConfigureAwait(false);
+            await database.SaveChangesAsync().ConfigureAwait(false);
         }
 
         var response = await fixture.InvokeAsync($$$"""
@@ -2605,7 +2664,7 @@ public sealed class JmapProtocolTests
             }, "q2"]
           ]
         }
-        """);
+        """).ConfigureAwait(false);
 
         Assert.AreEqual(
             legacyRaw.LongLength,
@@ -2625,7 +2684,8 @@ public sealed class JmapProtocolTests
     [TestMethod]
     public async Task UploadBlobCanBeParsedAndImported()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var raw = Encoding.UTF8.GetBytes(
             "From: Sender <sender@example.net>\r\n"
             + "To: user@mk8n.com\r\n"
@@ -2633,7 +2693,7 @@ public sealed class JmapProtocolTests
             + "Message-ID: <import-1@example.net>\r\n"
             + "Date: Sat, 20 Sep 2026 10:00:00 +0000\r\n"
             + "Content-Type: text/plain; charset=utf-8\r\n\r\nImported body");
-        var blobId = await fixture.StoreBlobAsync(raw);
+        var blobId = await fixture.StoreBlobAsync(raw).ConfigureAwait(false);
 
         var parse = await fixture.InvokeAsync($$$"""
         {
@@ -2649,13 +2709,13 @@ public sealed class JmapProtocolTests
               "keywords":{"$seen":true} } }
           }, "i1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         Assert.AreEqual(
             "Imported message",
-            Arguments(parse)["parsed"]![blobId]!["subject"]!.GetValue<string>());
+            Arguments(parse)["parsed"]![blobId]!["subject"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(
             "Imported body",
-            Arguments(parse)["parsed"]![blobId]!["bodyValues"]!["1"]!["value"]!.GetValue<string>());
+            Arguments(parse)["parsed"]![blobId]!["bodyValues"]!["1"]!["value"]!.GetValue<string>(), StringComparer.Ordinal);
         var importedId = Arguments(parse, 1)["created"]!["imp"]!["id"]!.GetValue<string>();
 
         var get = await fixture.InvokeAsync($$$"""
@@ -2666,21 +2726,22 @@ public sealed class JmapProtocolTests
             "properties":["id", "subject", "keywords"]
           }, "g1"]]
         }
-        """);
-        Assert.AreEqual("Imported message", Arguments(get)["list"]![0]!["subject"]!.GetValue<string>());
+        """).ConfigureAwait(false);
+        Assert.AreEqual("Imported message", Arguments(get)["list"]![0]!["subject"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.IsTrue(Arguments(get)["list"]![0]!["keywords"]!["$seen"]!.GetValue<bool>());
     }
 
     [TestMethod]
     public async Task ParsedBodyValuesOnlyNormalizeCrLfPairs()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var raw = Encoding.ASCII.GetBytes(
             "From: sender@example.net\r\n"
             + $"To: {fixture.User.Username}\r\n"
             + "Content-Type: text/plain; charset=us-ascii\r\n\r\n"
             + "first\rsecond\r\nthird\nfourth");
-        var blobId = await fixture.StoreBlobAsync(raw);
+        var blobId = await fixture.StoreBlobAsync(raw).ConfigureAwait(false);
 
         var response = await fixture.InvokeAsync($$$"""
         {
@@ -2692,24 +2753,25 @@ public sealed class JmapProtocolTests
             "fetchAllBodyValues":true
           }, "p1"]]
         }
-        """);
+        """).ConfigureAwait(false);
 
         Assert.AreEqual(
             "first\rsecond\nthird\nfourth",
             Arguments(response)["parsed"]![blobId]!["bodyValues"]!["1"]!["value"]!
-                .GetValue<string>());
+                .GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task ImportDefaultsReceivedAtFromMostRecentReceivedHeader()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var raw = Encoding.ASCII.GetBytes(
             "Received: from final.example by mx.example; Fri, 2 Jan 2026 03:04:05 EST\r\n"
             + "Received: from origin.example by final.example; Fri, 2 Jan 2026 12:00:00 +0000\r\n"
             + "From: sender@example.net\r\n"
             + $"To: {fixture.User.Username}\r\n\r\nbody");
-        var blobId = await fixture.StoreBlobAsync(raw);
+        var blobId = await fixture.StoreBlobAsync(raw).ConfigureAwait(false);
 
         var import = await fixture.InvokeAsync($$$"""
         {
@@ -2724,7 +2786,7 @@ public sealed class JmapProtocolTests
             }
           }, "i1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var emailId = Arguments(import)["created"]!["received"]!["id"]!.GetValue<string>();
         var get = await fixture.InvokeAsync($$$"""
         {
@@ -2734,16 +2796,18 @@ public sealed class JmapProtocolTests
             "properties":["receivedAt"]
           }, "g1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         Assert.AreEqual(
             "2026-01-02T08:04:05Z",
-            Arguments(get)["list"]![0]!["receivedAt"]!.GetValue<string>());
+            Arguments(get)["list"]![0]!["receivedAt"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The HtmlSearchAndPreviewIgnoreNonRenderedContent scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task HtmlSearchAndPreviewIgnoreNonRenderedContent()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var raw = Encoding.UTF8.GetBytes(
             $"From: sender@example.net\r\nTo: {fixture.User.Username}\r\n"
             + "Date: Sun, 20 Sep 2026 10:00:00 +0000\r\n"
@@ -2752,7 +2816,7 @@ public sealed class JmapProtocolTests
             + "<style>.private-style-token { display: none }</style>"
             + "<script>private-script-token</script>"
             + "<p>Visible &amp; searchable</p></body></html>");
-        var blobId = await fixture.StoreBlobAsync(raw);
+        var blobId = await fixture.StoreBlobAsync(raw).ConfigureAwait(false);
         var import = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
@@ -2762,7 +2826,7 @@ public sealed class JmapProtocolTests
               "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true} } }
           }, "i1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var emailId = Arguments(import)["created"]!["html"]!["id"]!.GetValue<string>();
 
         var response = await fixture.InvokeAsync($$$"""
@@ -2795,23 +2859,24 @@ public sealed class JmapProtocolTests
             }, "ss1"]
           ]
         }
-        """);
+        """).ConfigureAwait(false);
 
         Assert.AreEqual(0, Arguments(response)["total"]!.GetValue<int>());
         Assert.AreEqual(1, Arguments(response, 1)["total"]!.GetValue<int>());
-        Assert.AreEqual(emailId, Arguments(response, 1)["ids"]![0]!.GetValue<string>());
+        Assert.AreEqual(emailId, Arguments(response, 1)["ids"]![0]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(
             "Visible & searchable",
-            Arguments(response, 2)["list"]![0]!["preview"]!.GetValue<string>());
+            Arguments(response, 2)["list"]![0]!["preview"]!.GetValue<string>(), StringComparer.Ordinal);
         var snippet = Arguments(response, 3)["list"]![0]!["preview"]!.GetValue<string>();
-        StringAssert.Contains(snippet, "Visible &amp; <mark>searchable</mark>");
+        StringAssert.Contains(snippet, "Visible &amp; <mark>searchable</mark>", StringComparison.Ordinal);
         Assert.IsFalse(snippet.Contains("private-", StringComparison.Ordinal));
     }
 
     [TestMethod]
     public async Task SearchIncludesEveryInlineTextBodyPart()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var raw = Encoding.UTF8.GetBytes(
             $"From: sender@example.net\r\nTo: {fixture.User.Username}\r\n"
             + "Subject: Multipart search\r\n"
@@ -2819,7 +2884,7 @@ public sealed class JmapProtocolTests
             + "--parts\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nOpening text\r\n"
             + "--parts\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nClosing needle\r\n"
             + "--parts--\r\n");
-        var blobId = await fixture.StoreBlobAsync(raw);
+        var blobId = await fixture.StoreBlobAsync(raw).ConfigureAwait(false);
         var import = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
@@ -2829,7 +2894,7 @@ public sealed class JmapProtocolTests
               "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true} } }
           }, "i1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var emailId = Arguments(import)["created"]!["multipart"]!["id"]!.GetValue<string>();
 
         var response = await fixture.InvokeAsync($$$"""
@@ -2847,18 +2912,19 @@ public sealed class JmapProtocolTests
             }, "ss1"]
           ]
         }
-        """);
+        """).ConfigureAwait(false);
 
-        Assert.AreEqual(emailId, Arguments(response)["ids"]![0]!.GetValue<string>());
+        Assert.AreEqual(emailId, Arguments(response)["ids"]![0]!.GetValue<string>(), StringComparer.Ordinal);
         StringAssert.Contains(
             Arguments(response, 1)["list"]![0]!["preview"]!.GetValue<string>(),
-            "<mark>Closing</mark> <mark>needle</mark>");
+            "<mark>Closing</mark> <mark>needle</mark>", StringComparison.Ordinal);
     }
 
     [TestMethod]
     public async Task SearchIncludesTextInsideAttachedMessages()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var raw = Encoding.UTF8.GetBytes(
             $"From: sender@example.net\r\nTo: {fixture.User.Username}\r\n"
             + "Subject: Attached message search\r\n"
@@ -2872,7 +2938,7 @@ public sealed class JmapProtocolTests
             + "Content-Type: text/plain; charset=utf-8\r\n\r\n"
             + "Attached searchable needle\r\n"
             + "--parts--\r\n");
-        var blobId = await fixture.StoreBlobAsync(raw);
+        var blobId = await fixture.StoreBlobAsync(raw).ConfigureAwait(false);
         var import = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
@@ -2882,7 +2948,7 @@ public sealed class JmapProtocolTests
               "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true} } }
           }, "i1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var emailId = Arguments(import)["created"]!["attached"]!["id"]!.GetValue<string>();
 
         var response = await fixture.InvokeAsync($$$"""
@@ -2900,23 +2966,24 @@ public sealed class JmapProtocolTests
             }, "ss1"]
           ]
         }
-        """);
+        """).ConfigureAwait(false);
 
-        Assert.AreEqual(emailId, Arguments(response)["ids"]![0]!.GetValue<string>());
+        Assert.AreEqual(emailId, Arguments(response)["ids"]![0]!.GetValue<string>(), StringComparer.Ordinal);
         StringAssert.Contains(
             Arguments(response, 1)["list"]![0]!["preview"]!.GetValue<string>(),
-            "<mark>Attached</mark> <mark>searchable</mark> <mark>needle</mark>");
+            "<mark>Attached</mark> <mark>searchable</mark> <mark>needle</mark>", StringComparison.Ordinal);
     }
 
     [TestMethod]
     public async Task SearchSnippetDecodesEscapedPhraseTerms()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var raw = Encoding.UTF8.GetBytes(
             $"From: sender@example.net\r\nTo: {fixture.User.Username}\r\n"
             + "Subject: Escaped phrase\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n"
             + "A say \"hello\" \\ path phrase");
-        var blobId = await fixture.StoreBlobAsync(raw);
+        var blobId = await fixture.StoreBlobAsync(raw).ConfigureAwait(false);
         var import = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
@@ -2926,7 +2993,7 @@ public sealed class JmapProtocolTests
               "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true} } }
           }, "i1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var emailId = Arguments(import)["created"]!["escaped-phrase"]!["id"]!
             .GetValue<string>();
 
@@ -2945,24 +3012,25 @@ public sealed class JmapProtocolTests
             }, "ss1"]
           ]
         }
-        """);
+        """).ConfigureAwait(false);
 
-        Assert.AreEqual(emailId, Arguments(response)["ids"]![0]!.GetValue<string>());
+        Assert.AreEqual(emailId, Arguments(response)["ids"]![0]!.GetValue<string>(), StringComparer.Ordinal);
         StringAssert.Contains(
             Arguments(response, 1)["list"]![0]!["preview"]!.GetValue<string>(),
-            "<mark>say &quot;hello&quot; \\ path</mark>");
+            "<mark>say &quot;hello&quot; \\ path</mark>", StringComparison.Ordinal);
     }
 
     [TestMethod]
     public async Task SearchSnippetPreservesPlainTextHtmlEntities()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var raw = Encoding.UTF8.GetBytes(
             $"From: sender@example.net\r\nTo: {fixture.User.Username}\r\n"
             + "Date: Sun, 20 Sep 2026 10:00:00 +0000\r\n"
             + "Subject: Plain text entities\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n"
             + "Literal entity &lt;value&gt;");
-        var blobId = await fixture.StoreBlobAsync(raw);
+        var blobId = await fixture.StoreBlobAsync(raw).ConfigureAwait(false);
         var import = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
@@ -2972,7 +3040,7 @@ public sealed class JmapProtocolTests
               "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true} } }
           }, "i1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var emailId = Arguments(import)["created"]!["plain"]!["id"]!.GetValue<string>();
 
         var response = await fixture.InvokeAsync($$$"""
@@ -2984,22 +3052,23 @@ public sealed class JmapProtocolTests
             "emailIds":["{{{emailId}}}"]
           }, "ss1"]]
         }
-        """);
+        """).ConfigureAwait(false);
 
         Assert.AreEqual(
             "<mark>Literal</mark> entity &amp;lt;value&amp;gt;",
-            Arguments(response)["list"]![0]!["preview"]!.GetValue<string>());
+            Arguments(response)["list"]![0]!["preview"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task SearchSnippetDoesNotHighlightNegatedTerms()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var create = await CreateTextEmailAsync(
             fixture,
             "snippet-negation",
             "Allowed subject",
-            "wanted blocked");
+            "wanted blocked").ConfigureAwait(false);
         var emailId = Arguments(create)["created"]!["snippet-negation"]!["id"]!
             .GetValue<string>();
 
@@ -3015,22 +3084,23 @@ public sealed class JmapProtocolTests
             "emailIds":["{{{emailId}}}"]
           }, "ss1"]]
         }
-        """);
+        """).ConfigureAwait(false);
 
         var preview = Arguments(response)["list"]![0]!["preview"]!.GetValue<string>();
-        StringAssert.Contains(preview, "<mark>wanted</mark> blocked");
+        StringAssert.Contains(preview, "<mark>wanted</mark> blocked", StringComparison.Ordinal);
         Assert.IsFalse(preview.Contains("<mark>blocked</mark>", StringComparison.Ordinal));
     }
 
     [TestMethod]
     public async Task SearchSnippetUsesTheProjectedLastSubjectHeader()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var raw = Encoding.UTF8.GetBytes(
             $"From: sender@example.net\r\nTo: {fixture.User.Username}\r\n"
             + "Subject: Superseded subject\r\n"
             + "Subject: Final needle subject\r\n\r\nbody");
-        var blobId = await fixture.StoreBlobAsync(raw);
+        var blobId = await fixture.StoreBlobAsync(raw).ConfigureAwait(false);
         var import = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
@@ -3040,7 +3110,7 @@ public sealed class JmapProtocolTests
               "mailboxIds":{"{{{fixture.InboxMailboxId}}}":true} } }
           }, "i1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var emailId = Arguments(import)["created"]!["duplicate-subject"]!["id"]!
             .GetValue<string>();
 
@@ -3060,20 +3130,21 @@ public sealed class JmapProtocolTests
             }, "ss1"]
           ]
         }
-        """);
+        """).ConfigureAwait(false);
 
         Assert.AreEqual(
             "Final needle subject",
-            Arguments(response)["list"]![0]!["subject"]!.GetValue<string>());
+            Arguments(response)["list"]![0]!["subject"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(
             "Final <mark>needle</mark> subject",
-            Arguments(response, 1)["list"]![0]!["subject"]!.GetValue<string>());
+            Arguments(response, 1)["list"]![0]!["subject"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task SearchSnippetFilterErrorsRemainBehindAccountAuthorization()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var response = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
@@ -3088,10 +3159,10 @@ public sealed class JmapProtocolTests
             }, "unsupported"]
           ]
         }
-        """);
+        """).ConfigureAwait(false);
 
-        Assert.AreEqual("accountNotFound", Arguments(response)["type"]!.GetValue<string>());
-        Assert.AreEqual("unsupportedFilter", Arguments(response, 1)["type"]!.GetValue<string>());
+        Assert.AreEqual("accountNotFound", Arguments(response)["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("unsupportedFilter", Arguments(response, 1)["type"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -3106,15 +3177,15 @@ public sealed class JmapProtocolTests
         """)!.AsObject();
         Assert.IsTrue(GatewaySearchSnippetCodec.TryParse(arguments, 10, out var call, out var failure), failure);
         Assert.IsNotNull(call);
-        CollectionAssert.AreEqual(new[] { "needle" }, call.Command.Terms.ToArray());
+        CollectionAssert.AreEqual(ExpectedVector11, call.Command.Terms.ToArray());
         Assert.HasCount(1, call.Command.MessageIds);
         var result = new MailSearchSnippetResult(MailSearchSnippetStatus.Ok,
             [new(Guid.Parse("22222222-2222-2222-2222-222222222222"),
                 "<needle>", "near needle")]);
         var rendered = GatewaySearchSnippetCodec.Render(call, result).Data;
         Assert.AreEqual("&lt;<mark>needle</mark>&gt;",
-            rendered["list"]![0]!["subject"]!.GetValue<string>());
-        Assert.AreEqual("opaque", rendered["notFound"]![0]!.GetValue<string>());
+            rendered["list"]![0]!["subject"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("opaque", rendered["notFound"]![0]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.Throws<InvalidOperationException>(() => GatewaySearchSnippetCodec.Render(call,
             new(MailSearchSnippetStatus.Ok,
                 [new(Guid.Parse("33333333-3333-3333-3333-333333333333"), "needle", null)])));
@@ -3123,9 +3194,11 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The MimeProjectionPreservesNestedStructureAndResolvablePartBlobs scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task MimeProjectionPreservesNestedStructureAndResolvablePartBlobs()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var relatedRaw = Encoding.UTF8.GetBytes(
             "From: sender@example.net\r\n"
             + "To: user@mk8n.com\r\n"
@@ -3139,19 +3212,19 @@ public sealed class JmapProtocolTests
             + "--alternative--\r\n"
             + "--outer\r\nContent-Type: image/png\r\nContent-Disposition: inline\r\n\r\npng\r\n"
             + "--outer--\r\n");
-        var relatedBlobId = await fixture.StoreBlobAsync(relatedRaw);
+        var relatedBlobId = await fixture.StoreBlobAsync(relatedRaw).ConfigureAwait(false);
         var previewRaw = Encoding.UTF8.GetBytes(
             "From: sender@example.net\r\nTo: user@mk8n.com\r\n"
             + "Date: Sun, 20 Sep 2026 10:00:00 +0000\r\n"
             + "Content-Type: text/plain; charset=utf-8\r\n"
             + "Content-Transfer-Encoding: 8bit\r\n\r\n"
             + string.Concat(Enumerable.Repeat("😀", 300)));
-        var previewBlobId = await fixture.StoreBlobAsync(previewRaw);
+        var previewBlobId = await fixture.StoreBlobAsync(previewRaw).ConfigureAwait(false);
         var htmlPreviewBlobId = await fixture.StoreBlobAsync(Encoding.UTF8.GetBytes(
             "From: sender@example.net\r\nTo: user@mk8n.com\r\n"
             + "Date: Sun, 20 Sep 2026 10:00:00 +0000\r\n"
             + "Content-Type: text/html; charset=utf-8\r\n\r\n"
-            + "<p>Hello &amp; welcome</p>"));
+            + "<p>Hello &amp; welcome</p>")).ConfigureAwait(false);
 
         var projection = await fixture.InvokeAsync($$$"""
         {
@@ -3163,7 +3236,7 @@ public sealed class JmapProtocolTests
             "bodyProperties":["partId", "blobId", "type", "disposition"]
           }, "p1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var related = Arguments(projection)["parsed"]![relatedBlobId]!;
         var rootChildren = related["bodyStructure"]!["subParts"]!.AsArray();
         Assert.AreEqual(2, rootChildren.Count);
@@ -3179,7 +3252,7 @@ public sealed class JmapProtocolTests
         Assert.AreEqual(
             "Hello & welcome",
             Arguments(projection)["parsed"]![htmlPreviewBlobId]!["preview"]!
-                .GetValue<string>());
+                .GetValue<string>(), StringComparer.Ordinal);
 
         var attachedRaw = Encoding.UTF8.GetBytes(
             "From: sender@example.net\r\nTo: user@mk8n.com\r\n"
@@ -3192,7 +3265,7 @@ public sealed class JmapProtocolTests
             + "Date: Sun, 20 Sep 2026 11:00:00 +0000\r\n"
             + "Subject: Attached\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n"
             + "Nested payload\r\n--outer--\r\n");
-        var attachedBlobId = await fixture.StoreBlobAsync(attachedRaw);
+        var attachedBlobId = await fixture.StoreBlobAsync(attachedRaw).ConfigureAwait(false);
         var outerParse = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
@@ -3201,7 +3274,7 @@ public sealed class JmapProtocolTests
             "properties":["attachments"], "bodyProperties":["blobId", "type"]
           }, "p1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var messageBlobId = Arguments(outerParse)["parsed"]![attachedBlobId]!["attachments"]![0]!["blobId"]!
             .GetValue<string>();
         var innerParse = await fixture.InvokeAsync($$$"""
@@ -3212,23 +3285,24 @@ public sealed class JmapProtocolTests
             "properties":["textBody"], "bodyProperties":["blobId", "type"]
           }, "p2"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var nestedBodyBlobId = Arguments(innerParse)["parsed"]![messageBlobId]!["textBody"]![0]!["blobId"]!
             .GetValue<string>();
         using var scope = fixture.Services.CreateScope();
         var nestedBody = await scope.ServiceProvider.GetRequiredService<JmapBlobService>()
-            .GetAsync(fixture.InboxId, nestedBodyBlobId, CancellationToken.None);
+            .GetAsync(fixture.InboxId, nestedBodyBlobId, CancellationToken.None).ConfigureAwait(false);
         Assert.IsNotNull(nestedBody);
-        Assert.AreEqual("Nested payload", Encoding.UTF8.GetString(nestedBody.Content).Trim());
+        Assert.AreEqual("Nested payload", Encoding.UTF8.GetString(nestedBody.Content).Trim(), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task DeepMimePartBlobIdsRemainResolvableWithinTheIdLimit()
     {
         const int depth = 70;
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var uploadedBlobId = await fixture.StoreBlobAsync(
-            BuildDeepMultipartMessage(fixture.User.Username, depth, "Deep payload"));
+            BuildDeepMultipartMessage(fixture.User.Username, depth, "Deep payload")).ConfigureAwait(false);
 
         var response = await fixture.InvokeAsync($$$"""
         {
@@ -3240,7 +3314,7 @@ public sealed class JmapProtocolTests
             "bodyProperties":["partId", "blobId"]
           }, "p1"]]
         }
-        """);
+        """).ConfigureAwait(false);
 
         var part = Arguments(response)["parsed"]![uploadedBlobId]!["textBody"]![0]!;
         var partId = part["partId"]!.GetValue<string>();
@@ -3249,18 +3323,19 @@ public sealed class JmapProtocolTests
         Assert.IsTrue(JmapId.IsValidId(partBlobId));
         using var scope = fixture.Services.CreateScope();
         var content = await scope.ServiceProvider.GetRequiredService<JmapBlobService>()
-            .GetAsync(fixture.InboxId, partBlobId, CancellationToken.None);
+            .GetAsync(fixture.InboxId, partBlobId, CancellationToken.None).ConfigureAwait(false);
         Assert.IsNotNull(content);
-        Assert.AreEqual("Deep payload", Encoding.ASCII.GetString(content.Content).Trim());
+        Assert.AreEqual("Deep payload", Encoding.ASCII.GetString(content.Content).Trim(), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task VeryDeepMimePartBlobIdsAreBoundedAndResolvable()
     {
         const int depth = 85;
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var uploadedBlobId = await fixture.StoreBlobAsync(
-            BuildDeepMultipartMessage(fixture.User.Username, depth, "Very deep payload"));
+            BuildDeepMultipartMessage(fixture.User.Username, depth, "Very deep payload")).ConfigureAwait(false);
         var response = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
@@ -3271,7 +3346,7 @@ public sealed class JmapProtocolTests
             "bodyProperties":["partId", "blobId"]
           }, "p1"]]
         }
-        """);
+        """).ConfigureAwait(false);
 
         var part = Arguments(response)["parsed"]![uploadedBlobId]!["textBody"]![0]!;
         var partId = part["partId"]!.GetValue<string>();
@@ -3286,16 +3361,17 @@ public sealed class JmapProtocolTests
         Assert.AreEqual(0, nestingDepth);
         using var scope = fixture.Services.CreateScope();
         var content = await scope.ServiceProvider.GetRequiredService<JmapBlobService>()
-            .GetAsync(fixture.InboxId, partBlobId, CancellationToken.None);
+            .GetAsync(fixture.InboxId, partBlobId, CancellationToken.None).ConfigureAwait(false);
         Assert.IsNotNull(content);
-        Assert.AreEqual("Very deep payload", Encoding.ASCII.GetString(content.Content).Trim());
+        Assert.AreEqual("Very deep payload", Encoding.ASCII.GetString(content.Content).Trim(), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task HashedNestedMimePartBlobIdsPreserveTheirSourcePath()
     {
         const int depth = 85;
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var nested = BuildDeepMultipartMessage(
             fixture.User.Username,
             depth,
@@ -3308,7 +3384,7 @@ public sealed class JmapProtocolTests
             + "Content-Transfer-Encoding: base64\r\n\r\n"
             + Convert.ToBase64String(nested)
             + "\r\n");
-        var outerBlobId = await fixture.StoreBlobAsync(outer);
+        var outerBlobId = await fixture.StoreBlobAsync(outer).ConfigureAwait(false);
         var outerParse = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
@@ -3319,7 +3395,7 @@ public sealed class JmapProtocolTests
             "bodyProperties":["blobId"]
           }, "p1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var messageBlobId = Arguments(outerParse)["parsed"]![outerBlobId]!["bodyStructure"]!["blobId"]!
             .GetValue<string>();
         var innerParse = await fixture.InvokeAsync($$$"""
@@ -3332,7 +3408,7 @@ public sealed class JmapProtocolTests
             "bodyProperties":["blobId"]
           }, "p2"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var nestedBodyBlobId = Arguments(innerParse)["parsed"]![messageBlobId]!["textBody"]![0]!["blobId"]!
             .GetValue<string>();
         Assert.IsTrue(JmapId.IsValidId(nestedBodyBlobId));
@@ -3344,17 +3420,18 @@ public sealed class JmapProtocolTests
         Assert.AreEqual(1, nestingDepth);
         using var scope = fixture.Services.CreateScope();
         var content = await scope.ServiceProvider.GetRequiredService<JmapBlobService>()
-            .GetAsync(fixture.InboxId, nestedBodyBlobId, CancellationToken.None);
+            .GetAsync(fixture.InboxId, nestedBodyBlobId, CancellationToken.None).ConfigureAwait(false);
         Assert.IsNotNull(content);
         Assert.AreEqual(
             "Nested very deep payload",
-            Encoding.ASCII.GetString(content.Content).Trim());
+            Encoding.ASCII.GetString(content.Content).Trim(), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task MimeProjectionPreservesSequentialBodyOrderOutsideAlternatives()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var raw = Encoding.ASCII.GetBytes(
             $"From: sender@example.net\r\nTo: {fixture.User.Username}\r\n"
             + "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=body\r\n\r\n"
@@ -3362,7 +3439,7 @@ public sealed class JmapProtocolTests
             + "--body\r\nContent-Type: image/png\r\nContent-Disposition: inline\r\n\r\npng\r\n"
             + "--body\r\nContent-Type: text/html\r\n\r\n<p>Last</p>\r\n"
             + "--body--\r\n");
-        var blobId = await fixture.StoreBlobAsync(raw);
+        var blobId = await fixture.StoreBlobAsync(raw).ConfigureAwait(false);
 
         var response = await fixture.InvokeAsync($$$"""
         {
@@ -3373,7 +3450,7 @@ public sealed class JmapProtocolTests
             "bodyProperties":["type"]
           }, "p1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var email = Arguments(response)["parsed"]![blobId]!;
         var expected = new[] { "text/plain", "image/png", "text/html" };
         CollectionAssert.AreEqual(
@@ -3392,7 +3469,8 @@ public sealed class JmapProtocolTests
     [TestMethod]
     public async Task AttachedMessageBlobPreservesExactDecodedOctets()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var nestedRaw = Encoding.UTF8.GetBytes(
             "From: nested@example.net\n"
             + $"To: {fixture.User.Username}\n"
@@ -3410,7 +3488,7 @@ public sealed class JmapProtocolTests
         var encodedNested = Encoding.ASCII.GetBytes(Convert.ToBase64String(nestedRaw));
         var suffix = Encoding.ASCII.GetBytes("\r\n--outer--\r\n");
         var outerRaw = prefix.Concat(encodedNested).Concat(suffix).ToArray();
-        var outerBlobId = await fixture.StoreBlobAsync(outerRaw);
+        var outerBlobId = await fixture.StoreBlobAsync(outerRaw).ConfigureAwait(false);
 
         var parse = await fixture.InvokeAsync($$$"""
         {
@@ -3422,9 +3500,9 @@ public sealed class JmapProtocolTests
             "bodyProperties":["blobId", "size", "type"]
           }, "p1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var attachment = Arguments(parse)["parsed"]![outerBlobId]!["attachments"]![0]!;
-        Assert.AreEqual("message/rfc822", attachment["type"]!.GetValue<string>());
+        Assert.AreEqual("message/rfc822", attachment["type"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(nestedRaw.Length, attachment["size"]!.GetValue<int>());
 
         using var scope = fixture.Services.CreateScope();
@@ -3432,25 +3510,27 @@ public sealed class JmapProtocolTests
             .GetAsync(
                 fixture.InboxId,
                 attachment["blobId"]!.GetValue<string>(),
-                CancellationToken.None);
+                CancellationToken.None).ConfigureAwait(false);
         Assert.IsNotNull(stored);
         CollectionAssert.AreEqual(nestedRaw, stored.Content);
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The BodyLanguageUsesRfcLanguageTags scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task BodyLanguageUsesRfcLanguageTags()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var validBlobId = await fixture.StoreBlobAsync(Encoding.ASCII.GetBytes(
             "From: sender@example.net\r\n"
             + $"To: {fixture.User.Username}\r\n"
             + "Content-Type: text/plain; charset=us-ascii\r\n"
-            + "Content-Language: en-US (primary), i-klingon\r\n\r\nbody"));
+            + "Content-Language: en-US (primary), i-klingon\r\n\r\nbody")).ConfigureAwait(false);
         var invalidBlobId = await fixture.StoreBlobAsync(Encoding.ASCII.GetBytes(
             "From: sender@example.net\r\n"
             + $"To: {fixture.User.Username}\r\n"
             + "Content-Type: text/plain; charset=us-ascii\r\n"
-            + "Content-Language: en_US\r\n\r\nbody"));
+            + "Content-Language: en_US\r\n\r\nbody")).ConfigureAwait(false);
 
         var parse = await fixture.InvokeAsync($$$"""
         {
@@ -3462,14 +3542,14 @@ public sealed class JmapProtocolTests
             "bodyProperties":["language"]
           }, "p1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         Assert.AreEqual(
             "en-US|i-klingon",
             string.Join(
                 '|',
                 Arguments(parse)["parsed"]![validBlobId]!["bodyStructure"]!["language"]!
                     .AsArray()
-                    .Select(node => node!.GetValue<string>())));
+                    .Select(node => node!.GetValue<string>())), StringComparer.Ordinal);
         Assert.IsNull(
             Arguments(parse)["parsed"]![invalidBlobId]!["bodyStructure"]!["language"]);
 
@@ -3494,10 +3574,10 @@ public sealed class JmapProtocolTests
             }
           }, "s1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         Assert.AreEqual(
             "invalidProperties",
-            Arguments(create)["notCreated"]!["badLanguage"]!["type"]!.GetValue<string>());
+            Arguments(create)["notCreated"]!["badLanguage"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
         var createdId = Arguments(create)["created"]!["goodLanguage"]!["id"]!.GetValue<string>();
         var get = await fixture.InvokeAsync($$$"""
         {
@@ -3509,36 +3589,37 @@ public sealed class JmapProtocolTests
             "bodyProperties":["language"]
           }, "g1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         Assert.AreEqual(
             "en-US|i-klingon",
             string.Join(
                 '|',
                 Arguments(get)["list"]![0]!["bodyStructure"]!["language"]!
                     .AsArray()
-                    .Select(node => node!.GetValue<string>())));
+                    .Select(node => node!.GetValue<string>())), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task UploadedBlobPersistsOnlyAzureCompatibleObjectReference()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var content = "large-object-boundary"u8.ToArray();
-        var blobId = await fixture.StoreBlobAsync(content, "application/octet-stream");
+        var blobId = await fixture.StoreBlobAsync(content, "application/octet-stream").ConfigureAwait(false);
 
         using var scope = fixture.Services.CreateScope();
         var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
         var row = await database.JmapBlobs.AsNoTracking()
-            .SingleAsync(candidate => candidate.BlobId == blobId);
+            .SingleAsync(candidate => candidate.BlobId == blobId).ConfigureAwait(false);
         Assert.IsNull(row.Content);
-        Assert.AreEqual("azure-blob", row.ObjectProvider);
+        Assert.AreEqual("azure-blob", row.ObjectProvider, StringComparer.Ordinal);
         Assert.IsFalse(string.IsNullOrWhiteSpace(row.ObjectName));
         Assert.AreEqual(64, row.ObjectSha256?.Length);
         Assert.IsFalse(string.IsNullOrWhiteSpace(row.ObjectEntityTag));
         Assert.AreEqual(content.LongLength, row.SizeBytes);
 
         var loaded = await scope.ServiceProvider.GetRequiredService<JmapBlobService>()
-            .GetAsync(fixture.InboxId, blobId, CancellationToken.None);
+            .GetAsync(fixture.InboxId, blobId, CancellationToken.None).ConfigureAwait(false);
         Assert.IsNotNull(loaded);
         CollectionAssert.AreEqual(content, loaded.Content);
     }
@@ -3546,13 +3627,14 @@ public sealed class JmapProtocolTests
     [TestMethod]
     public async Task LegacyInlineBlobMigratesIdempotentlyToAzureCompatibleObjectReference()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var content = "legacy-inline-blob"u8.ToArray();
         var id = Guid.CreateVersion7();
         var blobId = JmapId.UploadedBlob(id);
         using var scope = fixture.Services.CreateScope();
         var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-        database.JmapBlobs.Add(new JmapBlobDB
+        await database.JmapBlobs.AddAsync(new JmapBlobDB
         {
             Id = id,
             BlobId = blobId,
@@ -3562,27 +3644,27 @@ public sealed class JmapProtocolTests
             SizeBytes = content.LongLength,
             CreatedAt = DateTime.UtcNow,
             ExpiresAt = DateTime.UtcNow.AddHours(1),
-        });
-        await database.SaveChangesAsync();
+        }).ConfigureAwait(false);
+        await database.SaveChangesAsync().ConfigureAwait(false);
 
         var migration = scope.ServiceProvider
             .GetRequiredService<JmapBlobLargeObjectMigrationService>();
-        await migration.MigrateAsync();
-        await migration.MigrateAsync();
+        await migration.MigrateAsync().ConfigureAwait(false);
+        await migration.MigrateAsync().ConfigureAwait(false);
         database.ChangeTracker.Clear();
 
         var migrated = await database.JmapBlobs.AsNoTracking()
-            .SingleAsync(candidate => candidate.Id == id);
+            .SingleAsync(candidate => candidate.Id == id).ConfigureAwait(false);
         Assert.IsNull(migrated.Content);
-        Assert.AreEqual("azure-blob", migrated.ObjectProvider);
-        Assert.AreEqual($"jmap/uploads/{fixture.InboxId:N}/{id:N}", migrated.ObjectName);
+        Assert.AreEqual("azure-blob", migrated.ObjectProvider, StringComparer.Ordinal);
+        Assert.AreEqual($"jmap/uploads/{fixture.InboxId:N}/{id:N}", migrated.ObjectName, StringComparer.Ordinal);
         Assert.AreEqual(64, migrated.ObjectSha256?.Length);
         Assert.IsFalse(string.IsNullOrWhiteSpace(migrated.ObjectEntityTag));
         Assert.AreEqual(1, scope.ServiceProvider
             .GetRequiredService<InMemoryLargeObjectStore>().Count);
 
         var loaded = await scope.ServiceProvider.GetRequiredService<JmapBlobService>()
-            .GetAsync(fixture.InboxId, blobId, CancellationToken.None);
+            .GetAsync(fixture.InboxId, blobId, CancellationToken.None).ConfigureAwait(false);
         Assert.IsNotNull(loaded);
         CollectionAssert.AreEqual(content, loaded.Content);
     }
@@ -3591,28 +3673,31 @@ public sealed class JmapProtocolTests
     public async Task BlobQuotaEvictsOldestUnreferencedUpload()
     {
         const int quota = 1_048_576;
-        await using var fixture = await JmapFixture.CreateAsync(quota);
-        var first = await fixture.StoreBlobAsync(new byte[700_000], "application/octet-stream");
-        var second = await fixture.StoreBlobAsync(new byte[700_000], "application/octet-stream");
+        var fixture = (await JmapFixture.CreateAsync(quota).ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
+        var first = await fixture.StoreBlobAsync(new byte[700_000], "application/octet-stream").ConfigureAwait(false);
+        var second = await fixture.StoreBlobAsync(new byte[700_000], "application/octet-stream").ConfigureAwait(false);
 
         using var scope = fixture.Services.CreateScope();
         var blobs = scope.ServiceProvider.GetRequiredService<JmapBlobService>();
-        Assert.IsNull(await blobs.GetAsync(fixture.InboxId, first, CancellationToken.None));
-        Assert.IsNotNull(await blobs.GetAsync(fixture.InboxId, second, CancellationToken.None));
+        Assert.IsNull(await blobs.GetAsync(fixture.InboxId, first, CancellationToken.None).ConfigureAwait(false));
+        Assert.IsNotNull(await blobs.GetAsync(fixture.InboxId, second, CancellationToken.None).ConfigureAwait(false));
         Assert.AreEqual(1, scope.ServiceProvider
             .GetRequiredService<InMemoryLargeObjectStore>().Count);
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The IdentitySubmissionQueuesMessageAndStripsBcc scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task IdentitySubmissionQueuesMessageAndStripsBcc()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var identityResponse = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Submission}}}"],
           "methodCalls": [["Identity/get", {"accountId":"{{{fixture.AccountId}}}"}, "i1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var identityId = Arguments(identityResponse)["list"]![0]!["id"]!.GetValue<string>();
 
         var emailResponse = await fixture.InvokeAsync($$$"""
@@ -3630,7 +3715,7 @@ public sealed class JmapProtocolTests
             }}
           }, "e1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var createdEmail = Arguments(emailResponse)["created"]!["send"]!;
         var emailId = createdEmail["id"]!.GetValue<string>();
         var emailSize = createdEmail["size"]!.GetValue<int>();
@@ -3686,49 +3771,45 @@ public sealed class JmapProtocolTests
             }
           }, "s1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var createdSubmission = Arguments(submissionResponse)["created"]!["submit"]!.AsObject();
         var submissionId = createdSubmission["id"]!.GetValue<string>();
         CollectionAssert.AreEquivalent(
-            new[]
-            {
-                "id", "threadId", "sendAt", "undoStatus", "deliveryStatus",
-                "dsnBlobIds", "mdnBlobIds",
-            },
+            ExpectedVector12,
             createdSubmission.Select(property => property.Key).ToArray());
-        Assert.AreEqual("final", createdSubmission["undoStatus"]!.GetValue<string>());
+        Assert.AreEqual("final", createdSubmission["undoStatus"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(0, createdSubmission["dsnBlobIds"]!.AsArray().Count);
         Assert.AreEqual(0, createdSubmission["mdnBlobIds"]!.AsArray().Count);
         Assert.AreEqual(
             "invalidProperties",
-            Arguments(submissionResponse)["notCreated"]!["badParameter"]!["type"]!.GetValue<string>());
+            Arguments(submissionResponse)["notCreated"]!["badParameter"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(
             "invalidProperties",
             Arguments(submissionResponse)["notCreated"]!["badRecipientParameter"]!["type"]!
-                .GetValue<string>());
+                .GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(
             "invalidProperties",
             Arguments(submissionResponse)["notCreated"]!["badRecipientShape"]!["type"]!
-                .GetValue<string>());
+                .GetValue<string>(), StringComparer.Ordinal);
         var invalidRecipient = Arguments(submissionResponse)["notCreated"]!["badRecipientAddress"]!;
-        Assert.AreEqual("invalidRecipients", invalidRecipient["type"]!.GetValue<string>());
+        Assert.AreEqual("invalidRecipients", invalidRecipient["type"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(
             "not an address",
-            invalidRecipient["invalidRecipients"]![0]!.GetValue<string>());
+            invalidRecipient["invalidRecipients"]![0]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(
             "invalidProperties",
             Arguments(submissionResponse)["notCreated"]!["oversizedMailFrom"]!["type"]!
-                .GetValue<string>());
+                .GetValue<string>(), StringComparer.Ordinal);
 
         using (var scope = fixture.Services.CreateScope())
         {
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
             var queueContent = scope.ServiceProvider.GetRequiredService<MailQueueContentService>();
-            var queued = await database.MailQueueMessages.Include(message => message.Recipients).SingleAsync();
-            Assert.AreEqual(fixture.User.Username, queued.EnvelopeSender);
-            Assert.AreEqual(fixture.User.Username, queued.Recipients.Single().Recipient);
+            var queued = await database.MailQueueMessages.Include(message => message.Recipients).SingleAsync().ConfigureAwait(false);
+            Assert.AreEqual(fixture.User.Username, queued.EnvelopeSender, StringComparer.Ordinal);
+            Assert.AreEqual(fixture.User.Username, queued.Recipients.Single().Recipient, StringComparer.Ordinal);
             Assert.IsNull(queued.RawMessage);
-            Assert.IsFalse((await queueContent.ReadAsync(queued))
+            Assert.IsFalse((await queueContent.ReadAsync(queued).ConfigureAwait(false))
                 .Contains("Bcc:", StringComparison.OrdinalIgnoreCase));
         }
 
@@ -3739,14 +3820,14 @@ public sealed class JmapProtocolTests
             "accountId":"{{{fixture.AccountId}}}", "ids":["{{{submissionId}}}"]
           }, "s2"]]
         }
-        """);
-        Assert.AreEqual("final", Arguments(read)["list"]![0]!["undoStatus"]!.GetValue<string>());
-        Assert.AreEqual(emailId, Arguments(read)["list"]![0]!["emailId"]!.GetValue<string>());
+        """).ConfigureAwait(false);
+        Assert.AreEqual("final", Arguments(read)["list"]![0]!["undoStatus"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual(emailId, Arguments(read)["list"]![0]!["emailId"]!.GetValue<string>(), StringComparer.Ordinal);
         var storedSubmission = Arguments(read)["list"]![0]!.AsObject();
         Assert.AreEqual(
             emailSize.ToString(System.Globalization.CultureInfo.InvariantCulture),
             storedSubmission["envelope"]!["mailFrom"]!["parameters"]!["SIZE"]!
-                .GetValue<string>());
+                .GetValue<string>(), StringComparer.Ordinal);
         Assert.IsNull(storedSubmission["envelope"]!["rcptTo"]![0]!["parameters"]);
 
         var roundTrip = await fixture.InvokeAsync(new JsonObject
@@ -3763,21 +3844,23 @@ public sealed class JmapProtocolTests
                     },
                 },
                 "s3")),
-        });
+        }).ConfigureAwait(false);
         Assert.IsNull(Arguments(roundTrip)["notUpdated"]);
         Assert.IsTrue(Arguments(roundTrip)["updated"]!.AsObject().ContainsKey(submissionId));
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The SubmissionCreationReferencesDoNotEchoClientPropertiesAndRunImplicitEmailSet scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task SubmissionCreationReferencesDoNotEchoClientPropertiesAndRunImplicitEmailSet()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var identityResponse = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Submission}}}"],
           "methodCalls": [["Identity/get", {"accountId":"{{{fixture.AccountId}}}"}, "i1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var identityId = Arguments(identityResponse)["list"]![0]!["id"]!.GetValue<string>();
         var emailResponse = await fixture.InvokeAsync($$$"""
         {
@@ -3794,7 +3877,7 @@ public sealed class JmapProtocolTests
             }}
           }, "e1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var emailId = Arguments(emailResponse)["created"]!["draft"]!["id"]!.GetValue<string>();
 
         var submission = await fixture.InvokeAsync($$$"""
@@ -3807,14 +3890,14 @@ public sealed class JmapProtocolTests
             "onSuccessUpdateEmail":{"#submit":{"keywords/$draft":null}}
           }, "s1"]]
         }
-        """);
+        """).ConfigureAwait(false);
 
         var responses = submission["methodResponses"]!.AsArray();
         Assert.AreEqual(2, responses.Count);
-        Assert.AreEqual("EmailSubmission/set", responses[0]![0]!.GetValue<string>());
-        Assert.AreEqual("Email/set", responses[1]![0]!.GetValue<string>());
-        Assert.AreEqual("s1", responses[0]![2]!.GetValue<string>());
-        Assert.AreEqual("s1", responses[1]![2]!.GetValue<string>());
+        Assert.AreEqual("EmailSubmission/set", responses[0]![0]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("Email/set", responses[1]![0]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("s1", responses[0]![2]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("s1", responses[1]![2]!.GetValue<string>(), StringComparer.Ordinal);
         var createdSubmission = Arguments(submission)["created"]!["submit"]!.AsObject();
         CollectionAssert.DoesNotContain(createdSubmission.Select(property => property.Key).ToArray(), "identityId");
         CollectionAssert.DoesNotContain(createdSubmission.Select(property => property.Key).ToArray(), "emailId");
@@ -3829,20 +3912,22 @@ public sealed class JmapProtocolTests
             "properties":["keywords"]
           }, "g1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         Assert.IsFalse(Arguments(email)["list"]![0]!["keywords"]!.AsObject().ContainsKey("$draft"));
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The SubmissionGeneratesAndPersistsDeduplicatedEnvelope scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task SubmissionGeneratesAndPersistsDeduplicatedEnvelope()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var identityResponse = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Submission}}}"],
           "methodCalls": [["Identity/get", {"accountId":"{{{fixture.AccountId}}}"}, "i1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var identityId = Arguments(identityResponse)["list"]![0]!["id"]!.GetValue<string>();
         var emailResponse = await fixture.InvokeAsync($$$"""
         {
@@ -3861,7 +3946,7 @@ public sealed class JmapProtocolTests
             }}
           }, "e1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var emailId = Arguments(emailResponse)["created"]!["generated"]!["id"]!.GetValue<string>();
         var submission = await fixture.InvokeAsync($$$"""
         {
@@ -3871,15 +3956,11 @@ public sealed class JmapProtocolTests
             "create":{"generated":{"identityId":"{{{identityId}}}", "emailId":"{{{emailId}}}"}}
           }, "s1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var createdSubmission = Arguments(submission)["created"]!["generated"]!.AsObject();
         var submissionId = createdSubmission["id"]!.GetValue<string>();
         CollectionAssert.AreEquivalent(
-            new[]
-            {
-                "id", "threadId", "envelope", "sendAt", "undoStatus", "deliveryStatus",
-                "dsnBlobIds", "mdnBlobIds",
-            },
+            ExpectedVector13,
             createdSubmission.Select(property => property.Key).ToArray());
         var read = await fixture.InvokeAsync($$$"""
         {
@@ -3889,20 +3970,21 @@ public sealed class JmapProtocolTests
             "properties":["id", "envelope"]
           }, "s2"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var envelope = Arguments(read)["list"]![0]!["envelope"]!;
         Assert.IsTrue(JsonNode.DeepEquals(createdSubmission["envelope"], envelope));
-        Assert.AreEqual(fixture.User.Username, envelope["mailFrom"]!["email"]!.GetValue<string>());
+        Assert.AreEqual(fixture.User.Username, envelope["mailFrom"]!["email"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.IsNull(envelope["mailFrom"]!["parameters"]);
         Assert.AreEqual(1, envelope["rcptTo"]!.AsArray().Count);
-        Assert.AreEqual(fixture.User.Username, envelope["rcptTo"]![0]!["email"]!.GetValue<string>());
+        Assert.AreEqual(fixture.User.Username, envelope["rcptTo"]![0]!["email"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.IsNull(envelope["rcptTo"]![0]!["parameters"]);
     }
 
     [TestMethod]
     public async Task IdentitySetReturnsOnlyServerSetAndDefaultedProperties()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var response = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Submission}}}"],
@@ -3921,26 +4003,28 @@ public sealed class JmapProtocolTests
             }
           }, "s1"]]
         }
-        """);
+        """).ConfigureAwait(false);
 
         var created = Arguments(response)["created"]!.AsObject();
         CollectionAssert.AreEquivalent(
-            new[] { "id", "mayDelete" },
+            ExpectedVector14,
             created["explicit"]!.AsObject().Select(property => property.Key).ToArray());
         CollectionAssert.AreEquivalent(
-            new[] { "id", "name", "replyTo", "bcc", "textSignature", "htmlSignature", "mayDelete" },
+            ExpectedVector15,
             created["defaults"]!.AsObject().Select(property => property.Key).ToArray());
-        Assert.AreEqual(string.Empty, created["defaults"]!["name"]!.GetValue<string>());
+        Assert.AreEqual(string.Empty, created["defaults"]!["name"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.IsNull(created["defaults"]!["replyTo"]);
         Assert.IsNull(created["defaults"]!["bcc"]);
-        Assert.AreEqual(string.Empty, created["defaults"]!["textSignature"]!.GetValue<string>());
-        Assert.AreEqual(string.Empty, created["defaults"]!["htmlSignature"]!.GetValue<string>());
+        Assert.AreEqual(string.Empty, created["defaults"]!["textSignature"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual(string.Empty, created["defaults"]!["htmlSignature"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The IdentitySetKeepsReferencesPatchesOwnershipAndDeletionAtomic scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task IdentitySetKeepsReferencesPatchesOwnershipAndDeletionAtomic()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var created = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Submission}}}"],
@@ -3958,15 +4042,15 @@ public sealed class JmapProtocolTests
             "destroy":["#transient"]
           }, "set"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var wireId = Arguments(created)["created"]!["fresh"]!["id"]!.GetValue<string>();
         var transientId = Arguments(created)["created"]!["transient"]!["id"]!.GetValue<string>();
-        Assert.AreEqual("forbiddenFrom", Arguments(created)["notCreated"]!["foreign"]!["type"]!.GetValue<string>());
-        Assert.AreEqual("invalidProperties", Arguments(created)["notCreated"]!["badAddress"]!["type"]!.GetValue<string>());
+        Assert.AreEqual("forbiddenFrom", Arguments(created)["notCreated"]!["foreign"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("invalidProperties", Arguments(created)["notCreated"]!["badAddress"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.IsTrue(Arguments(created)["updated"]!.AsObject().ContainsKey(wireId));
         Assert.AreEqual("willDestroy", Arguments(created)["notUpdated"]!["#transient"]!["type"]!
-            .GetValue<string>());
-        Assert.AreEqual(transientId, Arguments(created)["destroyed"]![0]!.GetValue<string>());
+            .GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual(transientId, Arguments(created)["destroyed"]![0]!.GetValue<string>(), StringComparer.Ordinal);
 
         var checkedPatch = await fixture.InvokeAsync($$$"""
         {
@@ -3979,7 +4063,7 @@ public sealed class JmapProtocolTests
             }
           }, "patch"]]
         }
-        """);
+        """).ConfigureAwait(false);
         Assert.IsNull(Arguments(checkedPatch)["notUpdated"]);
         Assert.IsTrue(Arguments(checkedPatch)["updated"]!.AsObject().ContainsKey(wireId));
 
@@ -3990,10 +4074,10 @@ public sealed class JmapProtocolTests
             "accountId":"{{{fixture.AccountId}}}","ids":["{{{wireId}}}"]
           }, "read"]]
         }
-        """);
-        Assert.AreEqual("After", Arguments(read)["list"]![0]!["name"]!.GetValue<string>());
-        Assert.AreEqual("reply@example.net", Arguments(read)["list"]![0]!["replyTo"]![0]!["email"]!.GetValue<string>());
-        Assert.AreEqual(string.Empty, Arguments(read)["list"]![0]!["textSignature"]!.GetValue<string>());
+        """).ConfigureAwait(false);
+        Assert.AreEqual("After", Arguments(read)["list"]![0]!["name"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("reply@example.net", Arguments(read)["list"]![0]!["replyTo"]![0]!["email"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual(string.Empty, Arguments(read)["list"]![0]!["textSignature"]!.GetValue<string>(), StringComparer.Ordinal);
 
         var invalid = await fixture.InvokeAsync($$$"""
         {
@@ -4005,10 +4089,10 @@ public sealed class JmapProtocolTests
               "update":{"{{{wireId}}}":{"name/child":"broken"} } },"patch"]
           ]
         }
-        """);
-        Assert.AreEqual("invalidProperties", Arguments(invalid)["notUpdated"]![wireId]!["type"]!.GetValue<string>());
-        Assert.AreEqual("email", Arguments(invalid)["notUpdated"]![wireId]!["properties"]![0]!.GetValue<string>());
-        Assert.AreEqual("invalidPatch", Arguments(invalid, 1)["notUpdated"]![wireId]!["type"]!.GetValue<string>());
+        """).ConfigureAwait(false);
+        Assert.AreEqual("invalidProperties", Arguments(invalid)["notUpdated"]![wireId]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("email", Arguments(invalid)["notUpdated"]![wireId]!["properties"]![0]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("invalidPatch", Arguments(invalid, 1)["notUpdated"]![wireId]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
 
         var destroyed = await fixture.InvokeAsync($$$"""
         {
@@ -4021,21 +4105,23 @@ public sealed class JmapProtocolTests
               "I22222222222222222222222222222222"]
           }, "destroy"]]
         }
-        """);
-        Assert.AreEqual("willDestroy", Arguments(destroyed)["notUpdated"]![wireId]!["type"]!.GetValue<string>());
+        """).ConfigureAwait(false);
+        Assert.AreEqual("willDestroy", Arguments(destroyed)["notUpdated"]![wireId]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual("notFound", Arguments(destroyed)["notUpdated"]!["I22222222222222222222222222222222"]!["type"]!
-            .GetValue<string>());
-        Assert.AreEqual(wireId, Arguments(destroyed)["destroyed"]![0]!.GetValue<string>());
+            .GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual(wireId, Arguments(destroyed)["destroyed"]![0]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual("forbidden", Arguments(destroyed)["notDestroyed"]![$"I{fixture.InboxId:N}"]!["type"]!
-            .GetValue<string>());
+            .GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual("notFound", Arguments(destroyed)["notDestroyed"]!["I22222222222222222222222222222222"]!["type"]!
-            .GetValue<string>());
+            .GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The IdentityAndSubmissionRejectInvalidWireValues scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task IdentityAndSubmissionRejectInvalidWireValues()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var identities = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Submission}}}"],
@@ -4050,12 +4136,12 @@ public sealed class JmapProtocolTests
               }
             }, "s1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var identityId = Arguments(identities)["list"]![0]!["id"]!.GetValue<string>();
         var identityFailures = Arguments(identities, 1)["notCreated"]!.AsObject();
-        Assert.AreEqual("invalidProperties", identityFailures["nullName"]!["type"]!.GetValue<string>());
-        Assert.AreEqual("invalidProperties", identityFailures["nullSignature"]!["type"]!.GetValue<string>());
-        Assert.AreEqual("invalidProperties", identityFailures["displayAddress"]!["type"]!.GetValue<string>());
+        Assert.AreEqual("invalidProperties", identityFailures["nullName"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("invalidProperties", identityFailures["nullSignature"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("invalidProperties", identityFailures["displayAddress"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
 
         var malformedRaw = Encoding.UTF8.GetBytes(
             "Date: Sun, 20 Sep 2026 10:00:00 +0000\r\n"
@@ -4064,7 +4150,7 @@ public sealed class JmapProtocolTests
             + $"From: {fixture.User.Username}\r\n"
             + "To: local-only\r\n"
             + "Subject: Invalid singleton headers\r\n\r\nbody");
-        var blobId = await fixture.StoreBlobAsync(malformedRaw);
+        var blobId = await fixture.StoreBlobAsync(malformedRaw).ConfigureAwait(false);
         var malformedIds = Encoding.UTF8.GetBytes(
             "Date: Sun, 20 Sep 2026 10:00:00 +0000\r\n"
             + $"From: {fixture.User.Username}\r\n"
@@ -4073,7 +4159,7 @@ public sealed class JmapProtocolTests
             + "In-Reply-To: <parent@example.com> trailing-junk\r\n"
             + "References: (comment only)\r\n"
             + "Subject: Invalid message ids\r\n\r\nbody");
-        var malformedIdsBlobId = await fixture.StoreBlobAsync(malformedIds);
+        var malformedIdsBlobId = await fixture.StoreBlobAsync(malformedIds).ConfigureAwait(false);
         var malformedDates = Encoding.UTF8.GetBytes(
             "Date: Mon, 20 Sep 2026 10:00:00 +0000\r\n"
             + $"Resent-From: {fixture.User.Username}\r\n"
@@ -4081,7 +4167,7 @@ public sealed class JmapProtocolTests
             + $"From: {fixture.User.Username}\r\n"
             + $"To: {fixture.User.Username}\r\n"
             + "Subject: Invalid dates\r\n\r\nbody");
-        var malformedDatesBlobId = await fixture.StoreBlobAsync(malformedDates);
+        var malformedDatesBlobId = await fixture.StoreBlobAsync(malformedDates).ConfigureAwait(false);
         var import = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
@@ -4095,7 +4181,7 @@ public sealed class JmapProtocolTests
               "mailboxIds":{"{{{fixture.DraftsMailboxId}}}":true} } }
           }, "i1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var emailId = Arguments(import)["created"]!["bad"]!["id"]!.GetValue<string>();
         var malformedIdsEmailId = Arguments(import)["created"]!["badIds"]!["id"]!.GetValue<string>();
         var malformedDatesEmailId = Arguments(import)["created"]!["badDates"]!["id"]!.GetValue<string>();
@@ -4115,36 +4201,38 @@ public sealed class JmapProtocolTests
                 "rcptTo":[{"email":"{{{fixture.User.Username}}}"}]} } }
           }, "s2"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var error = Arguments(submission)["notCreated"]!["bad"]!;
-        Assert.AreEqual("invalidEmail", error["type"]!.GetValue<string>());
+        Assert.AreEqual("invalidEmail", error["type"]!.GetValue<string>(), StringComparer.Ordinal);
         CollectionAssert.AreEquivalent(
-            new[] { "from", "sentAt", "to" },
+            ExpectedVector16,
             error["properties"]!.AsArray().Select(node => node!.GetValue<string>()).ToArray());
         var idError = Arguments(submission)["notCreated"]!["badIds"]!;
-        Assert.AreEqual("invalidEmail", idError["type"]!.GetValue<string>());
+        Assert.AreEqual("invalidEmail", idError["type"]!.GetValue<string>(), StringComparer.Ordinal);
         CollectionAssert.AreEquivalent(
-            new[] { "inReplyTo", "messageId", "references" },
+            ExpectedVector17,
             idError["properties"]!.AsArray().Select(node => node!.GetValue<string>()).ToArray());
         var dateError = Arguments(submission)["notCreated"]!["badDates"]!;
-        Assert.AreEqual("invalidEmail", dateError["type"]!.GetValue<string>());
+        Assert.AreEqual("invalidEmail", dateError["type"]!.GetValue<string>(), StringComparer.Ordinal);
         CollectionAssert.AreEquivalent(
-            new[] { "header:Resent-Date:asDate:all", "sentAt" },
+            ExpectedVector18,
             dateError["properties"]!.AsArray()
                 .Select(node => node!.GetValue<string>())
                 .ToArray());
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The SubmissionValidatesAddressListsAndResentBlocks scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task SubmissionValidatesAddressListsAndResentBlocks()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var identities = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Submission}}}"],
           "methodCalls": [["Identity/get", {"accountId":"{{{fixture.AccountId}}}"}, "g1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var identityId = Arguments(identities)["list"]![0]!["id"]!.GetValue<string>();
 
         var validRaw = Encoding.UTF8.GetBytes(
@@ -4177,8 +4265,8 @@ public sealed class JmapProtocolTests
             + "Cc: \r\n"
             + "Bcc: (undisclosed recipients)\r\n"
             + "Subject: Invalid resent block\r\n\r\nbody");
-        var validBlobId = await fixture.StoreBlobAsync(validRaw);
-        var invalidBlobId = await fixture.StoreBlobAsync(invalidRaw);
+        var validBlobId = await fixture.StoreBlobAsync(validRaw).ConfigureAwait(false);
+        var invalidBlobId = await fixture.StoreBlobAsync(invalidRaw).ConfigureAwait(false);
         var import = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
@@ -4192,7 +4280,7 @@ public sealed class JmapProtocolTests
             }
           }, "i1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var validEmailId = Arguments(import)["created"]!["valid"]!["id"]!.GetValue<string>();
         var invalidEmailId = Arguments(import)["created"]!["invalid"]!["id"]!.GetValue<string>();
 
@@ -4211,37 +4299,27 @@ public sealed class JmapProtocolTests
             }
           }, "s1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         Assert.IsNotNull(Arguments(submission)["created"]!["valid"]);
         var error = Arguments(submission)["notCreated"]!["invalid"]!;
-        Assert.AreEqual("invalidEmail", error["type"]!.GetValue<string>());
+        Assert.AreEqual("invalidEmail", error["type"]!.GetValue<string>(), StringComparer.Ordinal);
         CollectionAssert.AreEquivalent(
-            new[]
-            {
-                "cc",
-                "header:Resent-Cc:asAddresses:all",
-                "header:Resent-Date:asDate:all",
-                "header:Resent-Message-ID:asMessageIds:all",
-                "header:Resent-Reply-To:asAddresses:all",
-                "header:Resent-Sender:asAddresses:all",
-                "header:Resent-To:asAddresses:all",
-                "headers",
-                "replyTo",
-                "to",
-            },
+            ExpectedVector19,
             error["properties"]!.AsArray().Select(node => node!.GetValue<string>()).ToArray());
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The SubmissionEnforcesInternetMessageWireLimits scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task SubmissionEnforcesInternetMessageWireLimits()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var identities = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Submission}}}"],
           "methodCalls": [["Identity/get", {"accountId":"{{{fixture.AccountId}}}"}, "g1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var identityId = Arguments(identities)["list"]![0]!["id"]!.GetValue<string>();
 
         string Message(string extraHeader, string body, string newline = "\r\n") =>
@@ -4274,7 +4352,7 @@ public sealed class JmapProtocolTests
         {
             imports[item.Key] = new JsonObject
             {
-                ["blobId"] = await fixture.StoreBlobAsync(item.Value),
+                ["blobId"] = await fixture.StoreBlobAsync(item.Value).ConfigureAwait(false),
                 ["mailboxIds"] = new JsonObject { [fixture.DraftsMailboxId] = true },
             };
         }
@@ -4289,7 +4367,7 @@ public sealed class JmapProtocolTests
                     ["emails"] = imports,
                 },
                 "i1")),
-        });
+        }).ConfigureAwait(false);
         var imported = Arguments(import)["created"]!.AsObject();
         var submissions = new JsonObject();
         foreach (var name in rawMessages.Keys)
@@ -4317,7 +4395,7 @@ public sealed class JmapProtocolTests
                     ["create"] = submissions,
                 },
                 "s1")),
-        });
+        }).ConfigureAwait(false);
 
         Assert.IsNotNull(Arguments(submission)["created"]!["valid"]);
         Assert.IsNotNull(Arguments(submission)["created"]!["validFoldedDate"]);
@@ -4329,7 +4407,7 @@ public sealed class JmapProtocolTests
         void AssertInvalid(string name, string property)
         {
             var error = Arguments(submission)["notCreated"]![name]!;
-            Assert.AreEqual("invalidEmail", error["type"]!.GetValue<string>());
+            Assert.AreEqual("invalidEmail", error["type"]!.GetValue<string>(), StringComparer.Ordinal);
             CollectionAssert.Contains(
                 error["properties"]!.AsArray()
                     .Select(node => node!.GetValue<string>())
@@ -4339,10 +4417,12 @@ public sealed class JmapProtocolTests
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The SubmissionEnforcesTheRawSizeForLegacyRows scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task SubmissionEnforcesTheRawSizeForLegacyRows()
     {
         const int maximumMessageSize = 512;
-        await using var fixture = await JmapFixture.CreateAsync(maximumMessageSize);
+        var fixture = (await JmapFixture.CreateAsync(maximumMessageSize).ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var raw = Encoding.ASCII.GetBytes(
             "Date: Sun, 20 Sep 2026 10:00:00 +0000\r\n"
             + $"From: {fixture.User.Username}\r\n"
@@ -4356,8 +4436,8 @@ public sealed class JmapProtocolTests
         {
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
             var drafts = await database.Folders.SingleAsync(folder =>
-                folder.Id == fixture.DraftsFolderId);
-            database.Emails.Add(new EmailDB
+                folder.Id == fixture.DraftsFolderId).ConfigureAwait(false);
+            await database.Emails.AddAsync(new EmailDB
             {
                 Id = emailId,
                 Sender = fixture.User.Username,
@@ -4374,8 +4454,8 @@ public sealed class JmapProtocolTests
                 Uid = drafts.NextUid++,
                 ModSeq = ++drafts.HighestModSeq,
                 IsDraft = true,
-            });
-            await database.SaveChangesAsync();
+            }).ConfigureAwait(false);
+            await database.SaveChangesAsync().ConfigureAwait(false);
         }
 
         var identities = await fixture.InvokeAsync($$$"""
@@ -4383,7 +4463,7 @@ public sealed class JmapProtocolTests
           "using": ["{{{Core}}}", "{{{Submission}}}"],
           "methodCalls": [["Identity/get", {"accountId":"{{{fixture.AccountId}}}"}, "g1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var identityId = Arguments(identities)["list"]![0]!["id"]!.GetValue<string>();
         var submission = await fixture.InvokeAsync(new JsonObject
         {
@@ -4414,24 +4494,26 @@ public sealed class JmapProtocolTests
                     },
                 },
                 "s1")),
-        });
+        }).ConfigureAwait(false);
 
         Assert.IsNotNull(Arguments(submission)["notCreated"], submission.ToJsonString());
         var error = Arguments(submission)["notCreated"]!["legacy"]!;
-        Assert.AreEqual("tooLarge", error["type"]!.GetValue<string>());
+        Assert.AreEqual("tooLarge", error["type"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(maximumMessageSize, error["maxSize"]!.GetValue<int>());
         using var verificationScope = fixture.Services.CreateScope();
         var verificationDatabase = verificationScope.ServiceProvider
             .GetRequiredService<EmailDbContext>();
-        Assert.AreEqual(0, await verificationDatabase.JmapEmailSubmissions.CountAsync());
-        Assert.AreEqual(0, await verificationDatabase.MailQueueMessages.CountAsync());
+        Assert.AreEqual(0, await verificationDatabase.JmapEmailSubmissions.CountAsync().ConfigureAwait(false));
+        Assert.AreEqual(0, await verificationDatabase.MailQueueMessages.CountAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ImportCountsTheRawSizeOfLegacyRowsAgainstQuota scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task ImportCountsTheRawSizeOfLegacyRowsAgainstQuota()
     {
         const long quota = 1_000;
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var legacyRaw = Encoding.ASCII.GetBytes(
             "From: sender@example.net\r\n"
             + $"To: {fixture.User.Username}\r\n"
@@ -4448,12 +4530,12 @@ public sealed class JmapProtocolTests
         using (var scope = fixture.Services.CreateScope())
         {
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-            var user = await database.Users.SingleAsync(candidate => candidate.Id == fixture.User.Id);
+            var user = await database.Users.SingleAsync(candidate => candidate.Id == fixture.User.Id).ConfigureAwait(false);
             user.QuotaBytes = quota;
             var inbox = await database.Folders.SingleAsync(folder =>
-                folder.Id == fixture.InboxFolderId);
+                folder.Id == fixture.InboxFolderId).ConfigureAwait(false);
             var emailId = Guid.CreateVersion7();
-            database.Emails.Add(new EmailDB
+            await database.Emails.AddAsync(new EmailDB
             {
                 Id = emailId,
                 Sender = "sender@example.net",
@@ -4469,11 +4551,11 @@ public sealed class JmapProtocolTests
                 FolderId = inbox.Id,
                 Uid = inbox.NextUid++,
                 ModSeq = ++inbox.HighestModSeq,
-            });
-            await database.SaveChangesAsync();
+            }).ConfigureAwait(false);
+            await database.SaveChangesAsync().ConfigureAwait(false);
         }
 
-        var blobId = await fixture.StoreBlobAsync(importedRaw);
+        var blobId = await fixture.StoreBlobAsync(importedRaw).ConfigureAwait(false);
         var response = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Mail}}}"],
@@ -4485,20 +4567,22 @@ public sealed class JmapProtocolTests
             }}
           }, "i1"]]
         }
-        """);
+        """).ConfigureAwait(false);
 
         var error = Arguments(response)["notCreated"]!["overQuota"]!;
-        Assert.AreEqual("overQuota", error["type"]!.GetValue<string>());
+        Assert.AreEqual("overQuota", error["type"]!.GetValue<string>(), StringComparer.Ordinal);
         using var verificationScope = fixture.Services.CreateScope();
         var verificationDatabase = verificationScope.ServiceProvider
             .GetRequiredService<EmailDbContext>();
-        Assert.AreEqual(1, await verificationDatabase.Emails.CountAsync());
+        Assert.AreEqual(1, await verificationDatabase.Emails.CountAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The IdentityAndVacationAcceptWholeGetObjectsAsUpdates scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task IdentityAndVacationAcceptWholeGetObjectsAsUpdates()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var get = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Submission}}}", "{{{Vacation}}}"],
@@ -4507,7 +4591,7 @@ public sealed class JmapProtocolTests
             ["VacationResponse/get", {"accountId":"{{{fixture.AccountId}}}"}, "v1"]
           ]
         }
-        """);
+        """).ConfigureAwait(false);
         var identity = (JsonObject)Arguments(get)["list"]![0]!.DeepClone();
         var identityId = identity["id"]!.GetValue<string>();
         identity["name"] = "Round Trip";
@@ -4536,7 +4620,7 @@ public sealed class JmapProtocolTests
                         ["update"] = new JsonObject { ["singleton"] = vacation },
                     },
                     "v2")),
-        });
+        }).ConfigureAwait(false);
         Assert.IsNull(Arguments(set)["notUpdated"]);
         Assert.IsTrue(Arguments(set)["updated"]!.AsObject().ContainsKey(identityId));
         Assert.IsNull(Arguments(set, 1)["notUpdated"]);
@@ -4550,20 +4634,21 @@ public sealed class JmapProtocolTests
             ["VacationResponse/get", {"accountId":"{{{fixture.AccountId}}}"}, "v3"]
           ]
         }
-        """);
-        Assert.AreEqual("Round Trip", Arguments(verify)["list"]![0]!["name"]!.GetValue<string>());
+        """).ConfigureAwait(false);
+        Assert.AreEqual("Round Trip", Arguments(verify)["list"]![0]!["name"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(
             fixture.User.Username,
-            Arguments(verify)["list"]![0]!["email"]!.GetValue<string>());
+            Arguments(verify)["list"]![0]!["email"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(
             "Whole object update",
-            Arguments(verify, 1)["list"]![0]!["subject"]!.GetValue<string>());
+            Arguments(verify, 1)["list"]![0]!["subject"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task LazySingletonInitializationIsIdempotentAcrossConcurrentRequests()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var request = $$$"""
         {
           "using": ["{{{Core}}}", "{{{Submission}}}", "{{{Vacation}}}"],
@@ -4574,25 +4659,26 @@ public sealed class JmapProtocolTests
         }
         """;
         var responses = await Task.WhenAll(
-            Enumerable.Range(0, 8).Select(_ => fixture.InvokeAsync(request)));
+            Enumerable.Range(0, 8).Select(_ => fixture.InvokeAsync(request))).ConfigureAwait(false);
         foreach (var response in responses)
         {
-            Assert.AreEqual("Identity/get", response["methodResponses"]![0]![0]!.GetValue<string>());
-            Assert.AreEqual("VacationResponse/get", response["methodResponses"]![1]![0]!.GetValue<string>());
+            Assert.AreEqual("Identity/get", response["methodResponses"]![0]![0]!.GetValue<string>(), StringComparer.Ordinal);
+            Assert.AreEqual("VacationResponse/get", response["methodResponses"]![1]![0]!.GetValue<string>(), StringComparer.Ordinal);
             Assert.AreEqual(1, Arguments(response)["list"]!.AsArray().Count);
             Assert.AreEqual(1, Arguments(response, 1)["list"]!.AsArray().Count);
         }
 
         using var scope = fixture.Services.CreateScope();
         var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-        Assert.AreEqual(1, await database.JmapIdentities.CountAsync());
-        Assert.AreEqual(1, await database.JmapVacationResponses.CountAsync());
+        Assert.AreEqual(1, await database.JmapIdentities.CountAsync().ConfigureAwait(false));
+        Assert.AreEqual(1, await database.JmapVacationResponses.CountAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task VacationSingletonCanBeConfiguredButNotCreatedOrDestroyed()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var response = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Vacation}}}"],
@@ -4610,19 +4696,21 @@ public sealed class JmapProtocolTests
             "accountId":"{{{fixture.AccountId}}}", "ids":["singleton"]
           }, "v2"]]
         }
-        """);
-        Assert.AreEqual("singleton", Arguments(response)["notCreated"]!["other"]!["type"]!.GetValue<string>());
-        Assert.AreEqual("singleton", Arguments(response)["notDestroyed"]!["singleton"]!["type"]!.GetValue<string>());
+        """).ConfigureAwait(false);
+        Assert.AreEqual("singleton", Arguments(response)["notCreated"]!["other"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("singleton", Arguments(response)["notDestroyed"]!["singleton"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
         var vacation = Arguments(response, 1)["list"]![0]!;
         Assert.IsTrue(vacation["isEnabled"]!.GetValue<bool>());
-        Assert.AreEqual("Away", vacation["subject"]!.GetValue<string>());
-        Assert.AreEqual("Back soon", vacation["textBody"]!.GetValue<string>());
+        Assert.AreEqual("Away", vacation["subject"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("Back soon", vacation["textBody"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The VacationBodiesRoundTripThroughAzureBlobReferencesAndClearOnRemoval scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task VacationBodiesRoundTripThroughAzureBlobReferencesAndClearOnRemoval()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var firstBody = new string('x', 128 * 1024);
         var first = await fixture.InvokeAsync($$$"""
         {
@@ -4634,18 +4722,18 @@ public sealed class JmapProtocolTests
             "accountId":"{{{fixture.AccountId}}}", "ids":["singleton"]
           }, "v2"]]
         }
-        """);
+        """).ConfigureAwait(false);
         Assert.IsNull(Arguments(first)["notUpdated"]);
         Assert.AreEqual(firstBody,
-            Arguments(first, 1)["list"]![0]!["textBody"]!.GetValue<string>());
+            Arguments(first, 1)["list"]![0]!["textBody"]!.GetValue<string>(), StringComparer.Ordinal);
 
         using (var scope = fixture.Services.CreateScope())
         {
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-            var stored = await database.JmapVacationResponses.SingleAsync();
+            var stored = await database.JmapVacationResponses.SingleAsync().ConfigureAwait(false);
             Assert.IsNull(stored.TextBody);
             Assert.IsNull(stored.HtmlBody);
-            Assert.AreEqual(LargeObjectProviders.AzureBlob, stored.BodyObjectProvider);
+            Assert.AreEqual(LargeObjectProviders.AzureBlob, stored.BodyObjectProvider, StringComparer.Ordinal);
             Assert.IsTrue(stored.BodySizeBytes > firstBody.Length);
             Assert.IsNotNull(stored.BodyObjectName);
         }
@@ -4662,11 +4750,11 @@ public sealed class JmapProtocolTests
             "accountId":"{{{fixture.AccountId}}}"
           }, "v2"]]
         }
-        """);
+        """).ConfigureAwait(false);
         Assert.AreEqual("replacement",
-            Arguments(replacement, 1)["list"]![0]!["textBody"]!.GetValue<string>());
+            Arguments(replacement, 1)["list"]![0]!["textBody"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual("<p>away</p>",
-            Arguments(replacement, 1)["list"]![0]!["htmlBody"]!.GetValue<string>());
+            Arguments(replacement, 1)["list"]![0]!["htmlBody"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(1,
             fixture.Services.GetRequiredService<InMemoryLargeObjectStore>().Count);
 
@@ -4680,7 +4768,7 @@ public sealed class JmapProtocolTests
             "accountId":"{{{fixture.AccountId}}}"
           }, "v2"]]
         }
-        """);
+        """).ConfigureAwait(false);
         Assert.IsNull(Arguments(cleared, 1)["list"]![0]!["textBody"]);
         Assert.IsNull(Arguments(cleared, 1)["list"]![0]!["htmlBody"]);
         Assert.AreEqual(0,
@@ -4690,7 +4778,8 @@ public sealed class JmapProtocolTests
     [TestMethod]
     public async Task VacationResponseAllowsAnEmptyDateWindow()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var response = await fixture.InvokeAsync($$$"""
         {
           "using": ["{{{Core}}}", "{{{Vacation}}}"],
@@ -4705,25 +4794,26 @@ public sealed class JmapProtocolTests
             "accountId":"{{{fixture.AccountId}}}", "ids":["singleton"]
           }, "v2"]]
         }
-        """);
+        """).ConfigureAwait(false);
 
         Assert.IsNull(Arguments(response)["notUpdated"]);
         Assert.IsTrue(Arguments(response)["updated"]!.AsObject().ContainsKey("singleton"));
         var vacation = Arguments(response, 1)["list"]![0]!;
-        Assert.AreEqual("2026-09-30T00:00:00Z", vacation["fromDate"]!.GetValue<string>());
-        Assert.AreEqual("2026-09-20T00:00:00Z", vacation["toDate"]!.GetValue<string>());
+        Assert.AreEqual("2026-09-30T00:00:00Z", vacation["fromDate"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("2026-09-20T00:00:00Z", vacation["toDate"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task PushMethodsRejectAccountStateAndDoNotPartiallyApplyInvalidPatch()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var subscriptionId = Guid.CreateVersion7();
         var wireId = JmapId.PushSubscription(subscriptionId);
         using (var scope = fixture.Services.CreateScope())
         {
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-            database.JmapPushSubscriptions.Add(new JmapPushSubscriptionDB
+            await database.JmapPushSubscriptions.AddAsync(new JmapPushSubscriptionDB
             {
                 Id = subscriptionId,
                 SubscriptionObjectId = wireId,
@@ -4735,8 +4825,8 @@ public sealed class JmapProtocolTests
                 ExpiresAt = DateTime.UtcNow.AddDays(3),
                 CreatedAt = DateTime.UtcNow.AddMinutes(-1),
                 UpdatedAt = DateTime.UtcNow.AddMinutes(-1),
-            });
-            await database.SaveChangesAsync();
+            }).ConfigureAwait(false);
+            await database.SaveChangesAsync().ConfigureAwait(false);
         }
 
         var invalidArguments = await fixture.InvokeAsync($$$"""
@@ -4748,9 +4838,9 @@ public sealed class JmapProtocolTests
             "ifInState":"s0", "update":{"{{{wireId}}}":{"expires":"not-a-date"}}
           }, "p2"]]
         }
-        """);
-        Assert.AreEqual("invalidArguments", Arguments(invalidArguments)["type"]!.GetValue<string>());
-        Assert.AreEqual("invalidArguments", Arguments(invalidArguments, 1)["type"]!.GetValue<string>());
+        """).ConfigureAwait(false);
+        Assert.AreEqual("invalidArguments", Arguments(invalidArguments)["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("invalidArguments", Arguments(invalidArguments, 1)["type"]!.GetValue<string>(), StringComparer.Ordinal);
 
         var invalidPatch = await fixture.InvokeAsync($$$"""
         {
@@ -4763,29 +4853,31 @@ public sealed class JmapProtocolTests
             "ids":["{{{wireId}}}"], "properties":["keys"]
           }, "p5"]]
         }
-        """);
+        """).ConfigureAwait(false);
         Assert.AreEqual(
             "invalidProperties",
-            Arguments(invalidPatch)["notUpdated"]![wireId]!["type"]!.GetValue<string>());
-        Assert.AreEqual("Email", Arguments(invalidPatch, 1)["list"]![0]!["types"]![0]!.GetValue<string>());
-        Assert.AreEqual("forbidden", Arguments(invalidPatch, 2)["type"]!.GetValue<string>());
+            Arguments(invalidPatch)["notUpdated"]![wireId]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("Email", Arguments(invalidPatch, 1)["list"]![0]!["types"]![0]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("forbidden", Arguments(invalidPatch, 2)["type"]!.GetValue<string>(), StringComparer.Ordinal);
 
         using var verificationScope = fixture.Services.CreateScope();
         var stored = await verificationScope.ServiceProvider.GetRequiredService<EmailDbContext>()
-            .JmapPushSubscriptions.AsNoTracking().SingleAsync();
-        CollectionAssert.AreEqual(new[] { "Email" }, stored.Types!);
+            .JmapPushSubscriptions.AsNoTracking().SingleAsync().ConfigureAwait(false);
+        CollectionAssert.AreEqual(ExpectedVector20, stored.Types!);
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The PushSubscriptionAcceptsWholeGetObjectAndProtectsImmutableValues scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task PushSubscriptionAcceptsWholeGetObjectAndProtectsImmutableValues()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var subscriptionId = Guid.CreateVersion7();
         var wireId = JmapId.PushSubscription(subscriptionId);
         using (var scope = fixture.Services.CreateScope())
         {
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-            database.JmapPushSubscriptions.Add(new JmapPushSubscriptionDB
+            await database.JmapPushSubscriptions.AddAsync(new JmapPushSubscriptionDB
             {
                 Id = subscriptionId,
                 SubscriptionObjectId = wireId,
@@ -4798,8 +4890,8 @@ public sealed class JmapProtocolTests
                 ExpiresAt = DateTime.UtcNow.AddDays(3),
                 CreatedAt = DateTime.UtcNow.AddMinutes(-1),
                 UpdatedAt = DateTime.UtcNow.AddMinutes(-1),
-            });
-            await database.SaveChangesAsync();
+            }).ConfigureAwait(false);
+            await database.SaveChangesAsync().ConfigureAwait(false);
         }
 
         var get = await fixture.InvokeAsync($$$"""
@@ -4807,7 +4899,7 @@ public sealed class JmapProtocolTests
           "using": ["{{{Core}}}"],
           "methodCalls": [["PushSubscription/get", {"ids":["{{{wireId}}}"]}, "p1"]]
         }
-        """);
+        """).ConfigureAwait(false);
         var subscription = (JsonObject)Arguments(get)["list"]![0]!.DeepClone();
         Assert.IsNull(subscription["verificationCode"]);
         subscription["types"] = new JsonArray("Mailbox", "Email");
@@ -4821,7 +4913,7 @@ public sealed class JmapProtocolTests
                     ["update"] = new JsonObject { [wireId] = subscription },
                 },
                 "p2")),
-        });
+        }).ConfigureAwait(false);
         Assert.IsNull(Arguments(update)["notUpdated"]);
         Assert.IsTrue(Arguments(update)["updated"]!.AsObject().ContainsKey(wireId));
 
@@ -4837,31 +4929,32 @@ public sealed class JmapProtocolTests
                     ["update"] = new JsonObject { [wireId] = forbidden },
                 },
                 "p3")),
-        });
+        }).ConfigureAwait(false);
         var error = Arguments(invalid)["notUpdated"]![wireId]!;
-        Assert.AreEqual("invalidProperties", error["type"]!.GetValue<string>());
+        Assert.AreEqual("invalidProperties", error["type"]!.GetValue<string>(), StringComparer.Ordinal);
         CollectionAssert.AreEqual(
-            new[] { "deviceClientId" },
+            ExpectedVector21,
             error["properties"]!.AsArray().Select(node => node!.GetValue<string>()).ToArray());
 
         using var verificationScope = fixture.Services.CreateScope();
         var stored = await verificationScope.ServiceProvider.GetRequiredService<EmailDbContext>()
-            .JmapPushSubscriptions.AsNoTracking().SingleAsync();
-        CollectionAssert.AreEquivalent(new[] { "Mailbox", "Email" }, stored.Types!);
+            .JmapPushSubscriptions.AsNoTracking().SingleAsync().ConfigureAwait(false);
+        CollectionAssert.AreEquivalent(ExpectedVector22, stored.Types!);
         Assert.IsFalse(stored.IsVerified);
-        Assert.AreEqual("round-trip-device", stored.DeviceClientId);
+        Assert.AreEqual("round-trip-device", stored.DeviceClientId, StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task PushTypeFiltersTreatDuplicateNamesAsASet()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var subscriptionId = Guid.CreateVersion7();
         var wireId = JmapId.PushSubscription(subscriptionId);
         using (var scope = fixture.Services.CreateScope())
         {
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-            database.JmapPushSubscriptions.Add(new JmapPushSubscriptionDB
+            await database.JmapPushSubscriptions.AddAsync(new JmapPushSubscriptionDB
             {
                 Id = subscriptionId,
                 SubscriptionObjectId = wireId,
@@ -4873,8 +4966,8 @@ public sealed class JmapProtocolTests
                 ExpiresAt = DateTime.UtcNow.AddDays(3),
                 CreatedAt = DateTime.UtcNow.AddMinutes(-1),
                 UpdatedAt = DateTime.UtcNow.AddMinutes(-1),
-            });
-            await database.SaveChangesAsync();
+            }).ConfigureAwait(false);
+            await database.SaveChangesAsync().ConfigureAwait(false);
         }
 
         var response = await fixture.InvokeAsync(new JsonObject
@@ -4902,11 +4995,11 @@ public sealed class JmapProtocolTests
                         ["properties"] = new JsonArray("id", "types"),
                     },
                     "p2")),
-        });
+        }).ConfigureAwait(false);
 
         Assert.IsNull(Arguments(response)["notUpdated"]);
         CollectionAssert.AreEquivalent(
-            new[] { "Email", "Mailbox" },
+            ExpectedVector23,
             Arguments(response, 1)["list"]![0]!["types"]!
                 .AsArray()
                 .Select(node => node!.GetValue<string>())
@@ -4923,8 +5016,9 @@ public sealed class JmapProtocolTests
         receiverParameters.Q.X!.CopyTo(receiverPublic, 1);
         receiverParameters.Q.Y!.CopyTo(receiverPublic, 33);
         var delivery = new RecordingPushPresentationClient();
-        await using var fixture = await JmapFixture.CreateAsync(
-            configureServices: services => services.AddSingleton<IJmapPushPresentationClient>(delivery));
+        var fixture = (await JmapFixture.CreateAsync(
+            configureServices: services => services.AddSingleton<IJmapPushPresentationClient>(delivery)).ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var expires = JmapDate.FormatUtc(DateTime.UtcNow.AddDays(2));
 
         var response = await fixture.InvokeAsync(new JsonObject
@@ -4952,10 +5046,10 @@ public sealed class JmapProtocolTests
                     },
                 },
                 "p1")),
-        });
+        }).ConfigureAwait(false);
 
         CollectionAssert.AreEquivalent(
-            new[] { "id" },
+            ExpectedVector24,
             Arguments(response)["created"]!["push"]!.AsObject()
                 .Select(property => property.Key).ToArray());
         Assert.IsTrue(delivery.VerificationPayloadLength > 0);
@@ -4992,7 +5086,7 @@ public sealed class JmapProtocolTests
         receiverPublic[0] = 4;
         receiverParameters.Q.X!.CopyTo(receiverPublic, 1);
         receiverParameters.Q.Y!.CopyTo(receiverPublic, 33);
-        var handler = new PushRequestHandler();
+        using var handler = new PushRequestHandler();
         var journal = new RecordingPushJournal();
         using var delivery = new GatewayWebPushService(handler, journal, 65_536);
         var subscription = new WebPushSendRequest(
@@ -5006,15 +5100,15 @@ public sealed class JmapProtocolTests
             subscription,
             Guid.CreateVersion7(),
             Guid.CreateVersion7(),
-            CancellationToken.None);
+            CancellationToken.None).ConfigureAwait(false);
 
         Assert.AreEqual(WebPushSendOutcome.Success, result.Outcome);
-        Assert.AreEqual("application/json", handler.ContentType);
-        CollectionAssert.AreEqual(new[] { "aes128gcm" }, handler.ContentEncodings.ToArray());
+        Assert.AreEqual("application/json", handler.ContentType, StringComparer.Ordinal);
+        CollectionAssert.AreEqual(ExpectedVector25, handler.ContentEncodings.ToArray());
         Assert.IsTrue(handler.ContentLength > 0);
         Assert.HasCount(2, journal.Records);
-        Assert.AreEqual(GatewayTrafficDirections.Outbound, journal.Records[0].Direction);
-        Assert.AreEqual(GatewayTrafficDirections.Inbound, journal.Records[1].Direction);
+        Assert.AreEqual(GatewayTrafficDirections.Outbound, journal.Records[0].Direction, StringComparer.Ordinal);
+        Assert.AreEqual(GatewayTrafficDirections.Inbound, journal.Records[1].Direction, StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -5031,7 +5125,7 @@ public sealed class JmapProtocolTests
         Assert.IsNotNull(snippet);
         Assert.IsTrue(JmapJson.ContainsOnlyUnicodeScalars(snippet));
         Assert.IsTrue(Encoding.UTF8.GetByteCount(snippet) <= 255);
-        StringAssert.Contains(snippet, "<mark>needle</mark>");
+        StringAssert.Contains(snippet, "<mark>needle</mark>", StringComparison.Ordinal);
     }
 
     private static async Task<JsonObject> CreateTextEmailAsync(
@@ -5055,7 +5149,7 @@ public sealed class JmapProtocolTests
             }}
           }, "e1"]]
         }
-        """);
+        """).ConfigureAwait(false);
     }
 
     private static byte[] BuildDeepMultipartMessage(
@@ -5092,7 +5186,7 @@ public sealed class JmapProtocolTests
     {
         using var scope = fixture.Services.CreateScope();
         return await scope.ServiceProvider.GetRequiredService<JmapStateService>()
-            .GetStateAsync(fixture.InboxId, dataType);
+            .GetStateAsync(fixture.InboxId, dataType).ConfigureAwait(false);
     }
 
     private static JsonObject Arguments(JsonObject response, int index = 0) =>
@@ -5190,7 +5284,7 @@ public sealed class JmapProtocolTests
         {
             ContentType = request.Content?.Headers.ContentType?.MediaType;
             ContentEncodings = request.Content?.Headers.ContentEncoding.ToArray() ?? [];
-            ContentLength = (await request.Content!.ReadAsByteArrayAsync(cancellationToken)).Length;
+            ContentLength = (await request.Content!.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false)).Length;
             return new HttpResponseMessage(HttpStatusCode.Created);
         }
     }
@@ -5243,4 +5337,49 @@ public sealed class JmapProtocolTests
             Task.FromResult<IReadOnlyList<GatewayTrafficRecord>>(
                 Records.Where(record => record.SessionId == sessionId).ToArray());
     }
+    private static readonly string[] ExpectedVector1 = new[] { "parentId", "role", "sortOrder", "isSubscribed" };
+    private static readonly string[] ExpectedVector2 = new[] { "valid@example.test", "\"quoted local\"@example.test" };
+    private static readonly string[] ExpectedVector3 = new[] { "https://example.test/help", "mailto:help@example.test" };
+    private static readonly string[] ExpectedVector4 = new[] { "https://example.test/subscribe" };
+    private static readonly string[] ExpectedVector5 = new[] { "https://example.test/first" };
+    private static readonly string[] ExpectedVector6 = new[] { " \t=?UTF-8?Q?already_encoded?=\r\n\tcontinued", "second" };
+    private static readonly int[] ExpectedVector7 = new[] { 0, 1 };
+    private static readonly string[] ExpectedVector8 = new[] { "first@example.test", "second@example.test" };
+    private static readonly string[] ExpectedVector9 = new[] { "messageId", "sender" };
+    private static readonly string[] ExpectedVector10 = new[] { "part@example.test" };
+    private static readonly string[] ExpectedVector11 = new[] { "needle" };
+    private static readonly string[] ExpectedVector12 = new[]
+                {
+                "id", "threadId", "sendAt", "undoStatus", "deliveryStatus",
+                "dsnBlobIds", "mdnBlobIds",
+            };
+    private static readonly string[] ExpectedVector13 = new[]
+                {
+                "id", "threadId", "envelope", "sendAt", "undoStatus", "deliveryStatus",
+                "dsnBlobIds", "mdnBlobIds",
+            };
+    private static readonly string[] ExpectedVector14 = new[] { "id", "mayDelete" };
+    private static readonly string[] ExpectedVector15 = new[] { "id", "name", "replyTo", "bcc", "textSignature", "htmlSignature", "mayDelete" };
+    private static readonly string[] ExpectedVector16 = new[] { "from", "sentAt", "to" };
+    private static readonly string[] ExpectedVector17 = new[] { "inReplyTo", "messageId", "references" };
+    private static readonly string[] ExpectedVector18 = new[] { "header:Resent-Date:asDate:all", "sentAt" };
+    private static readonly string[] ExpectedVector19 = new[]
+                {
+                "cc",
+                "header:Resent-Cc:asAddresses:all",
+                "header:Resent-Date:asDate:all",
+                "header:Resent-Message-ID:asMessageIds:all",
+                "header:Resent-Reply-To:asAddresses:all",
+                "header:Resent-Sender:asAddresses:all",
+                "header:Resent-To:asAddresses:all",
+                "headers",
+                "replyTo",
+                "to",
+            };
+    private static readonly string[] ExpectedVector20 = new[] { "Email" };
+    private static readonly string[] ExpectedVector21 = new[] { "deviceClientId" };
+    private static readonly string[] ExpectedVector22 = new[] { "Mailbox", "Email" };
+    private static readonly string[] ExpectedVector23 = new[] { "Email", "Mailbox" };
+    private static readonly string[] ExpectedVector24 = new[] { "id" };
+    private static readonly string[] ExpectedVector25 = new[] { "aes128gcm" };
 }

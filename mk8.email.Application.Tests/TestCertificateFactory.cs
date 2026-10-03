@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Net.Security;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 
@@ -5,6 +7,13 @@ namespace mk8.email.Application.Tests;
 
 internal static class TestCertificateFactory
 {
+    private static readonly ConcurrentDictionary<string, byte> Certificates = new(StringComparer.Ordinal);
+
+    public static bool IsTrusted(X509Certificate? certificate, SslPolicyErrors errors) =>
+        certificate is not null
+        && errors is SslPolicyErrors.None or SslPolicyErrors.RemoteCertificateChainErrors
+        && Certificates.ContainsKey(certificate.GetCertHashString(HashAlgorithmName.SHA256));
+
     public static string Create(string directory, string hostName = "email.mk8n.com")
     {
         using var key = RSA.Create(2048);
@@ -26,6 +35,7 @@ internal static class TestCertificateFactory
             DateTimeOffset.UtcNow.AddDays(1));
         var path = Path.Combine(directory, $"{hostName}.pfx");
         File.WriteAllBytes(path, certificate.Export(X509ContentType.Pkcs12));
+        Certificates.TryAdd(certificate.GetCertHashString(HashAlgorithmName.SHA256), 0);
         return path;
     }
 
@@ -38,5 +48,3 @@ internal static class TestCertificateFactory
         return new TestDkimKey(privateKeyPath, $"v=DKIM1; k=rsa; p={publicKey}");
     }
 }
-
-internal sealed record TestDkimKey(string PrivateKeyPath, string PublicDnsRecord);

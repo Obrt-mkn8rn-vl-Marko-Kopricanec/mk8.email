@@ -6,7 +6,8 @@ using mk8.email.Hosting;
 namespace mk8.email.Messaging.Tests;
 
 [TestClass]
-public sealed class GatewayListenerHealthCheckTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class GatewayListenerHealthCheckTests
 {
     [TestMethod]
     public async Task EveryEnabledPop3AndSieveListenerMustBeReachable()
@@ -27,10 +28,10 @@ public sealed class GatewayListenerHealthCheckTests
 
         Assert.IsTrue(await GatewayListenerHealthCheck.IsHealthyAsync(
             environment,
-            CancellationToken.None));
+            CancellationToken.None).ConfigureAwait(false));
         sieve.Stop();
         Assert.IsFalse(await GatewayListenerHealthCheck.IsHealthyAsync(
             environment,
-            CancellationToken.None));
+            CancellationToken.None).ConfigureAwait(false));
     }
 }

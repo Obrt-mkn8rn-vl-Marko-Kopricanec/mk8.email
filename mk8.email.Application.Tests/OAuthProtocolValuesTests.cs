@@ -5,7 +5,8 @@ using mk8.email.Contracts.Protocol;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class OAuthProtocolValuesTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class OAuthProtocolValuesTests
 {
     [TestMethod]
     public void XOAuth2ParserAcceptsThunderbirdPayloadAndRejectsAmbiguousForms()
@@ -14,8 +15,8 @@ public sealed class OAuthProtocolValuesTests
             "user=person@example.com\u0001auth=Bearer mk8_at_token\u0001\u0001"));
 
         Assert.IsTrue(OAuthSasl.TryParseXOAuth2(encoded, out var username, out var token));
-        Assert.AreEqual("person@example.com", username);
-        Assert.AreEqual("mk8_at_token", token);
+        Assert.AreEqual("person@example.com", username, StringComparer.Ordinal);
+        Assert.AreEqual("mk8_at_token", token, StringComparer.Ordinal);
 
         Assert.IsFalse(OAuthSasl.TryParseXOAuth2("not-base64!", out _, out _));
         Assert.IsFalse(OAuthSasl.TryParseXOAuth2(
@@ -48,14 +49,16 @@ public sealed class OAuthProtocolValuesTests
             ["smtp offline_access imap smtp"],
             out var normalized));
         CollectionAssert.AreEquivalent(
-            new[] { "imap", "offline_access", "smtp" },
+            ExpectedVector1,
             normalized);
         Assert.IsFalse(OAuthProtocolValues.TryNormalizeScopes(["imap"], out _));
         Assert.IsTrue(OAuthProtocolValues.TryNormalizeScopes(
             ["openid offline_access imap"],
             out var identityScopes));
         CollectionAssert.AreEquivalent(
-            new[] { "imap", "offline_access", "openid" },
+            ExpectedVector2,
             identityScopes);
     }
+    private static readonly string[] ExpectedVector1 = new[] { "imap", "offline_access", "smtp" };
+    private static readonly string[] ExpectedVector2 = new[] { "imap", "offline_access", "openid" };
 }

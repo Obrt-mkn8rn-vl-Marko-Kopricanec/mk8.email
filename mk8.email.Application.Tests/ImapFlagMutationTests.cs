@@ -5,7 +5,8 @@ using mk8.email.Infrastructure.Models;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class ImapFlagMutationTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class ImapFlagMutationTests
 {
     [TestMethod]
     [DataRow(ImapFlagMutationMode.Add)]
@@ -21,7 +22,7 @@ public sealed class ImapFlagMutationTests
         };
 
         Assert.IsTrue(ImapFlagMutation.TryApply(email, mode, ["\\Seen", "added"], out var failure));
-        Assert.AreEqual(string.Empty, failure);
+        Assert.AreEqual(string.Empty, failure, StringComparer.Ordinal);
         Assert.AreEqual(mode != ImapFlagMutationMode.Remove, email.IsRead);
         Assert.AreEqual(mode != ImapFlagMutationMode.Replace, email.IsDeleted);
         var expectedKeywords = mode switch
@@ -43,7 +44,7 @@ public sealed class ImapFlagMutationTests
 
         Assert.IsFalse(ImapFlagMutation.TryApply(
             email, ImapFlagMutationMode.Add, ["\\Seen", "overflow"], out var failure));
-        Assert.AreEqual("Too many keywords", failure);
+        Assert.AreEqual("Too many keywords", failure, StringComparer.Ordinal);
         Assert.IsFalse(email.IsRead);
         Assert.IsTrue(email.IsFlagged);
         Assert.AreSame(originalKeywords, email.Keywords);
@@ -60,7 +61,7 @@ public sealed class ImapFlagMutationTests
 
         Assert.IsTrue(ImapFlagMutation.TryApply(
             email, ImapFlagMutationMode.Add, ["\\Seen"], out var failure));
-        Assert.AreEqual(string.Empty, failure);
+        Assert.AreEqual(string.Empty, failure, StringComparer.Ordinal);
         Assert.IsTrue(email.IsRead);
         Assert.HasCount(ImapFlagMutation.MaximumKeywordsPerMessage, email.Keywords);
     }
@@ -72,7 +73,7 @@ public sealed class ImapFlagMutationTests
 
         Assert.IsFalse(ImapFlagMutation.TryApply(
             email, (ImapFlagMutationMode)999, ["\\Seen"], out var failure));
-        Assert.AreEqual("Invalid STORE action", failure);
+        Assert.AreEqual("Invalid STORE action", failure, StringComparer.Ordinal);
         Assert.IsFalse(email.IsRead);
     }
 
@@ -83,7 +84,7 @@ public sealed class ImapFlagMutationTests
 
         Assert.IsFalse(ImapFlagMutation.TryApply(
             email, ImapFlagMutationMode.Add, ["\\Seen", "\\Recent"], out var failure));
-        StringAssert.Contains(failure, "cannot be changed");
+        StringAssert.Contains(failure, "cannot be changed", StringComparison.Ordinal);
         Assert.IsFalse(email.IsRead);
     }
 }

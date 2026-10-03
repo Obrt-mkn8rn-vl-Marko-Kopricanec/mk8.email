@@ -231,172 +231,217 @@ internal static class JmapContactCodec
         };
     }
 
-    private static void PopulateFromVCard(
-        JsonObject card,
-        IReadOnlyList<string> lines,
-        DavResourceDB resource)
+    private static void PopulateFromVCard(JsonObject card, IReadOnlyList<string> lines, DavResourceDB resource)
     {
-        var emails = new JsonObject();
-        var phones = new JsonObject();
-        var onlineServices = new JsonObject();
-        var addresses = new JsonObject();
-        var organizations = new JsonObject();
-        var titles = new JsonObject();
-        var nicknames = new JsonObject();
-        var links = new JsonObject();
-        var media = new JsonObject();
-        var notes = new JsonObject();
-        var members = new JsonObject();
-        var anniversaries = new JsonObject();
-        var keywords = new JsonObject();
+        var fields = new VCardProjection();
         JsonObject? name = null;
         var index = 0;
-
         foreach (var line in lines)
         {
-            if (!TryParseProperty(line, out var property))
-                continue;
+            if (!TryParseProperty(line, out var property)) continue;
             var value = UnescapeText(property.Value);
-            switch (property.Name)
-            {
-                case "UID":
-                    card["uid"] = value;
-                    break;
-                case "KIND":
-                    card["kind"] = value.ToProtocolLowerInvariant();
-                    break;
-                case "PRODID":
-                    card["prodId"] = value;
-                    break;
-                case "FN":
-                    if (!property.Parameters.TryGetValue("DERIVED", out var derived)
-                        || !derived.Equals("true", StringComparison.OrdinalIgnoreCase))
-                    {
-                        name ??= new JsonObject();
-                        name["full"] = value;
-                    }
-                    break;
-                case "N":
-                    name ??= new JsonObject();
-                    var components = SplitEscaped(property.Value, ';');
-                    var nameComponents = new JsonArray();
-                    AddStructuredNameComponents(nameComponents, components);
-                    if (nameComponents.Count > 0)
-                    {
-                        name["components"] = nameComponents;
-                        name["isOrdered"] = false;
-                    }
-                    break;
-                case "NICKNAME":
-                    foreach (var nickname in SplitEscaped(property.Value, ','))
-                    {
-                        nicknames[ObjectId(property, nicknames, "n", ref index)] =
-                            new JsonObject { ["name"] = UnescapeText(nickname) };
-                    }
-                    break;
-                case "ORG":
-                    var organizationParts = SplitEscaped(property.Value, ';');
-                    var organization = new JsonObject();
-                    var organizationName = UnescapeText(
-                        organizationParts.ElementAtOrDefault(0) ?? string.Empty);
-                    if (organizationName.Length > 0)
-                        organization["name"] = organizationName;
-                    var units = organizationParts.Skip(1)
-                        .Select(UnescapeText)
-                        .Where(item => item.Length > 0)
-                        .ToArray();
-                    if (units.Length > 0)
-                    {
-                        organization["units"] = new JsonArray(units
-                            .Select(unit => (JsonNode)new JsonObject { ["name"] = unit })
-                            .ToArray());
-                    }
-                    if (organization.Count > 0)
-                        organizations[ObjectId(property, organizations, "o", ref index)] = organization;
-                    break;
-                case "TITLE":
-                case "ROLE":
-                    titles[ObjectId(property, titles, "t", ref index)] = new JsonObject
-                    {
-                        ["name"] = value,
-                        ["kind"] = string.Equals(property.Name, "ROLE", StringComparison.Ordinal) ? "role" : "title",
-                    };
-                    break;
-                case "EMAIL":
-                    emails[ObjectId(property, emails, "e", ref index)] =
-                        ContactValue(property, "address", value);
-                    break;
-                case "TEL":
-                    phones[ObjectId(property, phones, "p", ref index)] =
-                        ContactValue(property, "number", value);
-                    break;
-                case "IMPP":
-                    onlineServices[ObjectId(property, onlineServices, "i", ref index)] =
-                        ResourceValue(property, value, null);
-                    break;
-                case "ADR":
-                    addresses[ObjectId(property, addresses, "d", ref index)] = AddressValue(property);
-                    break;
-                case "URL":
-                    links[ObjectId(property, links, "l", ref index)] =
-                        ResourceValue(property, value, null);
-                    break;
-                case "PHOTO":
-                case "LOGO":
-                case "SOUND":
-                    media[ObjectId(property, media, "m", ref index)] = ResourceValue(
-                        property,
-                        value,
-                        property.Name.ToProtocolLowerInvariant());
-                    break;
-                case "NOTE":
-                    notes[ObjectId(property, notes, "x", ref index)] =
-                        new JsonObject { ["note"] = value };
-                    break;
-                case "MEMBER":
-                    if (IsAbsoluteUri(property.Value))
-                        members[property.Value] = true;
-                    break;
-                case "BDAY":
-                case "ANNIVERSARY":
-                    if (AnniversaryValue(property.Name, value) is { } anniversary)
-                    {
-                        anniversaries[ObjectId(property, anniversaries, "a", ref index)] = anniversary;
-                    }
-                    break;
-                case "CATEGORIES":
-                    foreach (var keyword in SplitEscaped(property.Value, ','))
-                    {
-                        var decoded = UnescapeText(keyword);
-                        if (decoded.Length > 0)
-                            keywords[decoded] = true;
-                    }
-                    break;
-                case "CREATED":
-                    card["created"] = value;
-                    break;
-                case "REV":
-                    card["updated"] = value;
-                    break;
-            }
+            if (PopulateCardIdentity(card, property, value, ref name)) continue;
+            if (PopulatePersonalDetails(card, property, value, fields, ref index)) continue;
+            if (PopulateContactChannels(card, property, value, fields, ref index)) continue;
+            PopulateSupplementalValues(card, property, value, fields, ref index);
         }
-
         if (name is not null) card["name"] = name;
-        AddIfNotEmpty(card, "emails", emails);
-        AddIfNotEmpty(card, "phones", phones);
-        AddIfNotEmpty(card, "onlineServices", onlineServices);
-        AddIfNotEmpty(card, "addresses", addresses);
-        AddIfNotEmpty(card, "organizations", organizations);
-        AddIfNotEmpty(card, "titles", titles);
-        AddIfNotEmpty(card, "nicknames", nicknames);
-        AddIfNotEmpty(card, "links", links);
-        AddIfNotEmpty(card, "media", media);
-        AddIfNotEmpty(card, "notes", notes);
-        AddIfNotEmpty(card, "members", members);
-        AddIfNotEmpty(card, "anniversaries", anniversaries);
-        AddIfNotEmpty(card, "keywords", keywords);
+        AddIfNotEmpty(card, "emails", fields.Emails);
+        AddIfNotEmpty(card, "phones", fields.Phones);
+        AddIfNotEmpty(card, "onlineServices", fields.OnlineServices);
+        AddIfNotEmpty(card, "addresses", fields.Addresses);
+        AddIfNotEmpty(card, "organizations", fields.Organizations);
+        AddIfNotEmpty(card, "titles", fields.Titles);
+        AddIfNotEmpty(card, "nicknames", fields.Nicknames);
+        AddIfNotEmpty(card, "links", fields.Links);
+        AddIfNotEmpty(card, "media", fields.Media);
+        AddIfNotEmpty(card, "notes", fields.Notes);
+        AddIfNotEmpty(card, "members", fields.Members);
+        AddIfNotEmpty(card, "anniversaries", fields.Anniversaries);
+        AddIfNotEmpty(card, "keywords", fields.Keywords);
         card["created"] ??= JmapDate.FormatUtc(resource.CreatedAt);
         card["updated"] ??= JmapDate.FormatUtc(resource.UpdatedAt);
+    }
+
+    private static bool PopulateCardIdentity(JsonObject card, VCardProperty property, string value, ref JsonObject? name)
+    {
+        switch (property.Name)
+        {
+            case "UID":
+                card["uid"] = value;
+                return true;
+            case "KIND":
+                card["kind"] = value.ToProtocolLowerInvariant();
+                return true;
+            case "PRODID":
+                card["prodId"] = value;
+                return true;
+            case "FN":
+                if (!property.Parameters.TryGetValue("DERIVED", out var derived)
+                    || !derived.Equals("true", StringComparison.OrdinalIgnoreCase))
+                {
+                    name ??= new JsonObject();
+                    name["full"] = value;
+                }
+                return true;
+            case "N":
+                name ??= new JsonObject();
+                var components = SplitEscaped(property.Value, ';');
+                var nameComponents = new JsonArray();
+                AddStructuredNameComponents(nameComponents, components);
+                if (nameComponents.Count > 0)
+                {
+                    name["components"] = nameComponents;
+                    name["isOrdered"] = false;
+                }
+                return true;
+            case "CREATED":
+                card["created"] = value;
+                return true;
+            case "REV":
+                card["updated"] = value;
+                return true;
+            default: return false;
+        }
+    }
+
+    private static bool PopulatePersonalDetails(JsonObject card, VCardProperty property, string value, VCardProjection fields, ref int index)
+    {
+        var nicknames = fields.Nicknames;
+        var organizations = fields.Organizations;
+        var titles = fields.Titles;
+        switch (property.Name)
+        {
+            case "NICKNAME":
+                foreach (var nickname in SplitEscaped(property.Value, ','))
+                {
+                    nicknames[ObjectId(property, nicknames, "n", ref index)] =
+                        new JsonObject { ["name"] = UnescapeText(nickname) };
+                }
+                return true;
+            case "ORG":
+                var organizationParts = SplitEscaped(property.Value, ';');
+                var organization = new JsonObject();
+                var organizationName = UnescapeText(
+                    organizationParts.ElementAtOrDefault(0) ?? string.Empty);
+                if (organizationName.Length > 0)
+                    organization["name"] = organizationName;
+                var units = organizationParts.Skip(1)
+                    .Select(UnescapeText)
+                    .Where(item => item.Length > 0)
+                    .ToArray();
+                if (units.Length > 0)
+                {
+                    organization["units"] = new JsonArray(units
+                        .Select(unit => (JsonNode)new JsonObject { ["name"] = unit })
+                        .ToArray());
+                }
+                if (organization.Count > 0)
+                    organizations[ObjectId(property, organizations, "o", ref index)] = organization;
+                return true;
+            case "TITLE":
+            case "ROLE":
+                titles[ObjectId(property, titles, "t", ref index)] = new JsonObject
+                {
+                    ["name"] = value,
+                    ["kind"] = string.Equals(property.Name, "ROLE", StringComparison.Ordinal) ? "role" : "title",
+                };
+                return true;
+            default: return false;
+        }
+    }
+
+    private static bool PopulateContactChannels(JsonObject card, VCardProperty property, string value, VCardProjection fields, ref int index)
+    {
+        var emails = fields.Emails;
+        var phones = fields.Phones;
+        var onlineServices = fields.OnlineServices;
+        var addresses = fields.Addresses;
+        var links = fields.Links;
+        var media = fields.Media;
+        switch (property.Name)
+        {
+            case "EMAIL":
+                emails[ObjectId(property, emails, "e", ref index)] =
+                    ContactValue(property, "address", value);
+                return true;
+            case "TEL":
+                phones[ObjectId(property, phones, "p", ref index)] =
+                    ContactValue(property, "number", value);
+                return true;
+            case "IMPP":
+                onlineServices[ObjectId(property, onlineServices, "i", ref index)] =
+                    ResourceValue(property, value, null);
+                return true;
+            case "ADR":
+                addresses[ObjectId(property, addresses, "d", ref index)] = AddressValue(property);
+                return true;
+            case "URL":
+                links[ObjectId(property, links, "l", ref index)] =
+                    ResourceValue(property, value, null);
+                return true;
+            case "PHOTO":
+            case "LOGO":
+            case "SOUND":
+                media[ObjectId(property, media, "m", ref index)] = ResourceValue(
+                    property,
+                    value,
+                    property.Name.ToProtocolLowerInvariant());
+                return true;
+            default: return false;
+        }
+    }
+
+    private static bool PopulateSupplementalValues(JsonObject card, VCardProperty property, string value, VCardProjection fields, ref int index)
+    {
+        var notes = fields.Notes;
+        var members = fields.Members;
+        var anniversaries = fields.Anniversaries;
+        var keywords = fields.Keywords;
+        switch (property.Name)
+        {
+            case "NOTE":
+                notes[ObjectId(property, notes, "x", ref index)] =
+                    new JsonObject { ["note"] = value };
+                return true;
+            case "MEMBER":
+                if (IsAbsoluteUri(property.Value))
+                    members[property.Value] = true;
+                return true;
+            case "BDAY":
+            case "ANNIVERSARY":
+                if (AnniversaryValue(property.Name, value) is { } anniversary)
+                {
+                    anniversaries[ObjectId(property, anniversaries, "a", ref index)] = anniversary;
+                }
+                return true;
+            case "CATEGORIES":
+                foreach (var keyword in SplitEscaped(property.Value, ','))
+                {
+                    var decoded = UnescapeText(keyword);
+                    if (decoded.Length > 0)
+                        keywords[decoded] = true;
+                }
+                return true;
+            default: return false;
+        }
+    }
+
+    private sealed class VCardProjection
+    {
+        public JsonObject Emails { get; } = new();
+        public JsonObject Phones { get; } = new();
+        public JsonObject OnlineServices { get; } = new();
+        public JsonObject Addresses { get; } = new();
+        public JsonObject Organizations { get; } = new();
+        public JsonObject Titles { get; } = new();
+        public JsonObject Nicknames { get; } = new();
+        public JsonObject Links { get; } = new();
+        public JsonObject Media { get; } = new();
+        public JsonObject Notes { get; } = new();
+        public JsonObject Members { get; } = new();
+        public JsonObject Anniversaries { get; } = new();
+        public JsonObject Keywords { get; } = new();
     }
 
     private static string ObjectId(
@@ -542,12 +587,19 @@ internal static class JmapContactCodec
                     partial["day"] = day;
             }
         }
+        if (!IsValidPartialDate(partial)) return null;
+        anniversary["date"] = partial;
+        return anniversary;
+    }
+
+    private static bool IsValidPartialDate(JsonObject partial)
+    {
         if (partial.Count == 1
             || IntegerValue(partial["month"]) is < 1 or > 12
             || IntegerValue(partial["day"]) is < 1 or > 31
             || partial.ContainsKey("day") && !partial.ContainsKey("month"))
         {
-            return null;
+            return false;
         }
         if (IntegerValue(partial["month"]) is { } parsedMonth
             && IntegerValue(partial["day"]) is { } parsedDay)
@@ -555,10 +607,9 @@ internal static class JmapContactCodec
             var parsedYear = IntegerValue(partial["year"]);
             var maximumDay = DateTime.DaysInMonth(parsedYear is > 0 and <= 9999 ? parsedYear.Value : 2000, parsedMonth);
             if (parsedDay > maximumDay)
-                return null;
+                return false;
         }
-        anniversary["date"] = partial;
-        return anniversary;
+        return true;
     }
 
     private static bool TryPositiveInt(ReadOnlySpan<char> value, out int result) =>

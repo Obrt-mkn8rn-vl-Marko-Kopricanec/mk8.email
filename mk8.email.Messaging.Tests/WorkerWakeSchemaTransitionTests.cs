@@ -13,34 +13,39 @@ namespace mk8.email.Messaging.Tests;
 [TestClass]
 [DoNotParallelize]
 [TestCategory("PostgreSQL")]
-public sealed class WorkerWakeSchemaTransitionTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class WorkerWakeSchemaTransitionTests
 {
     [TestMethod]
     public async Task LegacyUpgradeAndEmptyRollbackRestoreSchemaAndExactPermissions()
     {
-        await using var fixture = await Fixture.CreateAsync(legacy: true);
-        Assert.AreEqual(WorkerWakeSchemaState.Legacy, await WorkerWakeSchemaTransition.ReadAsync(fixture.Source, fixture.Role));
-        await Assert.ThrowsAsync<InvalidOperationException>(() => WorkerWakeSchemaTransition.EnableAsync(fixture.Source, fixture.Role));
-        await fixture.PrepareAsync();
-        await Assert.ThrowsAsync<InvalidOperationException>(() => WorkerWakeSchemaTransition.ReadAsync(fixture.Source, fixture.Role));
-        await WorkerWakeSchemaTransition.EnableAsync(fixture.Source, fixture.Role);
-        await WorkerWakeSchemaTransition.EnableAsync(fixture.Source, fixture.Role);
-        Assert.AreEqual(WorkerWakeSchemaState.Receipts, await WorkerWakeSchemaTransition.ReadAsync(fixture.Source, fixture.Role));
-        await WorkerWakeDatabasePrivilegeProbe.ProbeAsync(fixture.Wake);
-        await WorkerWakeSchemaTransition.RestoreAsync(fixture.Source, fixture.Role, WorkerWakeSchemaState.Legacy);
-        Assert.AreEqual(WorkerWakeSchemaState.Legacy, await WorkerWakeSchemaTransition.ReadAsync(fixture.Source, fixture.Role));
-        await WorkerWakeSchemaTransition.RestoreAsync(fixture.Source, fixture.Role, WorkerWakeSchemaState.Legacy);
-        await using var table = fixture.Source.CreateCommand("SELECT to_regclass('public.application_operation_receipts') IS NULL");
-        Assert.AreEqual(true, await table.ExecuteScalarAsync());
-        await using var access = fixture.Source.CreateCommand("SELECT has_column_privilege(@role, 'public.users', 'id', 'SELECT')");
+        var fixture = (await Fixture.CreateAsync(legacy: true).ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
+        Assert.AreEqual(WorkerWakeSchemaState.Legacy, await WorkerWakeSchemaTransition.ReadAsync(fixture.Source, fixture.Role).ConfigureAwait(false));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => WorkerWakeSchemaTransition.EnableAsync(fixture.Source, fixture.Role)).ConfigureAwait(false);
+        await fixture.PrepareAsync().ConfigureAwait(false);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => WorkerWakeSchemaTransition.ReadAsync(fixture.Source, fixture.Role)).ConfigureAwait(false);
+        await WorkerWakeSchemaTransition.EnableAsync(fixture.Source, fixture.Role).ConfigureAwait(false);
+        await WorkerWakeSchemaTransition.EnableAsync(fixture.Source, fixture.Role).ConfigureAwait(false);
+        Assert.AreEqual(WorkerWakeSchemaState.Receipts, await WorkerWakeSchemaTransition.ReadAsync(fixture.Source, fixture.Role).ConfigureAwait(false));
+        await WorkerWakeDatabasePrivilegeProbe.ProbeAsync(fixture.Wake).ConfigureAwait(false);
+        await WorkerWakeSchemaTransition.RestoreAsync(fixture.Source, fixture.Role, WorkerWakeSchemaState.Legacy).ConfigureAwait(false);
+        Assert.AreEqual(WorkerWakeSchemaState.Legacy, await WorkerWakeSchemaTransition.ReadAsync(fixture.Source, fixture.Role).ConfigureAwait(false));
+        await WorkerWakeSchemaTransition.RestoreAsync(fixture.Source, fixture.Role, WorkerWakeSchemaState.Legacy).ConfigureAwait(false);
+        var table = fixture.Source.CreateCommand("SELECT to_regclass('public.application_operation_receipts') IS NULL");
+        await using var tableLifetime = table.ConfigureAwait(false);
+        Assert.AreEqual(true, await table.ExecuteScalarAsync().ConfigureAwait(false));
+        var access = fixture.Source.CreateCommand("SELECT has_column_privilege(@role, 'public.users', 'id', 'SELECT')");
+        await using var accessLifetime = access.ConfigureAwait(false);
         access.Parameters.AddWithValue("role", fixture.Role);
-        Assert.AreEqual(true, await access.ExecuteScalarAsync());
+        Assert.AreEqual(true, await access.ExecuteScalarAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task OperatorCliExecutesSchemaGrantAndGuardedRestoreAgainstPostgres()
     {
-        await using var fixture = await Fixture.CreateAsync(legacy: true);
+        var fixture = (await Fixture.CreateAsync(legacy: true).ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var directory = Directory.CreateTempSubdirectory("mk8-wake-operator-");
         try
         {
@@ -61,26 +66,26 @@ public sealed class WorkerWakeSchemaTransitionTests
             };
             var configPath = Path.Combine(directory.FullName, "worker.json");
             var wakePath = Path.Combine(directory.FullName, "wake.connection");
-            await File.WriteAllTextAsync(configPath, JsonSerializer.Serialize(config));
-            await File.WriteAllTextAsync(wakePath, fixture.Wake.ConnectionString);
+            await File.WriteAllTextAsync(configPath, JsonSerializer.Serialize(config)).ConfigureAwait(false);
+            await File.WriteAllTextAsync(wakePath, fixture.Wake.ConnectionString).ConfigureAwait(false);
             var legacy = await ManagementCliCommandBoundaryTests.RunCliAsync(configPath,
-                ["--worker-wake-schema-state", configPath, wakePath], development: true);
+                ["--worker-wake-schema-state", configPath, wakePath], development: true).ConfigureAwait(false);
             Assert.AreEqual(0, legacy.ExitCode, legacy.Output);
-            Assert.AreEqual("legacy", legacy.Output.Trim());
-            await fixture.PrepareAsync();
+            Assert.AreEqual("legacy", legacy.Output.Trim(), StringComparer.Ordinal);
+            await fixture.PrepareAsync().ConfigureAwait(false);
             var enabled = await ManagementCliCommandBoundaryTests.RunCliAsync(configPath,
-                ["--prepare-worker-wake", configPath, wakePath], development: true);
+                ["--prepare-worker-wake", configPath, wakePath], development: true).ConfigureAwait(false);
             Assert.AreEqual(0, enabled.ExitCode, enabled.Output);
-            await WorkerWakeDatabasePrivilegeProbe.ProbeAsync(fixture.Wake);
+            await WorkerWakeDatabasePrivilegeProbe.ProbeAsync(fixture.Wake).ConfigureAwait(false);
             var receipts = await ManagementCliCommandBoundaryTests.RunCliAsync(configPath,
-                ["--worker-wake-schema-state", configPath, wakePath], development: true);
+                ["--worker-wake-schema-state", configPath, wakePath], development: true).ConfigureAwait(false);
             Assert.AreEqual(0, receipts.ExitCode, receipts.Output);
-            Assert.AreEqual("receipts", receipts.Output.Trim());
+            Assert.AreEqual("receipts", receipts.Output.Trim(), StringComparer.Ordinal);
             var restored = await ManagementCliCommandBoundaryTests.RunCliAsync(configPath,
-                ["--restore-worker-wake", configPath, wakePath, "legacy"], development: true);
+                ["--restore-worker-wake", configPath, wakePath, "legacy"], development: true).ConfigureAwait(false);
             Assert.AreEqual(0, restored.ExitCode, restored.Output);
             Assert.AreEqual(WorkerWakeSchemaState.Legacy,
-                await WorkerWakeSchemaTransition.ReadAsync(fixture.Source, fixture.Role));
+                await WorkerWakeSchemaTransition.ReadAsync(fixture.Source, fixture.Role).ConfigureAwait(false));
         }
         finally
         {
@@ -91,14 +96,16 @@ public sealed class WorkerWakeSchemaTransitionTests
     [TestMethod]
     public async Task CommittedReceiptBlocksLegacyRollbackWithoutChangingRowsOrGrants()
     {
-        await using var fixture = await Fixture.CreateAsync();
-        await fixture.EnableAsync();
-        await fixture.AddReceiptAsync();
+        var fixture = (await Fixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
+        await fixture.EnableAsync().ConfigureAwait(false);
+        await fixture.AddReceiptAsync().ConfigureAwait(false);
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            WorkerWakeSchemaTransition.RestoreAsync(fixture.Source, fixture.Role, WorkerWakeSchemaState.Legacy));
-        await using var database = fixture.Context();
-        Assert.AreEqual(1, await database.ApplicationOperationReceipts.CountAsync());
-        await WorkerWakeDatabasePrivilegeProbe.ProbeAsync(fixture.Wake);
+            WorkerWakeSchemaTransition.RestoreAsync(fixture.Source, fixture.Role, WorkerWakeSchemaState.Legacy)).ConfigureAwait(false);
+        var database = fixture.Context();
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        Assert.AreEqual(1, await database.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
+        await WorkerWakeDatabasePrivilegeProbe.ProbeAsync(fixture.Wake).ConfigureAwait(false);
     }
 
     [TestMethod]
@@ -200,158 +207,163 @@ public sealed class WorkerWakeSchemaTransitionTests
     [DataRow(ApplicationOperations.MailOperationExecute, true, true)]
     public async Task PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(string operation, bool leased, bool expired)
     {
-        await using var fixture = await Fixture.CreateAsync();
-        await fixture.EnableAsync();
+        var fixture = (await Fixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
+        await fixture.EnableAsync().ConfigureAwait(false);
         using var protector = AesGcmPayloadProtectorTests.CreateProtector("wake", "transition");
         var bus = new PostgresApplicationBus(fixture.Source, protector);
         var now = DateTimeOffset.UtcNow;
         var request = new ApplicationRequest(Guid.CreateVersion7(), Guid.CreateVersion7(), 0, "jmap",
             operation, "application/json", "{}"u8.ToArray(),
-            new Dictionary<string, string>(), now.AddMinutes(-3), now.AddMinutes(2));
-        await bus.EnqueueAsync(request);
-        if (leased) Assert.IsNotNull(await bus.TryClaimAsync("transition-worker"));
+            new Dictionary<string, string>(StringComparer.Ordinal), now.AddMinutes(-3), now.AddMinutes(2));
+        await bus.EnqueueAsync(request).ConfigureAwait(false);
+        if (leased) Assert.IsNotNull(await bus.TryClaimAsync("transition-worker").ConfigureAwait(false));
         if (expired)
         {
-            await using var expiry = fixture.Source.CreateCommand("UPDATE application_requests SET deadline_at = clock_timestamp() - interval '1 second' WHERE id = @id");
+            var expiry = fixture.Source.CreateCommand("UPDATE application_requests SET deadline_at = clock_timestamp() - interval '1 second' WHERE id = @id");
+            await using var expiryLifetime = expiry.ConfigureAwait(false);
             expiry.Parameters.AddWithValue("id", request.Id);
-            await expiry.ExecuteNonQueryAsync();
+            await expiry.ExecuteNonQueryAsync().ConfigureAwait(false);
         }
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            WorkerWakeSchemaTransition.RestoreAsync(fixture.Source, fixture.Role, WorkerWakeSchemaState.Legacy));
-        await WorkerWakeDatabasePrivilegeProbe.ProbeAsync(fixture.Wake);
-        await using var state = fixture.Source.CreateCommand("SELECT state FROM application_requests WHERE id = @id");
+            WorkerWakeSchemaTransition.RestoreAsync(fixture.Source, fixture.Role, WorkerWakeSchemaState.Legacy)).ConfigureAwait(false);
+        await WorkerWakeDatabasePrivilegeProbe.ProbeAsync(fixture.Wake).ConfigureAwait(false);
+        var state = fixture.Source.CreateCommand("SELECT state FROM application_requests WHERE id = @id");
+        await using var stateLifetime = state.ConfigureAwait(false);
         state.Parameters.AddWithValue("id", request.Id);
-        Assert.AreEqual(leased ? "processing" : "pending", await state.ExecuteScalarAsync());
+        Assert.AreEqual(leased ? "processing" : "pending", await state.ExecuteScalarAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task V19MailOperationsBlockLegacyWakeRollbackInEveryLeaseState()
     {
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v19", false, false);
+            "mail.operation.execute.v19", false, false).ConfigureAwait(false);
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v19", true, false);
+            "mail.operation.execute.v19", true, false).ConfigureAwait(false);
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v19", false, true);
+            "mail.operation.execute.v19", false, true).ConfigureAwait(false);
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v19", true, true);
+            "mail.operation.execute.v19", true, true).ConfigureAwait(false);
     }
 
     [TestMethod]
     public async Task V20MailOperationsBlockLegacyWakeRollbackInEveryLeaseState()
     {
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v20", false, false);
+            "mail.operation.execute.v20", false, false).ConfigureAwait(false);
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v20", true, false);
+            "mail.operation.execute.v20", true, false).ConfigureAwait(false);
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v20", false, true);
+            "mail.operation.execute.v20", false, true).ConfigureAwait(false);
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v20", true, true);
+            "mail.operation.execute.v20", true, true).ConfigureAwait(false);
     }
 
     [TestMethod]
     public async Task V21MailOperationsBlockLegacyWakeRollbackInEveryLeaseState()
     {
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v21", false, false);
+            "mail.operation.execute.v21", false, false).ConfigureAwait(false);
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v21", true, false);
+            "mail.operation.execute.v21", true, false).ConfigureAwait(false);
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v21", false, true);
+            "mail.operation.execute.v21", false, true).ConfigureAwait(false);
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v21", true, true);
+            "mail.operation.execute.v21", true, true).ConfigureAwait(false);
     }
 
     [TestMethod]
     public async Task V22MailOperationsBlockLegacyWakeRollbackInEveryLeaseState()
     {
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v22", false, false);
+            "mail.operation.execute.v22", false, false).ConfigureAwait(false);
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v22", true, false);
+            "mail.operation.execute.v22", true, false).ConfigureAwait(false);
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v22", false, true);
+            "mail.operation.execute.v22", false, true).ConfigureAwait(false);
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v22", true, true);
+            "mail.operation.execute.v22", true, true).ConfigureAwait(false);
     }
 
     [TestMethod]
     public async Task V23MailOperationsBlockLegacyWakeRollbackInEveryLeaseState()
     {
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v23", false, false);
+            "mail.operation.execute.v23", false, false).ConfigureAwait(false);
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v23", true, false);
+            "mail.operation.execute.v23", true, false).ConfigureAwait(false);
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v23", false, true);
+            "mail.operation.execute.v23", false, true).ConfigureAwait(false);
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v23", true, true);
+            "mail.operation.execute.v23", true, true).ConfigureAwait(false);
     }
 
     [TestMethod]
     public async Task V24MailOperationsBlockLegacyWakeRollbackInEveryLeaseState()
     {
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v24", false, false);
+            "mail.operation.execute.v24", false, false).ConfigureAwait(false);
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v24", true, false);
+            "mail.operation.execute.v24", true, false).ConfigureAwait(false);
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v24", false, true);
+            "mail.operation.execute.v24", false, true).ConfigureAwait(false);
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v24", true, true);
+            "mail.operation.execute.v24", true, true).ConfigureAwait(false);
     }
 
     [TestMethod]
     public async Task V25MailOperationsBlockLegacyWakeRollbackInEveryLeaseState()
     {
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v25", false, false);
+            "mail.operation.execute.v25", false, false).ConfigureAwait(false);
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v25", true, false);
+            "mail.operation.execute.v25", true, false).ConfigureAwait(false);
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v25", false, true);
+            "mail.operation.execute.v25", false, true).ConfigureAwait(false);
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v25", true, true);
+            "mail.operation.execute.v25", true, true).ConfigureAwait(false);
     }
 
     [TestMethod]
     public async Task V26MailOperationsBlockLegacyWakeRollbackInEveryLeaseState()
     {
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v26", false, false);
+            "mail.operation.execute.v26", false, false).ConfigureAwait(false);
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v26", true, false);
+            "mail.operation.execute.v26", true, false).ConfigureAwait(false);
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v26", false, true);
+            "mail.operation.execute.v26", false, true).ConfigureAwait(false);
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v26", true, true);
+            "mail.operation.execute.v26", true, true).ConfigureAwait(false);
     }
 
     [TestMethod]
     public async Task V27MailOperationsBlockLegacyWakeRollbackInEveryLeaseState()
     {
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v27", false, false);
+            "mail.operation.execute.v27", false, false).ConfigureAwait(false);
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v27", true, false);
+            "mail.operation.execute.v27", true, false).ConfigureAwait(false);
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v27", false, true);
+            "mail.operation.execute.v27", false, true).ConfigureAwait(false);
         await PendingOrLeasedNewContractWorkBlocksLegacyRollbackEvenAfterDeadline(
-            "mail.operation.execute.v27", true, true);
+            "mail.operation.execute.v27", true, true).ConfigureAwait(false);
     }
 
     [TestMethod]
     public async Task ReceiptAwareRollbackPreservesCommittedRows()
     {
-        await using var fixture = await Fixture.CreateAsync();
-        await fixture.EnableAsync();
-        await fixture.AddReceiptAsync();
-        var prior = await WorkerWakeSchemaTransition.ReadAsync(fixture.Source, fixture.Role);
-        await WorkerWakeSchemaTransition.RestoreAsync(fixture.Source, fixture.Role, prior);
-        await using var database = fixture.Context();
-        Assert.AreEqual(1, await database.ApplicationOperationReceipts.CountAsync());
-        await WorkerWakeDatabasePrivilegeProbe.ProbeAsync(fixture.Wake);
+        var fixture = (await Fixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
+        await fixture.EnableAsync().ConfigureAwait(false);
+        await fixture.AddReceiptAsync().ConfigureAwait(false);
+        var prior = await WorkerWakeSchemaTransition.ReadAsync(fixture.Source, fixture.Role).ConfigureAwait(false);
+        await WorkerWakeSchemaTransition.RestoreAsync(fixture.Source, fixture.Role, prior).ConfigureAwait(false);
+        var database = fixture.Context();
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        Assert.AreEqual(1, await database.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
+        await WorkerWakeDatabasePrivilegeProbe.ProbeAsync(fixture.Wake).ConfigureAwait(false);
     }
 
     [TestMethod]
@@ -359,11 +371,15 @@ public sealed class WorkerWakeSchemaTransitionTests
     [DataRow(false)]
     public async Task LegacyRollbackWaitsForInFlightReceiptTransactionBeforeDeciding(bool commit)
     {
-        await using var fixture = await Fixture.CreateAsync();
-        await fixture.EnableAsync();
-        await using var writer = await fixture.Source.OpenConnectionAsync();
-        await using var transaction = await writer.BeginTransactionAsync();
-        await using (var insert = new NpgsqlCommand("""
+        var fixture = (await Fixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
+        await fixture.EnableAsync().ConfigureAwait(false);
+        var writer = (await fixture.Source.OpenConnectionAsync().ConfigureAwait(false));
+        await using var writerLifetime = writer.ConfigureAwait(false);
+        var transaction = (await writer.BeginTransactionAsync().ConfigureAwait(false));
+        await using var transactionLifetime = transaction.ConfigureAwait(false);
+        {
+            var insert = new NpgsqlCommand("""
                          INSERT INTO application_operation_receipts
                              (id, operation_id, step_number, user_id, purpose, payload_object_provider,
                               payload_object_name, payload_object_sha256, payload_object_etag, payload_length,
@@ -371,83 +387,117 @@ public sealed class WorkerWakeSchemaTransitionTests
                          VALUES (@id, @operation, 0, @user, 'jmap.batch', 'azure-blob',
                              'receipt/concurrent', @hash, 'guard', 1, clock_timestamp(),
                              false, clock_timestamp())
-                         """, writer, transaction))
-        {
+                         """, writer, transaction);
+            await using var insertLifetime = insert.ConfigureAwait(false);
             insert.Parameters.AddWithValue("id", Guid.CreateVersion7());
             insert.Parameters.AddWithValue("operation", Guid.CreateVersion7());
             insert.Parameters.AddWithValue("user", Guid.CreateVersion7());
             insert.Parameters.AddWithValue("hash", new string('b', 64));
-            await insert.ExecuteNonQueryAsync();
+            await insert.ExecuteNonQueryAsync().ConfigureAwait(false);
         }
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         var restore = WorkerWakeSchemaTransition.RestoreAsync(
             fixture.Source, fixture.Role, WorkerWakeSchemaState.Legacy, timeout.Token);
-        await using var waiting = fixture.Source.CreateCommand("""
+        var waiting = fixture.Source.CreateCommand("""
             SELECT EXISTS (SELECT 1 FROM pg_locks
                 WHERE relation = 'public.application_operation_receipts'::regclass
                     AND mode = 'AccessExclusiveLock' AND NOT granted)
             """);
-        while (await waiting.ExecuteScalarAsync(timeout.Token) is not true)
-            await Task.Delay(25, timeout.Token);
+        await using var waitingLifetime = waiting.ConfigureAwait(false);
+        while (await waiting.ExecuteScalarAsync(timeout.Token).ConfigureAwait(false) is not true)
+            await Task.Delay(25, timeout.Token).ConfigureAwait(false);
         Assert.IsFalse(restore.IsCompleted);
         if (commit)
         {
-            await transaction.CommitAsync(timeout.Token);
-            await Assert.ThrowsAsync<InvalidOperationException>(() => restore);
-            await using var database = fixture.Context();
-            Assert.AreEqual(1, await database.ApplicationOperationReceipts.CountAsync());
-            await WorkerWakeDatabasePrivilegeProbe.ProbeAsync(fixture.Wake);
+            await transaction.CommitAsync(timeout.Token).ConfigureAwait(false);
+
+            // This async test intentionally joins its pre-started background operation; no foreground synchronization context or JTF is involved.
+#pragma warning disable VSTHRD003
+            await Assert.ThrowsAsync<InvalidOperationException>(() => restore).ConfigureAwait(false);
+
+#pragma warning restore VSTHRD003
+
+            var database = fixture.Context();
+            await using var databaseLifetime = database.ConfigureAwait(false);
+            Assert.AreEqual(1, await database.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
+            await WorkerWakeDatabasePrivilegeProbe.ProbeAsync(fixture.Wake).ConfigureAwait(false);
         }
         else
         {
-            await transaction.RollbackAsync(timeout.Token);
-            await restore;
+            await transaction.RollbackAsync(timeout.Token).ConfigureAwait(false);
+            await restore.ConfigureAwait(false);
             Assert.AreEqual(WorkerWakeSchemaState.Legacy,
-                await WorkerWakeSchemaTransition.ReadAsync(fixture.Source, fixture.Role));
+                await WorkerWakeSchemaTransition.ReadAsync(fixture.Source, fixture.Role).ConfigureAwait(false));
         }
     }
 
     [TestMethod]
     public async Task UnsafeRoleAndSensitiveOrDelegableGrantsFailWithoutPermissionNormalization()
     {
-        await using var fixture = await Fixture.CreateAsync();
-        await using (var inherit = fixture.Source.CreateCommand($"ALTER ROLE \"{fixture.Role}\" INHERIT"))
-            await inherit.ExecuteNonQueryAsync();
-        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.EnableAsync());
-        await using (var safe = fixture.Source.CreateCommand($"ALTER ROLE \"{fixture.Role}\" NOINHERIT"))
-            await safe.ExecuteNonQueryAsync();
-        await using (var sensitive = fixture.Source.CreateCommand($"GRANT SELECT (payload_object_name) ON application_operation_receipts TO \"{fixture.Role}\""))
-            await sensitive.ExecuteNonQueryAsync();
-        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.EnableAsync());
-        await using (var check = fixture.Source.CreateCommand("SELECT has_column_privilege(@role, 'application_operation_receipts', 'effects_pending', 'SELECT')"))
+        var fixture = (await Fixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         {
-            check.Parameters.AddWithValue("role", fixture.Role);
-            Assert.AreEqual(false, await check.ExecuteScalarAsync());
+            var inherit = fixture.Source.CreateCommand($"ALTER ROLE \"{fixture.Role}\" INHERIT");
+            await using var inheritLifetime = inherit.ConfigureAwait(false);
+            await inherit.ExecuteNonQueryAsync().ConfigureAwait(false);
         }
-        await using (var revoke = fixture.Source.CreateCommand($"REVOKE SELECT (payload_object_name) ON application_operation_receipts FROM \"{fixture.Role}\""))
-            await revoke.ExecuteNonQueryAsync();
-        await using (var delegable = fixture.Source.CreateCommand($"GRANT SELECT (effects_pending, effects_retry_at) ON application_operation_receipts TO \"{fixture.Role}\" WITH GRANT OPTION"))
-            await delegable.ExecuteNonQueryAsync();
-        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.EnableAsync());
-        await Assert.ThrowsAsync<ArgumentException>(() => WorkerWakeSchemaTransition.ReadAsync(fixture.Source, "bad;role"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.EnableAsync()).ConfigureAwait(false);
+        {
+            var safe = fixture.Source.CreateCommand($"ALTER ROLE \"{fixture.Role}\" NOINHERIT");
+            await using var safeLifetime = safe.ConfigureAwait(false);
+            await safe.ExecuteNonQueryAsync().ConfigureAwait(false);
+        }
+        {
+            var sensitive = fixture.Source.CreateCommand($"GRANT SELECT (payload_object_name) ON application_operation_receipts TO \"{fixture.Role}\"");
+            await using var sensitiveLifetime = sensitive.ConfigureAwait(false);
+            await sensitive.ExecuteNonQueryAsync().ConfigureAwait(false);
+        }
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.EnableAsync()).ConfigureAwait(false);
+        {
+            var check = fixture.Source.CreateCommand("SELECT has_column_privilege(@role, 'application_operation_receipts', 'effects_pending', 'SELECT')");
+            await using var checkLifetime = check.ConfigureAwait(false);
+            check.Parameters.AddWithValue("role", fixture.Role);
+            Assert.AreEqual(false, await check.ExecuteScalarAsync().ConfigureAwait(false));
+        }
+        {
+            var revoke = fixture.Source.CreateCommand($"REVOKE SELECT (payload_object_name) ON application_operation_receipts FROM \"{fixture.Role}\"");
+            await using var revokeLifetime = revoke.ConfigureAwait(false);
+            await revoke.ExecuteNonQueryAsync().ConfigureAwait(false);
+        }
+        {
+            var delegable = fixture.Source.CreateCommand($"GRANT SELECT (effects_pending, effects_retry_at) ON application_operation_receipts TO \"{fixture.Role}\" WITH GRANT OPTION");
+            await using var delegableLifetime = delegable.ConfigureAwait(false);
+            await delegable.ExecuteNonQueryAsync().ConfigureAwait(false);
+        }
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.EnableAsync()).ConfigureAwait(false);
+        await Assert.ThrowsAsync<ArgumentException>(() => WorkerWakeSchemaTransition.ReadAsync(fixture.Source, "bad;role")).ConfigureAwait(false);
     }
 
     [TestMethod]
     public async Task LegacyRollbackWaitsForSnapshotBarrierAndCancellationLeavesSchemaAndGrantsUnchanged()
     {
-        await using var fixture = await Fixture.CreateAsync();
-        await fixture.EnableAsync();
-        await using var snapshot = await PostgresBlobDeletionBarrier.AcquireExclusiveAsync(fixture.Source);
+        var fixture = (await Fixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
+        await fixture.EnableAsync().ConfigureAwait(false);
+        var snapshot = (await PostgresBlobDeletionBarrier.AcquireExclusiveAsync(fixture.Source).ConfigureAwait(false));
+        await using var snapshotLifetime = snapshot.ConfigureAwait(false);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         var restore = WorkerWakeSchemaTransition.RestoreAsync(fixture.Source, fixture.Role, WorkerWakeSchemaState.Legacy, cancellation.Token);
-        await using var waiting = fixture.Source.CreateCommand("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = @database AND wait_event = 'advisory')");
+        var waiting = fixture.Source.CreateCommand("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = @database AND wait_event = 'advisory')");
+        await using var waitingLifetime = waiting.ConfigureAwait(false);
         waiting.Parameters.AddWithValue("database", fixture.Database.DatabaseName);
-        while (await waiting.ExecuteScalarAsync(cancellation.Token) is not true)
-            await Task.Delay(25, cancellation.Token);
+        while (await waiting.ExecuteScalarAsync(cancellation.Token).ConfigureAwait(false) is not true)
+            await Task.Delay(25, cancellation.Token).ConfigureAwait(false);
         Assert.IsFalse(restore.IsCompleted);
-        cancellation.Cancel();
-        await Assert.ThrowsAsync<OperationCanceledException>(() => restore);
-        await WorkerWakeDatabasePrivilegeProbe.ProbeAsync(fixture.Wake);
+        await cancellation.CancelAsync().ConfigureAwait(false);
+
+        // This async test intentionally joins its pre-started background operation; no foreground synchronization context or JTF is involved.
+#pragma warning disable VSTHRD003
+        await Assert.ThrowsAsync<OperationCanceledException>(() => restore).ConfigureAwait(false);
+
+#pragma warning restore VSTHRD003
+
+        await WorkerWakeDatabasePrivilegeProbe.ProbeAsync(fixture.Wake).ConfigureAwait(false);
     }
 
     private sealed class Fixture(PostgresTestDatabase database, NpgsqlDataSource source, NpgsqlDataSource wake, string role) : IAsyncDisposable
@@ -460,14 +510,16 @@ public sealed class WorkerWakeSchemaTransitionTests
         public Task EnableAsync() => WorkerWakeSchemaTransition.EnableAsync(Source, Role);
         public async Task PrepareAsync()
         {
-            await using var context = Context();
-            await new MailRuntimeSchemaService(context).EnsureAsync();
+            var context = Context();
+            await using var contextLifetime = context.ConfigureAwait(false);
+            await new MailRuntimeSchemaService(context).EnsureAsync().ConfigureAwait(false);
         }
         public async Task AddReceiptAsync()
         {
-            await using var context = Context();
+            var context = Context();
+            await using var contextLifetime = context.ConfigureAwait(false);
             // Even an unreadable/dangling receipt is committed state, not permission to discard it.
-            context.ApplicationOperationReceipts.Add(new ApplicationOperationReceiptDB
+            await (context.ApplicationOperationReceipts.AddAsync(new ApplicationOperationReceiptDB
             {
                 Id = Guid.CreateVersion7(),
                 OperationId = Guid.CreateVersion7(),
@@ -480,54 +532,116 @@ public sealed class WorkerWakeSchemaTransitionTests
                 PayloadLength = 1,
                 CreatedAt = DateTime.UtcNow,
                 EffectsRetryAt = DateTime.UtcNow
-            });
-            await context.SaveChangesAsync();
+            })).ConfigureAwait(false);
+            await context.SaveChangesAsync().ConfigureAwait(false);
         }
+
+
         public static async Task<Fixture> CreateAsync(bool legacy = false)
         {
-            var database = await PostgresTestDatabase.TryCreateAsync();
+            var database = await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false);
             if (database is null) Assert.Inconclusive("PostgreSQL is required.");
-            var source = NpgsqlDataSource.Create(database!.ConnectionString);
+            NpgsqlDataSource? source = null;
+            NpgsqlDataSource? wake = null;
             var role = $"mk8_wake_transition_{Guid.NewGuid():N}";
-            var wake = NpgsqlDataSource.Create(new NpgsqlConnectionStringBuilder(database.ConnectionString)
-            { Username = role, Password = "test-only" }.ConnectionString);
-            var fixture = new Fixture(database, source, wake, role);
-            await using (var context = fixture.Context())
+            try
             {
-                await context.Database.EnsureCreatedAsync();
-                await fixture.PrepareAsync();
+
+                // The returned fixture owns this allocation; finally releases untransferred resources if initialization fails.
+#pragma warning disable CA2000
+                source = NpgsqlDataSource.Create(database!.ConnectionString);
+
+#pragma warning restore CA2000
+
+                // The returned fixture owns this allocation; finally releases untransferred resources if initialization fails.
+#pragma warning disable CA2000
+                wake = NpgsqlDataSource.Create(new NpgsqlConnectionStringBuilder(database.ConnectionString)
+                { Username = role, Password = "test-only" }.ConnectionString);
+
+#pragma warning restore CA2000
+
+                // The returned fixture owns this allocation; finally releases untransferred resources if initialization fails.
+#pragma warning disable CA2000
+                var fixture = new Fixture(database, source, wake, role);
+
+#pragma warning restore CA2000
+                await InitializeAsync(fixture, legacy).ConfigureAwait(false);
+                source = null;
+                wake = null;
+                database = null;
+                return fixture;
             }
-            await PostgresMessagingSchema.EnsureAsync(source);
-            await using var setup = source.CreateCommand($"""
-                REVOKE ALL ON DATABASE "{database.DatabaseName}" FROM PUBLIC;
+            finally
+            {
+                if (wake is not null) await wake.DisposeAsync().ConfigureAwait(false);
+                try
+                {
+                    if (source is not null) await DeleteRoleAsync(source, role).ConfigureAwait(false);
+                }
+                finally
+                {
+                    if (source is not null) await source.DisposeAsync().ConfigureAwait(false);
+                    if (database is not null) await database.DisposeAsync().ConfigureAwait(false);
+                }
+            }
+        }
+
+        private static async Task InitializeAsync(Fixture fixture, bool legacy)
+        {
+            {
+                var context = fixture.Context();
+                await using var contextLifetime = context.ConfigureAwait(false);
+                await context.Database.EnsureCreatedAsync().ConfigureAwait(false);
+                await fixture.PrepareAsync().ConfigureAwait(false);
+            }
+            await PostgresMessagingSchema.EnsureAsync(fixture.Source).ConfigureAwait(false);
+            var setup = fixture.Source.CreateCommand($"""
+                REVOKE ALL ON DATABASE "{fixture.Database.DatabaseName}" FROM PUBLIC;
                 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
-                CREATE ROLE "{role}" LOGIN PASSWORD 'test-only' NOINHERIT;
-                GRANT CONNECT ON DATABASE "{database.DatabaseName}" TO "{role}";
-                GRANT USAGE ON SCHEMA public TO "{role}";
-                GRANT SELECT (state, lease_expires_at, deadline_at) ON application_requests TO "{role}";
-                GRANT SELECT (state, next_attempt_at, lease_expires_at) ON mail_queue_messages TO "{role}";
-                GRANT SELECT (expires_at, is_verified, next_push_at, user_id, last_pushed_change) ON jmap_push_subscriptions TO "{role}";
-                GRANT SELECT (id, is_active) ON users TO "{role}";
-                GRANT SELECT (id, owner_id, alias_for_inbox_id, name, address_id) ON inboxes TO "{role}";
-                GRANT SELECT (id, company_id, is_active) ON addresses TO "{role}";
-                GRANT SELECT (id, is_active) ON companies TO "{role}";
-                GRANT SELECT (account_id, sequence) ON jmap_changes TO "{role}";
+                CREATE ROLE "{fixture.Role}" LOGIN PASSWORD 'test-only' NOINHERIT;
+                GRANT CONNECT ON DATABASE "{fixture.Database.DatabaseName}" TO "{fixture.Role}";
+                GRANT USAGE ON SCHEMA public TO "{fixture.Role}";
+                GRANT SELECT (state, lease_expires_at, deadline_at) ON application_requests TO "{fixture.Role}";
+                GRANT SELECT (state, next_attempt_at, lease_expires_at) ON mail_queue_messages TO "{fixture.Role}";
+                GRANT SELECT (expires_at, is_verified, next_push_at, user_id, last_pushed_change) ON jmap_push_subscriptions TO "{fixture.Role}";
+                GRANT SELECT (id, is_active) ON users TO "{fixture.Role}";
+                GRANT SELECT (id, owner_id, alias_for_inbox_id, name, address_id) ON inboxes TO "{fixture.Role}";
+                GRANT SELECT (id, company_id, is_active) ON addresses TO "{fixture.Role}";
+                GRANT SELECT (id, is_active) ON companies TO "{fixture.Role}";
+                GRANT SELECT (account_id, sequence) ON jmap_changes TO "{fixture.Role}";
                 """);
-            await setup.ExecuteNonQueryAsync();
+            await using var setupLifetime = setup.ConfigureAwait(false);
+            await setup.ExecuteNonQueryAsync().ConfigureAwait(false);
             if (legacy)
             {
-                await using var drop = source.CreateCommand("DROP TABLE application_operation_receipts");
-                await drop.ExecuteNonQueryAsync();
+                var drop = fixture.Source.CreateCommand("DROP TABLE application_operation_receipts");
+                await using var dropLifetime = drop.ConfigureAwait(false);
+                await drop.ExecuteNonQueryAsync().ConfigureAwait(false);
             }
-            return fixture;
+
         }
+
+        private static async Task DeleteRoleAsync(NpgsqlDataSource source, string role)
+        {
+            var exists = source.CreateCommand("SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = @role)");
+            await using var existsLifetime = exists.ConfigureAwait(false);
+            exists.Parameters.AddWithValue("role", role);
+            if (await exists.ExecuteScalarAsync().ConfigureAwait(false) is not true) return;
+            var cleanup = source.CreateCommand($"DROP OWNED BY \"{role}\"; DROP ROLE \"{role}\"");
+            await using var cleanupLifetime = cleanup.ConfigureAwait(false);
+            await cleanup.ExecuteNonQueryAsync().ConfigureAwait(false);
+        }
+
         public async ValueTask DisposeAsync()
         {
-            await Wake.DisposeAsync();
-            await using (var cleanup = Source.CreateCommand($"DROP OWNED BY \"{Role}\"; DROP ROLE \"{Role}\""))
-                await cleanup.ExecuteNonQueryAsync();
-            await Source.DisposeAsync();
-            await Database.DisposeAsync();
+            await Wake.DisposeAsync().ConfigureAwait(false);
+            {
+                var cleanup = Source.CreateCommand($"DROP OWNED BY \"{Role}\"; DROP ROLE \"{Role}\"");
+                await using var cleanupLifetime = cleanup.ConfigureAwait(false);
+                await cleanup.ExecuteNonQueryAsync().ConfigureAwait(false);
+            }
+            await Source.DisposeAsync().ConfigureAwait(false);
+            await Database.DisposeAsync().ConfigureAwait(false);
         }
     }
 }

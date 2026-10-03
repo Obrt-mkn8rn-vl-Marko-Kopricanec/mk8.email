@@ -3,7 +3,8 @@ using mk8.email.MailWire;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class MailWireBoundaryTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class MailWireBoundaryTests
 {
     [TestMethod]
     public void PublicParsersRejectNullInputsWithoutDereferencingThem()

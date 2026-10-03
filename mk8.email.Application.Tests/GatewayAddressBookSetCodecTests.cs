@@ -9,7 +9,8 @@ using mk8.email.Jmap;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class GatewayAddressBookSetCodecTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class GatewayAddressBookSetCodecTests
 {
     private const string AccountId = "A11111111111111111111111111111111";
     private const string BookId = "D22222222222222222222222222222222";
@@ -34,10 +35,10 @@ public sealed class GatewayAddressBookSetCodecTests
             ["onSuccessSetIsDefault"] = "#new",
         };
         Assert.IsTrue(GatewayAddressBookSetCodec.TryParse(arguments,
-            new Dictionary<string, string>(), 10, out var call, out var failure));
+            new Dictionary<string, string>(StringComparer.Ordinal), 10, out var call, out var failure));
         Assert.IsNull(failure);
         Assert.IsNotNull(call);
-        Assert.AreEqual("new", call.Command.OnSuccessSetIsDefault!.CreatedKey);
+        Assert.AreEqual("new", call.Command.OnSuccessSetIsDefault!.CreatedKey, StringComparer.Ordinal);
         Assert.IsTrue(call.Command.Updates[0].Patch!.Rights!.CheckMayRead);
         Assert.IsFalse(call.Command.Updates[0].Patch!.Rights!.MayDelete);
         var newBook = new MailAddressBookSnapshot(Guid.Parse("33333333-3333-3333-3333-333333333333"),
@@ -59,18 +60,19 @@ public sealed class GatewayAddressBookSetCodecTests
             ["myRights/mayDelete"] = true,
         };
         Assert.IsTrue(GatewayAddressBookSetCodec.TryParse(arguments,
-            new Dictionary<string, string>(), 10, out call, out failure));
-        Assert.AreEqual("invalidPatch", call!.UpdateErrors[BookId]["type"]!.GetValue<string>());
+            new Dictionary<string, string>(StringComparer.Ordinal), 10, out call, out failure));
+        Assert.AreEqual("invalidPatch", call!.UpdateErrors[BookId]["type"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task WorkerRejectsForgedAddressBookTargetsAndDuplicateCreationIdsBeforePersistence()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         using var scope = fixture.Services.CreateScope();
         var processor = scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>();
         var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-        var before = await database.DavCollections.CountAsync();
+        var before = await database.DavCollections.CountAsync().ConfigureAwait(false);
         var malformed = JsonNode.Parse($$"""
             {"accountId":"{{fixture.InboxId}}","accountReferenceEligible":true,
              "ifInState":null,"onDestroyRemoveContents":false,"onSuccessSetIsDefault":null,
@@ -79,9 +81,9 @@ public sealed class GatewayAddressBookSetCodecTests
              "updates":[],"destroys":[]}
             """)!.AsObject();
         var command = new MailOperationCommand([MailFeature.Basic, MailFeature.Contacts],
-            MailOperationKind.MutateAddressBooks, malformed, new Dictionary<string, string>());
+            MailOperationKind.MutateAddressBooks, malformed, new Dictionary<string, string>(StringComparer.Ordinal));
         var failure = await Assert.ThrowsAsync<MailApplicationException>(() =>
-            processor.ExecuteAsync(command, fixture.User, null));
+            processor.ExecuteAsync(command, fixture.User, null)).ConfigureAwait(false);
         Assert.AreEqual(MailFailureKind.MalformedBatch, failure.Failure.Kind);
 
         malformed["creates"] = new JsonArray();
@@ -91,8 +93,8 @@ public sealed class GatewayAddressBookSetCodecTests
               "patch":null}]
             """);
         failure = await Assert.ThrowsAsync<MailApplicationException>(() =>
-            processor.ExecuteAsync(command, fixture.User, null));
+            processor.ExecuteAsync(command, fixture.User, null)).ConfigureAwait(false);
         Assert.AreEqual(MailFailureKind.MalformedBatch, failure.Failure.Kind);
-        Assert.AreEqual(before, await database.DavCollections.CountAsync());
+        Assert.AreEqual(before, await database.DavCollections.CountAsync().ConfigureAwait(false));
     }
 }

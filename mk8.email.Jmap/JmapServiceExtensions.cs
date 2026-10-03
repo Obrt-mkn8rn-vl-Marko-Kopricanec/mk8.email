@@ -14,6 +14,37 @@ public static class JmapServiceExtensions
     {
         services.TryAddScoped<ISenderAuthorizationService, SenderAuthorizationService>();
         services.TryAddScoped<IEmailService, EmailService>();
+        AddDomainServices(services);
+        services.TryAddScoped<LargeObjectTransactionEffects>();
+        services.TryAddScoped<ApplicationOperationReceiptStore>();
+        services.TryAddScoped<MailQueueContentService>();
+        services.TryAddScoped<MailboxMessageContentService>();
+        services.TryAddScoped<DavResourceContentService>();
+        services.TryAddScoped<VacationResponseContentService>();
+        services.AddScoped<JmapBlobService>();
+        services.AddScoped<JmapBlobLargeObjectMigrationService>();
+        services.AddScoped<MailMimeDraftBuilder>();
+        services.AddScoped<JmapEmailStore>();
+        services.AddScoped<IMailImportService, MailImportService>();
+        services.AddScoped<IMailCopyService, MailCopyService>();
+        services.AddScoped<JmapContactStore>();
+        services.AddScoped<IJmapApplicationService, JmapApplicationService>();
+        services.AddScoped<JmapIdentityService>();
+        services.AddScoped<JmapVacationResponseService>();
+        services.TryAddSingleton<IJmapPushPresentationClient, UnavailableJmapPushPresentationClient>();
+        services.AddSingleton<JmapConcurrencyLimiter>();
+        services.AddSingleton<JmapPushWorker>();
+        services.AddSingleton<IJmapPushWork>(provider =>
+            provider.GetRequiredService<JmapPushWorker>());
+        services.AddHostedService(provider => provider.GetRequiredService<JmapPushWorker>());
+        services.AddScoped<EmailSetMethod>();
+        services.AddScoped<IMailMessageMutationService>(provider => provider.GetRequiredService<EmailSetMethod>());
+        services.AddScoped<IMailSubmissionMutationService, EmailSubmissionSetMethod>();
+        services.AddScoped<JmapRequestProcessor>(CreateProcessor);
+        return services;
+    }
+    private static void AddDomainServices(IServiceCollection services)
+    {
         services.AddScoped<JmapAccountService>();
         services.AddScoped<JmapAccountProfileService>();
         services.AddScoped<JmapStateService>();
@@ -42,32 +73,9 @@ public static class JmapServiceExtensions
         services.AddScoped<IMailContactQueryService, MailContactQueryService>();
         services.AddScoped<IMailContactReader, MailContactReader>();
         services.AddScoped<IMailContactMutationService, MailContactMutationService>();
-        services.TryAddScoped<LargeObjectTransactionEffects>();
-        services.TryAddScoped<ApplicationOperationReceiptStore>();
-        services.TryAddScoped<MailQueueContentService>();
-        services.TryAddScoped<MailboxMessageContentService>();
-        services.TryAddScoped<DavResourceContentService>();
-        services.TryAddScoped<VacationResponseContentService>();
-        services.AddScoped<JmapBlobService>();
-        services.AddScoped<JmapBlobLargeObjectMigrationService>();
-        services.AddScoped<MailMimeDraftBuilder>();
-        services.AddScoped<JmapEmailStore>();
-        services.AddScoped<IMailImportService, MailImportService>();
-        services.AddScoped<IMailCopyService, MailCopyService>();
-        services.AddScoped<JmapContactStore>();
-        services.AddScoped<IJmapApplicationService, JmapApplicationService>();
-        services.AddScoped<JmapIdentityService>();
-        services.AddScoped<JmapVacationResponseService>();
-        services.TryAddSingleton<IJmapPushPresentationClient, UnavailableJmapPushPresentationClient>();
-        services.AddSingleton<JmapConcurrencyLimiter>();
-        services.AddSingleton<JmapPushWorker>();
-        services.AddSingleton<IJmapPushWork>(provider =>
-            provider.GetRequiredService<JmapPushWorker>());
-        services.AddHostedService(provider => provider.GetRequiredService<JmapPushWorker>());
-        services.AddScoped<EmailSetMethod>();
-        services.AddScoped<IMailMessageMutationService>(provider => provider.GetRequiredService<EmailSetMethod>());
-        services.AddScoped<IMailSubmissionMutationService, EmailSubmissionSetMethod>();
-        services.AddScoped<JmapRequestProcessor>(provider => new JmapRequestProcessor(
+    }
+
+    private static JmapRequestProcessor CreateProcessor(IServiceProvider provider) => new(
             provider.GetRequiredService<IEnumerable<IJmapMethod>>(),
             provider.GetRequiredService<JmapAccountProfileService>(),
             provider.GetRequiredService<EmailDbContext>(),
@@ -102,7 +110,5 @@ public static class JmapServiceExtensions
             provider.GetRequiredService<IMailFolderMutationService>(),
             provider.GetRequiredService<IMailMessageProjectionService>(),
             provider.GetRequiredService<IMailMessageMutationService>(),
-            provider.GetRequiredService<IMailSubmissionMutationService>()));
-        return services;
-    }
+            provider.GetRequiredService<IMailSubmissionMutationService>());
 }

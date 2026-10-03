@@ -8,26 +8,27 @@ using mk8.email.Gateway.ApplicationBridge;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class GatewayApplicationHealthTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class GatewayApplicationHealthTests
 {
     [TestMethod]
     public async Task ApplicationHealthUsesWorkerPingThroughTypedTransport()
     {
         var responseTime = DateTimeOffset.UtcNow;
         var transport = new StubTransport(responseTime);
-        var result = await GatewayApplicationHealth.CheckAsync(transport, CancellationToken.None);
+        var result = await GatewayApplicationHealth.CheckAsync(transport, CancellationToken.None).ConfigureAwait(false);
         var context = new DefaultHttpContext();
         context.RequestServices = new ServiceCollection().AddLogging().BuildServiceProvider();
         context.Response.Body = new MemoryStream();
 
-        await result.ExecuteAsync(context);
+        await result.ExecuteAsync(context).ConfigureAwait(false);
 
         Assert.AreEqual(StatusCodes.Status200OK, context.Response.StatusCode);
-        Assert.AreEqual("health", transport.Protocol);
-        Assert.AreEqual(ApplicationOperations.SystemPing, transport.Operation);
+        Assert.AreEqual("health", transport.Protocol, StringComparer.Ordinal);
+        Assert.AreEqual(ApplicationOperations.SystemPing, transport.Operation, StringComparer.Ordinal);
         context.Response.Body.Position = 0;
-        using var document = await JsonDocument.ParseAsync(context.Response.Body);
-        Assert.AreEqual("ready", document.RootElement.GetProperty("status").GetString());
+        using var document = await JsonDocument.ParseAsync(context.Response.Body).ConfigureAwait(false);
+        Assert.AreEqual("ready", document.RootElement.GetProperty("status").GetString(), StringComparer.Ordinal);
         Assert.AreEqual(
             responseTime,
             document.RootElement.GetProperty("respondedAt").GetDateTimeOffset());
@@ -45,15 +46,15 @@ public sealed class GatewayApplicationHealthTests
             {
                 var result = await GatewayApplicationHealth.CheckAsync(
                     new UnavailableTransport(),
-                    httpContext.RequestAborted);
-                await result.ExecuteAsync(httpContext);
+                    httpContext.RequestAborted).ConfigureAwait(false);
+                await result.ExecuteAsync(httpContext).ConfigureAwait(false);
             },
             NullLogger<GatewayApplicationFailureMiddleware>.Instance);
 
-        await middleware.InvokeAsync(context);
+        await middleware.InvokeAsync(context).ConfigureAwait(false);
 
         Assert.AreEqual(StatusCodes.Status503ServiceUnavailable, context.Response.StatusCode);
-        Assert.AreEqual("5", context.Response.Headers.RetryAfter.ToString());
+        Assert.AreEqual("5", context.Response.Headers.RetryAfter.ToString(), StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -63,13 +64,13 @@ public sealed class GatewayApplicationHealthTests
     [DataRow("different-contract")]
     public async Task IncompatibleWorkerCannotProduceAReadyHealthResponse(string? version)
     {
-        var result = await GatewayApplicationHealth.CheckAsync(new StubTransport(DateTimeOffset.UtcNow, version), CancellationToken.None);
+        var result = await GatewayApplicationHealth.CheckAsync(new StubTransport(DateTimeOffset.UtcNow, version), CancellationToken.None).ConfigureAwait(false);
         var context = new DefaultHttpContext();
         using var services = new ServiceCollection().AddLogging().BuildServiceProvider();
         using var body = new MemoryStream();
         context.RequestServices = services;
         context.Response.Body = body;
-        await result.ExecuteAsync(context);
+        await result.ExecuteAsync(context).ConfigureAwait(false);
         Assert.AreEqual(StatusCodes.Status503ServiceUnavailable, context.Response.StatusCode);
     }
 

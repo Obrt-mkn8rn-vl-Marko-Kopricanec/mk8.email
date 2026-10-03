@@ -8,7 +8,8 @@ using mk8.email.Jmap;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class JmapOperationBoundaryTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class JmapOperationBoundaryTests
 {
     [TestMethod]
     [DataRow("Core/echo", MailOperationKind.Echo, 2)]
@@ -55,14 +56,15 @@ public sealed class JmapOperationBoundaryTests
         Assert.AreEqual(number, (int)operation);
         Assert.AreEqual(operation, GatewayJmapOperationCodec.DecodeCall(name));
         Assert.AreEqual(operation, GatewayJmapOperationCodec.DecodeReference(name));
-        Assert.AreEqual(name, GatewayJmapOperationCodec.Render(operation));
+        Assert.AreEqual(name, GatewayJmapOperationCodec.Render(operation), StringComparer.Ordinal);
         Assert.AreEqual(MailOperationKind.None, GatewayJmapOperationCodec.DecodeCall(name.ToUpperInvariant()));
     }
 
     [TestMethod]
     public async Task EveryRegisteredHandlerHasExactlyOneGatewayMapping()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         using var scope = fixture.Services.CreateScope();
         var methods = scope.ServiceProvider.GetServices<IJmapMethod>().ToArray();
         Assert.IsEmpty(methods);
@@ -113,17 +115,18 @@ public sealed class JmapOperationBoundaryTests
     [DataRow("")]
     public async Task UnsupportedWireNamesStayInvocationErrorsAndDoNotAbortTheBatch(string name)
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var response = await fixture.InvokeAsync(new JsonObject
         {
             ["using"] = new JsonArray(GatewayJmapFeatureCodec.CoreCapability),
             ["methodCalls"] = new JsonArray(new JsonArray(name, new JsonObject(), "unknown"),
                 new JsonArray("Core/echo", new JsonObject { ["value"] = name }, "next")),
-        });
-        Assert.AreEqual("error", response["methodResponses"]![0]![0]!.GetValue<string>());
-        Assert.AreEqual("unknownMethod", response["methodResponses"]![0]![1]!["type"]!.GetValue<string>());
-        Assert.AreEqual("Core/echo", response["methodResponses"]![1]![0]!.GetValue<string>());
-        Assert.AreEqual(name, response["methodResponses"]![1]![1]!["value"]!.GetValue<string>());
+        }).ConfigureAwait(false);
+        Assert.AreEqual("error", response["methodResponses"]![0]![0]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("unknownMethod", response["methodResponses"]![0]![1]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("Core/echo", response["methodResponses"]![1]![0]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual(name, response["methodResponses"]![1]![1]!["value"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -144,26 +147,28 @@ public sealed class JmapOperationBoundaryTests
         Assert.IsNull(encoded["invocations"]![0]!["name"]);
         Assert.IsNull(encoded["invocations"]![1]!["bindings"]![0]!["sourceName"]);
         var transported = JsonSerializer.Deserialize<JmapApplicationBatch>(encoded, options)!;
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         using var scope = fixture.Services.CreateScope();
-        var result = await JmapFixture.ProcessBatchAsync(scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>(), transported, fixture.User);
-        Assert.AreEqual("unknownMethod", result.Invocations[1].Arguments["value"]!.GetValue<string>());
-        Assert.AreEqual("invalidResultReference", result.Invocations[2].Arguments["type"]!.GetValue<string>());
-        Assert.AreEqual("invalidResultReference", result.Invocations[3].Arguments["type"]!.GetValue<string>());
+        var result = await JmapFixture.ProcessBatchAsync(scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>(), transported, fixture.User).ConfigureAwait(false);
+        Assert.AreEqual("unknownMethod", result.Invocations[1].Arguments["value"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("invalidResultReference", result.Invocations[2].Arguments["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("invalidResultReference", result.Invocations[3].Arguments["type"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task OperationTranslationDoesNotTouchOpaqueBusinessNames()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var response = await fixture.InvokeAsync("""
             {"using":["urn:ietf:params:jmap:core"],"methodCalls":[
               ["Core/echo",{"name":"Unknown/run","Name":"Email/set","sourceName":"error"},"opaque"]]}
-            """);
+            """).ConfigureAwait(false);
         var value = response["methodResponses"]![0]![1]!;
-        Assert.AreEqual("Unknown/run", value["name"]!.GetValue<string>());
-        Assert.AreEqual("Email/set", value["Name"]!.GetValue<string>());
-        Assert.AreEqual("error", value["sourceName"]!.GetValue<string>());
+        Assert.AreEqual("Unknown/run", value["name"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("Email/set", value["Name"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("error", value["sourceName"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -172,7 +177,7 @@ public sealed class JmapOperationBoundaryTests
     public void OldOrWrongCaseCallDiscriminatorsCannotBecomeUnknownOperations(string json)
     {
         Assert.ThrowsExactly<JsonException>(() => JsonSerializer.Deserialize<JmapApplicationCall>(json,
-            new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = false }));
+            SerializationOptions1));
     }
 
     [TestMethod]
@@ -192,13 +197,14 @@ public sealed class JmapOperationBoundaryTests
     public async Task InvalidTypedCallRejectsTheEntireBatchBeforeEarlierInvocations(MailOperationKind operation)
     {
         var calls = 0;
-        await using var fixture = await JmapFixture.CreateAsync(configureServices: services =>
-            JmapFixture.OverrideMethod(services, new ProbeMethod(MailOperationKind.FindFolders, () => calls++)));
+        var fixture = (await JmapFixture.CreateAsync(configureServices: services =>
+            JmapFixture.OverrideMethod(services, new ProbeMethod(MailOperationKind.FindFolders, () => calls++))).ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         using var scope = fixture.Services.CreateScope();
         var batch = new JmapApplicationBatch([MailFeature.Basic],
             [new(MailOperationKind.FindFolders, new JsonObject(), "first"), new(operation, new JsonObject(), "invalid")]);
         await Assert.ThrowsAsync<GatewayJmapBatchCodec.RequestException>(() =>
-            JmapFixture.ProcessBatchAsync(scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>(), batch, fixture.User));
+            JmapFixture.ProcessBatchAsync(scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>(), batch, fixture.User)).ConfigureAwait(false);
         Assert.AreEqual(0, calls);
     }
 
@@ -206,14 +212,15 @@ public sealed class JmapOperationBoundaryTests
     public async Task UndefinedTypedDependencyRejectsBeforeEarlierInvocations()
     {
         var calls = 0;
-        await using var fixture = await JmapFixture.CreateAsync(configureServices: services =>
-            JmapFixture.OverrideMethod(services, new ProbeMethod(MailOperationKind.FindFolders, () => calls++)));
+        var fixture = (await JmapFixture.CreateAsync(configureServices: services =>
+            JmapFixture.OverrideMethod(services, new ProbeMethod(MailOperationKind.FindFolders, () => calls++))).ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         using var scope = fixture.Services.CreateScope();
         var batch = new JmapApplicationBatch([MailFeature.Basic],
             [new(MailOperationKind.FindFolders, new JsonObject(), "first"), new(MailOperationKind.Echo, new JsonObject(), "invalid",
                 [new("value", "first", (MailOperationKind)999, [])])]);
         await Assert.ThrowsAsync<GatewayJmapBatchCodec.RequestException>(() =>
-            JmapFixture.ProcessBatchAsync(scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>(), batch, fixture.User));
+            JmapFixture.ProcessBatchAsync(scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>(), batch, fixture.User)).ConfigureAwait(false);
         Assert.AreEqual(0, calls);
     }
 
@@ -224,8 +231,9 @@ public sealed class JmapOperationBoundaryTests
     [DataRow(MailOperationKind.Echo)]
     public async Task InvalidOrDuplicateHandlerRegistrationFailsClosed(MailOperationKind operation)
     {
-        await using var fixture = await JmapFixture.CreateAsync(configureServices: services =>
-            services.AddSingleton<IJmapMethod>(new ProbeMethod(operation, () => Assert.Fail("No handler should execute."))));
+        var fixture = (await JmapFixture.CreateAsync(configureServices: services =>
+            services.AddSingleton<IJmapMethod>(new ProbeMethod(operation, () => Assert.Fail("No handler should execute.")))).ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         using var scope = fixture.Services.CreateScope();
         Assert.ThrowsExactly<ArgumentException>(() => scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>());
     }
@@ -236,7 +244,7 @@ public sealed class JmapOperationBoundaryTests
     public void GatewayRefusesUnrenderableResults(MailOperationKind operation)
     {
         Assert.ThrowsExactly<InvalidOperationException>(() => GatewayJmapOperationCodec.Render(operation));
-        Assert.AreEqual("error", GatewayJmapOperationCodec.Render(MailOperationKind.Failure));
+        Assert.AreEqual("error", GatewayJmapOperationCodec.Render(MailOperationKind.Failure), StringComparer.Ordinal);
     }
 
     private sealed class ProbeMethod(MailOperationKind operation, Action onInvoke) : IJmapMethod
@@ -244,10 +252,11 @@ public sealed class JmapOperationBoundaryTests
         public MailOperationKind Operation => operation;
         public MailFeature Feature => MailFeature.Basic;
         public Task<JmapMethodResponse> InvokeAsync(JmapInvocationContext context, JsonObject arguments,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken)
         {
             onInvoke();
             return Task.FromResult(new JmapMethodResponse(Operation, arguments));
         }
     }
+    private static readonly JsonSerializerOptions SerializationOptions1 = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = false };
 }

@@ -8,13 +8,16 @@ namespace mk8.email.Messaging.Tests;
 
 [TestClass]
 [TestCategory("PostgreSQL")]
-public sealed class ImapMailboxRenamePostgresTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class ImapMailboxRenamePostgresTests
 {
     [TestMethod]
     [Timeout(20_000)]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The RenameUpdatesTheOwnedSubtreeAtomicallyAndPreservesMailboxIds scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task RenameUpdatesTheOwnedSubtreeAtomicallyAndPreservesMailboxIds()
     {
-        await using var server = await PostgresTestDatabase.TryCreateAsync();
+        var server = (await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false));
+        await using var serverLifetime = new NullableAsyncDisposable(server).ConfigureAwait(false);
         if (server is null)
         {
             Assert.Inconclusive("Set MK8_EMAIL_TEST_POSTGRES to a PostgreSQL admin connection string.");
@@ -29,9 +32,10 @@ public sealed class ImapMailboxRenamePostgresTests
         var childId = Guid.CreateVersion7();
         var rootMailboxId = Guid.CreateVersion7().ToString("N");
         var childMailboxId = Guid.CreateVersion7().ToString("N");
-        await using (var database = new EmailDbContext(options))
         {
-            await database.Database.EnsureCreatedAsync();
+            var database = new EmailDbContext(options);
+            await using var databaseLifetime = database.ConfigureAwait(false);
+            await database.Database.EnsureCreatedAsync().ConfigureAwait(false);
             var company = new CompanyDB
             {
                 Id = Guid.CreateVersion7(),
@@ -61,7 +65,7 @@ public sealed class ImapMailboxRenamePostgresTests
                 Address = address,
                 Owner = user,
             };
-            database.Folders.AddRange(
+            await (database.Folders.AddRangeAsync(
                 new FolderDB
                 {
                     Id = rootId,
@@ -76,37 +80,39 @@ public sealed class ImapMailboxRenamePostgresTests
                     MailboxId = childMailboxId,
                     Inbox = inbox,
                 },
-                new FolderDB { Id = Guid.CreateVersion7(), Name = "Archive", Inbox = inbox });
-            await database.SaveChangesAsync();
+                new FolderDB { Id = Guid.CreateVersion7(), Name = "Archive", Inbox = inbox })).ConfigureAwait(false);
+            await database.SaveChangesAsync().ConfigureAwait(false);
         }
 
-        await using (var database = new EmailDbContext(options))
         {
+            var database = new EmailDbContext(options);
+            await using var databaseLifetime = database.ConfigureAwait(false);
             var application = new ImapApplicationService(
                 null!, null!, database, null!, null!, null!);
             var collision = await application.RenameMailboxAsync(
-                new ImapMailboxRenameRequest(userId, "Projects", "Archive"));
+                new ImapMailboxRenameRequest(userId, "Projects", "Archive")).ConfigureAwait(false);
             Assert.AreEqual(ImapMailboxRenameDisposition.AlreadyExists, collision.Disposition);
             var unchanged = await application.RenameMailboxAsync(
-                new ImapMailboxRenameRequest(userId, "Projects", "Projects"));
+                new ImapMailboxRenameRequest(userId, "Projects", "Projects")).ConfigureAwait(false);
             Assert.AreEqual(ImapMailboxRenameDisposition.Renamed, unchanged.Disposition);
             var renamed = await application.RenameMailboxAsync(
-                new ImapMailboxRenameRequest(userId, "Projects", "Work"));
+                new ImapMailboxRenameRequest(userId, "Projects", "Work")).ConfigureAwait(false);
             Assert.AreEqual(ImapMailboxRenameDisposition.Renamed, renamed.Disposition);
         }
 
-        await using (var database = new EmailDbContext(options))
         {
-            var root = await database.Folders.AsNoTracking().SingleAsync(folder => folder.Id == rootId);
-            var child = await database.Folders.AsNoTracking().SingleAsync(folder => folder.Id == childId);
-            Assert.AreEqual("Work", root.Name);
-            Assert.AreEqual("Work/2026", child.Name);
-            Assert.AreEqual(rootMailboxId, root.MailboxId);
-            Assert.AreEqual(childMailboxId, child.MailboxId);
+            var database = new EmailDbContext(options);
+            await using var databaseLifetime = database.ConfigureAwait(false);
+            var root = await database.Folders.AsNoTracking().SingleAsync(folder => folder.Id == rootId).ConfigureAwait(false);
+            var child = await database.Folders.AsNoTracking().SingleAsync(folder => folder.Id == childId).ConfigureAwait(false);
+            Assert.AreEqual("Work", root.Name, StringComparer.Ordinal);
+            Assert.AreEqual("Work/2026", child.Name, StringComparer.Ordinal);
+            Assert.AreEqual(rootMailboxId, root.MailboxId, StringComparer.Ordinal);
+            Assert.AreEqual(childMailboxId, child.MailboxId, StringComparer.Ordinal);
             Assert.AreEqual(0, await database.Folders.CountAsync(
-                folder => folder.Name.StartsWith("Projects")));
+                folder => folder.Name.StartsWith("Projects")).ConfigureAwait(false));
             Assert.AreEqual(1, await database.Folders.CountAsync(
-                folder => folder.Name == "Archive"));
+                folder => folder.Name == "Archive").ConfigureAwait(false));
         }
     }
 }

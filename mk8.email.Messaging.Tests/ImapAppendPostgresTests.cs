@@ -10,13 +10,16 @@ namespace mk8.email.Messaging.Tests;
 
 [TestClass]
 [TestCategory("PostgreSQL")]
-public sealed class ImapAppendPostgresTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class ImapAppendPostgresTests
 {
     [TestMethod]
     [Timeout(30_000)]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The AppendIsOwnerScopedAtomicBlobBackedAndIdempotent scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task AppendIsOwnerScopedAtomicBlobBackedAndIdempotent()
     {
-        await using var server = await PostgresTestDatabase.TryCreateAsync();
+        var server = (await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false));
+        await using var serverLifetime = new NullableAsyncDisposable(server).ConfigureAwait(false);
         if (server is null)
         {
             Assert.Inconclusive("Set MK8_EMAIL_TEST_POSTGRES to a PostgreSQL admin connection string.");
@@ -42,10 +45,11 @@ public sealed class ImapAppendPostgresTests
         };
         var request = new ImapAppendRequest(ownerId, "INBOX", false, items);
         var objects = new InMemoryLargeObjectStore();
-        await using (var database = new EmailDbContext(options))
         {
-            await database.Database.EnsureCreatedAsync();
-            await new MailRuntimeSchemaService(database).EnsureAsync();
+            var database = new EmailDbContext(options);
+            await using var databaseLifetime = database.ConfigureAwait(false);
+            await database.Database.EnsureCreatedAsync().ConfigureAwait(false);
+            await new MailRuntimeSchemaService(database).EnsureAsync().ConfigureAwait(false);
             var company = new CompanyDB
             {
                 Id = Guid.CreateVersion7(),
@@ -69,7 +73,7 @@ public sealed class ImapAppendPostgresTests
                 QuotaBytes = raw1.Length + raw2.Length - 1,
                 Company = company,
             };
-            database.Users.Add(new UserDB
+            await (database.Users.AddAsync(new UserDB
             {
                 Id = otherId,
                 Username = "other@example.test",
@@ -77,8 +81,8 @@ public sealed class ImapAppendPostgresTests
                 Role = "User",
                 IsActive = true,
                 Company = company,
-            });
-            database.Folders.Add(new FolderDB
+            })).ConfigureAwait(false);
+            await (database.Folders.AddAsync(new FolderDB
             {
                 Id = folderId,
                 Name = "Inbox",
@@ -92,34 +96,35 @@ public sealed class ImapAppendPostgresTests
                     Address = address,
                     Owner = owner,
                 },
-            });
-            await database.SaveChangesAsync();
+            })).ConfigureAwait(false);
+            await database.SaveChangesAsync().ConfigureAwait(false);
         }
 
-        await using (var database = new EmailDbContext(options))
         {
+            var database = new EmailDbContext(options);
+            await using var databaseLifetime = database.ConfigureAwait(false);
             var application = CreateApplication(database, objects);
             Assert.AreEqual(ImapAppendDisposition.MailboxNotFound,
-                (await application.AppendMessagesAsync(request with { UserId = otherId })).Disposition);
+                (await application.AppendMessagesAsync(request with { UserId = otherId }).ConfigureAwait(false)).Disposition);
             Assert.AreEqual(ImapAppendDisposition.MailboxNotFound,
-                (await application.AppendMessagesAsync(request with { MailboxName = "Missing" })).Disposition);
+                (await application.AppendMessagesAsync(request with { MailboxName = "Missing" }).ConfigureAwait(false)).Disposition);
             Assert.AreEqual(ImapAppendDisposition.InvalidFlags,
                 (await application.AppendMessagesAsync(request with
                 {
                     Messages = [items[0] with { Flags = ["\\Recent"] }],
-                })).Disposition);
+                }).ConfigureAwait(false)).Disposition);
             Assert.AreEqual(ImapAppendDisposition.InvalidContent,
                 (await application.AppendMessagesAsync(request with
                 {
                     Messages = [items[0] with { RawMessage = "bad\0message"u8.ToArray() }],
-                })).Disposition);
+                }).ConfigureAwait(false)).Disposition);
             Assert.AreEqual(ImapAppendDisposition.OverQuota,
-                (await application.AppendMessagesAsync(request)).Disposition);
+                (await application.AppendMessagesAsync(request).ConfigureAwait(false)).Disposition);
             await Assert.ThrowsAsync<ArgumentException>(() => application.AppendMessagesAsync(
-                request with { Messages = [items[0], items[0]] }));
-            var owner = await database.Users.SingleAsync(user => user.Id == ownerId);
+                request with { Messages = [items[0], items[0]] })).ConfigureAwait(false);
+            var owner = await database.Users.SingleAsync(user => user.Id == ownerId).ConfigureAwait(false);
             owner.QuotaBytes = 0;
-            await database.SaveChangesAsync();
+            await database.SaveChangesAsync().ConfigureAwait(false);
             await database.Database.ExecuteSqlRawAsync(
                 """
                 CREATE FUNCTION reject_imap_append() RETURNS trigger AS $$
@@ -130,65 +135,69 @@ public sealed class ImapAppendPostgresTests
                 CREATE TRIGGER reject_imap_append
                 BEFORE INSERT ON emails
                 FOR EACH ROW EXECUTE FUNCTION reject_imap_append();
-                """);
+                """).ConfigureAwait(false);
         }
 
-        await using (var database = new EmailDbContext(options))
         {
+            var database = new EmailDbContext(options);
+            await using var databaseLifetime = database.ConfigureAwait(false);
             var application = CreateApplication(database, objects);
             await Assert.ThrowsAsync<DbUpdateException>(() =>
-                application.AppendMessagesAsync(request));
+                application.AppendMessagesAsync(request)).ConfigureAwait(false);
         }
         Assert.AreEqual(0, objects.ObjectCount);
         Assert.AreEqual(2, objects.DeleteCount);
-        await using (var database = new EmailDbContext(options))
         {
-            Assert.AreEqual(0, await database.Emails.CountAsync());
+            var database = new EmailDbContext(options);
+            await using var databaseLifetime = database.ConfigureAwait(false);
+            Assert.AreEqual(0, await database.Emails.CountAsync().ConfigureAwait(false));
             Assert.AreEqual(7, await database.Folders
                 .Where(folder => folder.Id == folderId)
                 .Select(folder => folder.NextUid)
-                .SingleAsync());
+                .SingleAsync().ConfigureAwait(false));
             await database.Database.ExecuteSqlRawAsync(
                 "DROP TRIGGER reject_imap_append ON emails; "
-                + "DROP FUNCTION reject_imap_append();");
+                + "DROP FUNCTION reject_imap_append();").ConfigureAwait(false);
         }
 
-        await using (var database = new EmailDbContext(options))
         {
+            var database = new EmailDbContext(options);
+            await using var databaseLifetime = database.ConfigureAwait(false);
             var application = CreateApplication(database, objects);
-            var appended = await application.AppendMessagesAsync(request);
+            var appended = await application.AppendMessagesAsync(request).ConfigureAwait(false);
             Assert.AreEqual(ImapAppendDisposition.Appended, appended.Disposition);
             Assert.AreEqual(42, appended.UidValidity);
-            CollectionAssert.AreEqual(new[] { 7, 8 }, appended.Uids);
+            CollectionAssert.AreEqual(ExpectedVector1, appended.Uids);
         }
         Assert.AreEqual(2, objects.ObjectCount);
-        await using (var database = new EmailDbContext(options))
         {
+            var database = new EmailDbContext(options);
+            await using var databaseLifetime = database.ConfigureAwait(false);
             var application = CreateApplication(database, objects);
-            var replayed = await application.AppendMessagesAsync(request);
-            CollectionAssert.AreEqual(new[] { 7, 8 }, replayed.Uids);
+            var replayed = await application.AppendMessagesAsync(request).ConfigureAwait(false);
+            CollectionAssert.AreEqual(ExpectedVector1, replayed.Uids);
             Assert.AreEqual(ImapAppendDisposition.Appended, replayed.Disposition);
             Assert.AreEqual(42, replayed.UidValidity);
-            var owner = await database.Users.SingleAsync(user => user.Id == ownerId);
+            var owner = await database.Users.SingleAsync(user => user.Id == ownerId).ConfigureAwait(false);
             owner.QuotaBytes = 1;
-            await database.SaveChangesAsync();
+            await database.SaveChangesAsync().ConfigureAwait(false);
             var reorderedReplay = await application.AppendMessagesAsync(request with
             {
                 Messages = [items[1], items[0] with { Flags = [], InternalDate = DateTime.UtcNow }],
-            });
+            }).ConfigureAwait(false);
             Assert.AreEqual(ImapAppendDisposition.Appended, reorderedReplay.Disposition);
-            CollectionAssert.AreEqual(new[] { 8, 7 }, reorderedReplay.Uids);
+            CollectionAssert.AreEqual(ExpectedVector2, reorderedReplay.Uids);
             Assert.AreEqual(2, objects.ObjectCount);
             await Assert.ThrowsAsync<InvalidOperationException>(() => application.AppendMessagesAsync(request with
             {
                 Messages = [items[0], items[1] with { MessageId = Guid.CreateVersion7() }],
-            }));
+            })).ConfigureAwait(false);
             await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 application.AppendMessagesAsync(request with
                 {
                     Messages = [items[0] with { RawMessage = raw2 }, items[1]],
-                }));
-            var stored = await database.Emails.OrderBy(email => email.Uid).ToListAsync();
+                })).ConfigureAwait(false);
+            var stored = await database.Emails.OrderBy(email => email.Uid).ToListAsync().ConfigureAwait(false);
             Assert.HasCount(2, stored);
             Assert.IsNull(stored[0].RawMessage);
             Assert.IsNull(stored[1].RawMessage);
@@ -196,24 +205,24 @@ public sealed class ImapAppendPostgresTests
             Assert.IsNotNull(stored[1].RawMessageObjectName);
             Assert.IsTrue(stored[0].IsRead);
             Assert.IsTrue(stored[1].IsFlagged);
-            CollectionAssert.AreEqual(new[] { "$Label1" }, stored[0].Keywords);
+            CollectionAssert.AreEqual(ExpectedVector3, stored[0].Keywords);
             Assert.AreEqual(items[0].InternalDate, stored[0].ReceivedAt);
-            Assert.AreEqual(stored[0].ThreadObjectId, stored[1].ThreadObjectId);
-            Assert.AreEqual("First", stored[0].Subject);
-            Assert.AreEqual("Second", stored[1].Subject);
+            Assert.AreEqual(stored[0].ThreadObjectId, stored[1].ThreadObjectId, StringComparer.Ordinal);
+            Assert.AreEqual("First", stored[0].Subject, StringComparer.Ordinal);
+            Assert.AreEqual("Second", stored[1].Subject, StringComparer.Ordinal);
             var effects = new LargeObjectTransactionEffects(
                 objects, NullLogger<LargeObjectTransactionEffects>.Instance);
             var content = new MailboxMessageContentService(objects, effects);
-            CollectionAssert.AreEqual(raw1, await content.ReadAsync(stored[0], CancellationToken.None));
-            CollectionAssert.AreEqual(raw2, await content.ReadAsync(stored[1], CancellationToken.None));
+            CollectionAssert.AreEqual(raw1, await content.ReadAsync(stored[0], CancellationToken.None).ConfigureAwait(false));
+            CollectionAssert.AreEqual(raw2, await content.ReadAsync(stored[1], CancellationToken.None).ConfigureAwait(false));
             Assert.AreEqual(9, await database.Folders
                 .Where(folder => folder.Id == folderId)
                 .Select(folder => folder.NextUid)
-                .SingleAsync());
+                .SingleAsync().ConfigureAwait(false));
             Assert.AreEqual(6L, await database.Folders
                 .Where(folder => folder.Id == folderId)
                 .Select(folder => folder.HighestModSeq)
-                .SingleAsync());
+                .SingleAsync().ConfigureAwait(false));
         }
     }
 
@@ -228,4 +237,7 @@ public sealed class ImapAppendPostgresTests
             new MailboxMessageContentService(objects, effects),
             effects, NullLogger<ImapApplicationService>.Instance);
     }
+    private static readonly int[] ExpectedVector1 = new[] { 7, 8 };
+    private static readonly int[] ExpectedVector2 = new[] { 8, 7 };
+    private static readonly string[] ExpectedVector3 = new[] { "$Label1" };
 }

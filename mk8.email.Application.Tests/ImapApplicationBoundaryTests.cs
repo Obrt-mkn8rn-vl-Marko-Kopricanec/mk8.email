@@ -7,98 +7,101 @@ using mk8.email.Contracts.Messaging;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class ImapApplicationBoundaryTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class ImapApplicationBoundaryTests
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ImapAuthenticationCrossesTransportNeutralJsonBoundary scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task ImapAuthenticationCrossesTransportNeutralJsonBoundary()
     {
         var application = new RecordingImapApplication();
-        await using var services = new ServiceCollection()
+        var services = new ServiceCollection()
             .AddSingleton<IImapApplicationService>(application)
             .BuildServiceProvider();
+        await using var servicesLifetime = services.ConfigureAwait(false);
         var dispatcher = new ApplicationRequestDispatcher(services);
 
         var password = await SendAsync<ImapPasswordAuthentication, ImapIdentityResult>(
             dispatcher,
             ApplicationOperations.ImapAuthenticatePassword,
-            new ImapPasswordAuthentication("user@example.test", "secret"));
+            new ImapPasswordAuthentication("user@example.test", "secret")).ConfigureAwait(false);
         Assert.AreEqual(application.UserId, password.UserId);
-        Assert.AreEqual("user@example.test", password.Username);
-        Assert.AreEqual("secret", application.LastPassword);
+        Assert.AreEqual("user@example.test", password.Username, StringComparer.Ordinal);
+        Assert.AreEqual("secret", application.LastPassword, StringComparer.Ordinal);
 
         var oauth = await SendAsync<ImapOAuthAuthentication, ImapIdentityResult>(
             dispatcher,
             ApplicationOperations.ImapAuthenticateOAuth,
-            new ImapOAuthAuthentication("user@example.test", "access-token"));
+            new ImapOAuthAuthentication("user@example.test", "access-token")).ConfigureAwait(false);
         Assert.AreEqual(application.UserId, oauth.UserId);
-        Assert.AreEqual("access-token", application.LastAccessToken);
+        Assert.AreEqual("access-token", application.LastAccessToken, StringComparer.Ordinal);
 
         var mailboxes = await SendAsync<ImapMailboxListRequest, ImapMailboxListResult>(
             dispatcher,
             ApplicationOperations.ImapListMailboxes,
-            new ImapMailboxListRequest(application.UserId, SubscribedOnly: true));
+            new ImapMailboxListRequest(application.UserId, SubscribedOnly: true)).ConfigureAwait(false);
         Assert.HasCount(1, mailboxes.Mailboxes);
-        Assert.AreEqual("INBOX", mailboxes.Mailboxes[0].FolderName);
+        Assert.AreEqual("INBOX", mailboxes.Mailboxes[0].FolderName, StringComparer.Ordinal);
         Assert.IsTrue(application.LastSubscribedOnly);
 
         var statuses = await SendAsync<ImapMailboxStatusRequest, ImapMailboxStatusResult>(
             dispatcher,
             ApplicationOperations.ImapGetMailboxStatuses,
             new ImapMailboxStatusRequest(
-                application.UserId, ["INBOX"], true, true, true));
+                application.UserId, ["INBOX"], true, true, true)).ConfigureAwait(false);
         Assert.AreEqual(2, statuses.Statuses["INBOX"].MessageCount);
         Assert.AreEqual(12L, statuses.Statuses["INBOX"].SizeBytes);
 
         var subscription = await SendAsync<ImapMailboxSubscriptionRequest, ImapMailboxSubscriptionResult>(
             dispatcher,
             ApplicationOperations.ImapSetMailboxSubscription,
-            new ImapMailboxSubscriptionRequest(application.UserId, "INBOX", false));
+            new ImapMailboxSubscriptionRequest(application.UserId, "INBOX", false)).ConfigureAwait(false);
         Assert.IsTrue(subscription.Found);
         Assert.IsFalse(application.LastSubscriptionState);
 
         var created = await SendAsync<ImapMailboxCreateRequest, ImapMailboxCreateResult>(
             dispatcher,
             ApplicationOperations.ImapCreateMailbox,
-            new ImapMailboxCreateRequest(application.UserId, "Projects"));
+            new ImapMailboxCreateRequest(application.UserId, "Projects")).ConfigureAwait(false);
         Assert.AreEqual(ImapMailboxCreateDisposition.Created, created.Disposition);
-        Assert.AreEqual("Projects", application.LastCreatedMailbox);
+        Assert.AreEqual("Projects", application.LastCreatedMailbox, StringComparer.Ordinal);
 
         var renamed = await SendAsync<ImapMailboxRenameRequest, ImapMailboxRenameResult>(
             dispatcher,
             ApplicationOperations.ImapRenameMailbox,
-            new ImapMailboxRenameRequest(application.UserId, "Projects", "Archive"));
+            new ImapMailboxRenameRequest(application.UserId, "Projects", "Archive")).ConfigureAwait(false);
         Assert.AreEqual(ImapMailboxRenameDisposition.Renamed, renamed.Disposition);
-        Assert.AreEqual("Archive", application.LastRenamedMailbox);
+        Assert.AreEqual("Archive", application.LastRenamedMailbox, StringComparer.Ordinal);
 
         var deleted = await SendAsync<ImapMailboxDeleteRequest, ImapMailboxDeleteResult>(
             dispatcher,
             ApplicationOperations.ImapDeleteMailbox,
-            new ImapMailboxDeleteRequest(application.UserId, "Archive"));
+            new ImapMailboxDeleteRequest(application.UserId, "Archive")).ConfigureAwait(false);
         Assert.AreEqual(ImapMailboxDeleteDisposition.Deleted, deleted.Disposition);
-        Assert.AreEqual("Archive", application.LastDeletedMailbox);
+        Assert.AreEqual("Archive", application.LastDeletedMailbox, StringComparer.Ordinal);
 
         var selected = await SendAsync<ImapMailboxSelectRequest, ImapMailboxSelectResult>(
             dispatcher,
             ApplicationOperations.ImapSelectMailbox,
-            new ImapMailboxSelectRequest(application.UserId, "INBOX", 1, 2));
+            new ImapMailboxSelectRequest(application.UserId, "INBOX", 1, 2)).ConfigureAwait(false);
         Assert.IsNotNull(selected.Mailbox);
         Assert.AreEqual(2, selected.Mailbox.MessageCount);
-        Assert.AreEqual("INBOX", application.LastSelectedMailbox);
+        Assert.AreEqual("INBOX", application.LastSelectedMailbox, StringComparer.Ordinal);
 
         var quota = await SendAsync<ImapQuotaRequest, ImapQuotaResult>(
             dispatcher,
             ApplicationOperations.ImapGetQuota,
-            new ImapQuotaRequest(application.UserId, "INBOX"));
+            new ImapQuotaRequest(application.UserId, "INBOX")).ConfigureAwait(false);
         Assert.IsTrue(quota.MailboxFound);
         Assert.AreEqual(2048L, quota.LimitBytes);
-        Assert.AreEqual("INBOX", application.LastQuotaMailbox);
+        Assert.AreEqual("INBOX", application.LastQuotaMailbox, StringComparer.Ordinal);
 
         var append = await SendAsync<ImapAppendPreflightRequest, ImapAppendPreflightResult>(
             dispatcher,
             ApplicationOperations.ImapCheckAppendCapacity,
-            new ImapAppendPreflightRequest(application.UserId, "INBOX", 123));
+            new ImapAppendPreflightRequest(application.UserId, "INBOX", 123)).ConfigureAwait(false);
         Assert.AreEqual(ImapAppendPreflightDisposition.Ready, append.Disposition);
         Assert.AreEqual(123L, application.LastAppendBytes);
 
@@ -107,26 +110,26 @@ public sealed class ImapApplicationBoundaryTests
             ApplicationOperations.ImapAppendMessages,
             new ImapAppendRequest(application.UserId, "INBOX", false,
                 [new ImapAppendMessage(Guid.CreateVersion7(), ["\\Seen"], null,
-                    "Subject: test\r\n\r\nbody"u8.ToArray())]));
+                    "Subject: test\r\n\r\nbody"u8.ToArray())])).ConfigureAwait(false);
         Assert.AreEqual(ImapAppendDisposition.Appended, committed.Disposition);
         Assert.HasCount(1, committed.Uids);
-        Assert.AreEqual("INBOX", application.LastAppendMailbox);
+        Assert.AreEqual("INBOX", application.LastAppendMailbox, StringComparer.Ordinal);
 
         var search = await SendAsync<ImapSearchRequest, ImapSearchResult>(
             dispatcher,
             ApplicationOperations.ImapSearchMessages,
             new ImapSearchRequest(application.UserId, Guid.CreateVersion7(),
-                "SUBJECT test", [7], false));
+                "SUBJECT test", [7], false)).ConfigureAwait(false);
         Assert.IsTrue(search.FolderFound);
         Assert.HasCount(1, search.Matches);
-        Assert.AreEqual("SUBJECT test", application.LastSearchCriteria);
+        Assert.AreEqual("SUBJECT test", application.LastSearchCriteria, StringComparer.Ordinal);
 
         var sort = await SendAsync<ImapSortRequest, ImapSortResult>(
             dispatcher,
             ApplicationOperations.ImapSortMessages,
             new ImapSortRequest(application.UserId, Guid.CreateVersion7(),
                 "ALL", [], false, "US-ASCII",
-                [new ImapSortCriterion(ImapSortKey.Subject, true)]));
+                [new ImapSortCriterion(ImapSortKey.Subject, true)])).ConfigureAwait(false);
         Assert.IsTrue(sort.FolderFound);
         Assert.HasCount(1, sort.SortedMatches);
         Assert.AreEqual(ImapSortKey.Subject, application.LastSortKey);
@@ -135,7 +138,7 @@ public sealed class ImapApplicationBoundaryTests
             dispatcher,
             ApplicationOperations.ImapThreadMessages,
             new ImapThreadRequest(application.UserId, Guid.CreateVersion7(),
-                "ALL", [7], false, "US-ASCII", ImapThreadAlgorithm.References, true));
+                "ALL", [7], false, "US-ASCII", ImapThreadAlgorithm.References, true)).ConfigureAwait(false);
         Assert.IsTrue(thread.FolderFound);
         Assert.HasCount(1, thread.Nodes);
         Assert.AreEqual(ImapThreadAlgorithm.References, application.LastThreadAlgorithm);
@@ -144,7 +147,7 @@ public sealed class ImapApplicationBoundaryTests
             dispatcher,
             ApplicationOperations.ImapMarkMessagesSeen,
             new ImapMarkSeenRequest(application.UserId, Guid.CreateVersion7(),
-                [Guid.CreateVersion7()]));
+                [Guid.CreateVersion7()])).ConfigureAwait(false);
         Assert.IsTrue(seen.FolderFound);
         Assert.HasCount(1, seen.Messages);
         Assert.AreEqual(7L, seen.Messages[0].ModSeq);
@@ -154,7 +157,7 @@ public sealed class ImapApplicationBoundaryTests
             ApplicationOperations.ImapFetchPage,
             new ImapFetchPageRequest(application.UserId, Guid.CreateVersion7(),
                 true, new ImapMessageSelection([new ImapMessageRange(1, null)], null),
-                0, null, null, null, true));
+                0, null, null, null, true)).ConfigureAwait(false);
         Assert.IsTrue(page.FolderFound);
         Assert.AreEqual(7, page.SnapshotMaxUid);
         Assert.IsTrue(application.LastFetchIncludedContent);
@@ -162,7 +165,7 @@ public sealed class ImapApplicationBoundaryTests
         var idle = await SendAsync<ImapIdleSnapshotRequest, ImapIdleSnapshotResult>(
             dispatcher,
             ApplicationOperations.ImapGetIdleSnapshot,
-            new ImapIdleSnapshotRequest(application.UserId, Guid.CreateVersion7()));
+            new ImapIdleSnapshotRequest(application.UserId, Guid.CreateVersion7())).ConfigureAwait(false);
         Assert.IsTrue(idle.FolderFound);
         Assert.HasCount(1, idle.Messages);
     }
@@ -181,10 +184,10 @@ public sealed class ImapApplicationBoundaryTests
             operation,
             "application/json",
             JsonSerializer.SerializeToUtf8Bytes(value, JsonOptions),
-            new Dictionary<string, string>(),
+            new Dictionary<string, string>(StringComparer.Ordinal),
             now,
             now.AddMinutes(1));
-        var response = await dispatcher.DispatchAsync(request);
+        var response = await dispatcher.DispatchAsync(request).ConfigureAwait(false);
         Assert.IsFalse(response.IsError, response.ErrorCode);
         return JsonSerializer.Deserialize<TResponse>(response.Payload, JsonOptions)
             ?? throw new InvalidOperationException("The IMAP application response was empty.");
@@ -235,7 +238,7 @@ public sealed class ImapApplicationBoundaryTests
         public Task<ImapMailboxStatusResult> GetMailboxStatusesAsync(
             ImapMailboxStatusRequest request,
             CancellationToken cancellationToken = default) =>
-            Task.FromResult(new ImapMailboxStatusResult(new Dictionary<string, ImapMailboxStatus>
+            Task.FromResult(new ImapMailboxStatusResult(new Dictionary<string, ImapMailboxStatus>(StringComparer.Ordinal)
             {
                 ["INBOX"] = new(
                     Guid.CreateVersion7(), 1, 3, 5, "mailbox-id", 2, 1, 12),

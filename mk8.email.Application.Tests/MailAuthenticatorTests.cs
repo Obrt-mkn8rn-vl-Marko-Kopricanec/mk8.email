@@ -7,7 +7,8 @@ using mk8.email.Utils;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class MailAuthenticatorTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class MailAuthenticatorTests
 {
     private const string Username = "user@mk8n.com";
     private const string Password = "test-password-value";
@@ -15,22 +16,24 @@ public sealed class MailAuthenticatorTests
     [TestMethod]
     public async Task ActiveAccountAuthenticatesWithNormalizedUsername()
     {
-        await using var database = CreateDatabase(domainActive: true, companyActive: true);
+        var database = CreateDatabase(domainActive: true, companyActive: true);
+        await using var databaseLifetime = database.ConfigureAwait(false);
         var authenticator = new MailAuthenticator(database);
 
-        var result = await authenticator.AuthenticateAsync("USER@MK8N.COM", Password);
+        var result = await authenticator.AuthenticateAsync("USER@MK8N.COM", Password).ConfigureAwait(false);
 
         Assert.IsNotNull(result);
-        Assert.AreEqual(Username, result.Username);
+        Assert.AreEqual(Username, result.Username, StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task InactiveDomainRejectsMailAuthentication()
     {
-        await using var database = CreateDatabase(domainActive: false, companyActive: true);
+        var database = CreateDatabase(domainActive: false, companyActive: true);
+        await using var databaseLifetime = database.ConfigureAwait(false);
         var authenticator = new MailAuthenticator(database);
 
-        var result = await authenticator.AuthenticateAsync(Username, Password);
+        var result = await authenticator.AuthenticateAsync(Username, Password).ConfigureAwait(false);
 
         Assert.IsNull(result);
     }
@@ -38,10 +41,11 @@ public sealed class MailAuthenticatorTests
     [TestMethod]
     public async Task InactiveCompanyRejectsMailAuthentication()
     {
-        await using var database = CreateDatabase(domainActive: true, companyActive: false);
+        var database = CreateDatabase(domainActive: true, companyActive: false);
+        await using var databaseLifetime = database.ConfigureAwait(false);
         var authenticator = new MailAuthenticator(database);
 
-        var result = await authenticator.AuthenticateAsync(Username, Password);
+        var result = await authenticator.AuthenticateAsync(Username, Password).ConfigureAwait(false);
 
         Assert.IsNull(result);
     }

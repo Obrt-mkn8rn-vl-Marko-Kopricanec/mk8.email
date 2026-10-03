@@ -4,7 +4,8 @@ using mk8.email.Contracts.Enums;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class SieveScriptTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class SieveScriptTests
 {
     private const string RawMessage =
         "From: Sender <sender@example.net>\r\n" +
@@ -33,10 +34,10 @@ public sealed class SieveScriptTests
         Assert.IsTrue(compilation.Succeeded, Format(compilation));
         var result = Evaluate(compilation);
         Assert.AreEqual(1, result.Deliveries.Count);
-        Assert.AreEqual("Projects/MK8", result.Deliveries[0].Folder);
+        Assert.AreEqual("Projects/MK8", result.Deliveries[0].Folder, StringComparer.Ordinal);
         Assert.IsTrue(result.Deliveries[0].Create);
         CollectionAssert.AreEquivalent(
-            new[] { "\\Seen", "project" },
+            ExpectedVector1,
             result.Deliveries[0].Flags.ToArray());
         Assert.AreEqual(0, result.Redirects.Count);
         Assert.IsFalse(result.Discarded);
@@ -59,9 +60,9 @@ public sealed class SieveScriptTests
         Assert.IsTrue(compilation.Succeeded, Format(compilation));
         var result = Evaluate(compilation);
         Assert.AreEqual(1, result.Deliveries.Count);
-        Assert.AreEqual(DefaultFolders.Inbox, result.Deliveries[0].Folder);
+        Assert.AreEqual(DefaultFolders.Inbox, result.Deliveries[0].Folder, StringComparer.Ordinal);
         CollectionAssert.AreEqual(
-            new[] { "archive@example.org" },
+            ExpectedVector2,
             result.Redirects.ToArray());
     }
 
@@ -84,9 +85,9 @@ public sealed class SieveScriptTests
             compilation,
             new HashSet<string>([DefaultFolders.Inbox, "Archive"], StringComparer.Ordinal));
         Assert.AreEqual(1, result.Deliveries.Count);
-        Assert.AreEqual("Archive", result.Deliveries[0].Folder);
+        Assert.AreEqual("Archive", result.Deliveries[0].Folder, StringComparer.Ordinal);
         CollectionAssert.AreEquivalent(
-            new[] { "\\Seen", "retained" },
+            ExpectedVector3,
             result.Deliveries[0].Flags.ToArray());
         Assert.IsFalse(result.Discarded);
     }
@@ -106,7 +107,7 @@ public sealed class SieveScriptTests
 
         Assert.IsTrue(compilation.Succeeded, Format(compilation));
         var result = Evaluate(compilation);
-        Assert.AreEqual("Policy refusal\r\n.Contact the recipient.\r\n", result.RejectReason);
+        Assert.AreEqual("Policy refusal\r\n.Contact the recipient.\r\n", result.RejectReason, StringComparer.Ordinal);
         Assert.AreEqual(0, result.Deliveries.Count);
     }
 
@@ -115,15 +116,15 @@ public sealed class SieveScriptTests
     {
         var undeclared = SieveScript.Compile("fileinto \"Archive\";");
         Assert.IsFalse(undeclared.Succeeded);
-        StringAssert.Contains(undeclared.Diagnostics[0].Message, "must be declared");
+        StringAssert.Contains(undeclared.Diagnostics[0].Message, "must be declared", StringComparison.Ordinal);
 
         var unsupported = SieveScript.Compile("require \"vacation\"; keep;");
         Assert.IsFalse(unsupported.Succeeded);
-        StringAssert.Contains(unsupported.Diagnostics[0].Message, "not supported");
+        StringAssert.Contains(unsupported.Diagnostics[0].Message, "not supported", StringComparison.Ordinal);
 
         var oversized = SieveScript.Compile(new string('x', SieveScript.MaximumScriptBytes + 1));
         Assert.IsFalse(oversized.Succeeded);
-        StringAssert.Contains(oversized.Diagnostics[0].Message, "one-megabyte");
+        StringAssert.Contains(oversized.Diagnostics[0].Message, "one-megabyte", StringComparison.Ordinal);
     }
 
     [TestMethod]
@@ -171,7 +172,7 @@ public sealed class SieveScriptTests
                 mimeMessage,
                 DefaultFolders.Inbox,
                 new HashSet<string>([DefaultFolders.Inbox, "Archive"], StringComparer.Ordinal)));
-        Assert.AreEqual("Archive", result.Deliveries.Single().Folder);
+        Assert.AreEqual("Archive", result.Deliveries.Single().Folder, StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -180,7 +181,7 @@ public sealed class SieveScriptTests
         var compilation = SieveScript.Compile("require []; keep;");
 
         Assert.IsFalse(compilation.Succeeded);
-        StringAssert.Contains(compilation.Diagnostics[0].Message, "cannot be empty");
+        StringAssert.Contains(compilation.Diagnostics[0].Message, "cannot be empty", StringComparison.Ordinal);
     }
 
     [TestMethod]
@@ -243,7 +244,7 @@ public sealed class SieveScriptTests
             $"if header {tags} \"Subject\" \"Queue test\" {{ discard; }}");
 
         Assert.IsFalse(compilation.Succeeded);
-        StringAssert.Contains(compilation.Diagnostics[0].Message, "Duplicate or conflicting");
+        StringAssert.Contains(compilation.Diagnostics[0].Message, "Duplicate or conflicting", StringComparison.Ordinal);
     }
 
     [TestMethod]
@@ -260,10 +261,10 @@ public sealed class SieveScriptTests
         Assert.IsTrue(compilation.Succeeded, Format(compilation));
         var result = Evaluate(compilation);
         Assert.AreEqual(2, result.Deliveries.Count);
-        var archive = result.Deliveries.Single(delivery => delivery.Folder == "Archive");
+        var archive = result.Deliveries.Single(delivery => string.Equals(delivery.Folder, "Archive", StringComparison.Ordinal));
         Assert.IsTrue(archive.Create);
-        CollectionAssert.AreEquivalent(new[] { "\\Seen", "tag" }, archive.Flags.ToArray());
-        Assert.IsTrue(result.Deliveries.Any(delivery => delivery.Folder == DefaultFolders.Inbox));
+        CollectionAssert.AreEquivalent(ExpectedVector4, archive.Flags.ToArray());
+        Assert.IsTrue(result.Deliveries.Any(delivery => string.Equals(delivery.Folder, DefaultFolders.Inbox, StringComparison.Ordinal)));
     }
 
     [TestMethod]
@@ -279,7 +280,7 @@ public sealed class SieveScriptTests
             """);
 
         Assert.IsFalse(compilation.Succeeded);
-        StringAssert.Contains(compilation.Diagnostics[0].Message, "Duplicate fileinto");
+        StringAssert.Contains(compilation.Diagnostics[0].Message, "Duplicate fileinto", StringComparison.Ordinal);
     }
 
     [TestMethod]
@@ -320,13 +321,13 @@ public sealed class SieveScriptTests
         Assert.IsTrue(compilation.Succeeded, Format(compilation));
         if (allowed)
         {
-            Assert.AreEqual(DefaultFolders.Inbox, EvaluateMessage(compilation, message).Deliveries.Single().Folder);
+            Assert.AreEqual(DefaultFolders.Inbox, EvaluateMessage(compilation, message).Deliveries.Single().Folder, StringComparer.Ordinal);
         }
         else
         {
             var exception = Assert.ThrowsExactly<InvalidOperationException>(
                 () => EvaluateMessage(compilation, message));
-            StringAssert.Contains(exception.Message, "MIME body part limit");
+            StringAssert.Contains(exception.Message, "MIME body part limit", StringComparison.Ordinal);
         }
     }
 
@@ -340,7 +341,7 @@ public sealed class SieveScriptTests
         Assert.IsFalse(compilation.Succeeded);
         Assert.AreEqual(line, compilation.Diagnostics[0].Line);
         Assert.AreEqual(column, compilation.Diagnostics[0].Column);
-        StringAssert.Contains(compilation.Diagnostics[0].Message, "Unexpected character '@'");
+        StringAssert.Contains(compilation.Diagnostics[0].Message, "Unexpected character '@'", StringComparison.Ordinal);
     }
 
     private static SieveEvaluationResult Evaluate(
@@ -370,4 +371,8 @@ public sealed class SieveScriptTests
     private static string Format(SieveCompilationResult result) => string.Join(
         "; ",
         result.Diagnostics.Select(item => $"{item.Line}:{item.Column} {item.Message}"));
+    private static readonly string[] ExpectedVector1 = new[] { "\\Seen", "project" };
+    private static readonly string[] ExpectedVector2 = new[] { "archive@example.org" };
+    private static readonly string[] ExpectedVector3 = new[] { "\\Seen", "retained" };
+    private static readonly string[] ExpectedVector4 = new[] { "\\Seen", "tag" };
 }

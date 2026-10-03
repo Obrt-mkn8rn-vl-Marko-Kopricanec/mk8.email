@@ -73,50 +73,57 @@ internal sealed class MailMessageQueryService(
             if (changes is null)
                 return new(MailMessageQueryStatus.CannotCalculateChanges, null, [], [], 0);
 
-            var ordered = JmapEmailQueryEngine.Sort(all, filtered, command.Criteria.Sort);
-            if (command.Criteria.CollapseThreads)
-                ordered = ordered.DistinctBy(item => item.ThreadId, StringComparer.Ordinal).ToList();
-            var currentIds = ordered.Select(item => EmailId(item.Email.Id)).ToArray();
-            var currentIdSet = currentIds.ToHashSet(StringComparer.Ordinal);
-            var mutableFilter = JmapEmailQueryEngine.UsesMutableFilter(command.Criteria.Filter);
-            var mutableSort = JmapEmailQueryEngine.UsesMutableSort(command.Criteria.Sort);
-            var threadProperties = JmapEmailQueryEngine.UsesThreadProperties(
-                command.Criteria.Filter, command.Criteria.Sort);
-            var hasMembershipChanges = changes.Created.Count > 0 || changes.Destroyed.Count > 0;
-            var resetQuery = threadProperties || command.Criteria.CollapseThreads
-                && (hasMembershipChanges || mutableFilter && changes.Updated.Count > 0);
-
-            string[] removed;
-            HashSet<string> addedIds;
-            if (resetQuery)
-            {
-                var createdIds = changes.Created.ToHashSet(StringComparer.Ordinal);
-                var oldCandidates = mutableFilter
-                    ? all.Select(item => EmailId(item.Email.Id))
-                    : JmapEmailQueryEngine.Sort(all, filtered, command.Criteria.Sort)
-                        .Select(item => EmailId(item.Email.Id));
-                removed = oldCandidates.Where(id => !createdIds.Contains(id))
-                    .Concat(changes.Destroyed).Distinct(StringComparer.Ordinal).ToArray();
-                addedIds = currentIdSet;
-            }
-            else
-            {
-                var includeUpdates = mutableFilter || mutableSort;
-                removed = changes.Destroyed.Concat(includeUpdates ? changes.Updated : [])
-                    .Distinct(StringComparer.Ordinal).ToArray();
-                addedIds = changes.Created.Concat(includeUpdates ? changes.Updated : [])
-                    .Where(currentIdSet.Contains).ToHashSet(StringComparer.Ordinal);
-            }
-            var added = ordered.Select((item, index) => new MailMessageIndexedId(item.Email.Id, index))
-                .Where(item => addedIds.Contains(EmailId(item.Id))).ToArray();
-            if (command.MaxChanges is not null && removed.LongLength + added.LongLength > command.MaxChanges.Value)
-                return new(MailMessageQueryStatus.TooManyChanges, null, [], [], 0);
-            return new(MailMessageQueryStatus.Ok, changes.NewState, removed, added, currentIds.Length);
+            return ComputeChanges(command, all, filtered, changes);
         }
         finally
         {
             for (var index = 0; index < all.Count; index++) all[index].Dispose();
         }
+    }
+
+    private static MailMessageQueryChangesResult ComputeChanges(
+        MailMessageQueryChangesCommand command, List<JmapEmailQueryItem> all,
+        List<JmapEmailQueryItem> filtered, JmapChangesResult changes)
+    {
+        var ordered = JmapEmailQueryEngine.Sort(all, filtered, command.Criteria.Sort);
+        if (command.Criteria.CollapseThreads)
+            ordered = ordered.DistinctBy(item => item.ThreadId, StringComparer.Ordinal).ToList();
+        var currentIds = ordered.Select(item => EmailId(item.Email.Id)).ToArray();
+        var currentIdSet = currentIds.ToHashSet(StringComparer.Ordinal);
+        var mutableFilter = JmapEmailQueryEngine.UsesMutableFilter(command.Criteria.Filter);
+        var mutableSort = JmapEmailQueryEngine.UsesMutableSort(command.Criteria.Sort);
+        var threadProperties = JmapEmailQueryEngine.UsesThreadProperties(
+            command.Criteria.Filter, command.Criteria.Sort);
+        var hasMembershipChanges = changes.Created.Count > 0 || changes.Destroyed.Count > 0;
+        var resetQuery = threadProperties || command.Criteria.CollapseThreads
+            && (hasMembershipChanges || mutableFilter && changes.Updated.Count > 0);
+
+        string[] removed;
+        HashSet<string> addedIds;
+        if (resetQuery)
+        {
+            var createdIds = changes.Created.ToHashSet(StringComparer.Ordinal);
+            var oldCandidates = mutableFilter
+                ? all.Select(item => EmailId(item.Email.Id))
+                : JmapEmailQueryEngine.Sort(all, filtered, command.Criteria.Sort)
+                    .Select(item => EmailId(item.Email.Id));
+            removed = oldCandidates.Where(id => !createdIds.Contains(id))
+                .Concat(changes.Destroyed).Distinct(StringComparer.Ordinal).ToArray();
+            addedIds = currentIdSet;
+        }
+        else
+        {
+            var includeUpdates = mutableFilter || mutableSort;
+            removed = changes.Destroyed.Concat(includeUpdates ? changes.Updated : [])
+                .Distinct(StringComparer.Ordinal).ToArray();
+            addedIds = changes.Created.Concat(includeUpdates ? changes.Updated : [])
+                .Where(currentIdSet.Contains).ToHashSet(StringComparer.Ordinal);
+        }
+        var added = ordered.Select((item, index) => new MailMessageIndexedId(item.Email.Id, index))
+            .Where(item => addedIds.Contains(EmailId(item.Id))).ToArray();
+        if (command.MaxChanges is not null && removed.LongLength + added.LongLength > command.MaxChanges.Value)
+            return new(MailMessageQueryStatus.TooManyChanges, null, [], [], 0);
+        return new(MailMessageQueryStatus.Ok, changes.NewState, removed, added, currentIds.Length);
     }
 
     private static List<JmapEmailQueryItem> FilterAndSort(

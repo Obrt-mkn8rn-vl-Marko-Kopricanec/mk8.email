@@ -57,6 +57,38 @@ public sealed class JmapStateService(
         if (limit < 1)
             return null;
 
+        var (folded, newSequence, hasMoreChanges) = await FoldPageAsync(
+            accountId, dataType, sinceSequence, currentSequence, limit, cancellationToken).ConfigureAwait(false);
+
+        if (!hasMoreChanges)
+            hasMoreChanges = newSequence < currentSequence;
+        if (hasMoreChanges
+            && await HasUnsafeFutureLifecycleAsync(
+                accountId,
+                dataType,
+                newSequence,
+                currentSequence,
+                folded,
+                cancellationToken).ConfigureAwait(false))
+        {
+            return null;
+        }
+        if (!hasMoreChanges)
+            newSequence = currentSequence;
+
+        return new JmapChangesResult(
+            sinceState,
+            FormatState(newSequence),
+            hasMoreChanges,
+            folded.Where(item => string.Equals(item.Value, JmapConstants.CreatedChange, StringComparison.Ordinal)).Select(item => item.Key).ToArray(),
+            folded.Where(item => string.Equals(item.Value, JmapConstants.UpdatedChange, StringComparison.Ordinal)).Select(item => item.Key).ToArray(),
+            folded.Where(item => string.Equals(item.Value, JmapConstants.DestroyedChange, StringComparison.Ordinal)).Select(item => item.Key).ToArray());
+    }
+
+    private async Task<(Dictionary<string, string> Changes, long Sequence, bool HasMore)> FoldPageAsync(
+        Guid accountId, string dataType, long sinceSequence, long currentSequence,
+        int limit, CancellationToken cancellationToken)
+    {
         var rows = database.JmapChanges
             .AsNoTracking()
             .Where(change => change.AccountId == accountId
@@ -91,29 +123,7 @@ public sealed class JmapStateService(
             newSequence = row.Sequence;
         }
 
-        if (!hasMoreChanges)
-            hasMoreChanges = newSequence < currentSequence;
-        if (hasMoreChanges
-            && await HasUnsafeFutureLifecycleAsync(
-                accountId,
-                dataType,
-                newSequence,
-                currentSequence,
-                folded,
-                cancellationToken).ConfigureAwait(false))
-        {
-            return null;
-        }
-        if (!hasMoreChanges)
-            newSequence = currentSequence;
-
-        return new JmapChangesResult(
-            sinceState,
-            FormatState(newSequence),
-            hasMoreChanges,
-            folded.Where(item => string.Equals(item.Value, JmapConstants.CreatedChange, StringComparison.Ordinal)).Select(item => item.Key).ToArray(),
-            folded.Where(item => string.Equals(item.Value, JmapConstants.UpdatedChange, StringComparison.Ordinal)).Select(item => item.Key).ToArray(),
-            folded.Where(item => string.Equals(item.Value, JmapConstants.DestroyedChange, StringComparison.Ordinal)).Select(item => item.Key).ToArray());
+        return (folded, newSequence, hasMoreChanges);
     }
 
     private Task<bool> HasUnsafeFutureLifecycleAsync(
@@ -226,6 +236,15 @@ public sealed class JmapStateService(
             ChangedAt = now,
         }, cancellationToken).ConfigureAwait(false);
 
+        await AddMailboxBaselineAsync(accountId, now, cancellationToken).ConfigureAwait(false);
+        await AddContactBaselineAsync(accountId, now, cancellationToken).ConfigureAwait(false);
+        await AddMessageBaselineAsync(accountId, now, cancellationToken).ConfigureAwait(false);
+        await AddSettingsBaselineAsync(accountId, now, cancellationToken).ConfigureAwait(false);
+        await SaveBaselineAsync(accountId, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task AddMailboxBaselineAsync(Guid accountId, DateTime now, CancellationToken cancellationToken)
+    {
         var mailboxIds = await database.Folders
             .AsNoTracking()
             .Where(folder => folder.InboxId == accountId)
@@ -240,6 +259,45 @@ public sealed class JmapStateService(
                 now);
         }
 
+    }
+
+    private async Task AddContactBaselineAsync(Guid accountId, DateTime now, CancellationToken cancellationToken)
+    {
+        var ownerId = await GetPrimaryOwnerAsync(accountId, cancellationToken).ConfigureAwait(false);
+        if (ownerId is null) return;
+        var addressBookIds = await database.DavCollections
+            .AsNoTracking()
+            .Where(collection => collection.UserId == ownerId.Value
+                && collection.CollectionType == DavCollectionDB.AddressBookType)
+            .Select(collection => collection.Id)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        for (var addressBookIndex = 0; addressBookIndex < addressBookIds.Count; addressBookIndex++)
+        {
+            AddBaselineChange(
+                accountId,
+                JmapConstants.AddressBookDataType,
+                JmapId.AddressBook(addressBookIds[addressBookIndex]),
+                now);
+        }
+
+        var contactCardIds = await database.DavResources
+            .AsNoTracking()
+            .Where(resource => resource.Collection.UserId == ownerId.Value
+                && resource.Collection.CollectionType == DavCollectionDB.AddressBookType)
+            .Select(resource => resource.Id)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        for (var contactCardIndex = 0; contactCardIndex < contactCardIds.Count; contactCardIndex++)
+        {
+            AddBaselineChange(
+                accountId,
+                JmapConstants.ContactCardDataType,
+                JmapId.ContactCard(contactCardIds[contactCardIndex]),
+                now);
+        }
+    }
+
+    private async Task<Guid?> GetPrimaryOwnerAsync(Guid accountId, CancellationToken cancellationToken)
+    {
         var accountOwner = await database.Inboxes
             .AsNoTracking()
             .Where(inbox => inbox.Id == accountId)
@@ -275,40 +333,13 @@ public sealed class JmapStateService(
                 .ThenBy(inbox => inbox.Name, StringComparer.Ordinal)
                 .Select(inbox => (Guid?)inbox.Id)
                 .FirstOrDefault();
-            if (primaryAccountId == accountId)
-            {
-                var addressBookIds = await database.DavCollections
-                    .AsNoTracking()
-                    .Where(collection => collection.UserId == accountOwner.OwnerId
-                        && collection.CollectionType == DavCollectionDB.AddressBookType)
-                    .Select(collection => collection.Id)
-                    .ToListAsync(cancellationToken).ConfigureAwait(false);
-                for (var addressBookIndex = 0; addressBookIndex < addressBookIds.Count; addressBookIndex++)
-                {
-                    AddBaselineChange(
-                        accountId,
-                        JmapConstants.AddressBookDataType,
-                        JmapId.AddressBook(addressBookIds[addressBookIndex]),
-                        now);
-                }
-
-                var contactCardIds = await database.DavResources
-                    .AsNoTracking()
-                    .Where(resource => resource.Collection.UserId == accountOwner.OwnerId
-                        && resource.Collection.CollectionType == DavCollectionDB.AddressBookType)
-                    .Select(resource => resource.Id)
-                    .ToListAsync(cancellationToken).ConfigureAwait(false);
-                for (var contactCardIndex = 0; contactCardIndex < contactCardIds.Count; contactCardIndex++)
-                {
-                    AddBaselineChange(
-                        accountId,
-                        JmapConstants.ContactCardDataType,
-                        JmapId.ContactCard(contactCardIds[contactCardIndex]),
-                        now);
-                }
-            }
+            if (primaryAccountId == accountId) return accountOwner.OwnerId;
         }
+        return null;
+    }
 
+    private async Task AddMessageBaselineAsync(Guid accountId, DateTime now, CancellationToken cancellationToken)
+    {
         var emails = await database.Emails
             .AsNoTracking()
             .Where(email => email.Folder.InboxId == accountId && !email.IsDeleted)
@@ -327,6 +358,10 @@ public sealed class JmapStateService(
             AddBaselineChange(accountId, JmapConstants.ThreadDataType, JmapId.Thread(threadId), now);
         }
 
+    }
+
+    private async Task AddSettingsBaselineAsync(Guid accountId, DateTime now, CancellationToken cancellationToken)
+    {
         var identityIds = await database.JmapIdentities
             .AsNoTracking()
             .Where(identity => identity.AccountId == accountId)
@@ -365,6 +400,10 @@ public sealed class JmapStateService(
                 now);
         }
 
+    }
+
+    private async Task SaveBaselineAsync(Guid accountId, CancellationToken cancellationToken)
+    {
         try
         {
             await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);

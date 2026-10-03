@@ -1,0 +1,2 @@
+T:System.Net.Mail.SmtpClient; tests must use the mail application boundary rather than send external mail
+M:System.Threading.Thread.Abort; tests must use cooperative cancellation rather than terminate managed threads

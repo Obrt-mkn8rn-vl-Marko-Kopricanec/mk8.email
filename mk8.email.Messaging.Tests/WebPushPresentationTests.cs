@@ -15,15 +15,20 @@ namespace mk8.email.Messaging.Tests;
 
 [TestClass]
 [TestCategory("PostgreSQL")]
-public sealed class WebPushPresentationTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class WebPushPresentationTests
 {
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The WorkerPushRequestCrossesReverseLaneAndGatewayJournalsHttpExchange scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task WorkerPushRequestCrossesReverseLaneAndGatewayJournalsHttpExchange()
     {
-        await using var database = await RequirePostgresAsync();
-        await using var applicationDataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await using var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await PostgresMessagingSchema.EnsureAsync(gatewayDataSource);
+        var database = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        var applicationDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var applicationDataSourceLifetime = applicationDataSource.ConfigureAwait(false);
+        var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var gatewayDataSourceLifetime = gatewayDataSource.ConfigureAwait(false);
+        await PostgresMessagingSchema.EnsureAsync(gatewayDataSource).ConfigureAwait(false);
         using var applicationProtector = AesGcmPayloadProtectorTests.CreateProtector(
             "test", "webpush-roundtrip-key");
         using var gatewayProtector = AesGcmPayloadProtectorTests.CreateProtector(
@@ -38,53 +43,55 @@ public sealed class WebPushPresentationTests
             gatewayDataSource, gatewayProtector, options);
         var journal = new PostgresGatewayTrafficJournal(
             gatewayDataSource, gatewayProtector, options);
-        var handler = new CapturingPushHandler();
+        using var handler = new CapturingPushHandler();
         using var sender = new GatewayWebPushService(handler, journal, options.MaxPayloadBytes);
-        var gatewayWorker = new GatewayPresentationWorker(
-            gatewayBus,
-            new PostgresApplicationTransportControl(gatewayDataSource),
-            journal,
-            sender,
-            new UnusedSmtpRelay(),
-            new EnvironmentConfig(),
-            NullLogger<GatewayPresentationWorker>.Instance);
+        using var gatewayWorker = new GatewayPresentationWorker(
+                    gatewayBus,
+                    new PostgresApplicationTransportControl(gatewayDataSource),
+                    journal,
+                    sender,
+                    new UnusedSmtpRelay(),
+                    new EnvironmentConfig(),
+                    NullLogger<GatewayPresentationWorker>.Instance);
         var application = new JmapPushPresentationClient(
             applicationBus,
             NullLogger<JmapPushPresentationClient>.Instance);
         var payload = Encoding.UTF8.GetBytes("{\"@type\":\"StateChange\",\"changed\":{}}");
 
-        await gatewayWorker.StartAsync(CancellationToken.None);
+        await gatewayWorker.StartAsync(CancellationToken.None).ConfigureAwait(false);
         try
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
             Assert.IsFalse(await application.IsSafeUrlAsync(
-                "https://127.0.0.1/push", timeout.Token));
+                "https://127.0.0.1/push", timeout.Token).ConfigureAwait(false));
             Assert.IsTrue(await application.IsSafeUrlAsync(
-                "https://1.1.1.1/push", timeout.Token));
+                "https://1.1.1.1/push", timeout.Token).ConfigureAwait(false));
             var result = await application.SendAsync(
                 "https://push.example.net/jmap",
                 keysJson: null,
                 DateTime.UtcNow.AddMinutes(5),
                 new JmapPushMessage(Changes: new JmapApplicationChanges(
-                    new Dictionary<string, IReadOnlyDictionary<string, string>>())),
-                timeout.Token);
+                    new Dictionary<string, IReadOnlyDictionary<string, string>>(StringComparer.Ordinal))),
+                timeout.Token).ConfigureAwait(false);
             Assert.AreEqual(WebPushSendOutcome.Success, result);
             Assert.AreEqual(1, handler.CallCount);
             CollectionAssert.AreEqual(payload, handler.Body!);
 
-            await using var requestQuery = applicationDataSource.CreateCommand(
+            var requestQuery = applicationDataSource.CreateCommand(
                 "SELECT id FROM presentation_requests WHERE operation = @operation");
+            await using var requestQueryLifetime = requestQuery.ConfigureAwait(false);
             requestQuery.Parameters.AddWithValue(
                 "operation", NpgsqlDbType.Varchar, WebPushPresentationOperations.Send);
-            var requestId = (Guid)(await requestQuery.ExecuteScalarAsync(timeout.Token)
+            var requestId = (Guid)(await requestQuery.ExecuteScalarAsync(timeout.Token).ConfigureAwait(false)
                 ?? throw new AssertFailedException("The presentation request is missing."));
-            await using var trafficQuery = gatewayDataSource.CreateCommand(
+            var trafficQuery = gatewayDataSource.CreateCommand(
                 "SELECT DISTINCT session_id FROM gateway_traffic_records "
                 + "WHERE application_request_id = @request_id");
+            await using var trafficQueryLifetime = trafficQuery.ConfigureAwait(false);
             trafficQuery.Parameters.AddWithValue("request_id", NpgsqlDbType.Uuid, requestId);
-            var trafficSessionId = (Guid)(await trafficQuery.ExecuteScalarAsync(timeout.Token)
+            var trafficSessionId = (Guid)(await trafficQuery.ExecuteScalarAsync(timeout.Token).ConfigureAwait(false)
                 ?? throw new AssertFailedException("The Gateway traffic session is missing."));
-            var records = await journal.ReadSessionAsync(trafficSessionId, timeout.Token);
+            var records = await journal.ReadSessionAsync(trafficSessionId, timeout.Token).ConfigureAwait(false);
             Assert.HasCount(4, records);
             CollectionAssert.AreEqual(
                 new[]
@@ -98,35 +105,36 @@ public sealed class WebPushPresentationTests
             CollectionAssert.AreEqual(new long[] { 0, 1, 2, 3 },
                 records.Select(record => record.Sequence).ToArray());
             var outbound = JsonNode.Parse(records[1].Payload)!.AsObject();
-            Assert.AreEqual("https://push.example.net/jmap", outbound["url"]!.GetValue<string>());
+            Assert.AreEqual("https://push.example.net/jmap", outbound["url"]!.GetValue<string>(), StringComparer.Ordinal);
             CollectionAssert.AreEqual(
                 payload,
                 Convert.FromBase64String(outbound["bodyBase64"]!.GetValue<string>()));
             var inbound = JsonNode.Parse(records[2].Payload)!.AsObject();
             Assert.AreEqual(201, inbound["status"]!.GetValue<int>());
             Assert.AreEqual("accepted", Encoding.UTF8.GetString(
-                Convert.FromBase64String(inbound["bodyBase64"]!.GetValue<string>())));
+                Convert.FromBase64String(inbound["bodyBase64"]!.GetValue<string>())), StringComparer.Ordinal);
 
-            await using var ciphertextQuery = gatewayDataSource.CreateCommand(
+            var ciphertextQuery = gatewayDataSource.CreateCommand(
                 "SELECT payload_inline FROM gateway_traffic_records "
                 + "WHERE session_id = @session_id AND sequence = 1");
+            await using var ciphertextQueryLifetime = ciphertextQuery.ConfigureAwait(false);
             ciphertextQuery.Parameters.AddWithValue(
                 "session_id", NpgsqlDbType.Uuid, trafficSessionId);
-            var ciphertext = (byte[])(await ciphertextQuery.ExecuteScalarAsync(timeout.Token)
+            var ciphertext = (byte[])(await ciphertextQuery.ExecuteScalarAsync(timeout.Token).ConfigureAwait(false)
                 ?? throw new AssertFailedException("The encrypted request trace is missing."));
             Assert.IsFalse(Encoding.UTF8.GetString(ciphertext).Contains(
                 "push.example.net", StringComparison.Ordinal));
         }
         finally
         {
-            await gatewayWorker.StopAsync(CancellationToken.None);
+            await gatewayWorker.StopAsync(CancellationToken.None).ConfigureAwait(false);
         }
     }
 
     [TestMethod]
     public async Task JournalFailurePreventsOutboundWebPush()
     {
-        var handler = new CapturingPushHandler();
+        using var handler = new CapturingPushHandler();
         using var sender = new GatewayWebPushService(handler, new RejectingJournal(), 65_536);
         var request = new WebPushSendRequest(
             "https://push.example.net/jmap",
@@ -139,16 +147,18 @@ public sealed class WebPushPresentationTests
             request,
             Guid.CreateVersion7(),
             Guid.CreateVersion7(),
-            CancellationToken.None));
+            CancellationToken.None)).ConfigureAwait(false);
         Assert.AreEqual(0, handler.CallCount);
     }
 
     [TestMethod]
     public async Task VerificationDeliveryRemainsQueuedWhileGatewayIsOffline()
     {
-        await using var database = await RequirePostgresAsync();
-        await using var dataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await PostgresMessagingSchema.EnsureAsync(dataSource);
+        var database = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        var dataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var dataSourceLifetime = dataSource.ConfigureAwait(false);
+        await PostgresMessagingSchema.EnsureAsync(dataSource).ConfigureAwait(false);
         using var protector = AesGcmPayloadProtectorTests.CreateProtector(
             "test", "webpush-verification-key");
         var bus = new PostgresPresentationBus(dataSource, protector);
@@ -161,35 +171,38 @@ public sealed class WebPushPresentationTests
             keysJson: null,
             DateTime.UtcNow.AddDays(2),
             new JmapPushMessage("subscription-id", "verification"),
-            CancellationToken.None);
+            CancellationToken.None).ConfigureAwait(false);
 
-        await using var query = dataSource.CreateCommand(
+        var query = dataSource.CreateCommand(
             "SELECT state, deadline_at FROM presentation_requests "
             + "WHERE operation = @operation");
+        await using var queryLifetime = query.ConfigureAwait(false);
         query.Parameters.AddWithValue(
             "operation", NpgsqlDbType.Varchar, WebPushPresentationOperations.Send);
-        await using var reader = await query.ExecuteReaderAsync();
-        Assert.IsTrue(await reader.ReadAsync());
-        Assert.AreEqual(ApplicationExchangeStates.Pending, reader.GetString(0));
+        var reader = (await query.ExecuteReaderAsync().ConfigureAwait(false));
+        await using var readerLifetime = reader.ConfigureAwait(false);
+        Assert.IsTrue(await reader.ReadAsync().ConfigureAwait(false));
+        Assert.AreEqual(ApplicationExchangeStates.Pending, reader.GetString(0), StringComparer.Ordinal);
         Assert.IsTrue(reader.GetDateTime(1) > DateTime.UtcNow.AddHours(23));
     }
 
     [TestMethod]
     public async Task EndpointCheckRejectsPrivateAndNonHttpsDestinations()
     {
+        using var ownedResource1 = new CapturingPushHandler();
         using var sender = new GatewayWebPushService(
-            new CapturingPushHandler(),
+            ownedResource1,
             new RejectingJournal(),
             65_536);
-        Assert.IsFalse(await sender.IsSafeUrlAsync("http://1.1.1.1/push", CancellationToken.None));
-        Assert.IsFalse(await sender.IsSafeUrlAsync("https://127.0.0.1/push", CancellationToken.None));
-        Assert.IsFalse(await sender.IsSafeUrlAsync("https://10.0.0.1/push", CancellationToken.None));
-        Assert.IsTrue(await sender.IsSafeUrlAsync("https://1.1.1.1/push", CancellationToken.None));
+        Assert.IsFalse(await sender.IsSafeUrlAsync("http://1.1.1.1/push", CancellationToken.None).ConfigureAwait(false));
+        Assert.IsFalse(await sender.IsSafeUrlAsync("https://127.0.0.1/push", CancellationToken.None).ConfigureAwait(false));
+        Assert.IsFalse(await sender.IsSafeUrlAsync("https://10.0.0.1/push", CancellationToken.None).ConfigureAwait(false));
+        Assert.IsTrue(await sender.IsSafeUrlAsync("https://1.1.1.1/push", CancellationToken.None).ConfigureAwait(false));
     }
 
     private static async Task<PostgresTestDatabase> RequirePostgresAsync()
     {
-        var database = await PostgresTestDatabase.TryCreateAsync();
+        var database = await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false);
         if (database is null)
         {
             Assert.Inconclusive("Set MK8_EMAIL_TEST_POSTGRES to a PostgreSQL admin connection string.");
@@ -208,7 +221,7 @@ public sealed class WebPushPresentationTests
             CancellationToken cancellationToken)
         {
             CallCount++;
-            Body = await request.Content!.ReadAsByteArrayAsync(cancellationToken);
+            Body = await request.Content!.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
             return new HttpResponseMessage(HttpStatusCode.Created)
             {
                 Content = new StringContent("accepted"),

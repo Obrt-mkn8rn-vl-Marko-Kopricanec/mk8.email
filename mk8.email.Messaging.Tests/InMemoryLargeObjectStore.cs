@@ -26,8 +26,9 @@ internal sealed class InMemoryLargeObjectStore : ILargeObjectStore
         CancellationToken cancellationToken = default)
     {
         Interlocked.Increment(ref _putCount);
-        await using var destination = new MemoryStream();
-        await content.CopyToAsync(destination, cancellationToken);
+        var destination = new MemoryStream();
+        await using var destinationLifetime = destination.ConfigureAwait(false);
+        await content.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
         var bytes = destination.ToArray();
         var actualHash = Convert.ToHexStringLower(SHA256.HashData(bytes));
         if (bytes.LongLength != length || !string.Equals(actualHash, sha256, StringComparison.Ordinal))
@@ -59,7 +60,7 @@ internal sealed class InMemoryLargeObjectStore : ILargeObjectStore
             throw new InvalidOperationException("The test large object is unavailable or changed.");
         }
         Interlocked.Increment(ref _readCount);
-        await destination.WriteAsync(stored.Content, cancellationToken);
+        await destination.WriteAsync(stored.Content, cancellationToken).ConfigureAwait(false);
     }
 
     public Task<bool> DeleteIfMatchAsync(

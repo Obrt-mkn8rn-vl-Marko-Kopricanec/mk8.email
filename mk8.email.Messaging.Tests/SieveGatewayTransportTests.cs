@@ -20,22 +20,27 @@ namespace mk8.email.Messaging.Tests;
 
 [TestClass]
 [TestCategory("PostgreSQL")]
-public sealed class SieveGatewayTransportTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class SieveGatewayTransportTests
 {
     [TestMethod]
     [Timeout(30_000)]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The TlsSieveAuthenticationCrossesRemoteWorkerAndRecordsWireTraffic scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task TlsSieveAuthenticationCrossesRemoteWorkerAndRecordsWireTraffic()
     {
-        await using var database = await PostgresTestDatabase.TryCreateAsync();
+        var database = (await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false));
+        await using var databaseLifetime = new NullableAsyncDisposable(database).ConfigureAwait(false);
         if (database is null)
         {
             Assert.Inconclusive("Set MK8_EMAIL_TEST_POSTGRES to a PostgreSQL admin connection string.");
             return;
         }
 
-        await using var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await using var workerDataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await PostgresMessagingSchema.EnsureAsync(gatewayDataSource);
+        var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var gatewayDataSourceLifetime = gatewayDataSource.ConfigureAwait(false);
+        var workerDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var workerDataSourceLifetime = workerDataSource.ConfigureAwait(false);
+        await PostgresMessagingSchema.EnsureAsync(gatewayDataSource).ConfigureAwait(false);
         using var gatewayProtector = AesGcmPayloadProtectorTests.CreateProtector(
             "test", "sieve-route-key");
         using var workerProtector = AesGcmPayloadProtectorTests.CreateProtector(
@@ -52,11 +57,12 @@ public sealed class SieveGatewayTransportTests
             gatewayDataSource, gatewayProtector, options);
 
         var application = new StubSieveApplication();
-        await using var workerProvider = new ServiceCollection()
+        var workerProvider = new ServiceCollection()
             .AddSingleton<ISieveApplicationService>(application)
             .AddScoped<IApplicationRequestDispatcher>(provider =>
                 new ApplicationRequestDispatcher(provider))
             .BuildServiceProvider();
+        await using var workerProviderLifetime = workerProvider.ConfigureAwait(false);
         var worker = new ApplicationRequestWorker(
             workerBus,
             workerProvider.GetRequiredService<IServiceScopeFactory>(),
@@ -67,11 +73,14 @@ public sealed class SieveGatewayTransportTests
             journal,
             new GatewayApplicationOptions(
                 "gateway@sieve-test-host", TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(5)));
-        await using var gatewayProvider = new ServiceCollection()
+        var gatewayProvider = new ServiceCollection()
             .AddSingleton<ISieveApplicationService>(new GatewaySieveApplicationService(transport))
             .BuildServiceProvider();
+        await using var gatewayProviderLifetime = gatewayProvider.ConfigureAwait(false);
         var port = ReservePort();
         var certificatePath = CreateCertificate();
+        using var expectedCertificate = X509CertificateLoader.LoadPkcs12FromFile(certificatePath, password: null);
+        var expectedPin = expectedCertificate.GetCertHashString(HashAlgorithmName.SHA256);
         var environment = new EnvironmentConfig
         {
             Sieve = new SieveConfig
@@ -93,64 +102,73 @@ public sealed class SieveGatewayTransportTests
             NullLogger<ManageSieveServerService>.Instance,
             journal);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
-        await worker.StartAsync(timeout.Token);
-        await listener.StartAsync(timeout.Token);
+        await worker.StartAsync(timeout.Token).ConfigureAwait(false);
+        await listener.StartAsync(timeout.Token).ConfigureAwait(false);
         try
         {
-            using var client = await ConnectAsync(port, timeout.Token);
+            using var client = await ConnectAsync(port, timeout.Token).ConfigureAwait(false);
             var network = client.GetStream();
-            await ReadCapabilitiesAsync(network, timeout.Token);
-            await WriteLineAsync(network, "STARTTLS", timeout.Token);
-            StringAssert.Contains(await ReadLineAsync(network, timeout.Token), "Begin TLS negotiation");
+            await ReadCapabilitiesAsync(network, timeout.Token).ConfigureAwait(false);
+            await WriteLineAsync(network, "STARTTLS", timeout.Token).ConfigureAwait(false);
+            StringAssert.Contains(await ReadLineAsync(network, timeout.Token).ConfigureAwait(false), "Begin TLS negotiation", StringComparison.Ordinal);
 
-            using var tls = new SslStream(network, false, (_, _, _, _) => true);
+            using var tls = new SslStream(network, false, (_, certificate, _, errors) =>
+                certificate is not null
+                && errors is SslPolicyErrors.None or SslPolicyErrors.RemoteCertificateChainErrors
+                && string.Equals(certificate.GetCertHashString(HashAlgorithmName.SHA256), expectedPin, StringComparison.Ordinal));
             await tls.AuthenticateAsClientAsync(
                 new SslClientAuthenticationOptions { TargetHost = "email.example.test" },
-                timeout.Token);
-            await ReadCapabilitiesAsync(tls, timeout.Token);
+                timeout.Token).ConfigureAwait(false);
+            await ReadCapabilitiesAsync(tls, timeout.Token).ConfigureAwait(false);
             var plain = Convert.ToBase64String(Encoding.UTF8.GetBytes(
                 "\0user@example.test\0sieve-secret"));
-            await WriteLineAsync(tls, $"AUTHENTICATE \"PLAIN\" \"{plain}\"", timeout.Token);
-            Assert.IsTrue((await ReadLineAsync(tls, timeout.Token)).StartsWith("OK ", StringComparison.Ordinal));
-            await WriteLineAsync(tls, "LISTSCRIPTS", timeout.Token);
-            Assert.AreEqual("\"primary\" ACTIVE", await ReadLineAsync(tls, timeout.Token));
-            Assert.IsTrue((await ReadLineAsync(tls, timeout.Token)).StartsWith("OK ", StringComparison.Ordinal));
-            Assert.AreEqual("sieve-secret", application.Password?.Password);
+            await WriteLineAsync(tls, $"AUTHENTICATE \"PLAIN\" \"{plain}\"", timeout.Token).ConfigureAwait(false);
+            Assert.IsTrue((await ReadLineAsync(tls, timeout.Token).ConfigureAwait(false)).StartsWith("OK ", StringComparison.Ordinal));
+            await WriteLineAsync(tls, "LISTSCRIPTS", timeout.Token).ConfigureAwait(false);
+            Assert.AreEqual("\"primary\" ACTIVE", await ReadLineAsync(tls, timeout.Token).ConfigureAwait(false), StringComparer.Ordinal);
+            Assert.IsTrue((await ReadLineAsync(tls, timeout.Token).ConfigureAwait(false)).StartsWith("OK ", StringComparison.Ordinal));
+            Assert.AreEqual("sieve-secret", application.Password?.Password, StringComparer.Ordinal);
 
-            await using var operations = gatewayDataSource.CreateCommand(
+            var operations = gatewayDataSource.CreateCommand(
                 "SELECT operation FROM application_requests ORDER BY created_at");
-            await using var operationReader = await operations.ExecuteReaderAsync(timeout.Token);
+            await using var operationsLifetime = operations.ConfigureAwait(false);
+            var operationReader = (await operations.ExecuteReaderAsync(timeout.Token).ConfigureAwait(false));
+            await using var operationReaderLifetime = operationReader.ConfigureAwait(false);
             var observed = new List<string>();
-            while (await operationReader.ReadAsync(timeout.Token))
+            while (await operationReader.ReadAsync(timeout.Token).ConfigureAwait(false))
                 observed.Add(operationReader.GetString(0));
             CollectionAssert.AreEqual(
                 new[] { ApplicationOperations.SieveAuthenticatePassword, ApplicationOperations.SieveList },
                 observed);
 
-            await using var traffic = gatewayDataSource.CreateCommand(
+            var traffic = gatewayDataSource.CreateCommand(
                 "SELECT count(*), count(*) FILTER (WHERE application_request_id IS NULL) "
                 + "FROM gateway_traffic_records WHERE protocol = 'sieve'");
-            await using var trafficReader = await traffic.ExecuteReaderAsync(timeout.Token);
-            Assert.IsTrue(await trafficReader.ReadAsync(timeout.Token));
+            await using var trafficLifetime = traffic.ConfigureAwait(false);
+            var trafficReader = (await traffic.ExecuteReaderAsync(timeout.Token).ConfigureAwait(false));
+            await using var trafficReaderLifetime = trafficReader.ConfigureAwait(false);
+            Assert.IsTrue(await trafficReader.ReadAsync(timeout.Token).ConfigureAwait(false));
             Assert.IsTrue(trafficReader.GetInt64(0) >= 6);
             Assert.IsTrue(trafficReader.GetInt64(1) >= 4);
 
-            await using var ciphertext = gatewayDataSource.CreateCommand(
+            var ciphertext = gatewayDataSource.CreateCommand(
                 "SELECT payload_inline FROM gateway_traffic_records "
                 + "WHERE protocol = 'sieve' AND payload_inline IS NOT NULL");
-            await using var ciphertextReader = await ciphertext.ExecuteReaderAsync(timeout.Token);
-            while (await ciphertextReader.ReadAsync(timeout.Token))
+            await using var ciphertextLifetime = ciphertext.ConfigureAwait(false);
+            var ciphertextReader = (await ciphertext.ExecuteReaderAsync(timeout.Token).ConfigureAwait(false));
+            await using var ciphertextReaderLifetime = ciphertextReader.ConfigureAwait(false);
+            while (await ciphertextReader.ReadAsync(timeout.Token).ConfigureAwait(false))
             {
                 Assert.IsFalse(Encoding.UTF8.GetString(
-                    ciphertextReader.GetFieldValue<byte[]>(0))
+await (ciphertextReader.GetFieldValueAsync<byte[]>(0)).ConfigureAwait(false))
                     .Contains("sieve-secret", StringComparison.Ordinal));
             }
         }
         finally
         {
-            await listener.StopAsync(CancellationToken.None);
+            await listener.StopAsync(CancellationToken.None).ConfigureAwait(false);
             listener.Dispose();
-            await worker.StopAsync(CancellationToken.None);
+            await worker.StopAsync(CancellationToken.None).ConfigureAwait(false);
             worker.Dispose();
             File.Delete(certificatePath);
         }
@@ -158,7 +176,7 @@ public sealed class SieveGatewayTransportTests
 
     private static int ReservePort()
     {
-        var listener = new TcpListener(IPAddress.Loopback, 0);
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         listener.Stop();
@@ -187,20 +205,20 @@ public sealed class SieveGatewayTransportTests
             var client = new TcpClient();
             try
             {
-                await client.ConnectAsync(IPAddress.Loopback, port, cancellationToken);
+                await client.ConnectAsync(IPAddress.Loopback, port, cancellationToken).ConfigureAwait(false);
                 return client;
             }
             catch (SocketException)
             {
                 client.Dispose();
-                await Task.Delay(20, cancellationToken);
+                await Task.Delay(20, cancellationToken).ConfigureAwait(false);
             }
         }
     }
 
     private static async Task ReadCapabilitiesAsync(Stream stream, CancellationToken cancellationToken)
     {
-        while (!(await ReadLineAsync(stream, cancellationToken)).StartsWith("OK ", StringComparison.Ordinal))
+        while (!(await ReadLineAsync(stream, cancellationToken).ConfigureAwait(false)).StartsWith("OK ", StringComparison.Ordinal))
         {
         }
     }
@@ -209,7 +227,7 @@ public sealed class SieveGatewayTransportTests
     {
         var bytes = new List<byte>();
         var single = new byte[1];
-        while (await stream.ReadAsync(single, cancellationToken) != 0)
+        while (await stream.ReadAsync(single, cancellationToken).ConfigureAwait(false) != 0)
         {
             if (single[0] == '\n')
             {
@@ -226,7 +244,7 @@ public sealed class SieveGatewayTransportTests
         Stream stream,
         string line,
         CancellationToken cancellationToken) =>
-        await stream.WriteAsync(Encoding.UTF8.GetBytes(line + "\r\n"), cancellationToken);
+        await stream.WriteAsync(Encoding.UTF8.GetBytes(line + "\r\n"), cancellationToken).ConfigureAwait(false);
 
     private sealed class StubSieveApplication : ISieveApplicationService
     {

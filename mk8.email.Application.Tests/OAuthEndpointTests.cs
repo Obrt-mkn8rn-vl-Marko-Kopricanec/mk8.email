@@ -26,24 +26,27 @@ namespace mk8.email.Application.Tests;
 
 [TestClass]
 [DoNotParallelize]
-public sealed class OAuthEndpointTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class OAuthEndpointTests
 {
     private const string Username = "oauth.user@example.com";
     private const string Password = "primary-password-for-oauth";
 
     [TestMethod]
     [Timeout(15_000)]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ThunderbirdAuthorizationCodeFlowRotatesAndRevokesTokens scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task ThunderbirdAuthorizationCodeFlowRotatesAndRevokesTokens()
     {
-        await using var fixture = await OAuthFixture.CreateAsync();
+        var fixture = (await OAuthFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         using var metadataResponse = await fixture.Client.GetAsync(
-            "/.well-known/oauth-authorization-server");
+new Uri("/.well-known/oauth-authorization-server", UriKind.RelativeOrAbsolute)).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.OK, metadataResponse.StatusCode);
-        using (var metadata = JsonDocument.Parse(await metadataResponse.Content.ReadAsStringAsync()))
+        using (var metadata = JsonDocument.Parse(await metadataResponse.Content.ReadAsStringAsync().ConfigureAwait(false)))
         {
             Assert.AreEqual(
                 "https://email.mk8n.com/oauth/authorize",
-                metadata.RootElement.GetProperty("authorization_endpoint").GetString());
+                metadata.RootElement.GetProperty("authorization_endpoint").GetString(), StringComparer.Ordinal);
             CollectionAssert.Contains(
                 metadata.RootElement.GetProperty("code_challenge_methods_supported")
                     .EnumerateArray().Select(item => item.GetString()).ToArray(),
@@ -54,7 +57,7 @@ public sealed class OAuthEndpointTests
         var challenge = OAuthProtocolValues.CreatePkceChallenge(verifier);
         const string redirectUri = "http://127.0.0.1:49152/";
         const string state = "state-value-123456789";
-        var authorizationValues = new Dictionary<string, string>
+        var authorizationValues = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["response_type"] = "code",
             ["client_id"] = "thunderbird",
@@ -68,14 +71,14 @@ public sealed class OAuthEndpointTests
         var authorizationQuery = string.Join('&', authorizationValues.Select(value =>
             $"{WebUtility.UrlEncode(value.Key)}={WebUtility.UrlEncode(value.Value)}"));
         using var beginResponse = await fixture.Client.GetAsync(
-            $"/oauth/authorize?{authorizationQuery}");
+new Uri($"/oauth/authorize?{authorizationQuery}", UriKind.RelativeOrAbsolute)).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.OK, beginResponse.StatusCode);
         StringAssert.Contains(
-            await beginResponse.Content.ReadAsStringAsync(),
-            "Connect Thunderbird to mk8.email");
+            await beginResponse.Content.ReadAsStringAsync().ConfigureAwait(false),
+            "Connect Thunderbird to mk8.email", StringComparison.Ordinal);
         var csrfCookie = GetCookie(beginResponse, "__Host-mk8oauth");
 
-        var completionValues = new Dictionary<string, string>(authorizationValues)
+        var completionValues = new Dictionary<string, string>(authorizationValues, StringComparer.Ordinal)
         {
             ["csrf"] = csrfCookie,
             ["username"] = Username,
@@ -89,16 +92,38 @@ public sealed class OAuthEndpointTests
         completionRequest.Headers.TryAddWithoutValidation(
             "Cookie",
             $"__Host-mk8oauth={csrfCookie}");
-        using var completionResponse = await fixture.Client.SendAsync(completionRequest);
+        using var completionResponse = await fixture.Client.SendAsync(completionRequest).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.Redirect, completionResponse.StatusCode);
         var redirect = completionResponse.Headers.Location;
         Assert.IsNotNull(redirect);
-        Assert.AreEqual("127.0.0.1", redirect.Host);
+        Assert.AreEqual("127.0.0.1", redirect.Host, StringComparer.Ordinal);
         var redirectValues = ParseQuery(redirect.Query);
-        Assert.AreEqual(state, redirectValues["state"]);
+        Assert.AreEqual(state, redirectValues["state"], StringComparer.Ordinal);
         var code = redirectValues["code"];
 
-        var initialTokens = await ExchangeAsync(fixture.Client, new Dictionary<string, string>
+        var initialTokens = await ExchangeAsync(fixture.Client, new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["grant_type"] = "authorization_code",
+            ["client_id"] = "thunderbird",
+            ["code"] = code,
+            ["redirect_uri"] = redirectUri,
+            ["code_verifier"] = verifier,
+        }).ConfigureAwait(false);
+        Assert.IsNotNull(initialTokens.AccessToken);
+        Assert.IsNotNull(initialTokens.RefreshToken);
+        Assert.AreEqual("Bearer", initialTokens.TokenType, StringComparer.Ordinal);
+
+        using (var scope = fixture.Services.CreateScope())
+        {
+            var tokenService = scope.ServiceProvider.GetRequiredService<IOAuthTokenService>();
+            Assert.IsNotNull(await tokenService.AuthenticateAccessTokenAsync(
+                initialTokens.AccessToken,
+                "imap").ConfigureAwait(false));
+            Assert.IsNull(await tokenService.AuthenticateAccessTokenAsync(
+                initialTokens.AccessToken,
+                "pop").ConfigureAwait(false));
+        }
+        using var ownedResource1 = new FormUrlEncodedContent(new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["grant_type"] = "authorization_code",
             ["client_id"] = "thunderbird",
@@ -106,98 +131,80 @@ public sealed class OAuthEndpointTests
             ["redirect_uri"] = redirectUri,
             ["code_verifier"] = verifier,
         });
-        Assert.IsNotNull(initialTokens.AccessToken);
-        Assert.IsNotNull(initialTokens.RefreshToken);
-        Assert.AreEqual("Bearer", initialTokens.TokenType);
-
-        using (var scope = fixture.Services.CreateScope())
-        {
-            var tokenService = scope.ServiceProvider.GetRequiredService<IOAuthTokenService>();
-            Assert.IsNotNull(await tokenService.AuthenticateAccessTokenAsync(
-                initialTokens.AccessToken,
-                "imap"));
-            Assert.IsNull(await tokenService.AuthenticateAccessTokenAsync(
-                initialTokens.AccessToken,
-                "pop"));
-        }
 
         using var replayResponse = await fixture.Client.PostAsync(
-            "/oauth/token",
-            new FormUrlEncodedContent(new Dictionary<string, string>
-            {
-                ["grant_type"] = "authorization_code",
-                ["client_id"] = "thunderbird",
-                ["code"] = code,
-                ["redirect_uri"] = redirectUri,
-                ["code_verifier"] = verifier,
-            }));
+new Uri("/oauth/token", UriKind.RelativeOrAbsolute),
+            ownedResource1).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.BadRequest, replayResponse.StatusCode);
-        StringAssert.Contains(await replayResponse.Content.ReadAsStringAsync(), "invalid_grant");
+        StringAssert.Contains(await replayResponse.Content.ReadAsStringAsync().ConfigureAwait(false), "invalid_grant", StringComparison.Ordinal);
 
-        var refreshed = await ExchangeAsync(fixture.Client, new Dictionary<string, string>
+        var refreshed = await ExchangeAsync(fixture.Client, new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["grant_type"] = "refresh_token",
             ["client_id"] = "thunderbird",
             ["refresh_token"] = initialTokens.RefreshToken,
+        }).ConfigureAwait(false);
+        Assert.AreNotEqual(initialTokens.AccessToken, refreshed.AccessToken, StringComparer.Ordinal);
+        Assert.AreNotEqual(initialTokens.RefreshToken, refreshed.RefreshToken, StringComparer.Ordinal);
+        using var ownedResource2 = new FormUrlEncodedContent(new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["client_id"] = "thunderbird",
+            ["token"] = refreshed.AccessToken,
         });
-        Assert.AreNotEqual(initialTokens.AccessToken, refreshed.AccessToken);
-        Assert.AreNotEqual(initialTokens.RefreshToken, refreshed.RefreshToken);
 
         using var revokeResponse = await fixture.Client.PostAsync(
-            "/oauth/revoke",
-            new FormUrlEncodedContent(new Dictionary<string, string>
-            {
-                ["client_id"] = "thunderbird",
-                ["token"] = refreshed.AccessToken,
-            }));
+new Uri("/oauth/revoke", UriKind.RelativeOrAbsolute),
+            ownedResource2).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.OK, revokeResponse.StatusCode);
         using (var scope = fixture.Services.CreateScope())
         {
             var tokenService = scope.ServiceProvider.GetRequiredService<IOAuthTokenService>();
             Assert.IsNull(await tokenService.AuthenticateAccessTokenAsync(
                 refreshed.AccessToken,
-                "imap"));
+                "imap").ConfigureAwait(false));
             Assert.IsNull(await tokenService.RefreshAsync(
                 refreshed.RefreshToken,
-                "thunderbird"));
+                "thunderbird").ConfigureAwait(false));
         }
     }
 
     [TestMethod]
     [Timeout(15_000)]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The OpenIdConnectCodeFlowSignsIdentityAndServesScopedUserInfo scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task OpenIdConnectCodeFlowSignsIdentityAndServesScopedUserInfo()
     {
-        await using var fixture = await OAuthFixture.CreateAsync();
+        var fixture = (await OAuthFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         using var discoveryResponse = await fixture.Client.GetAsync(
-            "/.well-known/openid-configuration");
+new Uri("/.well-known/openid-configuration", UriKind.RelativeOrAbsolute)).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.OK, discoveryResponse.StatusCode);
         using var discovery = JsonDocument.Parse(
-            await discoveryResponse.Content.ReadAsStringAsync());
+            await discoveryResponse.Content.ReadAsStringAsync().ConfigureAwait(false));
         Assert.AreEqual(
             "https://email.mk8n.com/oauth/jwks",
-            discovery.RootElement.GetProperty("jwks_uri").GetString());
+            discovery.RootElement.GetProperty("jwks_uri").GetString(), StringComparer.Ordinal);
         CollectionAssert.Contains(
             discovery.RootElement.GetProperty("scopes_supported")
                 .EnumerateArray().Select(item => item.GetString()).ToArray(),
             "openid");
 
-        using var jwksResponse = await fixture.Client.GetAsync("/oauth/jwks");
+        using var jwksResponse = await fixture.Client.GetAsync(new Uri("/oauth/jwks", UriKind.RelativeOrAbsolute)).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.OK, jwksResponse.StatusCode);
-        using var jwks = JsonDocument.Parse(await jwksResponse.Content.ReadAsStringAsync());
+        using var jwks = JsonDocument.Parse(await jwksResponse.Content.ReadAsStringAsync().ConfigureAwait(false));
         var jwk = jwks.RootElement.GetProperty("keys")[0];
-        Assert.AreEqual("RSA", jwk.GetProperty("kty").GetString());
-        Assert.AreEqual("RS256", jwk.GetProperty("alg").GetString());
+        Assert.AreEqual("RSA", jwk.GetProperty("kty").GetString(), StringComparer.Ordinal);
+        Assert.AreEqual("RS256", jwk.GetProperty("alg").GetString(), StringComparer.Ordinal);
 
-        using var missingBearer = await fixture.Client.GetAsync("/oauth/userinfo");
+        using var missingBearer = await fixture.Client.GetAsync(new Uri("/oauth/userinfo", UriKind.RelativeOrAbsolute)).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.Unauthorized, missingBearer.StatusCode);
         Assert.AreEqual(
             "Bearer error=\"invalid_token\"",
-            missingBearer.Headers.WwwAuthenticate.Single().ToString());
+            missingBearer.Headers.WwwAuthenticate.Single().ToString(), StringComparer.Ordinal);
 
         var verifier = new string('o', 64);
         const string redirectUri = "http://127.0.0.1:49153/";
         const string nonce = "openid-nonce-value-123456789";
-        var authorizationValues = new Dictionary<string, string>
+        var authorizationValues = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["response_type"] = "code",
             ["client_id"] = "thunderbird",
@@ -212,7 +219,7 @@ public sealed class OAuthEndpointTests
         };
         var query = string.Join('&', authorizationValues.Select(value =>
             $"{WebUtility.UrlEncode(value.Key)}={WebUtility.UrlEncode(value.Value)}"));
-        using var begin = await fixture.Client.GetAsync($"/oauth/authorize?{query}");
+        using var begin = await fixture.Client.GetAsync(new Uri($"/oauth/authorize?{query}", UriKind.RelativeOrAbsolute)).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.OK, begin.StatusCode);
         var csrf = GetCookie(begin, "__Host-mk8oauth");
         authorizationValues["csrf"] = csrf;
@@ -222,105 +229,107 @@ public sealed class OAuthEndpointTests
         using var completion = await SendAuthorizationAsync(
             fixture.Client,
             authorizationValues,
-            csrf);
+            csrf).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.Redirect, completion.StatusCode);
         var code = ParseQuery(completion.Headers.Location!.Query)["code"];
 
-        var tokens = await ExchangeAsync(fixture.Client, new Dictionary<string, string>
+        var tokens = await ExchangeAsync(fixture.Client, new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["grant_type"] = "authorization_code",
             ["client_id"] = "thunderbird",
             ["code"] = code,
             ["redirect_uri"] = redirectUri,
             ["code_verifier"] = verifier,
-        });
+        }).ConfigureAwait(false);
 
         Assert.IsNotNull(tokens.IdToken);
         var claims = VerifyIdToken(tokens.IdToken, jwk);
-        Assert.AreEqual("https://email.mk8n.com", claims.GetProperty("iss").GetString());
-        Assert.AreEqual("thunderbird", claims.GetProperty("aud").GetString());
-        Assert.AreEqual(nonce, claims.GetProperty("nonce").GetString());
-        Assert.AreEqual(Username, claims.GetProperty("email").GetString());
+        Assert.AreEqual("https://email.mk8n.com", claims.GetProperty("iss").GetString(), StringComparer.Ordinal);
+        Assert.AreEqual("thunderbird", claims.GetProperty("aud").GetString(), StringComparer.Ordinal);
+        Assert.AreEqual(nonce, claims.GetProperty("nonce").GetString(), StringComparer.Ordinal);
+        Assert.AreEqual(Username, claims.GetProperty("email").GetString(), StringComparer.Ordinal);
         Assert.IsTrue(claims.GetProperty("email_verified").GetBoolean());
-        Assert.AreEqual(Username, claims.GetProperty("preferred_username").GetString());
-        Assert.AreEqual(AccessTokenHash(tokens.AccessToken), claims.GetProperty("at_hash").GetString());
+        Assert.AreEqual(Username, claims.GetProperty("preferred_username").GetString(), StringComparer.Ordinal);
+        Assert.AreEqual(AccessTokenHash(tokens.AccessToken), claims.GetProperty("at_hash").GetString(), StringComparer.Ordinal);
         Assert.IsTrue(claims.GetProperty("exp").GetInt64() > claims.GetProperty("iat").GetInt64());
         var subject = claims.GetProperty("sub").GetString();
 
         using var userInfoRequest = new HttpRequestMessage(HttpMethod.Get, "/oauth/userinfo");
         userInfoRequest.Headers.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", tokens.AccessToken);
-        using var userInfoResponse = await fixture.Client.SendAsync(userInfoRequest);
+        using var userInfoResponse = await fixture.Client.SendAsync(userInfoRequest).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.OK, userInfoResponse.StatusCode);
-        using (var userInfo = JsonDocument.Parse(await userInfoResponse.Content.ReadAsStringAsync()))
+        using (var userInfo = JsonDocument.Parse(await userInfoResponse.Content.ReadAsStringAsync().ConfigureAwait(false)))
         {
-            Assert.AreEqual(subject, userInfo.RootElement.GetProperty("sub").GetString());
-            Assert.AreEqual(Username, userInfo.RootElement.GetProperty("email").GetString());
-            Assert.AreEqual(Username, userInfo.RootElement.GetProperty("preferred_username").GetString());
+            Assert.AreEqual(subject, userInfo.RootElement.GetProperty("sub").GetString(), StringComparer.Ordinal);
+            Assert.AreEqual(Username, userInfo.RootElement.GetProperty("email").GetString(), StringComparer.Ordinal);
+            Assert.AreEqual(Username, userInfo.RootElement.GetProperty("preferred_username").GetString(), StringComparer.Ordinal);
         }
 
-        var refreshed = await ExchangeAsync(fixture.Client, new Dictionary<string, string>
+        var refreshed = await ExchangeAsync(fixture.Client, new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["grant_type"] = "refresh_token",
             ["client_id"] = "thunderbird",
             ["refresh_token"] = tokens.RefreshToken,
-        });
+        }).ConfigureAwait(false);
         Assert.IsNotNull(refreshed.IdToken);
         var refreshedClaims = VerifyIdToken(refreshed.IdToken, jwk);
-        Assert.AreEqual(subject, refreshedClaims.GetProperty("sub").GetString());
+        Assert.AreEqual(subject, refreshedClaims.GetProperty("sub").GetString(), StringComparer.Ordinal);
         Assert.AreEqual(
             claims.GetProperty("auth_time").GetInt64(),
             refreshedClaims.GetProperty("auth_time").GetInt64());
         Assert.IsFalse(refreshedClaims.TryGetProperty("nonce", out _));
         Assert.AreEqual(
             AccessTokenHash(refreshed.AccessToken),
-            refreshedClaims.GetProperty("at_hash").GetString());
+            refreshedClaims.GetProperty("at_hash").GetString(), StringComparer.Ordinal);
 
         using (var scope = fixture.Services.CreateScope())
         {
             var expectedSubject = await scope.ServiceProvider
                 .GetRequiredService<EmailDbContext>()
                 .Users.Select(user => user.Id.ToString("D"))
-                .SingleAsync();
-            Assert.AreEqual(expectedSubject, subject);
+                .SingleAsync().ConfigureAwait(false);
+            Assert.AreEqual(expectedSubject, subject, StringComparer.Ordinal);
         }
 
         using var promptNone = await fixture.Client.GetAsync(
-            $"/oauth/authorize?{query}&prompt=none");
+new Uri($"/oauth/authorize?{query}&prompt=none", UriKind.RelativeOrAbsolute)).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.Redirect, promptNone.StatusCode);
         Assert.AreEqual(
             "login_required",
-            ParseQuery(promptNone.Headers.Location!.Query)["error"]);
+            ParseQuery(promptNone.Headers.Location!.Query)["error"], StringComparer.Ordinal);
     }
 
     [TestMethod]
     [Timeout(15_000)]
     public async Task AuthorizationEndpointRejectsMissingPkceAndCsrf()
     {
-        await using var fixture = await OAuthFixture.CreateAsync();
+        var fixture = (await OAuthFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         using var unsafeRedirect = await fixture.Client.GetAsync(
-            "/oauth/authorize?response_type=code&client_id=thunderbird"
+new Uri("/oauth/authorize?response_type=code&client_id=thunderbird"
             + "&redirect_uri=https%3A%2F%2Fattacker.example%2F"
             + "&scope=offline_access%20imap&state=state-value-123456789"
-            + "&code_challenge=missing&code_challenge_method=S256");
+            + "&code_challenge=missing&code_challenge_method=S256", UriKind.RelativeOrAbsolute)).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.BadRequest, unsafeRedirect.StatusCode);
 
         var verifier = new string('v', 64);
+        using var ownedResource3 = new FormUrlEncodedContent(new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["response_type"] = "code",
+            ["client_id"] = "thunderbird",
+            ["redirect_uri"] = "http://127.0.0.1:49152/",
+            ["scope"] = "offline_access imap",
+            ["state"] = "state-value-123456789",
+            ["code_challenge"] = OAuthProtocolValues.CreatePkceChallenge(verifier),
+            ["code_challenge_method"] = "S256",
+            ["username"] = Username,
+            ["password"] = Password,
+            ["device_name"] = "Thunderbird",
+        });
         using var missingCsrf = await fixture.Client.PostAsync(
-            "/oauth/authorize",
-            new FormUrlEncodedContent(new Dictionary<string, string>
-            {
-                ["response_type"] = "code",
-                ["client_id"] = "thunderbird",
-                ["redirect_uri"] = "http://127.0.0.1:49152/",
-                ["scope"] = "offline_access imap",
-                ["state"] = "state-value-123456789",
-                ["code_challenge"] = OAuthProtocolValues.CreatePkceChallenge(verifier),
-                ["code_challenge_method"] = "S256",
-                ["username"] = Username,
-                ["password"] = Password,
-                ["device_name"] = "Thunderbird",
-            }));
+new Uri("/oauth/authorize", UriKind.RelativeOrAbsolute),
+            ownedResource3).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.BadRequest, missingCsrf.StatusCode);
     }
 
@@ -328,10 +337,11 @@ public sealed class OAuthEndpointTests
     [Timeout(15_000)]
     public async Task AuthorizationEndpointRequiresEnrolledMfaAndAcceptsRecoveryCode()
     {
-        await using var fixture = await OAuthFixture.CreateAsync();
-        var recoveryCode = await fixture.EnrollMfaAsync();
+        var fixture = (await OAuthFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
+        var recoveryCode = await fixture.EnrollMfaAsync().ConfigureAwait(false);
         var verifier = new string('m', 64);
-        var values = new Dictionary<string, string>
+        var values = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["response_type"] = "code",
             ["client_id"] = "thunderbird",
@@ -344,18 +354,18 @@ public sealed class OAuthEndpointTests
         };
         var query = string.Join('&', values.Select(value =>
             $"{WebUtility.UrlEncode(value.Key)}={WebUtility.UrlEncode(value.Value)}"));
-        using var begin = await fixture.Client.GetAsync($"/oauth/authorize?{query}");
+        using var begin = await fixture.Client.GetAsync(new Uri($"/oauth/authorize?{query}", UriKind.RelativeOrAbsolute)).ConfigureAwait(false);
         var csrf = GetCookie(begin, "__Host-mk8oauth");
         values["csrf"] = csrf;
         values["username"] = Username;
         values["password"] = Password;
         values["device_name"] = "Thunderbird MFA test";
 
-        using var missingCode = await SendAuthorizationAsync(fixture.Client, values, csrf);
+        using var missingCode = await SendAuthorizationAsync(fixture.Client, values, csrf).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.Unauthorized, missingCode.StatusCode);
 
         values["mfa_code"] = recoveryCode;
-        using var authorized = await SendAuthorizationAsync(fixture.Client, values, csrf);
+        using var authorized = await SendAuthorizationAsync(fixture.Client, values, csrf).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.Redirect, authorized.StatusCode);
         Assert.IsTrue(authorized.Headers.Location?.Query.Contains("code=", StringComparison.Ordinal));
     }
@@ -364,12 +374,13 @@ public sealed class OAuthEndpointTests
         HttpClient client,
         IReadOnlyDictionary<string, string> values)
     {
+        using var ownedResource4 = new FormUrlEncodedContent(values);
         using var response = await client.PostAsync(
-            "/oauth/token",
-            new FormUrlEncodedContent(values));
+new Uri("/oauth/token", UriKind.RelativeOrAbsolute),
+            ownedResource4).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
         Assert.IsTrue(response.Headers.CacheControl?.NoStore);
-        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync().ConfigureAwait(false));
         return new(
             json.RootElement.GetProperty("access_token").GetString()!,
             json.RootElement.GetProperty("refresh_token").GetString()!,
@@ -384,8 +395,8 @@ public sealed class OAuthEndpointTests
         var segments = token.Split('.');
         Assert.HasCount(3, segments);
         using var header = JsonDocument.Parse(Base64UrlDecode(segments[0]));
-        Assert.AreEqual("RS256", header.RootElement.GetProperty("alg").GetString());
-        Assert.AreEqual(jwk.GetProperty("kid").GetString(), header.RootElement.GetProperty("kid").GetString());
+        Assert.AreEqual("RS256", header.RootElement.GetProperty("alg").GetString(), StringComparer.Ordinal);
+        Assert.AreEqual(jwk.GetProperty("kid").GetString(), header.RootElement.GetProperty("kid").GetString(), StringComparer.Ordinal);
         using var rsa = RSA.Create();
         rsa.ImportParameters(new RSAParameters
         {
@@ -424,17 +435,17 @@ public sealed class OAuthEndpointTests
         return header[(name.Length + 1)..].Split(';', 2)[0];
     }
 
-    private static Task<HttpResponseMessage> SendAuthorizationAsync(
+    private static async Task<HttpResponseMessage> SendAuthorizationAsync(
         HttpClient client,
         IReadOnlyDictionary<string, string> values,
         string csrf)
     {
-        var request = new HttpRequestMessage(HttpMethod.Post, "/oauth/authorize")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/oauth/authorize")
         {
             Content = new FormUrlEncodedContent(values),
         };
         request.Headers.TryAddWithoutValidation("Cookie", $"__Host-mk8oauth={csrf}");
-        return client.SendAsync(request);
+        return await client.SendAsync(request).ConfigureAwait(false);
     }
 
     private static Dictionary<string, string> ParseQuery(string query) =>
@@ -454,18 +465,43 @@ public sealed class OAuthEndpointTests
 
     private sealed class OAuthFixture : IAsyncDisposable
     {
-        private readonly WebApplication application;
+        private readonly WebApplication webApplication;
 
         private OAuthFixture(WebApplication application, HttpClient client)
         {
-            this.application = application;
+            webApplication = application;
             Client = client;
         }
 
         public HttpClient Client { get; }
-        public IServiceProvider Services => application.Services;
+        public IServiceProvider Services => webApplication.Services;
+
 
         public static async Task<OAuthFixture> CreateAsync()
+        {
+            var application = CreateApplication();
+            HttpClient? client = null;
+            try
+            {
+                await SeedAsync(application).ConfigureAwait(false);
+                await application.StartAsync().ConfigureAwait(false);
+                var addresses = application.Services.GetRequiredService<IServer>()
+                    .Features.Get<IServerAddressesFeature>()?.Addresses;
+                var address = addresses?.Single()
+                    ?? throw new InvalidOperationException("The OAuth test server did not publish an address.");
+
+                client = CreateClient(address);
+                return new OAuthFixture(application, client);
+            }
+            catch
+            {
+                client?.Dispose();
+                await application.DisposeAsync().ConfigureAwait(false);
+                throw;
+            }
+        }
+
+        private static WebApplication CreateApplication()
         {
             using var signingKey = RSA.Create(2048);
             var environment = new EnvironmentConfig
@@ -513,6 +549,12 @@ public sealed class OAuthEndpointTests
             application.UseRateLimiter();
             application.MapOAuthEndpoints();
 
+            return application;
+
+        }
+
+        private static async Task SeedAsync(WebApplication application)
+        {
             using (var scope = application.Services.CreateScope())
             {
                 var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
@@ -522,60 +564,69 @@ public sealed class OAuthEndpointTests
                     Name = "OAuth Endpoint Test",
                     IsActive = true,
                 };
-                database.Addresses.Add(new AddressDB
+                await database.Addresses.AddAsync(new AddressDB
                 {
                     Id = Guid.CreateVersion7(),
                     Domain = "example.com",
                     Company = company,
                     IsActive = true,
-                });
-                database.Users.Add(new UserDB
+                }).ConfigureAwait(false);
+                await database.Users.AddAsync(new UserDB
                 {
                     Id = Guid.CreateVersion7(),
                     Username = Username,
                     PasswordHash = PasswordHasher.Hash(Password),
                     Company = company,
                     IsActive = true,
-                });
-                await database.SaveChangesAsync();
+                }).ConfigureAwait(false);
+                await database.SaveChangesAsync().ConfigureAwait(false);
             }
             using (var verificationScope = application.Services.CreateScope())
             {
                 var authenticated = await verificationScope.ServiceProvider
                     .GetRequiredService<IMailAuthenticator>()
-                    .AuthenticatePrimaryAsync(Username, Password);
+                    .AuthenticatePrimaryAsync(Username, Password).ConfigureAwait(false);
                 Assert.IsNotNull(
                     authenticated,
                     "The OAuth fixture account must authenticate from a fresh service scope.");
             }
 
-            await application.StartAsync();
-            var addresses = application.Services.GetRequiredService<IServer>()
-                .Features.Get<IServerAddressesFeature>()?.Addresses;
-            var address = addresses?.Single()
-                ?? throw new InvalidOperationException("The OAuth test server did not publish an address.");
-            var client = new HttpClient(new SocketsHttpHandler
+
+        }
+
+        private static HttpClient CreateClient(string address)
+        {
+            SocketsHttpHandler? handler = new SocketsHttpHandler
             {
                 AllowAutoRedirect = false,
                 UseCookies = false,
-            })
-            {
-                BaseAddress = new Uri(address),
-                Timeout = TimeSpan.FromSeconds(10),
             };
-            return new OAuthFixture(application, client);
+            try
+            {
+                var client = new HttpClient(handler, disposeHandler: true)
+                {
+                    BaseAddress = new Uri(address),
+                    Timeout = TimeSpan.FromSeconds(10),
+                };
+                handler = null;
+                return client;
+            }
+            finally
+            {
+                handler?.Dispose();
+            }
         }
 
         public async Task<string> EnrollMfaAsync()
         {
             using var scope = Services.CreateScope();
             var service = scope.ServiceProvider.GetRequiredService<IMfaService>();
-            var enrollment = await service.BeginTotpEnrollmentAsync(Username, "Test authenticator");
+            var enrollment = await service.BeginTotpEnrollmentAsync(Username, "Test authenticator").ConfigureAwait(false);
             Assert.IsTrue(enrollment.Succeeded);
             Assert.IsTrue(TotpMfa.TryDecodeSecret(enrollment.Secret!, out var secret));
             var confirmation = await service.ConfirmTotpEnrollmentAsync(
                 Username,
-                TotpMfa.ComputeCode(secret, DateTime.UtcNow));
+                TotpMfa.ComputeCode(secret, DateTime.UtcNow)).ConfigureAwait(false);
             Assert.IsTrue(confirmation.Succeeded);
             return confirmation.RecoveryCodes![0];
         }
@@ -583,13 +634,13 @@ public sealed class OAuthEndpointTests
         public async ValueTask DisposeAsync()
         {
             Client.Dispose();
-            await application.StopAsync();
-            await application.DisposeAsync();
+            await webApplication.StopAsync().ConfigureAwait(false);
+            await webApplication.DisposeAsync().ConfigureAwait(false);
         }
     }
-
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "This fixture implementation is activated through the test service provider's registered generic interface mapping.")]
     private sealed class InProcessGatewayOAuthClient(IOAuthApplicationService application)
-        : IGatewayOAuthClient
+            : IGatewayOAuthClient
     {
         public Task<OAuthPublicKeyValue> GetPublicKeyAsync(
             CancellationToken cancellationToken = default) =>

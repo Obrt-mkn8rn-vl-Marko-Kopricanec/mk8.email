@@ -10,13 +10,16 @@ namespace mk8.email.Messaging.Tests;
 
 [TestClass]
 [TestCategory("PostgreSQL")]
-public sealed class ImapExpungePostgresTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class ImapExpungePostgresTests
 {
     [TestMethod]
     [Timeout(20_000)]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ExpungeIsOwnerScopedAndDeletesBlobsOnlyAfterCommit scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task ExpungeIsOwnerScopedAndDeletesBlobsOnlyAfterCommit()
     {
-        await using var server = await PostgresTestDatabase.TryCreateAsync();
+        var server = (await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false));
+        await using var serverLifetime = new NullableAsyncDisposable(server).ConfigureAwait(false);
         if (server is null)
         {
             Assert.Inconclusive("Set MK8_EMAIL_TEST_POSTGRES to a PostgreSQL admin connection string.");
@@ -30,10 +33,11 @@ public sealed class ImapExpungePostgresTests
         var otherUserId = Guid.CreateVersion7();
         var folderId = Guid.CreateVersion7();
         var objects = new InMemoryLargeObjectStore();
-        await using (var database = new EmailDbContext(options))
         {
-            await database.Database.EnsureCreatedAsync();
-            await new MailRuntimeSchemaService(database).EnsureAsync();
+            var database = new EmailDbContext(options);
+            await using var databaseLifetime = database.ConfigureAwait(false);
+            await database.Database.EnsureCreatedAsync().ConfigureAwait(false);
+            await new MailRuntimeSchemaService(database).EnsureAsync().ConfigureAwait(false);
             var company = new CompanyDB
             {
                 Id = Guid.CreateVersion7(),
@@ -56,7 +60,7 @@ public sealed class ImapExpungePostgresTests
                 IsActive = true,
                 Company = company,
             };
-            database.Users.Add(new UserDB
+            await (database.Users.AddAsync(new UserDB
             {
                 Id = otherUserId,
                 Username = "other@example.test",
@@ -64,7 +68,7 @@ public sealed class ImapExpungePostgresTests
                 Role = "User",
                 IsActive = true,
                 Company = company,
-            });
+            })).ConfigureAwait(false);
             var folder = new FolderDB
             {
                 Id = folderId,
@@ -96,42 +100,43 @@ public sealed class ImapExpungePostgresTests
                 };
                 await content.SetAsync(message, Encoding.UTF8.GetBytes(
                     $"From: sender@example.test\r\nSubject: Message {uid}\r\n\r\nBody\r\n"),
-                    CancellationToken.None);
-                database.Emails.Add(message);
+                    CancellationToken.None).ConfigureAwait(false);
+                await (database.Emails.AddAsync(message)).ConfigureAwait(false);
             }
-            await database.SaveChangesAsync();
-            await effects.CommitAsync(marker);
+            await database.SaveChangesAsync().ConfigureAwait(false);
+            await effects.CommitAsync(marker).ConfigureAwait(false);
             Assert.AreEqual(4, objects.ObjectCount);
         }
 
-        await using (var database = new EmailDbContext(options))
         {
+            var database = new EmailDbContext(options);
+            await using var databaseLifetime = database.ConfigureAwait(false);
             var effects = CreateEffects(objects);
             var application = CreateApplication(database, objects, effects);
             var denied = await application.ExpungeDeletedAsync(
-                new ImapExpungeRequest(otherUserId, folderId));
+                new ImapExpungeRequest(otherUserId, folderId)).ConfigureAwait(false);
             Assert.IsFalse(denied.FolderFound);
             Assert.IsEmpty(denied.Messages);
             Assert.AreEqual(4, objects.ObjectCount);
             await Assert.ThrowsAsync<ArgumentException>(() => application.ExpungeDeletedAsync(
-                new ImapExpungeRequest(Guid.Empty, folderId)));
+                new ImapExpungeRequest(Guid.Empty, folderId))).ConfigureAwait(false);
             await Assert.ThrowsAsync<ArgumentException>(() => application.ExpungeDeletedAsync(
-                new ImapExpungeRequest(userId, folderId, new ImapUidSelection([], null))));
+                new ImapExpungeRequest(userId, folderId, new ImapUidSelection([], null)))).ConfigureAwait(false);
             await Assert.ThrowsAsync<ArgumentException>(() => application.ExpungeDeletedAsync(
                 new ImapExpungeRequest(userId, folderId,
-                    new ImapUidSelection([new ImapUidRange(0, 1)], null))));
+                    new ImapUidSelection([new ImapUidRange(0, 1)], null)))).ConfigureAwait(false);
             await Assert.ThrowsExactlyAsync<ArgumentException>(() => application.ExpungeDeletedAsync(
-                new ImapExpungeRequest(userId, folderId, new ImapUidSelection([], []))));
+                new ImapExpungeRequest(userId, folderId, new ImapUidSelection([], [])))).ConfigureAwait(false);
             await Assert.ThrowsExactlyAsync<ArgumentException>(() => application.ExpungeDeletedAsync(
-                new ImapExpungeRequest(userId, folderId, new ImapUidSelection(null, [0]))));
+                new ImapExpungeRequest(userId, folderId, new ImapUidSelection(null, [0])))).ConfigureAwait(false);
             var empty = await application.ExpungeDeletedAsync(
-                new ImapExpungeRequest(userId, folderId, new ImapUidSelection(null, [])));
+                new ImapExpungeRequest(userId, folderId, new ImapUidSelection(null, []))).ConfigureAwait(false);
             Assert.IsTrue(empty.FolderFound);
             Assert.IsEmpty(empty.Messages);
-            Assert.AreEqual(4, await database.Emails.CountAsync());
-            Assert.AreEqual(0, await database.ExpungedUids.CountAsync());
+            Assert.AreEqual(4, await database.Emails.CountAsync().ConfigureAwait(false));
+            Assert.AreEqual(0, await database.ExpungedUids.CountAsync().ConfigureAwait(false));
             Assert.AreEqual(4L, await database.Folders.AsNoTracking()
-                .Where(folder => folder.Id == folderId).Select(folder => folder.HighestModSeq).SingleAsync());
+                .Where(folder => folder.Id == folderId).Select(folder => folder.HighestModSeq).SingleAsync().ConfigureAwait(false));
             Assert.AreEqual(4, objects.ObjectCount);
             Assert.AreEqual(0, objects.DeleteCount);
             await database.Database.ExecuteSqlRawAsync(
@@ -144,76 +149,80 @@ public sealed class ImapExpungePostgresTests
                 CREATE TRIGGER reject_imap_expunge
                 BEFORE DELETE ON emails
                 FOR EACH ROW EXECUTE FUNCTION reject_imap_expunge();
-                """);
+                """).ConfigureAwait(false);
         }
 
-        await using (var database = new EmailDbContext(options))
         {
+            var database = new EmailDbContext(options);
+            await using var databaseLifetime = database.ConfigureAwait(false);
             var effects = CreateEffects(objects);
             var application = CreateApplication(database, objects, effects);
             await Assert.ThrowsAsync<DbUpdateException>(() => application.ExpungeDeletedAsync(
-                new ImapExpungeRequest(userId, folderId)));
+                new ImapExpungeRequest(userId, folderId))).ConfigureAwait(false);
         }
         Assert.AreEqual(4, objects.ObjectCount);
         Assert.AreEqual(0, objects.DeleteCount);
-        await using (var database = new EmailDbContext(options))
         {
-            Assert.AreEqual(4, await database.Emails.CountAsync());
-            Assert.AreEqual(0, await database.ExpungedUids.CountAsync());
+            var database = new EmailDbContext(options);
+            await using var databaseLifetime = database.ConfigureAwait(false);
+            Assert.AreEqual(4, await database.Emails.CountAsync().ConfigureAwait(false));
+            Assert.AreEqual(0, await database.ExpungedUids.CountAsync().ConfigureAwait(false));
             Assert.AreEqual(4L, await database.Folders
                 .Where(folder => folder.Id == folderId)
                 .Select(folder => folder.HighestModSeq)
-                .SingleAsync());
+                .SingleAsync().ConfigureAwait(false));
             await database.Database.ExecuteSqlRawAsync(
                 "DROP TRIGGER reject_imap_expunge ON emails; "
-                + "DROP FUNCTION reject_imap_expunge();");
+                + "DROP FUNCTION reject_imap_expunge();").ConfigureAwait(false);
         }
 
-        await using (var database = new EmailDbContext(options))
         {
+            var database = new EmailDbContext(options);
+            await using var databaseLifetime = database.ConfigureAwait(false);
             var effects = CreateEffects(objects);
             var application = CreateApplication(database, objects, effects);
             var highest = await application.ExpungeDeletedAsync(
                 new ImapExpungeRequest(userId, folderId,
                     new ImapUidSelection(
-                        [new ImapUidRange(null, null), new ImapUidRange(4, 4), new ImapUidRange(100, 200)], null)));
+                        [new ImapUidRange(null, null), new ImapUidRange(4, 4), new ImapUidRange(100, 200)], null))).ConfigureAwait(false);
             CollectionAssert.AreEqual(
                 new[] { new ImapExpungedMessage(4, 4) }, highest.Messages);
             var saved = await application.ExpungeDeletedAsync(
                 new ImapExpungeRequest(userId, folderId,
-                    new ImapUidSelection(null, [3, 3, 999])));
+                    new ImapUidSelection(null, [3, 3, 999]))).ConfigureAwait(false);
             CollectionAssert.AreEqual(
                 new[] { new ImapExpungedMessage(3, 3) }, saved.Messages);
             var remaining = await application.ExpungeDeletedAsync(
-                new ImapExpungeRequest(userId, folderId));
+                new ImapExpungeRequest(userId, folderId)).ConfigureAwait(false);
             Assert.IsTrue(remaining.FolderFound);
             CollectionAssert.AreEqual(
                 new[] { new ImapExpungedMessage(2, 2) }, remaining.Messages);
             var repeat = await application.ExpungeDeletedAsync(
-                new ImapExpungeRequest(userId, folderId));
+                new ImapExpungeRequest(userId, folderId)).ConfigureAwait(false);
             Assert.IsTrue(repeat.FolderFound);
             Assert.IsEmpty(repeat.Messages);
         }
         Assert.AreEqual(1, objects.ObjectCount);
         Assert.AreEqual(3, objects.DeleteCount);
-        await using (var database = new EmailDbContext(options))
         {
-            CollectionAssert.AreEqual(new[] { 1 }, await database.Emails
+            var database = new EmailDbContext(options);
+            await using var databaseLifetime = database.ConfigureAwait(false);
+            CollectionAssert.AreEqual(ExpectedVector1, await database.Emails
                 .OrderBy(email => email.Uid)
                 .Select(email => email.Uid)
-                .ToListAsync());
-            CollectionAssert.AreEqual(new[] { 2, 3, 4 }, await database.ExpungedUids
+                .ToListAsync().ConfigureAwait(false));
+            CollectionAssert.AreEqual(ExpectedVector2, await database.ExpungedUids
                 .OrderBy(expunged => expunged.Uid)
                 .Select(expunged => expunged.Uid)
-                .ToListAsync());
+                .ToListAsync().ConfigureAwait(false));
             CollectionAssert.AreEqual(new long[] { 7, 6, 5 }, await database.ExpungedUids
                 .OrderBy(expunged => expunged.Uid)
                 .Select(expunged => expunged.ModSeq)
-                .ToListAsync());
+                .ToListAsync().ConfigureAwait(false));
             Assert.AreEqual(7L, await database.Folders
                 .Where(folder => folder.Id == folderId)
                 .Select(folder => folder.HighestModSeq)
-                .SingleAsync());
+                .SingleAsync().ConfigureAwait(false));
         }
     }
 
@@ -228,4 +237,6 @@ public sealed class ImapExpungePostgresTests
 
     private static LargeObjectTransactionEffects CreateEffects(InMemoryLargeObjectStore objects) =>
         new(objects, NullLogger<LargeObjectTransactionEffects>.Instance);
+    private static readonly int[] ExpectedVector1 = new[] { 1 };
+    private static readonly int[] ExpectedVector2 = new[] { 2, 3, 4 };
 }

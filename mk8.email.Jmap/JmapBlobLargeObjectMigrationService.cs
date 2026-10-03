@@ -1,6 +1,7 @@
 using System.Data;
 using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
 using mk8.email.Contracts.Storage;
 using mk8.email.Infrastructure.Data;
@@ -13,6 +14,12 @@ public sealed class JmapBlobLargeObjectMigrationService(
     ILargeObjectStore objects,
     ILogger<JmapBlobLargeObjectMigrationService> logger)
 {
+    private static readonly Action<ILogger, Guid, Exception?> RollbackWarning = LoggerMessage.Define<Guid>(
+        LogLevel.Warning, new EventId(1213, "BlobMigrationRollback"),
+        "Could not roll back failed JMAP blob migration for {BlobId}");
+    private static readonly Action<ILogger, string, Exception?> CleanupWarning = LoggerMessage.Define<string>(
+        LogLevel.Warning, new EventId(1214, "BlobMigrationCleanup"),
+        "Could not clean up JMAP migration object {ObjectName}");
     private const int BatchSize = 50;
     private const long MigrationLockKey = 5_568_199_231_845_892_162;
 
@@ -176,34 +183,9 @@ public sealed class JmapBlobLargeObjectMigrationService(
         }
         catch
         {
-            if (transaction is not null)
-            {
-                try
-                {
-                    await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
-                }
-                catch (Exception rollbackException)
-                {
-                    logger.LogWarning(
-                        rollbackException,
-                        "Could not roll back failed JMAP blob migration for {BlobId}",
-                        blob.Id);
-                }
-            }
+            await RollbackBestEffortAsync(transaction, blob.Id).ConfigureAwait(false);
             if (written is { Created: true } && !commitAttempted)
-            {
-                try
-                {
-                    await objects.DeleteIfMatchAsync(written.Reference, CancellationToken.None).ConfigureAwait(false);
-                }
-                catch (Exception cleanupException)
-                {
-                    logger.LogWarning(
-                        cleanupException,
-                        "Could not clean up JMAP migration object {ObjectName}",
-                        written.Reference.ObjectName);
-                }
-            }
+                await CleanupBestEffortAsync(written.Reference).ConfigureAwait(false);
             throw;
         }
         finally
@@ -211,6 +193,23 @@ public sealed class JmapBlobLargeObjectMigrationService(
             if (transaction is not null)
                 await transaction.DisposeAsync().ConfigureAwait(false);
         }
+    }
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1031",
+        Justification = "Migration compensation must preserve the original failure even if the database connection also fails.")]
+    private async Task RollbackBestEffortAsync(IDbContextTransaction? transaction, Guid blobId)
+    {
+        if (transaction is null) return;
+        try { await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false); }
+        catch (Exception exception) { RollbackWarning(logger, blobId, exception); }
+    }
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1031",
+        Justification = "Conditional cleanup of an uncommitted Azure object must not mask the migration failure.")]
+    private async Task CleanupBestEffortAsync(LargeObjectReference reference)
+    {
+        try { await objects.DeleteIfMatchAsync(reference, CancellationToken.None).ConfigureAwait(false); }
+        catch (Exception exception) { CleanupWarning(logger, reference.ObjectName, exception); }
     }
 
     internal static string BuildObjectName(Guid accountId, Guid blobId) =>

@@ -12,7 +12,8 @@ using mk8.email.Jmap;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class JmapContactsTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class JmapContactsTests
 {
     private const string Core = GatewayJmapFeatureCodec.CoreCapability;
     private const string Contacts = GatewayJmapFeatureCodec.ContactsCapability;
@@ -57,15 +58,16 @@ public sealed class JmapContactsTests
     [TestMethod]
     public async Task SessionAdvertisesRfc9610ForThePrimaryAccount()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         using var scope = fixture.Services.CreateScope();
         var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
         var primaryInbox = await database.Inboxes
             .Include(inbox => inbox.Address)
             .Include(inbox => inbox.Owner)
-            .SingleAsync(inbox => inbox.Id == fixture.InboxId);
+            .SingleAsync(inbox => inbox.Id == fixture.InboxId).ConfigureAwait(false);
         var secondaryInboxId = Guid.CreateVersion7();
-        database.Inboxes.Add(new InboxDB
+        await database.Inboxes.AddAsync(new InboxDB
         {
             Id = secondaryInboxId,
             Name = "secondary",
@@ -73,17 +75,17 @@ public sealed class JmapContactsTests
             Address = primaryInbox.Address,
             OwnerId = primaryInbox.OwnerId,
             Owner = primaryInbox.Owner,
-        });
-        await database.SaveChangesAsync();
+        }).ConfigureAwait(false);
+        await database.SaveChangesAsync().ConfigureAwait(false);
 
         var session = mk8.email.Gateway.Protocols.Jmap.GatewayJmapProfileCodec.Render(
             await scope.ServiceProvider.GetRequiredService<JmapAccountProfileService>()
-                .GetProfileAsync(fixture.User), fixture.Configuration);
+                .GetProfileAsync(fixture.User).ConfigureAwait(false), fixture.Configuration);
 
         Assert.IsNotNull(session["capabilities"]?[Contacts]);
         Assert.AreEqual(
             fixture.AccountId,
-            session["primaryAccounts"]?[Contacts]?.GetValue<string>());
+            session["primaryAccounts"]?[Contacts]?.GetValue<string>(), StringComparer.Ordinal);
         var accountCapability = session["accounts"]?[fixture.AccountId]?["accountCapabilities"]?[Contacts];
         Assert.IsNotNull(accountCapability);
         Assert.AreEqual(1, accountCapability["maxAddressBooksPerCard"]!.GetValue<int>());
@@ -95,28 +97,30 @@ public sealed class JmapContactsTests
         var unsupported = await InvokeAsync(fixture, "AddressBook/get", new JsonObject
         {
             ["accountId"] = secondaryAccountId,
-        });
-        Assert.AreEqual("accountNotSupportedByMethod", Arguments(unsupported)["type"]!.GetValue<string>());
+        }).ConfigureAwait(false);
+        Assert.AreEqual("accountNotSupportedByMethod", Arguments(unsupported)["type"]!.GetValue<string>(), StringComparer.Ordinal);
         var notFound = await InvokeAsync(fixture, "AddressBook/get", new JsonObject
         {
             ["accountId"] = JmapId.Account(Guid.CreateVersion7()),
-        });
-        Assert.AreEqual("accountNotFound", Arguments(notFound)["type"]!.GetValue<string>());
+        }).ConfigureAwait(false);
+        Assert.AreEqual("accountNotFound", Arguments(notFound)["type"]!.GetValue<string>(), StringComparer.Ordinal);
 
         var collections = await database.DavCollections.AsNoTracking()
             .Where(collection => collection.UserId == fixture.User.Id
-                && collection.CollectionType == DavCollectionDB.AddressBookType)
-            .ToListAsync();
+                && string.Equals(collection.CollectionType, DavCollectionDB.AddressBookType, StringComparison.Ordinal))
+            .ToListAsync().ConfigureAwait(false);
         Assert.AreEqual(1, collections.Count);
         Assert.IsTrue(collections[0].IsDefault);
         Assert.IsTrue(collections[0].IsSubscribed);
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ContactQueriesKeepRecursiveCriteriaAndAccountErrorPrecedenceAtTheGateway scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task ContactQueriesKeepRecursiveCriteriaAndAccountErrorPrecedenceAtTheGateway()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
-        var bookId = await GetDefaultAddressBookIdAsync(fixture);
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
+        var bookId = await GetDefaultAddressBookIdAsync(fixture).ConfigureAwait(false);
         var created = Arguments(await InvokeAsync(fixture, "ContactCard/set", new JsonObject
         {
             ["accountId"] = fixture.AccountId,
@@ -124,7 +128,7 @@ public sealed class JmapContactsTests
             {
                 ["card"] = Card(bookId, "query-uid", "Alice Adams", "Alice", "Adams", "alice@example.net"),
             },
-        }));
+        }).ConfigureAwait(false));
         var cardId = created["created"]!["card"]!["id"]!.GetValue<string>();
         var matching = Arguments(await InvokeAsync(fixture, "ContactCard/query", new JsonObject
         {
@@ -142,7 +146,7 @@ public sealed class JmapContactsTests
                 ["collation"] = "i;ascii-casemap",
             }),
             ["calculateTotal"] = true,
-        }));
+        }).ConfigureAwait(false));
         CollectionAssert.AreEqual(new[] { cardId }, StringValues(matching["ids"]!));
         Assert.AreEqual(1, matching["total"]!.GetValue<int>());
         var excluded = Arguments(await InvokeAsync(fixture, "ContactCard/query", new JsonObject
@@ -153,53 +157,55 @@ public sealed class JmapContactsTests
                 ["operator"] = "NOT",
                 ["conditions"] = new JsonArray(new JsonObject { ["uid"] = "query-uid" }),
             },
-        }));
+        }).ConfigureAwait(false));
         Assert.AreEqual(0, excluded["ids"]!.AsArray().Count);
         var unsupported = Arguments(await InvokeAsync(fixture, "ContactCard/query", new JsonObject
         {
             ["accountId"] = fixture.AccountId,
             ["filter"] = new JsonObject { ["unknown"] = true },
-        }));
-        Assert.AreEqual("unsupportedFilter", unsupported["type"]!.GetValue<string>());
+        }).ConfigureAwait(false));
+        Assert.AreEqual("unsupportedFilter", unsupported["type"]!.GetValue<string>(), StringComparer.Ordinal);
         var missingAccount = Arguments(await InvokeAsync(fixture, "ContactCard/query", new JsonObject
         {
             ["accountId"] = JmapId.Account(Guid.CreateVersion7()),
             ["filter"] = new JsonObject { ["unknown"] = true },
-        }));
-        Assert.AreEqual("accountNotFound", missingAccount["type"]!.GetValue<string>());
+        }).ConfigureAwait(false));
+        Assert.AreEqual("accountNotFound", missingAccount["type"]!.GetValue<string>(), StringComparer.Ordinal);
         var noncanonicalAccount = Arguments(await InvokeAsync(fixture, "ContactCard/query", new JsonObject
         {
             ["accountId"] = fixture.AccountId.ToUpperInvariant(),
-        }));
-        Assert.AreEqual("accountNotSupportedByMethod", noncanonicalAccount["type"]!.GetValue<string>());
+        }).ConfigureAwait(false));
+        Assert.AreEqual("accountNotSupportedByMethod", noncanonicalAccount["type"]!.GetValue<string>(), StringComparer.Ordinal);
         var invalidDate = Arguments(await InvokeAsync(fixture, "ContactCard/query", new JsonObject
         {
             ["accountId"] = fixture.AccountId,
             ["filter"] = new JsonObject { ["createdBefore"] = "not-a-date" },
-        }));
-        Assert.AreEqual("invalidArguments", invalidDate["type"]!.GetValue<string>());
+        }).ConfigureAwait(false));
+        Assert.AreEqual("invalidArguments", invalidDate["type"]!.GetValue<string>(), StringComparer.Ordinal);
         var unsupportedSort = Arguments(await InvokeAsync(fixture, "ContactCard/query", new JsonObject
         {
             ["accountId"] = fixture.AccountId,
             ["sort"] = new JsonArray(new JsonObject { ["property"] = "email" }),
-        }));
-        Assert.AreEqual("unsupportedSort", unsupportedSort["type"]!.GetValue<string>());
+        }).ConfigureAwait(false));
+        Assert.AreEqual("unsupportedSort", unsupportedSort["type"]!.GetValue<string>(), StringComparer.Ordinal);
         var missingAnchor = Arguments(await InvokeAsync(fixture, "ContactCard/query", new JsonObject
         {
             ["accountId"] = fixture.AccountId,
             ["anchor"] = "opaque",
-        }));
-        Assert.AreEqual("anchorNotFound", missingAnchor["type"]!.GetValue<string>());
+        }).ConfigureAwait(false));
+        Assert.AreEqual("anchorNotFound", missingAnchor["type"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The AddressBookLifecycleTracksChangesAndProtectsTheDefault scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task AddressBookLifecycleTracksChangesAndProtectsTheDefault()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var initial = Arguments(await InvokeAsync(fixture, "AddressBook/get", new JsonObject
         {
             ["accountId"] = fixture.AccountId,
-        }));
+        }).ConfigureAwait(false));
         var defaultBookId = initial["list"]![0]!["id"]!.GetValue<string>();
         var initialState = initial["state"]!.GetValue<string>();
         Assert.IsTrue(initial["list"]![0]!["isDefault"]!.GetValue<bool>());
@@ -219,7 +225,7 @@ public sealed class JmapContactsTests
                 },
             },
             ["onSuccessSetIsDefault"] = "#work",
-        }));
+        }).ConfigureAwait(false));
         var workBookId = create["created"]!["work"]!["id"]!.GetValue<string>();
         Assert.IsTrue(create["created"]!["work"]!["isDefault"]!.GetValue<bool>());
         Assert.IsFalse(create["created"]!["work"]!["myRights"]!["mayDelete"]!.GetValue<bool>());
@@ -229,14 +235,14 @@ public sealed class JmapContactsTests
         {
             ["accountId"] = fixture.AccountId,
             ["ids"] = new JsonArray(workBookId),
-        }))["list"]![0]!;
+        }).ConfigureAwait(false))["list"]![0]!;
         Assert.IsFalse(createdBook["isSubscribed"]!.GetValue<bool>());
 
         var changes = Arguments(await InvokeAsync(fixture, "AddressBook/changes", new JsonObject
         {
             ["accountId"] = fixture.AccountId,
             ["sinceState"] = initialState,
-        }));
+        }).ConfigureAwait(false));
         CollectionAssert.Contains(StringValues(changes["created"]!), workBookId);
         CollectionAssert.Contains(StringValues(changes["updated"]!), defaultBookId);
 
@@ -244,10 +250,10 @@ public sealed class JmapContactsTests
         {
             ["accountId"] = fixture.AccountId,
             ["destroy"] = new JsonArray(workBookId),
-        }));
+        }).ConfigureAwait(false));
         Assert.AreEqual(
             "forbidden",
-            protectedDestroy["notDestroyed"]![workBookId]!["type"]!.GetValue<string>());
+            protectedDestroy["notDestroyed"]![workBookId]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
 
         var invalidCreate = Arguments(await InvokeAsync(fixture, "AddressBook/set", new JsonObject
         {
@@ -256,10 +262,10 @@ public sealed class JmapContactsTests
             {
                 ["bad"] = new JsonObject { ["name"] = "Bad", ["unknown"] = true },
             },
-        }));
+        }).ConfigureAwait(false));
         Assert.AreEqual(
             "invalidProperties",
-            invalidCreate["notCreated"]!["bad"]!["type"]!.GetValue<string>());
+            invalidCreate["notCreated"]!["bad"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
         CollectionAssert.Contains(
             StringValues(invalidCreate["notCreated"]!["bad"]!["properties"]!),
             "unknown");
@@ -275,18 +281,18 @@ public sealed class JmapContactsTests
                     ["shareWith"] = new JsonObject { ["principal"] = new JsonObject() },
                 },
             },
-        }));
+        }).ConfigureAwait(false));
         Assert.AreEqual(
             "forbidden",
-            forbiddenShare["notCreated"]!["shared"]!["type"]!.GetValue<string>());
+            forbiddenShare["notCreated"]!["shared"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
 
         var emptyDefault = await InvokeAsync(fixture, "AddressBook/set", new JsonObject
         {
             ["accountId"] = fixture.AccountId,
             ["onSuccessSetIsDefault"] = string.Empty,
-        });
-        Assert.AreEqual("error", emptyDefault["methodResponses"]![0]![0]!.GetValue<string>());
-        Assert.AreEqual("invalidArguments", Arguments(emptyDefault)["type"]!.GetValue<string>());
+        }).ConfigureAwait(false);
+        Assert.AreEqual("error", emptyDefault["methodResponses"]![0]![0]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("invalidArguments", Arguments(emptyDefault)["type"]!.GetValue<string>(), StringComparer.Ordinal);
 
         var update = Arguments(await InvokeAsync(fixture, "AddressBook/set", new JsonObject
         {
@@ -296,7 +302,7 @@ public sealed class JmapContactsTests
                 [workBookId] = new JsonObject { ["name"] = "Colleagues", ["isSubscribed"] = true },
             },
             ["onSuccessSetIsDefault"] = defaultBookId,
-        }));
+        }).ConfigureAwait(false));
         Assert.IsNotNull(update["updated"]?[workBookId]);
         Assert.IsNotNull(update["updated"]?[defaultBookId]);
 
@@ -304,14 +310,16 @@ public sealed class JmapContactsTests
         {
             ["accountId"] = fixture.AccountId,
             ["destroy"] = new JsonArray(workBookId),
-        }));
+        }).ConfigureAwait(false));
         CollectionAssert.AreEqual(new[] { workBookId }, StringValues(destroy["destroyed"]!));
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The AddressBookSetPreservesPatchAssertionsAndServerNameNormalization scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task AddressBookSetPreservesPatchAssertionsAndServerNameNormalization()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var created = Arguments(await InvokeAsync(fixture, "AddressBook/set", new JsonObject
         {
             ["accountId"] = fixture.AccountId,
@@ -319,9 +327,9 @@ public sealed class JmapContactsTests
             {
                 ["new"] = new JsonObject { ["name"] = "Cafe\u0301" },
             },
-        }));
+        }).ConfigureAwait(false));
         var bookId = created["created"]!["new"]!["id"]!.GetValue<string>();
-        Assert.AreEqual("Café", created["created"]!["new"]!["name"]!.GetValue<string>());
+        Assert.AreEqual("Café", created["created"]!["new"]!["name"]!.GetValue<string>(), StringComparer.Ordinal);
 
         var updated = Arguments(await InvokeAsync(fixture, "AddressBook/set", new JsonObject
         {
@@ -340,15 +348,15 @@ public sealed class JmapContactsTests
                     ["unknown"] = null,
                 },
             },
-        }));
+        }).ConfigureAwait(false));
         Assert.IsNull(updated["notUpdated"]);
         Assert.IsTrue(updated["updated"]!.AsObject().ContainsKey(bookId));
         var read = Arguments(await InvokeAsync(fixture, "AddressBook/get", new JsonObject
         {
             ["accountId"] = fixture.AccountId,
             ["ids"] = new JsonArray(bookId),
-        }));
-        Assert.AreEqual("Café", read["list"]![0]!["name"]!.GetValue<string>());
+        }).ConfigureAwait(false));
+        Assert.AreEqual("Café", read["list"]![0]!["name"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(0L, read["list"]![0]!["sortOrder"]!.GetValue<long>());
         Assert.IsTrue(read["list"]![0]!["isSubscribed"]!.GetValue<bool>());
 
@@ -359,8 +367,8 @@ public sealed class JmapContactsTests
             {
                 [bookId] = new JsonObject { ["myRights/mayDelete"] = false },
             },
-        }));
-        Assert.AreEqual("invalidProperties", invalid["notUpdated"]![bookId]!["type"]!.GetValue<string>());
+        }).ConfigureAwait(false));
+        Assert.AreEqual("invalidProperties", invalid["notUpdated"]![bookId]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
         CollectionAssert.Contains(StringValues(invalid["notUpdated"]![bookId]!["properties"]!), "myRights");
 
         var malformed = Arguments(await InvokeAsync(fixture, "AddressBook/set", new JsonObject
@@ -374,33 +382,35 @@ public sealed class JmapContactsTests
                     ["myRights/mayDelete"] = true,
                 },
             },
-        }));
-        Assert.AreEqual("invalidPatch", malformed["notUpdated"]![bookId]!["type"]!.GetValue<string>());
+        }).ConfigureAwait(false));
+        Assert.AreEqual("invalidPatch", malformed["notUpdated"]![bookId]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
 
         var removed = Arguments(await InvokeAsync(fixture, "AddressBook/set", new JsonObject
         {
             ["accountId"] = fixture.AccountId,
             ["update"] = new JsonObject { [bookId] = new JsonObject { ["name"] = "Ignored" } },
             ["destroy"] = new JsonArray(bookId),
-        }));
-        Assert.AreEqual("willDestroy", removed["notUpdated"]![bookId]!["type"]!.GetValue<string>());
+        }).ConfigureAwait(false));
+        Assert.AreEqual("willDestroy", removed["notUpdated"]![bookId]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
         CollectionAssert.AreEqual(new[] { bookId }, StringValues(removed["destroyed"]!));
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ContactCardsSupportCrudQueryChangesAndAddressBookMoves scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task ContactCardsSupportCrudQueryChangesAndAddressBookMoves()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
-        var defaultBookId = await GetDefaultAddressBookIdAsync(fixture);
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
+        var defaultBookId = await GetDefaultAddressBookIdAsync(fixture).ConfigureAwait(false);
         var initialAddressBookState = Arguments(await InvokeAsync(
             fixture,
             "AddressBook/get",
-            new JsonObject { ["accountId"] = fixture.AccountId }))["state"]!.GetValue<string>();
+            new JsonObject { ["accountId"] = fixture.AccountId }).ConfigureAwait(false))["state"]!.GetValue<string>();
         var initialQuery = Arguments(await InvokeAsync(fixture, "ContactCard/query", new JsonObject
         {
             ["accountId"] = fixture.AccountId,
             ["calculateTotal"] = true,
-        }));
+        }).ConfigureAwait(false));
         var initialState = initialQuery["queryState"]!.GetValue<string>();
         Assert.AreEqual(0, initialQuery["total"]!.GetValue<int>());
 
@@ -425,7 +435,7 @@ public sealed class JmapContactsTests
                     "Brown",
                     "bob@example.net"),
             },
-        }));
+        }).ConfigureAwait(false));
         var aliceId = create["created"]!["alice"]!["id"]!.GetValue<string>();
         var bobId = create["created"]!["bob"]!["id"]!.GetValue<string>();
         var createdState = create["newState"]!.GetValue<string>();
@@ -434,17 +444,17 @@ public sealed class JmapContactsTests
         var addressBookStateAfterCardCreation = Arguments(await InvokeAsync(
             fixture,
             "AddressBook/get",
-            new JsonObject { ["accountId"] = fixture.AccountId }))["state"]!.GetValue<string>();
-        Assert.AreEqual(initialAddressBookState, addressBookStateAfterCardCreation);
+            new JsonObject { ["accountId"] = fixture.AccountId }).ConfigureAwait(false))["state"]!.GetValue<string>();
+        Assert.AreEqual(initialAddressBookState, addressBookStateAfterCardCreation, StringComparer.Ordinal);
 
         var get = Arguments(await InvokeAsync(fixture, "ContactCard/get", new JsonObject
         {
             ["accountId"] = fixture.AccountId,
             ["ids"] = new JsonArray(aliceId),
-        }));
+        }).ConfigureAwait(false));
         var alice = get["list"]![0]!;
-        Assert.AreEqual("Alice Adams", alice["name"]?["full"]?.GetValue<string>());
-        Assert.AreEqual("blue", alice["mk8.email:client"]?["theme"]?.GetValue<string>());
+        Assert.AreEqual("Alice Adams", alice["name"]?["full"]?.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("blue", alice["mk8.email:client"]?["theme"]?.GetValue<string>(), StringComparer.Ordinal);
         Assert.IsTrue(alice["addressBookIds"]?[defaultBookId]!.GetValue<bool>() ?? false);
 
         var invalidProperties = await InvokeAsync(fixture, "ContactCard/get", new JsonObject
@@ -452,29 +462,29 @@ public sealed class JmapContactsTests
             ["accountId"] = fixture.AccountId,
             ["ids"] = new JsonArray(aliceId),
             ["properties"] = new JsonArray("x-invalid-name"),
-        });
-        Assert.AreEqual("error", invalidProperties["methodResponses"]![0]![0]!.GetValue<string>());
+        }).ConfigureAwait(false);
+        Assert.AreEqual("error", invalidProperties["methodResponses"]![0]![0]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(
             "invalidArguments",
-            Arguments(invalidProperties)["type"]!.GetValue<string>());
+            Arguments(invalidProperties)["type"]!.GetValue<string>(), StringComparer.Ordinal);
         var invalidBeforeAccount = Arguments(await InvokeAsync(fixture, "ContactCard/get", new JsonObject
         {
             ["accountId"] = JmapId.Account(Guid.CreateVersion7()),
             ["properties"] = new JsonArray("x-invalid-name"),
-        }));
-        Assert.AreEqual("invalidArguments", invalidBeforeAccount["type"]!.GetValue<string>());
+        }).ConfigureAwait(false));
+        Assert.AreEqual("invalidArguments", invalidBeforeAccount["type"]!.GetValue<string>(), StringComparer.Ordinal);
 
         using (var scope = fixture.Services.CreateScope())
         {
             var resource = await scope.ServiceProvider.GetRequiredService<EmailDbContext>()
-                .DavResources.AsNoTracking().SingleAsync(item => item.Uid == "alice-uid");
+                .DavResources.AsNoTracking().SingleAsync(item => item.Uid == "alice-uid").ConfigureAwait(false);
             Assert.IsNull(resource.Content);
             var stored = await scope.ServiceProvider.GetRequiredService<DavResourceContentService>()
-                .ReadAsync(resource, CancellationToken.None);
+                .ReadAsync(resource, CancellationToken.None).ConfigureAwait(false);
             var vcard = Encoding.UTF8.GetString(stored);
-            StringAssert.Contains(vcard, "FN:Alice Adams");
-            StringAssert.Contains(vcard, ":alice@example.net");
-            StringAssert.Contains(vcard, "X-MK8-JSCONTACT:");
+            StringAssert.Contains(vcard, "FN:Alice Adams", StringComparison.Ordinal);
+            StringAssert.Contains(vcard, ":alice@example.net", StringComparison.Ordinal);
+            StringAssert.Contains(vcard, "X-MK8-JSCONTACT:", StringComparison.Ordinal);
         }
 
         var query = Arguments(await InvokeAsync(fixture, "ContactCard/query", new JsonObject
@@ -487,7 +497,7 @@ public sealed class JmapContactsTests
                 ["isAscending"] = true,
             }),
             ["calculateTotal"] = true,
-        }));
+        }).ConfigureAwait(false));
         CollectionAssert.AreEqual(new[] { aliceId }, StringValues(query["ids"]!));
         Assert.AreEqual(1, query["total"]!.GetValue<int>());
 
@@ -496,7 +506,7 @@ public sealed class JmapContactsTests
             ["accountId"] = fixture.AccountId,
             ["sinceQueryState"] = initialState,
             ["calculateTotal"] = true,
-        }));
+        }).ConfigureAwait(false));
         CollectionAssert.AreEquivalent(
             new[] { aliceId, bobId },
             queryChanges["added"]!.AsArray()
@@ -507,7 +517,7 @@ public sealed class JmapContactsTests
         {
             ["accountId"] = fixture.AccountId,
             ["sinceState"] = initialState,
-        }));
+        }).ConfigureAwait(false));
         CollectionAssert.AreEquivalent(new[] { aliceId, bobId }, StringValues(changes["created"]!));
 
         var duplicate = Arguments(await InvokeAsync(fixture, "ContactCard/set", new JsonObject
@@ -523,10 +533,10 @@ public sealed class JmapContactsTests
                     "Duplicate",
                     "duplicate@example.net"),
             },
-        }));
+        }).ConfigureAwait(false));
         Assert.AreEqual(
             "invalidProperties",
-            duplicate["notCreated"]!["duplicate"]!["type"]!.GetValue<string>());
+            duplicate["notCreated"]!["duplicate"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
         CollectionAssert.Contains(
             StringValues(duplicate["notCreated"]!["duplicate"]!["properties"]!),
             "uid");
@@ -535,7 +545,7 @@ public sealed class JmapContactsTests
         {
             ["accountId"] = fixture.AccountId,
             ["create"] = new JsonObject { ["team"] = new JsonObject { ["name"] = "Team" } },
-        }));
+        }).ConfigureAwait(false));
         var teamBookId = secondary["created"]!["team"]!["id"]!.GetValue<string>();
         var move = Arguments(await InvokeAsync(fixture, "ContactCard/set", new JsonObject
         {
@@ -549,7 +559,7 @@ public sealed class JmapContactsTests
                     ["name/full"] = "Alice A. Adams",
                 },
             },
-        }));
+        }).ConfigureAwait(false));
         Assert.IsTrue(move["updated"]!.AsObject().ContainsKey(aliceId));
         Assert.IsNull(move["updated"]![aliceId]);
         var movedState = move["newState"]!.GetValue<string>();
@@ -558,38 +568,40 @@ public sealed class JmapContactsTests
         {
             ["accountId"] = fixture.AccountId,
             ["filter"] = new JsonObject { ["inAddressBook"] = teamBookId },
-        }));
+        }).ConfigureAwait(false));
         CollectionAssert.AreEqual(new[] { aliceId }, StringValues(movedQuery["ids"]!));
 
         var contentGuard = Arguments(await InvokeAsync(fixture, "AddressBook/set", new JsonObject
         {
             ["accountId"] = fixture.AccountId,
             ["destroy"] = new JsonArray(teamBookId),
-        }));
+        }).ConfigureAwait(false));
         Assert.AreEqual(
             "addressBookHasContents",
-            contentGuard["notDestroyed"]![teamBookId]!["type"]!.GetValue<string>());
+            contentGuard["notDestroyed"]![teamBookId]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
 
         var cascade = Arguments(await InvokeAsync(fixture, "AddressBook/set", new JsonObject
         {
             ["accountId"] = fixture.AccountId,
             ["destroy"] = new JsonArray(teamBookId),
             ["onDestroyRemoveContents"] = true,
-        }));
+        }).ConfigureAwait(false));
         CollectionAssert.AreEqual(new[] { teamBookId }, StringValues(cascade["destroyed"]!));
         var destroyedChanges = Arguments(await InvokeAsync(fixture, "ContactCard/changes", new JsonObject
         {
             ["accountId"] = fixture.AccountId,
             ["sinceState"] = movedState,
-        }));
+        }).ConfigureAwait(false));
         CollectionAssert.Contains(StringValues(destroyedChanges["destroyed"]!), aliceId);
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ContactCardQueryChangesDoesNotReinsertUpdatesForImmutableIdOrder scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task ContactCardQueryChangesDoesNotReinsertUpdatesForImmutableIdOrder()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
-        var defaultBookId = await GetDefaultAddressBookIdAsync(fixture);
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
+        var defaultBookId = await GetDefaultAddressBookIdAsync(fixture).ConfigureAwait(false);
         var create = Arguments(await InvokeAsync(fixture, "ContactCard/set", new JsonObject
         {
             ["accountId"] = fixture.AccountId,
@@ -610,13 +622,13 @@ public sealed class JmapContactsTests
                     "Baker",
                     "bob@example.net"),
             },
-        }));
+        }).ConfigureAwait(false));
         var aliceId = create["created"]!["alice"]!["id"]!.GetValue<string>();
 
         var immutableQuery = Arguments(await InvokeAsync(fixture, "ContactCard/query", new JsonObject
         {
             ["accountId"] = fixture.AccountId,
-        }));
+        }).ConfigureAwait(false));
         var immutableState = immutableQuery["queryState"]!.GetValue<string>();
 
         var contentOnlyUpdate = Arguments(await InvokeAsync(fixture, "ContactCard/set", new JsonObject
@@ -626,7 +638,7 @@ public sealed class JmapContactsTests
             {
                 [aliceId] = new JsonObject { ["name/full"] = "Alice A. Adams" },
             },
-        }));
+        }).ConfigureAwait(false));
         Assert.IsTrue(contentOnlyUpdate["updated"]!.AsObject().ContainsKey(aliceId));
 
         var immutableChanges = Arguments(await InvokeAsync(
@@ -636,7 +648,7 @@ public sealed class JmapContactsTests
             {
                 ["accountId"] = fixture.AccountId,
                 ["sinceQueryState"] = immutableState,
-            }));
+            }).ConfigureAwait(false));
         Assert.AreEqual(0, immutableChanges["removed"]!.AsArray().Count);
         Assert.AreEqual(0, immutableChanges["added"]!.AsArray().Count);
 
@@ -649,7 +661,7 @@ public sealed class JmapContactsTests
         {
             ["accountId"] = fixture.AccountId,
             ["sort"] = mutableSort.DeepClone(),
-        }));
+        }).ConfigureAwait(false));
         var mutableState = mutableQuery["queryState"]!.GetValue<string>();
 
         var orderUpdate = Arguments(await InvokeAsync(fixture, "ContactCard/set", new JsonObject
@@ -668,7 +680,7 @@ public sealed class JmapContactsTests
                     },
                 },
             },
-        }));
+        }).ConfigureAwait(false));
         Assert.IsTrue(orderUpdate["updated"]!.AsObject().ContainsKey(aliceId));
 
         var mutableChanges = Arguments(await InvokeAsync(
@@ -679,25 +691,27 @@ public sealed class JmapContactsTests
                 ["accountId"] = fixture.AccountId,
                 ["sort"] = mutableSort.DeepClone(),
                 ["sinceQueryState"] = mutableState,
-            }));
+            }).ConfigureAwait(false));
         CollectionAssert.AreEqual(new[] { aliceId }, StringValues(mutableChanges["removed"]!));
         var added = mutableChanges["added"]!.AsArray();
         Assert.AreEqual(1, added.Count);
-        Assert.AreEqual(aliceId, added[0]!["id"]!.GetValue<string>());
+        Assert.AreEqual(aliceId, added[0]!["id"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(1, added[0]!["index"]!.GetValue<int>());
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ContactMediaAcceptsTypedUploadsAndRejectsMismatches scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task ContactMediaAcceptsTypedUploadsAndRejectsMismatches()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
-        var defaultBookId = await GetDefaultAddressBookIdAsync(fixture);
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
+        var defaultBookId = await GetDefaultAddressBookIdAsync(fixture).ConfigureAwait(false);
         var imageBlobId = await fixture.StoreBlobAsync(
             [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
-            "image/png");
+            "image/png").ConfigureAwait(false);
         var documentBlobId = await fixture.StoreBlobAsync(
             Encoding.ASCII.GetBytes("not an image"),
-            "application/pdf");
+            "application/pdf").ConfigureAwait(false);
 
         var good = Card(
             defaultBookId,
@@ -727,19 +741,19 @@ public sealed class JmapContactsTests
         {
             ["accountId"] = fixture.AccountId,
             ["create"] = new JsonObject { ["good"] = good, ["bad"] = bad },
-        }));
+        }).ConfigureAwait(false));
         var created = set["created"]!["good"]!.AsObject();
         var cardId = created["id"]!.GetValue<string>();
         var createdPhoto = created["media"]!["photo"]!;
         Assert.IsNull(createdPhoto["blobId"]);
-        Assert.AreEqual("image/png", createdPhoto["mediaType"]!.GetValue<string>());
+        Assert.AreEqual("image/png", createdPhoto["mediaType"]!.GetValue<string>(), StringComparer.Ordinal);
         StringAssert.StartsWith(
             createdPhoto["uri"]!.GetValue<string>(),
-            "data:image/png;base64,");
+            "data:image/png;base64,", StringComparison.Ordinal);
         ApplyServerProperties(expectedCache, created);
         Assert.AreEqual(
             "invalidProperties",
-            set["notCreated"]!["bad"]!["type"]!.GetValue<string>());
+            set["notCreated"]!["bad"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
         CollectionAssert.Contains(
             StringValues(set["notCreated"]!["bad"]!["properties"]!),
             "media/photo/blobId");
@@ -748,16 +762,16 @@ public sealed class JmapContactsTests
         {
             ["accountId"] = fixture.AccountId,
             ["ids"] = new JsonArray(cardId),
-        }));
+        }).ConfigureAwait(false));
         var photo = get["list"]![0]!["media"]!["photo"]!;
-        Assert.AreEqual("image/png", photo["mediaType"]!.GetValue<string>());
-        StringAssert.StartsWith(photo["uri"]!.GetValue<string>(), "data:image/png;base64,");
+        Assert.AreEqual("image/png", photo["mediaType"]!.GetValue<string>(), StringComparer.Ordinal);
+        StringAssert.StartsWith(photo["uri"]!.GetValue<string>(), "data:image/png;base64,", StringComparison.Ordinal);
         Assert.IsNull(photo["blobId"]);
         Assert.IsTrue(JsonNode.DeepEquals(expectedCache, get["list"]![0]));
 
         var replacementBlobId = await fixture.StoreBlobAsync(
             [0x47, 0x49, 0x46, 0x38, 0x39, 0x61],
-            "image/gif");
+            "image/gif").ConfigureAwait(false);
         var clientPatch = new JsonObject
         {
             ["media/photo"] = new JsonObject
@@ -771,53 +785,55 @@ public sealed class JmapContactsTests
         {
             ["accountId"] = fixture.AccountId,
             ["update"] = new JsonObject { [cardId] = clientPatch },
-        }));
+        }).ConfigureAwait(false));
         var updated = update["updated"]![cardId]!.AsObject();
         var updatedPhoto = updated["media"]!["photo"]!;
         Assert.IsNull(updatedPhoto["blobId"]);
-        Assert.AreEqual("image/gif", updatedPhoto["mediaType"]!.GetValue<string>());
-        StringAssert.StartsWith(updatedPhoto["uri"]!.GetValue<string>(), "data:image/gif;base64,");
+        Assert.AreEqual("image/gif", updatedPhoto["mediaType"]!.GetValue<string>(), StringComparer.Ordinal);
+        StringAssert.StartsWith(updatedPhoto["uri"]!.GetValue<string>(), "data:image/gif;base64,", StringComparison.Ordinal);
         ApplyServerProperties(patchedCache, updated);
 
         var updatedGet = Arguments(await InvokeAsync(fixture, "ContactCard/get", new JsonObject
         {
             ["accountId"] = fixture.AccountId,
             ["ids"] = new JsonArray(cardId),
-        }));
+        }).ConfigureAwait(false));
         Assert.IsTrue(JsonNode.DeepEquals(patchedCache, updatedGet["list"]![0]));
 
         using var scope = fixture.Services.CreateScope();
         var resource = await scope.ServiceProvider.GetRequiredService<EmailDbContext>()
             .DavResources.AsNoTracking()
             .Where(candidate => candidate.Uid == "photo-contact")
-            .SingleAsync();
+            .SingleAsync().ConfigureAwait(false);
         Assert.IsNull(resource.Content);
         var content = await scope.ServiceProvider.GetRequiredService<DavResourceContentService>()
-            .ReadAsync(resource, CancellationToken.None);
-        StringAssert.Contains(Encoding.UTF8.GetString(content), "data:image/gif;base64,");
+            .ReadAsync(resource, CancellationToken.None).ConfigureAwait(false);
+        StringAssert.Contains(Encoding.UTF8.GetString(content), "data:image/gif;base64,", StringComparison.Ordinal);
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ContactMediaAuthorizesEveryLocalizedBlobBeforePersistingIt scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task ContactMediaAuthorizesEveryLocalizedBlobBeforePersistingIt()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
-        var defaultBookId = await GetDefaultAddressBookIdAsync(fixture);
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
+        var defaultBookId = await GetDefaultAddressBookIdAsync(fixture).ConfigureAwait(false);
         var localizedBlobId = await fixture.StoreBlobAsync(
             [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
-            "image/png");
-        var foreignBlobId = await fixture.StoreBlobAsync([0x47, 0x49, 0x46], "image/gif");
-        var expiredBlobId = await fixture.StoreBlobAsync([0x52, 0x49, 0x46, 0x46], "audio/wav");
+            "image/png").ConfigureAwait(false);
+        var foreignBlobId = await fixture.StoreBlobAsync([0x47, 0x49, 0x46], "image/gif").ConfigureAwait(false);
+        var expiredBlobId = await fixture.StoreBlobAsync([0x52, 0x49, 0x46, 0x46], "audio/wav").ConfigureAwait(false);
         var wrongTypeBlobId = await fixture.StoreBlobAsync(
             Encoding.ASCII.GetBytes("not an image"),
-            "application/pdf");
+            "application/pdf").ConfigureAwait(false);
         using (var scope = fixture.Services.CreateScope())
         {
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-            var foreign = await database.JmapBlobs.SingleAsync(blob => blob.BlobId == foreignBlobId);
+            var foreign = await database.JmapBlobs.SingleAsync(blob => blob.BlobId == foreignBlobId).ConfigureAwait(false);
             foreign.AccountId = Guid.CreateVersion7();
-            var expired = await database.JmapBlobs.SingleAsync(blob => blob.BlobId == expiredBlobId);
+            var expired = await database.JmapBlobs.SingleAsync(blob => blob.BlobId == expiredBlobId).ConfigureAwait(false);
             expired.ExpiresAt = DateTime.UtcNow.AddMinutes(-1);
-            await database.SaveChangesAsync();
+            await database.SaveChangesAsync().ConfigureAwait(false);
         }
 
         var localized = Card(
@@ -865,15 +881,15 @@ public sealed class JmapContactsTests
                 ["wrongType"] = wrongType,
                 ["localizedMissing"] = localizedMissing,
             },
-        }));
+        }).ConfigureAwait(false));
 
         var cardId = set["created"]!["localized"]!["id"]!.GetValue<string>();
         var createdLocalization = set["created"]!["localized"]!["localizations"]!["fr"]!;
         Assert.IsNull(createdLocalization["media"]!["photo"]!["blobId"]);
         StringAssert.StartsWith(
             createdLocalization["media"]!["photo"]!["uri"]!.GetValue<string>(),
-            "data:image/png;base64,");
-        foreach (var expected in new Dictionary<string, string>
+            "data:image/png;base64,", StringComparison.Ordinal);
+        foreach (var expected in new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["missing"] = "media/photo/blobId",
             ["foreign"] = "media/photo/blobId",
@@ -883,7 +899,7 @@ public sealed class JmapContactsTests
         {
             Assert.AreEqual(
                 "invalidProperties",
-                set["notCreated"]![expected.Key]!["type"]!.GetValue<string>());
+                set["notCreated"]![expected.Key]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
             CollectionAssert.Contains(
                 StringValues(set["notCreated"]![expected.Key]!["properties"]!),
                 expected.Value);
@@ -896,11 +912,11 @@ public sealed class JmapContactsTests
         {
             ["accountId"] = fixture.AccountId,
             ["ids"] = new JsonArray(cardId),
-        }));
+        }).ConfigureAwait(false));
         var normalized = get["list"]![0]!["localizations"]!["fr"]!["media"]!["photo"]!;
         Assert.IsNull(normalized["blobId"]);
-        Assert.AreEqual("image/png", normalized["mediaType"]!.GetValue<string>());
-        StringAssert.StartsWith(normalized["uri"]!.GetValue<string>(), "data:image/png;base64,");
+        Assert.AreEqual("image/png", normalized["mediaType"]!.GetValue<string>(), StringComparer.Ordinal);
+        StringAssert.StartsWith(normalized["uri"]!.GetValue<string>(), "data:image/png;base64,", StringComparison.Ordinal);
 
         JsonObject WithMedia(string uid, string blobId, string kind)
         {
@@ -924,8 +940,9 @@ public sealed class JmapContactsTests
     [TestMethod]
     public async Task ContactVendorExtensionPreservesOpaqueBlobIdMembers()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
-        var defaultBookId = await GetDefaultAddressBookIdAsync(fixture);
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
+        var defaultBookId = await GetDefaultAddressBookIdAsync(fixture).ConfigureAwait(false);
         var metadata = new JsonObject
         {
             ["blobId"] = "opaque",
@@ -944,24 +961,26 @@ public sealed class JmapContactsTests
         {
             ["accountId"] = fixture.AccountId,
             ["create"] = new JsonObject { ["card"] = card },
-        }));
+        }).ConfigureAwait(false));
         var cardId = set["created"]!["card"]!["id"]!.GetValue<string>();
 
         var get = Arguments(await InvokeAsync(fixture, "ContactCard/get", new JsonObject
         {
             ["accountId"] = fixture.AccountId,
             ["ids"] = new JsonArray(cardId),
-        }));
+        }).ConfigureAwait(false));
         Assert.IsTrue(JsonNode.DeepEquals(
             metadata,
             get["list"]![0]!["example.com:metadata"]));
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ContactValidationRejectsMalformedRegisteredDataAndFoldsUtf8Vcards scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task ContactValidationRejectsMalformedRegisteredDataAndFoldsUtf8Vcards()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
-        var defaultBookId = await GetDefaultAddressBookIdAsync(fixture);
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
+        var defaultBookId = await GetDefaultAddressBookIdAsync(fixture).ConfigureAwait(false);
         var badProperty = Card(
             defaultBookId,
             "bad-property",
@@ -995,7 +1014,7 @@ public sealed class JmapContactsTests
                 ["badEmail"] = badEmail,
                 ["reserved"] = reserved,
             },
-        }));
+        }).ConfigureAwait(false));
         CollectionAssert.Contains(
             StringValues(invalid["notCreated"]!["badProperty"]!["properties"]!),
             "x-invalid-name");
@@ -1019,7 +1038,7 @@ public sealed class JmapContactsTests
         {
             ["accountId"] = fixture.AccountId,
             ["create"] = new JsonObject { ["unicode"] = valid },
-        }));
+        }).ConfigureAwait(false));
         var cardId = create["created"]!["unicode"]!["id"]!.GetValue<string>();
 
         using (var scope = fixture.Services.CreateScope())
@@ -1027,10 +1046,10 @@ public sealed class JmapContactsTests
             var resource = await scope.ServiceProvider.GetRequiredService<EmailDbContext>()
                 .DavResources.AsNoTracking()
                 .Where(candidate => candidate.Uid == "utf8-folding")
-                .SingleAsync();
+                .SingleAsync().ConfigureAwait(false);
             Assert.IsNull(resource.Content);
             var content = await scope.ServiceProvider.GetRequiredService<DavResourceContentService>()
-                .ReadAsync(resource, CancellationToken.None);
+                .ReadAsync(resource, CancellationToken.None).ConfigureAwait(false);
             var lines = Encoding.UTF8.GetString(content)
                 .Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
             Assert.IsTrue(lines.All(line => Encoding.UTF8.GetByteCount(line) <= 75));
@@ -1041,11 +1060,11 @@ public sealed class JmapContactsTests
         {
             ["accountId"] = fixture.AccountId,
             ["ids"] = new JsonArray(cardId),
-        }));
-        Assert.AreEqual(longName, get["list"]![0]!["name"]!["full"]!.GetValue<string>());
+        }).ConfigureAwait(false));
+        Assert.AreEqual(longName, get["list"]![0]!["name"]!["full"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(
             longName,
-            get["list"]![0]!["mk8.email:metadata"]!["value"]!.GetValue<string>());
+            get["list"]![0]!["mk8.email:metadata"]!["value"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     private static JsonObject Card(
@@ -1093,7 +1112,7 @@ public sealed class JmapContactsTests
         var response = Arguments(await InvokeAsync(fixture, "AddressBook/get", new JsonObject
         {
             ["accountId"] = fixture.AccountId,
-        }));
+        }).ConfigureAwait(false));
         return response["list"]!.AsArray()
             .Single(book => book!["isDefault"]!.GetValue<bool>())!["id"]!.GetValue<string>();
     }

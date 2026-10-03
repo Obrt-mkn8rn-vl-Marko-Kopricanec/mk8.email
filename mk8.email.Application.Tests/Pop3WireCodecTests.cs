@@ -4,7 +4,8 @@ using mk8.email.MailWire;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class Pop3WireCodecTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class Pop3WireCodecTests
 {
     [TestMethod]
     public void NormalizedSizeMatchesWireBytesForMixedLineEndings()
@@ -47,13 +48,14 @@ public sealed class Pop3WireCodecTests
     [TestMethod]
     public async Task DotStuffingPreservesOctetsAndEscapesLineInitialDots()
     {
-        await using var destination = new MemoryStream();
+        var destination = new MemoryStream();
+        await using var destinationLifetime = destination.ConfigureAwait(false);
         await Pop3WireCodec.WriteDotStuffedAsync(
             destination,
             ".start\r\n..second\r\nlast\r\n"u8.ToArray(),
-            CancellationToken.None);
+            CancellationToken.None).ConfigureAwait(false);
         Assert.AreEqual(
             "..start\r\n...second\r\nlast\r\n.\r\n",
-            Encoding.ASCII.GetString(destination.ToArray()));
+            Encoding.ASCII.GetString(destination.ToArray()), StringComparer.Ordinal);
     }
 }

@@ -263,6 +263,24 @@ internal sealed class MailFolderMutationService(
             return Error(MailFolderMutationError.InvalidProperties, properties: ["role"]);
         }
 
+        var renameFailure = RenameHierarchy(folders, folder, parent, name);
+        if (renameFailure is not null) return renameFailure;
+        ApplyFolderSettings(folder, plan!);
+        await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        return null;
+    }
+
+    private static void ApplyFolderSettings(FolderDB folder, MailboxUpdatePlan plan)
+    {
+        folder.JmapRole = plan.Role;
+        folder.SuppressDefaultJmapRole = true;
+        folder.SortOrder = plan.SortOrder;
+        folder.IsSubscribed = plan.IsSubscribed;
+    }
+
+    private static MailFolderMutationFailure? RenameHierarchy(List<FolderDB> folders,
+        FolderDB folder, FolderDB? parent, string name)
+    {
         var newFullName = parent is null ? name : $"{parent.Name}/{name}";
         var affected = folders
             .Where(candidate => candidate.Id == folder.Id
@@ -285,56 +303,49 @@ internal sealed class MailFolderMutationService(
 
         foreach (var affectedFolder in affected)
             affectedFolder.Name = renamed[affectedFolder.Id];
-        folder.JmapRole = role;
-        folder.SuppressDefaultJmapRole = true;
-        folder.SortOrder = sortOrder;
-        folder.IsSubscribed = isSubscribed;
-        await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return null;
     }
 
     private async Task<bool> TryApplyWholeSetAsBatchAsync(
-        Guid accountId,
-        JmapInvocationContext context,
-        Dictionary<string, MailFolderCreate> creates,
-        Dictionary<string, MailFolderPatch> updates,
-        string[]? destroys,
-        bool onDestroyRemoveEmails,
+        Guid accountId, JmapInvocationContext context,
+        Dictionary<string, MailFolderCreate> creates, Dictionary<string, MailFolderPatch> updates,
+        string[]? destroys, bool onDestroyRemoveEmails,
         Dictionary<string, MailFolderCreatedSnapshot> createdResponse,
-        HashSet<string> updatedResponse,
-        List<string> destroyedResponse,
-        CancellationToken cancellationToken)
+        HashSet<string> updatedResponse, List<string> destroyedResponse, CancellationToken cancellationToken)
     {
         var operationCount = creates.Count + updates.Count + (destroys?.Length ?? 0);
-        if (operationCount < 2
-            || creates.Count == 0
-            && (destroys is null || destroys.Length == 0))
-            return false;
-
-        var requestedCreates = creates;
-
+        if (operationCount < 2 || creates.Count == 0 && (destroys is null || destroys.Length == 0)) return false;
         var views = await mailboxes.LoadAsync(accountId, cancellationToken).ConfigureAwait(false);
-        var viewsById = views.ToDictionary(view => view.Id);
-        var folders = await database.Folders
-            .Where(folder => folder.InboxId == accountId)
+        var folders = await database.Folders.Where(folder => folder.InboxId == accountId)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
-        var foldersById = folders.ToDictionary(folder => folder.Id);
-        var nodes = views.ToDictionary(
-            view => view.Id,
-            view => new MailboxNode(
-                view.Id,
-                view.Name,
-                view.ParentId,
-                view.Role,
-                view.SortOrder,
-                view.IsSubscribed));
+        var batch = new MailboxBatch(folders, views.ToDictionary(view => view.Id), creates.Count);
+        var planningContext = PlanCreates(batch, creates, context);
+        if (planningContext is null || !PlanUpdates(batch, updates, planningContext)
+            || !PlanDestroys(batch, destroys, planningContext)) return false;
+        var finalNodes = batch.Nodes.Where(item => !batch.DestroyedIds.Contains(item.Key))
+            .ToDictionary(item => item.Key, item => item.Value);
+        if (!TryPlanHierarchy(finalNodes, out var finalNames)) return false;
+        var destroyedStoredIds = batch.DestroyedIds.Where(batch.FoldersById.ContainsKey).ToArray();
+        var destroyedEmails = destroyedStoredIds.Length == 0 ? [] : await database.Emails
+            .Where(email => destroyedStoredIds.Contains(email.FolderId))
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        if (destroyedEmails.Count > 0 && !onDestroyRemoveEmails) return false;
+        await PersistWholeBatchAsync(accountId, batch, finalNames, destroyedEmails, destroyedStoredIds,
+            cancellationToken).ConfigureAwait(false);
+        AddBatchResponses(batch, context, createdResponse, updatedResponse, destroyedResponse);
+        return true;
+    }
 
+    private static JmapInvocationContext? PlanCreates(MailboxBatch batch,
+        Dictionary<string, MailFolderCreate> requestedCreates, JmapInvocationContext context)
+    {
+        var nodes = batch.Nodes;
         var planningIds = new Dictionary<string, string>(context.CreatedIds, StringComparer.Ordinal);
         var createIds = new Dictionary<string, Guid>(StringComparer.Ordinal);
         foreach (var item in requestedCreates)
         {
             if (!JmapId.IsValidId(item.Key))
-                return false;
+                return null;
             var id = Guid.CreateVersion7();
             createIds[item.Key] = id;
             planningIds[item.Key] = JmapId.Mailbox(id);
@@ -347,11 +358,11 @@ internal sealed class MailFolderMutationService(
             ReferenceAliases = context.ReferenceAliases,
         };
 
-        var createPlans = new List<MailboxCreatePlan>(requestedCreates.Count);
+        var createPlans = batch.CreatePlans;
         foreach (var item in requestedCreates)
         {
             if (item.Value.Failure is not null || !TryResolveValues(item.Value.Values, planningContext, out var plan))
-                return false;
+                return null;
             var (name, parentId, role, sortOrder, isSubscribed) = plan!;
 
             var node = new MailboxNode(
@@ -365,8 +376,16 @@ internal sealed class MailFolderMutationService(
             createPlans.Add(new MailboxCreatePlan(item.Key, node));
         }
 
-        var explicitlyUpdated = new HashSet<Guid>();
-        var updateResponseIds = new List<string>();
+        return planningContext;
+    }
+
+    private static bool PlanUpdates(MailboxBatch batch,
+        Dictionary<string, MailFolderPatch> updates, JmapInvocationContext planningContext)
+    {
+        var nodes = batch.Nodes;
+        var viewsById = batch.ViewsById;
+        var explicitlyUpdated = batch.ExplicitlyUpdated;
+        var updateResponseIds = batch.UpdateResponseIds;
         if (updates is not null)
         {
             foreach (var item in updates)
@@ -410,8 +429,15 @@ internal sealed class MailFolderMutationService(
             }
         }
 
-        var destroyedIds = new HashSet<Guid>();
-        var destroyResponseIds = new List<(string Id, Guid FolderId)>();
+        return true;
+    }
+
+    private static bool PlanDestroys(MailboxBatch batch, string[]? destroys, JmapInvocationContext planningContext)
+    {
+        var nodes = batch.Nodes;
+        var viewsById = batch.ViewsById;
+        var destroyedIds = batch.DestroyedIds;
+        var destroyResponseIds = batch.DestroyResponseIds;
         if (destroys is not null)
         {
             foreach (var requestedId in destroys)
@@ -433,16 +459,19 @@ internal sealed class MailFolderMutationService(
             }
         }
 
-        var finalNodes = nodes
-            .Where(item => !destroyedIds.Contains(item.Key))
-            .ToDictionary(item => item.Key, item => item.Value);
+        return true;
+    }
+
+    private static bool TryPlanHierarchy(Dictionary<Guid, MailboxNode> finalNodes,
+        out Dictionary<Guid, string> finalNames)
+    {
+        finalNames = new Dictionary<Guid, string>();
         if (finalNodes.Values.Any(node => node.ParentId is not null
                 && !finalNodes.ContainsKey(node.ParentId.Value)))
         {
             return false;
         }
 
-        var finalNames = new Dictionary<Guid, string>();
         var visiting = new HashSet<Guid>();
         foreach (var node in finalNodes.Values)
         {
@@ -461,96 +490,112 @@ internal sealed class MailFolderMutationService(
             return false;
         }
 
-        var destroyedStoredIds = destroyedIds.Where(foldersById.ContainsKey).ToArray();
-        var destroyedEmails = destroyedStoredIds.Length == 0
-            ? []
-            : await database.Emails
-                .Where(email => destroyedStoredIds.Contains(email.FolderId))
-                .ToListAsync(cancellationToken).ConfigureAwait(false);
-        if (destroyedEmails.Count > 0 && !onDestroyRemoveEmails)
-            return false;
+        return true;
+    }
 
+    private async Task PersistWholeBatchAsync(Guid accountId, MailboxBatch batch,
+        Dictionary<Guid, string> finalNames, List<EmailDB> destroyedEmails,
+        Guid[] destroyedStoredIds, CancellationToken cancellationToken)
+    {
+        var changedNames = batch.Folders.Where(folder => batch.DestroyedIds.Contains(folder.Id)
+            || !string.Equals(folder.Name, finalNames[folder.Id], StringComparison.Ordinal)).ToArray();
+        var changedRoles = batch.Folders.Where(folder => batch.DestroyedIds.Contains(folder.Id)
+            || batch.ExplicitlyUpdated.Contains(folder.Id)
+            && !string.Equals(folder.JmapRole, batch.Nodes[folder.Id].Role, StringComparison.Ordinal)).ToArray();
         Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? transaction = null;
         try
         {
-            if (database.Database.IsRelational())
-            {
-                if (database.Database.CurrentTransaction is null)
-                    transaction = await database.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-                foreach (var folder in folders.Where(folder => destroyedIds.Contains(folder.Id)
-                             || !string.Equals(
-                                 folder.Name,
-                                 finalNames[folder.Id],
-                                 StringComparison.Ordinal)))
-                {
-                    var temporaryName = $"__jmap_tmp_{folder.Id:N}";
-                    await database.Database.ExecuteSqlInterpolatedAsync(
-                        $"UPDATE folders SET name = {temporaryName} WHERE id = {folder.Id} AND inbox_id = {accountId}",
-                        cancellationToken).ConfigureAwait(false);
-                    // EF's unique-index dependency graph must see the staged database
-                    // values, not the pre-swap values, or it rejects a valid swap as a cycle.
-                    database.Entry(folder).Property(item => item.Name).OriginalValue = temporaryName;
-                }
-                foreach (var folder in folders.Where(folder => destroyedIds.Contains(folder.Id)
-                             || explicitlyUpdated.Contains(folder.Id)
-                             && !string.Equals(
-                                 folder.JmapRole,
-                                 nodes[folder.Id].Role,
-                                 StringComparison.Ordinal)))
-                {
-                    await database.Database.ExecuteSqlInterpolatedAsync(
-                        $"UPDATE folders SET jmap_role = NULL WHERE id = {folder.Id} AND inbox_id = {accountId}",
-                        cancellationToken).ConfigureAwait(false);
-                    database.Entry(folder).Property(item => item.JmapRole).OriginalValue = null;
-                }
-            }
-
-            foreach (var folder in folders.Where(folder => !destroyedIds.Contains(folder.Id)))
-            {
-                folder.Name = finalNames[folder.Id];
-                if (!explicitlyUpdated.Contains(folder.Id))
-                    continue;
-                var node = nodes[folder.Id];
-                folder.JmapRole = node.Role;
-                folder.SuppressDefaultJmapRole = true;
-                folder.SortOrder = node.SortOrder;
-                folder.IsSubscribed = node.IsSubscribed;
-            }
-
-            foreach (var plan in createPlans.Where(plan => !destroyedIds.Contains(plan.Node.Id)))
-            {
-                var node = nodes[plan.Node.Id];
-                await database.Folders.AddAsync(new FolderDB
-                {
-                    Id = node.Id,
-                    Name = finalNames[node.Id],
-                    InboxId = accountId,
-                    JmapRole = node.Role,
-                    SuppressDefaultJmapRole = true,
-                    SortOrder = node.SortOrder,
-                    IsSubscribed = node.IsSubscribed,
-                }, cancellationToken).ConfigureAwait(false);
-            }
-            for (var emailIndex = 0; emailIndex < destroyedEmails.Count; emailIndex++)
-                content.DeleteOnCommit(destroyedEmails[emailIndex]);
-            if (destroyedEmails.Count > 0)
-                database.Emails.RemoveRange(destroyedEmails);
-            if (destroyedStoredIds.Length > 0)
-            {
-                database.Folders.RemoveRange(
-                    destroyedStoredIds.Select(id => foldersById[id]));
-            }
-
+            if (database.Database.IsRelational() && database.Database.CurrentTransaction is null)
+                transaction = await database.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+            await StageUniqueIndexesAsync(accountId, changedNames, changedRoles, cancellationToken).ConfigureAwait(false);
+            await ApplyWholeBatchRowsAsync(accountId, batch, finalNames, destroyedEmails, destroyedStoredIds,
+                cancellationToken).ConfigureAwait(false);
             await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-            if (transaction is not null)
-                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            if (transaction is not null) await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
         {
-            if (transaction is not null)
-                await transaction.DisposeAsync().ConfigureAwait(false);
+            if (transaction is not null) await transaction.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    private async Task ApplyWholeBatchRowsAsync(Guid accountId, MailboxBatch batch,
+        Dictionary<Guid, string> finalNames, List<EmailDB> destroyedEmails, Guid[] destroyedStoredIds,
+        CancellationToken cancellationToken)
+    {
+        var folders = batch.Folders;
+        var foldersById = batch.FoldersById;
+        var nodes = batch.Nodes;
+        var destroyedIds = batch.DestroyedIds;
+        var explicitlyUpdated = batch.ExplicitlyUpdated;
+        var createPlans = batch.CreatePlans;
+        foreach (var folder in folders.Where(folder => !destroyedIds.Contains(folder.Id)))
+        {
+            folder.Name = finalNames[folder.Id];
+            if (!explicitlyUpdated.Contains(folder.Id))
+                continue;
+            var node = nodes[folder.Id];
+            folder.JmapRole = node.Role;
+            folder.SuppressDefaultJmapRole = true;
+            folder.SortOrder = node.SortOrder;
+            folder.IsSubscribed = node.IsSubscribed;
         }
 
+        foreach (var plan in createPlans.Where(plan => !destroyedIds.Contains(plan.Node.Id)))
+        {
+            var node = nodes[plan.Node.Id];
+            await database.Folders.AddAsync(new FolderDB
+            {
+                Id = node.Id,
+                Name = finalNames[node.Id],
+                InboxId = accountId,
+                JmapRole = node.Role,
+                SuppressDefaultJmapRole = true,
+                SortOrder = node.SortOrder,
+                IsSubscribed = node.IsSubscribed,
+            }, cancellationToken).ConfigureAwait(false);
+        }
+        for (var emailIndex = 0; emailIndex < destroyedEmails.Count; emailIndex++)
+            content.DeleteOnCommit(destroyedEmails[emailIndex]);
+        if (destroyedEmails.Count > 0)
+            database.Emails.RemoveRange(destroyedEmails);
+        if (destroyedStoredIds.Length > 0)
+        {
+            database.Folders.RemoveRange(
+                destroyedStoredIds.Select(id => foldersById[id]));
+        }
+
+    }
+
+    private async Task StageUniqueIndexesAsync(Guid accountId, FolderDB[] changedNames,
+        FolderDB[] changedRoles, CancellationToken cancellationToken)
+    {
+        if (!database.Database.IsRelational()) return;
+        foreach (var folder in changedNames)
+        {
+            var temporaryName = $"__jmap_tmp_{folder.Id:N}";
+            await database.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE folders SET name = {temporaryName} WHERE id = {folder.Id} AND inbox_id = {accountId}",
+                cancellationToken).ConfigureAwait(false);
+            // EF's dependency graph must see the staged values to allow an atomic name swap.
+            database.Entry(folder).Property(item => item.Name).OriginalValue = temporaryName;
+        }
+        foreach (var folder in changedRoles)
+        {
+            await database.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE folders SET jmap_role = NULL WHERE id = {folder.Id} AND inbox_id = {accountId}",
+                cancellationToken).ConfigureAwait(false);
+            database.Entry(folder).Property(item => item.JmapRole).OriginalValue = null;
+        }
+    }
+
+    private static void AddBatchResponses(MailboxBatch batch, JmapInvocationContext context,
+        Dictionary<string, MailFolderCreatedSnapshot> createdResponse,
+        HashSet<string> updatedResponse, List<string> destroyedResponse)
+    {
+        var createPlans = batch.CreatePlans;
+        var updateResponseIds = batch.UpdateResponseIds;
+        var destroyResponseIds = batch.DestroyResponseIds;
         for (var planIndex = 0; planIndex < createPlans.Count; planIndex++)
         {
             var plan = createPlans[planIndex];
@@ -567,45 +612,81 @@ internal sealed class MailFolderMutationService(
         for (var responseIndex = 0; responseIndex < updateResponseIds.Count; responseIndex++)
             updatedResponse.Add(updateResponseIds[responseIndex]);
         foreach (var response in destroyResponseIds
-                     .OrderByDescending(item => GetDepth(item.FolderId)))
+                     .OrderByDescending(item => GetDepth(item.FolderId, batch.Nodes)))
         {
             destroyedResponse.Add(response.Id);
         }
-        return true;
-
-        int GetDepth(Guid id)
-        {
-            var depth = 0;
-            var visited = new HashSet<Guid>();
-            while (nodes.TryGetValue(id, out var node)
-                && node.ParentId is { } parentId
-                && visited.Add(id))
-            {
-                depth++;
-                id = parentId;
-            }
-            return depth;
-        }
     }
 
-    private async Task<bool> TryApplyUpdatesAsBatchAsync(
-        Guid accountId,
-        JmapInvocationContext context,
-        Dictionary<string, MailFolderPatch> updates,
-        HashSet<string> updatedResponse,
-        CancellationToken cancellationToken)
+    private static int GetDepth(Guid id, Dictionary<Guid, MailboxNode> nodes)
     {
-        if (updates.Count < 2)
-            return false;
+        var depth = 0;
+        var visited = new HashSet<Guid>();
+        while (nodes.TryGetValue(id, out var node)
+            && node.ParentId is { } parentId
+            && visited.Add(id))
+        {
+            depth++;
+            id = parentId;
+        }
+        return depth;
+    }
 
+    private sealed class MailboxBatch(List<FolderDB> folders, Dictionary<Guid, JmapMailboxView> views, int createCount)
+    {
+        public List<FolderDB> Folders { get; } = folders;
+        public Dictionary<Guid, FolderDB> FoldersById { get; } = folders.ToDictionary(folder => folder.Id);
+        public Dictionary<Guid, JmapMailboxView> ViewsById { get; } = views;
+        public Dictionary<Guid, MailboxNode> Nodes { get; } = views.Values.ToDictionary(view => view.Id,
+            view => new MailboxNode(view.Id, view.Name, view.ParentId, view.Role, view.SortOrder, view.IsSubscribed));
+        public List<MailboxCreatePlan> CreatePlans { get; } = new(createCount);
+        public HashSet<Guid> ExplicitlyUpdated { get; } = new();
+        public List<string> UpdateResponseIds { get; } = new();
+        public HashSet<Guid> DestroyedIds { get; } = new();
+        public List<(string Id, Guid FolderId)> DestroyResponseIds { get; } = new();
+    }
+
+    private async Task<bool> TryApplyUpdatesAsBatchAsync(Guid accountId, JmapInvocationContext context,
+        Dictionary<string, MailFolderPatch> updates, HashSet<string> updatedResponse, CancellationToken cancellationToken)
+    {
+        if (updates.Count < 2) return false;
         var views = await mailboxes.LoadAsync(accountId, cancellationToken).ConfigureAwait(false);
         var viewsById = views.ToDictionary(view => view.Id);
-        var folders = await database.Folders
-            .Where(folder => folder.InboxId == accountId)
+        var folders = await database.Folders.Where(folder => folder.InboxId == accountId)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
         var foldersById = folders.ToDictionary(folder => folder.Id);
-        var plans = new Dictionary<Guid, MailboxUpdatePlan>();
-        var responseIds = new List<string>(updates.Count);
+        if (!TryPlanUpdates(viewsById, updates, context, out var plans, out var responseIds)) return false;
+        var nodes = views.ToDictionary(
+            view => view.Id,
+            view => plans.TryGetValue(view.Id, out var plan)
+                ? new MailboxNode(
+                    view.Id,
+                    plan.Name,
+                    plan.ParentId,
+                    plan.Role,
+                    plan.SortOrder,
+                    plan.IsSubscribed)
+                : new MailboxNode(
+                    view.Id,
+                    view.Name,
+                    view.ParentId,
+                    view.Role,
+                    view.SortOrder,
+                    view.IsSubscribed));
+        if (!TryPlanHierarchy(nodes, out var finalNames)) return false;
+        await PersistUpdateBatchAsync(accountId, folders, foldersById, plans, finalNames,
+            cancellationToken).ConfigureAwait(false);
+        for (var responseIndex = 0; responseIndex < responseIds.Count; responseIndex++)
+            updatedResponse.Add(responseIds[responseIndex]);
+        return true;
+    }
+
+    private static bool TryPlanUpdates(Dictionary<Guid, JmapMailboxView> viewsById,
+        Dictionary<string, MailFolderPatch> updates, JmapInvocationContext context,
+        out Dictionary<Guid, MailboxUpdatePlan> plans, out List<string> responseIds)
+    {
+        plans = new Dictionary<Guid, MailboxUpdatePlan>();
+        responseIds = new List<string>(updates.Count);
 
         foreach (var item in updates)
         {
@@ -637,45 +718,13 @@ internal sealed class MailFolderMutationService(
             responseIds.Add(resolvedId!);
         }
 
-        var nodes = views.ToDictionary(
-            view => view.Id,
-            view => plans.TryGetValue(view.Id, out var plan)
-                ? new MailboxNode(
-                    view.Id,
-                    plan.Name,
-                    plan.ParentId,
-                    plan.Role,
-                    plan.SortOrder,
-                    plan.IsSubscribed)
-                : new MailboxNode(
-                    view.Id,
-                    view.Name,
-                    view.ParentId,
-                    view.Role,
-                    view.SortOrder,
-                    view.IsSubscribed));
-        if (nodes.Values.Any(node => node.ParentId is not null && !nodes.ContainsKey(node.ParentId.Value)))
-            return false;
+        return true;
+    }
 
-        var finalNames = new Dictionary<Guid, string>();
-        var visiting = new HashSet<Guid>();
-        foreach (var node in nodes.Values)
-        {
-            if (!TryBuildFullName(node.Id, nodes, finalNames, visiting, out _))
-                return false;
-        }
-        if (finalNames.Values.Any(name => !IsValidFullName(name))
-            || nodes.Values
-                .GroupBy(node => node.ParentId)
-                .Any(group => group.Select(node => node.Name)
-                    .Distinct(StringComparer.OrdinalIgnoreCase).Count() != group.Count())
-            || nodes.Values.Where(node => node.Role is not null)
-                .GroupBy(node => node.Role, StringComparer.Ordinal)
-                .Any(group => group.Count() > 1))
-        {
-            return false;
-        }
-
+    private async Task PersistUpdateBatchAsync(Guid accountId, List<FolderDB> folders,
+        Dictionary<Guid, FolderDB> foldersById, Dictionary<Guid, MailboxUpdatePlan> plans,
+        Dictionary<Guid, string> finalNames, CancellationToken cancellationToken)
+    {
         var changedNames = folders
             .Where(folder => !string.Equals(
                 folder.Name,
@@ -693,27 +742,9 @@ internal sealed class MailFolderMutationService(
         Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? transaction = null;
         try
         {
-            if (database.Database.IsRelational())
-            {
-                if (database.Database.CurrentTransaction is null)
-                    transaction = await database.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-                foreach (var folder in changedNames)
-                {
-                    var temporaryName = $"__jmap_tmp_{folder.Id:N}";
-                    await database.Database.ExecuteSqlInterpolatedAsync(
-                        $"UPDATE folders SET name = {temporaryName} WHERE id = {folder.Id} AND inbox_id = {accountId}",
-                        cancellationToken).ConfigureAwait(false);
-                    database.Entry(folder).Property(item => item.Name).OriginalValue = temporaryName;
-                }
-                foreach (var folder in changedRoles)
-                {
-                    await database.Database.ExecuteSqlInterpolatedAsync(
-                        $"UPDATE folders SET jmap_role = NULL WHERE id = {folder.Id} AND inbox_id = {accountId}",
-                        cancellationToken).ConfigureAwait(false);
-                    database.Entry(folder).Property(item => item.JmapRole).OriginalValue = null;
-                }
-            }
-
+            if (database.Database.IsRelational() && database.Database.CurrentTransaction is null)
+                transaction = await database.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+            await StageUniqueIndexesAsync(accountId, changedNames, changedRoles, cancellationToken).ConfigureAwait(false);
             for (var folderIndex = 0; folderIndex < folders.Count; folderIndex++)
                 folders[folderIndex].Name = finalNames[folders[folderIndex].Id];
             foreach (var plan in plans)
@@ -725,18 +756,12 @@ internal sealed class MailFolderMutationService(
                 folder.IsSubscribed = plan.Value.IsSubscribed;
             }
             await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-            if (transaction is not null)
-                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            if (transaction is not null) await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
         {
-            if (transaction is not null)
-                await transaction.DisposeAsync().ConfigureAwait(false);
+            if (transaction is not null) await transaction.DisposeAsync().ConfigureAwait(false);
         }
-
-        for (var responseIndex = 0; responseIndex < responseIds.Count; responseIndex++)
-            updatedResponse.Add(responseIds[responseIndex]);
-        return true;
     }
 
     private static bool TryBuildFullName(

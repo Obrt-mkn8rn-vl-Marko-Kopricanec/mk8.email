@@ -7,7 +7,8 @@ using mk8.email.Jmap;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class GatewayContactCopyCodecTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class GatewayContactCopyCodecTests
 {
     private const string SourceId = "Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     private const string TargetId = "Abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -37,15 +38,15 @@ public sealed class GatewayContactCopyCodecTests
         Assert.IsTrue(call.Command.SourceReferenceEligible);
         Assert.AreEqual(Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"), call.Command.TargetAccountId);
         Assert.IsTrue(call.Command.TargetReferenceEligible);
-        CollectionAssert.AreEqual(new[] { "first", "second" }, call.Command.CreationIds.ToArray());
+        CollectionAssert.AreEqual(ExpectedVector1, call.Command.CreationIds.ToArray());
         var rendered = GatewayContactCopyCodec.Render(call,
             new MailContactCopyResult(MailContactCopyStatus.Ok, "s2"));
         Assert.AreEqual(MailOperationKind.CopyContacts, rendered.Operation);
-        Assert.AreEqual("s2", rendered.Data["oldState"]!.GetValue<string>());
-        Assert.AreEqual("s2", rendered.Data["newState"]!.GetValue<string>());
+        Assert.AreEqual("s2", rendered.Data["oldState"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("s2", rendered.Data["newState"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.IsNull(rendered.Data["created"]);
-        Assert.AreEqual("forbidden", rendered.Data["notCreated"]!["first"]!["type"]!.GetValue<string>());
-        Assert.AreEqual("forbidden", rendered.Data["notCreated"]!["second"]!["type"]!.GetValue<string>());
+        Assert.AreEqual("forbidden", rendered.Data["notCreated"]!["first"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("forbidden", rendered.Data["notCreated"]!["second"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -62,7 +63,7 @@ public sealed class GatewayContactCopyCodecTests
         Assert.IsFalse(call.Command.SourceReferenceEligible);
         var unsupported = GatewayContactCopyCodec.Render(call,
             new MailContactCopyResult(MailContactCopyStatus.FromAccountNotSupported, null));
-        Assert.AreEqual("fromAccountNotSupportedByMethod", unsupported.Data["type"]!.GetValue<string>());
+        Assert.AreEqual("fromAccountNotSupportedByMethod", unsupported.Data["type"]!.GetValue<string>(), StringComparer.Ordinal);
         arguments["fromAccountId"] = "invalid";
         Assert.IsTrue(GatewayContactCopyCodec.TryParse(arguments, 2, out call, out _));
         Assert.IsFalse(call!.Command.SourceReferenceParseable);
@@ -79,20 +80,21 @@ public sealed class GatewayContactCopyCodecTests
             ["create"] = new JsonObject { ["one"] = new JsonObject(), ["two"] = new JsonObject() },
         };
         Assert.IsFalse(GatewayContactCopyCodec.TryParse(arguments, 1, out _, out var failure));
-        Assert.AreEqual("requestTooLarge", failure);
+        Assert.AreEqual("requestTooLarge", failure, StringComparer.Ordinal);
         arguments["onSuccessDestroyOriginal"] = null;
         Assert.IsFalse(GatewayContactCopyCodec.TryParse(arguments, 2, out _, out failure));
-        Assert.AreEqual("invalidArguments", failure);
+        Assert.AreEqual("invalidArguments", failure, StringComparer.Ordinal);
         arguments["onSuccessDestroyOriginal"] = false;
         arguments["accountId"] = SourceId;
         Assert.IsFalse(GatewayContactCopyCodec.TryParse(arguments, 2, out _, out failure));
-        Assert.AreEqual("invalidArguments", failure);
+        Assert.AreEqual("invalidArguments", failure, StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task WorkerRejectsExtraTypedContactCopyFields()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         using var scope = fixture.Services.CreateScope();
         var processor = scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>();
         var command = new MailOperationCommand([MailFeature.Basic, MailFeature.Contacts],
@@ -108,9 +110,10 @@ public sealed class GatewayContactCopyCodecTests
                 ["ifInState"] = null,
                 ["creationIds"] = new JsonArray(),
                 ["extra"] = true,
-            }, new Dictionary<string, string>());
+            }, new Dictionary<string, string>(StringComparer.Ordinal));
         var failure = await Assert.ThrowsAsync<MailApplicationException>(() =>
-            processor.ExecuteAsync(command, fixture.User, null));
+            processor.ExecuteAsync(command, fixture.User, null)).ConfigureAwait(false);
         Assert.AreEqual(MailFailureKind.MalformedBatch, failure.Failure.Kind);
     }
+    private static readonly string[] ExpectedVector1 = new[] { "first", "second" };
 }

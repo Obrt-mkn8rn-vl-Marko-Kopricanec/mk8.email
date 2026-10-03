@@ -3,7 +3,8 @@ using mk8.email.Imap.Presentation.Protocol;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class ImapMimeMessageTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class ImapMimeMessageTests
 {
     [TestMethod]
     public void BodyStructureIncludesMimeExtensionsWhileBodyRemainsBasic()
@@ -31,16 +32,16 @@ public sealed class ImapMimeMessageTests
         using var mimeMessage = ImapMimeMessage.TryParse(message);
 
         Assert.IsNotNull(mimeMessage);
-        StringAssert.Contains(mimeMessage.BodyStructure, "(\"BOUNDARY\" \"mix\")");
-        StringAssert.Contains(mimeMessage.BodyStructure, "\"<pixel@example.net>\"");
-        StringAssert.Contains(mimeMessage.BodyStructure, "\"dGVzdC1kaWdlc3Q=\"");
+        StringAssert.Contains(mimeMessage.BodyStructure, "(\"BOUNDARY\" \"mix\")", StringComparison.Ordinal);
+        StringAssert.Contains(mimeMessage.BodyStructure, "\"<pixel@example.net>\"", StringComparison.Ordinal);
+        StringAssert.Contains(mimeMessage.BodyStructure, "\"dGVzdC1kaWdlc3Q=\"", StringComparison.Ordinal);
         StringAssert.Contains(
             mimeMessage.BodyStructure,
-            "(\"INLINE\" (\"FILENAME\" \"pixel.png\"))");
-        StringAssert.Contains(mimeMessage.BodyStructure, "(\"en\" \"fr\")");
-        StringAssert.Contains(mimeMessage.BodyStructure, "\"images/pixel.png\"");
+            "(\"INLINE\" (\"FILENAME\" \"pixel.png\"))", StringComparison.Ordinal);
+        StringAssert.Contains(mimeMessage.BodyStructure, "(\"en\" \"fr\")", StringComparison.Ordinal);
+        StringAssert.Contains(mimeMessage.BodyStructure, "\"images/pixel.png\"", StringComparison.Ordinal);
 
-        StringAssert.Contains(mimeMessage.Body, "\"<pixel@example.net>\"");
+        StringAssert.Contains(mimeMessage.Body, "\"<pixel@example.net>\"", StringComparison.Ordinal);
         Assert.IsFalse(mimeMessage.Body.Contains("\"BOUNDARY\"", StringComparison.Ordinal));
         Assert.IsFalse(mimeMessage.Body.Contains("\"INLINE\"", StringComparison.Ordinal));
         Assert.IsFalse(mimeMessage.Body.Contains("dGVzdC1kaWdlc3Q=", StringComparison.Ordinal));
@@ -120,7 +121,7 @@ public sealed class ImapMimeMessageTests
         Assert.AreEqual(
             ImapBinarySectionStatus.Success,
             mimeMessage.GetBinarySection(string.Empty, out var root));
-        Assert.AreEqual("single part\r\n", MailWireEncoding.Instance.GetString(root.Content));
+        Assert.AreEqual("single part\r\n", MailWireEncoding.Instance.GetString(root.Content), StringComparer.Ordinal);
         Assert.AreEqual(
             ImapBinarySectionStatus.Success,
             mimeMessage.GetBinarySection("1", out var numbered));

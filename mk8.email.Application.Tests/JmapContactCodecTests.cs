@@ -8,7 +8,8 @@ using mk8.email.Jmap;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class JmapContactCodecTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class JmapContactCodecTests
 {
     [TestMethod]
     public void EncodeUsesRfc6350ValueTypesAndRfc9555StructuredMappings()
@@ -54,21 +55,22 @@ public sealed class JmapContactCodecTests
             string.Join(", ", invalid));
         var encoded = Encoding.UTF8.GetString(JmapContactCodec.Encode(card));
 
-        StringAssert.Contains(encoded, "UID;VALUE=text:family\\,plain\r\n");
+        StringAssert.Contains(encoded, "UID;VALUE=text:family\\,plain\r\n", StringComparison.Ordinal);
         Assert.IsFalse(encoded.Contains("FN;DERIVED=", StringComparison.Ordinal));
         StringAssert.Contains(
             encoded,
-            "N:Stevenson;John;Philip,Paul;Dr.;M.D.,A.C.P.,Jr.;;Jr.\r\n");
+            "N:Stevenson;John;Philip,Paul;Dr.;M.D.,A.C.P.,Jr.;;Jr.\r\n", StringComparison.Ordinal);
         StringAssert.Contains(
             encoded,
-            "ORG;PROP-ID=work:ABC\\, Inc.;North American Division;Marketing\r\n");
+            "ORG;PROP-ID=work:ABC\\, Inc.;North American Division;Marketing\r\n", StringComparison.Ordinal);
         StringAssert.Contains(
             encoded,
-            "MEMBER:urn:uuid:03a0e51f-d1aa-4385-8a53-e29025acd8af\r\n");
+            "MEMBER:urn:uuid:03a0e51f-d1aa-4385-8a53-e29025acd8af\r\n", StringComparison.Ordinal);
         Assert.IsFalse(encoded.Contains("MEMBER:local-member", StringComparison.Ordinal));
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The Rfc9555PropIdsRoundTripAndSynthesizedFullNameIsDerived scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public void Rfc9555PropIdsRoundTripAndSynthesizedFullNameIsDerived()
     {
         var card = new JsonObject
@@ -153,24 +155,24 @@ public sealed class JmapContactCodecTests
             string.Join(", ", invalid));
         var encoded = Encoding.UTF8.GetString(JmapContactCodec.Encode(card));
 
-        StringAssert.Contains(encoded, "FN;DERIVED=TRUE:Jane Doe\r\n");
-        StringAssert.Contains(encoded, "NICKNAME;PROP-ID=nick_primary:Janie\r\n");
-        StringAssert.Contains(encoded, "ORG;PROP-ID=org_main:Example Corp\r\n");
-        StringAssert.Contains(encoded, "TITLE;PROP-ID=title_primary:Engineer\r\n");
-        StringAssert.Contains(encoded, "EMAIL;PROP-ID=email_work:jane@example.net\r\n");
-        StringAssert.Contains(encoded, "TEL;PROP-ID=phone_mobile:+1-555-0100\r\n");
-        StringAssert.Contains(encoded, "IMPP;PROP-ID=chat_main:xmpp:jane@example.net\r\n");
-        StringAssert.Contains(encoded, "ADR;PROP-ID=address_home:");
-        StringAssert.Contains(encoded, "URL;PROP-ID=link_profile:https://example.net/jane\r\n");
-        StringAssert.Contains(encoded, "PHOTO;PROP-ID=photo_primary:https://example.net/jane.jpg\r\n");
-        StringAssert.Contains(encoded, "NOTE;PROP-ID=note_main:Primary note\r\n");
-        StringAssert.Contains(encoded, "BDAY;PROP-ID=birth_date:19900102\r\n");
+        StringAssert.Contains(encoded, "FN;DERIVED=TRUE:Jane Doe\r\n", StringComparison.Ordinal);
+        StringAssert.Contains(encoded, "NICKNAME;PROP-ID=nick_primary:Janie\r\n", StringComparison.Ordinal);
+        StringAssert.Contains(encoded, "ORG;PROP-ID=org_main:Example Corp\r\n", StringComparison.Ordinal);
+        StringAssert.Contains(encoded, "TITLE;PROP-ID=title_primary:Engineer\r\n", StringComparison.Ordinal);
+        StringAssert.Contains(encoded, "EMAIL;PROP-ID=email_work:jane@example.net\r\n", StringComparison.Ordinal);
+        StringAssert.Contains(encoded, "TEL;PROP-ID=phone_mobile:+1-555-0100\r\n", StringComparison.Ordinal);
+        StringAssert.Contains(encoded, "IMPP;PROP-ID=chat_main:xmpp:jane@example.net\r\n", StringComparison.Ordinal);
+        StringAssert.Contains(encoded, "ADR;PROP-ID=address_home:", StringComparison.Ordinal);
+        StringAssert.Contains(encoded, "URL;PROP-ID=link_profile:https://example.net/jane\r\n", StringComparison.Ordinal);
+        StringAssert.Contains(encoded, "PHOTO;PROP-ID=photo_primary:https://example.net/jane.jpg\r\n", StringComparison.Ordinal);
+        StringAssert.Contains(encoded, "NOTE;PROP-ID=note_main:Primary note\r\n", StringComparison.Ordinal);
+        StringAssert.Contains(encoded, "BDAY;PROP-ID=birth_date:19900102\r\n", StringComparison.Ordinal);
 
         var decoded = Decode(Resource(
             "prop-id-roundtrip",
             WithoutEmbeddedExtensions(encoded)));
         Assert.IsNull(decoded["name"]!["full"]);
-        foreach (var expected in new Dictionary<string, string>
+        foreach (var expected in new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["nicknames"] = "nick_primary",
             ["organizations"] = "org_main",
@@ -189,7 +191,7 @@ public sealed class JmapContactCodecTests
         }
         StringAssert.Contains(
             Encoding.UTF8.GetString(JmapContactCodec.Encode(decoded)),
-            "FN;DERIVED=TRUE:");
+            "FN;DERIVED=TRUE:", StringComparison.Ordinal);
     }
 
     [TestMethod]
@@ -208,10 +210,9 @@ public sealed class JmapContactCodecTests
 
         var emails = decoded["emails"]!.AsObject();
         Assert.AreEqual(2, emails.Count);
-        Assert.AreEqual("first@example.net", emails["shared"]!["address"]!.GetValue<string>());
-        Assert.IsTrue(emails.Any(item =>
-            item.Value!["address"]!.GetValue<string>() == "second@example.net"));
-        Assert.AreEqual("Engineer", decoded["titles"]!["shared"]!["name"]!.GetValue<string>());
+        Assert.AreEqual("first@example.net", emails["shared"]!["address"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.IsTrue(emails.Any(item => string.Equals(item.Value!["address"]!.GetValue<string>(), "second@example.net", StringComparison.Ordinal)));
+        Assert.AreEqual("Engineer", decoded["titles"]!["shared"]!["name"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -260,7 +261,7 @@ public sealed class JmapContactCodecTests
         Assert.IsTrue(decoded["mk8.email:legacy"]!["preserved"]!.GetValue<bool>());
         StringAssert.Contains(
             Encoding.UTF8.GetString(JmapContactCodec.Encode(decoded)),
-            "EMAIL;PROP-ID=legacy_email:legacy@example.net\r\n");
+            "EMAIL;PROP-ID=legacy_email:legacy@example.net\r\n", StringComparison.Ordinal);
     }
 
     [TestMethod]
@@ -287,15 +288,11 @@ public sealed class JmapContactCodecTests
             .Select(component => $"{component!["kind"]!.GetValue<string>()}:{component["value"]!.GetValue<string>()}")
             .ToArray();
         CollectionAssert.AreEqual(
-            new[]
-            {
-                "surname:Stevenson", "given:John", "given2:Philip", "given2:Paul",
-                "title:Dr.", "credential:M.D.", "credential:A.C.P.", "generation:Jr.",
-            },
+            ExpectedVector1,
             components);
         var units = decoded["organizations"]!.AsObject().Single().Value!["units"]!.AsArray();
         CollectionAssert.AreEqual(
-            new[] { "North American Division", "Marketing" },
+            ExpectedVector2,
             units.Select(unit => unit!["name"]!.GetValue<string>()).ToArray());
         Assert.AreEqual(
             true,
@@ -403,4 +400,10 @@ public sealed class JmapContactCodecTests
 
     private static JsonObject Decode(DavResourceDB resource) =>
         JmapContactCodec.Decode(resource, resource.Content!);
+    private static readonly string[] ExpectedVector1 = new[]
+                {
+                "surname:Stevenson", "given:John", "given2:Philip", "given2:Paul",
+                "title:Dr.", "credential:M.D.", "credential:A.C.P.", "generation:Jr.",
+            };
+    private static readonly string[] ExpectedVector2 = new[] { "North American Division", "Marketing" };
 }

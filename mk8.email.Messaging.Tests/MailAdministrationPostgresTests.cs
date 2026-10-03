@@ -7,13 +7,16 @@ namespace mk8.email.Messaging.Tests;
 
 [TestClass]
 [TestCategory("PostgreSQL")]
-public sealed class MailAdministrationPostgresTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class MailAdministrationPostgresTests
 {
     [TestMethod]
     [Timeout(30_000)]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The DeactivationRevokesOnlyMatchingDomainThenTheRemainingAccount scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task DeactivationRevokesOnlyMatchingDomainThenTheRemainingAccount()
     {
-        await using var server = await PostgresTestDatabase.TryCreateAsync();
+        var server = (await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false));
+        await using var serverLifetime = new NullableAsyncDisposable(server).ConfigureAwait(false);
         if (server is null)
         {
             Assert.Inconclusive("Set MK8_EMAIL_TEST_POSTGRES to a PostgreSQL admin connection string.");
@@ -38,10 +41,11 @@ public sealed class MailAdministrationPostgresTests
         var users = affectedUsers.Append(retainedUser).ToArray();
         var now = DateTime.UtcNow;
 
-        await using var database = new EmailDbContext(options);
-        await database.Database.EnsureCreatedAsync();
-        database.Companies.Add(company);
-        database.Addresses.AddRange(
+        var database = new EmailDbContext(options);
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        await database.Database.EnsureCreatedAsync().ConfigureAwait(false);
+        await (database.Companies.AddAsync(company)).ConfigureAwait(false);
+        await (database.Addresses.AddRangeAsync(
             new AddressDB
             {
                 Id = Guid.CreateVersion7(),
@@ -55,8 +59,8 @@ public sealed class MailAdministrationPostgresTests
                 Domain = "example.net",
                 IsActive = true,
                 Company = company,
-            });
-        database.Users.AddRange(users);
+            })).ConfigureAwait(false);
+        await (database.Users.AddRangeAsync(users)).ConfigureAwait(false);
         for (var index = 0; index < users.Length; index++)
         {
             var user = users[index];
@@ -67,16 +71,16 @@ public sealed class MailAdministrationPostgresTests
                 ClientId = "test-client",
                 DeviceName = "test-device",
             };
-            database.OAuthGrants.Add(grant);
-            database.OAuthTokens.Add(new OAuthTokenDB
+            await (database.OAuthGrants.AddAsync(grant)).ConfigureAwait(false);
+            await (database.OAuthTokens.AddAsync(new OAuthTokenDB
             {
                 Id = Guid.CreateVersion7(),
                 Grant = grant,
                 TokenType = "access",
                 TokenHash = Enumerable.Repeat((byte)(index + 1), 32).ToArray(),
                 ExpiresAt = now.AddHours(1),
-            });
-            database.OAuthAuthorizationCodes.Add(new OAuthAuthorizationCodeDB
+            })).ConfigureAwait(false);
+            await (database.OAuthAuthorizationCodes.AddAsync(new OAuthAuthorizationCodeDB
             {
                 Id = Guid.CreateVersion7(),
                 User = user,
@@ -86,8 +90,8 @@ public sealed class MailAdministrationPostgresTests
                 CodeChallenge = "test-challenge",
                 CodeHash = Enumerable.Repeat((byte)(index + 4), 32).ToArray(),
                 ExpiresAt = now.AddMinutes(5),
-            });
-            database.JmapPushSubscriptions.Add(new JmapPushSubscriptionDB
+            })).ConfigureAwait(false);
+            await (database.JmapPushSubscriptions.AddAsync(new JmapPushSubscriptionDB
             {
                 Id = Guid.CreateVersion7(),
                 SubscriptionObjectId = Guid.CreateVersion7().ToString("N"),
@@ -96,19 +100,19 @@ public sealed class MailAdministrationPostgresTests
                 Url = "https://push.example.test/notify",
                 VerificationCode = "test-code",
                 ExpiresAt = now.AddHours(1),
-            });
+            })).ConfigureAwait(false);
         }
-        await database.SaveChangesAsync();
+        await database.SaveChangesAsync().ConfigureAwait(false);
 
         var administration = new MailAdministrationService(database);
-        Assert.IsTrue((await administration.SetDomainActiveAsync("example.test", false)).Succeeded);
+        Assert.IsTrue((await administration.SetDomainActiveAsync("example.test", false).ConfigureAwait(false)).Succeeded);
         database.ChangeTracker.Clear();
 
-        var grants = await database.OAuthGrants.AsNoTracking().ToDictionaryAsync(grant => grant.UserId);
+        var grants = await database.OAuthGrants.AsNoTracking().ToDictionaryAsync(grant => grant.UserId).ConfigureAwait(false);
         var tokens = await database.OAuthTokens.AsNoTracking()
-            .Include(token => token.Grant).ToListAsync();
+            .Include(token => token.Grant).ToListAsync().ConfigureAwait(false);
         var codes = await database.OAuthAuthorizationCodes.AsNoTracking()
-            .ToDictionaryAsync(code => code.UserId);
+            .ToDictionaryAsync(code => code.UserId).ConfigureAwait(false);
         foreach (var user in affectedUsers)
         {
             Assert.IsNotNull(grants[user.Id].RevokedAt);
@@ -119,15 +123,15 @@ public sealed class MailAdministrationPostgresTests
         Assert.IsNull(tokens.Single(token => token.Grant.UserId == retainedUser.Id).RevokedAt);
         Assert.IsNull(codes[retainedUser.Id].ConsumedAt);
         var remainingSubscriptions = await database.JmapPushSubscriptions.AsNoTracking()
-            .Select(subscription => subscription.UserId).ToArrayAsync();
+            .Select(subscription => subscription.UserId).ToArrayAsync().ConfigureAwait(false);
         CollectionAssert.AreEqual(new[] { retainedUser.Id }, remainingSubscriptions);
 
-        Assert.IsTrue((await administration.SetAccountActiveAsync(retainedUser.Id, false)).Succeeded);
+        Assert.IsTrue((await administration.SetAccountActiveAsync(retainedUser.Id, false).ConfigureAwait(false)).Succeeded);
         database.ChangeTracker.Clear();
-        Assert.AreEqual(3, await database.OAuthGrants.CountAsync(grant => grant.RevokedAt != null));
-        Assert.AreEqual(3, await database.OAuthTokens.CountAsync(token => token.RevokedAt != null));
-        Assert.AreEqual(3, await database.OAuthAuthorizationCodes.CountAsync(code => code.ConsumedAt != null));
-        Assert.AreEqual(0, await database.JmapPushSubscriptions.CountAsync());
+        Assert.AreEqual(3, await database.OAuthGrants.CountAsync(grant => grant.RevokedAt != null).ConfigureAwait(false));
+        Assert.AreEqual(3, await database.OAuthTokens.CountAsync(token => token.RevokedAt != null).ConfigureAwait(false));
+        Assert.AreEqual(3, await database.OAuthAuthorizationCodes.CountAsync(code => code.ConsumedAt != null).ConfigureAwait(false));
+        Assert.AreEqual(0, await database.JmapPushSubscriptions.CountAsync().ConfigureAwait(false));
     }
 
     private static UserDB CreateUser(string username, CompanyDB company) => new()

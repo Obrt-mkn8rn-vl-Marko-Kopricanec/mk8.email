@@ -7,7 +7,8 @@ using mk8.email.Contracts.Pop3;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class Pop3ApplicationBoundaryTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class Pop3ApplicationBoundaryTests
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -15,9 +16,10 @@ public sealed class Pop3ApplicationBoundaryTests
     public async Task Pop3OperationsCrossTransportNeutralJsonBoundary()
     {
         var application = new RecordingPop3Application();
-        await using var services = new ServiceCollection()
+        var services = new ServiceCollection()
             .AddSingleton<IPop3ApplicationService>(application)
             .BuildServiceProvider();
+        await using var servicesLifetime = services.ConfigureAwait(false);
         var dispatcher = new ApplicationRequestDispatcher(services);
         var userId = Guid.CreateVersion7();
         var messageId = application.FoundMessageId;
@@ -25,36 +27,36 @@ public sealed class Pop3ApplicationBoundaryTests
         var password = await SendAsync<Pop3PasswordAuthentication, Pop3IdentityResult>(
             dispatcher,
             ApplicationOperations.Pop3AuthenticatePassword,
-            new Pop3PasswordAuthentication("user@example.test", "secret"));
-        Assert.AreEqual("user@example.test", password.Username);
+            new Pop3PasswordAuthentication("user@example.test", "secret")).ConfigureAwait(false);
+        Assert.AreEqual("user@example.test", password.Username, StringComparer.Ordinal);
         var oauth = await SendAsync<Pop3OAuthAuthentication, Pop3IdentityResult>(
             dispatcher,
             ApplicationOperations.Pop3AuthenticateOAuth,
-            new Pop3OAuthAuthentication("user@example.test", "access-token"));
-        Assert.AreEqual("access-token", application.LastAccessToken);
+            new Pop3OAuthAuthentication("user@example.test", "access-token")).ConfigureAwait(false);
+        Assert.AreEqual("access-token", application.LastAccessToken, StringComparer.Ordinal);
         Assert.IsNotNull(oauth.UserId);
 
         var snapshot = await SendAsync<Pop3UserRequest, Pop3MaildropSnapshot>(
             dispatcher,
             ApplicationOperations.Pop3ListMaildrop,
-            new Pop3UserRequest(userId));
+            new Pop3UserRequest(userId)).ConfigureAwait(false);
         Assert.HasCount(1, snapshot.Messages);
         Assert.AreEqual(userId, application.LastUserId);
         var message = await SendAsync<Pop3MessageRequest, Pop3MessageResult>(
             dispatcher,
             ApplicationOperations.Pop3GetMessage,
-            new Pop3MessageRequest(userId, messageId));
+            new Pop3MessageRequest(userId, messageId)).ConfigureAwait(false);
         CollectionAssert.AreEqual("wire\r\n"u8.ToArray(), message.RawMessage);
         var missing = await SendAsync<Pop3MessageRequest, Pop3MessageResult>(
             dispatcher,
             ApplicationOperations.Pop3GetMessage,
-            new Pop3MessageRequest(userId, Guid.CreateVersion7()));
+            new Pop3MessageRequest(userId, Guid.CreateVersion7())).ConfigureAwait(false);
         Assert.IsNull(missing.RawMessage);
 
         var deleted = await SendAsync<Pop3DeleteRequest, Pop3DeleteResult>(
             dispatcher,
             ApplicationOperations.Pop3CommitDeletes,
-            new Pop3DeleteRequest(userId, [messageId]));
+            new Pop3DeleteRequest(userId, [messageId])).ConfigureAwait(false);
         Assert.AreEqual(1, deleted.DeletedCount);
         Assert.AreEqual(messageId, application.LastDeletedId);
     }
@@ -73,10 +75,10 @@ public sealed class Pop3ApplicationBoundaryTests
             operation,
             "application/json",
             JsonSerializer.SerializeToUtf8Bytes(value, JsonOptions),
-            new Dictionary<string, string>(),
+            new Dictionary<string, string>(StringComparer.Ordinal),
             now,
             now.AddMinutes(1));
-        var response = await dispatcher.DispatchAsync(request);
+        var response = await dispatcher.DispatchAsync(request).ConfigureAwait(false);
         Assert.IsFalse(response.IsError, response.ErrorCode);
         return JsonSerializer.Deserialize<TResponse>(response.Payload, JsonOptions)
             ?? throw new InvalidOperationException("The POP3 application response was empty.");

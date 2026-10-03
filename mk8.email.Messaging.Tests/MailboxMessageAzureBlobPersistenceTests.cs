@@ -17,12 +17,15 @@ namespace mk8.email.Messaging.Tests;
 [DoNotParallelize]
 [TestCategory("PostgreSQL")]
 [TestCategory("AzureBlobCompatible")]
-public sealed class MailboxMessageAzureBlobPersistenceTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class MailboxMessageAzureBlobPersistenceTests
 {
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ConcurrentLegacyMigrationExternalizesMimeAndEnforcesReferenceOnlyRows scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task ConcurrentLegacyMigrationExternalizesMimeAndEnforcesReferenceOnlyRows()
     {
-        await using var databaseServer = await RequirePostgresAsync();
+        var databaseServer = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseServerLifetime = databaseServer.ConfigureAwait(false);
         var serviceClient = new BlobServiceClient(RequireAzureBlobConnection());
         var containerName = $"mk8-mailbox-{Guid.NewGuid():N}";
         var container = serviceClient.GetBlobContainerClient(containerName);
@@ -41,48 +44,49 @@ public sealed class MailboxMessageAzureBlobPersistenceTests
             raw,
             reconstructedMessageId,
             reconstructedHeaders,
-            reconstructedBody);
+            reconstructedBody).ConfigureAwait(false);
 
         try
         {
             async Task MigrateAsync()
             {
-                await using var context = CreateContext(databaseServer.ConnectionString);
-                var effects = CreateEffects(store);
+                var context = CreateContext(databaseServer.ConnectionString);
+                await using var contextLifetime = context.ConfigureAwait(false);
+                var migrationEffects = CreateEffects(store);
                 await new MailboxMessageLargeObjectMigrationService(
                     context,
                     store,
-                    new MailboxMessageContentService(store, effects),
+                    new MailboxMessageContentService(store, migrationEffects),
                     NullLogger<MailboxMessageLargeObjectMigrationService>.Instance)
-                    .MigrateAsync();
+                    .MigrateAsync().ConfigureAwait(false);
             }
 
-            await Task.WhenAll(MigrateAsync(), MigrateAsync());
+            await Task.WhenAll(MigrateAsync(), MigrateAsync()).ConfigureAwait(false);
 
-            await using var verification = CreateContext(databaseServer.ConnectionString);
+            var verification = CreateContext(databaseServer.ConnectionString);
+            await using var verificationLifetime = verification.ConfigureAwait(false);
             var migrated = await verification.Emails.AsNoTracking()
                 .OrderBy(message => message.Uid)
-                .ToListAsync();
+                .ToListAsync().ConfigureAwait(false);
             Assert.HasCount(2, migrated);
             Assert.IsTrue(migrated.All(message => message.RawMessage is null));
-            Assert.IsTrue(migrated.All(message =>
-                message.RawMessageObjectProvider == LargeObjectProviders.AzureBlob));
+            Assert.IsTrue(migrated.All(message => string.Equals(message.RawMessageObjectProvider, LargeObjectProviders.AzureBlob, StringComparison.Ordinal)));
             Assert.IsTrue(migrated.All(message => message.Body.Length <= 65_536));
             Assert.IsTrue(migrated.All(message => (message.RawHeaders?.Length ?? 0) <= 65_536));
 
             var externalized = migrated.Single(message => message.Id == rawMessageId);
-            StringAssert.Contains(externalized.Body, "visible message text");
+            StringAssert.Contains(externalized.Body, "visible message text", StringComparison.Ordinal);
             Assert.IsFalse(externalized.Body.Contains("attachment-sentinel", StringComparison.Ordinal));
             var effects = new LargeObjectTransactionEffects(
                 store,
                 NullLogger<LargeObjectTransactionEffects>.Instance);
             var content = new MailboxMessageContentService(store, effects);
-            CollectionAssert.AreEqual(raw, await content.ReadAsync(externalized, CancellationToken.None));
+            CollectionAssert.AreEqual(raw, await content.ReadAsync(externalized, CancellationToken.None).ConfigureAwait(false));
             CollectionAssert.AreEqual(
                 reconstructedRaw,
                 await content.ReadAsync(
                     migrated.Single(message => message.Id == reconstructedMessageId),
-                    CancellationToken.None));
+                    CancellationToken.None).ConfigureAwait(false));
 
             var exception = await Assert.ThrowsExactlyAsync<PostgresException>(() =>
                 InsertInlineMessageAsync(
@@ -90,19 +94,20 @@ public sealed class MailboxMessageAzureBlobPersistenceTests
                     Guid.CreateVersion7(),
                     externalized.FolderId,
                     uid: 3,
-                    raw));
-            Assert.AreEqual(PostgresErrorCodes.CheckViolation, exception.SqlState);
+                    raw)).ConfigureAwait(false);
+            Assert.AreEqual(PostgresErrorCodes.CheckViolation, exception.SqlState, StringComparer.Ordinal);
         }
         finally
         {
-            await container.DeleteIfExistsAsync();
+            await container.DeleteIfExistsAsync().ConfigureAwait(false);
         }
     }
 
     [TestMethod]
     public async Task FailedLegacyMigrationRetainsMailboxRowAndRemovesCreatedBlob()
     {
-        await using var databaseServer = await RequirePostgresAsync();
+        var databaseServer = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseServerLifetime = databaseServer.ConfigureAwait(false);
         var serviceClient = new BlobServiceClient(RequireAzureBlobConnection());
         var containerName = $"mk8-mailbox-{Guid.NewGuid():N}";
         var container = serviceClient.GetBlobContainerClient(containerName);
@@ -110,23 +115,25 @@ public sealed class MailboxMessageAzureBlobPersistenceTests
         var messageId = Guid.CreateVersion7();
         var raw = Encoding.Latin1.GetBytes(
             "From: sender@example.test\r\nTo: mailbox@example.test\r\nSubject: legacy\r\n\r\nbody\r\n");
-        await using (var setup = CreateContext(databaseServer.ConnectionString))
         {
-            await setup.Database.EnsureCreatedAsync();
-            var folderId = await SeedMailboxAsync(setup);
+            var setup = CreateContext(databaseServer.ConnectionString);
+            await using var setupLifetime = setup.ConfigureAwait(false);
+            await setup.Database.EnsureCreatedAsync().ConfigureAwait(false);
+            var folderId = await SeedMailboxAsync(setup).ConfigureAwait(false);
             var message = CreateMessage(messageId, folderId, 1);
             message.RawMessage = raw;
             message.SizeBytes = raw.Length;
-            setup.Emails.Add(message);
-            await setup.SaveChangesAsync();
+            await (setup.Emails.AddAsync(message)).ConfigureAwait(false);
+            await setup.SaveChangesAsync().ConfigureAwait(false);
             await setup.Database.ExecuteSqlRawAsync(
-                "ALTER TABLE emails ADD CONSTRAINT ck_test_keep_legacy_mail CHECK (raw_message IS NOT NULL)");
+                "ALTER TABLE emails ADD CONSTRAINT ck_test_keep_legacy_mail CHECK (raw_message IS NOT NULL)").ConfigureAwait(false);
         }
 
         try
         {
-            await using (var migration = CreateContext(databaseServer.ConnectionString))
             {
+                var migration = CreateContext(databaseServer.ConnectionString);
+                await using var migrationLifetime = migration.ConfigureAwait(false);
                 var effects = CreateEffects(store);
                 await Assert.ThrowsExactlyAsync<DbUpdateException>(() =>
                     new MailboxMessageLargeObjectMigrationService(
@@ -134,86 +141,95 @@ public sealed class MailboxMessageAzureBlobPersistenceTests
                         store,
                         new MailboxMessageContentService(store, effects),
                         NullLogger<MailboxMessageLargeObjectMigrationService>.Instance)
-                        .MigrateAsync());
+                        .MigrateAsync()).ConfigureAwait(false);
             }
 
-            await using var verification = CreateContext(databaseServer.ConnectionString);
+            var verification = CreateContext(databaseServer.ConnectionString);
+            await using var verificationLifetime = verification.ConfigureAwait(false);
             var legacy = await verification.Emails.AsNoTracking()
-                .SingleAsync(message => message.Id == messageId);
+                .SingleAsync(message => message.Id == messageId).ConfigureAwait(false);
             CollectionAssert.AreEqual(raw, legacy.RawMessage);
             Assert.IsNull(legacy.RawMessageObjectName);
-            Assert.HasCount(0, await GetBlobNamesAsync(container, messageId));
+            Assert.HasCount(0, await GetBlobNamesAsync(container, messageId).ConfigureAwait(false));
         }
         finally
         {
-            await container.DeleteIfExistsAsync();
+            await container.DeleteIfExistsAsync().ConfigureAwait(false);
         }
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The TransactionEffectsPreserveRollbackAndDeleteOnlyCommittedMessages scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task TransactionEffectsPreserveRollbackAndDeleteOnlyCommittedMessages()
     {
-        await using var databaseServer = await RequirePostgresAsync();
+        var databaseServer = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseServerLifetime = databaseServer.ConfigureAwait(false);
         var serviceClient = new BlobServiceClient(RequireAzureBlobConnection());
         var containerName = $"mk8-mailbox-tx-{Guid.NewGuid():N}";
         var container = serviceClient.GetBlobContainerClient(containerName);
         var store = CreateStore(serviceClient, containerName);
-        var folderId = await CreateEmptyMigratedSchemaAsync(databaseServer.ConnectionString, store);
+        var folderId = await CreateEmptyMigratedSchemaAsync(databaseServer.ConnectionString, store).ConfigureAwait(false);
         var raw = Encoding.Latin1.GetBytes(
             "From: sender@example.test\r\nTo: mailbox@example.test\r\nSubject: transaction\r\n\r\nbody\r\n");
 
         try
         {
             var rolledBackId = Guid.CreateVersion7();
-            await using (var context = CreateContext(databaseServer.ConnectionString))
             {
+                var context = CreateContext(databaseServer.ConnectionString);
+                await using var contextLifetime = context.ConfigureAwait(false);
                 var effects = CreateEffects(store);
                 var content = new MailboxMessageContentService(store, effects);
                 var marker = effects.Mark();
-                await using var transaction = await context.Database.BeginTransactionAsync();
+                var transaction = (await context.Database.BeginTransactionAsync().ConfigureAwait(false));
+                await using var transactionLifetime = transaction.ConfigureAwait(false);
                 var message = CreateMessage(rolledBackId, folderId, 1);
-                await content.SetAsync(message, raw, CancellationToken.None);
-                context.Emails.Add(message);
-                await context.SaveChangesAsync();
-                await transaction.RollbackAsync();
-                await effects.RollbackAsync(marker);
+                await content.SetAsync(message, raw, CancellationToken.None).ConfigureAwait(false);
+                await (context.Emails.AddAsync(message)).ConfigureAwait(false);
+                await context.SaveChangesAsync().ConfigureAwait(false);
+                await transaction.RollbackAsync().ConfigureAwait(false);
+                await effects.RollbackAsync(marker).ConfigureAwait(false);
             }
-            Assert.HasCount(0, await GetBlobNamesAsync(container, rolledBackId));
+            Assert.HasCount(0, await GetBlobNamesAsync(container, rolledBackId).ConfigureAwait(false));
 
             var committedId = Guid.CreateVersion7();
-            await using (var context = CreateContext(databaseServer.ConnectionString))
             {
+                var context = CreateContext(databaseServer.ConnectionString);
+                await using var contextLifetime = context.ConfigureAwait(false);
                 var effects = CreateEffects(store);
                 var content = new MailboxMessageContentService(store, effects);
                 var marker = effects.Mark();
-                await using var transaction = await context.Database.BeginTransactionAsync();
+                var transaction = (await context.Database.BeginTransactionAsync().ConfigureAwait(false));
+                await using var transactionLifetime = transaction.ConfigureAwait(false);
                 var message = CreateMessage(committedId, folderId, 1);
-                await content.SetAsync(message, raw, CancellationToken.None);
-                context.Emails.Add(message);
-                await context.SaveChangesAsync();
-                await transaction.CommitAsync();
-                await effects.CommitAsync(marker);
+                await content.SetAsync(message, raw, CancellationToken.None).ConfigureAwait(false);
+                await (context.Emails.AddAsync(message)).ConfigureAwait(false);
+                await context.SaveChangesAsync().ConfigureAwait(false);
+                await transaction.CommitAsync().ConfigureAwait(false);
+                await effects.CommitAsync(marker).ConfigureAwait(false);
             }
-            Assert.HasCount(1, await GetBlobNamesAsync(container, committedId));
+            Assert.HasCount(1, await GetBlobNamesAsync(container, committedId).ConfigureAwait(false));
 
-            await using (var context = CreateContext(databaseServer.ConnectionString))
             {
+                var context = CreateContext(databaseServer.ConnectionString);
+                await using var contextLifetime = context.ConfigureAwait(false);
                 var effects = CreateEffects(store);
                 var content = new MailboxMessageContentService(store, effects);
                 var marker = effects.Mark();
-                await using var transaction = await context.Database.BeginTransactionAsync();
-                var message = await context.Emails.SingleAsync(candidate => candidate.Id == committedId);
+                var transaction = (await context.Database.BeginTransactionAsync().ConfigureAwait(false));
+                await using var transactionLifetime = transaction.ConfigureAwait(false);
+                var message = await context.Emails.SingleAsync(candidate => candidate.Id == committedId).ConfigureAwait(false);
                 content.DeleteOnCommit(message);
                 context.Emails.Remove(message);
-                await context.SaveChangesAsync();
-                await transaction.CommitAsync();
-                await effects.CommitAsync(marker);
+                await context.SaveChangesAsync().ConfigureAwait(false);
+                await transaction.CommitAsync().ConfigureAwait(false);
+                await effects.CommitAsync(marker).ConfigureAwait(false);
             }
-            Assert.HasCount(0, await GetBlobNamesAsync(container, committedId));
+            Assert.HasCount(0, await GetBlobNamesAsync(container, committedId).ConfigureAwait(false));
         }
         finally
         {
-            await container.DeleteIfExistsAsync();
+            await container.DeleteIfExistsAsync().ConfigureAwait(false);
         }
     }
 
@@ -222,39 +238,42 @@ public sealed class MailboxMessageAzureBlobPersistenceTests
     [DataRow(true)]
     public async Task EmailServiceCommitsBlobBackedMetadataAndReplaysIdempotently(bool sentCopy)
     {
-        await using var server = await RequirePostgresAsync();
+        var server = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var serverLifetime = server.ConfigureAwait(false);
         var client = new BlobServiceClient(RequireAzureBlobConnection());
         var containerName = $"mk8-email-service-{Guid.NewGuid():N}";
         var container = client.GetBlobContainerClient(containerName);
         var store = CreateStore(client, containerName);
-        var folderId = await PrepareEmailServiceFolderAsync(server.ConnectionString, store, sentCopy);
+        var folderId = await PrepareEmailServiceFolderAsync(server.ConnectionString, store, sentCopy).ConfigureAwait(false);
         var deliveryId = Guid.CreateVersion7();
         var raw = BuildEmailServiceMessage(sentCopy);
 
         try
         {
-            await using (var context = CreateContext(server.ConnectionString))
             {
+                var context = CreateContext(server.ConnectionString);
+                await using var contextLifetime = context.ConfigureAwait(false);
                 var effects = CreateEffects(store);
                 var content = new MailboxMessageContentService(store, effects);
                 var service = new EmailService(context, content, effects);
-                Assert.IsTrue(await StoreEmailAsync(service, sentCopy, raw, deliveryId));
-                Assert.IsTrue(await StoreEmailAsync(service, sentCopy, "replacement body", deliveryId));
+                Assert.IsTrue(await StoreEmailAsync(service, sentCopy, raw, deliveryId).ConfigureAwait(false));
+                Assert.IsTrue(await StoreEmailAsync(service, sentCopy, "replacement body", deliveryId).ConfigureAwait(false));
             }
-            await using var verification = CreateContext(server.ConnectionString);
-            var email = await verification.Emails.AsNoTracking().SingleAsync();
+            var verification = CreateContext(server.ConnectionString);
+            await using var verificationLifetime = verification.ConfigureAwait(false);
+            var email = await verification.Emails.AsNoTracking().SingleAsync().ConfigureAwait(false);
             VerifyEmailServiceMetadata(email, sentCopy, deliveryId, folderId);
             var contentReader = new MailboxMessageContentService(store, CreateEffects(store));
             CollectionAssert.AreEqual(Encoding.Latin1.GetBytes(raw),
-                await contentReader.ReadAsync(email, CancellationToken.None));
-            Assert.HasCount(1, await GetBlobNamesAsync(container));
-            var folder = await verification.Folders.AsNoTracking().SingleAsync(item => item.Id == folderId);
+                await contentReader.ReadAsync(email, CancellationToken.None).ConfigureAwait(false));
+            Assert.HasCount(1, await GetBlobNamesAsync(container).ConfigureAwait(false));
+            var folder = await verification.Folders.AsNoTracking().SingleAsync(item => item.Id == folderId).ConfigureAwait(false);
             Assert.AreEqual(4, folder.NextUid);
             Assert.AreEqual(3L, folder.HighestModSeq);
         }
         finally
         {
-            await container.DeleteIfExistsAsync();
+            await container.DeleteIfExistsAsync().ConfigureAwait(false);
         }
     }
 
@@ -263,39 +282,43 @@ public sealed class MailboxMessageAzureBlobPersistenceTests
     [DataRow(true)]
     public async Task EmailServiceDatabaseFailureRollsBackCountersAndRemovesCreatedBlob(bool sentCopy)
     {
-        await using var server = await RequirePostgresAsync();
+        var server = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var serverLifetime = server.ConfigureAwait(false);
         var client = new BlobServiceClient(RequireAzureBlobConnection());
         var containerName = $"mk8-email-failure-{Guid.NewGuid():N}";
         var container = client.GetBlobContainerClient(containerName);
         var store = CreateStore(client, containerName);
-        var folderId = await PrepareEmailServiceFolderAsync(server.ConnectionString, store, sentCopy);
-        await using (var setup = CreateContext(server.ConnectionString))
+        var folderId = await PrepareEmailServiceFolderAsync(server.ConnectionString, store, sentCopy).ConfigureAwait(false);
         {
+            var setup = CreateContext(server.ConnectionString);
+            await using var setupLifetime = setup.ConfigureAwait(false);
             await setup.Database.ExecuteSqlRawAsync(
-                "ALTER TABLE emails ADD CONSTRAINT ck_test_reject_email CHECK (false)");
+                "ALTER TABLE emails ADD CONSTRAINT ck_test_reject_email CHECK (false)").ConfigureAwait(false);
         }
 
         try
         {
-            await using (var context = CreateContext(server.ConnectionString))
             {
+                var context = CreateContext(server.ConnectionString);
+                await using var contextLifetime = context.ConfigureAwait(false);
                 var effects = CreateEffects(store);
                 var service = new EmailService(context, new MailboxMessageContentService(store, effects), effects);
                 var exception = await Assert.ThrowsExactlyAsync<DbUpdateException>(() =>
-                    StoreEmailAsync(service, sentCopy, BuildEmailServiceMessage(sentCopy), Guid.CreateVersion7()));
+                    StoreEmailAsync(service, sentCopy, BuildEmailServiceMessage(sentCopy), Guid.CreateVersion7())).ConfigureAwait(false);
                 Assert.AreEqual(PostgresErrorCodes.CheckViolation,
-                    Assert.IsInstanceOfType<PostgresException>(exception.InnerException).SqlState);
+                    Assert.IsInstanceOfType<PostgresException>(exception.InnerException).SqlState, StringComparer.Ordinal);
             }
-            await using var verification = CreateContext(server.ConnectionString);
-            Assert.AreEqual(0, await verification.Emails.CountAsync());
-            var folder = await verification.Folders.AsNoTracking().SingleAsync(item => item.Id == folderId);
+            var verification = CreateContext(server.ConnectionString);
+            await using var verificationLifetime = verification.ConfigureAwait(false);
+            Assert.AreEqual(0, await verification.Emails.CountAsync().ConfigureAwait(false));
+            var folder = await verification.Folders.AsNoTracking().SingleAsync(item => item.Id == folderId).ConfigureAwait(false);
             Assert.AreEqual(3, folder.NextUid);
             Assert.AreEqual(2L, folder.HighestModSeq);
-            Assert.HasCount(0, await GetBlobNamesAsync(container));
+            Assert.HasCount(0, await GetBlobNamesAsync(container).ConfigureAwait(false));
         }
         finally
         {
-            await container.DeleteIfExistsAsync();
+            await container.DeleteIfExistsAsync().ConfigureAwait(false);
         }
     }
 
@@ -304,9 +327,10 @@ public sealed class MailboxMessageAzureBlobPersistenceTests
         AzureBlobLargeObjectStore store,
         bool sentCopy)
     {
-        var inboxFolderId = await CreateEmptyMigratedSchemaAsync(connectionString, store);
-        await using var context = CreateContext(connectionString);
-        var inboxFolder = await context.Folders.SingleAsync(folder => folder.Id == inboxFolderId);
+        var inboxFolderId = await CreateEmptyMigratedSchemaAsync(connectionString, store).ConfigureAwait(false);
+        var context = CreateContext(connectionString);
+        await using var contextLifetime = context.ConfigureAwait(false);
+        var inboxFolder = await context.Folders.SingleAsync(folder => folder.Id == inboxFolderId).ConfigureAwait(false);
         inboxFolder.Name = DefaultFolders.Inbox;
         var selected = inboxFolder;
         if (sentCopy)
@@ -319,9 +343,9 @@ public sealed class MailboxMessageAzureBlobPersistenceTests
                 NextUid = 3,
                 HighestModSeq = 2,
             };
-            context.Folders.Add(selected);
+            await (context.Folders.AddAsync(selected)).ConfigureAwait(false);
         }
-        await context.SaveChangesAsync();
+        await context.SaveChangesAsync().ConfigureAwait(false);
         return selected.Id;
     }
 
@@ -351,17 +375,17 @@ public sealed class MailboxMessageAzureBlobPersistenceTests
         Assert.AreEqual(3L, email.ModSeq);
         Assert.AreEqual(sentCopy, email.IsRead);
         Assert.AreEqual(!sentCopy, email.IsFlagged);
-        CollectionAssert.AreEqual(sentCopy ? Array.Empty<string>() : new[] { "tag" }, email.Keywords);
-        Assert.AreEqual(sentCopy ? "header@example.test" : "mailbox@mailbox.example.test", email.Recipient);
-        Assert.AreEqual(new string('s', 998), email.Subject);
-        Assert.AreEqual("<email-service@example.test>", email.MessageId);
-        Assert.AreEqual("<parent@example.test>", email.InReplyTo);
-        Assert.AreEqual("copy@example.test", email.Cc);
+        CollectionAssert.AreEqual(sentCopy ? Array.Empty<string>() : ExpectedVector1, email.Keywords);
+        Assert.AreEqual(sentCopy ? "header@example.test" : "mailbox@mailbox.example.test", email.Recipient, StringComparer.Ordinal);
+        Assert.AreEqual(new string('s', 998), email.Subject, StringComparer.Ordinal);
+        Assert.AreEqual("<email-service@example.test>", email.MessageId, StringComparer.Ordinal);
+        Assert.AreEqual("<parent@example.test>", email.InReplyTo, StringComparer.Ordinal);
+        Assert.AreEqual("copy@example.test", email.Cc, StringComparer.Ordinal);
         Assert.IsFalse(string.IsNullOrEmpty(email.EmailObjectId));
         Assert.IsFalse(string.IsNullOrEmpty(email.ThreadObjectId));
         Assert.IsNull(email.RawMessage);
-        Assert.AreEqual(LargeObjectProviders.AzureBlob, email.RawMessageObjectProvider);
-        StringAssert.Contains(email.Body, "visible message text");
+        Assert.AreEqual(LargeObjectProviders.AzureBlob, email.RawMessageObjectProvider, StringComparer.Ordinal);
+        StringAssert.Contains(email.Body, "visible message text", StringComparison.Ordinal);
         Assert.IsFalse(email.Body.Contains("attachment-sentinel", StringComparison.Ordinal));
     }
 
@@ -373,35 +397,37 @@ public sealed class MailboxMessageAzureBlobPersistenceTests
         string reconstructedHeaders,
         string reconstructedBody)
     {
-        await using var context = CreateContext(connectionString);
-        await context.Database.EnsureCreatedAsync();
-        var folderId = await SeedMailboxAsync(context);
+        var context = CreateContext(connectionString);
+        await using var contextLifetime = context.ConfigureAwait(false);
+        await context.Database.EnsureCreatedAsync().ConfigureAwait(false);
+        var folderId = await SeedMailboxAsync(context).ConfigureAwait(false);
         var externalized = CreateMessage(rawMessageId, folderId, 1);
         externalized.RawMessage = raw;
         externalized.SizeBytes = raw.Length;
-        context.Emails.Add(externalized);
+        await (context.Emails.AddAsync(externalized)).ConfigureAwait(false);
         var reconstructed = CreateMessage(reconstructedMessageId, folderId, 2);
         reconstructed.RawHeaders = reconstructedHeaders;
         reconstructed.Body = reconstructedBody;
-        context.Emails.Add(reconstructed);
-        await context.SaveChangesAsync();
+        await (context.Emails.AddAsync(reconstructed)).ConfigureAwait(false);
+        await context.SaveChangesAsync().ConfigureAwait(false);
     }
 
     private static async Task<Guid> CreateEmptyMigratedSchemaAsync(
         string connectionString,
         AzureBlobLargeObjectStore store)
     {
-        await using (var context = CreateContext(connectionString))
         {
-            await context.Database.EnsureCreatedAsync();
-            var folderId = await SeedMailboxAsync(context);
+            var context = CreateContext(connectionString);
+            await using var contextLifetime = context.ConfigureAwait(false);
+            await context.Database.EnsureCreatedAsync().ConfigureAwait(false);
+            var folderId = await SeedMailboxAsync(context).ConfigureAwait(false);
             var effects = CreateEffects(store);
             await new MailboxMessageLargeObjectMigrationService(
                 context,
                 store,
                 new MailboxMessageContentService(store, effects),
                 NullLogger<MailboxMessageLargeObjectMigrationService>.Instance)
-                .MigrateAsync();
+                .MigrateAsync().ConfigureAwait(false);
             return folderId;
         }
     }
@@ -443,8 +469,8 @@ public sealed class MailboxMessageAzureBlobPersistenceTests
             NextUid = 3,
             HighestModSeq = 2,
         };
-        context.Folders.Add(folder);
-        await context.SaveChangesAsync();
+        await context.Folders.AddAsync(folder).ConfigureAwait(false);
+        await context.SaveChangesAsync().ConfigureAwait(false);
         return folder.Id;
     }
 
@@ -489,9 +515,11 @@ public sealed class MailboxMessageAzureBlobPersistenceTests
         int uid,
         byte[] raw)
     {
-        await using var connection = new NpgsqlConnection(connectionString);
-        await connection.OpenAsync();
-        await using var command = connection.CreateCommand();
+        var connection = new NpgsqlConnection(connectionString);
+        await using var connectionLifetime = connection.ConfigureAwait(false);
+        await connection.OpenAsync().ConfigureAwait(false);
+        var command = connection.CreateCommand();
+        await using var commandLifetime = command.ConfigureAwait(false);
         command.CommandText =
             """
             INSERT INTO emails (
@@ -510,7 +538,7 @@ public sealed class MailboxMessageAzureBlobPersistenceTests
         command.Parameters.AddWithValue("received_at", DateTime.UtcNow);
         command.Parameters.AddWithValue("uid", uid);
         command.Parameters.AddWithValue("folder_id", folderId);
-        await command.ExecuteNonQueryAsync();
+        await command.ExecuteNonQueryAsync().ConfigureAwait(false);
     }
 
     private static LargeObjectTransactionEffects CreateEffects(AzureBlobLargeObjectStore store) =>
@@ -544,7 +572,7 @@ public sealed class MailboxMessageAzureBlobPersistenceTests
                            BlobTraits.None,
                            BlobStates.None,
                            prefix,
-                           CancellationToken.None))
+                           CancellationToken.None).ConfigureAwait(false))
         {
             names.Add(item.Name);
         }
@@ -554,7 +582,7 @@ public sealed class MailboxMessageAzureBlobPersistenceTests
 
     private static async Task<PostgresTestDatabase> RequirePostgresAsync()
     {
-        var database = await PostgresTestDatabase.TryCreateAsync();
+        var database = await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false);
         if (database is null)
         {
             Assert.Inconclusive(
@@ -576,4 +604,5 @@ public sealed class MailboxMessageAzureBlobPersistenceTests
         }
         return connectionString;
     }
+    private static readonly string[] ExpectedVector1 = new[] { "tag" };
 }

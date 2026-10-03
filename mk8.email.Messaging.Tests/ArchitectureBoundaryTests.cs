@@ -15,7 +15,8 @@ using mk8.email.Wake;
 namespace mk8.email.Messaging.Tests;
 
 [TestClass]
-public sealed class ArchitectureBoundaryTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class ArchitectureBoundaryTests
 {
     [TestMethod]
     public void MessagingContractsDoNotReferenceHostingOrPersistenceFrameworks()
@@ -55,23 +56,24 @@ public sealed class ArchitectureBoundaryTests
         foreach (var assembly in new[] { typeof(GatewayDatabasePrivilegeProbe).Assembly,
                      typeof(WorkerWakeProbe).Assembly, typeof(mk8.email.Hosting.WorkerWakeSchemaTransition).Assembly })
         {
-            await using var stream = assembly.GetManifestResourceStream("mk8.email.RestrictedRolePolicy.sql");
+            var stream = assembly.GetManifestResourceStream("mk8.email.RestrictedRolePolicy.sql");
+            await using var streamLifetime = new NullableAsyncDisposable(stream).ConfigureAwait(false);
             Assert.IsNotNull(stream);
             using var reader = new StreamReader(stream);
-            var policy = await reader.ReadToEndAsync();
+            var policy = await reader.ReadToEndAsync().ConfigureAwait(false);
             Assert.IsTrue(policy.TrimEnd().EndsWith("\n\\gset", StringComparison.Ordinal));
             expected ??= policy;
-            Assert.AreEqual(expected, policy);
+            Assert.AreEqual(expected, policy, StringComparer.Ordinal);
         }
     }
 
     [TestMethod]
     public void OutboundMailContractsDoNotLoadApplicationLogic()
     {
-        Assert.AreEqual("mk8.email.Contracts", typeof(IOutboundMailRelay).Assembly.GetName().Name);
-        Assert.AreEqual("mk8.email.Contracts", typeof(IMailExchangeResolver).Assembly.GetName().Name);
-        Assert.AreEqual("mk8.email.Contracts", typeof(IMailSubmissionQueue).Assembly.GetName().Name);
-        Assert.AreEqual("mk8.email.Contracts", typeof(SmtpRelayPresentationRequest).Assembly.GetName().Name);
+        Assert.AreEqual("mk8.email.Contracts", typeof(IOutboundMailRelay).Assembly.GetName().Name, StringComparer.Ordinal);
+        Assert.AreEqual("mk8.email.Contracts", typeof(IMailExchangeResolver).Assembly.GetName().Name, StringComparer.Ordinal);
+        Assert.AreEqual("mk8.email.Contracts", typeof(IMailSubmissionQueue).Assembly.GetName().Name, StringComparer.Ordinal);
+        Assert.AreEqual("mk8.email.Contracts", typeof(SmtpRelayPresentationRequest).Assembly.GetName().Name, StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -108,7 +110,7 @@ public sealed class ArchitectureBoundaryTests
     public void MailWireHelpersAreIndependentOfApplicationAndPersistence()
     {
         var assembly = typeof(SmtpAddress).Assembly;
-        Assert.AreEqual("mk8.email.MailWire", assembly.GetName().Name);
+        Assert.AreEqual("mk8.email.MailWire", assembly.GetName().Name, StringComparer.Ordinal);
         Assert.AreSame(assembly, typeof(ManageSieveWireReader).Assembly);
         Assert.AreSame(assembly, typeof(SieveWireCapabilities).Assembly);
         Assert.AreSame(assembly, typeof(Pop3WireCodec).Assembly);
@@ -125,20 +127,18 @@ public sealed class ArchitectureBoundaryTests
     public void SmtpNetworkAndListenerCodeIsOutsideApplicationCoreAndWorker()
     {
         var presentationAssembly = typeof(OutboundSmtpRelay).Assembly;
-        Assert.AreEqual("mk8.email.Smtp.Presentation", presentationAssembly.GetName().Name);
+        Assert.AreEqual("mk8.email.Smtp.Presentation", presentationAssembly.GetName().Name, StringComparer.Ordinal);
         Assert.AreSame(presentationAssembly, typeof(SmtpServerService).Assembly);
-        Assert.AreEqual("mk8.email.Contracts", typeof(ISmtpApplicationService).Assembly.GetName().Name);
+        Assert.AreEqual("mk8.email.Contracts", typeof(ISmtpApplicationService).Assembly.GetName().Name, StringComparer.Ordinal);
         Assert.IsFalse(presentationAssembly.GetReferencedAssemblies().Any(reference =>
             reference.Name is not null
             && (reference.Name.StartsWith("mk8.email.Application", StringComparison.Ordinal)
                 || reference.Name.StartsWith("mk8.email.Infrastructure", StringComparison.Ordinal)
                 || reference.Name.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal))));
         Assert.IsFalse(typeof(mk8.email.Application.Services.MailQueueWorker).Assembly
-            .GetReferencedAssemblies().Any(reference =>
-                reference.Name == "mk8.email.Smtp.Presentation"));
+            .GetReferencedAssemblies().Any(reference => string.Equals(reference.Name, "mk8.email.Smtp.Presentation", StringComparison.Ordinal)));
         Assert.IsFalse(typeof(mk8.email.Application.Worker.OutboundSmtpPresentationClient).Assembly
-            .GetReferencedAssemblies().Any(reference =>
-                reference.Name == "mk8.email.Smtp.Presentation"));
+            .GetReferencedAssemblies().Any(reference => string.Equals(reference.Name, "mk8.email.Smtp.Presentation", StringComparison.Ordinal)));
     }
 
     [TestMethod]
@@ -163,7 +163,7 @@ public sealed class ArchitectureBoundaryTests
         Assert.AreEqual(
             "mk8.email.Gateway",
             typeof(mk8.email.Gateway.ApplicationBridge.GatewayMailSystemStatusReader)
-                .Assembly.GetName().Name);
+                .Assembly.GetName().Name, StringComparer.Ordinal);
         Assert.IsFalse(typeof(mk8.email.Application.Services.ApplicationRequestDispatcher)
             .Assembly.GetTypes().Any(type => type.GetConstructors().Any(constructor =>
                 constructor.GetParameters().Any(parameter =>
@@ -180,7 +180,7 @@ public sealed class ArchitectureBoundaryTests
 
         Assert.AreEqual(
             "mk8.email.Dav.Application",
-            typeof(mk8.email.Dav.DavServiceExtensions).Assembly.GetName().Name);
+            typeof(mk8.email.Dav.DavServiceExtensions).Assembly.GetName().Name, StringComparer.Ordinal);
         Assert.IsFalse(references.Any(reference =>
             reference.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal)
             || string.Equals(reference, "mk8.email.Dav", StringComparison.Ordinal)
@@ -210,7 +210,7 @@ public sealed class ArchitectureBoundaryTests
 
         Assert.AreEqual(
             "mk8.email.Configuration",
-            typeof(mk8.email.Configuration.EnvironmentConfig).Assembly.GetName().Name);
+            typeof(mk8.email.Configuration.EnvironmentConfig).Assembly.GetName().Name, StringComparer.Ordinal);
         Assert.IsFalse(references.Any(reference =>
             reference.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal)
             || reference.StartsWith("Microsoft.EntityFrameworkCore", StringComparison.Ordinal)
@@ -255,20 +255,20 @@ public sealed class ArchitectureBoundaryTests
             typeof(mk8.email.Gateway.Protocols.OAuth.OAuthEndpointRouteBuilderExtensions)
                 .Assembly
                 .GetName()
-                .Name);
+                .Name, StringComparer.Ordinal);
         Assert.AreEqual(
             "mk8.email.Contracts",
             typeof(mk8.email.Contracts.Protocol.OAuthProtocolValues)
                 .Assembly
                 .GetName()
-                .Name);
+                .Name, StringComparer.Ordinal);
     }
 
     [TestMethod]
     public void GatewayOwnsManageSievePresentationWithoutApplicationLogic()
     {
-        Assert.AreEqual("mk8.email.Gateway", typeof(ManageSieveServerService).Assembly.GetName().Name);
-        Assert.AreEqual("mk8.email.Contracts", typeof(ISieveApplicationService).Assembly.GetName().Name);
+        Assert.AreEqual("mk8.email.Gateway", typeof(ManageSieveServerService).Assembly.GetName().Name, StringComparer.Ordinal);
+        Assert.AreEqual("mk8.email.Contracts", typeof(ISieveApplicationService).Assembly.GetName().Name, StringComparer.Ordinal);
         Assert.IsFalse(typeof(ManageSieveServerService).Assembly.GetReferencedAssemblies().Any(reference =>
             reference.Name is not null
             && (reference.Name.StartsWith("mk8.email.Application", StringComparison.Ordinal)
@@ -278,8 +278,8 @@ public sealed class ArchitectureBoundaryTests
     [TestMethod]
     public void GatewayOwnsPop3PresentationWithoutApplicationLogic()
     {
-        Assert.AreEqual("mk8.email.Gateway", typeof(Pop3ServerService).Assembly.GetName().Name);
-        Assert.AreEqual("mk8.email.Contracts", typeof(IPop3ApplicationService).Assembly.GetName().Name);
+        Assert.AreEqual("mk8.email.Gateway", typeof(Pop3ServerService).Assembly.GetName().Name, StringComparer.Ordinal);
+        Assert.AreEqual("mk8.email.Contracts", typeof(IPop3ApplicationService).Assembly.GetName().Name, StringComparer.Ordinal);
         Assert.IsFalse(typeof(Pop3ServerService).Assembly.GetReferencedAssemblies().Any(reference =>
             reference.Name is not null
             && (reference.Name.StartsWith("mk8.email.Application", StringComparison.Ordinal)
@@ -289,15 +289,15 @@ public sealed class ArchitectureBoundaryTests
     [TestMethod]
     public void ImapApplicationContractIsTransportNeutral()
     {
-        Assert.AreEqual("mk8.email.Contracts", typeof(IImapApplicationService).Assembly.GetName().Name);
-        Assert.AreEqual("mk8.email.Gateway", typeof(GatewayImapApplicationService).Assembly.GetName().Name);
+        Assert.AreEqual("mk8.email.Contracts", typeof(IImapApplicationService).Assembly.GetName().Name, StringComparer.Ordinal);
+        Assert.AreEqual("mk8.email.Gateway", typeof(GatewayImapApplicationService).Assembly.GetName().Name, StringComparer.Ordinal);
     }
 
     [TestMethod]
     public void ImapListenerLivesInPresentationAssemblyWithoutApplicationOrPersistenceDependencies()
     {
         var presentation = typeof(ImapServerService).Assembly;
-        Assert.AreEqual("mk8.email.Imap.Presentation", presentation.GetName().Name);
+        Assert.AreEqual("mk8.email.Imap.Presentation", presentation.GetName().Name, StringComparer.Ordinal);
         var references = presentation.GetReferencedAssemblies()
             .Select(reference => reference.Name ?? string.Empty)
             .ToArray();
@@ -307,11 +307,9 @@ public sealed class ArchitectureBoundaryTests
             || reference.StartsWith("Microsoft.EntityFrameworkCore", StringComparison.Ordinal)
             || reference.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal)));
         Assert.IsFalse(typeof(mk8.email.Application.Services.MailQueueWorker).Assembly
-            .GetReferencedAssemblies().Any(reference =>
-                reference.Name == "mk8.email.Imap.Presentation"));
+            .GetReferencedAssemblies().Any(reference => string.Equals(reference.Name, "mk8.email.Imap.Presentation", StringComparison.Ordinal)));
         Assert.IsFalse(typeof(mk8.email.Application.Worker.ApplicationRequestWorker).Assembly
-            .GetReferencedAssemblies().Any(reference =>
-                reference.Name == "mk8.email.Imap.Presentation"));
+            .GetReferencedAssemblies().Any(reference => string.Equals(reference.Name, "mk8.email.Imap.Presentation", StringComparison.Ordinal)));
     }
 
     [TestMethod]
@@ -319,7 +317,7 @@ public sealed class ArchitectureBoundaryTests
     {
         var endpointAssembly = typeof(
             mk8.email.Gateway.Protocols.Jmap.JmapEndpointRouteBuilderExtensions).Assembly;
-        Assert.AreEqual("mk8.email.Gateway", endpointAssembly.GetName().Name);
+        Assert.AreEqual("mk8.email.Gateway", endpointAssembly.GetName().Name, StringComparer.Ordinal);
         Assert.IsFalse(endpointAssembly.GetReferencedAssemblies().Any(reference =>
             string.Equals(reference.Name, "mk8.email.Jmap", StringComparison.Ordinal)));
     }
@@ -343,7 +341,7 @@ public sealed class ArchitectureBoundaryTests
         {
             Assert.IsNull(typeof(MailAdmissionPlan).Assembly.GetType("mk8.email.Contracts.Messaging." + frontendType));
         }
-        Assert.AreEqual("mk8.email.Gateway", typeof(JmapApplicationBatch).Assembly.GetName().Name);
+        Assert.AreEqual("mk8.email.Gateway", typeof(JmapApplicationBatch).Assembly.GetName().Name, StringComparer.Ordinal);
         Assert.IsNull(typeof(mk8.email.Jmap.MailApplicationException).GetProperty("StatusCode"));
         Assert.IsNull(typeof(mk8.email.Jmap.MailApplicationException).GetProperty("Type"));
         Assert.IsNull(typeof(MailApplicationFailure).GetProperty("Type"));
@@ -358,9 +356,9 @@ public sealed class ArchitectureBoundaryTests
         Assert.IsNull(typeof(mk8.email.Jmap.IJmapMethod).GetProperty("Capability"));
         Assert.IsNull(typeof(mk8.email.Jmap.JmapJson).GetMethod("ParseRequest"));
         Assert.AreEqual("mk8.email.Gateway", typeof(
-            mk8.email.Gateway.Protocols.Jmap.GatewayJmapJson).Assembly.GetName().Name);
+            mk8.email.Gateway.Protocols.Jmap.GatewayJmapJson).Assembly.GetName().Name, StringComparer.Ordinal);
         Assert.AreEqual("mk8.email.Gateway", typeof(
-            mk8.email.Gateway.Protocols.Jmap.GatewayJmapBatchCodec).Assembly.GetName().Name);
+            mk8.email.Gateway.Protocols.Jmap.GatewayJmapBatchCodec).Assembly.GetName().Name, StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -372,9 +370,9 @@ public sealed class ArchitectureBoundaryTests
             typeof(mk8.email.Contracts.Messaging.JmapApplicationResult).GetProperty("Changes")?.PropertyType);
         Assert.IsNull(typeof(JmapApplicationBatchResult).GetProperty("Revision"));
         Assert.AreEqual("mk8.email.Gateway", typeof(
-            mk8.email.Gateway.Protocols.Jmap.GatewayJmapProfileCodec).Assembly.GetName().Name);
+            mk8.email.Gateway.Protocols.Jmap.GatewayJmapProfileCodec).Assembly.GetName().Name, StringComparer.Ordinal);
         Assert.AreEqual("mk8.email.Gateway", typeof(
-            mk8.email.Gateway.Protocols.Jmap.GatewayJmapChangesCodec).Assembly.GetName().Name);
+            mk8.email.Gateway.Protocols.Jmap.GatewayJmapChangesCodec).Assembly.GetName().Name, StringComparer.Ordinal);
         Assert.IsFalse(typeof(mk8.email.Jmap.JmapAccountProfileService).Assembly.GetTypes()
             .Any(type => type.Name is "JmapSessionDocument" or "JmapPushPresentationPayload"));
     }
@@ -394,7 +392,7 @@ public sealed class ArchitectureBoundaryTests
         Assert.AreEqual(typeof(ApplicationValuePathSegment[]), typeof(ApplicationArgumentBinding).GetProperty("Path")?.PropertyType);
         Assert.IsNull(typeof(ApplicationValuePathSegment).GetProperty("Pointer"));
         Assert.AreEqual("mk8.email.Gateway", typeof(
-            mk8.email.Gateway.Protocols.Jmap.GatewayJmapArgumentBindingCodec).Assembly.GetName().Name);
+            mk8.email.Gateway.Protocols.Jmap.GatewayJmapArgumentBindingCodec).Assembly.GetName().Name, StringComparer.Ordinal);
         Assert.IsFalse(typeof(mk8.email.Jmap.JmapRequestProcessor)
             .GetMethods(System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
             .Any(method => method.Name is "TryResolveResultReferences" or "TryApplyJsonPointer" or "TryDecodePointerToken"));
@@ -404,16 +402,16 @@ public sealed class ArchitectureBoundaryTests
     public void WorkerReceivesOnlyResolvedMailCommandsAndReturnsRawValueTrees()
     {
         var worker = typeof(mk8.email.Jmap.JmapRequestProcessor);
-        Assert.IsFalse(worker.GetMethods().Any(method => method.Name == "ProcessAsync"));
+        Assert.IsFalse(worker.GetMethods().Any(method => string.Equals(method.Name, "ProcessAsync", StringComparison.Ordinal)));
         Assert.IsFalse(worker.Assembly.GetTypes().Any(type => type.Name is "CoreEchoMethod" or "ApplicationArgumentBindingResolver"));
         Assert.IsFalse(typeof(mk8.email.Jmap.JmapJson).GetMethods(System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
-            .Any(method => method.Name == "SanitizeResponse"));
+            .Any(method => string.Equals(method.Name, "SanitizeResponse", StringComparison.Ordinal)));
         Assert.IsFalse(typeof(MailOperationCommand).GetProperties().Any(property =>
             property.Name is "Invocations" or "Bindings" or "CorrelationId" or "Document"));
         Assert.AreEqual(typeof(ApplicationValue), typeof(MailOperationResponse).GetProperty("Data")?.PropertyType);
-        Assert.AreEqual("mk8.email.Gateway", typeof(mk8.email.Gateway.Protocols.Jmap.GatewayJmapBatchExecutor).Assembly.GetName().Name);
-        Assert.AreEqual("mk8.email.Gateway", typeof(mk8.email.Gateway.Protocols.Jmap.GatewayJmapArgumentBindingResolver).Assembly.GetName().Name);
-        Assert.AreEqual("mk8.email.Gateway", typeof(mk8.email.Gateway.ApplicationBridge.GatewayApplicationDeadline).Assembly.GetName().Name);
+        Assert.AreEqual("mk8.email.Gateway", typeof(mk8.email.Gateway.Protocols.Jmap.GatewayJmapBatchExecutor).Assembly.GetName().Name, StringComparer.Ordinal);
+        Assert.AreEqual("mk8.email.Gateway", typeof(mk8.email.Gateway.Protocols.Jmap.GatewayJmapArgumentBindingResolver).Assembly.GetName().Name, StringComparer.Ordinal);
+        Assert.AreEqual("mk8.email.Gateway", typeof(mk8.email.Gateway.ApplicationBridge.GatewayApplicationDeadline).Assembly.GetName().Name, StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -421,7 +419,7 @@ public sealed class ArchitectureBoundaryTests
     {
         var endpointAssembly = typeof(
             mk8.email.Gateway.Protocols.Dav.GatewayDavEndpointRouteBuilderExtensions).Assembly;
-        Assert.AreEqual("mk8.email.Gateway", endpointAssembly.GetName().Name);
+        Assert.AreEqual("mk8.email.Gateway", endpointAssembly.GetName().Name, StringComparer.Ordinal);
         Assert.IsFalse(endpointAssembly.GetReferencedAssemblies().Any(reference =>
             string.Equals(reference.Name, "mk8.email.Dav.Application", StringComparison.Ordinal)
             || string.Equals(reference.Name, "mk8.email.Dav", StringComparison.Ordinal)));

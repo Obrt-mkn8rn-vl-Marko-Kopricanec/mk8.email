@@ -6,7 +6,8 @@ using Npgsql;
 namespace mk8.email.Messaging.Tests;
 
 [TestClass]
-public sealed class ManagementCliCommandBoundaryTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class ManagementCliCommandBoundaryTests
 {
     [TestMethod]
     public async Task ManagementCliRecognizesBoundedCommandsButRejectsListenerMode()
@@ -51,7 +52,7 @@ public sealed class ManagementCliCommandBoundaryTests
 
         foreach (var command in recognizedCommands)
         {
-            var result = await RunCliAsync(missing, command);
+            var result = await RunCliAsync(missing, command).ConfigureAwait(false);
             Assert.AreEqual(1, result.ExitCode,
                 $"{command[0]} must be recognized and fail on the missing prerequisite: {result.Output}");
             Assert.IsFalse(result.Output.Contains("Use one valid management command.", StringComparison.Ordinal));
@@ -66,13 +67,14 @@ public sealed class ManagementCliCommandBoundaryTests
         ];
         foreach (var command in rejectedCommands)
         {
-            var result = await RunCliAsync(missing, command);
+            var result = await RunCliAsync(missing, command).ConfigureAwait(false);
             Assert.AreEqual(2, result.ExitCode, $"{command[0]}: {result.Output}");
-            StringAssert.Contains(result.Output, "Use one valid management command.");
+            StringAssert.Contains(result.Output, "Use one valid management command.", StringComparison.Ordinal);
         }
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The WakeOperatorRejectsUnsafeFilesAndEndpointMismatchWithoutEchoingSecrets scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task WakeOperatorRejectsUnsafeFilesAndEndpointMismatchWithoutEchoingSecrets()
     {
         var directory = Directory.CreateTempSubdirectory("mk8-wake-cli-");
@@ -93,13 +95,13 @@ public sealed class ManagementCliCommandBoundaryTests
             Assert.HasCount(0, errors, string.Join("; ", errors));
             var configPath = Path.Combine(directory.FullName, "worker.json");
             var wakePath = Path.Combine(directory.FullName, "wake.connection");
-            await File.WriteAllTextAsync(configPath, JsonSerializer.Serialize(config));
+            await File.WriteAllTextAsync(configPath, JsonSerializer.Serialize(config)).ConfigureAwait(false);
             const string secret = "secret-must-not-appear-in-command-output";
-            await File.WriteAllTextAsync(wakePath, secret + "=not-a-connection-string");
+            await File.WriteAllTextAsync(wakePath, secret + "=not-a-connection-string").ConfigureAwait(false);
             var malformed = await RunCliAsync(configPath,
-                ["--prepare-worker-wake", configPath, wakePath], development: true);
+                ["--prepare-worker-wake", configPath, wakePath], development: true).ConfigureAwait(false);
             Assert.AreEqual(1, malformed.ExitCode, malformed.Output);
-            StringAssert.Contains(malformed.Output, "not a valid PostgreSQL connection string");
+            StringAssert.Contains(malformed.Output, "not a valid PostgreSQL connection string", StringComparison.Ordinal);
             Assert.IsFalse(malformed.Output.Contains(secret, StringComparison.Ordinal));
 
             foreach (var changed in new[] { "host", "port", "database", "role" })
@@ -113,11 +115,11 @@ public sealed class ManagementCliCommandBoundaryTests
                     case "database": connection.Database = "other_database"; break;
                     case "role": connection.Username = config.Database.Username; break;
                 }
-                await File.WriteAllTextAsync(wakePath, connection.ConnectionString);
+                await File.WriteAllTextAsync(wakePath, connection.ConnectionString).ConfigureAwait(false);
                 var mismatch = await RunCliAsync(configPath,
-                    ["--prepare-worker-wake", configPath, wakePath], development: true);
+                    ["--prepare-worker-wake", configPath, wakePath], development: true).ConfigureAwait(false);
                 Assert.AreEqual(1, mismatch.ExitCode, mismatch.Output);
-                StringAssert.Contains(mismatch.Output, "separate roles on the same explicit database endpoint");
+                StringAssert.Contains(mismatch.Output, "separate roles on the same explicit database endpoint", StringComparison.Ordinal);
                 Assert.IsFalse(mismatch.Output.Contains(secret, StringComparison.Ordinal));
             }
             if (OperatingSystem.IsLinux())
@@ -125,15 +127,15 @@ public sealed class ManagementCliCommandBoundaryTests
                 var link = Path.Combine(directory.FullName, "wake-link.connection");
                 File.CreateSymbolicLink(link, wakePath);
                 var symlink = await RunCliAsync(configPath,
-                    ["--prepare-worker-wake", configPath, link], development: true);
+                    ["--prepare-worker-wake", configPath, link], development: true).ConfigureAwait(false);
                 Assert.AreEqual(1, symlink.ExitCode, symlink.Output);
-                StringAssert.Contains(symlink.Output, "missing, oversized or unsafe");
+                StringAssert.Contains(symlink.Output, "missing, oversized or unsafe", StringComparison.Ordinal);
                 if (!string.Equals(Environment.UserName, "root", StringComparison.Ordinal))
                 {
                     var service = await RunCliAsync(configPath,
-                        ["--prepare-worker-wake", configPath, wakePath]);
+                        ["--prepare-worker-wake", configPath, wakePath]).ConfigureAwait(false);
                     Assert.AreEqual(1, service.ExitCode, service.Output);
-                    StringAssert.Contains(service.Output, "require a root operator");
+                    StringAssert.Contains(service.Output, "require a root operator", StringComparison.Ordinal);
                 }
             }
         }
@@ -176,14 +178,14 @@ public sealed class ManagementCliCommandBoundaryTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         try
         {
-            await process.WaitForExitAsync(timeout.Token);
+            await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
             process.Kill(entireProcessTree: true);
-            await process.WaitForExitAsync();
+            await process.WaitForExitAsync().ConfigureAwait(false);
             Assert.Fail($"The management CLI timed out: {arguments[0]}");
         }
-        return (process.ExitCode, await output + await error);
+        return (process.ExitCode, await output.ConfigureAwait(false) + await error.ConfigureAwait(false));
     }
 }

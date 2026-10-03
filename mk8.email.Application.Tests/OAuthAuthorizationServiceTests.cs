@@ -13,16 +13,18 @@ using mk8.email.Utils;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class OAuthAuthorizationServiceTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class OAuthAuthorizationServiceTests
 {
     [TestMethod]
     public async Task AuthorizationCodeIsHashedBoundToPkceAndSingleUse()
     {
-        await using var database = CreateDatabase();
+        var database = CreateDatabase();
+        await using var databaseLifetime = database.ConfigureAwait(false);
         var environment = CreateEnvironment();
         var tokenService = new OAuthTokenService(database, environment);
         var service = new OAuthAuthorizationService(database, tokenService, environment);
-        var userId = await database.Users.Select(user => user.Id).SingleAsync();
+        var userId = await database.Users.Select(user => user.Id).SingleAsync().ConfigureAwait(false);
         var verifier = new string('v', 64);
         var challenge = OAuthProtocolValues.CreatePkceChallenge(verifier);
 
@@ -32,45 +34,46 @@ public sealed class OAuthAuthorizationServiceTests
             "http://127.0.0.1:49152/",
             "Work laptop",
             ["offline_access", "imap", "smtp"],
-            challenge);
+            challenge).ConfigureAwait(false);
 
         Assert.IsNotNull(code);
-        StringAssert.StartsWith(code, "mk8_ac_");
-        var stored = await database.OAuthAuthorizationCodes.SingleAsync();
+        StringAssert.StartsWith(code, "mk8_ac_", StringComparison.Ordinal);
+        var stored = await database.OAuthAuthorizationCodes.SingleAsync().ConfigureAwait(false);
         Assert.AreEqual(32, stored.CodeHash.Length);
         Assert.IsFalse(stored.CodeHash.SequenceEqual(Encoding.ASCII.GetBytes(code)));
         Assert.IsNull(await service.RedeemAuthorizationCodeAsync(
             code,
             "thunderbird",
             "http://127.0.0.1:49152/",
-            new string('x', 64)));
+            new string('x', 64)).ConfigureAwait(false));
 
         var pair = await service.RedeemAuthorizationCodeAsync(
             code,
             "thunderbird",
             "http://127.0.0.1:49152/",
-            verifier);
+            verifier).ConfigureAwait(false);
 
         Assert.IsNotNull(pair);
-        Assert.IsNotNull(await tokenService.AuthenticateAccessTokenAsync(pair.AccessToken, "imap"));
+        Assert.IsNotNull(await tokenService.AuthenticateAccessTokenAsync(pair.AccessToken, "imap").ConfigureAwait(false));
         Assert.IsNull(await service.RedeemAuthorizationCodeAsync(
             code,
             "thunderbird",
             "http://127.0.0.1:49152/",
-            verifier));
+            verifier).ConfigureAwait(false));
         Assert.IsNotNull(stored.ConsumedAt);
     }
 
     [TestMethod]
     public async Task AuthorizationCodeRejectsUnregisteredOrUnsafeRequests()
     {
-        await using var database = CreateDatabase();
+        var database = CreateDatabase();
+        await using var databaseLifetime = database.ConfigureAwait(false);
         var environment = CreateEnvironment();
         var service = new OAuthAuthorizationService(
             database,
             new OAuthTokenService(database, environment),
             environment);
-        var userId = await database.Users.Select(user => user.Id).SingleAsync();
+        var userId = await database.Users.Select(user => user.Id).SingleAsync().ConfigureAwait(false);
         var challenge = OAuthProtocolValues.CreatePkceChallenge(new string('v', 64));
 
         Assert.IsNull(await service.CreateAuthorizationCodeAsync(
@@ -79,32 +82,33 @@ public sealed class OAuthAuthorizationServiceTests
             "http://127.0.0.1:49152/",
             "Laptop",
             ["offline_access", "imap"],
-            challenge));
+            challenge).ConfigureAwait(false));
         Assert.IsNull(await service.CreateAuthorizationCodeAsync(
             userId,
             "thunderbird",
             "https://attacker.example/",
             "Laptop",
             ["offline_access", "imap"],
-            challenge));
+            challenge).ConfigureAwait(false));
         Assert.IsNull(await service.CreateAuthorizationCodeAsync(
             userId,
             "thunderbird",
             "http://127.0.0.1:49152/",
             "Laptop",
             ["imap"],
-            challenge));
-        Assert.AreEqual(0, await database.OAuthAuthorizationCodes.CountAsync());
+            challenge).ConfigureAwait(false));
+        Assert.AreEqual(0, await database.OAuthAuthorizationCodes.CountAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task PasswordResetInvalidatesOutstandingAuthorizationCode()
     {
-        await using var database = CreateDatabase();
+        var database = CreateDatabase();
+        await using var databaseLifetime = database.ConfigureAwait(false);
         var environment = CreateEnvironment();
         var tokenService = new OAuthTokenService(database, environment);
         var service = new OAuthAuthorizationService(database, tokenService, environment);
-        var userId = await database.Users.Select(user => user.Id).SingleAsync();
+        var userId = await database.Users.Select(user => user.Id).SingleAsync().ConfigureAwait(false);
         var verifier = new string('v', 64);
         var code = await service.CreateAuthorizationCodeAsync(
             userId,
@@ -112,18 +116,18 @@ public sealed class OAuthAuthorizationServiceTests
             "http://127.0.0.1:49152/",
             "Laptop",
             ["offline_access", "imap"],
-            OAuthProtocolValues.CreatePkceChallenge(verifier));
+            OAuthProtocolValues.CreatePkceChallenge(verifier)).ConfigureAwait(false);
 
         var result = await new MailAdministrationService(database)
-            .ResetPasswordAsync(userId, "replacement-password");
+            .ResetPasswordAsync(userId, "replacement-password").ConfigureAwait(false);
 
         Assert.IsTrue(result.Succeeded);
         Assert.IsNull(await service.RedeemAuthorizationCodeAsync(
             code!,
             "thunderbird",
             "http://127.0.0.1:49152/",
-            verifier));
-        Assert.IsNotNull((await database.OAuthAuthorizationCodes.SingleAsync()).ConsumedAt);
+            verifier).ConfigureAwait(false));
+        Assert.IsNotNull((await database.OAuthAuthorizationCodes.SingleAsync().ConfigureAwait(false)).ConsumedAt);
     }
 
     private static EnvironmentConfig CreateEnvironment() => new()

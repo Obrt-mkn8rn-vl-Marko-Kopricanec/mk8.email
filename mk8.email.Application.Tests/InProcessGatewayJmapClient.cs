@@ -5,6 +5,7 @@ using mk8.email.Gateway.Protocols.Jmap;
 
 namespace mk8.email.Application.Tests;
 
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "This fixture implementation is activated through the test service provider's registered generic interface mapping.")]
 internal sealed class InProcessGatewayJmapClient(IServiceScopeFactory scopes)
     : IGatewayJmapClient
 {
@@ -42,6 +43,6 @@ internal sealed class InProcessGatewayJmapClient(IServiceScopeFactory scopes)
         Func<IJmapApplicationService, Task<JmapApplicationResult>> operation)
     {
         using var scope = scopes.CreateScope();
-        return await operation(scope.ServiceProvider.GetRequiredService<IJmapApplicationService>());
+        return await operation(scope.ServiceProvider.GetRequiredService<IJmapApplicationService>()).ConfigureAwait(false);
     }
 }

@@ -6,6 +6,7 @@ using mk8.email.Configuration;
 using mk8.email.Application.Interfaces;
 using mk8.email.Contracts.Messaging;
 using mk8.email.Infrastructure.Data;
+using mk8.email.Infrastructure.Models;
 using Npgsql;
 
 namespace mk8.email.Jmap;
@@ -16,6 +17,14 @@ internal sealed class JmapPushWorker(
     EnvironmentConfig environment,
     ILogger<JmapPushWorker> logger) : BackgroundService, IJmapPushWork
 {
+    private static readonly Action<ILogger, Exception?> LoopError = LoggerMessage.Define(
+        LogLevel.Error, new EventId(1215, "PushLoop"), "JMAP push delivery loop failed");
+    private static readonly Action<ILogger, Exception?> ListenerError = LoggerMessage.Define(
+        LogLevel.Error, new EventId(1216, "PushListener"), "The JMAP push notification listener failed");
+    private static readonly Action<ILogger, Guid, Exception?> DeliveryWarning = LoggerMessage.Define<Guid>(
+        LogLevel.Warning, new EventId(1217, "PushDelivery"),
+        "Could not request JMAP Web Push delivery for {SubscriptionId}");
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (IsPostgreSql())
@@ -27,6 +36,8 @@ internal sealed class JmapPushWorker(
         await RunPollingLoopAsync(stoppingToken).ConfigureAwait(false);
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1031",
+        Justification = "The background supervisor retries transient provider failures and handles shutdown cancellation separately.")]
     private async Task RunPollingLoopAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
@@ -41,7 +52,7 @@ internal sealed class JmapPushWorker(
             }
             catch (Exception exception)
             {
-                logger.LogError(exception, "JMAP push delivery loop failed");
+                LoopError(logger, exception);
             }
 
             try
@@ -55,6 +66,8 @@ internal sealed class JmapPushWorker(
         }
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1031",
+        Justification = "The notification supervisor reconnects after provider failure; shutdown cancellation is not swallowed.")]
     private async Task RunNotificationLoopAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
@@ -86,7 +99,7 @@ internal sealed class JmapPushWorker(
             }
             catch (Exception exception)
             {
-                logger.LogError(exception, "The JMAP push notification listener failed");
+                ListenerError(logger, exception);
                 await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken).ConfigureAwait(false);
             }
         }
@@ -222,6 +235,12 @@ internal sealed class JmapPushWorker(
             return;
         }
 
+        await DeliverChangesAsync(database, subscription, poll, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task DeliverChangesAsync(EmailDbContext database, JmapPushSubscriptionDB subscription,
+        JmapStateChangePoll poll, CancellationToken cancellationToken)
+    {
         WebPushSendOutcome result;
         try
         {
@@ -234,10 +253,7 @@ internal sealed class JmapPushWorker(
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            logger.LogWarning(
-                exception,
-                "Could not request JMAP Web Push delivery for {SubscriptionId}",
-                subscription.Id);
+            DeliveryWarning(logger, subscription.Id, exception);
             result = WebPushSendOutcome.Failed;
         }
         var now = DateTime.UtcNow;

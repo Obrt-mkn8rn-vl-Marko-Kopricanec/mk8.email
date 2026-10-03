@@ -10,13 +10,16 @@ namespace mk8.email.Messaging.Tests;
 
 [TestClass]
 [TestCategory("PostgreSQL")]
-public sealed class ImapMovePostgresTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class ImapMovePostgresTests
 {
     [TestMethod]
     [Timeout(20_000)]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The MoveIsOwnerScopedTransactionalAndPreservesAzureBlobReference scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task MoveIsOwnerScopedTransactionalAndPreservesAzureBlobReference()
     {
-        await using var server = await PostgresTestDatabase.TryCreateAsync();
+        var server = (await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false));
+        await using var serverLifetime = new NullableAsyncDisposable(server).ConfigureAwait(false);
         if (server is null)
         {
             Assert.Inconclusive("Set MK8_EMAIL_TEST_POSTGRES to a PostgreSQL admin connection string.");
@@ -35,10 +38,11 @@ public sealed class ImapMovePostgresTests
             "From: sender@example.test\r\nSubject: Blob message\r\n\r\nBody\r\n");
         var objects = new InMemoryLargeObjectStore();
         string? objectName = null;
-        await using (var database = new EmailDbContext(options))
         {
-            await database.Database.EnsureCreatedAsync();
-            await new MailRuntimeSchemaService(database).EnsureAsync();
+            var database = new EmailDbContext(options);
+            await using var databaseLifetime = database.ConfigureAwait(false);
+            await database.Database.EnsureCreatedAsync().ConfigureAwait(false);
+            await new MailRuntimeSchemaService(database).EnsureAsync().ConfigureAwait(false);
             var company = new CompanyDB
             {
                 Id = Guid.CreateVersion7(),
@@ -61,7 +65,7 @@ public sealed class ImapMovePostgresTests
                 IsActive = true,
                 Company = company,
             };
-            database.Users.Add(new UserDB
+            await (database.Users.AddAsync(new UserDB
             {
                 Id = otherUserId,
                 Username = "other@example.test",
@@ -69,7 +73,7 @@ public sealed class ImapMovePostgresTests
                 Role = "User",
                 IsActive = true,
                 Company = company,
-            });
+            })).ConfigureAwait(false);
             var inbox = new InboxDB
             {
                 Id = Guid.CreateVersion7(),
@@ -94,7 +98,7 @@ public sealed class ImapMovePostgresTests
                 NextUid = 10,
                 Inbox = inbox,
             };
-            database.Folders.Add(destination);
+            await (database.Folders.AddAsync(destination)).ConfigureAwait(false);
             for (var uid = 1; uid <= 3; uid++)
             {
                 var message = new EmailDB
@@ -113,29 +117,30 @@ public sealed class ImapMovePostgresTests
                     var effects = CreateEffects(objects);
                     var content = new MailboxMessageContentService(objects, effects);
                     var marker = effects.Mark();
-                    await content.SetAsync(message, rawMessage, CancellationToken.None);
-                    await effects.CommitAsync(marker);
+                    await content.SetAsync(message, rawMessage, CancellationToken.None).ConfigureAwait(false);
+                    await effects.CommitAsync(marker).ConfigureAwait(false);
                     objectName = message.RawMessageObjectName;
                 }
-                database.Emails.Add(message);
+                await (database.Emails.AddAsync(message)).ConfigureAwait(false);
             }
-            await database.SaveChangesAsync();
+            await database.SaveChangesAsync().ConfigureAwait(false);
         }
         Assert.AreEqual(1, objects.ObjectCount);
-        await using (var database = new EmailDbContext(options))
         {
+            var database = new EmailDbContext(options);
+            await using var databaseLifetime = database.ConfigureAwait(false);
             var application = CreateApplication(database);
             var denied = await application.MoveMessagesAsync(new ImapMoveRequest(
                 otherUserId, sourceId, "Archive", false,
-                new ImapMessageSelection([new ImapMessageRange(1, null)], null)));
+                new ImapMessageSelection([new ImapMessageRange(1, null)], null))).ConfigureAwait(false);
             Assert.AreEqual(ImapMoveDisposition.SourceNotFound, denied.Disposition);
             var missing = await application.MoveMessagesAsync(new ImapMoveRequest(
                 userId, sourceId, "Missing", false,
-                new ImapMessageSelection([new ImapMessageRange(1, null)], null)));
+                new ImapMessageSelection([new ImapMessageRange(1, null)], null))).ConfigureAwait(false);
             Assert.AreEqual(ImapMoveDisposition.DestinationNotFound, missing.Disposition);
             var empty = await application.MoveMessagesAsync(new ImapMoveRequest(
                 userId, sourceId, "Archive", true,
-                new ImapMessageSelection([new ImapMessageRange(99, 99)], null)));
+                new ImapMessageSelection([new ImapMessageRange(99, 99)], null))).ConfigureAwait(false);
             Assert.AreEqual(ImapMoveDisposition.Moved, empty.Disposition);
             Assert.AreEqual(23, empty.DestinationUidValidity);
             Assert.IsEmpty(empty.SourceUids);
@@ -143,7 +148,7 @@ public sealed class ImapMovePostgresTests
             Assert.IsEmpty(empty.ExpungeSequenceNumbers);
             await Assert.ThrowsAsync<ArgumentException>(() => application.MoveMessagesAsync(
                 new ImapMoveRequest(userId, sourceId, "Archive", false,
-                    new ImapMessageSelection([new ImapMessageRange(0, 1)], null))));
+                    new ImapMessageSelection([new ImapMessageRange(0, 1)], null)))).ConfigureAwait(false);
             await database.Database.ExecuteSqlRawAsync(
                 """
                 CREATE FUNCTION reject_imap_move() RETURNS trigger AS $$
@@ -154,94 +159,100 @@ public sealed class ImapMovePostgresTests
                 CREATE TRIGGER reject_imap_move
                 BEFORE UPDATE ON emails
                 FOR EACH ROW EXECUTE FUNCTION reject_imap_move();
-                """);
+                """).ConfigureAwait(false);
         }
 
-        await using (var database = new EmailDbContext(options))
         {
+            var database = new EmailDbContext(options);
+            await using var databaseLifetime = database.ConfigureAwait(false);
             var application = CreateApplication(database);
             await Assert.ThrowsAsync<DbUpdateException>(() => application.MoveMessagesAsync(
                 new ImapMoveRequest(userId, sourceId, "Archive", false,
-                    new ImapMessageSelection([new ImapMessageRange(2, 2)], null))));
+                    new ImapMessageSelection([new ImapMessageRange(2, 2)], null)))).ConfigureAwait(false);
         }
-        await using (var database = new EmailDbContext(options))
         {
+            var database = new EmailDbContext(options);
+            await using var databaseLifetime = database.ConfigureAwait(false);
             Assert.AreEqual(sourceId, await database.Emails
                 .Where(message => message.Id == blobMessageId)
                 .Select(message => message.FolderId)
-                .SingleAsync());
-            Assert.AreEqual(0, await database.ExpungedUids.CountAsync());
+                .SingleAsync().ConfigureAwait(false));
+            Assert.AreEqual(0, await database.ExpungedUids.CountAsync().ConfigureAwait(false));
             Assert.AreEqual(3L, await database.Folders
                 .Where(folder => folder.Id == sourceId)
                 .Select(folder => folder.HighestModSeq)
-                .SingleAsync());
+                .SingleAsync().ConfigureAwait(false));
             Assert.AreEqual(10, await database.Folders
                 .Where(folder => folder.Id == destinationId)
                 .Select(folder => folder.NextUid)
-                .SingleAsync());
+                .SingleAsync().ConfigureAwait(false));
             await database.Database.ExecuteSqlRawAsync(
                 "DROP TRIGGER reject_imap_move ON emails; "
-                + "DROP FUNCTION reject_imap_move();");
+                + "DROP FUNCTION reject_imap_move();").ConfigureAwait(false);
         }
         Assert.AreEqual(1, objects.ObjectCount);
 
-        await using (var database = new EmailDbContext(options))
         {
+            var database = new EmailDbContext(options);
+            await using var databaseLifetime = database.ConfigureAwait(false);
             var application = CreateApplication(database);
             var moved = await application.MoveMessagesAsync(new ImapMoveRequest(
                 userId, sourceId, "Archive", false,
-                new ImapMessageSelection([new ImapMessageRange(2, 2)], null)));
+                new ImapMessageSelection([new ImapMessageRange(2, 2)], null))).ConfigureAwait(false);
             Assert.AreEqual(ImapMoveDisposition.Moved, moved.Disposition);
             Assert.AreEqual(23, moved.DestinationUidValidity);
-            CollectionAssert.AreEqual(new[] { 2 }, moved.SourceUids);
-            CollectionAssert.AreEqual(new[] { 10 }, moved.DestinationUids);
-            CollectionAssert.AreEqual(new[] { 2 }, moved.ExpungeSequenceNumbers);
+            CollectionAssert.AreEqual(ExpectedVector1, moved.SourceUids);
+            CollectionAssert.AreEqual(ExpectedVector2, moved.DestinationUids);
+            CollectionAssert.AreEqual(ExpectedVector1, moved.ExpungeSequenceNumbers);
         }
-        await using (var database = new EmailDbContext(options))
         {
-            var movedMessage = await database.Emails.SingleAsync(message => message.Id == blobMessageId);
+            var database = new EmailDbContext(options);
+            await using var databaseLifetime = database.ConfigureAwait(false);
+            var movedMessage = await database.Emails.SingleAsync(message => message.Id == blobMessageId).ConfigureAwait(false);
             Assert.AreEqual(destinationId, movedMessage.FolderId);
             Assert.AreEqual(10, movedMessage.Uid);
             Assert.AreEqual(6L, movedMessage.ModSeq);
-            Assert.AreEqual(objectName, movedMessage.RawMessageObjectName);
+            Assert.AreEqual(objectName, movedMessage.RawMessageObjectName, StringComparer.Ordinal);
             var effects = CreateEffects(objects);
             var content = new MailboxMessageContentService(objects, effects);
             CollectionAssert.AreEqual(rawMessage, await content.ReadAsync(
-                movedMessage, CancellationToken.None));
+                movedMessage, CancellationToken.None).ConfigureAwait(false));
             Assert.AreEqual(4L, await database.Folders
                 .Where(folder => folder.Id == sourceId)
                 .Select(folder => folder.HighestModSeq)
-                .SingleAsync());
+                .SingleAsync().ConfigureAwait(false));
             Assert.AreEqual(11, await database.Folders
                 .Where(folder => folder.Id == destinationId)
                 .Select(folder => folder.NextUid)
-                .SingleAsync());
+                .SingleAsync().ConfigureAwait(false));
         }
 
-        await using (var database = new EmailDbContext(options))
         {
+            var database = new EmailDbContext(options);
+            await using var databaseLifetime = database.ConfigureAwait(false);
             var application = CreateApplication(database);
             var moved = await application.MoveMessagesAsync(new ImapMoveRequest(
                 userId, sourceId, "Archive", true,
-                new ImapMessageSelection(null, [1, 3])));
-            CollectionAssert.AreEqual(new[] { 1, 3 }, moved.SourceUids);
-            CollectionAssert.AreEqual(new[] { 11, 12 }, moved.DestinationUids);
-            CollectionAssert.AreEqual(new[] { 1, 1 }, moved.ExpungeSequenceNumbers);
+                new ImapMessageSelection(null, [1, 3]))).ConfigureAwait(false);
+            CollectionAssert.AreEqual(ExpectedVector3, moved.SourceUids);
+            CollectionAssert.AreEqual(ExpectedVector4, moved.DestinationUids);
+            CollectionAssert.AreEqual(ExpectedVector5, moved.ExpungeSequenceNumbers);
         }
-        await using (var database = new EmailDbContext(options))
         {
+            var database = new EmailDbContext(options);
+            await using var databaseLifetime = database.ConfigureAwait(false);
             Assert.AreEqual(0, await database.Emails.CountAsync(
-                message => message.FolderId == sourceId));
-            CollectionAssert.AreEqual(new[] { 10, 11, 12 }, await database.Emails
+                message => message.FolderId == sourceId).ConfigureAwait(false));
+            CollectionAssert.AreEqual(ExpectedVector6, await database.Emails
                 .Where(message => message.FolderId == destinationId)
                 .OrderBy(message => message.Uid)
                 .Select(message => message.Uid)
-                .ToListAsync());
-            CollectionAssert.AreEqual(new[] { 1, 2, 3 }, await database.ExpungedUids
+                .ToListAsync().ConfigureAwait(false));
+            CollectionAssert.AreEqual(ExpectedVector7, await database.ExpungedUids
                 .Where(expunged => expunged.FolderId == sourceId)
                 .OrderBy(expunged => expunged.Uid)
                 .Select(expunged => expunged.Uid)
-                .ToListAsync());
+                .ToListAsync().ConfigureAwait(false));
         }
         Assert.AreEqual(1, objects.ObjectCount);
         Assert.AreEqual(0, objects.DeleteCount);
@@ -252,4 +263,11 @@ public sealed class ImapMovePostgresTests
 
     private static LargeObjectTransactionEffects CreateEffects(InMemoryLargeObjectStore objects) =>
         new(objects, NullLogger<LargeObjectTransactionEffects>.Instance);
+    private static readonly int[] ExpectedVector1 = new[] { 2 };
+    private static readonly int[] ExpectedVector2 = new[] { 10 };
+    private static readonly int[] ExpectedVector3 = new[] { 1, 3 };
+    private static readonly int[] ExpectedVector4 = new[] { 11, 12 };
+    private static readonly int[] ExpectedVector5 = new[] { 1, 1 };
+    private static readonly int[] ExpectedVector6 = new[] { 10, 11, 12 };
+    private static readonly int[] ExpectedVector7 = new[] { 1, 2, 3 };
 }

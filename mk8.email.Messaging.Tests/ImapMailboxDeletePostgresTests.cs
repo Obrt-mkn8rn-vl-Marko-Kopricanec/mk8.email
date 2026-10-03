@@ -10,13 +10,16 @@ namespace mk8.email.Messaging.Tests;
 
 [TestClass]
 [TestCategory("PostgreSQL")]
-public sealed class ImapMailboxDeletePostgresTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class ImapMailboxDeletePostgresTests
 {
     [TestMethod]
     [Timeout(20_000)]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The FailedCommitRetainsTheMessageBlobAndSuccessfulDeleteRemovesIt scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task FailedCommitRetainsTheMessageBlobAndSuccessfulDeleteRemovesIt()
     {
-        await using var server = await PostgresTestDatabase.TryCreateAsync();
+        var server = (await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false));
+        await using var serverLifetime = new NullableAsyncDisposable(server).ConfigureAwait(false);
         if (server is null)
         {
             Assert.Inconclusive("Set MK8_EMAIL_TEST_POSTGRES to a PostgreSQL admin connection string.");
@@ -29,10 +32,11 @@ public sealed class ImapMailboxDeletePostgresTests
         var userId = Guid.CreateVersion7();
         var folderId = Guid.CreateVersion7();
         var objects = new InMemoryLargeObjectStore();
-        await using (var database = new EmailDbContext(options))
         {
-            await database.Database.EnsureCreatedAsync();
-            await new MailRuntimeSchemaService(database).EnsureAsync();
+            var database = new EmailDbContext(options);
+            await using var databaseLifetime = database.ConfigureAwait(false);
+            await database.Database.EnsureCreatedAsync().ConfigureAwait(false);
+            await new MailRuntimeSchemaService(database).EnsureAsync().ConfigureAwait(false);
             var company = new CompanyDB
             {
                 Id = Guid.CreateVersion7(),
@@ -82,10 +86,10 @@ public sealed class ImapMailboxDeletePostgresTests
             var marker = effects.Mark();
             await content.SetAsync(message, Encoding.UTF8.GetBytes(
                 "From: sender@example.test\r\nTo: owner@example.test\r\nSubject: Blob cleanup\r\n\r\nBody\r\n"),
-                CancellationToken.None);
-            database.Emails.Add(message);
-            await database.SaveChangesAsync();
-            await effects.CommitAsync(marker);
+                CancellationToken.None).ConfigureAwait(false);
+            await (database.Emails.AddAsync(message)).ConfigureAwait(false);
+            await database.SaveChangesAsync().ConfigureAwait(false);
+            await effects.CommitAsync(marker).ConfigureAwait(false);
             Assert.AreEqual(1, objects.ObjectCount);
             Assert.IsNull(message.RawMessage);
 
@@ -99,11 +103,12 @@ public sealed class ImapMailboxDeletePostgresTests
                 CREATE TRIGGER reject_imap_mailbox_delete
                 BEFORE DELETE ON folders
                 FOR EACH ROW EXECUTE FUNCTION reject_imap_mailbox_delete();
-                """);
+                """).ConfigureAwait(false);
         }
 
-        await using (var database = new EmailDbContext(options))
         {
+            var database = new EmailDbContext(options);
+            await using var databaseLifetime = database.ConfigureAwait(false);
             var effects = CreateEffects(objects);
             var application = new ImapApplicationService(
                 null!, null!, database,
@@ -111,20 +116,22 @@ public sealed class ImapMailboxDeletePostgresTests
                 effects,
                 NullLogger<ImapApplicationService>.Instance);
             await Assert.ThrowsAsync<DbUpdateException>(() => application.DeleteMailboxAsync(
-                new ImapMailboxDeleteRequest(userId, "Projects")));
+                new ImapMailboxDeleteRequest(userId, "Projects"))).ConfigureAwait(false);
         }
         Assert.AreEqual(1, objects.ObjectCount);
-        await using (var database = new EmailDbContext(options))
         {
-            Assert.AreEqual(1, await database.Folders.CountAsync(folder => folder.Id == folderId));
-            Assert.AreEqual(1, await database.Emails.CountAsync(email => email.FolderId == folderId));
+            var database = new EmailDbContext(options);
+            await using var databaseLifetime = database.ConfigureAwait(false);
+            Assert.AreEqual(1, await database.Folders.CountAsync(folder => folder.Id == folderId).ConfigureAwait(false));
+            Assert.AreEqual(1, await database.Emails.CountAsync(email => email.FolderId == folderId).ConfigureAwait(false));
             await database.Database.ExecuteSqlRawAsync(
                 "DROP TRIGGER reject_imap_mailbox_delete ON folders; "
-                + "DROP FUNCTION reject_imap_mailbox_delete();");
+                + "DROP FUNCTION reject_imap_mailbox_delete();").ConfigureAwait(false);
         }
 
-        await using (var database = new EmailDbContext(options))
         {
+            var database = new EmailDbContext(options);
+            await using var databaseLifetime = database.ConfigureAwait(false);
             var effects = CreateEffects(objects);
             var application = new ImapApplicationService(
                 null!, null!, database,
@@ -132,16 +139,17 @@ public sealed class ImapMailboxDeletePostgresTests
                 effects,
                 NullLogger<ImapApplicationService>.Instance);
             var deleted = await application.DeleteMailboxAsync(
-                new ImapMailboxDeleteRequest(userId, "Projects"));
+                new ImapMailboxDeleteRequest(userId, "Projects")).ConfigureAwait(false);
             Assert.AreEqual(ImapMailboxDeleteDisposition.Deleted, deleted.Disposition);
             Assert.AreEqual(folderId, deleted.FolderId);
         }
         Assert.AreEqual(0, objects.ObjectCount);
         Assert.AreEqual(1, objects.DeleteCount);
-        await using (var database = new EmailDbContext(options))
         {
-            Assert.AreEqual(0, await database.Folders.CountAsync(folder => folder.Id == folderId));
-            Assert.AreEqual(0, await database.Emails.CountAsync(email => email.FolderId == folderId));
+            var database = new EmailDbContext(options);
+            await using var databaseLifetime = database.ConfigureAwait(false);
+            Assert.AreEqual(0, await database.Folders.CountAsync(folder => folder.Id == folderId).ConfigureAwait(false));
+            Assert.AreEqual(0, await database.Emails.CountAsync(email => email.FolderId == folderId).ConfigureAwait(false));
         }
     }
 

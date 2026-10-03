@@ -9,7 +9,8 @@ using mk8.email.Jmap;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class GatewayBlobCopyCodecTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class GatewayBlobCopyCodecTests
 {
     private const string SourceAccountId = "A11111111111111111111111111111111";
     private const string TargetAccountId = "A22222222222222222222222222222222";
@@ -37,10 +38,10 @@ public sealed class GatewayBlobCopyCodecTests
                 [new MailBlobCopyItemResult(SourceBlobId, MailBlobCopyItemStatus.Copied, CopiedBlobId),
                  new MailBlobCopyItemResult(MissingBlobId, MailBlobCopyItemStatus.NotFound, null)]));
         Assert.AreEqual(MailOperationKind.CopyBinaryObjects, rendered.Operation);
-        Assert.AreEqual(SourceAccountId, rendered.Data["fromAccountId"]!.GetValue<string>());
-        Assert.AreEqual(TargetAccountId, rendered.Data["accountId"]!.GetValue<string>());
-        Assert.AreEqual(CopiedBlobId, rendered.Data["copied"]![SourceBlobId]!.GetValue<string>());
-        Assert.AreEqual("notFound", rendered.Data["notCopied"]![MissingBlobId]!["type"]!.GetValue<string>());
+        Assert.AreEqual(SourceAccountId, rendered.Data["fromAccountId"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual(TargetAccountId, rendered.Data["accountId"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual(CopiedBlobId, rendered.Data["copied"]![SourceBlobId]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("notFound", rendered.Data["notCopied"]![MissingBlobId]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.HasCount(1, rendered.Data["copied"]!.AsObject());
         Assert.HasCount(1, rendered.Data["notCopied"]!.AsObject());
     }
@@ -59,37 +60,38 @@ public sealed class GatewayBlobCopyCodecTests
         Assert.AreEqual(Guid.Empty, call.Command.AccountId);
         var sourceError = GatewayBlobCopyCodec.Render(call,
             new MailBlobCopyResult(MailBlobCopyStatus.FromAccountNotFound, []));
-        Assert.AreEqual("fromAccountNotFound", sourceError.Data["type"]!.GetValue<string>());
+        Assert.AreEqual("fromAccountNotFound", sourceError.Data["type"]!.GetValue<string>(), StringComparer.Ordinal);
 
         arguments["fromAccountId"] = SourceAccountId;
         Assert.IsTrue(GatewayBlobCopyCodec.TryParse(arguments, 1, out call, out _));
         Assert.AreEqual(Guid.Empty, call!.Command.AccountId);
         var targetError = GatewayBlobCopyCodec.Render(call,
             new MailBlobCopyResult(MailBlobCopyStatus.AccountNotFound, []));
-        Assert.AreEqual("accountNotFound", targetError.Data["type"]!.GetValue<string>());
+        Assert.AreEqual("accountNotFound", targetError.Data["type"]!.GetValue<string>(), StringComparer.Ordinal);
         arguments["accountId"] = SourceAccountId;
         Assert.IsFalse(GatewayBlobCopyCodec.TryParse(arguments, 1, out _, out var failure));
-        Assert.AreEqual("invalidArguments", failure);
+        Assert.AreEqual("invalidArguments", failure, StringComparer.Ordinal);
         arguments["accountId"] = TargetAccountId;
         arguments["blobIds"] = new JsonArray("invalid/id");
         Assert.IsFalse(GatewayBlobCopyCodec.TryParse(arguments, 1, out _, out failure));
-        Assert.AreEqual("invalidArguments", failure);
+        Assert.AreEqual("invalidArguments", failure, StringComparer.Ordinal);
         arguments["blobIds"] = new JsonArray(SourceBlobId, MissingBlobId);
         Assert.IsFalse(GatewayBlobCopyCodec.TryParse(arguments, 1, out _, out failure));
-        Assert.AreEqual("requestTooLarge", failure);
+        Assert.AreEqual("requestTooLarge", failure, StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task WorkerAuthorizesSourceBeforeTargetAndRejectsMalformedCommands()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         using var scope = fixture.Services.CreateScope();
         var service = scope.ServiceProvider.GetRequiredService<IMailBlobCopyService>();
         var missingSource = await service.CopyAsync(new MailBlobCopyCommand(Guid.NewGuid(), fixture.InboxId, []),
-            fixture.User, CancellationToken.None);
+            fixture.User, CancellationToken.None).ConfigureAwait(false);
         Assert.AreEqual(MailBlobCopyStatus.FromAccountNotFound, missingSource.Status);
         var missingTarget = await service.CopyAsync(new MailBlobCopyCommand(fixture.InboxId, Guid.NewGuid(), []),
-            fixture.User, CancellationToken.None);
+            fixture.User, CancellationToken.None).ConfigureAwait(false);
         Assert.AreEqual(MailBlobCopyStatus.AccountNotFound, missingTarget.Status);
 
         var processor = scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>();
@@ -100,11 +102,11 @@ public sealed class GatewayBlobCopyCodecTests
                 ["accountId"] = Guid.NewGuid().ToString(),
                 ["blobIds"] = new JsonArray(SourceBlobId),
                 ["extra"] = true,
-            }, new Dictionary<string, string>());
+            }, new Dictionary<string, string>(StringComparer.Ordinal));
         var failure = await Assert.ThrowsAsync<MailApplicationException>(() =>
-            processor.ExecuteAsync(malformed, fixture.User, null));
+            processor.ExecuteAsync(malformed, fixture.User, null)).ConfigureAwait(false);
         Assert.AreEqual(MailFailureKind.MalformedBatch, failure.Failure.Kind);
         var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-        Assert.AreEqual(0, await database.JmapBlobs.CountAsync());
+        Assert.AreEqual(0, await database.JmapBlobs.CountAsync().ConfigureAwait(false));
     }
 }

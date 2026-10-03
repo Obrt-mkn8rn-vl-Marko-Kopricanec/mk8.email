@@ -7,44 +7,54 @@ namespace mk8.email.Messaging.Tests;
 
 [TestClass]
 [TestCategory("PostgreSQL")]
-public sealed class PostgresBlobDeletionBarrierTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class PostgresBlobDeletionBarrierTests
 {
     [TestMethod]
     public async Task ExclusiveBackupLeaseBlocksPhysicalDeletionButNotBlobReads()
     {
-        await using var database = await RequirePostgresAsync();
-        await using var backupSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await using var applicationSource = NpgsqlDataSource.Create(database.ConnectionString);
+        var database = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        var backupSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var backupSourceLifetime = backupSource.ConfigureAwait(false);
+        var applicationSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var applicationSourceLifetime = applicationSource.ConfigureAwait(false);
         var raw = new InMemoryLargeObjectStore();
         var coordinated = new PostgresCoordinatedLargeObjectStore(applicationSource, raw);
         var content = "backup keeps these bytes"u8.ToArray();
         var sha256 = Convert.ToHexStringLower(SHA256.HashData(content));
-        await using var upload = new MemoryStream(content, writable: false);
+        var upload = new MemoryStream(content, writable: false);
+        await using var uploadLifetime = upload.ConfigureAwait(false);
         var written = await coordinated.PutIfAbsentAsync(
-            "backup/live", upload, content.LongLength, sha256, "text/plain");
+            "backup/live", upload, content.LongLength, sha256, "text/plain").ConfigureAwait(false);
 
-        await using var lease = await PostgresBlobDeletionBarrier.AcquireExclusiveAsync(backupSource);
+        var lease = (await PostgresBlobDeletionBarrier.AcquireExclusiveAsync(backupSource).ConfigureAwait(false));
+        await using var leaseLifetime = lease.ConfigureAwait(false);
         var deletion = coordinated.DeleteIfMatchAsync(written.Reference);
-        await WaitForAdvisoryWaitAsync(backupSource);
+        await WaitForAdvisoryWaitAsync(backupSource).ConfigureAwait(false);
         Assert.IsFalse(deletion.IsCompleted);
 
-        await using (var copied = new MemoryStream())
         {
-            await coordinated.CopyToAsync(written.Reference, copied);
+            var copied = new MemoryStream();
+            await using var copiedLifetime = copied.ConfigureAwait(false);
+            await coordinated.CopyToAsync(written.Reference, copied).ConfigureAwait(false);
             CollectionAssert.AreEqual(content, copied.ToArray());
         }
 
-        await lease.DisposeAsync();
-        Assert.IsTrue(await deletion.WaitAsync(TimeSpan.FromSeconds(5)));
+        await lease.DisposeAsync().ConfigureAwait(false);
+        Assert.IsTrue(await deletion.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false));
         Assert.AreEqual(0, raw.ObjectCount);
     }
 
     [TestMethod]
     public async Task BackupLeaseWaitsForEarlierPhysicalDeletionToFinish()
     {
-        await using var database = await RequirePostgresAsync();
-        await using var backupSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await using var applicationSource = NpgsqlDataSource.Create(database.ConnectionString);
+        var database = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        var backupSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var backupSourceLifetime = backupSource.ConfigureAwait(false);
+        var applicationSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var applicationSourceLifetime = applicationSource.ConfigureAwait(false);
         var inner = new BlockingDeleteStore();
         var coordinated = new PostgresCoordinatedLargeObjectStore(applicationSource, inner);
         var reference = new LargeObjectReference(
@@ -52,29 +62,36 @@ public sealed class PostgresBlobDeletionBarrierTests
             new string('a', 64), "etag");
 
         var deletion = coordinated.DeleteIfMatchAsync(reference);
-        await inner.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await inner.Started.Task.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+        // Finally releases the test gate, joins this task and disposes its returned lease before either source lifetime ends.
+#pragma warning disable CA2025
         var acquiring = PostgresBlobDeletionBarrier.AcquireExclusiveAsync(backupSource);
+#pragma warning restore CA2025
         try
         {
-            await WaitForAdvisoryWaitAsync(backupSource);
+            await WaitForAdvisoryWaitAsync(backupSource).ConfigureAwait(false);
             Assert.IsFalse(acquiring.IsCompleted);
         }
         finally
         {
             inner.Release.TrySetResult(true);
+            Assert.IsTrue(await deletion.ConfigureAwait(false));
+            var lease = await acquiring.ConfigureAwait(false);
+            await lease.DisposeAsync().ConfigureAwait(false);
         }
 
-        Assert.IsTrue(await deletion.WaitAsync(TimeSpan.FromSeconds(5)));
-        await using var lease = await acquiring.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.IsTrue(inner.Finished);
     }
 
     [TestMethod]
     public async Task FailedPhysicalDeletionReleasesSharedLease()
     {
-        await using var database = await RequirePostgresAsync();
-        await using var backupSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await using var applicationSource = NpgsqlDataSource.Create(database.ConnectionString);
+        var database = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        var backupSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var backupSourceLifetime = backupSource.ConfigureAwait(false);
+        var applicationSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var applicationSourceLifetime = applicationSource.ConfigureAwait(false);
         var coordinated = new PostgresCoordinatedLargeObjectStore(
             applicationSource, new ThrowingDeleteStore());
         var reference = new LargeObjectReference(
@@ -82,9 +99,10 @@ public sealed class PostgresBlobDeletionBarrierTests
             new string('a', 64), "etag");
 
         await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
-            coordinated.DeleteIfMatchAsync(reference));
-        await using var lease = await PostgresBlobDeletionBarrier
-            .AcquireExclusiveAsync(backupSource).WaitAsync(TimeSpan.FromSeconds(5));
+            coordinated.DeleteIfMatchAsync(reference)).ConfigureAwait(false);
+        var lease = (await PostgresBlobDeletionBarrier
+            .AcquireExclusiveAsync(backupSource).WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false));
+        await using var leaseLifetime = lease.ConfigureAwait(false);
     }
 
     private static async Task WaitForAdvisoryWaitAsync(NpgsqlDataSource source)
@@ -92,17 +110,19 @@ public sealed class PostgresBlobDeletionBarrierTests
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
         while (DateTime.UtcNow < deadline)
         {
-            await using var connection = await source.OpenConnectionAsync();
-            await using var command = connection.CreateCommand();
+            var connection = (await source.OpenConnectionAsync().ConfigureAwait(false));
+            await using var connectionLifetime = connection.ConfigureAwait(false);
+            var command = connection.CreateCommand();
+            await using var commandLifetime = command.ConfigureAwait(false);
             command.CommandText = """
                 SELECT count(*) FROM pg_stat_activity
                 WHERE datname = current_database()
                     AND wait_event_type = 'Lock'
                     AND wait_event = 'advisory'
                 """;
-            if ((long)(await command.ExecuteScalarAsync())! > 0)
+            if ((long)(await command.ExecuteScalarAsync().ConfigureAwait(false))! > 0)
                 return;
-            await Task.Delay(20);
+            await Task.Delay(20).ConfigureAwait(false);
         }
 
         Assert.Fail("No PostgreSQL session waited on the Blob deletion barrier.");
@@ -110,7 +130,7 @@ public sealed class PostgresBlobDeletionBarrierTests
 
     private static async Task<PostgresTestDatabase> RequirePostgresAsync()
     {
-        var database = await PostgresTestDatabase.TryCreateAsync();
+        var database = await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false);
         if (database is null)
             Assert.Inconclusive("Set MK8_EMAIL_TEST_POSTGRES.");
         return database!;
@@ -147,7 +167,7 @@ public sealed class PostgresBlobDeletionBarrierTests
             CancellationToken cancellationToken = default)
         {
             Started.TrySetResult(true);
-            await Release.Task.WaitAsync(cancellationToken);
+            await Release.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
             Finished = true;
             return true;
         }

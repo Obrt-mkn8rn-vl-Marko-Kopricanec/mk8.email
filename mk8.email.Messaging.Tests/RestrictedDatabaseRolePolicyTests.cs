@@ -9,7 +9,8 @@ namespace mk8.email.Messaging.Tests;
 [TestClass]
 [DoNotParallelize]
 [TestCategory("PostgreSQL")]
-public sealed class RestrictedDatabaseRolePolicyTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class RestrictedDatabaseRolePolicyTests
 {
     [TestMethod]
     [DataRow("gateway", "private-column")]
@@ -74,16 +75,18 @@ public sealed class RestrictedDatabaseRolePolicyTests
     [DataRow("wake", "column-reference")]
     public async Task RestrictedRoleRejectsAuthorityOutsideItsScopeWithoutChangingIt(string kind, string violation)
     {
-        await using var fixture = await Fixture.CreateAsync(kind);
-        await fixture.ProbeAsync();
-        await using var mutation = fixture.Admin.CreateCommand(fixture.Violation(violation));
-        await mutation.ExecuteNonQueryAsync();
-        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => fixture.ProbeAsync());
-        if (kind == "wake")
+        var fixture = (await Fixture.CreateAsync(kind).ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
+        await fixture.ProbeAsync().ConfigureAwait(false);
+        var mutation = fixture.Admin.CreateCommand(fixture.Violation(violation));
+        await using var mutationLifetime = mutation.ConfigureAwait(false);
+        await mutation.ExecuteNonQueryAsync().ConfigureAwait(false);
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => fixture.ProbeAsync()).ConfigureAwait(false);
+        if (string.Equals(kind, "wake", StringComparison.Ordinal))
             await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
-                WorkerWakeSchemaTransition.EnableAsync(fixture.Admin, fixture.Role));
+                WorkerWakeSchemaTransition.EnableAsync(fixture.Admin, fixture.Role)).ConfigureAwait(false);
         // Rejection is observational: it must not repair privileges or rotate a role.
-        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => fixture.ProbeAsync());
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => fixture.ProbeAsync()).ConfigureAwait(false);
     }
 
     [TestMethod]
@@ -91,14 +94,16 @@ public sealed class RestrictedDatabaseRolePolicyTests
     [DataRow("wake")]
     public async Task SessionSettingsCannotSpoofTheAuditedRoleOrPolicy(string kind)
     {
-        await using var fixture = await Fixture.CreateAsync(kind);
+        var fixture = (await Fixture.CreateAsync(kind).ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var spoof = new NpgsqlConnectionStringBuilder(fixture.Database.ConnectionString)
         { Options = $"-c mk8.restricted_role={fixture.Role} -c mk8.restricted_role_kind={kind}" };
-        await using var elevated = NpgsqlDataSource.Create(spoof.ConnectionString);
-        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => kind == "gateway"
-            ? GatewayDatabasePrivilegeProbe.ProbeAsync(elevated)
-            : WorkerWakeDatabasePrivilegeProbe.ProbeAsync(elevated));
-        await fixture.ProbeAsync();
+        var elevated = NpgsqlDataSource.Create(spoof.ConnectionString);
+        await using var elevatedLifetime = elevated.ConfigureAwait(false);
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => string.Equals(kind, "gateway"
+, StringComparison.Ordinal) ? GatewayDatabasePrivilegeProbe.ProbeAsync(elevated)
+            : WorkerWakeDatabasePrivilegeProbe.ProbeAsync(elevated)).ConfigureAwait(false);
+        await fixture.ProbeAsync().ConfigureAwait(false);
     }
 
     [TestMethod]
@@ -106,19 +111,22 @@ public sealed class RestrictedDatabaseRolePolicyTests
     [DataRow("wake")]
     public async Task BuiltInPublicRoutineAndTypeDefaultsDoNotGiveAdditionalAuthority(string kind)
     {
-        await using var fixture = await Fixture.CreateAsync(kind);
-        await using var setup = fixture.Admin.CreateCommand("""
+        var fixture = (await Fixture.CreateAsync(kind).ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
+        var setup = fixture.Admin.CreateCommand("""
             ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO PUBLIC;
             ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE ON TYPES TO PUBLIC;
             CREATE FUNCTION harmless_policy_invoker() RETURNS integer LANGUAGE sql AS 'SELECT 1';
             CREATE TYPE harmless_policy_type AS ENUM ('a');
             """);
-        await setup.ExecuteNonQueryAsync();
-        await using var builtIn = fixture.Admin.CreateCommand(
+        await using var setupLifetime = setup.ConfigureAwait(false);
+        await setup.ExecuteNonQueryAsync().ConfigureAwait(false);
+        var builtIn = fixture.Admin.CreateCommand(
             "SELECT has_table_privilege(@role, 'pg_catalog.pg_settings', 'UPDATE')");
+        await using var builtInLifetime = builtIn.ConfigureAwait(false);
         builtIn.Parameters.AddWithValue("role", fixture.Role);
-        Assert.IsTrue(await builtIn.ExecuteScalarAsync() is true);
-        await fixture.ProbeAsync();
+        Assert.IsTrue(await builtIn.ExecuteScalarAsync().ConfigureAwait(false) is true);
+        await fixture.ProbeAsync().ConfigureAwait(false);
     }
 
     [TestMethod]
@@ -128,24 +136,34 @@ public sealed class RestrictedDatabaseRolePolicyTests
     [DataRow("wake", "SESSION AUTHORIZATION")]
     public async Task ElevatedLoginCannotPassBySwitchingToARestrictedIdentity(string kind, string switchKind)
     {
-        await using var fixture = await Fixture.CreateAsync(kind);
+        var fixture = (await Fixture.CreateAsync(kind).ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var builder = new NpgsqlDataSourceBuilder(fixture.Database.ConnectionString);
         var switchedIdentity = false;
         builder.UsePhysicalConnectionInitializer(_ => throw new NotSupportedException("Async initialization is required."),
             async connection =>
             {
-                await using var command = new NpgsqlCommand($"SET {switchKind} \"{fixture.Role}\"", connection);
-                await command.ExecuteNonQueryAsync();
-                await using var identity = new NpgsqlCommand("SELECT current_user", connection);
-                Assert.AreEqual(fixture.Role, await identity.ExecuteScalarAsync());
+
+                // Only fixed DataRow SQL grammar and GUID-generated quoted fixture role names reach this test-only command.
+#pragma warning disable CA2100
+                var command = new NpgsqlCommand($"SET {switchKind} \"{fixture.Role}\"", connection);
+
+#pragma warning restore CA2100
+
+                await using var commandLifetime = command.ConfigureAwait(false);
+                await command.ExecuteNonQueryAsync().ConfigureAwait(false);
+                var identity = new NpgsqlCommand("SELECT current_user", connection);
+                await using var identityLifetime = identity.ConfigureAwait(false);
+                Assert.AreEqual(fixture.Role, await identity.ExecuteScalarAsync().ConfigureAwait(false));
                 switchedIdentity = true;
             });
-        await using var switched = builder.Build();
-        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => kind == "gateway"
-            ? GatewayDatabasePrivilegeProbe.ProbeAsync(switched)
-            : WorkerWakeDatabasePrivilegeProbe.ProbeAsync(switched));
+        var switched = builder.Build();
+        await using var switchedLifetime = switched.ConfigureAwait(false);
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => string.Equals(kind, "gateway"
+, StringComparison.Ordinal) ? GatewayDatabasePrivilegeProbe.ProbeAsync(switched)
+            : WorkerWakeDatabasePrivilegeProbe.ProbeAsync(switched)).ConfigureAwait(false);
         Assert.IsTrue(switchedIdentity);
-        await fixture.ProbeAsync();
+        await fixture.ProbeAsync().ConfigureAwait(false);
     }
 
     private sealed class Fixture(PostgresTestDatabase database, NpgsqlDataSource admin, NpgsqlDataSource restricted,
@@ -154,8 +172,8 @@ public sealed class RestrictedDatabaseRolePolicyTests
         internal PostgresTestDatabase Database { get; } = database;
         internal NpgsqlDataSource Admin { get; } = admin;
         internal string Role { get; } = role;
-        internal Task ProbeAsync() => kind == "gateway"
-            ? GatewayDatabasePrivilegeProbe.ProbeAsync(restricted)
+        internal Task ProbeAsync() => string.Equals(kind, "gateway"
+, StringComparison.Ordinal) ? GatewayDatabasePrivilegeProbe.ProbeAsync(restricted)
             : WorkerWakeDatabasePrivilegeProbe.ProbeAsync(restricted);
 
         internal string Violation(string violation) => violation switch
@@ -174,8 +192,8 @@ public sealed class RestrictedDatabaseRolePolicyTests
             "control-maintenance" => $"GRANT MAINTAIN ON application_requests TO \"{Role}\"",
             "connect-delegation" => $"GRANT CONNECT ON DATABASE \"{Database.DatabaseName}\" TO \"{Role}\" WITH GRANT OPTION",
             "schema-delegation" => $"GRANT USAGE ON SCHEMA public TO \"{Role}\" WITH GRANT OPTION",
-            "data-delegation" => kind == "gateway"
-                ? $"GRANT SELECT ON application_requests TO \"{Role}\" WITH GRANT OPTION"
+            "data-delegation" => string.Equals(kind, "gateway"
+, StringComparison.Ordinal) ? $"GRANT SELECT ON application_requests TO \"{Role}\" WITH GRANT OPTION"
                 : $"GRANT SELECT (state) ON application_requests TO \"{Role}\" WITH GRANT OPTION",
             "future-role-data" => $"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO \"{Role}\"",
             "future-public-data" => "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO PUBLIC",
@@ -190,81 +208,134 @@ public sealed class RestrictedDatabaseRolePolicyTests
             "large-object" => $"SELECT lo_from_bytea(0, 'secret'::bytea) AS oid; DO $grant$ DECLARE id oid; BEGIN SELECT oid INTO id FROM pg_largeobject_metadata; EXECUTE format('GRANT SELECT ON LARGE OBJECT %s TO %I', id, '{Role}'); END $grant$",
             "inheritance" => $"ALTER ROLE \"{Role}\" INHERIT",
             "foreign-server" => $"CREATE FOREIGN DATA WRAPPER private_policy_wrapper; CREATE SERVER private_policy_server FOREIGN DATA WRAPPER private_policy_wrapper; GRANT USAGE ON FOREIGN SERVER private_policy_server TO \"{Role}\"",
-            "control-column-write" => kind == "gateway"
-                ? $"GRANT UPDATE (sequence) ON gateway_traffic_records TO \"{Role}\""
+            "control-column-write" => string.Equals(kind, "gateway"
+, StringComparison.Ordinal) ? $"GRANT UPDATE (sequence) ON gateway_traffic_records TO \"{Role}\""
                 : $"GRANT UPDATE (state) ON application_requests TO \"{Role}\"",
             "column-reference" => $"GRANT REFERENCES (state) ON application_requests TO \"{Role}\"",
             _ => throw new ArgumentOutOfRangeException(nameof(violation)),
         };
 
+
         internal static async Task<Fixture> CreateAsync(string kind)
         {
-            var database = await PostgresTestDatabase.TryCreateAsync();
+            var database = await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false);
             if (database is null) Assert.Inconclusive("PostgreSQL is required.");
-            var admin = NpgsqlDataSource.Create(database!.ConnectionString);
+            NpgsqlDataSource? admin = null;
+            NpgsqlDataSource? restrictedSource = null;
             var role = $"mk8_policy_{kind}_{Guid.NewGuid():N}";
-            var connection = new NpgsqlConnectionStringBuilder(database.ConnectionString)
-            { Username = role, Password = "test-only" };
-            var restricted = NpgsqlDataSource.Create(connection.ConnectionString);
-            var fixture = new Fixture(database, admin, restricted, role, kind);
             try
             {
-                await using (var context = new EmailDbContext(new DbContextOptionsBuilder<EmailDbContext>()
-                                 .UseNpgsql(database.ConnectionString).Options))
-                    await context.Database.EnsureCreatedAsync();
-                await PostgresMessagingSchema.EnsureAsync(admin);
-                await using var setup = admin.CreateCommand($"""
-                    REVOKE ALL ON DATABASE "{database.DatabaseName}" FROM PUBLIC;
-                    REVOKE CREATE ON SCHEMA public FROM PUBLIC;
-                    CREATE TABLE private_policy_state (secret text);
-                    CREATE ROLE "{role}" LOGIN PASSWORD 'test-only' NOINHERIT;
-                    GRANT CONNECT ON DATABASE "{database.DatabaseName}" TO "{role}";
-                    GRANT USAGE ON SCHEMA public TO "{role}";
-                    """);
-                await setup.ExecuteNonQueryAsync();
-                var grant = kind == "gateway" ? $"""
-                    GRANT SELECT, INSERT ON gateway_traffic_records TO "{role}";
-                    GRANT SELECT, INSERT, UPDATE ON application_requests, presentation_requests TO "{role}";
-                    GRANT SELECT, INSERT, UPDATE, DELETE ON pop3_maildrop_leases TO "{role}";
-                    """ : $"""
-                    GRANT SELECT (state, lease_expires_at, deadline_at) ON application_requests TO "{role}";
-                    GRANT SELECT (effects_pending, effects_retry_at) ON application_operation_receipts TO "{role}";
-                    GRANT SELECT (state, next_attempt_at, lease_expires_at) ON mail_queue_messages TO "{role}";
-                    GRANT SELECT (expires_at, is_verified, next_push_at, user_id, last_pushed_change) ON jmap_push_subscriptions TO "{role}";
-                    GRANT SELECT (id, is_active) ON users TO "{role}";
-                    GRANT SELECT (id, owner_id, alias_for_inbox_id, name, address_id) ON inboxes TO "{role}";
-                    GRANT SELECT (id, company_id, is_active) ON addresses TO "{role}";
-                    GRANT SELECT (id, is_active) ON companies TO "{role}";
-                    GRANT SELECT (account_id, sequence) ON jmap_changes TO "{role}";
-                    """;
-                await using var allowed = admin.CreateCommand(grant);
-                await allowed.ExecuteNonQueryAsync();
+
+                // The returned fixture owns this allocation; finally releases untransferred resources if initialization fails.
+#pragma warning disable CA2000
+                admin = NpgsqlDataSource.Create(database!.ConnectionString);
+
+#pragma warning restore CA2000
+                var connection = new NpgsqlConnectionStringBuilder(database.ConnectionString)
+                { Username = role, Password = "test-only" };
+
+                // The returned fixture owns this allocation; finally releases untransferred resources if initialization fails.
+#pragma warning disable CA2000
+                restrictedSource = NpgsqlDataSource.Create(connection.ConnectionString);
+
+#pragma warning restore CA2000
+
+                // The returned fixture owns this allocation; finally releases untransferred resources if initialization fails.
+#pragma warning disable CA2000
+                var fixture = new Fixture(database, admin, restrictedSource, role, kind);
+
+#pragma warning restore CA2000
+                await InitializeAsync(fixture, kind).ConfigureAwait(false);
+                admin = null;
+                restrictedSource = null;
+                database = null;
                 return fixture;
             }
-            catch
+            finally
             {
-                await fixture.DisposeAsync();
-                throw;
+                if (restrictedSource is not null) await restrictedSource.DisposeAsync().ConfigureAwait(false);
+                try
+                {
+                    if (admin is not null) await DeleteRoleAsync(admin, role).ConfigureAwait(false);
+                }
+                finally
+                {
+                    if (admin is not null) await admin.DisposeAsync().ConfigureAwait(false);
+                    if (database is not null) await database.DisposeAsync().ConfigureAwait(false);
+                }
             }
+        }
+
+        private static async Task InitializeAsync(Fixture fixture, string kind)
+        {
+            {
+                var context = new EmailDbContext(new DbContextOptionsBuilder<EmailDbContext>()
+                             .UseNpgsql(fixture.Database.ConnectionString).Options);
+                await using var contextLifetime = context.ConfigureAwait(false);
+                await context.Database.EnsureCreatedAsync().ConfigureAwait(false);
+            }
+            await PostgresMessagingSchema.EnsureAsync(fixture.Admin).ConfigureAwait(false);
+            var setup = fixture.Admin.CreateCommand($"""
+                    REVOKE ALL ON DATABASE "{fixture.Database.DatabaseName}" FROM PUBLIC;
+                    REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+                    CREATE TABLE private_policy_state (secret text);
+                    CREATE ROLE "{fixture.Role}" LOGIN PASSWORD 'test-only' NOINHERIT;
+                    GRANT CONNECT ON DATABASE "{fixture.Database.DatabaseName}" TO "{fixture.Role}";
+                    GRANT USAGE ON SCHEMA public TO "{fixture.Role}";
+                    """);
+            await using var setupLifetime = setup.ConfigureAwait(false);
+            await setup.ExecuteNonQueryAsync().ConfigureAwait(false);
+            var grant = string.Equals(kind, "gateway", StringComparison.Ordinal) ? $"""
+                    GRANT SELECT, INSERT ON gateway_traffic_records TO "{fixture.Role}";
+                    GRANT SELECT, INSERT, UPDATE ON application_requests, presentation_requests TO "{fixture.Role}";
+                    GRANT SELECT, INSERT, UPDATE, DELETE ON pop3_maildrop_leases TO "{fixture.Role}";
+                    """ : $"""
+                    GRANT SELECT (state, lease_expires_at, deadline_at) ON application_requests TO "{fixture.Role}";
+                    GRANT SELECT (effects_pending, effects_retry_at) ON application_operation_receipts TO "{fixture.Role}";
+                    GRANT SELECT (state, next_attempt_at, lease_expires_at) ON mail_queue_messages TO "{fixture.Role}";
+                    GRANT SELECT (expires_at, is_verified, next_push_at, user_id, last_pushed_change) ON jmap_push_subscriptions TO "{fixture.Role}";
+                    GRANT SELECT (id, is_active) ON users TO "{fixture.Role}";
+                    GRANT SELECT (id, owner_id, alias_for_inbox_id, name, address_id) ON inboxes TO "{fixture.Role}";
+                    GRANT SELECT (id, company_id, is_active) ON addresses TO "{fixture.Role}";
+                    GRANT SELECT (id, is_active) ON companies TO "{fixture.Role}";
+                    GRANT SELECT (account_id, sequence) ON jmap_changes TO "{fixture.Role}";
+                    """;
+            var allowed = fixture.Admin.CreateCommand(grant);
+            await using var allowedLifetime = allowed.ConfigureAwait(false);
+            await allowed.ExecuteNonQueryAsync().ConfigureAwait(false);
+
+        }
+
+        private static async Task DeleteRoleAsync(NpgsqlDataSource admin, string role)
+        {
+            var exists = admin.CreateCommand("SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = @role)");
+            await using var existsLifetime = exists.ConfigureAwait(false);
+            exists.Parameters.AddWithValue("role", role);
+            if (await exists.ExecuteScalarAsync().ConfigureAwait(false) is not true) return;
+            var cleanup = admin.CreateCommand($"DROP OWNED BY \"{role}\"; DROP ROLE \"{role}\"");
+            await using var cleanupLifetime = cleanup.ConfigureAwait(false);
+            await cleanup.ExecuteNonQueryAsync().ConfigureAwait(false);
         }
 
         public async ValueTask DisposeAsync()
         {
-            await restricted.DisposeAsync();
+            await restricted.DisposeAsync().ConfigureAwait(false);
             try
             {
-                await using var exists = Admin.CreateCommand("SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = @role)");
+                var exists = Admin.CreateCommand("SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = @role)");
+                await using var existsLifetime = exists.ConfigureAwait(false);
                 exists.Parameters.AddWithValue("role", Role);
-                if (await exists.ExecuteScalarAsync() is true)
+                if (await exists.ExecuteScalarAsync().ConfigureAwait(false) is true)
                 {
-                    await using var cleanup = Admin.CreateCommand($"DROP OWNED BY \"{Role}\"; DROP ROLE \"{Role}\"");
-                    await cleanup.ExecuteNonQueryAsync();
+                    var cleanup = Admin.CreateCommand($"DROP OWNED BY \"{Role}\"; DROP ROLE \"{Role}\"");
+                    await using var cleanupLifetime = cleanup.ConfigureAwait(false);
+                    await cleanup.ExecuteNonQueryAsync().ConfigureAwait(false);
                 }
             }
             finally
             {
-                await Admin.DisposeAsync();
-                await Database.DisposeAsync();
+                await Admin.DisposeAsync().ConfigureAwait(false);
+                await Database.DisposeAsync().ConfigureAwait(false);
             }
         }
     }

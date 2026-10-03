@@ -7,7 +7,8 @@ using mk8.email.Jmap;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class GatewayFolderQueryCodecTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class GatewayFolderQueryCodecTests
 {
     private const string AccountId = "A11111111111111111111111111111111";
     private const string FolderId = "M22222222222222222222222222222222";
@@ -45,7 +46,7 @@ public sealed class GatewayFolderQueryCodecTests
         Assert.IsFalse(response.Data["canCalculateChanges"]!.GetValue<bool>());
         Assert.AreEqual(7, response.Data["total"]!.GetValue<int>());
         Assert.AreEqual(2, response.Data["limit"]!.GetValue<int>());
-        Assert.AreEqual(FolderId, response.Data["ids"]![0]!.GetValue<string>());
+        Assert.AreEqual(FolderId, response.Data["ids"]![0]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -60,19 +61,19 @@ public sealed class GatewayFolderQueryCodecTests
         Assert.IsTrue(GatewayFolderQueryCodec.TryParseQuery(arguments, 2, out var call, out _));
         Assert.AreEqual(Guid.Empty, call!.Command.AccountId);
         Assert.IsTrue(call.Command.CheckAccountOnly);
-        Assert.AreEqual("unsupportedFilter", call.DeferredError);
+        Assert.AreEqual("unsupportedFilter", call.DeferredError, StringComparer.Ordinal);
         var denied = GatewayFolderQueryCodec.RenderQuery(call,
             new MailFolderQueryResult(MailFolderQueryStatus.AccountNotFound, null, 0, [], 0));
-        Assert.AreEqual("accountNotFound", denied.Data["type"]!.GetValue<string>());
+        Assert.AreEqual("accountNotFound", denied.Data["type"]!.GetValue<string>(), StringComparer.Ordinal);
         var authorized = GatewayFolderQueryCodec.RenderQuery(call,
             new MailFolderQueryResult(MailFolderQueryStatus.Authorized, null, 0, [], 0));
-        Assert.AreEqual("unsupportedFilter", authorized.Data["type"]!.GetValue<string>());
+        Assert.AreEqual("unsupportedFilter", authorized.Data["type"]!.GetValue<string>(), StringComparer.Ordinal);
         arguments["filter"] = new JsonObject();
         Assert.IsTrue(GatewayFolderQueryCodec.TryParseQuery(arguments, 2, out call, out _));
-        Assert.AreEqual("unsupportedSort", call!.DeferredError);
+        Assert.AreEqual("unsupportedSort", call!.DeferredError, StringComparer.Ordinal);
         arguments["sort"] = new JsonArray(new JsonObject { ["property"] = "name", ["collation"] = null });
         Assert.IsTrue(GatewayFolderQueryCodec.TryParseQuery(arguments, 2, out call, out _));
-        Assert.AreEqual("invalidArguments", call!.DeferredError);
+        Assert.AreEqual("invalidArguments", call!.DeferredError, StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -113,9 +114,9 @@ public sealed class GatewayFolderQueryCodecTests
             new MailFolderQueryChangesResult(MailFolderQueryStatus.Ok, "s2", [FolderId],
                 [new(Guid.Parse("33333333-3333-3333-3333-333333333333"), 4)], 8));
         Assert.AreEqual(MailOperationKind.FindFolderChanges, rendered.Operation);
-        Assert.AreEqual("s1", rendered.Data["oldQueryState"]!.GetValue<string>());
-        Assert.AreEqual(FolderId, rendered.Data["removed"]![0]!.GetValue<string>());
-        Assert.AreEqual("M33333333333333333333333333333333", rendered.Data["added"]![0]!["id"]!.GetValue<string>());
+        Assert.AreEqual("s1", rendered.Data["oldQueryState"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual(FolderId, rendered.Data["removed"]![0]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("M33333333333333333333333333333333", rendered.Data["added"]![0]!["id"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(4, rendered.Data["added"]![0]!["index"]!.GetValue<int>());
         Assert.AreEqual(8, rendered.Data["total"]!.GetValue<int>());
     }
@@ -123,7 +124,8 @@ public sealed class GatewayFolderQueryCodecTests
     [TestMethod]
     public async Task WorkerRejectsExtraTypedFolderQueryFields()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         using var scope = fixture.Services.CreateScope();
         var processor = scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>();
         var command = new MailOperationCommand([MailFeature.Basic, MailFeature.Messages],
@@ -138,9 +140,9 @@ public sealed class GatewayFolderQueryCodecTests
                 ["anchorOffset"] = 0,
                 ["limit"] = 10,
                 ["extra"] = true,
-            }, new Dictionary<string, string>());
+            }, new Dictionary<string, string>(StringComparer.Ordinal));
         var failure = await Assert.ThrowsAsync<MailApplicationException>(() =>
-            processor.ExecuteAsync(command, fixture.User, null));
+            processor.ExecuteAsync(command, fixture.User, null)).ConfigureAwait(false);
         Assert.AreEqual(MailFailureKind.MalformedBatch, failure.Failure.Kind);
     }
 }

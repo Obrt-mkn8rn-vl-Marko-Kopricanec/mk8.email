@@ -3,7 +3,8 @@ using mk8.email.Application.Protocol;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class SmtpAddressTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class SmtpAddressTests
 {
     [TestMethod]
     public void InternationalizedMailboxIsNormalizedAndIdnDomainUsesALabel()
@@ -14,7 +15,7 @@ public sealed class SmtpAddressTests
             out var address,
             out var requiresSmtpUtf8));
 
-        Assert.AreEqual("usér@xn--bcher-kva.example", address);
+        Assert.AreEqual("usér@xn--bcher-kva.example", address, StringComparer.Ordinal);
         Assert.IsTrue(requiresSmtpUtf8);
     }
 
@@ -27,7 +28,7 @@ public sealed class SmtpAddressTests
             out var address,
             out var requiresSmtpUtf8));
 
-        Assert.AreEqual("\"customer care\"@example.com", address);
+        Assert.AreEqual("\"customer care\"@example.com", address, StringComparer.Ordinal);
         Assert.IsFalse(requiresSmtpUtf8);
     }
 

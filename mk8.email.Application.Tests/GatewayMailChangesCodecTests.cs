@@ -9,7 +9,8 @@ using mk8.email.Infrastructure.Data;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class GatewayMailChangesCodecTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class GatewayMailChangesCodecTests
 {
     private const string AccountId = "A11111111111111111111111111111111";
     private const string FolderId = "M22222222222222222222222222222222";
@@ -54,16 +55,16 @@ public sealed class GatewayMailChangesCodecTests
         Assert.IsNull(failure);
         Assert.IsNotNull(call);
         Assert.AreEqual(Guid.Parse("11111111-1111-1111-1111-111111111111"), call.Command.AccountId);
-        Assert.AreEqual("s0", call.Command.SinceState);
+        Assert.AreEqual("s0", call.Command.SinceState, StringComparer.Ordinal);
         Assert.AreEqual(2L, call.Command.MaxChanges);
         var response = GatewayMailChangesCodec.Render(call,
             new MailChangesResult(MailChangesStatus.Ok, "s0", "s42", true,
                 [FolderId], [], []));
         Assert.AreEqual(MailOperationKind.ReadFolderChanges, response.Operation);
-        Assert.AreEqual(AccountId, response.Data["accountId"]!.GetValue<string>());
-        Assert.AreEqual("s42", response.Data["newState"]!.GetValue<string>());
+        Assert.AreEqual(AccountId, response.Data["accountId"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("s42", response.Data["newState"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.IsTrue(response.Data["hasMoreChanges"]!.GetValue<bool>());
-        Assert.AreEqual(FolderId, response.Data["created"]![0]!.GetValue<string>());
+        Assert.AreEqual(FolderId, response.Data["created"]![0]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.IsNull(response.Data["updatedProperties"]);
     }
 
@@ -77,7 +78,7 @@ public sealed class GatewayMailChangesCodecTests
         var arguments = new JsonObject { ["accountId"] = AccountId, ["sinceState"] = "s0", [key] = value };
         Assert.IsFalse(GatewayMailChangesCodec.TryParse(arguments, MailOperationKind.ReadFolderChanges,
             out _, out var failure));
-        Assert.AreEqual("invalidArguments", failure);
+        Assert.AreEqual("invalidArguments", failure, StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -87,13 +88,13 @@ public sealed class GatewayMailChangesCodecTests
         {
             ["accountId"] = "not-an-account",
         }, MailOperationKind.ReadFolderChanges, out _, out var missing));
-        Assert.AreEqual("invalidArguments", missing);
+        Assert.AreEqual("invalidArguments", missing, StringComparer.Ordinal);
         Assert.IsFalse(GatewayMailChangesCodec.TryParse(new JsonObject
         {
             ["accountId"] = "not-an-account",
             ["sinceState"] = "s0",
         }, MailOperationKind.ReadFolderChanges, out _, out var unknown));
-        Assert.AreEqual("accountNotFound", unknown);
+        Assert.AreEqual("accountNotFound", unknown, StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -107,10 +108,10 @@ public sealed class GatewayMailChangesCodecTests
         Assert.IsNotNull(call);
         var denied = GatewayMailChangesCodec.Render(call,
             new MailChangesResult(MailChangesStatus.AccountNotFound, null, null, false, [], [], []));
-        Assert.AreEqual("accountNotFound", denied.Data["type"]!.GetValue<string>());
+        Assert.AreEqual("accountNotFound", denied.Data["type"]!.GetValue<string>(), StringComparer.Ordinal);
         var expired = GatewayMailChangesCodec.Render(call,
             new MailChangesResult(MailChangesStatus.CannotCalculateChanges, null, null, false, [], [], []));
-        Assert.AreEqual("cannotCalculateChanges", expired.Data["type"]!.GetValue<string>());
+        Assert.AreEqual("cannotCalculateChanges", expired.Data["type"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.ThrowsExactly<InvalidOperationException>(() => GatewayMailChangesCodec.Render(call,
             new MailChangesResult(MailChangesStatus.Ok, "s999", "s1", false, [], [], [])));
     }
@@ -118,23 +119,24 @@ public sealed class GatewayMailChangesCodecTests
     [TestMethod]
     public async Task ContactChangesRetainPrimaryAndCanonicalAccountPrecedence()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         using var scope = fixture.Services.CreateScope();
         var reader = scope.ServiceProvider.GetRequiredService<IMailChangesReader>();
         var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-        var before = await database.DavCollections.CountAsync();
+        var before = await database.DavCollections.CountAsync().ConfigureAwait(false);
         var uncanonical = await reader.ReadAsync(MailOperationKind.ReadContactChanges,
-            new MailChangesCommand(fixture.InboxId, "s0", null, false), fixture.User, CancellationToken.None);
+            new MailChangesCommand(fixture.InboxId, "s0", null, false), fixture.User, CancellationToken.None).ConfigureAwait(false);
         Assert.AreEqual(MailChangesStatus.AccountNotSupported, uncanonical.Status);
-        Assert.AreEqual(before, await database.DavCollections.CountAsync());
+        Assert.AreEqual(before, await database.DavCollections.CountAsync().ConfigureAwait(false));
         var unknown = await reader.ReadAsync(MailOperationKind.ReadContactChanges,
-            new MailChangesCommand(Guid.NewGuid(), "s0", null, false), fixture.User, CancellationToken.None);
+            new MailChangesCommand(Guid.NewGuid(), "s0", null, false), fixture.User, CancellationToken.None).ConfigureAwait(false);
         Assert.AreEqual(MailChangesStatus.AccountNotFound, unknown.Status);
-        Assert.AreEqual(before, await database.DavCollections.CountAsync());
+        Assert.AreEqual(before, await database.DavCollections.CountAsync().ConfigureAwait(false));
         var valid = await reader.ReadAsync(MailOperationKind.ReadAddressBookChanges,
-            new MailChangesCommand(fixture.InboxId, "s0", null, true), fixture.User, CancellationToken.None);
+            new MailChangesCommand(fixture.InboxId, "s0", null, true), fixture.User, CancellationToken.None).ConfigureAwait(false);
         Assert.AreEqual(MailChangesStatus.Ok, valid.Status);
-        Assert.IsTrue(await database.DavCollections.CountAsync() > before);
+        Assert.IsTrue(await database.DavCollections.CountAsync().ConfigureAwait(false) > before);
     }
 
     [TestMethod]
@@ -150,7 +152,7 @@ public sealed class GatewayMailChangesCodecTests
         Assert.IsFalse(call.Command.AccountReferenceEligible);
         var error = GatewayMailChangesCodec.Render(call,
             new MailChangesResult(MailChangesStatus.AccountNotSupported, null, null, false, [], [], []));
-        Assert.AreEqual("accountNotSupportedByMethod", error.Data["type"]!.GetValue<string>());
+        Assert.AreEqual("accountNotSupportedByMethod", error.Data["type"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.IsTrue(GatewayMailChangesCodec.TryParse(new JsonObject
         {
             ["accountId"] = upper,
@@ -163,7 +165,8 @@ public sealed class GatewayMailChangesCodecTests
     [TestMethod]
     public async Task WorkerRejectsMalformedTypedChangesBeforeReceiptOrRead()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         using var scope = fixture.Services.CreateScope();
         var processor = scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>();
         var invalid = new JsonObject
@@ -175,19 +178,19 @@ public sealed class GatewayMailChangesCodecTests
             ["unexpected"] = true,
         };
         var command = new MailOperationCommand([MailFeature.Basic, MailFeature.Messages],
-            MailOperationKind.ReadFolderChanges, invalid, new Dictionary<string, string>());
+            MailOperationKind.ReadFolderChanges, invalid, new Dictionary<string, string>(StringComparer.Ordinal));
         var exception = await Assert.ThrowsAsync<MailApplicationException>(() =>
-            processor.ExecuteAsync(command, fixture.User, null));
+            processor.ExecuteAsync(command, fixture.User, null)).ConfigureAwait(false);
         Assert.AreEqual(MailFailureKind.MalformedBatch, exception.Failure.Kind);
         invalid.Remove("unexpected");
         invalid["maxChanges"] = "not-a-number";
         exception = await Assert.ThrowsAsync<MailApplicationException>(() =>
-            processor.ExecuteAsync(command, fixture.User, null));
+            processor.ExecuteAsync(command, fixture.User, null)).ConfigureAwait(false);
         Assert.AreEqual(MailFailureKind.MalformedBatch, exception.Failure.Kind);
         invalid["maxChanges"] = null;
         invalid["accountReferenceEligible"] = false;
         exception = await Assert.ThrowsAsync<MailApplicationException>(() =>
-            processor.ExecuteAsync(command, fixture.User, null));
+            processor.ExecuteAsync(command, fixture.User, null)).ConfigureAwait(false);
         Assert.AreEqual(MailFailureKind.MalformedBatch, exception.Failure.Kind);
     }
 }

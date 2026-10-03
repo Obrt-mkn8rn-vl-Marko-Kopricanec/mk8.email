@@ -18,12 +18,15 @@ namespace mk8.email.Messaging.Tests;
 [DoNotParallelize]
 [TestCategory("PostgreSQL")]
 [TestCategory("AzureBlobCompatible")]
-public sealed class JmapAzureBlobPersistenceTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class JmapAzureBlobPersistenceTests
 {
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ConcurrentLegacyMigrationExternalizesBytesAndEnforcesReferenceOnlyRows scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task ConcurrentLegacyMigrationExternalizesBytesAndEnforcesReferenceOnlyRows()
     {
-        await using var databaseServer = await RequirePostgresAsync();
+        var databaseServer = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseServerLifetime = databaseServer.ConfigureAwait(false);
         var connectionString = RequireAzureBlobConnection();
         var serviceClient = new BlobServiceClient(connectionString);
         var containerName = $"mk8-jmap-{Guid.NewGuid():N}";
@@ -32,39 +35,42 @@ public sealed class JmapAzureBlobPersistenceTests
         var accountId = Guid.CreateVersion7();
         var blobId = Guid.CreateVersion7();
         var content = RandomNumberGenerator.GetBytes(16_384);
-        await CreateSchemaAsync(databaseServer.ConnectionString);
+        await CreateSchemaAsync(databaseServer.ConnectionString).ConfigureAwait(false);
         await InsertLegacyAsync(
             databaseServer.ConnectionString,
             accountId,
             blobId,
-            content);
+            content).ConfigureAwait(false);
 
         try
         {
             async Task MigrateAsync()
             {
-                await using var context = CreateContext(databaseServer.ConnectionString);
+                var context = CreateContext(databaseServer.ConnectionString);
+                await using var contextLifetime = context.ConfigureAwait(false);
                 var migration = new JmapBlobLargeObjectMigrationService(
                     context,
                     store,
                     NullLogger<JmapBlobLargeObjectMigrationService>.Instance);
-                await migration.MigrateAsync();
+                await migration.MigrateAsync().ConfigureAwait(false);
             }
 
-            await Task.WhenAll(MigrateAsync(), MigrateAsync());
+            await Task.WhenAll(MigrateAsync(), MigrateAsync()).ConfigureAwait(false);
 
-            await using var verification = CreateContext(databaseServer.ConnectionString);
+            var verification = CreateContext(databaseServer.ConnectionString);
+            await using var verificationLifetime = verification.ConfigureAwait(false);
             var migrated = await verification.JmapBlobs.AsNoTracking()
-                .SingleAsync(candidate => candidate.Id == blobId);
+                .SingleAsync(candidate => candidate.Id == blobId).ConfigureAwait(false);
             Assert.IsNull(migrated.Content);
-            Assert.AreEqual(LargeObjectProviders.AzureBlob, migrated.ObjectProvider);
-            Assert.AreEqual($"jmap/uploads/{accountId:N}/{blobId:N}", migrated.ObjectName);
+            Assert.AreEqual(LargeObjectProviders.AzureBlob, migrated.ObjectProvider, StringComparer.Ordinal);
+            Assert.AreEqual($"jmap/uploads/{accountId:N}/{blobId:N}", migrated.ObjectName, StringComparer.Ordinal);
             Assert.AreEqual(content.LongLength, migrated.SizeBytes);
             Assert.AreEqual(64, migrated.ObjectSha256?.Length);
             Assert.IsFalse(string.IsNullOrWhiteSpace(migrated.ObjectEntityTag));
 
-            await using var downloaded = new MemoryStream();
-            await store.CopyToAsync(ToReference(migrated), downloaded);
+            var downloaded = new MemoryStream();
+            await using var downloadedLifetime = downloaded.ConfigureAwait(false);
+            await store.CopyToAsync(ToReference(migrated), downloaded).ConfigureAwait(false);
             CollectionAssert.AreEqual(content, downloaded.ToArray());
 
             var exception = await Assert.ThrowsExactlyAsync<PostgresException>(() =>
@@ -72,19 +78,21 @@ public sealed class JmapAzureBlobPersistenceTests
                     databaseServer.ConnectionString,
                     accountId,
                     Guid.CreateVersion7(),
-                    "forbidden-inline-row"u8.ToArray()));
-            Assert.AreEqual(PostgresErrorCodes.CheckViolation, exception.SqlState);
+                    "forbidden-inline-row"u8.ToArray())).ConfigureAwait(false);
+            Assert.AreEqual(PostgresErrorCodes.CheckViolation, exception.SqlState, StringComparer.Ordinal);
         }
         finally
         {
-            await container.DeleteIfExistsAsync();
+            await container.DeleteIfExistsAsync().ConfigureAwait(false);
         }
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The CallerTransactionDefersObjectDeletionUntilCommitOrRollback scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task CallerTransactionDefersObjectDeletionUntilCommitOrRollback()
     {
-        await using var databaseServer = await RequirePostgresAsync();
+        var databaseServer = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseServerLifetime = databaseServer.ConfigureAwait(false);
         var connectionString = RequireAzureBlobConnection();
         var serviceClient = new BlobServiceClient(connectionString);
         var containerName = $"mk8-jmap-{Guid.NewGuid():N}";
@@ -99,21 +107,23 @@ public sealed class JmapAzureBlobPersistenceTests
                 MaxUnreferencedBlobBytesPerAccount = 1_000_000,
             },
         };
-        await CreateSchemaAsync(databaseServer.ConnectionString);
-        await using (var migrationContext = CreateContext(databaseServer.ConnectionString))
+        await CreateSchemaAsync(databaseServer.ConnectionString).ConfigureAwait(false);
         {
+            var migrationContext = CreateContext(databaseServer.ConnectionString);
+            await using var migrationContextLifetime = migrationContext.ConfigureAwait(false);
             await new JmapBlobLargeObjectMigrationService(
                 migrationContext,
                 store,
                 NullLogger<JmapBlobLargeObjectMigrationService>.Instance)
-                .MigrateAsync();
+                .MigrateAsync().ConfigureAwait(false);
         }
 
         try
         {
             JmapBlobDB original;
-            await using (var originalContext = CreateContext(databaseServer.ConnectionString))
             {
+                var originalContext = CreateContext(databaseServer.ConnectionString);
+                await using var originalContextLifetime = originalContext.ConfigureAwait(false);
                 var originalEffects = new LargeObjectTransactionEffects(
                     store,
                     NullLogger<LargeObjectTransactionEffects>.Instance);
@@ -129,16 +139,18 @@ public sealed class JmapAzureBlobPersistenceTests
                         RandomNumberGenerator.GetBytes(600_000),
                         "application/octet-stream",
                         null,
-                        CancellationToken.None);
+                        CancellationToken.None).ConfigureAwait(false);
             }
 
-            await using (var rollbackContext = CreateContext(databaseServer.ConnectionString))
             {
+                var rollbackContext = CreateContext(databaseServer.ConnectionString);
+                await using var rollbackContextLifetime = rollbackContext.ConfigureAwait(false);
                 var rollbackEffects = new LargeObjectTransactionEffects(
                     store,
                     NullLogger<LargeObjectTransactionEffects>.Instance);
                 var marker = rollbackEffects.Mark();
-                await using var transaction = await rollbackContext.Database.BeginTransactionAsync();
+                var transaction = (await rollbackContext.Database.BeginTransactionAsync().ConfigureAwait(false));
+                await using var transactionLifetime = transaction.ConfigureAwait(false);
                 await new JmapBlobService(
                     rollbackContext,
                     environment,
@@ -151,31 +163,34 @@ public sealed class JmapAzureBlobPersistenceTests
                         RandomNumberGenerator.GetBytes(600_000),
                         "application/octet-stream",
                         null,
-                        CancellationToken.None);
-                Assert.HasCount(2, await GetBlobNamesAsync(container, accountId));
+                        CancellationToken.None).ConfigureAwait(false);
+                Assert.HasCount(2, await GetBlobNamesAsync(container, accountId).ConfigureAwait(false));
 
-                await transaction.RollbackAsync();
-                await rollbackEffects.RollbackAsync(marker);
+                await transaction.RollbackAsync().ConfigureAwait(false);
+                await rollbackEffects.RollbackAsync(marker).ConfigureAwait(false);
             }
 
-            await using (var rollbackVerification = CreateContext(databaseServer.ConnectionString))
             {
-                var rows = await rollbackVerification.JmapBlobs.AsNoTracking().ToListAsync();
+                var rollbackVerification = CreateContext(databaseServer.ConnectionString);
+                await using var rollbackVerificationLifetime = rollbackVerification.ConfigureAwait(false);
+                var rows = await rollbackVerification.JmapBlobs.AsNoTracking().ToListAsync().ConfigureAwait(false);
                 Assert.HasCount(1, rows);
                 Assert.AreEqual(original.Id, rows[0].Id);
             }
-            var afterRollback = await GetBlobNamesAsync(container, accountId);
+            var afterRollback = await GetBlobNamesAsync(container, accountId).ConfigureAwait(false);
             Assert.HasCount(1, afterRollback);
-            Assert.AreEqual($"objects/{original.ObjectName}", afterRollback[0]);
+            Assert.AreEqual($"objects/{original.ObjectName}", afterRollback[0], StringComparer.Ordinal);
 
             JmapBlobDB committed;
-            await using (var commitContext = CreateContext(databaseServer.ConnectionString))
             {
+                var commitContext = CreateContext(databaseServer.ConnectionString);
+                await using var commitContextLifetime = commitContext.ConfigureAwait(false);
                 var commitEffects = new LargeObjectTransactionEffects(
                     store,
                     NullLogger<LargeObjectTransactionEffects>.Instance);
                 var marker = commitEffects.Mark();
-                await using var transaction = await commitContext.Database.BeginTransactionAsync();
+                var transaction = (await commitContext.Database.BeginTransactionAsync().ConfigureAwait(false));
+                await using var transactionLifetime = transaction.ConfigureAwait(false);
                 committed = await new JmapBlobService(
                     commitContext,
                     environment,
@@ -188,47 +203,51 @@ public sealed class JmapAzureBlobPersistenceTests
                         RandomNumberGenerator.GetBytes(600_000),
                         "application/octet-stream",
                         null,
-                        CancellationToken.None);
-                Assert.HasCount(2, await GetBlobNamesAsync(container, accountId));
+                        CancellationToken.None).ConfigureAwait(false);
+                Assert.HasCount(2, await GetBlobNamesAsync(container, accountId).ConfigureAwait(false));
 
-                await transaction.CommitAsync();
-                await commitEffects.CommitAsync(marker);
+                await transaction.CommitAsync().ConfigureAwait(false);
+                await commitEffects.CommitAsync(marker).ConfigureAwait(false);
             }
 
-            await using (var commitVerification = CreateContext(databaseServer.ConnectionString))
             {
-                var rows = await commitVerification.JmapBlobs.AsNoTracking().ToListAsync();
+                var commitVerification = CreateContext(databaseServer.ConnectionString);
+                await using var commitVerificationLifetime = commitVerification.ConfigureAwait(false);
+                var rows = await commitVerification.JmapBlobs.AsNoTracking().ToListAsync().ConfigureAwait(false);
                 Assert.HasCount(1, rows);
                 Assert.AreEqual(committed.Id, rows[0].Id);
             }
-            var afterCommit = await GetBlobNamesAsync(container, accountId);
+            var afterCommit = await GetBlobNamesAsync(container, accountId).ConfigureAwait(false);
             Assert.HasCount(1, afterCommit);
-            Assert.AreEqual($"objects/{committed.ObjectName}", afterCommit[0]);
+            Assert.AreEqual($"objects/{committed.ObjectName}", afterCommit[0], StringComparer.Ordinal);
         }
         finally
         {
-            await container.DeleteIfExistsAsync();
+            await container.DeleteIfExistsAsync().ConfigureAwait(false);
         }
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ConcurrentUploadsSerializeAccountQuotaAndReclaimEvictedObjects scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task ConcurrentUploadsSerializeAccountQuotaAndReclaimEvictedObjects()
     {
-        await using var databaseServer = await RequirePostgresAsync();
+        var databaseServer = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseServerLifetime = databaseServer.ConfigureAwait(false);
         var connectionString = RequireAzureBlobConnection();
         var serviceClient = new BlobServiceClient(connectionString);
         var containerName = $"mk8-jmap-{Guid.NewGuid():N}";
         var container = serviceClient.GetBlobContainerClient(containerName);
         var store = CreateStore(serviceClient, containerName);
         var accountId = Guid.CreateVersion7();
-        await CreateSchemaAsync(databaseServer.ConnectionString);
-        await using (var migrationContext = CreateContext(databaseServer.ConnectionString))
+        await CreateSchemaAsync(databaseServer.ConnectionString).ConfigureAwait(false);
         {
+            var migrationContext = CreateContext(databaseServer.ConnectionString);
+            await using var migrationContextLifetime = migrationContext.ConfigureAwait(false);
             await new JmapBlobLargeObjectMigrationService(
                 migrationContext,
                 store,
                 NullLogger<JmapBlobLargeObjectMigrationService>.Instance)
-                .MigrateAsync();
+                .MigrateAsync().ConfigureAwait(false);
         }
 
         var environment = new EnvironmentConfig
@@ -254,7 +273,8 @@ public sealed class JmapAzureBlobPersistenceTests
         {
             async Task StoreAsync(byte[] content)
             {
-                await using var context = CreateContext(databaseServer.ConnectionString);
+                var context = CreateContext(databaseServer.ConnectionString);
+                await using var contextLifetime = context.ConfigureAwait(false);
                 var effects = new LargeObjectTransactionEffects(
                     store,
                     NullLogger<LargeObjectTransactionEffects>.Instance);
@@ -267,37 +287,45 @@ public sealed class JmapAzureBlobPersistenceTests
                     NullLogger<JmapBlobService>.Instance);
                 if (Interlocked.Increment(ref ready) == contents.Length)
                     gate.SetResult();
-                await gate.Task;
+
+                // This async test intentionally joins its pre-started background operation; no foreground synchronization context or JTF is involved.
+#pragma warning disable VSTHRD003
+                await gate.Task.ConfigureAwait(false);
+
+#pragma warning restore VSTHRD003
+
                 await blobs.StoreAsync(
                     accountId,
                     content,
                     "application/octet-stream",
                     null,
-                    CancellationToken.None);
+                    CancellationToken.None).ConfigureAwait(false);
             }
 
-            await Task.WhenAll(contents.Select(StoreAsync));
+            await Task.WhenAll(contents.Select(StoreAsync)).ConfigureAwait(false);
 
-            await using var verification = CreateContext(databaseServer.ConnectionString);
-            var rows = await verification.JmapBlobs.AsNoTracking().ToListAsync();
+            var verification = CreateContext(databaseServer.ConnectionString);
+            await using var verificationLifetime = verification.ConfigureAwait(false);
+            var rows = await verification.JmapBlobs.AsNoTracking().ToListAsync().ConfigureAwait(false);
             Assert.HasCount(1, rows);
             var surviving = rows[0];
             Assert.IsNull(surviving.Content);
             Assert.AreEqual(600_000L, surviving.SizeBytes);
 
-            var storedNames = await GetBlobNamesAsync(container, accountId);
+            var storedNames = await GetBlobNamesAsync(container, accountId).ConfigureAwait(false);
             Assert.HasCount(1, storedNames);
-            Assert.AreEqual($"objects/{surviving.ObjectName}", storedNames[0]);
+            Assert.AreEqual($"objects/{surviving.ObjectName}", storedNames[0], StringComparer.Ordinal);
 
-            await using var downloaded = new MemoryStream();
-            await store.CopyToAsync(ToReference(surviving), downloaded);
+            var downloaded = new MemoryStream();
+            await using var downloadedLifetime = downloaded.ConfigureAwait(false);
+            await store.CopyToAsync(ToReference(surviving), downloaded).ConfigureAwait(false);
             var downloadedContent = downloaded.ToArray();
             Assert.IsTrue(contents.Any(candidate =>
                 candidate.AsSpan().SequenceEqual(downloadedContent)));
         }
         finally
         {
-            await container.DeleteIfExistsAsync();
+            await container.DeleteIfExistsAsync().ConfigureAwait(false);
         }
     }
 
@@ -326,7 +354,7 @@ public sealed class JmapAzureBlobPersistenceTests
                            BlobTraits.None,
                            BlobStates.None,
                            $"objects/jmap/uploads/{accountId:N}/",
-                           CancellationToken.None))
+                           CancellationToken.None).ConfigureAwait(false))
         {
             names.Add(item.Name);
         }
@@ -347,9 +375,11 @@ public sealed class JmapAzureBlobPersistenceTests
 
     private static async Task CreateSchemaAsync(string connectionString)
     {
-        await using var connection = new NpgsqlConnection(connectionString);
-        await connection.OpenAsync();
-        await using var command = connection.CreateCommand();
+        var connection = new NpgsqlConnection(connectionString);
+        await using var connectionLifetime = connection.ConfigureAwait(false);
+        await connection.OpenAsync().ConfigureAwait(false);
+        var command = connection.CreateCommand();
+        await using var commandLifetime = command.ConfigureAwait(false);
         command.CommandText =
             """
             CREATE TABLE jmap_blobs (
@@ -383,7 +413,7 @@ public sealed class JmapAzureBlobPersistenceTests
             CREATE INDEX ix_jmap_blobs_account_id_expires_at
                 ON jmap_blobs(account_id, expires_at);
             """;
-        await command.ExecuteNonQueryAsync();
+        await command.ExecuteNonQueryAsync().ConfigureAwait(false);
     }
 
     private static async Task InsertLegacyAsync(
@@ -392,9 +422,11 @@ public sealed class JmapAzureBlobPersistenceTests
         Guid blobId,
         byte[] content)
     {
-        await using var connection = new NpgsqlConnection(connectionString);
-        await connection.OpenAsync();
-        await using var command = connection.CreateCommand();
+        var connection = new NpgsqlConnection(connectionString);
+        await using var connectionLifetime = connection.ConfigureAwait(false);
+        await connection.OpenAsync().ConfigureAwait(false);
+        var command = connection.CreateCommand();
+        await using var commandLifetime = command.ConfigureAwait(false);
         command.CommandText =
             """
             INSERT INTO jmap_blobs (
@@ -411,12 +443,12 @@ public sealed class JmapAzureBlobPersistenceTests
         command.Parameters.AddWithValue("size_bytes", content.LongLength);
         command.Parameters.AddWithValue("created_at", DateTime.UtcNow);
         command.Parameters.AddWithValue("expires_at", DateTime.UtcNow.AddHours(1));
-        await command.ExecuteNonQueryAsync();
+        await command.ExecuteNonQueryAsync().ConfigureAwait(false);
     }
 
     private static async Task<PostgresTestDatabase> RequirePostgresAsync()
     {
-        var database = await PostgresTestDatabase.TryCreateAsync();
+        var database = await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false);
         if (database is null)
         {
             Assert.Inconclusive(

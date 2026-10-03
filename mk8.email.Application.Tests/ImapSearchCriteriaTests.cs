@@ -8,7 +8,8 @@ using mk8.email.Infrastructure.Models;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class ImapSearchCriteriaTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class ImapSearchCriteriaTests
 {
     private static readonly int[] OrderedUids = [2, 5, 9];
 
@@ -66,7 +67,8 @@ public sealed class ImapSearchCriteriaTests
     public async Task SearchKeepsMailboxSequenceNumbersAndReadsOnlyRequiredPayloads(
         string criteria, int[] expectedUids, int reads, long? highestModSequence)
     {
-        await using var fixture = await SearchFixture.CreateAsync().ConfigureAwait(false);
+        var fixture = (await SearchFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var result = await fixture.SearchAsync(criteria).ConfigureAwait(false);
         Assert.IsNull(result.FailureResponse);
         CollectionAssert.AreEqual(expectedUids, result.Matches.Select(match => match.Uid).ToArray());
@@ -115,9 +117,10 @@ public sealed class ImapSearchCriteriaTests
     [DataRow("MODSEQ /invalid SHARED 40")]
     public async Task InvalidCriteriaFailBeforePayloadReads(string criteria)
     {
-        await using var fixture = await SearchFixture.CreateAsync().ConfigureAwait(false);
+        var fixture = (await SearchFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var result = await fixture.SearchAsync(criteria).ConfigureAwait(false);
-        Assert.AreEqual("BAD Invalid search criteria", result.FailureResponse);
+        Assert.AreEqual("BAD Invalid search criteria", result.FailureResponse, StringComparer.Ordinal);
         Assert.AreEqual(0, result.Matches.Count);
         Assert.IsNull(result.HighestModSequence);
         Assert.AreEqual(0, fixture.Objects.ReadCount);
@@ -128,7 +131,8 @@ public sealed class ImapSearchCriteriaTests
     [DataRow(4097, false)]
     public async Task TokenLimitRetainsItsExactBoundary(int count, bool allowed)
     {
-        await using var fixture = await SearchFixture.CreateAsync().ConfigureAwait(false);
+        var fixture = (await SearchFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var result = await fixture.SearchAsync(string.Join(' ', Enumerable.Repeat("ALL", count))).ConfigureAwait(false);
         Assert.AreEqual(allowed, result.FailureResponse is null);
         CollectionAssert.AreEqual(allowed ? OrderedUids : Array.Empty<int>(), result.Matches.Select(match => match.Uid).ToArray());
@@ -140,7 +144,8 @@ public sealed class ImapSearchCriteriaTests
     [DataRow(65, false)]
     public async Task NestingLimitRetainsItsExactBoundary(int depth, bool allowed)
     {
-        await using var fixture = await SearchFixture.CreateAsync().ConfigureAwait(false);
+        var fixture = (await SearchFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var result = await fixture.SearchAsync(new string('(', depth) + "ALL" + new string(')', depth)).ConfigureAwait(false);
         Assert.AreEqual(allowed, result.FailureResponse is null);
         CollectionAssert.AreEqual(allowed ? OrderedUids : Array.Empty<int>(), result.Matches.Select(match => match.Uid).ToArray());
@@ -152,7 +157,8 @@ public sealed class ImapSearchCriteriaTests
     [DataRow(65, false)]
     public async Task NegationLimitRetainsItsExactBoundary(int depth, bool allowed)
     {
-        await using var fixture = await SearchFixture.CreateAsync().ConfigureAwait(false);
+        var fixture = (await SearchFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var result = await fixture.SearchAsync(string.Concat(Enumerable.Repeat("NOT ", depth)) + "ALL")
             .ConfigureAwait(false);
         Assert.AreEqual(allowed, result.FailureResponse is null);
@@ -169,50 +175,64 @@ public sealed class ImapSearchCriteriaTests
 
         public static async Task<SearchFixture> CreateAsync()
         {
-            var database = new EmailDbContext(new DbContextOptionsBuilder<EmailDbContext>()
+
+            // The returned fixture owns this allocation; finally releases untransferred resources if initialization fails.
+#pragma warning disable CA2000
+            EmailDbContext? database = new EmailDbContext(new DbContextOptionsBuilder<EmailDbContext>()
                 .UseInMemoryDatabase($"imap-search-phases-{Guid.NewGuid():N}").Options);
-            await database.Database.EnsureCreatedAsync().ConfigureAwait(false);
-            var objects = new InMemoryLargeObjectStore();
-            var effects = new LargeObjectTransactionEffects(objects, NullLogger<LargeObjectTransactionEffects>.Instance);
-            var content = new MailboxMessageContentService(objects, effects);
-            var marker = effects.Mark();
-            var folderId = Guid.CreateVersion7();
-            foreach (var uid in new[] { 9, 2, 5 })
+
+#pragma warning restore CA2000
+            try
             {
-                var (subject, body) = uid switch
+                await database.Database.EnsureCreatedAsync().ConfigureAwait(false);
+                var objects = new InMemoryLargeObjectStore();
+                var effects = new LargeObjectTransactionEffects(objects, NullLogger<LargeObjectTransactionEffects>.Instance);
+                var content = new MailboxMessageContentService(objects, effects);
+                var marker = effects.Mark();
+                var folderId = Guid.CreateVersion7();
+                foreach (var uid in new[] { 9, 2, 5 })
                 {
-                    2 => ("alpha \"quoted\"", "first body"),
-                    5 => ("beta\\path", "second body"),
-                    _ => ("gamma", "third body"),
-                };
-                var email = new EmailDB
-                {
-                    Id = Guid.CreateVersion7(),
-                    Uid = uid,
-                    ModSeq = uid * 10,
-                    Subject = subject,
-                    Sender = "sender@example.test",
-                    Recipient = "mailbox@example.test",
-                    IsRead = uid == 2,
-                    IsFlagged = uid == 5,
-                    IsDeleted = uid == 5,
-                    IsDraft = uid == 9,
-                    IsAnswered = uid == 9,
-                    Keywords = uid == 5 ? [] : ["$label1"],
-                    EmailObjectId = $"email{uid}",
-                    ThreadObjectId = uid == 9 ? "thread9" : "threadshared",
-                    ReceivedAt = new DateTime(2026, 1, uid, 12, 0, 0, DateTimeKind.Utc),
-                    FolderId = folderId,
-                };
-                var raw = $"From: sender@example.test\r\nTo: mailbox@example.test\r\nSubject: {subject}\r\n"
-                    + $"Date: {uid} Jan 2026 12:00:00 +0000\r\nCc: copy@example.test\r\nBcc: blind@example.test\r\n"
-                    + $"X-Test: {body.Split(' ')[0]}\r\n\r\n{body}\r\n";
-                await content.SetAsync(email, Encoding.Latin1.GetBytes(raw), CancellationToken.None).ConfigureAwait(false);
-                database.Emails.Add(email);
+                    var (subject, body) = uid switch
+                    {
+                        2 => ("alpha \"quoted\"", "first body"),
+                        5 => ("beta\\path", "second body"),
+                        _ => ("gamma", "third body"),
+                    };
+                    var email = new EmailDB
+                    {
+                        Id = Guid.CreateVersion7(),
+                        Uid = uid,
+                        ModSeq = uid * 10,
+                        Subject = subject,
+                        Sender = "sender@example.test",
+                        Recipient = "mailbox@example.test",
+                        IsRead = uid == 2,
+                        IsFlagged = uid == 5,
+                        IsDeleted = uid == 5,
+                        IsDraft = uid == 9,
+                        IsAnswered = uid == 9,
+                        Keywords = uid == 5 ? [] : ["$label1"],
+                        EmailObjectId = $"email{uid}",
+                        ThreadObjectId = uid == 9 ? "thread9" : "threadshared",
+                        ReceivedAt = new DateTime(2026, 1, uid, 12, 0, 0, DateTimeKind.Utc),
+                        FolderId = folderId,
+                    };
+                    var raw = $"From: sender@example.test\r\nTo: mailbox@example.test\r\nSubject: {subject}\r\n"
+                        + $"Date: {uid} Jan 2026 12:00:00 +0000\r\nCc: copy@example.test\r\nBcc: blind@example.test\r\n"
+                        + $"X-Test: {body.Split(' ')[0]}\r\n\r\n{body}\r\n";
+                    await content.SetAsync(email, Encoding.Latin1.GetBytes(raw), CancellationToken.None).ConfigureAwait(false);
+                    await database.Emails.AddAsync(email).ConfigureAwait(false);
+                }
+                await database.SaveChangesAsync().ConfigureAwait(false);
+                await effects.CommitAsync(marker).ConfigureAwait(false);
+                var fixture = new SearchFixture(database, objects, content);
+                database = null;
+                return fixture;
             }
-            await database.SaveChangesAsync().ConfigureAwait(false);
-            await effects.CommitAsync(marker).ConfigureAwait(false);
-            return new SearchFixture(database, objects, content);
+            finally
+            {
+                if (database is not null) await database.DisposeAsync().ConfigureAwait(false);
+            }
         }
 
         public Task<ImapSearchEngine.SearchExecutionResult> SearchAsync(string criteria) =>

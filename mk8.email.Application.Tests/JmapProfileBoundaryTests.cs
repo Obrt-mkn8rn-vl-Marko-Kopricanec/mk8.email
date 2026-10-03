@@ -9,18 +9,20 @@ using mk8.email.Jmap;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class JmapProfileBoundaryTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class JmapProfileBoundaryTests
 {
     [TestMethod]
     public async Task WorkerProfileDoesNotParseItsPublicUrlOrExposePresentationFields()
     {
-        await using var fixture = await SplitWorkerAsync();
+        var fixture = (await SplitWorkerAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         using var scope = fixture.Services.CreateScope();
         var profile = await scope.ServiceProvider.GetRequiredService<JmapAccountProfileService>()
-            .GetProfileAsync(fixture.User);
-        var value = JsonSerializer.SerializeToNode(profile, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+            .GetProfileAsync(fixture.User).ConfigureAwait(false);
+        var value = JsonSerializer.SerializeToNode(profile, SerializationOptions1)!;
 
-        Assert.AreEqual(fixture.User.Username, profile.Username);
+        Assert.AreEqual(fixture.User.Username, profile.Username, StringComparer.Ordinal);
         Assert.IsFalse(value.ToJsonString().Contains("worker.internal", StringComparison.Ordinal));
         Assert.IsFalse(value.AsObject().ContainsKey("apiUrl"));
         Assert.IsFalse(value.AsObject().ContainsKey("state"));
@@ -30,31 +32,33 @@ public sealed class JmapProfileBoundaryTests
     [TestMethod]
     public async Task DiscoveryAndBatchStatesAgreeAcrossDifferentHostConfigurations()
     {
-        await using var fixture = await SplitWorkerAsync();
+        var fixture = (await SplitWorkerAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         using var scope = fixture.Services.CreateScope();
         var profile = await scope.ServiceProvider.GetRequiredService<JmapAccountProfileService>()
-            .GetProfileAsync(fixture.User);
+            .GetProfileAsync(fixture.User).ConfigureAwait(false);
         var gateway = Gateway("https://edge.example.test/mail");
         var session = GatewayJmapProfileCodec.Render(profile, gateway);
         var batch = await JmapFixture.ProcessBatchAsync(scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>(),
             new JmapApplicationBatch([MailFeature.Basic],
-                [new JmapApplicationCall(MailOperationKind.Echo, new JsonObject { ["ok"] = true }, "one")]), fixture.User);
+                [new JmapApplicationCall(MailOperationKind.Echo, new JsonObject { ["ok"] = true }, "one")]), fixture.User).ConfigureAwait(false);
         var response = GatewayJmapBatchCodec.Render(batch, gateway);
 
-        Assert.AreEqual("https://edge.example.test/mail/jmap/api", session["apiUrl"]!.GetValue<string>());
-        Assert.AreEqual(session["state"]!.GetValue<string>(), response["sessionState"]!.GetValue<string>());
+        Assert.AreEqual("https://edge.example.test/mail/jmap/api", session["apiUrl"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual(session["state"]!.GetValue<string>(), response["sessionState"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.IsTrue(response["methodResponses"]![0]![1]!["ok"]!.GetValue<bool>());
         var other = GatewayJmapProfileCodec.Render(profile, Gateway("https://replacement.example.test"));
-        Assert.AreNotEqual(session["state"]!.GetValue<string>(), other["state"]!.GetValue<string>());
+        Assert.AreNotEqual(session["state"]!.GetValue<string>(), other["state"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task AdvertisedLimitsRespectBothGatewayAndWorkerPolicies()
     {
-        await using var fixture = await SplitWorkerAsync();
+        var fixture = (await SplitWorkerAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         using var scope = fixture.Services.CreateScope();
         var profile = await scope.ServiceProvider.GetRequiredService<JmapAccountProfileService>()
-            .GetProfileAsync(fixture.User);
+            .GetProfileAsync(fixture.User).ConfigureAwait(false);
         var gateway = new EnvironmentConfig
         {
             Jmap = new JmapConfig { PublicBaseUrl = "https://edge.example.test", MaxRequestSizeBytes = 1024, MaxUploadSizeBytes = 2048 },
@@ -72,10 +76,11 @@ public sealed class JmapProfileBoundaryTests
     [TestMethod]
     public async Task ProfileTransportAndStateHashPreserveMetadataAndPolicyChanges()
     {
-        await using var fixture = await SplitWorkerAsync();
+        var fixture = (await SplitWorkerAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         using var scope = fixture.Services.CreateScope();
         var profile = await scope.ServiceProvider.GetRequiredService<JmapAccountProfileService>()
-            .GetProfileAsync(fixture.User);
+            .GetProfileAsync(fixture.User).ConfigureAwait(false);
         var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
         var transported = JsonSerializer.Deserialize<JmapApplicationProfile>(JsonSerializer.Serialize(profile, options), options)!;
         var gateway = Gateway("https://edge.example.test");
@@ -84,29 +89,29 @@ public sealed class JmapProfileBoundaryTests
         Assert.IsTrue(JsonNode.DeepEquals(rendered, GatewayJmapProfileCodec.Render(transported, gateway)));
         var changedPolicy = profile with { Limits = profile.Limits with { MaxCallsInRequest = 5 } };
         var changedAccount = profile with { Accounts = [profile.Accounts[0] with { Name = "renamed@example.test" }] };
-        Assert.AreNotEqual(rendered["state"]!.GetValue<string>(), GatewayJmapProfileCodec.Render(changedPolicy, gateway)["state"]!.GetValue<string>());
-        Assert.AreNotEqual(rendered["state"]!.GetValue<string>(), GatewayJmapProfileCodec.Render(changedAccount, gateway)["state"]!.GetValue<string>());
+        Assert.AreNotEqual(rendered["state"]!.GetValue<string>(), GatewayJmapProfileCodec.Render(changedPolicy, gateway)["state"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreNotEqual(rendered["state"]!.GetValue<string>(), GatewayJmapProfileCodec.Render(changedAccount, gateway)["state"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public void TypedChangeDataRoundTripsAndGatewayFramesEventsAndVerification()
     {
-        var changes = new JmapApplicationChanges(new Dictionary<string, IReadOnlyDictionary<string, string>>
+        var changes = new JmapApplicationChanges(new Dictionary<string, IReadOnlyDictionary<string, string>>(StringComparer.Ordinal)
         {
-            ["account-id"] = new Dictionary<string, string> { ["Mailbox"] = "state-1", ["Email"] = "state-2" },
+            ["account-id"] = new Dictionary<string, string>(StringComparer.Ordinal) { ["Mailbox"] = "state-1", ["Email"] = "state-2" },
         });
         var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
         var transported = JsonSerializer.Deserialize<JmapApplicationChanges>(JsonSerializer.Serialize(changes, options), options)!;
         var rendered = GatewayJmapChangesCodec.Render(transported);
 
-        Assert.AreEqual("StateChange", rendered["@type"]!.GetValue<string>());
-        Assert.AreEqual("state-1", rendered["changed"]!["account-id"]!["Mailbox"]!.GetValue<string>());
+        Assert.AreEqual("StateChange", rendered["@type"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("state-1", rendered["changed"]!["account-id"]!["Mailbox"]!.GetValue<string>(), StringComparer.Ordinal);
         var push = JsonNode.Parse(GatewayJmapChangesCodec.EncodePush(new JmapPushMessage(Changes: transported)));
         Assert.IsTrue(JsonNode.DeepEquals(rendered, push));
         var verification = JsonNode.Parse(GatewayJmapChangesCodec.EncodePush(new JmapPushMessage("push-id", "code")))!;
-        Assert.AreEqual("PushVerification", verification["@type"]!.GetValue<string>());
-        Assert.AreEqual("push-id", verification["pushSubscriptionId"]!.GetValue<string>());
-        Assert.AreEqual("code", verification["verificationCode"]!.GetValue<string>());
+        Assert.AreEqual("PushVerification", verification["@type"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("push-id", verification["pushSubscriptionId"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("code", verification["verificationCode"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.ThrowsExactly<ArgumentException>(() => GatewayJmapChangesCodec.EncodePush(new JmapPushMessage()));
         Assert.ThrowsExactly<ArgumentException>(() => GatewayJmapChangesCodec.EncodePush(new JmapPushMessage("push-id", "code", changes)));
     }
@@ -123,4 +128,5 @@ public sealed class JmapProfileBoundaryTests
         Smtp = new SmtpConfig { Hostname = "edge.example.test" },
         Jmap = new JmapConfig { PublicBaseUrl = publicBase },
     };
+    private static readonly JsonSerializerOptions SerializationOptions1 = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 }

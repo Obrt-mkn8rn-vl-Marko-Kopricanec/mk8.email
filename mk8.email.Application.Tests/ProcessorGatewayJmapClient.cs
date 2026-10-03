@@ -20,7 +20,7 @@ internal sealed class ProcessorGatewayJmapClient(
     public async Task<JmapApplicationResult> ValidatePlanAsync(MailPlanApplicationRequest request, CancellationToken cancellationToken = default)
     {
         processor.ValidatePlan(request.Plan);
-        return new(JmapApplicationOutcomes.Ok, Profile: await processor.GetProfileAsync(user, cancellationToken));
+        return new(JmapApplicationOutcomes.Ok, Profile: await processor.GetProfileAsync(user, cancellationToken).ConfigureAwait(false));
     }
 
     public async Task<JmapApplicationResult> ExecuteOperationAsync(MailOperationApplicationRequest request, CancellationToken cancellationToken = default)
@@ -33,7 +33,7 @@ internal sealed class ProcessorGatewayJmapClient(
         }
         _step++;
         return new(JmapApplicationOutcomes.Ok, OperationResult:
-            await processor.ExecuteAsync(request.Command, user, identity, cancellationToken));
+            await processor.ExecuteAsync(request.Command, user, identity, cancellationToken).ConfigureAwait(false));
     }
 
     public Task<JmapApplicationResult> UploadAsync(JmapUploadApplicationRequest request, CancellationToken cancellationToken = default) =>

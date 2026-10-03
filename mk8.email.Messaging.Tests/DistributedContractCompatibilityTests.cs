@@ -17,7 +17,8 @@ namespace mk8.email.Messaging.Tests;
 
 [TestClass]
 [TestCategory("PostgreSQL")]
-public sealed class DistributedContractCompatibilityTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class DistributedContractCompatibilityTests
 {
     [TestMethod]
     [DataRow("jmap.api.process", false, false)]
@@ -90,22 +91,24 @@ public sealed class DistributedContractCompatibilityTests
     [DataRow("webpush.send", true, true)]
     public async Task SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(string operation, bool presentation, bool leased)
     {
-        await using var database = await RequirePostgresAsync();
-        await using var source = NpgsqlDataSource.Create(database.ConnectionString);
-        await PostgresMessagingSchema.EnsureAsync(source);
+        var database = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        var source = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var sourceLifetime = source.ConfigureAwait(false);
+        await PostgresMessagingSchema.EnsureAsync(source).ConfigureAwait(false);
         using var protector = AesGcmPayloadProtectorTests.CreateProtector("original", "original-escrow-only-key");
         PostgresApplicationBus bus = presentation
             ? new PostgresPresentationBus(source, protector) : new PostgresApplicationBus(source, protector);
         var request = Request(operation);
-        await bus.EnqueueAsync(request);
+        await bus.EnqueueAsync(request).ConfigureAwait(false);
         if (leased)
-            Assert.IsNotNull(await bus.TryClaimAsync("original-role"));
+            Assert.IsNotNull(await bus.TryClaimAsync("original-role").ConfigureAwait(false));
         var table = presentation ? "presentation_requests" : "application_requests";
-        var before = await SnapshotAsync(source, table, request.Id);
-        Assert.IsFalse(await DistributedQueueContractGuard.IsCompatibleAsync(source));
-        await Assert.ThrowsAsync<InvalidOperationException>(() => DistributedQueueContractGuard.RequireCompatibleAsync(source));
-        Assert.IsFalse(await Control(source).IsAvailableAsync());
-        Assert.AreEqual(before, await SnapshotAsync(source, table, request.Id));
+        var before = await SnapshotAsync(source, table, request.Id).ConfigureAwait(false);
+        Assert.IsFalse(await DistributedQueueContractGuard.IsCompatibleAsync(source).ConfigureAwait(false));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => DistributedQueueContractGuard.RequireCompatibleAsync(source)).ConfigureAwait(false);
+        Assert.IsFalse(await Control(source).IsAvailableAsync().ConfigureAwait(false));
+        Assert.AreEqual(before, await SnapshotAsync(source, table, request.Id).ConfigureAwait(false), StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -137,9 +140,11 @@ public sealed class DistributedContractCompatibilityTests
     [DataRow("jmap.changes.poll", false)]
     public async Task ElapsedLegacyDeadlinesRemainBlockedAndAreNotAutomaticallyExpired(string operation, bool presentation)
     {
-        await using var database = await RequirePostgresAsync();
-        await using var source = NpgsqlDataSource.Create(database.ConnectionString);
-        await PostgresMessagingSchema.EnsureAsync(source);
+        var database = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        var source = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var sourceLifetime = source.ConfigureAwait(false);
+        await PostgresMessagingSchema.EnsureAsync(source).ConfigureAwait(false);
         using var protector = AesGcmPayloadProtectorTests.CreateProtector("original", "elapsed-legacy-key");
         PostgresApplicationBus bus = presentation
             ? new PostgresPresentationBus(source, protector) : new PostgresApplicationBus(source, protector);
@@ -148,250 +153,261 @@ public sealed class DistributedContractCompatibilityTests
             CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-2),
             Deadline = DateTimeOffset.UtcNow.AddMinutes(-1),
         };
-        await bus.EnqueueAsync(request);
+        await bus.EnqueueAsync(request).ConfigureAwait(false);
         var table = presentation ? "presentation_requests" : "application_requests";
-        var before = await SnapshotAsync(source, table, request.Id);
-        Assert.IsFalse(await DistributedQueueContractGuard.IsCompatibleAsync(source));
-        Assert.IsNull(await bus.TryClaimAsync("new-role"));
-        Assert.IsFalse(await Control(source).IsAvailableAsync());
-        Assert.AreEqual(before, await SnapshotAsync(source, table, request.Id));
+        var before = await SnapshotAsync(source, table, request.Id).ConfigureAwait(false);
+        Assert.IsFalse(await DistributedQueueContractGuard.IsCompatibleAsync(source).ConfigureAwait(false));
+        Assert.IsNull(await bus.TryClaimAsync("new-role").ConfigureAwait(false));
+        Assert.IsFalse(await Control(source).IsAvailableAsync().ConfigureAwait(false));
+        Assert.AreEqual(before, await SnapshotAsync(source, table, request.Id).ConfigureAwait(false), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task V19MailOperationsAreBlockedBeforeV20Dispatch()
     {
         await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
-            "mail.operation.execute.v19", false, false);
+            "mail.operation.execute.v19", false, false).ConfigureAwait(false);
         await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
-            "mail.operation.execute.v19", false, true);
+            "mail.operation.execute.v19", false, true).ConfigureAwait(false);
         await ElapsedLegacyDeadlinesRemainBlockedAndAreNotAutomaticallyExpired(
-            "mail.operation.execute.v19", false);
+            "mail.operation.execute.v19", false).ConfigureAwait(false);
     }
 
     [TestMethod]
     public async Task V20MailOperationsAreBlockedBeforeV21Dispatch()
     {
         await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
-            "mail.operation.execute.v20", false, false);
+            "mail.operation.execute.v20", false, false).ConfigureAwait(false);
         await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
-            "mail.operation.execute.v20", false, true);
+            "mail.operation.execute.v20", false, true).ConfigureAwait(false);
         await ElapsedLegacyDeadlinesRemainBlockedAndAreNotAutomaticallyExpired(
-            "mail.operation.execute.v20", false);
+            "mail.operation.execute.v20", false).ConfigureAwait(false);
     }
 
     [TestMethod]
     public async Task V21MailOperationsAreBlockedBeforeV22Dispatch()
     {
         await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
-            "mail.operation.execute.v21", false, false);
+            "mail.operation.execute.v21", false, false).ConfigureAwait(false);
         await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
-            "mail.operation.execute.v21", false, true);
+            "mail.operation.execute.v21", false, true).ConfigureAwait(false);
         await ElapsedLegacyDeadlinesRemainBlockedAndAreNotAutomaticallyExpired(
-            "mail.operation.execute.v21", false);
+            "mail.operation.execute.v21", false).ConfigureAwait(false);
     }
 
     [TestMethod]
     public async Task V22MailOperationsAreBlockedBeforeV23Dispatch()
     {
         await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
-            "mail.operation.execute.v22", false, false);
+            "mail.operation.execute.v22", false, false).ConfigureAwait(false);
         await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
-            "mail.operation.execute.v22", false, true);
+            "mail.operation.execute.v22", false, true).ConfigureAwait(false);
         await ElapsedLegacyDeadlinesRemainBlockedAndAreNotAutomaticallyExpired(
-            "mail.operation.execute.v22", false);
+            "mail.operation.execute.v22", false).ConfigureAwait(false);
     }
 
     [TestMethod]
     public async Task V23MailOperationsAreBlockedBeforeV24Dispatch()
     {
         await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
-            "mail.operation.execute.v23", false, false);
+            "mail.operation.execute.v23", false, false).ConfigureAwait(false);
         await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
-            "mail.operation.execute.v23", false, true);
+            "mail.operation.execute.v23", false, true).ConfigureAwait(false);
         await ElapsedLegacyDeadlinesRemainBlockedAndAreNotAutomaticallyExpired(
-            "mail.operation.execute.v23", false);
+            "mail.operation.execute.v23", false).ConfigureAwait(false);
     }
 
     [TestMethod]
     public async Task V24MailOperationsAreBlockedBeforeV25Dispatch()
     {
         await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
-            "mail.operation.execute.v24", false, false);
+            "mail.operation.execute.v24", false, false).ConfigureAwait(false);
         await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
-            "mail.operation.execute.v24", false, true);
+            "mail.operation.execute.v24", false, true).ConfigureAwait(false);
         await ElapsedLegacyDeadlinesRemainBlockedAndAreNotAutomaticallyExpired(
-            "mail.operation.execute.v24", false);
+            "mail.operation.execute.v24", false).ConfigureAwait(false);
     }
 
     [TestMethod]
     public async Task V25MailOperationsAreBlockedBeforeV26Dispatch()
     {
         await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
-            "mail.operation.execute.v25", false, false);
+            "mail.operation.execute.v25", false, false).ConfigureAwait(false);
         await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
-            "mail.operation.execute.v25", false, true);
+            "mail.operation.execute.v25", false, true).ConfigureAwait(false);
         await ElapsedLegacyDeadlinesRemainBlockedAndAreNotAutomaticallyExpired(
-            "mail.operation.execute.v25", false);
+            "mail.operation.execute.v25", false).ConfigureAwait(false);
     }
 
     [TestMethod]
     public async Task V26MailOperationsAreBlockedBeforeV27Dispatch()
     {
         await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
-            "mail.operation.execute.v26", false, false);
+            "mail.operation.execute.v26", false, false).ConfigureAwait(false);
         await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
-            "mail.operation.execute.v26", false, true);
+            "mail.operation.execute.v26", false, true).ConfigureAwait(false);
         await ElapsedLegacyDeadlinesRemainBlockedAndAreNotAutomaticallyExpired(
-            "mail.operation.execute.v26", false);
+            "mail.operation.execute.v26", false).ConfigureAwait(false);
     }
 
     [TestMethod]
     public async Task V27MailOperationsAreBlockedBeforeV28Dispatch()
     {
         await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
-            "mail.operation.execute.v27", false, false);
+            "mail.operation.execute.v27", false, false).ConfigureAwait(false);
         await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
-            "mail.operation.execute.v27", false, true);
+            "mail.operation.execute.v27", false, true).ConfigureAwait(false);
         await ElapsedLegacyDeadlinesRemainBlockedAndAreNotAutomaticallyExpired(
-            "mail.operation.execute.v27", false);
+            "mail.operation.execute.v27", false).ConfigureAwait(false);
     }
 
     [TestMethod]
     public async Task V28MailOperationsAreBlockedBeforeV29Dispatch()
     {
         await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
-            "mail.operation.execute.v28", false, false);
+            "mail.operation.execute.v28", false, false).ConfigureAwait(false);
         await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
-            "mail.operation.execute.v28", false, true);
+            "mail.operation.execute.v28", false, true).ConfigureAwait(false);
         await ElapsedLegacyDeadlinesRemainBlockedAndAreNotAutomaticallyExpired(
-            "mail.operation.execute.v28", false);
+            "mail.operation.execute.v28", false).ConfigureAwait(false);
     }
 
     [TestMethod]
     public async Task V29MailOperationsAreBlockedBeforeV30Dispatch()
     {
         await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
-            "mail.operation.execute.v29", false, false);
+            "mail.operation.execute.v29", false, false).ConfigureAwait(false);
         await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
-            "mail.operation.execute.v29", false, true);
+            "mail.operation.execute.v29", false, true).ConfigureAwait(false);
         await ElapsedLegacyDeadlinesRemainBlockedAndAreNotAutomaticallyExpired(
-            "mail.operation.execute.v29", false);
+            "mail.operation.execute.v29", false).ConfigureAwait(false);
     }
 
     [TestMethod]
     public async Task V30MailOperationsAreBlockedBeforeV31Dispatch()
     {
         await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
-            "mail.operation.execute.v30", false, false);
+            "mail.operation.execute.v30", false, false).ConfigureAwait(false);
         await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
-            "mail.operation.execute.v30", false, true);
+            "mail.operation.execute.v30", false, true).ConfigureAwait(false);
         await ElapsedLegacyDeadlinesRemainBlockedAndAreNotAutomaticallyExpired(
-            "mail.operation.execute.v30", false);
+            "mail.operation.execute.v30", false).ConfigureAwait(false);
     }
 
     [TestMethod]
     public async Task V31MailOperationsAreBlockedBeforeV32Dispatch()
     {
         await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
-            "mail.operation.execute.v31", false, false);
+            "mail.operation.execute.v31", false, false).ConfigureAwait(false);
         await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
-            "mail.operation.execute.v31", false, true);
+            "mail.operation.execute.v31", false, true).ConfigureAwait(false);
         await ElapsedLegacyDeadlinesRemainBlockedAndAreNotAutomaticallyExpired(
-            "mail.operation.execute.v31", false);
+            "mail.operation.execute.v31", false).ConfigureAwait(false);
     }
 
     [TestMethod]
     public async Task V32MailOperationsAreBlockedBeforeV33Dispatch()
     {
         await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
-            "mail.operation.execute.v32", false, false);
+            "mail.operation.execute.v32", false, false).ConfigureAwait(false);
         await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
-            "mail.operation.execute.v32", false, true);
+            "mail.operation.execute.v32", false, true).ConfigureAwait(false);
         await ElapsedLegacyDeadlinesRemainBlockedAndAreNotAutomaticallyExpired(
-            "mail.operation.execute.v32", false);
+            "mail.operation.execute.v32", false).ConfigureAwait(false);
     }
 
     [TestMethod]
     public async Task V33MailOperationsAreBlockedBeforeV34Dispatch()
     {
         await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
-            "mail.operation.execute.v33", false, false);
+            "mail.operation.execute.v33", false, false).ConfigureAwait(false);
         await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
-            "mail.operation.execute.v33", false, true);
+            "mail.operation.execute.v33", false, true).ConfigureAwait(false);
         await ElapsedLegacyDeadlinesRemainBlockedAndAreNotAutomaticallyExpired(
-            "mail.operation.execute.v33", false);
+            "mail.operation.execute.v33", false).ConfigureAwait(false);
     }
 
     [TestMethod]
     public async Task FreshSchemasAndCurrentOrTerminalWorkAreCompatible()
     {
-        await using var database = await RequirePostgresAsync();
-        await using var source = NpgsqlDataSource.Create(database.ConnectionString);
-        Assert.IsTrue(await DistributedQueueContractGuard.IsCompatibleAsync(source));
-        await PostgresMessagingSchema.EnsureAsync(source);
+        var database = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        var source = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var sourceLifetime = source.ConfigureAwait(false);
+        Assert.IsTrue(await DistributedQueueContractGuard.IsCompatibleAsync(source).ConfigureAwait(false));
+        await PostgresMessagingSchema.EnsureAsync(source).ConfigureAwait(false);
         using var protector = AesGcmPayloadProtectorTests.CreateProtector("test", "compatible-key");
         var application = new PostgresApplicationBus(source, protector);
         var presentation = new PostgresPresentationBus(source, protector);
-        await application.EnqueueAsync(Request(ApplicationOperations.MailOperationExecute));
-        await presentation.EnqueueAsync(Request(WebPushPresentationOperations.Send));
-        Assert.IsTrue(await Control(source).IsAvailableAsync());
-        var current = await application.TryClaimAsync("current-role");
+        await application.EnqueueAsync(Request(ApplicationOperations.MailOperationExecute)).ConfigureAwait(false);
+        await presentation.EnqueueAsync(Request(WebPushPresentationOperations.Send)).ConfigureAwait(false);
+        Assert.IsTrue(await Control(source).IsAvailableAsync().ConfigureAwait(false));
+        var current = await application.TryClaimAsync("current-role").ConfigureAwait(false);
         Assert.IsNotNull(current);
-        await application.CompleteAsync(current, new ApplicationResponse(current.Request.Id, "application/json", "{}"u8.ToArray(), new Dictionary<string, string>()));
+        await application.CompleteAsync(current, new ApplicationResponse(current.Request.Id, "application/json", "{}"u8.ToArray(), new Dictionary<string, string>(StringComparer.Ordinal))).ConfigureAwait(false);
         var old = Request("jmap.batch.execute.v2");
-        await application.EnqueueAsync(old);
-        var legacy = await application.TryClaimAsync("original-role");
+        await application.EnqueueAsync(old).ConfigureAwait(false);
+        var legacy = await application.TryClaimAsync("original-role").ConfigureAwait(false);
         Assert.IsNotNull(legacy);
         Assert.AreEqual(old.Id, legacy.Request.Id);
-        await application.FailAsync(legacy, "operator-reconciled", "Test operator reconciliation.");
-        Assert.IsTrue(await Control(source).IsAvailableAsync());
+        await application.FailAsync(legacy, "operator-reconciled", "Test operator reconciliation.").ConfigureAwait(false);
+        Assert.IsTrue(await Control(source).IsAvailableAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task IncompleteQueueSchemaFailsClosed()
     {
-        await using var database = await RequirePostgresAsync();
-        await using var source = NpgsqlDataSource.Create(database.ConnectionString);
-        await using var command = source.CreateCommand("CREATE TABLE public.application_requests (id uuid)");
-        await command.ExecuteNonQueryAsync();
-        Assert.IsFalse(await DistributedQueueContractGuard.IsCompatibleAsync(source));
-        await Assert.ThrowsAsync<InvalidOperationException>(() => DistributedQueueContractGuard.RequireCompatibleAsync(source));
+        var database = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        var source = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var sourceLifetime = source.ConfigureAwait(false);
+        var command = source.CreateCommand("CREATE TABLE public.application_requests (id uuid)");
+        await using var commandLifetime = command.ConfigureAwait(false);
+        await command.ExecuteNonQueryAsync().ConfigureAwait(false);
+        Assert.IsFalse(await DistributedQueueContractGuard.IsCompatibleAsync(source).ConfigureAwait(false));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => DistributedQueueContractGuard.RequireCompatibleAsync(source)).ConfigureAwait(false);
     }
 
     [TestMethod]
     public async Task GatewayRecordsRejectedWorkButDoesNotQueueItWhenReconciliationIsRequired()
     {
-        await using var database = await RequirePostgresAsync();
-        await using var source = NpgsqlDataSource.Create(database.ConnectionString);
-        await PostgresMessagingSchema.EnsureAsync(source);
+        var database = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        var source = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var sourceLifetime = source.ConfigureAwait(false);
+        await PostgresMessagingSchema.EnsureAsync(source).ConfigureAwait(false);
         using var protector = AesGcmPayloadProtectorTests.CreateProtector("test", "record-rejection-key");
         var bus = new PostgresApplicationBus(source, protector);
         var journal = new PostgresGatewayTrafficJournal(source, protector);
-        await bus.EnqueueAsync(Request("jmap.session.get"));
+        await bus.EnqueueAsync(Request("jmap.session.get")).ConfigureAwait(false);
         var gateway = new GatewayApplicationTransport(bus, journal,
             new GatewayApplicationOptions("gateway@test", TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5)), Control(source));
         var error = await Assert.ThrowsAsync<GatewayApplicationException>(() =>
-            gateway.SendAsync<object, SystemPingResult>("health", ApplicationOperations.SystemPing, new { }));
+            gateway.SendAsync<object, SystemPingResult>("health", ApplicationOperations.SystemPing, new { })).ConfigureAwait(false);
         Assert.IsTrue(error.IsUnavailable);
-        Assert.AreEqual("application-unavailable", error.Code);
-        await using var count = source.CreateCommand("SELECT count(*) FROM public.application_requests");
-        Assert.AreEqual(1L, await count.ExecuteScalarAsync());
-        await using var session = source.CreateCommand("SELECT DISTINCT session_id FROM public.gateway_traffic_records");
-        var sessionId = (Guid)(await session.ExecuteScalarAsync())!;
-        var records = await journal.ReadSessionAsync(sessionId);
+        Assert.AreEqual("application-unavailable", error.Code, StringComparer.Ordinal);
+        var count = source.CreateCommand("SELECT count(*) FROM public.application_requests");
+        await using var countLifetime = count.ConfigureAwait(false);
+        Assert.AreEqual(1L, await count.ExecuteScalarAsync().ConfigureAwait(false));
+        var session = source.CreateCommand("SELECT DISTINCT session_id FROM public.gateway_traffic_records");
+        await using var sessionLifetime = session.ConfigureAwait(false);
+        var sessionId = (Guid)(await session.ExecuteScalarAsync().ConfigureAwait(false))!;
+        var records = await journal.ReadSessionAsync(sessionId).ConfigureAwait(false);
         Assert.HasCount(2, records);
-        Assert.AreEqual(GatewayTrafficDirections.Inbound, records[0].Direction);
-        Assert.AreEqual(GatewayTrafficDirections.Outbound, records[1].Direction);
+        Assert.AreEqual(GatewayTrafficDirections.Inbound, records[0].Direction, StringComparer.Ordinal);
+        Assert.AreEqual(GatewayTrafficDirections.Outbound, records[1].Direction, StringComparer.Ordinal);
         using var payload = JsonDocument.Parse(records[1].Payload);
-        Assert.AreEqual("application-unavailable", payload.RootElement.GetProperty("code").GetString());
+        Assert.AreEqual("application-unavailable", payload.RootElement.GetProperty("code").GetString(), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task CancellationDuringAvailabilityCheckIsJournaledWithoutQueuingWork()
     {
-        await using var database = await RequirePostgresAsync();
-        await using var source = NpgsqlDataSource.Create(database.ConnectionString);
-        await PostgresMessagingSchema.EnsureAsync(source);
+        var database = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        var source = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var sourceLifetime = source.ConfigureAwait(false);
+        await PostgresMessagingSchema.EnsureAsync(source).ConfigureAwait(false);
         using var protector = AesGcmPayloadProtectorTests.CreateProtector("test", "record-cancellation-key");
         var bus = new PostgresApplicationBus(source, protector);
         var journal = new PostgresGatewayTrafficJournal(source, protector);
@@ -400,71 +416,80 @@ public sealed class DistributedContractCompatibilityTests
             new GatewayApplicationOptions("gateway@test", TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5)),
             new CancelingAvailability(cancellation));
         await Assert.ThrowsAsync<OperationCanceledException>(() => gateway.SendAsync<object, SystemPingResult>(
-            "health", ApplicationOperations.SystemPing, new { }, cancellation.Token));
-        await using var count = source.CreateCommand("SELECT count(*) FROM public.application_requests");
-        Assert.AreEqual(0L, await count.ExecuteScalarAsync());
-        await using var session = source.CreateCommand("SELECT DISTINCT session_id FROM public.gateway_traffic_records");
-        var records = await journal.ReadSessionAsync((Guid)(await session.ExecuteScalarAsync())!);
+            "health", ApplicationOperations.SystemPing, new { }, cancellation.Token)).ConfigureAwait(false);
+        var count = source.CreateCommand("SELECT count(*) FROM public.application_requests");
+        await using var countLifetime = count.ConfigureAwait(false);
+        Assert.AreEqual(0L, await count.ExecuteScalarAsync().ConfigureAwait(false));
+        var session = source.CreateCommand("SELECT DISTINCT session_id FROM public.gateway_traffic_records");
+        await using var sessionLifetime = session.ConfigureAwait(false);
+        var records = await journal.ReadSessionAsync((Guid)(await session.ExecuteScalarAsync().ConfigureAwait(false))!).ConfigureAwait(false);
         Assert.HasCount(2, records);
-        Assert.AreEqual(GatewayTrafficDirections.Outbound, records[1].Direction);
+        Assert.AreEqual(GatewayTrafficDirections.Outbound, records[1].Direction, StringComparer.Ordinal);
         using var payload = JsonDocument.Parse(records[1].Payload);
-        Assert.AreEqual("gateway-request-cancelled", payload.RootElement.GetProperty("code").GetString());
+        Assert.AreEqual("gateway-request-cancelled", payload.RootElement.GetProperty("code").GetString(), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task ApplicationLeaseArrivingAfterPreflightIsNotCompletedOrFailed()
     {
-        await using var database = await RequirePostgresAsync();
-        await using var source = NpgsqlDataSource.Create(database.ConnectionString);
-        await PostgresMessagingSchema.EnsureAsync(source);
-        Assert.IsTrue(await DistributedQueueContractGuard.IsCompatibleAsync(source));
+        var database = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        var source = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var sourceLifetime = source.ConfigureAwait(false);
+        await PostgresMessagingSchema.EnsureAsync(source).ConfigureAwait(false);
+        Assert.IsTrue(await DistributedQueueContractGuard.IsCompatibleAsync(source).ConfigureAwait(false));
         using var protector = AesGcmPayloadProtectorTests.CreateProtector("original", "application-race-key");
         var bus = new PostgresApplicationBus(source, protector);
-        await bus.EnqueueAsync(Request("jmap.batch.execute.v2"));
-        var lease = await bus.TryClaimAsync("new-role");
+        await bus.EnqueueAsync(Request("jmap.batch.execute.v2")).ConfigureAwait(false);
+        var lease = await bus.TryClaimAsync("new-role").ConfigureAwait(false);
         Assert.IsNotNull(lease);
-        var before = await SnapshotAsync(source, "application_requests", lease.Request.Id);
+        var before = await SnapshotAsync(source, "application_requests", lease.Request.Id).ConfigureAwait(false);
         var dispatcher = new RejectingDispatcher();
-        await using var services = new ServiceCollection().AddSingleton<IApplicationRequestDispatcher>(dispatcher).BuildServiceProvider();
+        var services = new ServiceCollection().AddSingleton<IApplicationRequestDispatcher>(dispatcher).BuildServiceProvider();
+        await using var servicesLifetime = services.ConfigureAwait(false);
         using var worker = new ApplicationRequestWorker(bus, services.GetRequiredService<IServiceScopeFactory>(),
             new ApplicationWorkerIdentity("new-role", TimeSpan.FromSeconds(1)), NullLogger<ApplicationRequestWorker>.Instance);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => worker.ProcessLeaseAsync(lease, CancellationToken.None));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => worker.ProcessLeaseAsync(lease, CancellationToken.None)).ConfigureAwait(false);
         Assert.AreEqual(0, dispatcher.Calls);
-        Assert.AreEqual(before, await SnapshotAsync(source, "application_requests", lease.Request.Id));
+        Assert.AreEqual(before, await SnapshotAsync(source, "application_requests", lease.Request.Id).ConfigureAwait(false), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task GatewayLeaseRaceKeepsPresentationWorkerAliveAndPreservesWork()
     {
-        await using var database = await RequirePostgresAsync();
-        await using var source = NpgsqlDataSource.Create(database.ConnectionString);
-        await PostgresMessagingSchema.EnsureAsync(source);
+        var database = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        var source = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var sourceLifetime = source.ConfigureAwait(false);
+        await PostgresMessagingSchema.EnsureAsync(source).ConfigureAwait(false);
         using var protector = AesGcmPayloadProtectorTests.CreateProtector("original", "presentation-race-key");
         var bus = new PostgresPresentationBus(source, protector, new PostgresMessagingOptions { NotificationFallbackInterval = TimeSpan.FromSeconds(1) });
         var availability = new AvailabilityBarrier(Control(source));
         var journal = new PostgresGatewayTrafficJournal(source, protector);
-        using var sender = new GatewayWebPushService(new RejectingHandler(), journal, 1_048_576);
+        using var ownedResource1 = new RejectingHandler();
+        using var sender = new GatewayWebPushService(ownedResource1, journal, 1_048_576);
         using var worker = new GatewayPresentationWorker(bus, availability, journal, sender, new RejectingRelay(),
             new EnvironmentConfig(), NullLogger<GatewayPresentationWorker>.Instance);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        await worker.StartAsync(timeout.Token);
+        await worker.StartAsync(timeout.Token).ConfigureAwait(false);
         try
         {
-            await availability.FirstCheck.Task.WaitAsync(timeout.Token);
+            await availability.FirstCheck.Task.WaitAsync(timeout.Token).ConfigureAwait(false);
             var request = Request("webpush.send");
-            await bus.EnqueueAsync(request, timeout.Token);
-            await availability.Blocked.Task.WaitAsync(timeout.Token);
+            await bus.EnqueueAsync(request, timeout.Token).ConfigureAwait(false);
+            await availability.Blocked.Task.WaitAsync(timeout.Token).ConfigureAwait(false);
             Assert.IsFalse(worker.ExecuteTask!.IsCompleted);
-            using var snapshot = JsonDocument.Parse(await SnapshotAsync(source, "presentation_requests", request.Id));
-            Assert.AreEqual("processing", snapshot.RootElement.GetProperty("state").GetString());
+            using var snapshot = JsonDocument.Parse(await SnapshotAsync(source, "presentation_requests", request.Id).ConfigureAwait(false));
+            Assert.AreEqual("processing", snapshot.RootElement.GetProperty("state").GetString(), StringComparer.Ordinal);
             Assert.AreEqual(JsonValueKind.Null, snapshot.RootElement.GetProperty("completed_at").ValueKind);
             Assert.AreEqual(1, snapshot.RootElement.GetProperty("attempt_count").GetInt32());
-            await using var traffic = source.CreateCommand("SELECT count(*) FROM public.gateway_traffic_records");
-            Assert.AreEqual(0L, await traffic.ExecuteScalarAsync(timeout.Token));
+            var traffic = source.CreateCommand("SELECT count(*) FROM public.gateway_traffic_records");
+            await using var trafficLifetime = traffic.ConfigureAwait(false);
+            Assert.AreEqual(0L, await traffic.ExecuteScalarAsync(timeout.Token).ConfigureAwait(false));
         }
         finally
         {
-            await worker.StopAsync(timeout.Token);
+            await worker.StopAsync(timeout.Token).ConfigureAwait(false);
         }
     }
 
@@ -473,20 +498,21 @@ public sealed class DistributedContractCompatibilityTests
 
     private static ApplicationRequest Request(string operation) => new(
         Guid.CreateVersion7(), Guid.CreateVersion7(), 0, "test", operation, "application/json",
-        "original opaque document, not a modern DTO"u8.ToArray(), new Dictionary<string, string>(),
+        "original opaque document, not a modern DTO"u8.ToArray(), new Dictionary<string, string>(StringComparer.Ordinal),
         DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddMinutes(5));
 
     private static async Task<string> SnapshotAsync(NpgsqlDataSource source, string table, Guid id)
     {
         Assert.IsTrue(table is "application_requests" or "presentation_requests");
-        await using var command = source.CreateCommand($"SELECT to_jsonb(queue_row)::text FROM public.{table} AS queue_row WHERE id = @id");
+        var command = source.CreateCommand($"SELECT to_jsonb(queue_row)::text FROM public.{table} AS queue_row WHERE id = @id");
+        await using var commandLifetime = command.ConfigureAwait(false);
         command.Parameters.AddWithValue("id", id);
-        return (string)(await command.ExecuteScalarAsync())!;
+        return (string)(await command.ExecuteScalarAsync().ConfigureAwait(false))!;
     }
 
     private static async Task<PostgresTestDatabase> RequirePostgresAsync()
     {
-        var database = await PostgresTestDatabase.TryCreateAsync();
+        var database = await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false);
         if (database is null)
         {
             Assert.Inconclusive("Set MK8_EMAIL_TEST_POSTGRES to a PostgreSQL admin connection string.");
@@ -511,7 +537,7 @@ public sealed class DistributedContractCompatibilityTests
         public TaskCompletionSource Blocked { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public async Task<bool> IsAvailableAsync(CancellationToken cancellationToken = default)
         {
-            var result = await inner.IsAvailableAsync(cancellationToken);
+            var result = await inner.IsAvailableAsync(cancellationToken).ConfigureAwait(false);
             if (result) FirstCheck.TrySetResult();
             else Blocked.TrySetResult();
             return result;
@@ -520,9 +546,9 @@ public sealed class DistributedContractCompatibilityTests
 
     private sealed class CancelingAvailability(CancellationTokenSource cancellation) : IApplicationTransportControl
     {
-        public Task<bool> IsAvailableAsync(CancellationToken cancellationToken = default)
+        public async Task<bool> IsAvailableAsync(CancellationToken cancellationToken = default)
         {
-            cancellation.Cancel();
+            await cancellation.CancelAsync().ConfigureAwait(false);
             throw new OperationCanceledException(cancellationToken);
         }
     }

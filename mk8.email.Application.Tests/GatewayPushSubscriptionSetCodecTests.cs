@@ -10,7 +10,8 @@ using mk8.email.Jmap;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class GatewayPushSubscriptionSetCodecTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class GatewayPushSubscriptionSetCodecTests
 {
     private const string SubscriptionId = "P22222222222222222222222222222222";
 
@@ -38,11 +39,11 @@ public sealed class GatewayPushSubscriptionSetCodecTests
             },
         };
         Assert.IsTrue(GatewayPushSubscriptionSetCodec.TryParse(arguments,
-            new Dictionary<string, string>(), 10, out var call, out var failure));
+            new Dictionary<string, string>(StringComparer.Ordinal), 10, out var call, out var failure));
         Assert.IsNull(failure);
         Assert.IsNotNull(call);
         Assert.IsTrue(call.Command.Updates[0].Patch!.AssertKeyP256dh);
-        Assert.AreEqual("same-key", call.Command.Updates[0].Patch!.KeyP256dh);
+        Assert.AreEqual("same-key", call.Command.Updates[0].Patch!.KeyP256dh, StringComparer.Ordinal);
         var createdId = Guid.Parse("33333333-3333-3333-3333-333333333333");
         var expiry = new DateTime(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc);
         var rendered = GatewayPushSubscriptionSetCodec.Render(call,
@@ -53,9 +54,9 @@ public sealed class GatewayPushSubscriptionSetCodecTests
                     Guid.Parse("22222222-2222-2222-2222-222222222222"),
                     MailPushSubscriptionMutationError.None, null, null)], []));
         Assert.AreEqual(MailOperationKind.MutateNotificationSubscriptions, rendered.Operation);
-        Assert.AreEqual($"P{createdId:N}", rendered.Data["created"]!["new"]!["id"]!.GetValue<string>());
+        Assert.AreEqual($"P{createdId:N}", rendered.Data["created"]!["new"]!["id"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual("2026-10-01T00:00:00Z",
-            rendered.Data["created"]!["new"]!["expires"]!.GetValue<string>());
+            rendered.Data["created"]!["new"]!["expires"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.IsTrue(rendered.Data["created"]!["new"]!.AsObject().ContainsKey("keys"));
         Assert.IsNull(rendered.Data["updated"]![SubscriptionId]);
 
@@ -65,27 +66,28 @@ public sealed class GatewayPushSubscriptionSetCodecTests
             ["keys/auth"] = "x",
         };
         Assert.IsTrue(GatewayPushSubscriptionSetCodec.TryParse(arguments,
-            new Dictionary<string, string>(), 10, out call, out failure));
-        Assert.AreEqual("invalidPatch", call!.UpdateErrors[SubscriptionId]["type"]!.GetValue<string>());
+            new Dictionary<string, string>(StringComparer.Ordinal), 10, out call, out failure));
+        Assert.AreEqual("invalidPatch", call!.UpdateErrors[SubscriptionId]["type"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task WorkerRejectsDuplicatePushCreationIdsBeforePersistence()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         using var scope = fixture.Services.CreateScope();
         var processor = scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>();
         var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-        var before = await database.JmapPushSubscriptions.CountAsync();
+        var before = await database.JmapPushSubscriptions.CountAsync().ConfigureAwait(false);
         var malformed = JsonNode.Parse("""
             {"creates":[{"creationId":"same","values":null},{"creationId":"same","values":null}],
              "updates":[],"destroys":[]}
             """)!.AsObject();
         var command = new MailOperationCommand([MailFeature.Basic],
             MailOperationKind.MutateNotificationSubscriptions, malformed,
-            new Dictionary<string, string>());
+            new Dictionary<string, string>(StringComparer.Ordinal));
         var failure = await Assert.ThrowsAsync<MailApplicationException>(() =>
-            processor.ExecuteAsync(command, fixture.User, null));
+            processor.ExecuteAsync(command, fixture.User, null)).ConfigureAwait(false);
         Assert.AreEqual(MailFailureKind.MalformedBatch, failure.Failure.Kind);
 
         malformed["creates"] = new JsonArray();
@@ -95,21 +97,22 @@ public sealed class GatewayPushSubscriptionSetCodecTests
               "patch":null}]
             """);
         failure = await Assert.ThrowsAsync<MailApplicationException>(() =>
-            processor.ExecuteAsync(command, fixture.User, null));
+            processor.ExecuteAsync(command, fixture.User, null)).ConfigureAwait(false);
         Assert.AreEqual(MailFailureKind.MalformedBatch, failure.Failure.Kind);
-        Assert.AreEqual(before, await database.JmapPushSubscriptions.CountAsync());
+        Assert.AreEqual(before, await database.JmapPushSubscriptions.CountAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task MissingNestedKeyRemovalIsAnUnchangedAssertion()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var id = Guid.CreateVersion7();
         var wireId = $"P{id:N}";
         using (var scope = fixture.Services.CreateScope())
         {
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-            database.JmapPushSubscriptions.Add(new JmapPushSubscriptionDB
+            await database.JmapPushSubscriptions.AddAsync(new JmapPushSubscriptionDB
             {
                 Id = id,
                 SubscriptionObjectId = wireId,
@@ -121,15 +124,15 @@ public sealed class GatewayPushSubscriptionSetCodecTests
                 ExpiresAt = DateTime.UtcNow.AddDays(2),
                 CreatedAt = DateTime.UtcNow.AddMinutes(-1),
                 UpdatedAt = DateTime.UtcNow.AddMinutes(-1),
-            });
-            await database.SaveChangesAsync();
+            }).ConfigureAwait(false);
+            await database.SaveChangesAsync().ConfigureAwait(false);
         }
-        var accepted = await InvokePatchAsync(new JsonObject { ["keys/unknown"] = null });
+        var accepted = await InvokePatchAsync(new JsonObject { ["keys/unknown"] = null }).ConfigureAwait(false);
         Assert.IsNull(accepted["notUpdated"]);
         Assert.IsTrue(accepted["updated"]!.AsObject().ContainsKey(wireId));
-        var changed = await InvokePatchAsync(new JsonObject { ["keys/unknown"] = "new" });
-        Assert.AreEqual("invalidProperties", changed["notUpdated"]![wireId]!["type"]!.GetValue<string>());
-        Assert.AreEqual("keys", changed["notUpdated"]![wireId]!["properties"]![0]!.GetValue<string>());
+        var changed = await InvokePatchAsync(new JsonObject { ["keys/unknown"] = "new" }).ConfigureAwait(false);
+        Assert.AreEqual("invalidProperties", changed["notUpdated"]![wireId]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("keys", changed["notUpdated"]![wireId]!["properties"]![0]!.GetValue<string>(), StringComparer.Ordinal);
 
         async Task<JsonObject> InvokePatchAsync(JsonObject patch)
         {
@@ -138,7 +141,7 @@ public sealed class GatewayPushSubscriptionSetCodecTests
                 ["using"] = new JsonArray("urn:ietf:params:jmap:core"),
                 ["methodCalls"] = new JsonArray(new JsonArray("PushSubscription/set",
                     new JsonObject { ["update"] = new JsonObject { [wireId] = patch } }, "p1")),
-            });
+            }).ConfigureAwait(false);
             return response["methodResponses"]![0]![1]!.AsObject();
         }
     }

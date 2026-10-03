@@ -28,8 +28,9 @@ internal sealed class InMemoryLargeObjectStore : ILargeObjectStore
         ArgumentException.ThrowIfNullOrWhiteSpace(objectName);
         ArgumentNullException.ThrowIfNull(content);
         ArgumentException.ThrowIfNullOrWhiteSpace(contentType);
-        await using var copy = new MemoryStream();
-        await content.CopyToAsync(copy, cancellationToken);
+        var copy = new MemoryStream();
+        await using var copyLifetime = copy.ConfigureAwait(false);
+        await content.CopyToAsync(copy, cancellationToken).ConfigureAwait(false);
         var bytes = copy.ToArray();
         var actualHash = Convert.ToHexStringLower(SHA256.HashData(bytes));
         if (bytes.LongLength != length
@@ -68,7 +69,7 @@ internal sealed class InMemoryLargeObjectStore : ILargeObjectStore
         if (stored.Reference != reference)
             throw new InvalidOperationException("The test object reference failed its integrity check.");
         Interlocked.Increment(ref readCount);
-        await destination.WriteAsync(stored.Content, cancellationToken);
+        await destination.WriteAsync(stored.Content, cancellationToken).ConfigureAwait(false);
     }
 
     public Task<bool> DeleteIfMatchAsync(

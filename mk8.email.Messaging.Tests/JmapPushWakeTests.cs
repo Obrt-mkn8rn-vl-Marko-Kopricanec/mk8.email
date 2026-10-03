@@ -11,12 +11,15 @@ namespace mk8.email.Messaging.Tests;
 
 [TestClass]
 [TestCategory("PostgreSQL")]
-public sealed class JmapPushWakeTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class JmapPushWakeTests
 {
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The VerifiedSubscriptionNotificationWakesIdleWorkerAndClearsStaleRetry scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task VerifiedSubscriptionNotificationWakesIdleWorkerAndClearsStaleRetry()
     {
-        await using var server = await PostgresTestDatabase.TryCreateAsync();
+        var server = (await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false));
+        await using var serverLifetime = new NullableAsyncDisposable(server).ConfigureAwait(false);
         if (server is null)
         {
             Assert.Inconclusive("Set MK8_EMAIL_TEST_POSTGRES to a PostgreSQL admin connection string.");
@@ -40,20 +43,22 @@ public sealed class JmapPushWakeTests
             .AddScoped<JmapAccountService>()
             .AddScoped<JmapStateService>()
             .AddScoped<JmapStateChangeService>();
-        await using var provider = services.BuildServiceProvider();
+        var provider = services.BuildServiceProvider();
+        await using var providerLifetime = provider.ConfigureAwait(false);
         var userId = Guid.CreateVersion7();
-        await using (var scope = provider.CreateAsyncScope())
         {
+            var scope = provider.CreateAsyncScope();
+            await using var scopeLifetime = scope.ConfigureAwait(false);
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-            await database.Database.EnsureCreatedAsync();
-            await new MailRuntimeSchemaService(database).EnsureAsync();
-            database.Users.Add(new UserDB
+            await database.Database.EnsureCreatedAsync().ConfigureAwait(false);
+            await new MailRuntimeSchemaService(database).EnsureAsync().ConfigureAwait(false);
+            await database.Users.AddAsync(new UserDB
             {
                 Id = userId,
                 Username = "push-wake@example.test",
                 PasswordHash = "unused",
-            });
-            await database.SaveChangesAsync();
+            }).ConfigureAwait(false);
+            await database.SaveChangesAsync().ConfigureAwait(false);
         }
 
         var worker = new JmapPushWorker(
@@ -61,30 +66,33 @@ public sealed class JmapPushWakeTests
             new UnavailableJmapPushPresentationClient(),
             environment,
             NullLogger<JmapPushWorker>.Instance);
-        await worker.StartAsync(CancellationToken.None);
+        await worker.StartAsync(CancellationToken.None).ConfigureAwait(false);
         try
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-            await using var observer = new NpgsqlConnection(server.ConnectionString);
-            await observer.OpenAsync(timeout.Token);
+            var observer = new NpgsqlConnection(server.ConnectionString);
+            await using var observerLifetime = observer.ConfigureAwait(false);
+            await observer.OpenAsync(timeout.Token).ConfigureAwait(false);
             while (true)
             {
-                await using var ready = observer.CreateCommand();
+                var ready = observer.CreateCommand();
+                await using var readyLifetime = ready.ConfigureAwait(false);
                 ready.CommandText =
                     "SELECT EXISTS (SELECT 1 FROM pg_stat_activity "
                     + "WHERE datname = @database AND application_name = 'mk8.email' "
                     + "AND query = 'LISTEN mk8_jmap_push_ready' AND state = 'idle')";
                 ready.Parameters.AddWithValue("database", connection.Database!);
-                if ((bool)(await ready.ExecuteScalarAsync(timeout.Token) ?? false))
+                if ((bool)(await ready.ExecuteScalarAsync(timeout.Token).ConfigureAwait(false) ?? false))
                     break;
-                await Task.Delay(50, timeout.Token);
+                await Task.Delay(50, timeout.Token).ConfigureAwait(false);
             }
 
             var subscriptionId = Guid.CreateVersion7();
-            await using (var scope = provider.CreateAsyncScope())
             {
+                var scope = provider.CreateAsyncScope();
+                await using var scopeLifetime = scope.ConfigureAwait(false);
                 var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-                database.JmapPushSubscriptions.Add(new JmapPushSubscriptionDB
+                await database.JmapPushSubscriptions.AddAsync(new JmapPushSubscriptionDB
                 {
                     Id = subscriptionId,
                     SubscriptionObjectId = "push-wake",
@@ -95,27 +103,28 @@ public sealed class JmapPushWakeTests
                     IsVerified = true,
                     ExpiresAt = DateTime.UtcNow.AddHours(1),
                     NextPushAt = DateTime.UtcNow.AddSeconds(-1),
-                });
-                await database.SaveChangesAsync(timeout.Token);
+                }).ConfigureAwait(false);
+                await database.SaveChangesAsync(timeout.Token).ConfigureAwait(false);
             }
 
             while (true)
             {
-                await using var scope = provider.CreateAsyncScope();
+                var scope = provider.CreateAsyncScope();
+                await using var scopeLifetime = scope.ConfigureAwait(false);
                 var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
                 var nextPushAt = await database.JmapPushSubscriptions
                     .AsNoTracking()
                     .Where(candidate => candidate.Id == subscriptionId)
                     .Select(candidate => candidate.NextPushAt)
-                    .SingleAsync(timeout.Token);
+                    .SingleAsync(timeout.Token).ConfigureAwait(false);
                 if (nextPushAt is null)
                     break;
-                await Task.Delay(50, timeout.Token);
+                await Task.Delay(50, timeout.Token).ConfigureAwait(false);
             }
         }
         finally
         {
-            await worker.StopAsync(CancellationToken.None);
+            await worker.StopAsync(CancellationToken.None).ConfigureAwait(false);
             worker.Dispose();
         }
     }

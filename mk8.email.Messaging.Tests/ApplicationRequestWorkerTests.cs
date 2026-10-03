@@ -17,7 +17,8 @@ using Npgsql;
 namespace mk8.email.Messaging.Tests;
 
 [TestClass]
-public sealed class ApplicationRequestWorkerTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class ApplicationRequestWorkerTests
 {
     [TestMethod]
     public void DrainModeUsesTheSameQueueAndPushWorkersAsHostedMode()
@@ -54,8 +55,8 @@ public sealed class ApplicationRequestWorkerTests
             NullLogger<ApplicationRequestWorker>.Instance);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
-        await worker.StartAsync(timeout.Token);
-        await requests.WaitEntered.Task.WaitAsync(timeout.Token);
+        await worker.StartAsync(timeout.Token).ConfigureAwait(false);
+        await requests.WaitEntered.Task.WaitAsync(timeout.Token).ConfigureAwait(false);
         Assert.AreEqual(0, dispatcher.DispatchCount);
 
         var request = NewRequest();
@@ -65,14 +66,14 @@ public sealed class ApplicationRequestWorkerTests
                 "application@test-host",
                 DateTimeOffset.UtcNow.AddMinutes(2),
                 1),
-            timeout.Token);
-        var response = await requests.Completed.Task.WaitAsync(timeout.Token);
+            timeout.Token).ConfigureAwait(false);
+        var response = await requests.Completed.Task.WaitAsync(timeout.Token).ConfigureAwait(false);
 
         Assert.AreEqual(1, dispatcher.DispatchCount);
         Assert.AreEqual(request.Id, response.RequestId);
-        await worker.StopAsync(timeout.Token);
+        await worker.StopAsync(timeout.Token).ConfigureAwait(false);
         worker.Dispose();
-        await services.DisposeAsync();
+        await services.DisposeAsync().ConfigureAwait(false);
     }
 
     [TestMethod]
@@ -89,7 +90,7 @@ public sealed class ApplicationRequestWorkerTests
                 renewalEntered.TrySetResult();
                 try
                 {
-                    await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                    await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
                     return true;
                 }
                 finally
@@ -98,10 +99,11 @@ public sealed class ApplicationRequestWorkerTests
                 }
             },
         };
-        await using var services = new ServiceCollection()
+        var services = new ServiceCollection()
             .AddSingleton<IApplicationRequestDispatcher>(
                 _ => new ThrowAfterSignalDispatcher(renewalEntered.Task))
             .BuildServiceProvider();
+        await using var servicesLifetime = services.ConfigureAwait(false);
         using var worker = new ApplicationRequestWorker(
             requests,
             services.GetRequiredService<IServiceScopeFactory>(),
@@ -114,11 +116,11 @@ public sealed class ApplicationRequestWorkerTests
             request,
             "application@renewal-test",
             DateTimeOffset.UtcNow.AddMinutes(2),
-            1), timeout.Token);
+            1), timeout.Token).ConfigureAwait(false);
 
         Assert.IsTrue(renewalStopped.Task.IsCompleted);
         await Assert.ThrowsExactlyAsync<InvalidOperationException>(
-            () => requests.Completed.Task.WaitAsync(timeout.Token));
+            () => requests.Completed.Task.WaitAsync(timeout.Token)).ConfigureAwait(false);
     }
 
     [TestMethod]
@@ -126,9 +128,10 @@ public sealed class ApplicationRequestWorkerTests
     {
         var requests = new StubRequestConsumer();
         var dispatcher = new StubDispatcher();
-        await using var services = new ServiceCollection()
+        var services = new ServiceCollection()
             .AddSingleton<IApplicationRequestDispatcher>(_ => dispatcher)
             .BuildServiceProvider();
+        await using var servicesLifetime = services.ConfigureAwait(false);
         var identity = new ApplicationWorkerIdentity(
             "application@drain-host",
             TimeSpan.FromMinutes(1));
@@ -138,9 +141,9 @@ public sealed class ApplicationRequestWorkerTests
             identity,
             NullLogger<ApplicationRequestWorker>.Instance);
         await requests.Queue.Writer.WriteAsync(new ApplicationRequestLease(
-            NewRequest(), identity.WorkerId, DateTimeOffset.UtcNow.AddMinutes(2), 1));
+            NewRequest(), identity.WorkerId, DateTimeOffset.UtcNow.AddMinutes(2), 1)).ConfigureAwait(false);
         await requests.Queue.Writer.WriteAsync(new ApplicationRequestLease(
-            NewRequest(), identity.WorkerId, DateTimeOffset.UtcNow.AddMinutes(2), 1));
+            NewRequest(), identity.WorkerId, DateTimeOffset.UtcNow.AddMinutes(2), 1)).ConfigureAwait(false);
         var mailCalls = 0;
         var cleanupCalls = 0;
         var pushCalls = 0;
@@ -163,7 +166,7 @@ public sealed class ApplicationRequestWorkerTests
             _ => Task.FromResult(++effectCalls <= 3));
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
-        var result = await runner.RunAsync(timeout.Token);
+        var result = await runner.RunAsync(timeout.Token).ConfigureAwait(false);
 
         Assert.AreEqual(2, result.ApplicationRequests);
         Assert.AreEqual(2, result.MailMessages);
@@ -180,9 +183,10 @@ public sealed class ApplicationRequestWorkerTests
     {
         var requests = new StubRequestConsumer();
         var dispatcher = new StubDispatcher();
-        await using var services = new ServiceCollection()
+        var services = new ServiceCollection()
             .AddSingleton<IApplicationRequestDispatcher>(_ => dispatcher)
             .BuildServiceProvider();
+        await using var servicesLifetime = services.ConfigureAwait(false);
         var identity = new ApplicationWorkerIdentity(
             "application@drain-host",
             TimeSpan.FromMinutes(1));
@@ -208,7 +212,7 @@ public sealed class ApplicationRequestWorkerTests
             });
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
-        var result = await runner.RunAsync(timeout.Token);
+        var result = await runner.RunAsync(timeout.Token).ConfigureAwait(false);
 
         Assert.AreEqual(1, result.ApplicationRequests);
         Assert.AreEqual(0, result.MailMessages);
@@ -220,10 +224,13 @@ public sealed class ApplicationRequestWorkerTests
     [TestCategory("PostgreSQL")]
     public async Task RemoteWorkerConsumesRequestQueuedWhileItWasOffline()
     {
-        await using var database = await RequirePostgresAsync();
-        await using var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await using var workerDataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await PostgresMessagingSchema.EnsureAsync(gatewayDataSource);
+        var database = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var gatewayDataSourceLifetime = gatewayDataSource.ConfigureAwait(false);
+        var workerDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var workerDataSourceLifetime = workerDataSource.ConfigureAwait(false);
+        await PostgresMessagingSchema.EnsureAsync(gatewayDataSource).ConfigureAwait(false);
         using var gatewayProtector = AesGcmPayloadProtectorTests.CreateProtector("test", "worker-key");
         using var workerProtector = AesGcmPayloadProtectorTests.CreateProtector("test", "worker-key");
         var options = new PostgresMessagingOptions
@@ -233,12 +240,13 @@ public sealed class ApplicationRequestWorkerTests
         var gateway = new PostgresApplicationBus(gatewayDataSource, gatewayProtector, options);
         var workerBus = new PostgresApplicationBus(workerDataSource, workerProtector, options);
         var request = NewRequest();
-        await gateway.EnqueueAsync(request);
+        await gateway.EnqueueAsync(request).ConfigureAwait(false);
 
         var services = new ServiceCollection();
         services.AddScoped<IApplicationRequestDispatcher>(serviceProvider =>
             new ApplicationRequestDispatcher(serviceProvider));
-        await using var provider = services.BuildServiceProvider();
+        var provider = services.BuildServiceProvider();
+        await using var providerLifetime = provider.ConfigureAwait(false);
         var worker = new ApplicationRequestWorker(
             workerBus,
             provider.GetRequiredService<IServiceScopeFactory>(),
@@ -246,13 +254,13 @@ public sealed class ApplicationRequestWorkerTests
             NullLogger<ApplicationRequestWorker>.Instance);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
 
-        await worker.StartAsync(timeout.Token);
-        var response = await gateway.WaitForResponseAsync(request.Id, request.Deadline, timeout.Token);
+        await worker.StartAsync(timeout.Token).ConfigureAwait(false);
+        var response = await gateway.WaitForResponseAsync(request.Id, request.Deadline, timeout.Token).ConfigureAwait(false);
 
-        Assert.AreEqual("application/json", response.ContentType);
+        Assert.AreEqual("application/json", response.ContentType, StringComparer.Ordinal);
         Assert.IsFalse(response.IsError);
-        await DistributedApplicationProbe.ProbeAsync(gateway, TimeSpan.FromSeconds(5), timeout.Token);
-        await worker.StopAsync(timeout.Token);
+        await DistributedApplicationProbe.ProbeAsync(gateway, TimeSpan.FromSeconds(5), timeout.Token).ConfigureAwait(false);
+        await worker.StopAsync(timeout.Token).ConfigureAwait(false);
         worker.Dispose();
     }
 
@@ -260,10 +268,13 @@ public sealed class ApplicationRequestWorkerTests
     [TestCategory("PostgreSQL")]
     public async Task DrainModeClaimsRemoteRequestQueuedWhileApplicationWasOffline()
     {
-        await using var database = await RequirePostgresAsync();
-        await using var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await using var workerDataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await PostgresMessagingSchema.EnsureAsync(gatewayDataSource);
+        var database = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var gatewayDataSourceLifetime = gatewayDataSource.ConfigureAwait(false);
+        var workerDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var workerDataSourceLifetime = workerDataSource.ConfigureAwait(false);
+        await PostgresMessagingSchema.EnsureAsync(gatewayDataSource).ConfigureAwait(false);
         using var gatewayProtector = AesGcmPayloadProtectorTests.CreateProtector(
             "test", "drain-key");
         using var workerProtector = AesGcmPayloadProtectorTests.CreateProtector(
@@ -275,12 +286,13 @@ public sealed class ApplicationRequestWorkerTests
         var gateway = new PostgresApplicationBus(gatewayDataSource, gatewayProtector, options);
         var workerBus = new PostgresApplicationBus(workerDataSource, workerProtector, options);
         var request = NewRequest();
-        await gateway.EnqueueAsync(request);
+        await gateway.EnqueueAsync(request).ConfigureAwait(false);
 
-        await using var services = new ServiceCollection()
+        var services = new ServiceCollection()
             .AddScoped<IApplicationRequestDispatcher>(provider =>
                 new ApplicationRequestDispatcher(provider))
             .BuildServiceProvider();
+        await using var servicesLifetime = services.ConfigureAwait(false);
         var identity = new ApplicationWorkerIdentity(
             "application@remote-drain-host", TimeSpan.FromSeconds(30));
         using var worker = new ApplicationRequestWorker(
@@ -296,24 +308,28 @@ public sealed class ApplicationRequestWorkerTests
             _ => Task.CompletedTask);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
 
-        var result = await runner.RunAsync(timeout.Token);
+        var result = await runner.RunAsync(timeout.Token).ConfigureAwait(false);
         var response = await gateway.WaitForResponseAsync(
-            request.Id, request.Deadline, timeout.Token);
+            request.Id, request.Deadline, timeout.Token).ConfigureAwait(false);
 
         Assert.AreEqual(1, result.ApplicationRequests);
         Assert.AreEqual(0, result.MailMessages);
         Assert.IsFalse(response.IsError);
-        Assert.AreEqual("application/json", response.ContentType);
+        Assert.AreEqual("application/json", response.ContentType, StringComparer.Ordinal);
     }
 
     [TestMethod]
     [TestCategory("PostgreSQL")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The OAuthGatewayCallCrossesRemoteWorkerAndRecordsBothDirections scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task OAuthGatewayCallCrossesRemoteWorkerAndRecordsBothDirections()
     {
-        await using var database = await RequirePostgresAsync();
-        await using var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await using var workerDataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await PostgresMessagingSchema.EnsureAsync(gatewayDataSource);
+        var database = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var gatewayDataSourceLifetime = gatewayDataSource.ConfigureAwait(false);
+        var workerDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var workerDataSourceLifetime = workerDataSource.ConfigureAwait(false);
+        await PostgresMessagingSchema.EnsureAsync(gatewayDataSource).ConfigureAwait(false);
         using var gatewayProtector = AesGcmPayloadProtectorTests.CreateProtector(
             "test",
             "oauth-worker-key");
@@ -341,12 +357,13 @@ public sealed class ApplicationRequestWorkerTests
             .AddSingleton<IOAuthApplicationService>(oauth)
             .AddScoped<IApplicationRequestDispatcher>(serviceProvider =>
                 new ApplicationRequestDispatcher(serviceProvider));
-        await using var provider = services.BuildServiceProvider();
-        var worker = new ApplicationRequestWorker(
-            workerBus,
-            provider.GetRequiredService<IServiceScopeFactory>(),
-            new ApplicationWorkerIdentity("application@oauth-host", TimeSpan.FromSeconds(30)),
-            NullLogger<ApplicationRequestWorker>.Instance);
+        var provider = services.BuildServiceProvider();
+        await using var providerLifetime = provider.ConfigureAwait(false);
+        using var worker = new ApplicationRequestWorker(
+                    workerBus,
+                    provider.GetRequiredService<IServiceScopeFactory>(),
+                    new ApplicationWorkerIdentity("application@oauth-host", TimeSpan.FromSeconds(30)),
+                    NullLogger<ApplicationRequestWorker>.Instance);
         var transport = new GatewayApplicationTransport(
             gatewayBus,
             journal,
@@ -367,23 +384,24 @@ public sealed class ApplicationRequestWorkerTests
             null);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
 
-        await worker.StartAsync(timeout.Token);
-        var result = await client.AuthorizeAsync(request, timeout.Token);
+        await worker.StartAsync(timeout.Token).ConfigureAwait(false);
+        var result = await client.AuthorizeAsync(request, timeout.Token).ConfigureAwait(false);
 
         Assert.AreEqual(OAuthAuthorizationOutcome.Succeeded, result.Outcome);
-        Assert.AreEqual("remote-authorization-code", result.AuthorizationCode);
-        Assert.AreEqual(request.Username, oauth.AuthorizationRequest?.Username);
-        await using var sessionCommand = gatewayDataSource.CreateCommand(
+        Assert.AreEqual("remote-authorization-code", result.AuthorizationCode, StringComparer.Ordinal);
+        Assert.AreEqual(request.Username, oauth.AuthorizationRequest?.Username, StringComparer.Ordinal);
+        var sessionCommand = gatewayDataSource.CreateCommand(
             "SELECT session_id FROM gateway_traffic_records LIMIT 1");
-        var sessionId = (Guid)(await sessionCommand.ExecuteScalarAsync(timeout.Token)
+        await using var sessionCommandLifetime = sessionCommand.ConfigureAwait(false);
+        var sessionId = (Guid)(await sessionCommand.ExecuteScalarAsync(timeout.Token).ConfigureAwait(false)
             ?? throw new AssertFailedException("The OAuth traffic journal is empty."));
-        var records = await journal.ReadSessionAsync(sessionId, timeout.Token);
+        var records = await journal.ReadSessionAsync(sessionId, timeout.Token).ConfigureAwait(false);
         Assert.HasCount(2, records);
-        Assert.IsTrue(records.All(record => record.Protocol == "oauth"));
-        Assert.AreEqual(GatewayTrafficDirections.Inbound, records[0].Direction);
-        Assert.AreEqual(GatewayTrafficDirections.Outbound, records[1].Direction);
+        Assert.IsTrue(records.All(record => string.Equals(record.Protocol, "oauth", StringComparison.Ordinal)));
+        Assert.AreEqual(GatewayTrafficDirections.Inbound, records[0].Direction, StringComparer.Ordinal);
+        Assert.AreEqual(GatewayTrafficDirections.Outbound, records[1].Direction, StringComparer.Ordinal);
 
-        await worker.StopAsync(timeout.Token);
+        await worker.StopAsync(timeout.Token).ConfigureAwait(false);
         worker.Dispose();
     }
 
@@ -398,14 +416,14 @@ public sealed class ApplicationRequestWorkerTests
             ApplicationOperations.SystemPing,
             "application/json",
             "{}"u8.ToArray(),
-            new Dictionary<string, string>(),
+            new Dictionary<string, string>(StringComparer.Ordinal),
             now,
             now.AddMinutes(1));
     }
 
     private static async Task<PostgresTestDatabase> RequirePostgresAsync()
     {
-        var database = await PostgresTestDatabase.TryCreateAsync();
+        var database = await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false);
         if (database is null)
         {
             Assert.Inconclusive(
@@ -429,7 +447,7 @@ public sealed class ApplicationRequestWorkerTests
                 request.Id,
                 "application/json",
                 "{}"u8.ToArray(),
-                new Dictionary<string, string>()));
+                new Dictionary<string, string>(StringComparer.Ordinal)));
         }
     }
 
@@ -439,7 +457,7 @@ public sealed class ApplicationRequestWorkerTests
             ApplicationRequest request,
             CancellationToken cancellationToken = default)
         {
-            await signal.WaitAsync(cancellationToken);
+            await signal.WaitAsync(cancellationToken).ConfigureAwait(false);
             throw new InvalidOperationException("The handler failed.");
         }
     }
@@ -458,7 +476,7 @@ public sealed class ApplicationRequestWorkerTests
             CancellationToken cancellationToken = default)
         {
             WaitEntered.TrySetResult();
-            return await Queue.Reader.ReadAsync(cancellationToken);
+            return await Queue.Reader.ReadAsync(cancellationToken).ConfigureAwait(false);
         }
 
         public Task<ApplicationRequestLease?> TryClaimAsync(

@@ -25,16 +25,7 @@ internal sealed class JmapMailboxStore(EmailDbContext database)
             })
             .ToListAsync(cancellationToken).ConfigureAwait(false);
 
-        var messages = await database.Emails
-            .AsNoTracking()
-            .Where(email => email.Folder.InboxId == accountId && !email.IsDeleted)
-            .Select(email => new MailboxMessage(
-                email.Id,
-                email.FolderId,
-                email.IsRead,
-                email.IsDraft,
-                email.ThreadObjectId))
-            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        var messages = await LoadMessagesAsync(accountId, cancellationToken).ConfigureAwait(false);
 
         var idByName = folders.ToDictionary(
             folder => folder.Name,
@@ -72,6 +63,21 @@ internal sealed class JmapMailboxStore(EmailDbContext database)
         }
 
         return result;
+    }
+
+    private async Task<List<MailboxMessage>> LoadMessagesAsync(Guid accountId, CancellationToken cancellationToken)
+    {
+        return await database.Emails
+            .AsNoTracking()
+            .Where(email => email.Folder.InboxId == accountId && !email.IsDeleted)
+            .Select(email => new MailboxMessage(
+                email.Id,
+                email.FolderId,
+                email.IsRead,
+                email.IsDraft,
+                email.ThreadObjectId))
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+
     }
 
     public Task<List<FolderDB>> LoadTrackedFoldersAsync(

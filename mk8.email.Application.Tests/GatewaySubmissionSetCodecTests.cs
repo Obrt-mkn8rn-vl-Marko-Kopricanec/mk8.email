@@ -5,12 +5,14 @@ using mk8.email.Gateway.Protocols.Jmap;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class GatewaySubmissionSetCodecTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class GatewaySubmissionSetCodecTests
 {
     private const string AccountId = "A11111111111111111111111111111111";
     private const string ExistingId = "S22222222222222222222222222222222";
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The GatewayOwnsSubmissionSetSyntaxAndResponseProjection scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public void GatewayOwnsSubmissionSetSyntaxAndResponseProjection()
     {
         var envelope = new JsonObject
@@ -40,14 +42,14 @@ public sealed class GatewaySubmissionSetCodecTests
             ["onSuccessDestroyEmail"] = new JsonArray(ExistingId),
         };
         Assert.IsFalse(GatewaySubmissionSetCodec.TryParse(arguments, 3, out _, out var failure));
-        Assert.AreEqual("requestTooLarge", failure);
+        Assert.AreEqual("requestTooLarge", failure, StringComparer.Ordinal);
         Assert.IsTrue(GatewaySubmissionSetCodec.TryParse(arguments, 4, out var call, out failure));
         Assert.IsNull(failure);
         Assert.IsNotNull(call);
         Assert.HasCount(1, call.Command.Creates);
         Assert.HasCount(1, call.Command.Destroys);
         Assert.HasCount(1, call.Command.OnSuccessUpdates);
-        Assert.AreEqual("sender@example.test", call.Command.Creates[0].Draft.Envelope!.Sender.Address);
+        Assert.AreEqual("sender@example.test", call.Command.Creates[0].Draft.Envelope!.Sender.Address, StringComparer.Ordinal);
 
         var createdId = Guid.Parse("55555555-5555-5555-5555-555555555555");
         var created = new MailSubmissionSnapshot(createdId,
@@ -68,17 +70,17 @@ public sealed class GatewaySubmissionSetCodecTests
                 null, null))], implicitCommand, implicitResult);
         var displayed = GatewaySubmissionSetCodec.Render(call, result);
         Assert.AreEqual(MailOperationKind.MutateSubmissions, displayed.Operation);
-        Assert.AreEqual("s2", displayed.Data["newState"]!.GetValue<string>());
+        Assert.AreEqual("s2", displayed.Data["newState"]!.GetValue<string>(), StringComparer.Ordinal);
         var createdResponse = displayed.Data["created"]!["new"]!;
-        Assert.AreEqual($"S{createdId:N}", createdResponse["id"]!.GetValue<string>());
+        Assert.AreEqual($"S{createdId:N}", createdResponse["id"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.IsNull(createdResponse["identityId"]);
         Assert.IsNull(createdResponse["emailId"]);
         Assert.IsNull(createdResponse["envelope"]);
         Assert.AreEqual("queued", createdResponse["deliveryStatus"]!["to@example.test"]!
-            ["delivered"]!.GetValue<string>());
+            ["delivered"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.IsNull(displayed.Data["updated"]![$"S{createdId:N}"]);
         Assert.AreEqual("notFound", displayed.Data["notDestroyed"]![ExistingId]!["type"]!
-            .GetValue<string>());
+            .GetValue<string>(), StringComparer.Ordinal);
         var additional = GatewaySubmissionSetCodec.RenderAdditional(call, result);
         Assert.HasCount(1, additional);
         Assert.AreEqual(MailOperationKind.MutateMessages, additional[0].Operation);
@@ -97,10 +99,10 @@ public sealed class GatewaySubmissionSetCodecTests
         Assert.AreEqual(Guid.Empty, call!.Command.AccountId);
         var denied = GatewaySubmissionSetCodec.Render(call,
             new(MailSubmissionMutationStatus.AccountNotFound, null, null, [], [], [], null, null));
-        Assert.AreEqual("accountNotFound", denied.Data["type"]!.GetValue<string>());
+        Assert.AreEqual("accountNotFound", denied.Data["type"]!.GetValue<string>(), StringComparer.Ordinal);
         arguments["unknown"] = true;
         Assert.IsFalse(GatewaySubmissionSetCodec.TryParse(arguments, 1, out _, out var failure));
-        Assert.AreEqual("invalidArguments", failure);
+        Assert.AreEqual("invalidArguments", failure, StringComparer.Ordinal);
         arguments.Remove("unknown");
         arguments["create"] = new JsonObject { ["bad#key"] = new JsonObject() };
         Assert.IsFalse(GatewaySubmissionSetCodec.TryParse(arguments, 1, out _, out failure));

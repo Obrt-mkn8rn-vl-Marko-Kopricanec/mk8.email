@@ -7,13 +7,14 @@ using mk8.email.Configuration;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class RspamdMailScannerTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class RspamdMailScannerTests
 {
     [TestMethod]
     public async Task AuthenticatedScanReturnsValidatedDkimHeaderAndMetadata()
     {
-        var handler = new RecordingHandler(
-            """
+        using var handler = new RecordingHandler(
+                    """
             {
               "action":"no action",
               "score":0.5,
@@ -33,22 +34,22 @@ public sealed class RspamdMailScannerTests
             "From: admin@mk8n.com\r\n\r\nbody\r\n",
             "192.0.2.10",
             "client.example",
-            "admin@mk8n.com"));
+            "admin@mk8n.com")).ConfigureAwait(false);
 
-        Assert.AreEqual("no action", result.Action);
-        StringAssert.StartsWith(result.AddedHeaders, "DKIM-Signature: v=1;");
-        StringAssert.Contains(result.AddedHeaders, "\r\n\tb=test\r\n");
-        Assert.AreEqual(queueId.ToString("N"), handler.Headers["Queue-Id"].Single());
-        Assert.AreEqual("admin@mk8n.com", handler.Headers["User"].Single());
-        Assert.AreEqual("recipient@example.net", handler.Headers["Rcpt"].Single());
-        StringAssert.Contains(handler.Body!, "From: admin@mk8n.com");
+        Assert.AreEqual("no action", result.Action, StringComparer.Ordinal);
+        StringAssert.StartsWith(result.AddedHeaders, "DKIM-Signature: v=1;", StringComparison.Ordinal);
+        StringAssert.Contains(result.AddedHeaders, "\r\n\tb=test\r\n", StringComparison.Ordinal);
+        Assert.AreEqual(queueId.ToString("N"), handler.Headers["Queue-Id"].Single(), StringComparer.Ordinal);
+        Assert.AreEqual("admin@mk8n.com", handler.Headers["User"].Single(), StringComparer.Ordinal);
+        Assert.AreEqual("recipient@example.net", handler.Headers["Rcpt"].Single(), StringComparer.Ordinal);
+        StringAssert.Contains(handler.Body!, "From: admin@mk8n.com", StringComparison.Ordinal);
     }
 
     [TestMethod]
     public async Task ClamFailureRequestsRetryWithoutAddedHeaders()
     {
-        var handler = new RecordingHandler(
-            """
+        using var handler = new RecordingHandler(
+                    """
             {
               "action":"soft reject",
               "score":0.0,
@@ -59,18 +60,18 @@ public sealed class RspamdMailScannerTests
         using var client = new HttpClient(handler);
         using var scanner = new RspamdMailScanner(CreateEnvironment(), client);
 
-        var result = await scanner.ScanAsync(InboundRequest());
+        var result = await scanner.ScanAsync(InboundRequest()).ConfigureAwait(false);
 
         Assert.IsTrue(result.IsTemporaryFailure);
         Assert.IsFalse(result.IsMalware);
-        Assert.AreEqual(string.Empty, result.AddedHeaders);
+        Assert.AreEqual(string.Empty, result.AddedHeaders, StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task VirusSymbolMarksMessageAsMalware()
     {
-        var handler = new RecordingHandler(
-            """
+        using var handler = new RecordingHandler(
+                    """
             {
               "action":"reject",
               "score":20.0,
@@ -81,18 +82,18 @@ public sealed class RspamdMailScannerTests
         using var client = new HttpClient(handler);
         using var scanner = new RspamdMailScanner(CreateEnvironment(), client);
 
-        var result = await scanner.ScanAsync(InboundRequest());
+        var result = await scanner.ScanAsync(InboundRequest()).ConfigureAwait(false);
 
         Assert.IsTrue(result.IsMalware);
         Assert.IsFalse(result.IsTemporaryFailure);
-        StringAssert.Contains(result.AddedHeaders, "X-Spam-Status: Yes");
+        StringAssert.Contains(result.AddedHeaders, "X-Spam-Status: Yes", StringComparison.Ordinal);
     }
 
     [TestMethod]
     public async Task InvalidFoldedDkimHeaderStopsProcessing()
     {
-        var handler = new RecordingHandler(
-            """
+        using var handler = new RecordingHandler(
+                    """
             {
               "action":"no action",
               "score":0.0,
@@ -105,7 +106,7 @@ public sealed class RspamdMailScannerTests
         using var scanner = new RspamdMailScanner(CreateEnvironment(), client);
         var request = InboundRequest() with { AuthenticatedUser = "admin@mk8n.com" };
 
-        await Assert.ThrowsExactlyAsync<InvalidDataException>(() => scanner.ScanAsync(request));
+        await Assert.ThrowsExactlyAsync<InvalidDataException>(() => scanner.ScanAsync(request)).ConfigureAwait(false);
     }
 
     private static MailScanRequest InboundRequest() => new(
@@ -138,7 +139,7 @@ public sealed class RspamdMailScannerTests
         {
             foreach (var header in request.Headers)
                 Headers.Add(header.Key, header.Value.ToArray());
-            Body = await request.Content!.ReadAsStringAsync(cancellationToken);
+            Body = await request.Content!.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(responseJson, Encoding.UTF8, "application/json"),

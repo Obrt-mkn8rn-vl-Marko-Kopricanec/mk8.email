@@ -5,7 +5,8 @@ using mk8.email.Gateway.ApplicationBridge;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class GatewayMailSystemStatusReaderTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class GatewayMailSystemStatusReaderTests
 {
     private string _testDirectory = null!;
     private string _statusPath = null!;
@@ -43,12 +44,12 @@ public sealed class GatewayMailSystemStatusReaderTests
               "adminCertificateRemainingSeconds": 1728000,
               "errorCount": 0
             }
-            """);
+            """).ConfigureAwait(false);
         var service = CreateService();
 
-        var result = await service.GetStatusAsync();
+        var result = await service.GetStatusAsync().ConfigureAwait(false);
 
-        Assert.AreEqual("healthy", result.State);
+        Assert.AreEqual("healthy", result.State, StringComparer.Ordinal);
         Assert.AreEqual(3, result.QueueCount);
         Assert.AreEqual(12, result.MailStorageUsedPercent);
         Assert.AreEqual(0, result.ErrorCount);
@@ -57,12 +58,12 @@ public sealed class GatewayMailSystemStatusReaderTests
     [TestMethod]
     public async Task InvalidSnapshotReturnsUnavailableState()
     {
-        await File.WriteAllTextAsync(_statusPath, "{\"state\":\"healthy\",\"queueCount\":-1}");
+        await File.WriteAllTextAsync(_statusPath, "{\"state\":\"healthy\",\"queueCount\":-1}").ConfigureAwait(false);
         var service = CreateService();
 
-        var result = await service.GetStatusAsync();
+        var result = await service.GetStatusAsync().ConfigureAwait(false);
 
-        Assert.AreEqual("unavailable", result.State);
+        Assert.AreEqual("unavailable", result.State, StringComparer.Ordinal);
         Assert.IsNull(result.CheckedAt);
     }
 

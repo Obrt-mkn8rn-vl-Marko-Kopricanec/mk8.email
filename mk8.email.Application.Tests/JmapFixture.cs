@@ -43,15 +43,46 @@ internal sealed class JmapFixture : IAsyncDisposable
     public string InboxMailboxId => JmapId.Mailbox(InboxFolderId);
     public string DraftsMailboxId => JmapId.Mailbox(DraftsFolderId);
 
+
     public static async Task<JmapFixture> CreateAsync(
         long? maximumUnreferencedBlobBytes = null,
         Action<IServiceCollection>? configureServices = null)
+    {
+        var configuration = CreateConfiguration(maximumUnreferencedBlobBytes);
+        var provider = CreateServices(configuration, configureServices);
+        var userId = Guid.CreateVersion7();
+        var inboxId = Guid.CreateVersion7();
+        var inboxFolderId = Guid.CreateVersion7();
+        var draftsFolderId = Guid.CreateVersion7();
+        var sentFolderId = Guid.CreateVersion7();
+        const string username = "user@mk8n.com";
+
+        try
+        {
+            await SeedAsync(provider, userId, inboxId, inboxFolderId, draftsFolderId, sentFolderId, username).ConfigureAwait(false);
+            return new JmapFixture(
+                provider,
+                configuration,
+                new AuthenticatedMailUser(userId, username),
+                inboxId,
+                inboxFolderId,
+                draftsFolderId,
+                sentFolderId);
+        }
+        catch
+        {
+            await provider.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private static EnvironmentConfig CreateConfiguration(long? maximumUnreferencedBlobBytes)
     {
         var blobLimit = maximumUnreferencedBlobBytes ?? 100_000_000;
         var objectSizeLimit = maximumUnreferencedBlobBytes is null
             ? 10 * 1024 * 1024
             : checked((int)blobLimit);
-        var configuration = new EnvironmentConfig
+        return new EnvironmentConfig
         {
             Smtp = new SmtpConfig
             {
@@ -68,6 +99,11 @@ internal sealed class JmapFixture : IAsyncDisposable
             },
             Limits = new LimitsConfig { MaxMessageSizeBytes = objectSizeLimit },
         };
+
+    }
+
+    private static ServiceProvider CreateServices(EnvironmentConfig configuration, Action<IServiceCollection>? configureServices)
+    {
         var services = new ServiceCollection();
         var databaseName = $"jmap-{Guid.NewGuid():N}";
         services.AddLogging();
@@ -79,14 +115,14 @@ internal sealed class JmapFixture : IAsyncDisposable
             options.UseInMemoryDatabase(databaseName));
         services.AddJmapApplication();
         configureServices?.Invoke(services);
-        var provider = services.BuildServiceProvider();
+        return services.BuildServiceProvider();
 
-        var userId = Guid.CreateVersion7();
-        var inboxId = Guid.CreateVersion7();
-        var inboxFolderId = Guid.CreateVersion7();
-        var draftsFolderId = Guid.CreateVersion7();
-        var sentFolderId = Guid.CreateVersion7();
-        const string username = "user@mk8n.com";
+
+    }
+
+    private static async Task SeedAsync(ServiceProvider provider, Guid userId, Guid inboxId,
+        Guid inboxFolderId, Guid draftsFolderId, Guid sentFolderId, string username)
+    {
         using (var scope = provider.CreateScope())
         {
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
@@ -122,18 +158,11 @@ internal sealed class JmapFixture : IAsyncDisposable
             inbox.Folders.Add(CreateFolder(sentFolderId, inboxId, "Sent", "sent"));
             inbox.Folders.Add(CreateFolder(Guid.CreateVersion7(), inboxId, "Trash", "trash"));
             inbox.Folders.Add(CreateFolder(Guid.CreateVersion7(), inboxId, "Spam", "junk"));
-            database.Inboxes.Add(inbox);
-            await database.SaveChangesAsync();
+            await database.Inboxes.AddAsync(inbox).ConfigureAwait(false);
+            await database.SaveChangesAsync().ConfigureAwait(false);
         }
 
-        return new JmapFixture(
-            provider,
-            configuration,
-            new AuthenticatedMailUser(userId, username),
-            inboxId,
-            inboxFolderId,
-            draftsFolderId,
-            sentFolderId);
+
     }
 
     internal static void OverrideMethod(IServiceCollection services, IJmapMethod replacement)
@@ -145,22 +174,22 @@ internal sealed class JmapFixture : IAsyncDisposable
 
     public async Task<JsonObject> InvokeAsync(string requestJson)
     {
-        return await InvokeAsync(JsonNode.Parse(requestJson));
+        return await InvokeAsync(JsonNode.Parse(requestJson)).ConfigureAwait(false);
     }
 
     public async Task<JsonObject> InvokeAsync(JsonNode? request)
     {
         using var scope = Services.CreateScope();
         var processor = scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>();
-        return await ProcessAsync(processor, request, User, environment: Configuration);
+        return await ProcessAsync(processor, request, User, environment: Configuration).ConfigureAwait(false);
     }
 
     internal static async Task<JsonObject> ProcessAsync(
         JmapRequestProcessor processor,
         JsonNode? request,
         AuthenticatedMailUser user,
-        CancellationToken cancellationToken = default,
-        EnvironmentConfig? environment = null)
+        EnvironmentConfig? environment = null,
+        CancellationToken cancellationToken = default)
     {
         MailAdmissionPlan? preflight = null;
         JmapApplicationBatch batch;
@@ -173,7 +202,7 @@ internal sealed class JmapFixture : IAsyncDisposable
             processor.ValidatePlan(preflight);
             throw;
         }
-        return GatewayJmapBatchCodec.Render(await ProcessBatchAsync(processor, batch, user, cancellationToken),
+        return GatewayJmapBatchCodec.Render(await ProcessBatchAsync(processor, batch, user, cancellationToken).ConfigureAwait(false),
             environment ?? new EnvironmentConfig { Smtp = new SmtpConfig { Hostname = "email.mk8n.com" } });
     }
 
@@ -184,9 +213,9 @@ internal sealed class JmapFixture : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         processor.ValidatePlan(new(batch.Features, batch.Invocations?.Length ?? 0));
-        var result = await GatewayJmapBatchExecutor.ExecuteAsync(new mk8.email.TestSupport.ProcessorGatewayJmapClient(processor, user),
+        var result = await GatewayJmapBatchExecutor.ExecuteAsync(new TestSupport.ProcessorGatewayJmapClient(processor, user),
             new(ProtocolAuthenticationKinds.Password, user.Username, "test-only"),
-            batch, await processor.GetProfileAsync(user, cancellationToken), cancellationToken);
+            batch, await processor.GetProfileAsync(user, cancellationToken).ConfigureAwait(false), cancellationToken).ConfigureAwait(false);
         return result.Batch!;
     }
 
@@ -194,7 +223,7 @@ internal sealed class JmapFixture : IAsyncDisposable
     {
         using var scope = Services.CreateScope();
         var stored = await scope.ServiceProvider.GetRequiredService<JmapBlobService>()
-            .StoreAsync(InboxId, content, contentType, null, CancellationToken.None);
+            .StoreAsync(InboxId, content, contentType, null, CancellationToken.None).ConfigureAwait(false);
         return stored.BlobId;
     }
 

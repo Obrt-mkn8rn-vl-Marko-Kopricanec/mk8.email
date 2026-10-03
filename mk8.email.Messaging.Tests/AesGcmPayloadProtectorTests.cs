@@ -4,7 +4,8 @@ using System.Text;
 namespace mk8.email.Messaging.Tests;
 
 [TestClass]
-public sealed class AesGcmPayloadProtectorTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class AesGcmPayloadProtectorTests
 {
     [TestMethod]
     public void PayloadRoundTripsAndTamperingFailsClosed()
@@ -39,7 +40,7 @@ public sealed class AesGcmPayloadProtectorTests
         using var rotated = new AesGcmPayloadProtector(active, [old]);
 
         CollectionAssert.AreEqual(payload, rotated.Unprotect(protectedPayload, associatedData));
-        Assert.AreEqual("current", rotated.Protect(payload, associatedData).KeyId);
+        Assert.AreEqual("current", rotated.Protect(payload, associatedData).KeyId, StringComparer.Ordinal);
     }
 
     internal static AesGcmPayloadProtector CreateProtector(string id, string material) =>

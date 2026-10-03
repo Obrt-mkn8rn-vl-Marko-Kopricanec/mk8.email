@@ -22,15 +22,20 @@ namespace mk8.email.Messaging.Tests;
 [TestClass]
 [DoNotParallelize]
 [TestCategory("PostgreSQL")]
-public sealed class OAuthGatewayRouteTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class OAuthGatewayRouteTests
 {
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The HttpTokenRequestCrossesRemoteWorkerAndRecordsBothBoundaries scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task HttpTokenRequestCrossesRemoteWorkerAndRecordsBothBoundaries()
     {
-        await using var database = await RequirePostgresAsync();
-        await using var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await using var workerDataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await PostgresMessagingSchema.EnsureAsync(gatewayDataSource);
+        var database = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var gatewayDataSourceLifetime = gatewayDataSource.ConfigureAwait(false);
+        var workerDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var workerDataSourceLifetime = workerDataSource.ConfigureAwait(false);
+        await PostgresMessagingSchema.EnsureAsync(gatewayDataSource).ConfigureAwait(false);
         using var gatewayProtector = AesGcmPayloadProtectorTests.CreateProtector(
             "test",
             "oauth-route-key");
@@ -58,7 +63,8 @@ public sealed class OAuthGatewayRouteTests
             .AddSingleton<IOAuthApplicationService>(oauth)
             .AddScoped<IApplicationRequestDispatcher>(serviceProvider =>
                 new ApplicationRequestDispatcher(serviceProvider));
-        await using var workerProvider = workerServices.BuildServiceProvider();
+        var workerProvider = workerServices.BuildServiceProvider();
+        await using var workerProviderLifetime = workerProvider.ConfigureAwait(false);
         var worker = new ApplicationRequestWorker(
             workerBus,
             workerProvider.GetRequiredService<IServiceScopeFactory>(),
@@ -91,8 +97,8 @@ public sealed class OAuthGatewayRouteTests
         application.MapOAuthEndpoints();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
 
-        await worker.StartAsync(timeout.Token);
-        await application.StartAsync(timeout.Token);
+        await worker.StartAsync(timeout.Token).ConfigureAwait(false);
+        await application.StartAsync(timeout.Token).ConfigureAwait(false);
         try
         {
             var address = application.Services.GetRequiredService<IServer>()
@@ -103,42 +109,48 @@ public sealed class OAuthGatewayRouteTests
                 BaseAddress = new Uri(address),
                 Timeout = TimeSpan.FromSeconds(10),
             };
+            using var ownedResource1 = new FormUrlEncodedContent(new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["grant_type"] = "refresh_token",
+                ["client_id"] = "thunderbird",
+                ["refresh_token"] = "route-refresh-secret",
+            });
             using var response = await client.PostAsync(
-                "/oauth/token",
-                new FormUrlEncodedContent(new Dictionary<string, string>
-                {
-                    ["grant_type"] = "refresh_token",
-                    ["client_id"] = "thunderbird",
-                    ["refresh_token"] = "route-refresh-secret",
-                }),
-                timeout.Token);
+new Uri("/oauth/token", UriKind.RelativeOrAbsolute),
+                ownedResource1,
+                timeout.Token).ConfigureAwait(false);
 
             Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
-            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(timeout.Token));
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false));
             Assert.AreEqual(
                 "returned-access-token",
-                json.RootElement.GetProperty("access_token").GetString());
-            Assert.AreEqual("route-refresh-secret", oauth.RefreshRequest?.RefreshToken);
+                json.RootElement.GetProperty("access_token").GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("route-refresh-secret", oauth.RefreshRequest?.RefreshToken, StringComparer.Ordinal);
 
-            await using var countCommand = gatewayDataSource.CreateCommand(
+            var countCommand = gatewayDataSource.CreateCommand(
                 "SELECT count(*), count(*) FILTER (WHERE metadata ->> 'layer' = 'presentation') "
                 + "FROM gateway_traffic_records WHERE protocol = 'oauth'");
-            await using var countReader = await countCommand.ExecuteReaderAsync(timeout.Token);
-            Assert.IsTrue(await countReader.ReadAsync(timeout.Token));
+            await using var countCommandLifetime = countCommand.ConfigureAwait(false);
+            var countReader = (await countCommand.ExecuteReaderAsync(timeout.Token).ConfigureAwait(false));
+            await using var countReaderLifetime = countReader.ConfigureAwait(false);
+            Assert.IsTrue(await countReader.ReadAsync(timeout.Token).ConfigureAwait(false));
             Assert.AreEqual(4L, countReader.GetInt64(0));
             Assert.AreEqual(2L, countReader.GetInt64(1));
 
-            await using var operationCommand = gatewayDataSource.CreateCommand(
+            var operationCommand = gatewayDataSource.CreateCommand(
                 "SELECT operation FROM application_requests LIMIT 1");
+            await using var operationCommandLifetime = operationCommand.ConfigureAwait(false);
             Assert.AreEqual(
                 ApplicationOperations.OAuthTokenRefresh,
-                await operationCommand.ExecuteScalarAsync(timeout.Token));
-            await using var ciphertextCommand = gatewayDataSource.CreateCommand(
+                await operationCommand.ExecuteScalarAsync(timeout.Token).ConfigureAwait(false));
+            var ciphertextCommand = gatewayDataSource.CreateCommand(
                 "SELECT payload_inline FROM gateway_traffic_records WHERE payload_inline IS NOT NULL");
-            await using var ciphertextReader = await ciphertextCommand.ExecuteReaderAsync(timeout.Token);
-            while (await ciphertextReader.ReadAsync(timeout.Token))
+            await using var ciphertextCommandLifetime = ciphertextCommand.ConfigureAwait(false);
+            var ciphertextReader = (await ciphertextCommand.ExecuteReaderAsync(timeout.Token).ConfigureAwait(false));
+            await using var ciphertextReaderLifetime = ciphertextReader.ConfigureAwait(false);
+            while (await ciphertextReader.ReadAsync(timeout.Token).ConfigureAwait(false))
             {
-                var ciphertext = ciphertextReader.GetFieldValue<byte[]>(0);
+                var ciphertext = await (ciphertextReader.GetFieldValueAsync<byte[]>(0)).ConfigureAwait(false);
                 Assert.IsFalse(
                     Encoding.UTF8.GetString(ciphertext)
                         .Contains("route-refresh-secret", StringComparison.Ordinal));
@@ -146,16 +158,16 @@ public sealed class OAuthGatewayRouteTests
         }
         finally
         {
-            await application.StopAsync(timeout.Token);
-            await application.DisposeAsync();
-            await worker.StopAsync(timeout.Token);
+            await application.StopAsync(timeout.Token).ConfigureAwait(false);
+            await application.DisposeAsync().ConfigureAwait(false);
+            await worker.StopAsync(timeout.Token).ConfigureAwait(false);
             worker.Dispose();
         }
     }
 
     private static async Task<PostgresTestDatabase> RequirePostgresAsync()
     {
-        var database = await PostgresTestDatabase.TryCreateAsync();
+        var database = await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false);
         if (database is null)
         {
             Assert.Inconclusive(

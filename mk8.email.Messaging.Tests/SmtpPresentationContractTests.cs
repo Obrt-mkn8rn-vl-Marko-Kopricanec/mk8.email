@@ -3,7 +3,8 @@ using System.Text.Json;
 namespace mk8.email.Messaging.Tests;
 
 [TestClass]
-public sealed class SmtpPresentationContractTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class SmtpPresentationContractTests
 {
     [TestMethod]
     public void RelayRequestPreservesWireBytesAndDeliveryOptionsAcrossJson()
@@ -21,9 +22,9 @@ public sealed class SmtpPresentationContractTests
         var decoded = JsonSerializer.Deserialize<SmtpRelayPresentationRequest>(payload);
 
         Assert.IsNotNull(decoded);
-        Assert.AreEqual(original.Sender, decoded.Sender);
-        Assert.AreEqual(original.Recipient, decoded.Recipient);
-        Assert.AreEqual(original.RawMessage, decoded.RawMessage);
+        Assert.AreEqual(original.Sender, decoded.Sender, StringComparer.Ordinal);
+        Assert.AreEqual(original.Recipient, decoded.Recipient, StringComparer.Ordinal);
+        Assert.AreEqual(original.RawMessage, decoded.RawMessage, StringComparer.Ordinal);
         Assert.AreEqual(original.Options, decoded.Options);
     }
 }

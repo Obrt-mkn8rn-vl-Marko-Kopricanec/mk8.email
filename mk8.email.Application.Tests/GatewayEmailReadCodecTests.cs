@@ -8,7 +8,8 @@ using mk8.email.Jmap;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class GatewayEmailReadCodecTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class GatewayEmailReadCodecTests
 {
     private const string AccountId = "A11111111111111111111111111111111";
     private const string FirstId = "E22222222222222222222222222222222";
@@ -41,10 +42,10 @@ public sealed class GatewayEmailReadCodecTests
         ]);
         var response = GatewayEmailReadCodec.RenderGet(call, result);
         Assert.AreEqual(MailOperationKind.ReadMessages, response.Operation);
-        Assert.AreEqual("s5", response.Data["state"]!.GetValue<string>());
+        Assert.AreEqual("s5", response.Data["state"]!.GetValue<string>(), StringComparer.Ordinal);
         CollectionAssert.AreEqual(new[] { SecondId, FirstId }, response.Data["list"]!.AsArray()
             .Select(item => item!["id"]!.GetValue<string>()).ToArray());
-        CollectionAssert.AreEqual(new[] { "opaque" }, response.Data["notFound"]!.AsArray()
+        CollectionAssert.AreEqual(ExpectedVector1, response.Data["notFound"]!.AsArray()
             .Select(item => item!.GetValue<string>()).ToArray());
     }
 
@@ -57,18 +58,18 @@ public sealed class GatewayEmailReadCodecTests
         CollectionAssert.Contains(call.Projection.Properties.ToArray(), "id");
         get["ids"] = new JsonArray(FirstId, FirstId, FirstId);
         Assert.IsFalse(GatewayEmailReadCodec.TryParseGet(get, 2, out _, out var failure));
-        Assert.AreEqual("requestTooLarge", failure);
+        Assert.AreEqual("requestTooLarge", failure, StringComparer.Ordinal);
         var parse = new JsonObject { ["accountId"] = AccountId, ["blobIds"] = new JsonArray("blob_1") };
         Assert.IsTrue(GatewayEmailReadCodec.TryParseParse(parse, 2, out var parsed, out _));
         Assert.IsNotNull(parsed);
         CollectionAssert.DoesNotContain(parsed.Projection.Properties.ToArray(), "id");
         parse["properties"] = null;
         Assert.IsFalse(GatewayEmailReadCodec.TryParseParse(parse, 2, out _, out failure));
-        Assert.AreEqual("invalidArguments", failure);
+        Assert.AreEqual("invalidArguments", failure, StringComparer.Ordinal);
         parse.Remove("properties");
         parse["blobIds"] = null;
         Assert.IsFalse(GatewayEmailReadCodec.TryParseParse(parse, 2, out _, out failure));
-        Assert.AreEqual("invalidArguments", failure);
+        Assert.AreEqual("invalidArguments", failure, StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -79,7 +80,7 @@ public sealed class GatewayEmailReadCodecTests
         {
             arguments["properties"] = new JsonArray(property);
             Assert.IsFalse(GatewayEmailReadCodec.TryParseGet(arguments, 2, out _, out var failure));
-            Assert.AreEqual("invalidArguments", failure);
+            Assert.AreEqual("invalidArguments", failure, StringComparer.Ordinal);
         }
         arguments["properties"] = new JsonArray("header:Subject:asText");
         arguments["maxBodyValueBytes"] = null;
@@ -114,9 +115,9 @@ public sealed class GatewayEmailReadCodecTests
         ]);
         var response = GatewayEmailReadCodec.RenderParse(call, result);
         Assert.AreEqual(MailOperationKind.ParseMessages, response.Operation);
-        Assert.AreEqual("one", response.Data["parsed"]!["blob_1"]!["subject"]!.GetValue<string>());
-        Assert.AreEqual("blob_2", response.Data["notParsable"]![0]!.GetValue<string>());
-        Assert.AreEqual("blob_3", response.Data["notFound"]![0]!.GetValue<string>());
+        Assert.AreEqual("one", response.Data["parsed"]!["blob_1"]!["subject"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("blob_2", response.Data["notParsable"]![0]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("blob_3", response.Data["notFound"]![0]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.Throws<InvalidOperationException>(() => GatewayEmailReadCodec.RenderParse(call,
             result with { Items = result.Items.Reverse().ToArray() }));
     }
@@ -124,7 +125,8 @@ public sealed class GatewayEmailReadCodecTests
     [TestMethod]
     public async Task WorkerRejectsWireProjectionAndMissingTypedTextSelectionBeforeReading()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         using var scope = fixture.Services.CreateScope();
         var processor = scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>();
         var command = new MailOperationCommand([MailFeature.Basic, MailFeature.Messages],
@@ -142,20 +144,20 @@ public sealed class GatewayEmailReadCodecTests
                     ["maxBodyValueBytes"] = 0,
                     ["extra"] = true,
                 },
-            }, new Dictionary<string, string>());
+            }, new Dictionary<string, string>(StringComparer.Ordinal));
         var failure = await Assert.ThrowsAsync<MailApplicationException>(() =>
-            processor.ExecuteAsync(command, fixture.User, null));
+            processor.ExecuteAsync(command, fixture.User, null)).ConfigureAwait(false);
         Assert.AreEqual(MailFailureKind.MalformedBatch, failure.Failure.Kind);
         command.Arguments.Remove("projection");
         failure = await Assert.ThrowsAsync<MailApplicationException>(() =>
-            processor.ExecuteAsync(command, fixture.User, null));
+            processor.ExecuteAsync(command, fixture.User, null)).ConfigureAwait(false);
         Assert.AreEqual(MailFailureKind.MalformedBatch, failure.Failure.Kind);
         command.Arguments["includeText"] = "false";
         failure = await Assert.ThrowsAsync<MailApplicationException>(() =>
-            processor.ExecuteAsync(command, fixture.User, null));
+            processor.ExecuteAsync(command, fixture.User, null)).ConfigureAwait(false);
         Assert.AreEqual(MailFailureKind.MalformedBatch, failure.Failure.Kind);
         command.Arguments["includeText"] = false;
-        var accepted = await processor.ExecuteAsync(command, fixture.User, null);
+        var accepted = await processor.ExecuteAsync(command, fixture.User, null).ConfigureAwait(false);
         Assert.AreEqual(MailOperationKind.ReadMessages, accepted.Response.Operation);
     }
 
@@ -164,4 +166,5 @@ public sealed class GatewayEmailReadCodecTests
             id is { } storedId ? new(storedId, Guid.Parse("55555555-5555-5555-5555-555555555555"),
                 "thread", [], 20, new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)) : null,
             [new("Subject"u8.ToArray(), Encoding.UTF8.GetBytes(" " + subject + "\r\n"))], null, []);
+    private static readonly string[] ExpectedVector1 = new[] { "opaque" };
 }

@@ -8,7 +8,8 @@ using mk8.email.Jmap;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class JmapArgumentBindingBoundaryTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class JmapArgumentBindingBoundaryTests
 {
     [TestMethod]
     public async Task GatewayTranslatesReferencesBeforeTypedTransportAndWorkerResolution()
@@ -24,18 +25,19 @@ public sealed class JmapArgumentBindingBoundaryTests
         Assert.IsFalse(input.Arguments.ContainsKey("copied"));
         Assert.IsTrue(input.Arguments["ordinary"]!.GetValue<bool>());
         var binding = input.Bindings!.Single();
-        Assert.AreEqual("copied", binding.Target);
-        Assert.AreEqual("source", binding.SourceCorrelationId);
+        Assert.AreEqual("copied", binding.Target, StringComparer.Ordinal);
+        Assert.AreEqual("source", binding.SourceCorrelationId, StringComparer.Ordinal);
         Assert.AreEqual(MailOperationKind.Echo, binding.SourceOperation);
-        CollectionAssert.AreEqual(new[] { "a/b", "~ids", "2" }, binding.Path.Select(part => part.Property).ToArray());
+        CollectionAssert.AreEqual(ExpectedVector1, binding.Path.Select(part => part.Property).ToArray());
         Assert.AreEqual(2, binding.Path[2].ArrayIndex);
         Assert.AreEqual(ApplicationBindingFailure.None, binding.Failure);
         var options = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = false };
         var transported = JsonSerializer.Deserialize<JmapApplicationBatch>(JsonSerializer.Serialize(batch, options), options)!;
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         using var scope = fixture.Services.CreateScope();
-        var result = await JmapFixture.ProcessBatchAsync(scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>(), transported, fixture.User);
-        Assert.AreEqual("two", result.Invocations[1].Arguments["copied"]!.GetValue<string>());
+        var result = await JmapFixture.ProcessBatchAsync(scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>(), transported, fixture.User).ConfigureAwait(false);
+        Assert.AreEqual("two", result.Invocations[1].Arguments["copied"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(1, result.Invocations[0].Arguments["x"]!.GetValue<int>());
         Assert.AreEqual(2, result.Invocations[0].Arguments["X"]!.GetValue<int>());
         Assert.IsFalse(result.Invocations[1].Arguments.ContainsKey("#copied"));
@@ -70,20 +72,21 @@ public sealed class JmapArgumentBindingBoundaryTests
     [DataRow("{}", "/a~2", null, "invalidResultReference")]
     public async Task DecodedSelectorsPreservePointerBehavior(string source, string path, string? expected, string? error)
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var result = await fixture.InvokeAsync(Request(JsonNode.Parse(source)!.AsObject(), new JsonObject
         {
             ["#value"] = Reference("source", path),
-        }));
+        })).ConfigureAwait(false);
         var response = result["methodResponses"]![1]!;
         if (error is not null)
         {
-            Assert.AreEqual("error", response[0]!.GetValue<string>());
-            Assert.AreEqual(error, response[1]!["type"]!.GetValue<string>());
+            Assert.AreEqual("error", response[0]!.GetValue<string>(), StringComparer.Ordinal);
+            Assert.AreEqual(error, response[1]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
         }
         else
         {
-            Assert.AreEqual("Core/echo", response[0]!.GetValue<string>());
+            Assert.AreEqual("Core/echo", response[0]!.GetValue<string>(), StringComparer.Ordinal);
             Assert.IsTrue(response[1]!.AsObject().ContainsKey("value"));
             Assert.IsTrue(JsonNode.DeepEquals(JsonNode.Parse(expected!), response[1]!["value"]));
         }
@@ -100,52 +103,56 @@ public sealed class JmapArgumentBindingBoundaryTests
     [DataRow("{\"#value\":{\"resultOf\":\"target\",\"name\":\"Core/echo\",\"path\":\"\"}}", "invalidResultReference")]
     public async Task DeferredFailuresPreserveOriginalBindingOrder(string input, string expected)
     {
-        await using var fixture = await JmapFixture.CreateAsync();
-        var result = await fixture.InvokeAsync(Request(new JsonObject(), JsonNode.Parse(input)!.AsObject()));
-        Assert.AreEqual(expected, result["methodResponses"]![1]![1]!["type"]!.GetValue<string>());
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
+        var result = await fixture.InvokeAsync(Request(new JsonObject(), JsonNode.Parse(input)!.AsObject())).ConfigureAwait(false);
+        Assert.AreEqual(expected, result["methodResponses"]![1]![1]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task ATargetBeginningWithHashIsNotReinterpretedAsAnotherReference()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var result = await fixture.InvokeAsync(Request(new JsonObject { ["value"] = "copied" }, new JsonObject
         {
             ["##target"] = Reference("source", "/value"),
-        }));
-        Assert.AreEqual("copied", result["methodResponses"]![1]![1]!["#target"]!.GetValue<string>());
+        })).ConfigureAwait(false);
+        Assert.AreEqual("copied", result["methodResponses"]![1]![1]!["#target"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task InvalidReferenceIsAnInvocationErrorAndDoesNotAbortOtherCalls()
     {
         var calls = 0;
-        await using var fixture = await JmapFixture.CreateAsync(configureServices: services =>
-            JmapFixture.OverrideMethod(services, new ProbeMethod(() => calls++)));
+        var fixture = (await JmapFixture.CreateAsync(configureServices: services =>
+            JmapFixture.OverrideMethod(services, new ProbeMethod(() => calls++))).ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var document = Request(new JsonObject(), new JsonObject { ["#value"] = Reference("source", "/bad~2") });
         var invocations = document["methodCalls"]!.AsArray();
         invocations[0]![0] = "Mailbox/query";
         invocations.Add(new JsonArray("Mailbox/query", new JsonObject(), "last"));
-        var result = await fixture.InvokeAsync(document);
+        var result = await fixture.InvokeAsync(document).ConfigureAwait(false);
         Assert.AreEqual(2, calls);
         Assert.AreEqual(3, result["methodResponses"]!.AsArray().Count);
-        Assert.AreEqual("invalidResultReference", result["methodResponses"]![1]![1]!["type"]!.GetValue<string>());
+        Assert.AreEqual("invalidResultReference", result["methodResponses"]![1]![1]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task DependencyValuesAreClonedWithoutMutatingCompletedResults()
     {
-        await using var fixture = await JmapFixture.CreateAsync(configureServices: services =>
-            JmapFixture.OverrideMethod(services, new MutatingMethod()));
+        var fixture = (await JmapFixture.CreateAsync(configureServices: services =>
+            JmapFixture.OverrideMethod(services, new MutatingMethod())).ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var document = Request(new JsonObject { ["object"] = new JsonObject { ["name"] = "original" } },
             new JsonObject { ["#copy"] = Reference("source", "/object") });
         document["methodCalls"]![1]![0] = "Mailbox/set";
         document["methodCalls"]!.AsArray().Add(new JsonArray("Core/echo",
             new JsonObject { ["#copy"] = Reference("source", "/object") }, "last"));
-        var result = await fixture.InvokeAsync(document);
-        Assert.AreEqual("original", result["methodResponses"]![0]![1]!["object"]!["name"]!.GetValue<string>());
-        Assert.AreEqual("changed", result["methodResponses"]![1]![1]!["copy"]!["name"]!.GetValue<string>());
-        Assert.AreEqual("original", result["methodResponses"]![2]![1]!["copy"]!["name"]!.GetValue<string>());
+        var result = await fixture.InvokeAsync(document).ConfigureAwait(false);
+        Assert.AreEqual("original", result["methodResponses"]![0]![1]!["object"]!["name"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("changed", result["methodResponses"]![1]![1]!["copy"]!["name"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("original", result["methodResponses"]![2]![1]!["copy"]!["name"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -158,16 +165,17 @@ public sealed class JmapArgumentBindingBoundaryTests
     public async Task WorkerRejectsIncompleteTypedDependenciesBeforeEarlierCalls(string bindingJson)
     {
         var calls = 0;
-        await using var fixture = await JmapFixture.CreateAsync(configureServices: services =>
-            JmapFixture.OverrideMethod(services, new ProbeMethod(() => calls++)));
+        var fixture = (await JmapFixture.CreateAsync(configureServices: services =>
+            JmapFixture.OverrideMethod(services, new ProbeMethod(() => calls++))).ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         using var scope = fixture.Services.CreateScope();
-        var binding = JsonSerializer.Deserialize<ApplicationArgumentBinding>(bindingJson, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var binding = JsonSerializer.Deserialize<ApplicationArgumentBinding>(bindingJson, SerializationOptions2);
         var batch = new JmapApplicationBatch([MailFeature.Basic],
             [new JmapApplicationCall(MailOperationKind.FindFolders, new JsonObject(), "first"),
              new JmapApplicationCall(MailOperationKind.Echo, new JsonObject(), "second", [binding!])]);
         var exception = await Assert.ThrowsAsync<GatewayJmapBatchCodec.RequestException>(() =>
-            JmapFixture.ProcessBatchAsync(scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>(), batch, fixture.User));
-        Assert.AreEqual("urn:ietf:params:jmap:error:notRequest", exception.Problem.Type);
+            JmapFixture.ProcessBatchAsync(scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>(), batch, fixture.User)).ConfigureAwait(false);
+        Assert.AreEqual("urn:ietf:params:jmap:error:notRequest", exception.Problem.Type, StringComparer.Ordinal);
         Assert.AreEqual(0, calls);
     }
 
@@ -190,7 +198,7 @@ public sealed class JmapArgumentBindingBoundaryTests
         public MailOperationKind Operation => MailOperationKind.FindFolders;
         public MailFeature Feature => MailFeature.Basic;
         public Task<JmapMethodResponse> InvokeAsync(JmapInvocationContext context, JsonObject arguments,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken)
         {
             onInvoke();
             return Task.FromResult(new JmapMethodResponse(Operation, arguments));
@@ -202,10 +210,12 @@ public sealed class JmapArgumentBindingBoundaryTests
         public MailOperationKind Operation => MailOperationKind.MutateFolders;
         public MailFeature Feature => MailFeature.Basic;
         public Task<JmapMethodResponse> InvokeAsync(JmapInvocationContext context, JsonObject arguments,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken)
         {
             arguments["copy"]!["name"] = "changed";
             return Task.FromResult(new JmapMethodResponse(Operation, arguments));
         }
     }
+    private static readonly string[] ExpectedVector1 = new[] { "a/b", "~ids", "2" };
+    private static readonly JsonSerializerOptions SerializationOptions2 = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 }

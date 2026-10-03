@@ -49,21 +49,15 @@ jobs:
         run: dotnet restore mk8.email.slnx --locked-mode
 
       - name: Build all projects
-        # Keep compiler warnings fatal; enrolled analyzer gates run separately below.
-        # JMAP and remaining test-project analyzer migrations still block review.
+        # Keep compiler warnings fatal; the complete analyzer gates run separately below.
         run: dotnet build mk8.email.slnx --configuration Release --no-restore --property:TreatWarningsAsErrors=true --property:ContinuousIntegrationBuild=true --property:RunAnalyzers=false
 
-      - name: Enforce completed analyzer gates
+      - name: Enforce all analyzer gates
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t projects < <(grep -l '<EnforceCodeStyleInBuild>true' mk8.email.*/*.csproj | sort)
+          mapfile -t projects < <(rg -l '<EnforceCodeStyleInBuild>true' mk8.email.*/*.csproj | sort)
           for project in "${projects[@]}"; do
-            # JMAP is enrolled but its migration is unfinished; it still blocks review.
-            # Keep the previously completed gates enforced during this source-only checkpoint.
-            if [[ "$project" == "mk8.email.Jmap/mk8.email.Jmap.csproj" ]]; then
-              continue
-            fi
             dotnet build "$project" --configuration Release --no-restore --no-dependencies --target:Rebuild \
               --property:TreatWarningsAsErrors=true \
               --property:ContinuousIntegrationBuild=true \

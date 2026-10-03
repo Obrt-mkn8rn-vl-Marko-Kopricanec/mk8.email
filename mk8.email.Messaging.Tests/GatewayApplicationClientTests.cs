@@ -11,7 +11,8 @@ using mk8.email.Gateway.Protocols.OAuth;
 namespace mk8.email.Messaging.Tests;
 
 [TestClass]
-public sealed class GatewayApplicationClientTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class GatewayApplicationClientTests
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -32,25 +33,25 @@ public sealed class GatewayApplicationClientTests
             request.Id,
             "application/json",
             JsonSerializer.SerializeToUtf8Bytes(expected, JsonOptions),
-            new Dictionary<string, string>()));
+            new Dictionary<string, string>(StringComparer.Ordinal)));
         var journal = new StubTrafficJournal();
         var client = CreateClient(requests, journal);
 
         var result = await client.AuthenticateAsync(
-            new LoginRequestDTO("admin@example.test", "not-logged-secret"));
+            new LoginRequestDTO("admin@example.test", "not-logged-secret")).ConfigureAwait(false);
 
         Assert.IsTrue(result.Success);
-        Assert.AreEqual(ApplicationOperations.AdminAuthenticate, requests.Request?.Operation);
-        Assert.AreEqual("admin", requests.Request?.Protocol);
-        Assert.IsFalse(requests.Request?.Metadata.Values.Contains("not-logged-secret") == true);
+        Assert.AreEqual(ApplicationOperations.AdminAuthenticate, requests.Request?.Operation, StringComparer.Ordinal);
+        Assert.AreEqual("admin", requests.Request?.Protocol, StringComparer.Ordinal);
+        Assert.IsFalse(requests.Request?.Metadata.Values.Contains("not-logged-secret", StringComparer.Ordinal) == true);
         Assert.HasCount(2, journal.Records);
-        Assert.AreEqual(GatewayTrafficDirections.Inbound, journal.Records[0].Direction);
-        Assert.AreEqual(GatewayTrafficDirections.Outbound, journal.Records[1].Direction);
+        Assert.AreEqual(GatewayTrafficDirections.Inbound, journal.Records[0].Direction, StringComparer.Ordinal);
+        Assert.AreEqual(GatewayTrafficDirections.Outbound, journal.Records[1].Direction, StringComparer.Ordinal);
         Assert.AreEqual(journal.Records[0].SessionId, journal.Records[1].SessionId);
         Assert.AreEqual(requests.Request?.Id, journal.Records[0].ApplicationRequestId);
         StringAssert.Contains(
             Encoding.UTF8.GetString(journal.Records[0].Payload),
-            "not-logged-secret");
+            "not-logged-secret", StringComparison.Ordinal);
     }
 
     [TestMethod]
@@ -60,7 +61,7 @@ public sealed class GatewayApplicationClientTests
             request.Id,
             "application/problem+json",
             "{}"u8.ToArray(),
-            new Dictionary<string, string>(),
+            new Dictionary<string, string>(StringComparer.Ordinal),
             IsError: true,
             ErrorCode: "invalid-arguments",
             ErrorDetail: "The request is invalid."));
@@ -68,11 +69,11 @@ public sealed class GatewayApplicationClientTests
         var client = CreateClient(requests, journal);
 
         var exception = await Assert.ThrowsExactlyAsync<GatewayApplicationException>(
-            () => client.GetDomainsAsync());
+            () => client.GetDomainsAsync()).ConfigureAwait(false);
 
-        Assert.AreEqual("invalid-arguments", exception.Code);
+        Assert.AreEqual("invalid-arguments", exception.Code, StringComparer.Ordinal);
         Assert.HasCount(2, journal.Records);
-        Assert.AreEqual("application/problem+json", journal.Records[1].ContentType);
+        Assert.AreEqual("application/problem+json", journal.Records[1].ContentType, StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -84,15 +85,15 @@ public sealed class GatewayApplicationClientTests
         var client = CreateClient(requests, journal);
 
         var exception = await Assert.ThrowsExactlyAsync<GatewayApplicationException>(
-            () => client.GetDashboardAsync());
+            () => client.GetDashboardAsync()).ConfigureAwait(false);
 
-        Assert.AreEqual("application-transport-failure", exception.Code);
+        Assert.AreEqual("application-transport-failure", exception.Code, StringComparer.Ordinal);
         Assert.IsTrue(exception.IsUnavailable);
         Assert.HasCount(2, journal.Records);
-        Assert.AreEqual(GatewayTrafficDirections.Outbound, journal.Records[1].Direction);
+        Assert.AreEqual(GatewayTrafficDirections.Outbound, journal.Records[1].Direction, StringComparer.Ordinal);
         StringAssert.Contains(
             Encoding.UTF8.GetString(journal.Records[1].Payload),
-            "application-transport-failure");
+            "application-transport-failure", StringComparison.Ordinal);
     }
 
     [TestMethod]
@@ -106,20 +107,20 @@ public sealed class GatewayApplicationClientTests
                 """
                 {"state":"healthy","checkedAt":"2026-09-23T12:00:00Z",
                  "queueCount":0,"errorCount":0}
-                """);
+                """).ConfigureAwait(false);
             var expected = new AdminDashboardDTO([], [], MailSystemStatusDTO.Unavailable);
             var requests = new StubRequestClient(request => new ApplicationResponse(
                 request.Id,
                 "application/json",
                 JsonSerializer.SerializeToUtf8Bytes(expected, JsonOptions),
-                new Dictionary<string, string>()));
+                new Dictionary<string, string>(StringComparer.Ordinal)));
             var journal = new StubTrafficJournal();
             var client = CreateClient(requests, journal, statusPath);
 
-            var result = await client.GetDashboardAsync();
+            var result = await client.GetDashboardAsync().ConfigureAwait(false);
 
-            Assert.AreEqual(ApplicationOperations.AdminDashboardGet, requests.Request?.Operation);
-            Assert.AreEqual("healthy", result.SystemStatus.State);
+            Assert.AreEqual(ApplicationOperations.AdminDashboardGet, requests.Request?.Operation, StringComparer.Ordinal);
+            Assert.AreEqual("healthy", result.SystemStatus.State, StringComparer.Ordinal);
             Assert.HasCount(0, result.Domains);
             Assert.HasCount(0, result.Accounts);
             Assert.HasCount(2, journal.Records);
@@ -144,18 +145,18 @@ public sealed class GatewayApplicationClientTests
             request.Id,
             "application/json",
             JsonSerializer.SerializeToUtf8Bytes(expected, JsonOptions),
-            new Dictionary<string, string>()));
+            new Dictionary<string, string>(StringComparer.Ordinal)));
         var journal = new StubTrafficJournal();
         var transport = new GatewayApplicationTransport(requests, journal, TestOptions());
         var client = new GatewayOAuthClient(transport);
 
-        var result = await client.GetPublicKeyAsync();
+        var result = await client.GetPublicKeyAsync().ConfigureAwait(false);
 
         Assert.AreEqual(expected, result);
-        Assert.AreEqual("oauth", requests.Request?.Protocol);
-        Assert.AreEqual(ApplicationOperations.OAuthPublicKeyGet, requests.Request?.Operation);
+        Assert.AreEqual("oauth", requests.Request?.Protocol, StringComparer.Ordinal);
+        Assert.AreEqual(ApplicationOperations.OAuthPublicKeyGet, requests.Request?.Operation, StringComparer.Ordinal);
         Assert.HasCount(2, journal.Records);
-        Assert.IsTrue(journal.Records.All(record => record.Protocol == "oauth"));
+        Assert.IsTrue(journal.Records.All(record => string.Equals(record.Protocol, "oauth", StringComparison.Ordinal)));
     }
 
     private static GatewayApplicationOptions TestOptions() => new(
@@ -167,18 +168,18 @@ public sealed class GatewayApplicationClientTests
     public async Task OnePresentationDeadlineClipsEveryDurableOperationAndNestedScopes()
     {
         var requests = new StubRequestClient(request => new ApplicationResponse(request.Id, "application/json",
-            "true"u8.ToArray(), new Dictionary<string, string>()));
+            "true"u8.ToArray(), new Dictionary<string, string>(StringComparer.Ordinal)));
         var journal = new StubTrafficJournal();
         var transport = new GatewayApplicationTransport(requests, journal, TestOptions());
         DateTimeOffset bounded;
         using (GatewayApplicationDeadline.Begin(TimeSpan.FromSeconds(3)))
         {
             bounded = GatewayApplicationDeadline.Clip(DateTimeOffset.MaxValue);
-            await transport.SendAsync<object, bool>("jmap", ApplicationOperations.MailPlanValidate, new { });
+            await transport.SendAsync<object, bool>("jmap", ApplicationOperations.MailPlanValidate, new { }).ConfigureAwait(false);
             Assert.AreEqual(bounded, requests.Request!.Deadline);
             using (GatewayApplicationDeadline.Begin(TimeSpan.FromSeconds(20)))
                 Assert.AreEqual(bounded, GatewayApplicationDeadline.Clip(DateTimeOffset.MaxValue));
-            await transport.SendAsync<object, bool>("jmap", ApplicationOperations.MailOperationExecute, new { });
+            await transport.SendAsync<object, bool>("jmap", ApplicationOperations.MailOperationExecute, new { }).ConfigureAwait(false);
             Assert.AreEqual(bounded, requests.Request!.Deadline);
         }
         Assert.AreEqual(DateTimeOffset.MaxValue, GatewayApplicationDeadline.Clip(DateTimeOffset.MaxValue));
@@ -193,12 +194,12 @@ public sealed class GatewayApplicationClientTests
         var transport = new GatewayApplicationTransport(requests, journal, TestOptions());
         using var deadline = GatewayApplicationDeadline.Begin(TimeSpan.FromSeconds(-1));
         var failure = await Assert.ThrowsExactlyAsync<GatewayApplicationException>(
-            () => transport.SendAsync<object, bool>("jmap", ApplicationOperations.MailOperationExecute, new { }));
-        Assert.AreEqual("application-timeout", failure.Code);
+            () => transport.SendAsync<object, bool>("jmap", ApplicationOperations.MailOperationExecute, new { })).ConfigureAwait(false);
+        Assert.AreEqual("application-timeout", failure.Code, StringComparer.Ordinal);
         Assert.IsTrue(failure.IsUnavailable);
         Assert.IsNull(requests.Request);
         Assert.HasCount(2, journal.Records);
-        StringAssert.Contains(Encoding.UTF8.GetString(journal.Records[1].Payload), "application-timeout");
+        StringAssert.Contains(Encoding.UTF8.GetString(journal.Records[1].Payload), "application-timeout", StringComparison.Ordinal);
     }
 
     [TestMethod]
@@ -210,7 +211,7 @@ public sealed class GatewayApplicationClientTests
             await Task.Yield();
             return GatewayApplicationDeadline.Clip(DateTimeOffset.MaxValue);
         }
-        var values = await Task.WhenAll(ScopedAsync(2), ScopedAsync(20));
+        var values = await Task.WhenAll(ScopedAsync(2), ScopedAsync(20)).ConfigureAwait(false);
         Assert.IsTrue(values[1] - values[0] > TimeSpan.FromSeconds(15));
         Assert.AreEqual(DateTimeOffset.MaxValue, GatewayApplicationDeadline.Clip(DateTimeOffset.MaxValue));
     }

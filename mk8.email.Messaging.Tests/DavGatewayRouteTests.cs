@@ -23,20 +23,25 @@ namespace mk8.email.Messaging.Tests;
 [TestClass]
 [DoNotParallelize]
 [TestCategory("PostgreSQL")]
-public sealed class DavGatewayRouteTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class DavGatewayRouteTests
 {
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The HttpPropfindCrossesSeparateWorkerAndRecordsBothBoundaries scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task HttpPropfindCrossesSeparateWorkerAndRecordsBothBoundaries()
     {
-        await using var database = await PostgresTestDatabase.TryCreateAsync();
+        var database = (await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false));
+        await using var databaseLifetime = new NullableAsyncDisposable(database).ConfigureAwait(false);
         if (database is null)
         {
             Assert.Inconclusive("Set MK8_EMAIL_TEST_POSTGRES to a PostgreSQL admin connection string.");
             return;
         }
-        await using var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await using var workerDataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await PostgresMessagingSchema.EnsureAsync(gatewayDataSource);
+        var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var gatewayDataSourceLifetime = gatewayDataSource.ConfigureAwait(false);
+        var workerDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var workerDataSourceLifetime = workerDataSource.ConfigureAwait(false);
+        await PostgresMessagingSchema.EnsureAsync(gatewayDataSource).ConfigureAwait(false);
         using var gatewayProtector = AesGcmPayloadProtectorTests.CreateProtector(
             "test", "dav-route-key");
         using var workerProtector = AesGcmPayloadProtectorTests.CreateProtector(
@@ -50,9 +55,10 @@ public sealed class DavGatewayRouteTests
         var journal = new PostgresGatewayTrafficJournal(
             gatewayDataSource, gatewayProtector, options);
         var dispatcher = new StubDavDispatcher();
-        await using var workerProvider = new ServiceCollection()
+        var workerProvider = new ServiceCollection()
             .AddSingleton<IApplicationRequestDispatcher>(dispatcher)
             .BuildServiceProvider();
+        await using var workerProviderLifetime = workerProvider.ConfigureAwait(false);
         var worker = new ApplicationRequestWorker(
             workerBus,
             workerProvider.GetRequiredService<IServiceScopeFactory>(),
@@ -80,8 +86,8 @@ public sealed class DavGatewayRouteTests
         gateway.MapDavEndpoints();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
 
-        await worker.StartAsync(timeout.Token);
-        await gateway.StartAsync(timeout.Token);
+        await worker.StartAsync(timeout.Token).ConfigureAwait(false);
+        await gateway.StartAsync(timeout.Token).ConfigureAwait(false);
         try
         {
             var address = gateway.Services.GetRequiredService<IServer>()
@@ -104,46 +110,52 @@ public sealed class DavGatewayRouteTests
                 "Basic",
                 Convert.ToBase64String(Encoding.UTF8.GetBytes(
                     "user@example.test:gateway-dav-secret")));
-            using var response = await client.SendAsync(request, timeout.Token);
+            using var response = await client.SendAsync(request, timeout.Token).ConfigureAwait(false);
 
             Assert.AreEqual(HttpStatusCode.MultiStatus, response.StatusCode);
-            var body = await response.Content.ReadAsStringAsync(timeout.Token);
-            StringAssert.Contains(body, $"/dav/principals/{dispatcher.UserId:N}/");
-            Assert.AreEqual("gateway-dav-secret", dispatcher.Password);
+            var body = await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);
+            StringAssert.Contains(body, $"/dav/principals/{dispatcher.UserId:N}/", StringComparison.Ordinal);
+            Assert.AreEqual("gateway-dav-secret", dispatcher.Password, StringComparer.Ordinal);
             Assert.AreEqual(dispatcher.UserId, dispatcher.EnsuredUserId);
 
-            await using var countCommand = gatewayDataSource.CreateCommand(
+            var countCommand = gatewayDataSource.CreateCommand(
                 "SELECT count(*), count(*) FILTER (WHERE metadata ->> 'layer' = 'presentation') "
                 + "FROM gateway_traffic_records WHERE protocol = 'dav'");
-            await using var countReader = await countCommand.ExecuteReaderAsync(timeout.Token);
-            Assert.IsTrue(await countReader.ReadAsync(timeout.Token));
+            await using var countCommandLifetime = countCommand.ConfigureAwait(false);
+            var countReader = (await countCommand.ExecuteReaderAsync(timeout.Token).ConfigureAwait(false));
+            await using var countReaderLifetime = countReader.ConfigureAwait(false);
+            Assert.IsTrue(await countReader.ReadAsync(timeout.Token).ConfigureAwait(false));
             Assert.AreEqual(6L, countReader.GetInt64(0));
             Assert.AreEqual(2L, countReader.GetInt64(1));
 
-            await using var operationsCommand = gatewayDataSource.CreateCommand(
+            var operationsCommand = gatewayDataSource.CreateCommand(
                 "SELECT operation FROM application_requests");
-            await using var operationsReader = await operationsCommand.ExecuteReaderAsync(timeout.Token);
+            await using var operationsCommandLifetime = operationsCommand.ConfigureAwait(false);
+            var operationsReader = (await operationsCommand.ExecuteReaderAsync(timeout.Token).ConfigureAwait(false));
+            await using var operationsReaderLifetime = operationsReader.ConfigureAwait(false);
             var operations = new List<string>();
-            while (await operationsReader.ReadAsync(timeout.Token))
+            while (await operationsReader.ReadAsync(timeout.Token).ConfigureAwait(false))
                 operations.Add(operationsReader.GetString(0));
             CollectionAssert.AreEquivalent(
                 new[] { ApplicationOperations.DavAuthenticate, ApplicationOperations.DavEnsureCollections },
                 operations);
 
-            await using var ciphertextCommand = gatewayDataSource.CreateCommand(
+            var ciphertextCommand = gatewayDataSource.CreateCommand(
                 "SELECT payload_inline FROM gateway_traffic_records WHERE payload_inline IS NOT NULL");
-            await using var ciphertextReader = await ciphertextCommand.ExecuteReaderAsync(timeout.Token);
-            while (await ciphertextReader.ReadAsync(timeout.Token))
+            await using var ciphertextCommandLifetime = ciphertextCommand.ConfigureAwait(false);
+            var ciphertextReader = (await ciphertextCommand.ExecuteReaderAsync(timeout.Token).ConfigureAwait(false));
+            await using var ciphertextReaderLifetime = ciphertextReader.ConfigureAwait(false);
+            while (await ciphertextReader.ReadAsync(timeout.Token).ConfigureAwait(false))
             {
-                Assert.IsFalse(Encoding.UTF8.GetString(ciphertextReader.GetFieldValue<byte[]>(0))
+                Assert.IsFalse(Encoding.UTF8.GetString(await (ciphertextReader.GetFieldValueAsync<byte[]>(0)).ConfigureAwait(false))
                     .Contains("gateway-dav-secret", StringComparison.Ordinal));
             }
         }
         finally
         {
-            await gateway.StopAsync(timeout.Token);
-            await gateway.DisposeAsync();
-            await worker.StopAsync(timeout.Token);
+            await gateway.StopAsync(timeout.Token).ConfigureAwait(false);
+            await gateway.DisposeAsync().ConfigureAwait(false);
+            await worker.StopAsync(timeout.Token).ConfigureAwait(false);
             worker.Dispose();
         }
     }
@@ -170,15 +182,15 @@ public sealed class DavGatewayRouteTests
                 request.Id,
                 "application/json",
                 JsonSerializer.SerializeToUtf8Bytes(result, JsonOptions),
-                new Dictionary<string, string>()));
+                new Dictionary<string, string>(StringComparer.Ordinal)));
         }
 
         private DavLookupResult<DavUser> Authenticate(ApplicationRequest request)
         {
             var value = JsonSerializer.Deserialize<DavAuthenticationRequest>(request.Payload, JsonOptions)
                 ?? throw new JsonException("Missing DAV authentication request.");
-            Assert.AreEqual(ProtocolAuthenticationKinds.Password, value.Authentication.Kind);
-            Assert.AreEqual("user@example.test", value.Authentication.Username);
+            Assert.AreEqual(ProtocolAuthenticationKinds.Password, value.Authentication.Kind, StringComparer.Ordinal);
+            Assert.AreEqual("user@example.test", value.Authentication.Username, StringComparer.Ordinal);
             Password = value.Authentication.Secret;
             return new DavLookupResult<DavUser>(new DavUser(UserId, "user@example.test"));
         }

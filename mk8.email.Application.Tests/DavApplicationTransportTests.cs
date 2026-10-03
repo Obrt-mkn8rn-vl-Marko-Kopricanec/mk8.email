@@ -8,14 +8,16 @@ using mk8.email.Dav;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class DavApplicationTransportTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class DavApplicationTransportTests
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     [TestMethod]
     public async Task DavOperationsDispatchWithoutHttpTypesAndVerifyCollectionAccess()
     {
-        await using var fixture = await DavFixture.CreateAsync();
+        var fixture = (await DavFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         using var scope = fixture.Services.CreateScope();
         var dispatcher = new ApplicationRequestDispatcher(scope.ServiceProvider);
 
@@ -24,8 +26,8 @@ public sealed class DavApplicationTransportTests
             ApplicationOperations.DavAuthenticate,
             new DavAuthenticationRequest(new ProtocolAuthentication(
                 ProtocolAuthenticationKinds.Password,
-                fixture.PrimaryAddress,
-                "correct horse battery staple")));
+                DavFixture.PrimaryAddress,
+                "correct horse battery staple"))).ConfigureAwait(false);
         var user = authentication.Value;
         Assert.IsNotNull(user);
         Assert.AreEqual(fixture.UserId, user.Id);
@@ -33,13 +35,13 @@ public sealed class DavApplicationTransportTests
         var ensured = await DispatchAsync<DavAcknowledgement>(
             dispatcher,
             ApplicationOperations.DavEnsureCollections,
-            new DavEnsureCollectionsRequest(user));
+            new DavEnsureCollectionsRequest(user)).ConfigureAwait(false);
         Assert.IsTrue(ensured.Succeeded);
         var collection = (await DispatchAsync<DavLookupResult<DavCollection>>(
             dispatcher,
             ApplicationOperations.DavCollectionGet,
             new DavCollectionLookupRequest(
-                user, DavCollectionKind.AddressBook, user.Id, "default"))).Value;
+                user, DavCollectionKind.AddressBook, user.Id, "default")).ConfigureAwait(false)).Value;
         Assert.IsNotNull(collection);
 
         var content = Encoding.UTF8.GetBytes(
@@ -49,14 +51,14 @@ public sealed class DavApplicationTransportTests
             ApplicationOperations.DavResourcePut,
             new DavResourcePutRequest(
                 user, collection.Id, "transport.vcf", "transport-card", "text/vcard",
-                content, null, true));
+                content, null, true)).ConfigureAwait(false);
         Assert.AreEqual(DavResourceWriteStatus.Created, write.Status);
 
         var reference = new DavCollectionReference(user, collection);
         var resource = (await DispatchAsync<DavLookupResult<DavResource>>(
             dispatcher,
             ApplicationOperations.DavResourceGet,
-            new DavResourceLookupRequest(reference, "transport.vcf"))).Value;
+            new DavResourceLookupRequest(reference, "transport.vcf")).ConfigureAwait(false)).Value;
         Assert.IsNotNull(resource);
         CollectionAssert.AreEqual(content, resource.Content);
 
@@ -66,7 +68,7 @@ public sealed class DavApplicationTransportTests
             ApplicationOperations.DavResourceGet,
             new DavResourceLookupRequest(
                 new DavCollectionReference(outsider, collection),
-                "transport.vcf"));
+                "transport.vcf")).ConfigureAwait(false);
         Assert.IsNull(denied.Value);
     }
 
@@ -79,8 +81,8 @@ public sealed class DavApplicationTransportTests
         var request = new ApplicationRequest(
             Guid.CreateVersion7(), Guid.CreateVersion7(), 0, "dav", operation,
             "application/json", JsonSerializer.SerializeToUtf8Bytes(value, JsonOptions),
-            new Dictionary<string, string>(), now, now.AddMinutes(1));
-        var response = await dispatcher.DispatchAsync(request);
+            new Dictionary<string, string>(StringComparer.Ordinal), now, now.AddMinutes(1));
+        var response = await dispatcher.DispatchAsync(request).ConfigureAwait(false);
         Assert.IsFalse(response.IsError, response.ErrorDetail);
         return JsonSerializer.Deserialize<T>(response.Payload, JsonOptions)
             ?? throw new AssertFailedException("The DAV application response was empty.");

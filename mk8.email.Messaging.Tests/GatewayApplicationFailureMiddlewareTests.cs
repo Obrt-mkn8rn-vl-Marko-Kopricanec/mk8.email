@@ -11,7 +11,8 @@ using mk8.email.Messaging;
 namespace mk8.email.Messaging.Tests;
 
 [TestClass]
-public sealed class GatewayApplicationFailureMiddlewareTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class GatewayApplicationFailureMiddlewareTests
 {
     [TestMethod]
     public async Task OfflineApplicationReturnsStableOAuthAvailabilityError()
@@ -26,15 +27,16 @@ public sealed class GatewayApplicationFailureMiddlewareTests
                 isUnavailable: true),
             NullLogger<GatewayApplicationFailureMiddleware>.Instance);
 
-        await middleware.InvokeAsync(context);
+        await middleware.InvokeAsync(context).ConfigureAwait(false);
 
         Assert.AreEqual(StatusCodes.Status503ServiceUnavailable, context.Response.StatusCode);
-        Assert.AreEqual("5", context.Response.Headers.RetryAfter.ToString());
+        Assert.AreEqual("5", context.Response.Headers.RetryAfter.ToString(), StringComparer.Ordinal);
         context.Response.Body.Position = 0;
-        var body = await new StreamReader(
-            context.Response.Body,
-            Encoding.UTF8).ReadToEndAsync();
-        StringAssert.Contains(body, "temporarily_unavailable");
+        using var ownedResource1 = new StreamReader(
+                    context.Response.Body,
+                    Encoding.UTF8);
+        var body = await ownedResource1.ReadToEndAsync().ConfigureAwait(false);
+        StringAssert.Contains(body, "temporarily_unavailable", StringComparison.Ordinal);
         Assert.IsFalse(body.Contains("simulated unavailable worker", StringComparison.Ordinal));
     }
 
@@ -55,7 +57,7 @@ public sealed class GatewayApplicationFailureMiddlewareTests
             {
                 requestContext.Response.StatusCode = StatusCodes.Status200OK;
                 requestContext.Response.ContentType = "application/json";
-                await requestContext.Response.WriteAsync("{\"ok\":true}");
+                await requestContext.Response.WriteAsync("{\"ok\":true}").ConfigureAwait(false);
             },
             NullLogger<GatewayProtocolTrafficCaptureMiddleware>.Instance);
 
@@ -66,22 +68,23 @@ public sealed class GatewayApplicationFailureMiddlewareTests
                 "gateway@test-host",
                 TimeSpan.FromSeconds(10),
                 TimeSpan.FromSeconds(10)),
-            new EnvironmentConfig());
+            new EnvironmentConfig()).ConfigureAwait(false);
 
         Assert.HasCount(2, journal.Records);
-        Assert.AreEqual(GatewayTrafficDirections.Inbound, journal.Records[0].Direction);
-        Assert.AreEqual(GatewayTrafficDirections.Outbound, journal.Records[1].Direction);
+        Assert.AreEqual(GatewayTrafficDirections.Inbound, journal.Records[0].Direction, StringComparer.Ordinal);
+        Assert.AreEqual(GatewayTrafficDirections.Outbound, journal.Records[1].Direction, StringComparer.Ordinal);
         Assert.AreEqual(journal.Records[0].SessionId, journal.Records[1].SessionId);
         using var inbound = JsonDocument.Parse(journal.Records[0].Payload);
-        Assert.AreEqual("/oauth/token", inbound.RootElement.GetProperty("path").GetString());
+        Assert.AreEqual("/oauth/token", inbound.RootElement.GetProperty("path").GetString(), StringComparer.Ordinal);
         Assert.AreEqual(
             "grant_type=refresh_token&refresh_token=secret-value",
             Encoding.UTF8.GetString(Convert.FromBase64String(
-                inbound.RootElement.GetProperty("bodyBase64").GetString()!)));
+                inbound.RootElement.GetProperty("bodyBase64").GetString()!)), StringComparer.Ordinal);
         context.Response.Body.Position = 0;
+        using var ownedResource2 = new StreamReader(context.Response.Body, Encoding.UTF8);
         Assert.AreEqual(
             "{\"ok\":true}",
-            await new StreamReader(context.Response.Body, Encoding.UTF8).ReadToEndAsync());
+            await ownedResource2.ReadToEndAsync().ConfigureAwait(false), StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -98,9 +101,9 @@ public sealed class GatewayApplicationFailureMiddlewareTests
             {
                 requestContext.Response.StatusCode = StatusCodes.Status200OK;
                 requestContext.Response.ContentType = "text/event-stream";
-                await requestContext.Response.StartAsync();
-                await requestContext.Response.WriteAsync("event: ping\ndata: {\"interval\":15}\n\n");
-                await requestContext.Response.WriteAsync("event: ping\ndata: {\"interval\":15}\n\n");
+                await requestContext.Response.StartAsync().ConfigureAwait(false);
+                await requestContext.Response.WriteAsync("event: ping\ndata: {\"interval\":15}\n\n").ConfigureAwait(false);
+                await requestContext.Response.WriteAsync("event: ping\ndata: {\"interval\":15}\n\n").ConfigureAwait(false);
             },
             NullLogger<GatewayProtocolTrafficCaptureMiddleware>.Instance);
 
@@ -118,19 +121,19 @@ public sealed class GatewayApplicationFailureMiddlewareTests
                     MaxRequestSizeBytes = 65_536,
                     MaxUploadSizeBytes = 1_048_576,
                 },
-            });
+            }).ConfigureAwait(false);
 
         Assert.HasCount(4, journal.Records);
-        Assert.AreEqual(GatewayTrafficDirections.Inbound, journal.Records[0].Direction);
-        Assert.AreEqual(GatewayTrafficDirections.Outbound, journal.Records[1].Direction);
-        Assert.AreEqual("application/vnd.mk8.gateway-http+json", journal.Records[1].ContentType);
+        Assert.AreEqual(GatewayTrafficDirections.Inbound, journal.Records[0].Direction, StringComparer.Ordinal);
+        Assert.AreEqual(GatewayTrafficDirections.Outbound, journal.Records[1].Direction, StringComparer.Ordinal);
+        Assert.AreEqual("application/vnd.mk8.gateway-http+json", journal.Records[1].ContentType, StringComparer.Ordinal);
         Assert.AreEqual(
             "application/vnd.mk8.gateway-http-chunk+json",
-            journal.Records[2].ContentType);
+            journal.Records[2].ContentType, StringComparer.Ordinal);
         Assert.AreEqual(
             "application/vnd.mk8.gateway-http-chunk+json",
-            journal.Records[3].ContentType);
-        Assert.IsTrue(journal.Records.All(record => record.Protocol == "jmap"));
+            journal.Records[3].ContentType, StringComparer.Ordinal);
+        Assert.IsTrue(journal.Records.All(record => string.Equals(record.Protocol, "jmap", StringComparison.Ordinal)));
         Assert.IsTrue(journal.Records.All(record => record.SessionId == journal.Records[0].SessionId));
     }
 

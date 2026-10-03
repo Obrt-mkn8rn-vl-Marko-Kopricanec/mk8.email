@@ -30,24 +30,28 @@ namespace mk8.email.Messaging.Tests;
 [DoNotParallelize]
 [TestCategory("PostgreSQL")]
 [TestCategory("AzureBlobCompatible")]
-public sealed class JmapDurableReplayTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class JmapDurableReplayTests
 {
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The TypedEmailSetCreateUpdateDestroyReplaysWithoutDuplicatingAzureContent scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task TypedEmailSetCreateUpdateDestroyReplaysWithoutDuplicatingAzureContent()
     {
-        await using var rig = await Rig.CreateAsync();
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         var folderId = Guid.CreateVersion7();
-        await using (var setup = rig.Context())
         {
-            setup.Folders.Add(new FolderDB
+            var setup = rig.Context();
+            await using var setupLifetime = setup.ConfigureAwait(false);
+            await (setup.Folders.AddAsync(new FolderDB
             {
                 Id = folderId,
                 InboxId = rig.InboxId,
                 Name = "Drafts",
                 UidValidity = 1,
                 NextUid = 1,
-            });
-            await setup.SaveChangesAsync();
+            })).ConfigureAwait(false);
+            await setup.SaveChangesAsync().ConfigureAwait(false);
         }
         var create = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Messages],
             [new JmapApplicationCall(MailOperationKind.MutateMessages, new JsonObject
@@ -63,17 +67,18 @@ public sealed class JmapDurableReplayTests
                         ["textBody"] = new JsonArray(new JsonObject { ["partId"] = "1", ["type"] = "text/plain" }),
                     },
                 },
-            }, "create")], new Dictionary<string, string>());
+            }, "create")], new Dictionary<string, string>(StringComparer.Ordinal));
         var createOperation = Guid.CreateVersion7();
-        var firstCreate = await rig.InvokeAsync(create, createOperation);
+        var firstCreate = await rig.InvokeAsync(create, createOperation).ConfigureAwait(false);
         var emailId = firstCreate.Invocations[0].Arguments["created"]!["draft"]!["id"]!.GetValue<string>();
-        Assert.AreEqual(emailId, firstCreate.CreatedIds!["draft"]);
-        var replayCreate = await rig.InvokeAsync(create, createOperation);
-        Assert.AreEqual(JsonSerializer.Serialize(firstCreate.Invocations), JsonSerializer.Serialize(replayCreate.Invocations));
-        await using (var database = rig.Context())
+        Assert.AreEqual(emailId, firstCreate.CreatedIds!["draft"], StringComparer.Ordinal);
+        var replayCreate = await rig.InvokeAsync(create, createOperation).ConfigureAwait(false);
+        Assert.AreEqual(JsonSerializer.Serialize(firstCreate.Invocations), JsonSerializer.Serialize(replayCreate.Invocations), StringComparer.Ordinal);
         {
-            var stored = await database.Emails.SingleAsync();
-            Assert.AreEqual(LargeObjectProviders.AzureBlob, stored.RawMessageObjectProvider);
+            var database = rig.Context();
+            await using var databaseLifetime = database.ConfigureAwait(false);
+            var stored = await database.Emails.SingleAsync().ConfigureAwait(false);
+            Assert.AreEqual(LargeObjectProviders.AzureBlob, stored.RawMessageObjectProvider, StringComparer.Ordinal);
             Assert.IsNull(stored.RawMessage);
             Assert.IsFalse(stored.IsRead);
         }
@@ -92,12 +97,15 @@ public sealed class JmapDurableReplayTests
                 },
             }, "update")]);
         var updateOperation = Guid.CreateVersion7();
-        var firstUpdate = await rig.InvokeAsync(update, updateOperation);
+        var firstUpdate = await rig.InvokeAsync(update, updateOperation).ConfigureAwait(false);
         Assert.IsNull(firstUpdate.Invocations[0].Arguments["updated"]![emailId]);
-        var replayUpdate = await rig.InvokeAsync(update, updateOperation);
-        Assert.AreEqual(JsonSerializer.Serialize(firstUpdate.Invocations), JsonSerializer.Serialize(replayUpdate.Invocations));
-        await using (var database = rig.Context())
-            Assert.IsTrue((await database.Emails.SingleAsync()).IsRead);
+        var replayUpdate = await rig.InvokeAsync(update, updateOperation).ConfigureAwait(false);
+        Assert.AreEqual(JsonSerializer.Serialize(firstUpdate.Invocations), JsonSerializer.Serialize(replayUpdate.Invocations), StringComparer.Ordinal);
+        {
+            var database = rig.Context();
+            await using var databaseLifetime = database.ConfigureAwait(false);
+            Assert.IsTrue((await database.Emails.SingleAsync().ConfigureAwait(false)).IsRead);
+        }
         var destroy = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Messages],
             [new JmapApplicationCall(MailOperationKind.MutateMessages, new JsonObject
             {
@@ -105,31 +113,35 @@ public sealed class JmapDurableReplayTests
                 ["destroy"] = new JsonArray(emailId),
             }, "destroy")]);
         var destroyOperation = Guid.CreateVersion7();
-        var firstDestroy = await rig.InvokeAsync(destroy, destroyOperation);
-        Assert.AreEqual(emailId, firstDestroy.Invocations[0].Arguments["destroyed"]![0]!.GetValue<string>());
-        var replayDestroy = await rig.InvokeAsync(destroy, destroyOperation);
-        Assert.AreEqual(JsonSerializer.Serialize(firstDestroy.Invocations), JsonSerializer.Serialize(replayDestroy.Invocations));
-        await using var verification = rig.Context();
-        Assert.AreEqual(0, await verification.Emails.CountAsync());
-        Assert.AreEqual(3, await verification.ApplicationOperationReceipts.CountAsync());
+        var firstDestroy = await rig.InvokeAsync(destroy, destroyOperation).ConfigureAwait(false);
+        Assert.AreEqual(emailId, firstDestroy.Invocations[0].Arguments["destroyed"]![0]!.GetValue<string>(), StringComparer.Ordinal);
+        var replayDestroy = await rig.InvokeAsync(destroy, destroyOperation).ConfigureAwait(false);
+        Assert.AreEqual(JsonSerializer.Serialize(firstDestroy.Invocations), JsonSerializer.Serialize(replayDestroy.Invocations), StringComparer.Ordinal);
+        var verification = rig.Context();
+        await using var verificationLifetime = verification.ConfigureAwait(false);
+        Assert.AreEqual(0, await verification.Emails.CountAsync().ConfigureAwait(false));
+        Assert.AreEqual(3, await verification.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The TypedSubmissionSetAndImplicitEmailSetReplayOneCommittedAzureQueueWrite scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task TypedSubmissionSetAndImplicitEmailSetReplayOneCommittedAzureQueueWrite()
     {
-        await using var rig = await Rig.CreateAsync();
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         var draftsId = Guid.CreateVersion7();
-        await using (var setup = rig.Context())
         {
-            setup.Folders.Add(new FolderDB
+            var setup = rig.Context();
+            await using var setupLifetime = setup.ConfigureAwait(false);
+            await (setup.Folders.AddAsync(new FolderDB
             {
                 Id = draftsId,
                 InboxId = rig.InboxId,
                 Name = "Drafts",
                 UidValidity = 1,
                 NextUid = 1,
-            });
-            await setup.SaveChangesAsync();
+            })).ConfigureAwait(false);
+            await setup.SaveChangesAsync().ConfigureAwait(false);
         }
         var draft = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Messages],
             [new JmapApplicationCall(MailOperationKind.MutateMessages, new JsonObject
@@ -148,7 +160,7 @@ public sealed class JmapDurableReplayTests
                     },
                 },
             }, "draft")]);
-        var createdDraft = await rig.InvokeAsync(draft, Guid.CreateVersion7());
+        var createdDraft = await rig.InvokeAsync(draft, Guid.CreateVersion7()).ConfigureAwait(false);
         var emailId = createdDraft.Invocations[0].Arguments["created"]!["draft"]!["id"]!.GetValue<string>();
         var submission = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Submission],
             [new JmapApplicationCall(MailOperationKind.MutateSubmissions, new JsonObject
@@ -171,30 +183,31 @@ public sealed class JmapDurableReplayTests
                         ["bodyValues/1/value"] = "Blob-backed mail",
                     },
                 },
-            }, "submission")], new Dictionary<string, string>());
+            }, "submission")], new Dictionary<string, string>(StringComparer.Ordinal));
         var operation = Guid.CreateVersion7();
-        var first = await rig.InvokeAsync(submission, operation);
+        var first = await rig.InvokeAsync(submission, operation).ConfigureAwait(false);
         Assert.HasCount(2, first.Invocations);
         Assert.AreEqual(MailOperationKind.MutateSubmissions, first.Invocations[0].Operation);
         Assert.AreEqual(MailOperationKind.MutateMessages, first.Invocations[1].Operation);
         var submissionId = first.Invocations[0].Arguments["created"]!["out"]!["id"]!.GetValue<string>();
-        Assert.AreEqual(submissionId, first.CreatedIds!["out"]);
+        Assert.AreEqual(submissionId, first.CreatedIds!["out"], StringComparer.Ordinal);
         Assert.IsNull(first.Invocations[1].Arguments["updated"]![emailId]);
-        await using (var database = rig.Context())
         {
-            Assert.AreEqual(1, await database.JmapEmailSubmissions.CountAsync());
-            Assert.AreEqual(1, await database.MailQueueMessages.CountAsync());
-            var persisted = await database.JmapEmailSubmissions.SingleAsync();
+            var database = rig.Context();
+            await using var databaseLifetime = database.ConfigureAwait(false);
+            Assert.AreEqual(1, await database.JmapEmailSubmissions.CountAsync().ConfigureAwait(false));
+            Assert.AreEqual(1, await database.MailQueueMessages.CountAsync().ConfigureAwait(false));
+            var persisted = await database.JmapEmailSubmissions.SingleAsync().ConfigureAwait(false);
             Assert.AreEqual(GatewayJmapDateCodec.FormatUtc(persisted.SendAt),
-                first.Invocations[0].Arguments["created"]!["out"]!["sendAt"]!.GetValue<string>());
-            var queue = await database.MailQueueMessages.SingleAsync();
-            Assert.AreEqual(LargeObjectProviders.AzureBlob, queue.RawMessageObjectProvider);
+                first.Invocations[0].Arguments["created"]!["out"]!["sendAt"]!.GetValue<string>(), StringComparer.Ordinal);
+            var queue = await database.MailQueueMessages.SingleAsync().ConfigureAwait(false);
+            Assert.AreEqual(LargeObjectProviders.AzureBlob, queue.RawMessageObjectProvider, StringComparer.Ordinal);
             Assert.IsNull(queue.RawMessage);
-            Assert.IsTrue((await database.Emails.SingleAsync()).IsRead);
+            Assert.IsTrue((await database.Emails.SingleAsync().ConfigureAwait(false)).IsRead);
         }
-        var replay = await rig.InvokeAsync(submission, operation);
-        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
-        Assert.AreEqual(submissionId, replay.CreatedIds!["out"]);
+        var replay = await rig.InvokeAsync(submission, operation).ConfigureAwait(false);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations), StringComparer.Ordinal);
+        Assert.AreEqual(submissionId, replay.CreatedIds!["out"], StringComparer.Ordinal);
         var assertionUpdate = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Submission],
             [new JmapApplicationCall(MailOperationKind.MutateSubmissions, new JsonObject
             {
@@ -204,42 +217,46 @@ public sealed class JmapDurableReplayTests
                     { [submissionId] = new JsonObject { ["keywords/$flagged"] = true } },
             }, "assertion")]);
         var updateOperation = Guid.CreateVersion7();
-        var firstUpdate = await rig.InvokeAsync(assertionUpdate, updateOperation);
+        var firstUpdate = await rig.InvokeAsync(assertionUpdate, updateOperation).ConfigureAwait(false);
         Assert.IsNull(firstUpdate.Invocations[0].Arguments["notUpdated"], firstUpdate.Invocations[0].Arguments.ToJsonString());
         Assert.IsNotNull(firstUpdate.Invocations[0].Arguments["updated"], firstUpdate.Invocations[0].Arguments.ToJsonString());
         Assert.IsNull(firstUpdate.Invocations[0].Arguments["updated"]![submissionId]);
-        var replayUpdate = await rig.InvokeAsync(assertionUpdate, updateOperation);
-        Assert.AreEqual(JsonSerializer.Serialize(firstUpdate.Invocations), JsonSerializer.Serialize(replayUpdate.Invocations));
-        await using var verification = rig.Context();
-        Assert.AreEqual(1, await verification.JmapEmailSubmissions.CountAsync());
-        Assert.AreEqual(1, await verification.MailQueueMessages.CountAsync());
-        Assert.IsTrue((await verification.Emails.SingleAsync()).IsFlagged);
-        Assert.AreEqual(3, await verification.ApplicationOperationReceipts.CountAsync());
+        var replayUpdate = await rig.InvokeAsync(assertionUpdate, updateOperation).ConfigureAwait(false);
+        Assert.AreEqual(JsonSerializer.Serialize(firstUpdate.Invocations), JsonSerializer.Serialize(replayUpdate.Invocations), StringComparer.Ordinal);
+        var verification = rig.Context();
+        await using var verificationLifetime = verification.ConfigureAwait(false);
+        Assert.AreEqual(1, await verification.JmapEmailSubmissions.CountAsync().ConfigureAwait(false));
+        Assert.AreEqual(1, await verification.MailQueueMessages.CountAsync().ConfigureAwait(false));
+        Assert.IsTrue((await verification.Emails.SingleAsync().ConfigureAwait(false)).IsFlagged);
+        Assert.AreEqual(3, await verification.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The TypedBlobCopyUsesAzureStorageAndReplaysCommittedResultWithoutDuplicatingBlob scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task TypedBlobCopyUsesAzureStorageAndReplaysCommittedResultWithoutDuplicatingBlob()
     {
-        await using var rig = await Rig.CreateAsync();
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         var targetAccountId = Guid.CreateVersion7();
-        await using (var setup = rig.Context())
         {
-            var original = await setup.Inboxes.SingleAsync();
-            setup.Inboxes.Add(new InboxDB
+            var setup = rig.Context();
+            await using var setupLifetime = setup.ConfigureAwait(false);
+            var original = await setup.Inboxes.SingleAsync().ConfigureAwait(false);
+            await (setup.Inboxes.AddAsync(new InboxDB
             {
                 Id = targetAccountId,
                 Name = "copy-target",
                 AddressId = original.AddressId,
                 OwnerId = rig.User.Id,
-            });
-            await setup.SaveChangesAsync();
+            })).ConfigureAwait(false);
+            await setup.SaveChangesAsync().ConfigureAwait(false);
         }
         string sourceBlobId;
         using (var scope = rig.Services.CreateScope())
         {
             var blobs = scope.ServiceProvider.GetRequiredService<JmapBlobService>();
             var source = await blobs.StoreAsync(rig.InboxId, "copied payload"u8.ToArray(),
-                "text/plain", "payload.txt", CancellationToken.None);
+                "text/plain", "payload.txt", CancellationToken.None).ConfigureAwait(false);
             sourceBlobId = source.BlobId;
         }
         var batch = new JmapApplicationBatch([MailFeature.Basic],
@@ -250,52 +267,60 @@ public sealed class JmapDurableReplayTests
                 ["blobIds"] = new JsonArray(sourceBlobId, "Umissing"),
             }, "copy")]);
         var operation = Guid.CreateVersion7();
-        var first = await rig.InvokeAsync(batch, operation);
+        var first = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
         Assert.AreEqual(MailOperationKind.CopyBinaryObjects, first.Invocations[0].Operation);
         var copiedBlobId = first.Invocations[0].Arguments["copied"]![sourceBlobId]!.GetValue<string>();
         Assert.AreEqual("notFound", first.Invocations[0].Arguments["notCopied"]!["Umissing"]!["type"]!
-            .GetValue<string>());
-        await using (var database = rig.Context())
+            .GetValue<string>(), StringComparer.Ordinal);
         {
-            Assert.AreEqual(2, await database.JmapBlobs.CountAsync());
-            var copied = await database.JmapBlobs.SingleAsync(blob => blob.AccountId == targetAccountId);
-            Assert.AreEqual(LargeObjectProviders.AzureBlob, copied.ObjectProvider);
+            var database = rig.Context();
+            await using var databaseLifetime = database.ConfigureAwait(false);
+            Assert.AreEqual(2, await database.JmapBlobs.CountAsync().ConfigureAwait(false));
+            var copied = await database.JmapBlobs.SingleAsync(blob => blob.AccountId == targetAccountId).ConfigureAwait(false);
+            Assert.AreEqual(LargeObjectProviders.AzureBlob, copied.ObjectProvider, StringComparer.Ordinal);
             Assert.IsNull(copied.Content);
         }
         using (var scope = rig.Services.CreateScope())
         {
             var blobs = scope.ServiceProvider.GetRequiredService<JmapBlobService>();
-            var copied = await blobs.GetAsync(targetAccountId, copiedBlobId, CancellationToken.None);
+            var copied = await blobs.GetAsync(targetAccountId, copiedBlobId, CancellationToken.None).ConfigureAwait(false);
             Assert.IsNotNull(copied);
             CollectionAssert.AreEqual("copied payload"u8.ToArray(), copied.Content);
         }
-        var replay = await rig.InvokeAsync(batch, operation);
-        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
-        await using (var database = rig.Context())
-            Assert.AreEqual(2, await database.JmapBlobs.CountAsync());
-        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7());
-        Assert.AreNotEqual(copiedBlobId, fresh.Invocations[0].Arguments["copied"]![sourceBlobId]!.GetValue<string>());
-        await using var verification = rig.Context();
-        Assert.AreEqual(3, await verification.JmapBlobs.CountAsync());
-        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync());
+        var replay = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations), StringComparer.Ordinal);
+        {
+            var database = rig.Context();
+            await using var databaseLifetime = database.ConfigureAwait(false);
+            Assert.AreEqual(2, await database.JmapBlobs.CountAsync().ConfigureAwait(false));
+        }
+        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7()).ConfigureAwait(false);
+        Assert.AreNotEqual(copiedBlobId, fresh.Invocations[0].Arguments["copied"]![sourceBlobId]!.GetValue<string>(), StringComparer.Ordinal);
+        var verification = rig.Context();
+        await using var verificationLifetime = verification.ConfigureAwait(false);
+        Assert.AreEqual(3, await verification.JmapBlobs.CountAsync().ConfigureAwait(false));
+        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The TypedEmailImportUsesAzureContentAndReplaysWithoutDuplicatingMessage scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task TypedEmailImportUsesAzureContentAndReplaysWithoutDuplicatingMessage()
     {
-        await using var rig = await Rig.CreateAsync();
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         var folderId = Guid.CreateVersion7();
-        await using (var setup = rig.Context())
         {
-            setup.Folders.Add(new FolderDB
+            var setup = rig.Context();
+            await using var setupLifetime = setup.ConfigureAwait(false);
+            await (setup.Folders.AddAsync(new FolderDB
             {
                 Id = folderId,
                 InboxId = rig.InboxId,
                 Name = "Inbox",
                 UidValidity = 1,
                 NextUid = 1,
-            });
-            await setup.SaveChangesAsync();
+            })).ConfigureAwait(false);
+            await setup.SaveChangesAsync().ConfigureAwait(false);
         }
         const string raw = "From: sender@example.test\r\nTo: replay@example.test\r\nSubject: Imported\r\n\r\nBody";
         string blobId;
@@ -303,7 +328,7 @@ public sealed class JmapDurableReplayTests
         {
             var blobs = scope.ServiceProvider.GetRequiredService<JmapBlobService>();
             var stored = await blobs.StoreAsync(rig.InboxId, Encoding.UTF8.GetBytes(raw),
-                "message/rfc822", "import.eml", CancellationToken.None);
+                "message/rfc822", "import.eml", CancellationToken.None).ConfigureAwait(false);
             blobId = stored.BlobId;
         }
         var batch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Messages],
@@ -319,47 +344,55 @@ public sealed class JmapDurableReplayTests
                         ["keywords"] = new JsonObject { ["$seen"] = true },
                     },
                 },
-            }, "import")], new Dictionary<string, string>());
+            }, "import")], new Dictionary<string, string>(StringComparer.Ordinal));
         var operation = Guid.CreateVersion7();
-        var first = await rig.InvokeAsync(batch, operation);
+        var first = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
         var emailId = first.Invocations[0].Arguments["created"]!["created"]!["id"]!.GetValue<string>();
-        Assert.AreEqual(emailId, first.CreatedIds!["created"]);
-        await using (var database = rig.Context())
+        Assert.AreEqual(emailId, first.CreatedIds!["created"], StringComparer.Ordinal);
         {
-            Assert.AreEqual(1, await database.Emails.CountAsync());
-            var email = await database.Emails.SingleAsync();
-            Assert.AreEqual(LargeObjectProviders.AzureBlob, email.RawMessageObjectProvider);
+            var database = rig.Context();
+            await using var databaseLifetime = database.ConfigureAwait(false);
+            Assert.AreEqual(1, await database.Emails.CountAsync().ConfigureAwait(false));
+            var email = await database.Emails.SingleAsync().ConfigureAwait(false);
+            Assert.AreEqual(LargeObjectProviders.AzureBlob, email.RawMessageObjectProvider, StringComparer.Ordinal);
             Assert.IsNull(email.RawMessage);
             Assert.IsTrue(email.IsRead);
         }
-        var replay = await rig.InvokeAsync(batch, operation);
-        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
-        Assert.AreEqual(emailId, replay.CreatedIds!["created"]);
-        await using (var database = rig.Context())
-            Assert.AreEqual(1, await database.Emails.CountAsync());
-        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7());
-        Assert.AreNotEqual(emailId, fresh.Invocations[0].Arguments["created"]!["created"]!["id"]!.GetValue<string>());
-        await using var final = rig.Context();
-        Assert.AreEqual(2, await final.Emails.CountAsync());
-        Assert.AreEqual(2, await final.ApplicationOperationReceipts.CountAsync());
+        var replay = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations), StringComparer.Ordinal);
+        Assert.AreEqual(emailId, replay.CreatedIds!["created"], StringComparer.Ordinal);
+        {
+            var database = rig.Context();
+            await using var databaseLifetime = database.ConfigureAwait(false);
+            Assert.AreEqual(1, await database.Emails.CountAsync().ConfigureAwait(false));
+        }
+        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7()).ConfigureAwait(false);
+        Assert.AreNotEqual(emailId, fresh.Invocations[0].Arguments["created"]!["created"]!["id"]!.GetValue<string>(), StringComparer.Ordinal);
+        var final = rig.Context();
+        await using var finalLifetime = final.ConfigureAwait(false);
+        Assert.AreEqual(2, await final.Emails.CountAsync().ConfigureAwait(false));
+        Assert.AreEqual(2, await final.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The TypedEmailReadAndParseReplayAzureBackedProjectionSnapshots scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task TypedEmailReadAndParseReplayAzureBackedProjectionSnapshots()
     {
-        await using var rig = await Rig.CreateAsync();
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         var folderId = Guid.CreateVersion7();
-        await using (var setup = rig.Context())
         {
-            setup.Folders.Add(new FolderDB
+            var setup = rig.Context();
+            await using var setupLifetime = setup.ConfigureAwait(false);
+            await (setup.Folders.AddAsync(new FolderDB
             {
                 Id = folderId,
                 InboxId = rig.InboxId,
                 Name = "Inbox",
                 UidValidity = 1,
                 NextUid = 1,
-            });
-            await setup.SaveChangesAsync();
+            })).ConfigureAwait(false);
+            await setup.SaveChangesAsync().ConfigureAwait(false);
         }
         const string raw = "From: sender@example.test\r\nTo: replay@example.test\r\nSubject: Azure projection\r\n\r\nBody";
         string blobId;
@@ -367,7 +400,7 @@ public sealed class JmapDurableReplayTests
         {
             var blobs = scope.ServiceProvider.GetRequiredService<JmapBlobService>();
             blobId = (await blobs.StoreAsync(rig.InboxId, Encoding.UTF8.GetBytes(raw),
-                "message/rfc822", "projection.eml", CancellationToken.None)).BlobId;
+                "message/rfc822", "projection.eml", CancellationToken.None).ConfigureAwait(false)).BlobId;
         }
         var imported = await rig.InvokeAsync(new JmapApplicationBatch([MailFeature.Basic, MailFeature.Messages],
             [new JmapApplicationCall(MailOperationKind.ImportMessages, new JsonObject
@@ -381,7 +414,7 @@ public sealed class JmapDurableReplayTests
                         ["mailboxIds"] = new JsonObject { [JmapId.Mailbox(folderId)] = true },
                     },
                 },
-            }, "import")], new Dictionary<string, string>()), Guid.CreateVersion7());
+            }, "import")], new Dictionary<string, string>(StringComparer.Ordinal)), Guid.CreateVersion7()).ConfigureAwait(false);
         var emailId = imported.Invocations[0].Arguments["created"]!["created"]!["id"]!.GetValue<string>();
         var read = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Messages],
             [new JmapApplicationCall(MailOperationKind.ReadMessages, new JsonObject
@@ -391,12 +424,12 @@ public sealed class JmapDurableReplayTests
                 ["properties"] = new JsonArray("id", "subject"),
             }, "read")]);
         var readOperation = Guid.CreateVersion7();
-        var firstRead = await rig.InvokeAsync(read, readOperation);
+        var firstRead = await rig.InvokeAsync(read, readOperation).ConfigureAwait(false);
         Assert.AreEqual("Azure projection", firstRead.Invocations[0].Arguments["list"]![0]!["subject"]!
-            .GetValue<string>());
-        Assert.AreEqual("missing", firstRead.Invocations[0].Arguments["notFound"]![0]!.GetValue<string>());
-        var replayRead = await rig.InvokeAsync(read, readOperation);
-        Assert.AreEqual(JsonSerializer.Serialize(firstRead.Invocations), JsonSerializer.Serialize(replayRead.Invocations));
+            .GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("missing", firstRead.Invocations[0].Arguments["notFound"]![0]!.GetValue<string>(), StringComparer.Ordinal);
+        var replayRead = await rig.InvokeAsync(read, readOperation).ConfigureAwait(false);
+        Assert.AreEqual(JsonSerializer.Serialize(firstRead.Invocations), JsonSerializer.Serialize(replayRead.Invocations), StringComparer.Ordinal);
         var parse = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Messages],
             [new JmapApplicationCall(MailOperationKind.ParseMessages, new JsonObject
             {
@@ -405,53 +438,57 @@ public sealed class JmapDurableReplayTests
                 ["properties"] = new JsonArray("subject"),
             }, "parse")]);
         var parseOperation = Guid.CreateVersion7();
-        var firstParse = await rig.InvokeAsync(parse, parseOperation);
+        var firstParse = await rig.InvokeAsync(parse, parseOperation).ConfigureAwait(false);
         Assert.AreEqual("Azure projection", firstParse.Invocations[0].Arguments["parsed"]![blobId]!["subject"]!
-            .GetValue<string>());
-        Assert.AreEqual("Umissing", firstParse.Invocations[0].Arguments["notFound"]![0]!.GetValue<string>());
-        var replayParse = await rig.InvokeAsync(parse, parseOperation);
-        Assert.AreEqual(JsonSerializer.Serialize(firstParse.Invocations), JsonSerializer.Serialize(replayParse.Invocations));
-        await using var verification = rig.Context();
-        var stored = await verification.Emails.SingleAsync();
-        Assert.AreEqual(LargeObjectProviders.AzureBlob, stored.RawMessageObjectProvider);
+            .GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("Umissing", firstParse.Invocations[0].Arguments["notFound"]![0]!.GetValue<string>(), StringComparer.Ordinal);
+        var replayParse = await rig.InvokeAsync(parse, parseOperation).ConfigureAwait(false);
+        Assert.AreEqual(JsonSerializer.Serialize(firstParse.Invocations), JsonSerializer.Serialize(replayParse.Invocations), StringComparer.Ordinal);
+        var verification = rig.Context();
+        await using var verificationLifetime = verification.ConfigureAwait(false);
+        var stored = await verification.Emails.SingleAsync().ConfigureAwait(false);
+        Assert.AreEqual(LargeObjectProviders.AzureBlob, stored.RawMessageObjectProvider, StringComparer.Ordinal);
         Assert.IsNull(stored.RawMessage);
-        Assert.AreEqual(3, await verification.ApplicationOperationReceipts.CountAsync());
+        Assert.AreEqual(3, await verification.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The TypedEmailCopyReplaysCommittedCopyAndSourceDeletionWithoutRepeatingEither scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task TypedEmailCopyReplaysCommittedCopyAndSourceDeletionWithoutRepeatingEither()
     {
-        await using var rig = await Rig.CreateAsync();
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         var sourceFolderId = Guid.CreateVersion7();
         var targetAccountId = Guid.CreateVersion7();
         var targetFolderId = Guid.CreateVersion7();
-        await using (var setup = rig.Context())
         {
-            var original = await setup.Inboxes.SingleAsync();
-            setup.Inboxes.Add(new InboxDB
+            var setup = rig.Context();
+            await using var setupLifetime = setup.ConfigureAwait(false);
+            var original = await setup.Inboxes.SingleAsync().ConfigureAwait(false);
+            await (setup.Inboxes.AddAsync(new InboxDB
             {
                 Id = targetAccountId,
                 Name = "copy-target",
                 AddressId = original.AddressId,
                 OwnerId = rig.User.Id,
-            });
-            setup.Folders.Add(new FolderDB
+            })).ConfigureAwait(false);
+            await (setup.Folders.AddAsync(new FolderDB
             {
                 Id = sourceFolderId,
                 InboxId = rig.InboxId,
                 Name = "Source",
                 UidValidity = 1,
                 NextUid = 1,
-            });
-            setup.Folders.Add(new FolderDB
+            })).ConfigureAwait(false);
+            await (setup.Folders.AddAsync(new FolderDB
             {
                 Id = targetFolderId,
                 InboxId = targetAccountId,
                 Name = "Target",
                 UidValidity = 1,
                 NextUid = 1,
-            });
-            await setup.SaveChangesAsync();
+            })).ConfigureAwait(false);
+            await setup.SaveChangesAsync().ConfigureAwait(false);
         }
         const string raw = "From: sender@example.test\r\nTo: replay@example.test\r\nSubject: Copy\r\n\r\nBody";
         string blobId;
@@ -459,7 +496,7 @@ public sealed class JmapDurableReplayTests
         {
             var blobs = scope.ServiceProvider.GetRequiredService<JmapBlobService>();
             blobId = (await blobs.StoreAsync(rig.InboxId, Encoding.UTF8.GetBytes(raw),
-                "message/rfc822", "copy.eml", CancellationToken.None)).BlobId;
+                "message/rfc822", "copy.eml", CancellationToken.None).ConfigureAwait(false)).BlobId;
         }
         var import = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Messages],
             [new JmapApplicationCall(MailOperationKind.ImportMessages, new JsonObject
@@ -473,8 +510,8 @@ public sealed class JmapDurableReplayTests
                         ["mailboxIds"] = new JsonObject { [JmapId.Mailbox(sourceFolderId)] = true },
                     },
                 },
-            }, "import")], new Dictionary<string, string>());
-        var imported = await rig.InvokeAsync(import, Guid.CreateVersion7());
+            }, "import")], new Dictionary<string, string>(StringComparer.Ordinal));
+        var imported = await rig.InvokeAsync(import, Guid.CreateVersion7()).ConfigureAwait(false);
         var sourceId = imported.Invocations[0].Arguments["created"]!["source"]!["id"]!.GetValue<string>();
         var copy = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Messages],
             [new JmapApplicationCall(MailOperationKind.CopyMessages, new JsonObject
@@ -490,47 +527,51 @@ public sealed class JmapDurableReplayTests
                     },
                 },
                 ["onSuccessDestroyOriginal"] = true,
-            }, "copy")], new Dictionary<string, string>());
+            }, "copy")], new Dictionary<string, string>(StringComparer.Ordinal));
         var operation = Guid.CreateVersion7();
-        var first = await rig.InvokeAsync(copy, operation);
+        var first = await rig.InvokeAsync(copy, operation).ConfigureAwait(false);
         Assert.HasCount(2, first.Invocations);
         Assert.AreEqual(MailOperationKind.CopyMessages, first.Invocations[0].Operation);
         Assert.AreEqual(MailOperationKind.MutateMessages, first.Invocations[1].Operation);
         var copiedId = first.Invocations[0].Arguments["created"]!["copied"]!["id"]!.GetValue<string>();
-        Assert.AreEqual(copiedId, first.CreatedIds!["copied"]);
-        Assert.AreEqual(sourceId, first.Invocations[1].Arguments["destroyed"]![0]!.GetValue<string>());
-        await using (var database = rig.Context())
+        Assert.AreEqual(copiedId, first.CreatedIds!["copied"], StringComparer.Ordinal);
+        Assert.AreEqual(sourceId, first.Invocations[1].Arguments["destroyed"]![0]!.GetValue<string>(), StringComparer.Ordinal);
         {
-            Assert.AreEqual(1, await database.Emails.CountAsync());
-            var target = await database.Emails.SingleAsync();
+            var database = rig.Context();
+            await using var databaseLifetime = database.ConfigureAwait(false);
+            Assert.AreEqual(1, await database.Emails.CountAsync().ConfigureAwait(false));
+            var target = await database.Emails.SingleAsync().ConfigureAwait(false);
             Assert.AreEqual(targetFolderId, target.FolderId);
-            Assert.AreEqual(LargeObjectProviders.AzureBlob, target.RawMessageObjectProvider);
+            Assert.AreEqual(LargeObjectProviders.AzureBlob, target.RawMessageObjectProvider, StringComparer.Ordinal);
             Assert.IsNull(target.RawMessage);
         }
-        var replay = await rig.InvokeAsync(copy, operation);
-        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
-        Assert.AreEqual(copiedId, replay.CreatedIds!["copied"]);
-        await using var final = rig.Context();
-        Assert.AreEqual(1, await final.Emails.CountAsync());
-        Assert.AreEqual(2, await final.ApplicationOperationReceipts.CountAsync());
+        var replay = await rig.InvokeAsync(copy, operation).ConfigureAwait(false);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations), StringComparer.Ordinal);
+        Assert.AreEqual(copiedId, replay.CreatedIds!["copied"], StringComparer.Ordinal);
+        var final = rig.Context();
+        await using var finalLifetime = final.ConfigureAwait(false);
+        Assert.AreEqual(1, await final.Emails.CountAsync().ConfigureAwait(false));
+        Assert.AreEqual(2, await final.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task TypedContactCopyPreservesAccountPrecedenceAndReplaysCommittedError()
     {
-        await using var rig = await Rig.CreateAsync();
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         var otherAccountId = Guid.CreateVersion7();
-        await using (var setup = rig.Context())
         {
-            var primary = await setup.Inboxes.SingleAsync();
-            setup.Inboxes.Add(new InboxDB
+            var setup = rig.Context();
+            await using var setupLifetime = setup.ConfigureAwait(false);
+            var primary = await setup.Inboxes.SingleAsync().ConfigureAwait(false);
+            await (setup.Inboxes.AddAsync(new InboxDB
             {
                 Id = otherAccountId,
                 Name = "other",
                 AddressId = primary.AddressId,
                 OwnerId = rig.User.Id,
-            });
-            await setup.SaveChangesAsync();
+            })).ConfigureAwait(false);
+            await setup.SaveChangesAsync().ConfigureAwait(false);
         }
         var arguments = new JsonObject
         {
@@ -541,39 +582,41 @@ public sealed class JmapDurableReplayTests
         var batch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Contacts],
             [new JmapApplicationCall(MailOperationKind.CopyContacts, (JsonObject)arguments.DeepClone(), "copy")]);
         var operation = Guid.CreateVersion7();
-        var first = await rig.InvokeAsync(batch, operation);
+        var first = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
         Assert.AreEqual(MailOperationKind.Failure, first.Invocations[0].Operation);
-        Assert.AreEqual("accountNotSupportedByMethod", first.Invocations[0].Arguments["type"]!.GetValue<string>());
-        var replay = await rig.InvokeAsync(batch, operation);
-        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
+        Assert.AreEqual("accountNotSupportedByMethod", first.Invocations[0].Arguments["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        var replay = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations), StringComparer.Ordinal);
         arguments["fromAccountId"] = JmapId.Account(otherAccountId);
         arguments["accountId"] = JmapId.Account(rig.InboxId);
         var reversed = await rig.InvokeAsync(new JmapApplicationBatch([MailFeature.Basic, MailFeature.Contacts],
             [new JmapApplicationCall(MailOperationKind.CopyContacts, (JsonObject)arguments.DeepClone(), "reversed")]),
-            Guid.CreateVersion7());
+            Guid.CreateVersion7()).ConfigureAwait(false);
         Assert.AreEqual("fromAccountNotSupportedByMethod",
-            reversed.Invocations[0].Arguments["type"]!.GetValue<string>());
+            reversed.Invocations[0].Arguments["type"]!.GetValue<string>(), StringComparer.Ordinal);
         arguments["fromAccountId"] = "Ainvalid";
         var missing = await rig.InvokeAsync(new JmapApplicationBatch([MailFeature.Basic, MailFeature.Contacts],
             [new JmapApplicationCall(MailOperationKind.CopyContacts, arguments, "missing")]),
-            Guid.CreateVersion7());
-        Assert.AreEqual("fromAccountNotFound", missing.Invocations[0].Arguments["type"]!.GetValue<string>());
-        await using var verification = rig.Context();
-        Assert.AreEqual(3, await verification.ApplicationOperationReceipts.CountAsync());
+            Guid.CreateVersion7()).ConfigureAwait(false);
+        Assert.AreEqual("fromAccountNotFound", missing.Invocations[0].Arguments["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        var verification = rig.Context();
+        await using var verificationLifetime = verification.ConfigureAwait(false);
+        Assert.AreEqual(3, await verification.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task TypedContactQueriesReplayCommittedSearchAndChangeSnapshots()
     {
-        await using var rig = await Rig.CreateAsync();
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         var initialBatch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Contacts],
             [new JmapApplicationCall(MailOperationKind.FindContacts, new JsonObject
             {
                 ["accountId"] = JmapId.Account(rig.InboxId),
             }, "initial")]);
-        var initial = await rig.InvokeAsync(initialBatch, Guid.CreateVersion7());
+        var initial = await rig.InvokeAsync(initialBatch, Guid.CreateVersion7()).ConfigureAwait(false);
         var since = initial.Invocations[0].Arguments["queryState"]!.GetValue<string>();
-        var created = await rig.InvokeAsync(rig.ContactsBatch(), Guid.CreateVersion7());
+        var created = await rig.InvokeAsync(rig.ContactsBatch(), Guid.CreateVersion7()).ConfigureAwait(false);
         var cardId = created.Invocations[1].Arguments["created"]!["card"]!["id"]!.GetValue<string>();
         var query = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Contacts],
             [new JmapApplicationCall(MailOperationKind.FindContacts, new JsonObject
@@ -593,10 +636,10 @@ public sealed class JmapDurableReplayTests
             }, "changes")]);
         var queryOperation = Guid.CreateVersion7();
         var changesOperation = Guid.CreateVersion7();
-        var firstQuery = await rig.InvokeAsync(query, queryOperation);
-        var firstChanges = await rig.InvokeAsync(changes, changesOperation);
-        Assert.AreEqual(cardId, firstQuery.Invocations[0].Arguments["ids"]![0]!.GetValue<string>());
-        Assert.AreEqual(cardId, firstChanges.Invocations[0].Arguments["added"]![0]!["id"]!.GetValue<string>());
+        var firstQuery = await rig.InvokeAsync(query, queryOperation).ConfigureAwait(false);
+        var firstChanges = await rig.InvokeAsync(changes, changesOperation).ConfigureAwait(false);
+        Assert.AreEqual(cardId, firstQuery.Invocations[0].Arguments["ids"]![0]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual(cardId, firstChanges.Invocations[0].Arguments["added"]![0]!["id"]!.GetValue<string>(), StringComparer.Ordinal);
         var changed = await rig.InvokeAsync(new JmapApplicationBatch([MailFeature.Basic, MailFeature.Contacts],
             [new JmapApplicationCall(MailOperationKind.MutateContacts, new JsonObject
             {
@@ -605,25 +648,26 @@ public sealed class JmapDurableReplayTests
                 {
                     ["name"] = new JsonObject { ["@type"] = "Name", ["full"] = "Other person" },
                 } },
-            }, "update")]), Guid.CreateVersion7());
+            }, "update")]), Guid.CreateVersion7()).ConfigureAwait(false);
         Assert.IsTrue(changed.Invocations[0].Arguments["updated"]!.AsObject().ContainsKey(cardId));
-        var replayQuery = await rig.InvokeAsync(query, queryOperation);
-        var replayChanges = await rig.InvokeAsync(changes, changesOperation);
-        Assert.AreEqual(JsonSerializer.Serialize(firstQuery.Invocations), JsonSerializer.Serialize(replayQuery.Invocations));
-        Assert.AreEqual(JsonSerializer.Serialize(firstChanges.Invocations), JsonSerializer.Serialize(replayChanges.Invocations));
-        var freshQuery = await rig.InvokeAsync(query, Guid.CreateVersion7());
-        var freshChanges = await rig.InvokeAsync(changes, Guid.CreateVersion7());
+        var replayQuery = await rig.InvokeAsync(query, queryOperation).ConfigureAwait(false);
+        var replayChanges = await rig.InvokeAsync(changes, changesOperation).ConfigureAwait(false);
+        Assert.AreEqual(JsonSerializer.Serialize(firstQuery.Invocations), JsonSerializer.Serialize(replayQuery.Invocations), StringComparer.Ordinal);
+        Assert.AreEqual(JsonSerializer.Serialize(firstChanges.Invocations), JsonSerializer.Serialize(replayChanges.Invocations), StringComparer.Ordinal);
+        var freshQuery = await rig.InvokeAsync(query, Guid.CreateVersion7()).ConfigureAwait(false);
+        var freshChanges = await rig.InvokeAsync(changes, Guid.CreateVersion7()).ConfigureAwait(false);
         Assert.AreEqual(0, freshQuery.Invocations[0].Arguments["ids"]!.AsArray().Count);
         Assert.AreEqual(0, freshChanges.Invocations[0].Arguments["added"]!.AsArray().Count);
         Assert.AreNotEqual(firstChanges.Invocations[0].Arguments["newQueryState"]!.GetValue<string>(),
-            freshChanges.Invocations[0].Arguments["newQueryState"]!.GetValue<string>());
+            freshChanges.Invocations[0].Arguments["newQueryState"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task TypedContactReadReplaysCommittedJsContactProjection()
     {
-        await using var rig = await Rig.CreateAsync();
-        var created = await rig.InvokeAsync(rig.ContactsBatch(), Guid.CreateVersion7());
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
+        var created = await rig.InvokeAsync(rig.ContactsBatch(), Guid.CreateVersion7()).ConfigureAwait(false);
         var cardId = created.Invocations[1].Arguments["created"]!["card"]!["id"]!.GetValue<string>();
         var batch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Contacts],
             [new JmapApplicationCall(MailOperationKind.ReadContacts, new JsonObject
@@ -633,9 +677,9 @@ public sealed class JmapDurableReplayTests
                 ["properties"] = new JsonArray("uid", "name", "addressBookIds"),
             }, "read")]);
         var operation = Guid.CreateVersion7();
-        var first = await rig.InvokeAsync(batch, operation);
+        var first = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
         var firstCard = first.Invocations[0].Arguments["list"]![0]!;
-        Assert.AreEqual("Replay person", firstCard["name"]!["full"]!.GetValue<string>());
+        Assert.AreEqual("Replay person", firstCard["name"]!["full"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.IsFalse(firstCard.AsObject().ContainsKey("version"));
         Assert.IsNotNull(firstCard["addressBookIds"]);
         var changed = await rig.InvokeAsync(new JmapApplicationBatch([MailFeature.Basic, MailFeature.Contacts],
@@ -646,23 +690,25 @@ public sealed class JmapDurableReplayTests
                 {
                     ["name"] = new JsonObject { ["@type"] = "Name", ["full"] = "Updated person" },
                 } },
-            }, "update")]), Guid.CreateVersion7());
+            }, "update")]), Guid.CreateVersion7()).ConfigureAwait(false);
         Assert.IsTrue(changed.Invocations[0].Arguments["updated"]!.AsObject().ContainsKey(cardId));
-        var replay = await rig.InvokeAsync(batch, operation);
-        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
-        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7());
+        var replay = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations), StringComparer.Ordinal);
+        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7()).ConfigureAwait(false);
         Assert.AreEqual("Updated person", fresh.Invocations[0].Arguments["list"]![0]!["name"]!["full"]!
-            .GetValue<string>());
+            .GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task TypedSubmissionReadReplaysCommittedSnapshotAcrossWorkerRetries()
     {
-        await using var rig = await Rig.CreateAsync();
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         var submissionId = Guid.CreateVersion7();
-        await using (var setup = rig.Context())
         {
-            setup.JmapEmailSubmissions.Add(new JmapEmailSubmissionDB
+            var setup = rig.Context();
+            await using var setupLifetime = setup.ConfigureAwait(false);
+            await (setup.JmapEmailSubmissions.AddAsync(new JmapEmailSubmissionDB
             {
                 Id = submissionId,
                 SubmissionObjectId = JmapId.Submission(submissionId),
@@ -675,8 +721,8 @@ public sealed class JmapDurableReplayTests
                 EnvelopeRecipients = ["recipient@example.test"],
                 SendAt = new DateTime(2026, 9, 29, 12, 0, 0, DateTimeKind.Utc),
                 UndoStatus = "final",
-            });
-            await setup.SaveChangesAsync();
+            })).ConfigureAwait(false);
+            await setup.SaveChangesAsync().ConfigureAwait(false);
         }
         var batch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Submission],
             [new JmapApplicationCall(MailOperationKind.ReadSubmissions, new JsonObject
@@ -686,36 +732,40 @@ public sealed class JmapDurableReplayTests
                 ["properties"] = new JsonArray("undoStatus", "envelope"),
             }, "submission")]);
         var operation = Guid.CreateVersion7();
-        var first = await rig.InvokeAsync(batch, operation);
-        Assert.AreEqual("final", first.Invocations[0].Arguments["list"]![0]!["undoStatus"]!.GetValue<string>());
+        var first = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
+        Assert.AreEqual("final", first.Invocations[0].Arguments["list"]![0]!["undoStatus"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(rig.User.Username,
-            first.Invocations[0].Arguments["list"]![0]!["envelope"]!["mailFrom"]!["email"]!.GetValue<string>());
-        await using (var changed = rig.Context())
+            first.Invocations[0].Arguments["list"]![0]!["envelope"]!["mailFrom"]!["email"]!.GetValue<string>(), StringComparer.Ordinal);
         {
-            var submission = await changed.JmapEmailSubmissions.SingleAsync();
+            var changed = rig.Context();
+            await using var changedLifetime = changed.ConfigureAwait(false);
+            var submission = await changed.JmapEmailSubmissions.SingleAsync().ConfigureAwait(false);
             submission.UndoStatus = "pending";
             submission.EnvelopeSender = "updated@example.test";
-            await changed.SaveChangesAsync();
+            await changed.SaveChangesAsync().ConfigureAwait(false);
         }
-        var replay = await rig.InvokeAsync(batch, operation);
-        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
-        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7());
-        Assert.AreEqual("pending", fresh.Invocations[0].Arguments["list"]![0]!["undoStatus"]!.GetValue<string>());
+        var replay = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations), StringComparer.Ordinal);
+        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7()).ConfigureAwait(false);
+        Assert.AreEqual("pending", fresh.Invocations[0].Arguments["list"]![0]!["undoStatus"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual("updated@example.test",
-            fresh.Invocations[0].Arguments["list"]![0]!["envelope"]!["mailFrom"]!["email"]!.GetValue<string>());
-        await using var verification = rig.Context();
-        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync());
+            fresh.Invocations[0].Arguments["list"]![0]!["envelope"]!["mailFrom"]!["email"]!.GetValue<string>(), StringComparer.Ordinal);
+        var verification = rig.Context();
+        await using var verificationLifetime = verification.ConfigureAwait(false);
+        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task TypedSubmissionQueryReplaysCommittedFilteredOrderAcrossWorkerRetries()
     {
-        await using var rig = await Rig.CreateAsync();
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         var submissionId = Guid.CreateVersion7();
-        await using (var setup = rig.Context())
         {
-            setup.JmapEmailSubmissions.Add(NewSubmission(rig, submissionId, "final"));
-            await setup.SaveChangesAsync();
+            var setup = rig.Context();
+            await using var setupLifetime = setup.ConfigureAwait(false);
+            await (setup.JmapEmailSubmissions.AddAsync(NewSubmission(rig, submissionId, "final"))).ConfigureAwait(false);
+            await setup.SaveChangesAsync().ConfigureAwait(false);
         }
         var batch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Submission],
             [new JmapApplicationCall(MailOperationKind.FindSubmissions, new JsonObject
@@ -725,36 +775,40 @@ public sealed class JmapDurableReplayTests
                 ["calculateTotal"] = true,
             }, "query")]);
         var operation = Guid.CreateVersion7();
-        var first = await rig.InvokeAsync(batch, operation);
+        var first = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
         Assert.AreEqual(MailOperationKind.FindSubmissions, first.Invocations[0].Operation);
-        Assert.AreEqual(JmapId.Submission(submissionId), first.Invocations[0].Arguments["ids"]![0]!.GetValue<string>());
-        await using (var changed = rig.Context())
+        Assert.AreEqual(JmapId.Submission(submissionId), first.Invocations[0].Arguments["ids"]![0]!.GetValue<string>(), StringComparer.Ordinal);
         {
-            var submission = await changed.JmapEmailSubmissions.SingleAsync();
+            var changed = rig.Context();
+            await using var changedLifetime = changed.ConfigureAwait(false);
+            var submission = await changed.JmapEmailSubmissions.SingleAsync().ConfigureAwait(false);
             submission.UndoStatus = "canceled";
-            await changed.SaveChangesAsync();
+            await changed.SaveChangesAsync().ConfigureAwait(false);
         }
-        var replay = await rig.InvokeAsync(batch, operation);
-        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
-        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7());
+        var replay = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations), StringComparer.Ordinal);
+        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7()).ConfigureAwait(false);
         Assert.AreEqual(0, fresh.Invocations[0].Arguments["ids"]!.AsArray().Count);
         Assert.AreEqual(0, fresh.Invocations[0].Arguments["total"]!.GetValue<int>());
-        await using var verification = rig.Context();
-        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync());
+        var verification = rig.Context();
+        await using var verificationLifetime = verification.ConfigureAwait(false);
+        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task TypedSubmissionQueryDoesNotMatchOpaqueAnchorToLegacyEmptyGuidRow()
     {
-        await using var rig = await Rig.CreateAsync();
-        await using (var setup = rig.Context())
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         {
+            var setup = rig.Context();
+            await using var setupLifetime = setup.ConfigureAwait(false);
             var legacyRow = NewSubmission(rig, Guid.Empty, "final");
-            setup.JmapEmailSubmissions.Add(legacyRow);
-            await setup.SaveChangesAsync();
+            await (setup.JmapEmailSubmissions.AddAsync(legacyRow)).ConfigureAwait(false);
+            await setup.SaveChangesAsync().ConfigureAwait(false);
             // EF generates a new key for Guid.Empty, so create the legacy row directly in PostgreSQL.
             await setup.Database.ExecuteSqlInterpolatedAsync(
-                $"UPDATE jmap_email_submissions SET id = {Guid.Empty} WHERE id = {legacyRow.Id}");
+                $"UPDATE jmap_email_submissions SET id = {Guid.Empty} WHERE id = {legacyRow.Id}").ConfigureAwait(false);
         }
         var arguments = new JsonObject
         {
@@ -764,35 +818,37 @@ public sealed class JmapDurableReplayTests
         var canonical = await rig.InvokeAsync(new JmapApplicationBatch(
             [MailFeature.Basic, MailFeature.Submission],
             [new JmapApplicationCall(MailOperationKind.FindSubmissions, (JsonObject)arguments.DeepClone(), "canonical")]),
-            Guid.CreateVersion7());
+            Guid.CreateVersion7()).ConfigureAwait(false);
         Assert.IsNotNull(canonical.Invocations[0].Arguments["ids"],
             canonical.Invocations[0].Arguments.ToJsonString());
         Assert.AreEqual(JmapId.Submission(Guid.Empty),
-            canonical.Invocations[0].Arguments["ids"]![0]!.GetValue<string>());
+            canonical.Invocations[0].Arguments["ids"]![0]!.GetValue<string>(), StringComparer.Ordinal);
         arguments["anchor"] = "opaque";
         var opaque = await rig.InvokeAsync(new JmapApplicationBatch(
             [MailFeature.Basic, MailFeature.Submission],
             [new JmapApplicationCall(MailOperationKind.FindSubmissions, arguments, "opaque")]),
-            Guid.CreateVersion7());
-        Assert.AreEqual("anchorNotFound", opaque.Invocations[0].Arguments["type"]!.GetValue<string>());
+            Guid.CreateVersion7()).ConfigureAwait(false);
+        Assert.AreEqual("anchorNotFound", opaque.Invocations[0].Arguments["type"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task TypedSubmissionQueryChangesReplaysCommittedDeltaAcrossWorkerRetries()
     {
-        await using var rig = await Rig.CreateAsync();
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         var query = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Submission],
             [new JmapApplicationCall(MailOperationKind.FindSubmissions, new JsonObject
             {
                 ["accountId"] = JmapId.Account(rig.InboxId),
             }, "initial")]);
-        var initial = await rig.InvokeAsync(query, Guid.CreateVersion7());
+        var initial = await rig.InvokeAsync(query, Guid.CreateVersion7()).ConfigureAwait(false);
         var since = initial.Invocations[0].Arguments["queryState"]!.GetValue<string>();
         var submissionId = Guid.CreateVersion7();
-        await using (var setup = rig.Context())
         {
-            setup.JmapEmailSubmissions.Add(NewSubmission(rig, submissionId, "final"));
-            await setup.SaveChangesAsync();
+            var setup = rig.Context();
+            await using var setupLifetime = setup.ConfigureAwait(false);
+            await (setup.JmapEmailSubmissions.AddAsync(NewSubmission(rig, submissionId, "final"))).ConfigureAwait(false);
+            await setup.SaveChangesAsync().ConfigureAwait(false);
         }
         var batch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Submission],
             [new JmapApplicationCall(MailOperationKind.FindSubmissionChanges, new JsonObject
@@ -803,22 +859,24 @@ public sealed class JmapDurableReplayTests
                 ["calculateTotal"] = true,
             }, "changes")]);
         var operation = Guid.CreateVersion7();
-        var first = await rig.InvokeAsync(batch, operation);
+        var first = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
         Assert.AreEqual(MailOperationKind.FindSubmissionChanges, first.Invocations[0].Operation);
         Assert.AreEqual(JmapId.Submission(submissionId),
-            first.Invocations[0].Arguments["added"]![0]!["id"]!.GetValue<string>());
-        await using (var changed = rig.Context())
+            first.Invocations[0].Arguments["added"]![0]!["id"]!.GetValue<string>(), StringComparer.Ordinal);
         {
-            var submission = await changed.JmapEmailSubmissions.SingleAsync();
+            var changed = rig.Context();
+            await using var changedLifetime = changed.ConfigureAwait(false);
+            var submission = await changed.JmapEmailSubmissions.SingleAsync().ConfigureAwait(false);
             submission.UndoStatus = "canceled";
-            await changed.SaveChangesAsync();
+            await changed.SaveChangesAsync().ConfigureAwait(false);
         }
-        var replay = await rig.InvokeAsync(batch, operation);
-        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
-        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7());
+        var replay = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations), StringComparer.Ordinal);
+        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7()).ConfigureAwait(false);
         Assert.AreEqual(0, fresh.Invocations[0].Arguments["added"]!.AsArray().Count);
-        await using var verification = rig.Context();
-        Assert.AreEqual(3, await verification.ApplicationOperationReceipts.CountAsync());
+        var verification = rig.Context();
+        await using var verificationLifetime = verification.ConfigureAwait(false);
+        Assert.AreEqual(3, await verification.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
     }
 
     private static JmapEmailSubmissionDB NewSubmission(Rig rig, Guid id, string undoStatus) => new()
@@ -839,20 +897,22 @@ public sealed class JmapDurableReplayTests
     [TestMethod]
     public async Task TypedThreadReadReplaysCommittedGroupingAcrossWorkerRetries()
     {
-        await using var rig = await Rig.CreateAsync();
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         var folderId = Guid.CreateVersion7();
         var emailId = Guid.CreateVersion7();
-        await using (var setup = rig.Context())
         {
-            setup.Folders.Add(new FolderDB
+            var setup = rig.Context();
+            await using var setupLifetime = setup.ConfigureAwait(false);
+            await (setup.Folders.AddAsync(new FolderDB
             {
                 Id = folderId,
                 InboxId = rig.InboxId,
                 Name = "Inbox",
                 UidValidity = 1,
                 NextUid = 2,
-            });
-            setup.Emails.Add(new EmailDB
+            })).ConfigureAwait(false);
+            await (setup.Emails.AddAsync(new EmailDB
             {
                 Id = emailId,
                 Sender = "sender@example.test",
@@ -867,8 +927,8 @@ public sealed class JmapDurableReplayTests
                 FolderId = folderId,
                 Uid = 1,
                 ModSeq = 1,
-            });
-            await setup.SaveChangesAsync();
+            })).ConfigureAwait(false);
+            await setup.SaveChangesAsync().ConfigureAwait(false);
         }
         var batch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Messages],
             [new JmapApplicationCall(MailOperationKind.ReadThreads, new JsonObject
@@ -877,28 +937,31 @@ public sealed class JmapDurableReplayTests
                 ["properties"] = new JsonArray("emailIds"),
             }, "thread")]);
         var operation = Guid.CreateVersion7();
-        var first = await rig.InvokeAsync(batch, operation);
-        Assert.AreEqual("TYyE", first.Invocations[0].Arguments["list"]![0]!["id"]!.GetValue<string>());
+        var first = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
+        Assert.AreEqual("TYyE", first.Invocations[0].Arguments["list"]![0]!["id"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(JmapId.Email(emailId),
-            first.Invocations[0].Arguments["list"]![0]!["emailIds"]![0]!.GetValue<string>());
-        await using (var changed = rig.Context())
+            first.Invocations[0].Arguments["list"]![0]!["emailIds"]![0]!.GetValue<string>(), StringComparer.Ordinal);
         {
-            var email = await changed.Emails.SingleAsync();
+            var changed = rig.Context();
+            await using var changedLifetime = changed.ConfigureAwait(false);
+            var email = await changed.Emails.SingleAsync().ConfigureAwait(false);
             email.ThreadObjectId = "changed";
-            await changed.SaveChangesAsync();
+            await changed.SaveChangesAsync().ConfigureAwait(false);
         }
-        var replay = await rig.InvokeAsync(batch, operation);
-        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
-        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7());
-        Assert.AreEqual("Tchanged", fresh.Invocations[0].Arguments["list"]![0]!["id"]!.GetValue<string>());
-        await using var verification = rig.Context();
-        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync());
+        var replay = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations), StringComparer.Ordinal);
+        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7()).ConfigureAwait(false);
+        Assert.AreEqual("Tchanged", fresh.Invocations[0].Arguments["list"]![0]!["id"]!.GetValue<string>(), StringComparer.Ordinal);
+        var verification = rig.Context();
+        await using var verificationLifetime = verification.ConfigureAwait(false);
+        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task TypedVacationReadReplaysItsCommittedSnapshotAcrossWorkerRetries()
     {
-        await using var rig = await Rig.CreateAsync();
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         var batch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.AutomaticReplies],
             [new JmapApplicationCall(MailOperationKind.ReadVacationSettings, new JsonObject
             {
@@ -906,27 +969,30 @@ public sealed class JmapDurableReplayTests
                 ["properties"] = new JsonArray("subject"),
             }, "vacation")]);
         var operation = Guid.CreateVersion7();
-        var first = await rig.InvokeAsync(batch, operation);
+        var first = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
         Assert.AreEqual(MailOperationKind.ReadVacationSettings, first.Invocations[0].Operation);
         Assert.IsNull(first.Invocations[0].Arguments["list"]![0]!["subject"]);
-        await using (var changed = rig.Context())
         {
-            var vacation = await changed.JmapVacationResponses.SingleAsync();
+            var changed = rig.Context();
+            await using var changedLifetime = changed.ConfigureAwait(false);
+            var vacation = await changed.JmapVacationResponses.SingleAsync().ConfigureAwait(false);
             vacation.Subject = "New subject";
-            await changed.SaveChangesAsync();
+            await changed.SaveChangesAsync().ConfigureAwait(false);
         }
-        var replay = await rig.InvokeAsync(batch, operation);
-        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
-        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7());
-        Assert.AreEqual("New subject", fresh.Invocations[0].Arguments["list"]![0]!["subject"]!.GetValue<string>());
-        await using var verification = rig.Context();
-        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync());
+        var replay = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations), StringComparer.Ordinal);
+        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7()).ConfigureAwait(false);
+        Assert.AreEqual("New subject", fresh.Invocations[0].Arguments["list"]![0]!["subject"]!.GetValue<string>(), StringComparer.Ordinal);
+        var verification = rig.Context();
+        await using var verificationLifetime = verification.ConfigureAwait(false);
+        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task TypedVacationMutationUsesAzureBlobAndReplaysWithoutRepeatingChanges()
     {
-        await using var rig = await Rig.CreateAsync();
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         var batch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.AutomaticReplies],
             [new JmapApplicationCall(MailOperationKind.MutateVacationSettings, new JsonObject
             {
@@ -942,44 +1008,49 @@ public sealed class JmapDurableReplayTests
                 },
             }, "vacation-set")]);
         var operation = Guid.CreateVersion7();
-        var first = await rig.InvokeAsync(batch, operation);
+        var first = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
         Assert.AreEqual(MailOperationKind.MutateVacationSettings, first.Invocations[0].Operation);
         Assert.IsTrue(first.Invocations[0].Arguments["updated"]!.AsObject().ContainsKey("singleton"));
         string? originalBodyObject;
-        await using (var database = rig.Context())
         {
-            var vacation = await database.JmapVacationResponses.SingleAsync();
-            Assert.AreEqual("Away", vacation.Subject);
-            Assert.AreEqual(LargeObjectProviders.AzureBlob, vacation.BodyObjectProvider);
+            var database = rig.Context();
+            await using var databaseLifetime = database.ConfigureAwait(false);
+            var vacation = await database.JmapVacationResponses.SingleAsync().ConfigureAwait(false);
+            Assert.AreEqual("Away", vacation.Subject, StringComparer.Ordinal);
+            Assert.AreEqual(LargeObjectProviders.AzureBlob, vacation.BodyObjectProvider, StringComparer.Ordinal);
             Assert.IsNull(vacation.TextBody);
             Assert.IsNull(vacation.HtmlBody);
             originalBodyObject = vacation.BodyObjectName;
             vacation.Subject = "Changed after commit";
-            await database.SaveChangesAsync();
+            await database.SaveChangesAsync().ConfigureAwait(false);
         }
-        var replay = await rig.InvokeAsync(batch, operation);
-        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
-        await using (var database = rig.Context())
+        var replay = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations), StringComparer.Ordinal);
         {
-            var vacation = await database.JmapVacationResponses.SingleAsync();
-            Assert.AreEqual("Changed after commit", vacation.Subject);
-            Assert.AreEqual(originalBodyObject, vacation.BodyObjectName);
+            var database = rig.Context();
+            await using var databaseLifetime = database.ConfigureAwait(false);
+            var vacation = await database.JmapVacationResponses.SingleAsync().ConfigureAwait(false);
+            Assert.AreEqual("Changed after commit", vacation.Subject, StringComparer.Ordinal);
+            Assert.AreEqual(originalBodyObject, vacation.BodyObjectName, StringComparer.Ordinal);
         }
-        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7());
+        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7()).ConfigureAwait(false);
         Assert.IsTrue(fresh.Invocations[0].Arguments["updated"]!.AsObject().ContainsKey("singleton"));
-        await using var verification = rig.Context();
-        Assert.AreEqual("Away", (await verification.JmapVacationResponses.SingleAsync()).Subject);
-        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync());
+        var verification = rig.Context();
+        await using var verificationLifetime = verification.ConfigureAwait(false);
+        Assert.AreEqual("Away", (await verification.JmapVacationResponses.SingleAsync().ConfigureAwait(false)).Subject, StringComparer.Ordinal);
+        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task TypedPushReadReplaysItsCommittedSnapshotAcrossWorkerRetries()
     {
-        await using var rig = await Rig.CreateAsync();
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         var subscriptionId = Guid.CreateVersion7();
-        await using (var setup = rig.Context())
         {
-            setup.JmapPushSubscriptions.Add(new JmapPushSubscriptionDB
+            var setup = rig.Context();
+            await using var setupLifetime = setup.ConfigureAwait(false);
+            await (setup.JmapPushSubscriptions.AddAsync(new JmapPushSubscriptionDB
             {
                 Id = subscriptionId,
                 SubscriptionObjectId = JmapId.PushSubscription(subscriptionId),
@@ -988,8 +1059,8 @@ public sealed class JmapDurableReplayTests
                 Url = "https://push.example.test/",
                 VerificationCode = "private-code",
                 ExpiresAt = DateTime.UtcNow.AddHours(1),
-            });
-            await setup.SaveChangesAsync();
+            })).ConfigureAwait(false);
+            await setup.SaveChangesAsync().ConfigureAwait(false);
         }
         var batch = new JmapApplicationBatch([MailFeature.Basic],
             [new JmapApplicationCall(MailOperationKind.ReadNotificationSubscriptions, new JsonObject
@@ -997,27 +1068,30 @@ public sealed class JmapDurableReplayTests
                 ["properties"] = new JsonArray("deviceClientId"),
             }, "push")]);
         var operation = Guid.CreateVersion7();
-        var first = await rig.InvokeAsync(batch, operation);
+        var first = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
         Assert.AreEqual(MailOperationKind.ReadNotificationSubscriptions, first.Invocations[0].Operation);
-        Assert.AreEqual("initial", first.Invocations[0].Arguments["list"]![0]!["deviceClientId"]!.GetValue<string>());
-        await using (var changed = rig.Context())
+        Assert.AreEqual("initial", first.Invocations[0].Arguments["list"]![0]!["deviceClientId"]!.GetValue<string>(), StringComparer.Ordinal);
         {
-            var subscription = await changed.JmapPushSubscriptions.SingleAsync();
+            var changed = rig.Context();
+            await using var changedLifetime = changed.ConfigureAwait(false);
+            var subscription = await changed.JmapPushSubscriptions.SingleAsync().ConfigureAwait(false);
             subscription.DeviceClientId = "updated";
-            await changed.SaveChangesAsync();
+            await changed.SaveChangesAsync().ConfigureAwait(false);
         }
-        var replay = await rig.InvokeAsync(batch, operation);
-        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
-        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7());
-        Assert.AreEqual("updated", fresh.Invocations[0].Arguments["list"]![0]!["deviceClientId"]!.GetValue<string>());
-        await using var verification = rig.Context();
-        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync());
+        var replay = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations), StringComparer.Ordinal);
+        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7()).ConfigureAwait(false);
+        Assert.AreEqual("updated", fresh.Invocations[0].Arguments["list"]![0]!["deviceClientId"]!.GetValue<string>(), StringComparer.Ordinal);
+        var verification = rig.Context();
+        await using var verificationLifetime = verification.ConfigureAwait(false);
+        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task TypedIdentityReadReplaysItsCommittedSnapshotAcrossWorkerRetries()
     {
-        await using var rig = await Rig.CreateAsync();
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         var batch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Submission],
             [new JmapApplicationCall(MailOperationKind.ReadSenderIdentities, new JsonObject
             {
@@ -1025,27 +1099,30 @@ public sealed class JmapDurableReplayTests
                 ["properties"] = new JsonArray("name", "email"),
             }, "identities")]);
         var operation = Guid.CreateVersion7();
-        var first = await rig.InvokeAsync(batch, operation);
+        var first = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
         Assert.AreEqual(MailOperationKind.ReadSenderIdentities, first.Invocations[0].Operation);
-        Assert.AreEqual(string.Empty, first.Invocations[0].Arguments["list"]![0]!["name"]!.GetValue<string>());
-        await using (var changed = rig.Context())
+        Assert.AreEqual(string.Empty, first.Invocations[0].Arguments["list"]![0]!["name"]!.GetValue<string>(), StringComparer.Ordinal);
         {
-            var identity = await changed.JmapIdentities.SingleAsync();
+            var changed = rig.Context();
+            await using var changedLifetime = changed.ConfigureAwait(false);
+            var identity = await changed.JmapIdentities.SingleAsync().ConfigureAwait(false);
             identity.Name = "Renamed sender";
-            await changed.SaveChangesAsync();
+            await changed.SaveChangesAsync().ConfigureAwait(false);
         }
-        var replay = await rig.InvokeAsync(batch, operation);
-        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
-        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7());
-        Assert.AreEqual("Renamed sender", fresh.Invocations[0].Arguments["list"]![0]!["name"]!.GetValue<string>());
-        await using var verification = rig.Context();
-        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync());
+        var replay = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations), StringComparer.Ordinal);
+        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7()).ConfigureAwait(false);
+        Assert.AreEqual("Renamed sender", fresh.Invocations[0].Arguments["list"]![0]!["name"]!.GetValue<string>(), StringComparer.Ordinal);
+        var verification = rig.Context();
+        await using var verificationLifetime = verification.ConfigureAwait(false);
+        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task TypedAddressBookReadReplaysItsCommittedSnapshotAcrossWorkerRetries()
     {
-        await using var rig = await Rig.CreateAsync();
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         var batch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Contacts],
             [new JmapApplicationCall(MailOperationKind.ReadAddressBooks, new JsonObject
             {
@@ -1053,68 +1130,76 @@ public sealed class JmapDurableReplayTests
                 ["properties"] = new JsonArray("name"),
             }, "books")]);
         var operation = Guid.CreateVersion7();
-        var first = await rig.InvokeAsync(batch, operation);
+        var first = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
         Assert.AreEqual(MailOperationKind.ReadAddressBooks, first.Invocations[0].Operation);
-        Assert.AreEqual("Address Book", first.Invocations[0].Arguments["list"]![0]!["name"]!.GetValue<string>());
-        await using (var changed = rig.Context())
+        Assert.AreEqual("Address Book", first.Invocations[0].Arguments["list"]![0]!["name"]!.GetValue<string>(), StringComparer.Ordinal);
         {
-            var book = await changed.DavCollections.SingleAsync();
+            var changed = rig.Context();
+            await using var changedLifetime = changed.ConfigureAwait(false);
+            var book = await changed.DavCollections.SingleAsync().ConfigureAwait(false);
             book.DisplayName = "Renamed book";
-            await changed.SaveChangesAsync();
+            await changed.SaveChangesAsync().ConfigureAwait(false);
         }
-        var replay = await rig.InvokeAsync(batch, operation);
-        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
-        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7());
-        Assert.AreEqual("Renamed book", fresh.Invocations[0].Arguments["list"]![0]!["name"]!.GetValue<string>());
-        await using var verification = rig.Context();
-        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync());
+        var replay = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations), StringComparer.Ordinal);
+        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7()).ConfigureAwait(false);
+        Assert.AreEqual("Renamed book", fresh.Invocations[0].Arguments["list"]![0]!["name"]!.GetValue<string>(), StringComparer.Ordinal);
+        var verification = rig.Context();
+        await using var verificationLifetime = verification.ConfigureAwait(false);
+        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task PostgreSqlChangeReaderPreservesContactAndIdentityLazyDefaults()
     {
-        await using var rig = await Rig.CreateAsync();
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         using var scope = rig.Services.CreateScope();
         var reader = scope.ServiceProvider.GetRequiredService<IMailChangesReader>();
-        await using var before = rig.Context();
-        Assert.AreEqual(0, await before.DavCollections.CountAsync());
-        Assert.AreEqual(0, await before.JmapIdentities.CountAsync());
+        var before = rig.Context();
+        await using var beforeLifetime = before.ConfigureAwait(false);
+        Assert.AreEqual(0, await before.DavCollections.CountAsync().ConfigureAwait(false));
+        Assert.AreEqual(0, await before.JmapIdentities.CountAsync().ConfigureAwait(false));
 
         var denied = await reader.ReadAsync(MailOperationKind.ReadAddressBookChanges,
-            new MailChangesCommand(rig.InboxId, "s0", null, false), rig.User, CancellationToken.None);
+            new MailChangesCommand(rig.InboxId, "s0", null, false), rig.User, CancellationToken.None).ConfigureAwait(false);
         Assert.AreEqual(MailChangesStatus.AccountNotSupported, denied.Status);
-        await using var unchanged = rig.Context();
-        Assert.AreEqual(0, await unchanged.DavCollections.CountAsync());
+        var unchanged = rig.Context();
+        await using var unchangedLifetime = unchanged.ConfigureAwait(false);
+        Assert.AreEqual(0, await unchanged.DavCollections.CountAsync().ConfigureAwait(false));
 
         var books = await reader.ReadAsync(MailOperationKind.ReadAddressBookChanges,
-            new MailChangesCommand(rig.InboxId, "s0", null, true), rig.User, CancellationToken.None);
+            new MailChangesCommand(rig.InboxId, "s0", null, true), rig.User, CancellationToken.None).ConfigureAwait(false);
         Assert.AreEqual(MailChangesStatus.Ok, books.Status);
         Assert.IsTrue(books.CreatedKeys.Any(key => key.StartsWith('D')));
         var identities = await reader.ReadAsync(MailOperationKind.ReadSenderIdentityChanges,
-            new MailChangesCommand(rig.InboxId, "s0", null, true), rig.User, CancellationToken.None);
+            new MailChangesCommand(rig.InboxId, "s0", null, true), rig.User, CancellationToken.None).ConfigureAwait(false);
         Assert.AreEqual(MailChangesStatus.Ok, identities.Status);
-        Assert.IsTrue(identities.CreatedKeys.Contains(JmapId.Identity(rig.InboxId)));
-        await using var after = rig.Context();
-        Assert.AreEqual(1, await after.DavCollections.CountAsync());
-        Assert.AreEqual(1, await after.JmapIdentities.CountAsync());
+        Assert.IsTrue(identities.CreatedKeys.Contains(JmapId.Identity(rig.InboxId), StringComparer.Ordinal));
+        var after = rig.Context();
+        await using var afterLifetime = after.ConfigureAwait(false);
+        Assert.AreEqual(1, await after.DavCollections.CountAsync().ConfigureAwait(false));
+        Assert.AreEqual(1, await after.JmapIdentities.CountAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task TypedMailboxChangesReplaysItsCommittedStateAcrossWorkerRetries()
     {
-        await using var rig = await Rig.CreateAsync();
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         var folderId = Guid.CreateVersion7();
-        await using (var setup = rig.Context())
         {
-            setup.Folders.Add(new FolderDB
+            var setup = rig.Context();
+            await using var setupLifetime = setup.ConfigureAwait(false);
+            await (setup.Folders.AddAsync(new FolderDB
             {
                 Id = folderId,
                 InboxId = rig.InboxId,
                 Name = "Initial",
                 UidValidity = 1,
                 NextUid = 1,
-            });
-            await setup.SaveChangesAsync();
+            })).ConfigureAwait(false);
+            await setup.SaveChangesAsync().ConfigureAwait(false);
         }
         var batch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Messages],
             [new JmapApplicationCall(MailOperationKind.ReadFolderChanges, new JsonObject
@@ -1123,41 +1208,45 @@ public sealed class JmapDurableReplayTests
                 ["sinceState"] = "s0",
             }, "changes")]);
         var operation = Guid.CreateVersion7();
-        var first = await rig.InvokeAsync(batch, operation);
+        var first = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
         Assert.AreEqual(MailOperationKind.ReadFolderChanges, first.Invocations[0].Operation);
         Assert.IsTrue(first.Invocations[0].Arguments["created"]!.AsArray()
-            .Any(value => value!.GetValue<string>() == JmapId.Mailbox(folderId)));
-        await using (var changed = rig.Context())
+            .Any(value => string.Equals(value!.GetValue<string>(), JmapId.Mailbox(folderId), StringComparison.Ordinal)));
         {
-            var folder = await changed.Folders.SingleAsync(row => row.Id == folderId);
+            var changed = rig.Context();
+            await using var changedLifetime = changed.ConfigureAwait(false);
+            var folder = await changed.Folders.SingleAsync(row => row.Id == folderId).ConfigureAwait(false);
             folder.Name = "Updated";
-            await changed.SaveChangesAsync();
+            await changed.SaveChangesAsync().ConfigureAwait(false);
         }
-        var replay = await rig.InvokeAsync(batch, operation);
-        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
-        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7());
+        var replay = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations), StringComparer.Ordinal);
+        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7()).ConfigureAwait(false);
         Assert.AreNotEqual(first.Invocations[0].Arguments["newState"]!.GetValue<string>(),
-            fresh.Invocations[0].Arguments["newState"]!.GetValue<string>());
-        await using var verification = rig.Context();
-        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync());
+            fresh.Invocations[0].Arguments["newState"]!.GetValue<string>(), StringComparer.Ordinal);
+        var verification = rig.Context();
+        await using var verificationLifetime = verification.ConfigureAwait(false);
+        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task TypedMailboxReadReplaysItsCommittedSnapshotAcrossWorkerRetries()
     {
-        await using var rig = await Rig.CreateAsync();
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         var folderId = Guid.CreateVersion7();
-        await using (var setup = rig.Context())
         {
-            setup.Folders.Add(new FolderDB
+            var setup = rig.Context();
+            await using var setupLifetime = setup.ConfigureAwait(false);
+            await (setup.Folders.AddAsync(new FolderDB
             {
                 Id = folderId,
                 InboxId = rig.InboxId,
                 Name = "Before retry",
                 UidValidity = 1,
                 NextUid = 1,
-            });
-            await setup.SaveChangesAsync();
+            })).ConfigureAwait(false);
+            await setup.SaveChangesAsync().ConfigureAwait(false);
         }
         var batch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Messages],
             [new JmapApplicationCall(MailOperationKind.ReadFolders, new JsonObject
@@ -1167,26 +1256,29 @@ public sealed class JmapDurableReplayTests
                 ["properties"] = new JsonArray("name"),
             }, "get")]);
         var operation = Guid.CreateVersion7();
-        var first = await rig.InvokeAsync(batch, operation);
-        Assert.AreEqual("Before retry", first.Invocations[0].Arguments["list"]![0]!["name"]!.GetValue<string>());
-        await using (var changed = rig.Context())
+        var first = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
+        Assert.AreEqual("Before retry", first.Invocations[0].Arguments["list"]![0]!["name"]!.GetValue<string>(), StringComparer.Ordinal);
         {
-            var folder = await changed.Folders.SingleAsync(row => row.Id == folderId);
+            var changed = rig.Context();
+            await using var changedLifetime = changed.ConfigureAwait(false);
+            var folder = await changed.Folders.SingleAsync(row => row.Id == folderId).ConfigureAwait(false);
             folder.Name = "After retry";
-            await changed.SaveChangesAsync();
+            await changed.SaveChangesAsync().ConfigureAwait(false);
         }
-        var replay = await rig.InvokeAsync(batch, operation);
-        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
-        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7());
-        Assert.AreEqual("After retry", fresh.Invocations[0].Arguments["list"]![0]!["name"]!.GetValue<string>());
-        await using var verification = rig.Context();
-        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync());
+        var replay = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations), StringComparer.Ordinal);
+        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7()).ConfigureAwait(false);
+        Assert.AreEqual("After retry", fresh.Invocations[0].Arguments["list"]![0]!["name"]!.GetValue<string>(), StringComparer.Ordinal);
+        var verification = rig.Context();
+        await using var verificationLifetime = verification.ConfigureAwait(false);
+        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task TypedFolderMutationReplaysCreationAndAtomicNameSwapInPostgres()
     {
-        await using var rig = await Rig.CreateAsync();
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         var batch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Messages],
         [
             new(MailOperationKind.MutateFolders, new JsonObject
@@ -1209,7 +1301,7 @@ public sealed class JmapDurableReplayTests
             }, "swap"),
         ]);
         var operation = Guid.CreateVersion7();
-        var first = await rig.InvokeAsync(batch, operation);
+        var first = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
         Assert.AreEqual(MailOperationKind.MutateFolders, first.Invocations[0].Operation);
         Assert.AreEqual(MailOperationKind.MutateFolders, first.Invocations[1].Operation,
             first.Invocations[1].Arguments.ToJsonString());
@@ -1219,32 +1311,35 @@ public sealed class JmapDurableReplayTests
         var betaId = first.Invocations[0].Arguments["created"]!["beta"]!["id"]!.GetValue<string>();
         Assert.IsTrue(JmapId.TryParseMailbox(alphaId, out var alpha));
         Assert.IsTrue(JmapId.TryParseMailbox(betaId, out var beta));
-        var replay = await rig.InvokeAsync(batch, operation);
-        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
-        await using var verification = rig.Context();
-        Assert.AreEqual("Beta", (await verification.Folders.SingleAsync(folder => folder.Id == alpha)).Name);
-        Assert.AreEqual("Alpha", (await verification.Folders.SingleAsync(folder => folder.Id == beta)).Name);
-        Assert.AreEqual(1, await verification.Folders.CountAsync(folder => folder.InboxId == rig.InboxId && folder.Name == "Alpha"));
-        Assert.AreEqual(1, await verification.Folders.CountAsync(folder => folder.InboxId == rig.InboxId && folder.Name == "Beta"));
-        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync());
+        var replay = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations), StringComparer.Ordinal);
+        var verification = rig.Context();
+        await using var verificationLifetime = verification.ConfigureAwait(false);
+        Assert.AreEqual("Beta", (await verification.Folders.SingleAsync(folder => folder.Id == alpha).ConfigureAwait(false)).Name, StringComparer.Ordinal);
+        Assert.AreEqual("Alpha", (await verification.Folders.SingleAsync(folder => folder.Id == beta).ConfigureAwait(false)).Name, StringComparer.Ordinal);
+        Assert.AreEqual(1, await verification.Folders.CountAsync(folder => folder.InboxId == rig.InboxId && folder.Name == "Alpha").ConfigureAwait(false));
+        Assert.AreEqual(1, await verification.Folders.CountAsync(folder => folder.InboxId == rig.InboxId && folder.Name == "Beta").ConfigureAwait(false));
+        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task TypedFolderQueryReplaysCommittedFilteredOrderAcrossWorkerRetries()
     {
-        await using var rig = await Rig.CreateAsync();
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         var folderId = Guid.CreateVersion7();
-        await using (var setup = rig.Context())
         {
-            setup.Folders.Add(new FolderDB
+            var setup = rig.Context();
+            await using var setupLifetime = setup.ConfigureAwait(false);
+            await (setup.Folders.AddAsync(new FolderDB
             {
                 Id = folderId,
                 InboxId = rig.InboxId,
                 Name = "Alpha",
                 UidValidity = 1,
                 NextUid = 1,
-            });
-            await setup.SaveChangesAsync();
+            })).ConfigureAwait(false);
+            await setup.SaveChangesAsync().ConfigureAwait(false);
         }
         var batch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Messages],
             [new JmapApplicationCall(MailOperationKind.FindFolders, new JsonObject
@@ -1255,47 +1350,51 @@ public sealed class JmapDurableReplayTests
                 ["calculateTotal"] = true,
             }, "query")]);
         var operation = Guid.CreateVersion7();
-        var first = await rig.InvokeAsync(batch, operation);
+        var first = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
         Assert.AreEqual(MailOperationKind.FindFolders, first.Invocations[0].Operation);
-        Assert.AreEqual(JmapId.Mailbox(folderId), first.Invocations[0].Arguments["ids"]![0]!.GetValue<string>());
-        await using (var changed = rig.Context())
+        Assert.AreEqual(JmapId.Mailbox(folderId), first.Invocations[0].Arguments["ids"]![0]!.GetValue<string>(), StringComparer.Ordinal);
         {
-            var folder = await changed.Folders.SingleAsync(row => row.Id == folderId);
+            var changed = rig.Context();
+            await using var changedLifetime = changed.ConfigureAwait(false);
+            var folder = await changed.Folders.SingleAsync(row => row.Id == folderId).ConfigureAwait(false);
             folder.Name = "Beta";
-            await changed.SaveChangesAsync();
+            await changed.SaveChangesAsync().ConfigureAwait(false);
         }
-        var replay = await rig.InvokeAsync(batch, operation);
-        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
-        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7());
+        var replay = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations), StringComparer.Ordinal);
+        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7()).ConfigureAwait(false);
         Assert.AreEqual(0, fresh.Invocations[0].Arguments["ids"]!.AsArray().Count);
         Assert.AreEqual(0, fresh.Invocations[0].Arguments["total"]!.GetValue<int>());
-        await using var verification = rig.Context();
-        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync());
+        var verification = rig.Context();
+        await using var verificationLifetime = verification.ConfigureAwait(false);
+        Assert.AreEqual(2, await verification.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task TypedFolderQueryChangesReplaysCommittedDeltaAcrossWorkerRetries()
     {
-        await using var rig = await Rig.CreateAsync();
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         var query = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Messages],
             [new JmapApplicationCall(MailOperationKind.FindFolders, new JsonObject
             {
                 ["accountId"] = JmapId.Account(rig.InboxId),
             }, "initial")]);
-        var initial = await rig.InvokeAsync(query, Guid.CreateVersion7());
+        var initial = await rig.InvokeAsync(query, Guid.CreateVersion7()).ConfigureAwait(false);
         var since = initial.Invocations[0].Arguments["queryState"]!.GetValue<string>();
         var folderId = Guid.CreateVersion7();
-        await using (var setup = rig.Context())
         {
-            setup.Folders.Add(new FolderDB
+            var setup = rig.Context();
+            await using var setupLifetime = setup.ConfigureAwait(false);
+            await (setup.Folders.AddAsync(new FolderDB
             {
                 Id = folderId,
                 InboxId = rig.InboxId,
                 Name = "New",
                 UidValidity = 1,
                 NextUid = 1,
-            });
-            await setup.SaveChangesAsync();
+            })).ConfigureAwait(false);
+            await setup.SaveChangesAsync().ConfigureAwait(false);
         }
         var batch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Messages],
             [new JmapApplicationCall(MailOperationKind.FindFolderChanges, new JsonObject
@@ -1305,29 +1404,32 @@ public sealed class JmapDurableReplayTests
                 ["calculateTotal"] = true,
             }, "changes")]);
         var operation = Guid.CreateVersion7();
-        var first = await rig.InvokeAsync(batch, operation);
+        var first = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
         Assert.AreEqual(MailOperationKind.FindFolderChanges, first.Invocations[0].Operation);
         Assert.AreEqual(JmapId.Mailbox(folderId),
-            first.Invocations[0].Arguments["added"]![0]!["id"]!.GetValue<string>());
-        await using (var changed = rig.Context())
+            first.Invocations[0].Arguments["added"]![0]!["id"]!.GetValue<string>(), StringComparer.Ordinal);
         {
-            var folder = await changed.Folders.SingleAsync(row => row.Id == folderId);
+            var changed = rig.Context();
+            await using var changedLifetime = changed.ConfigureAwait(false);
+            var folder = await changed.Folders.SingleAsync(row => row.Id == folderId).ConfigureAwait(false);
             folder.Name = "Renamed";
-            await changed.SaveChangesAsync();
+            await changed.SaveChangesAsync().ConfigureAwait(false);
         }
-        var replay = await rig.InvokeAsync(batch, operation);
-        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
-        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7());
+        var replay = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations), StringComparer.Ordinal);
+        var fresh = await rig.InvokeAsync(batch, Guid.CreateVersion7()).ConfigureAwait(false);
         Assert.AreNotEqual(first.Invocations[0].Arguments["newQueryState"]!.GetValue<string>(),
-            fresh.Invocations[0].Arguments["newQueryState"]!.GetValue<string>());
-        await using var verification = rig.Context();
-        Assert.AreEqual(3, await verification.ApplicationOperationReceipts.CountAsync());
+            fresh.Invocations[0].Arguments["newQueryState"]!.GetValue<string>(), StringComparer.Ordinal);
+        var verification = rig.Context();
+        await using var verificationLifetime = verification.ConfigureAwait(false);
+        Assert.AreEqual(3, await verification.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task NativeFolderMutationReplaysParentReferencesWithoutDuplicatingFolders()
     {
-        await using var rig = await Rig.CreateAsync();
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         var batch = new JmapApplicationBatch([MailFeature.Basic, MailFeature.Messages],
         [
             new(MailOperationKind.MutateFolders, new JsonObject
@@ -1339,52 +1441,56 @@ public sealed class JmapDurableReplayTests
                     ["parent"] = new JsonObject { ["name"] = "Replay Parent" },
                 },
             }, "folders"),
-        ], new Dictionary<string, string>());
+        ], new Dictionary<string, string>(StringComparer.Ordinal));
         var operation = Guid.CreateVersion7();
-        var first = await rig.InvokeAsync(batch, operation);
+        var first = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
         Assert.AreEqual(MailOperationKind.MutateFolders, first.Invocations[0].Operation);
         var parentId = first.Invocations[0].Arguments["created"]!["parent"]!["id"]!.GetValue<string>();
         var childId = first.Invocations[0].Arguments["created"]!["child"]!["id"]!.GetValue<string>();
-        Assert.AreEqual(parentId, first.CreatedIds!["parent"]);
-        Assert.AreEqual(childId, first.CreatedIds["child"]);
-        var replay = await rig.InvokeAsync(batch, operation);
-        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations));
+        Assert.AreEqual(parentId, first.CreatedIds!["parent"], StringComparer.Ordinal);
+        Assert.AreEqual(childId, first.CreatedIds["child"], StringComparer.Ordinal);
+        var replay = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
+        Assert.AreEqual(JsonSerializer.Serialize(first.Invocations), JsonSerializer.Serialize(replay.Invocations), StringComparer.Ordinal);
         CollectionAssert.AreEquivalent(first.CreatedIds.ToArray(), replay.CreatedIds!.ToArray());
-        await using var database = rig.Context();
-        Assert.AreEqual(1, await database.Folders.CountAsync(folder => folder.Name == "Replay Parent"));
-        Assert.AreEqual(1, await database.Folders.CountAsync(folder => folder.Name == "Replay Parent/Child"));
-        Assert.AreEqual(1, await database.ApplicationOperationReceipts.CountAsync());
+        var database = rig.Context();
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        Assert.AreEqual(1, await database.Folders.CountAsync(folder => folder.Name == "Replay Parent").ConfigureAwait(false));
+        Assert.AreEqual(1, await database.Folders.CountAsync(folder => folder.Name == "Replay Parent/Child").ConfigureAwait(false));
+        Assert.AreEqual(1, await database.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task NativeContactMutationsReplayResultsAndCreationReferencesWithoutDuplicatingData()
     {
-        await using var rig = await Rig.CreateAsync();
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         var operation = Guid.CreateVersion7();
-        var original = await rig.InvokeAsync(rig.ContactsBatch(), operation);
+        var original = await rig.InvokeAsync(rig.ContactsBatch(), operation).ConfigureAwait(false);
         Assert.AreEqual(MailOperationKind.MutateAddressBooks, original.Invocations[0].Operation);
         Assert.AreEqual(MailOperationKind.MutateContacts, original.Invocations[1].Operation);
         Assert.IsNotNull(original.CreatedIds?["book"]);
         Assert.IsNotNull(original.CreatedIds?["card"]);
-        var replay = await rig.InvokeAsync(rig.ContactsBatch(), operation);
-        Assert.AreEqual(JsonSerializer.Serialize(original.Invocations), JsonSerializer.Serialize(replay.Invocations));
+        var replay = await rig.InvokeAsync(rig.ContactsBatch(), operation).ConfigureAwait(false);
+        Assert.AreEqual(JsonSerializer.Serialize(original.Invocations), JsonSerializer.Serialize(replay.Invocations), StringComparer.Ordinal);
         CollectionAssert.AreEquivalent(original.CreatedIds!.ToArray(), replay.CreatedIds!.ToArray());
-        await using var database = rig.Context();
-        Assert.AreEqual(1, await database.DavCollections.CountAsync(book => book.DisplayName == "Replay book"));
-        Assert.AreEqual(1, await database.DavCollections.CountAsync(book => book.IsDefault));
+        var database = rig.Context();
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        Assert.AreEqual(1, await database.DavCollections.CountAsync(book => book.DisplayName == "Replay book").ConfigureAwait(false));
+        Assert.AreEqual(1, await database.DavCollections.CountAsync(book => book.IsDefault).ConfigureAwait(false));
         Assert.IsTrue(await database.DavCollections.Where(book => book.DisplayName == "Replay book")
-            .Select(book => book.IsDefault).SingleAsync());
-        Assert.AreEqual(1, await database.DavResources.CountAsync(card => card.Uid == "replay-card-uid"));
-        var receipts = await database.ApplicationOperationReceipts.OrderBy(receipt => receipt.OperationId).ToListAsync();
+            .Select(book => book.IsDefault).SingleAsync().ConfigureAwait(false));
+        Assert.AreEqual(1, await database.DavResources.CountAsync(card => card.Uid == "replay-card-uid").ConfigureAwait(false));
+        var receipts = await database.ApplicationOperationReceipts.OrderBy(receipt => receipt.OperationId).ToListAsync().ConfigureAwait(false);
         Assert.HasCount(2, receipts);
         foreach (var receipt in receipts)
         {
-            Assert.AreEqual(LargeObjectProviders.AzureBlob, receipt.ObjectProvider);
+            Assert.AreEqual(LargeObjectProviders.AzureBlob, receipt.ObjectProvider, StringComparer.Ordinal);
             Assert.AreEqual(0, receipt.StepNumber);
-            Assert.AreEqual("mail.operation", receipt.Purpose);
+            Assert.AreEqual("mail.operation", receipt.Purpose, StringComparer.Ordinal);
             Assert.IsTrue(receipt.PayloadLength > 0);
-            await using var content = new MemoryStream();
-            await rig.Objects.CopyToAsync(Reference(receipt), content);
+            var content = new MemoryStream();
+            await using var contentLifetime = content.ConfigureAwait(false);
+            await rig.Objects.CopyToAsync(Reference(receipt), content).ConfigureAwait(false);
             Assert.IsFalse(Encoding.UTF8.GetString(content.ToArray()).Contains("Replay book", StringComparison.Ordinal));
         }
     }
@@ -1393,43 +1499,48 @@ public sealed class JmapDurableReplayTests
     public async Task ConcurrentWorkersWaitForTheDatabaseReceiptLockAndDoNotRepeatNativeMutations()
     {
         var pause = new ReceiptPause();
-        await using var rig = await Rig.CreateAsync(pause);
+        var rig = (await Rig.CreateAsync(pause).ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         var operation = Guid.CreateVersion7();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         var first = rig.InvokeAsync(rig.ContactsBatch(), operation, timeout.Token);
-        await pause.Entered.Task.WaitAsync(timeout.Token);
+        await pause.Entered.Task.WaitAsync(timeout.Token).ConfigureAwait(false);
         var second = rig.InvokeAsync(rig.ContactsBatch(), operation, timeout.Token);
         try
         {
-            await using var waiting = rig.Source.CreateCommand("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = @database AND wait_event = 'advisory')");
+            var waiting = rig.Source.CreateCommand("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = @database AND wait_event = 'advisory')");
+            await using var waitingLifetime = waiting.ConfigureAwait(false);
             waiting.Parameters.AddWithValue("database", rig.Database.DatabaseName);
-            while (await waiting.ExecuteScalarAsync(timeout.Token) is not true)
-                await Task.Delay(25, timeout.Token);
+            while (await waiting.ExecuteScalarAsync(timeout.Token).ConfigureAwait(false) is not true)
+                await Task.Delay(25, timeout.Token).ConfigureAwait(false);
             Assert.IsFalse(second.IsCompleted);
         }
         finally
         {
             pause.Release.TrySetResult();
         }
-        var results = await Task.WhenAll(first, second).WaitAsync(timeout.Token);
-        Assert.AreEqual(JsonSerializer.Serialize(results[0].Invocations), JsonSerializer.Serialize(results[1].Invocations));
-        await using var database = rig.Context();
-        Assert.AreEqual(2, await database.ApplicationOperationReceipts.CountAsync());
-        Assert.AreEqual(1, await database.DavCollections.CountAsync(book => book.DisplayName == "Replay book"));
-        Assert.AreEqual(1, await database.DavResources.CountAsync(card => card.Uid == "replay-card-uid"));
+        var results = await Task.WhenAll(first, second).WaitAsync(timeout.Token).ConfigureAwait(false);
+        Assert.AreEqual(JsonSerializer.Serialize(results[0].Invocations), JsonSerializer.Serialize(results[1].Invocations), StringComparer.Ordinal);
+        var database = rig.Context();
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        Assert.AreEqual(2, await database.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
+        Assert.AreEqual(1, await database.DavCollections.CountAsync(book => book.DisplayName == "Replay book").ConfigureAwait(false));
+        Assert.AreEqual(1, await database.DavResources.CountAsync(card => card.Uid == "replay-card-uid").ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task CancellationBeforeReceiptCommitRollsBackBusinessRowsAndDeletesNewReceiptBlob()
     {
         using var cancellation = new CancellationTokenSource();
-        await using var rig = await Rig.CreateAsync(new CancelReceipt(cancellation));
-        await Assert.ThrowsAsync<OperationCanceledException>(() => rig.InvokeAsync(rig.ContactsBatch(), Guid.CreateVersion7(), cancellation.Token));
-        await using var database = rig.Context();
-        Assert.AreEqual(0, await database.ApplicationOperationReceipts.CountAsync());
-        Assert.AreEqual(0, await database.DavCollections.CountAsync(book => book.DisplayName == "Replay book"));
+        var rig = (await Rig.CreateAsync(new CancelReceipt(cancellation)).ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
+        await Assert.ThrowsAsync<OperationCanceledException>(() => rig.InvokeAsync(rig.ContactsBatch(), Guid.CreateVersion7(), cancellation.Token)).ConfigureAwait(false);
+        var database = rig.Context();
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        Assert.AreEqual(0, await database.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
+        Assert.AreEqual(0, await database.DavCollections.CountAsync(book => book.DisplayName == "Replay book").ConfigureAwait(false));
         var blobs = new List<string>();
-        await foreach (var blob in rig.Container.GetBlobsAsync(BlobTraits.None, BlobStates.None, "application-receipts/", CancellationToken.None))
+        await foreach (var blob in rig.Container.GetBlobsAsync(BlobTraits.None, BlobStates.None, "application-receipts/", CancellationToken.None).ConfigureAwait(false))
             blobs.Add(blob.Name);
         Assert.HasCount(0, blobs);
     }
@@ -1437,144 +1548,163 @@ public sealed class JmapDurableReplayTests
     [TestMethod]
     public async Task ConflictingInputOrAuthenticatedUserCannotReuseACommittedReceipt()
     {
-        await using var rig = await Rig.CreateAsync();
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         var operation = Guid.CreateVersion7();
-        await rig.InvokeAsync(rig.ContactsBatch(), operation);
+        await rig.InvokeAsync(rig.ContactsBatch(), operation).ConfigureAwait(false);
         var changed = rig.ContactsBatch();
         changed.Invocations[0].Arguments["create"]!["book"]!["name"] = "Different book";
-        var mismatch = await rig.InvokeAsync(changed, operation);
+        var mismatch = await rig.InvokeAsync(changed, operation).ConfigureAwait(false);
         Assert.AreEqual(MailOperationKind.Failure, mismatch.Invocations[0].Operation);
-        Assert.AreEqual("serverFail", mismatch.Invocations[0].Arguments["type"]!.GetValue<string>());
+        Assert.AreEqual("serverFail", mismatch.Invocations[0].Arguments["type"]!.GetValue<string>(), StringComparer.Ordinal);
         var foreignUser = new AuthenticatedMailUser(Guid.CreateVersion7(), "foreign@example.test");
-        await using (var setup = rig.Context())
         {
-            setup.Users.Add(new UserDB
+            var setup = rig.Context();
+            await using var setupLifetime = setup.ConfigureAwait(false);
+            await (setup.Users.AddAsync(new UserDB
             {
                 Id = foreignUser.Id,
                 Username = foreignUser.Username,
                 PasswordHash = "unused",
-                CompanyId = await setup.Users.Where(user => user.Id == rig.User.Id).Select(user => user.CompanyId).SingleAsync()
-            });
-            await setup.SaveChangesAsync();
+                CompanyId = await setup.Users.Where(user => user.Id == rig.User.Id).Select(user => user.CompanyId).SingleAsync().ConfigureAwait(false)
+            })).ConfigureAwait(false);
+            await setup.SaveChangesAsync().ConfigureAwait(false);
         }
         using var scope = rig.Services.CreateScope();
         var foreign = await InvokeGatewayAsync(scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>(),
-            rig.ContactsBatch(), foreignUser, operation);
+            rig.ContactsBatch(), foreignUser, operation).ConfigureAwait(false);
         Assert.AreEqual(MailOperationKind.Failure, foreign.Invocations[0].Operation);
-        await using var database = rig.Context();
-        Assert.AreEqual(2, await database.ApplicationOperationReceipts.CountAsync());
-        Assert.AreEqual(0, await database.DavCollections.CountAsync(book => book.DisplayName == "Different book"));
+        var database = rig.Context();
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        Assert.AreEqual(2, await database.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
+        Assert.AreEqual(0, await database.DavCollections.CountAsync(book => book.DisplayName == "Different book").ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task MissingCommittedReceiptContentFailsClosedWithoutRepeatingBusinessMutations()
     {
-        await using var rig = await Rig.CreateAsync();
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         var operation = Guid.CreateVersion7();
-        await rig.InvokeAsync(rig.ContactsBatch(), operation);
-        await using (var database = rig.Context())
+        await rig.InvokeAsync(rig.ContactsBatch(), operation).ConfigureAwait(false);
         {
-            var receipt = await database.ApplicationOperationReceipts.Where(row => row.OperationId == ProcessorGatewayJmapClient.ReplayOperationId(operation, 0)).SingleAsync();
-            Assert.IsTrue(await rig.Objects.DeleteIfMatchAsync(Reference(receipt)));
+            var database = rig.Context();
+            await using var databaseLifetime = database.ConfigureAwait(false);
+            var receipt = await database.ApplicationOperationReceipts.Where(row => row.OperationId == ProcessorGatewayJmapClient.ReplayOperationId(operation, 0)).SingleAsync().ConfigureAwait(false);
+            Assert.IsTrue(await rig.Objects.DeleteIfMatchAsync(Reference(receipt)).ConfigureAwait(false));
         }
-        var replay = await rig.InvokeAsync(rig.ContactsBatch(), operation);
+        var replay = await rig.InvokeAsync(rig.ContactsBatch(), operation).ConfigureAwait(false);
         Assert.AreEqual(MailOperationKind.Failure, replay.Invocations[0].Operation);
-        Assert.AreEqual("serverFail", replay.Invocations[0].Arguments["type"]!.GetValue<string>());
-        await using var unchanged = rig.Context();
-        Assert.AreEqual(2, await unchanged.ApplicationOperationReceipts.CountAsync());
-        Assert.AreEqual(1, await unchanged.DavCollections.CountAsync(book => book.DisplayName == "Replay book"));
-        Assert.AreEqual(1, await unchanged.DavResources.CountAsync(card => card.Uid == "replay-card-uid"));
+        Assert.AreEqual("serverFail", replay.Invocations[0].Arguments["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        var unchanged = rig.Context();
+        await using var unchangedLifetime = unchanged.ConfigureAwait(false);
+        Assert.AreEqual(2, await unchanged.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
+        Assert.AreEqual(1, await unchanged.DavCollections.CountAsync(book => book.DisplayName == "Replay book").ConfigureAwait(false));
+        Assert.AreEqual(1, await unchanged.DavResources.CountAsync(card => card.Uid == "replay-card-uid").ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task WorkerCrashBeforeResponsePublicationReclaimsTheSameRequestWithoutRepeatingMutations()
     {
-        await using var rig = await Rig.CreateAsync();
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         var now = DateTimeOffset.UtcNow;
         var mutationArguments = JsonSerializer.SerializeToNode(
             new MailAddressBookMutationCommand(rig.InboxId, true, null, false,
                 new MailAddressBookTarget(null, "book"),
                 [new MailAddressBookCreate("book", false,
                     new MailAddressBookValues("Replay book", null, 0, true))], [], []),
-            new JsonSerializerOptions(JsonSerializerDefaults.Web))!.AsObject();
+            SerializationOptions1)!.AsObject();
         var request = new ApplicationRequest(Guid.CreateVersion7(), Guid.CreateVersion7(), 0, "jmap", ApplicationOperations.MailOperationExecute,
             "application/json", JsonSerializer.SerializeToUtf8Bytes(new MailOperationApplicationRequest(
                 new ProtocolAuthentication(ProtocolAuthenticationKinds.Password, rig.User.Username, "test"),
                 new([MailFeature.Basic, MailFeature.Contacts], MailOperationKind.MutateAddressBooks,
                     mutationArguments, GatewayJmapReferenceAliasCodec.Collect(mutationArguments))),
-                new JsonSerializerOptions(JsonSerializerDefaults.Web)), new Dictionary<string, string>(), now, now.AddMinutes(3));
-        await rig.Bus.EnqueueAsync(request);
-        var lease = await rig.Bus.TryClaimAsync("first-worker");
+                SerializationOptions1), new Dictionary<string, string>(StringComparer.Ordinal), now, now.AddMinutes(3));
+        await rig.Bus.EnqueueAsync(request).ConfigureAwait(false);
+        var lease = await rig.Bus.TryClaimAsync("first-worker").ConfigureAwait(false);
         Assert.IsNotNull(lease);
         using var stop = new CancellationTokenSource();
         var crash = new CancelBeforePublication(rig.Bus, stop);
         using (var worker = new ApplicationRequestWorker(crash, rig.Services.GetRequiredService<IServiceScopeFactory>(),
                    new ApplicationWorkerIdentity("first-worker", TimeSpan.FromSeconds(1)), NullLogger<ApplicationRequestWorker>.Instance))
-            await worker.ProcessLeaseAsync(lease, stop.Token);
-        await using (var status = rig.Source.CreateCommand("SELECT state FROM application_requests WHERE id = @id"))
+            await worker.ProcessLeaseAsync(lease, stop.Token).ConfigureAwait(false);
         {
+            var status = rig.Source.CreateCommand("SELECT state FROM application_requests WHERE id = @id");
+            await using var statusLifetime = status.ConfigureAwait(false);
             status.Parameters.AddWithValue("id", request.Id);
-            Assert.AreEqual("processing", await status.ExecuteScalarAsync());
+            Assert.AreEqual("processing", await status.ExecuteScalarAsync().ConfigureAwait(false));
         }
-        await using (var expiration = rig.Source.CreateCommand("SELECT lease_expires_at FROM application_requests WHERE id = @id"))
         {
+            var expiration = rig.Source.CreateCommand("SELECT lease_expires_at FROM application_requests WHERE id = @id");
+            await using var expirationLifetime = expiration.ConfigureAwait(false);
             expiration.Parameters.AddWithValue("id", request.Id);
-            var delay = (DateTime)(await expiration.ExecuteScalarAsync())! - DateTime.UtcNow + TimeSpan.FromMilliseconds(100);
-            if (delay > TimeSpan.Zero) await Task.Delay(delay);
+            var delay = (DateTime)(await expiration.ExecuteScalarAsync().ConfigureAwait(false))! - DateTime.UtcNow + TimeSpan.FromMilliseconds(100);
+            if (delay > TimeSpan.Zero) await Task.Delay(delay).ConfigureAwait(false);
         }
-        var retry = await rig.Bus.TryClaimAsync("replacement-worker");
+        var retry = await rig.Bus.TryClaimAsync("replacement-worker").ConfigureAwait(false);
         Assert.IsNotNull(retry);
         using (var worker = new ApplicationRequestWorker(rig.Bus, rig.Services.GetRequiredService<IServiceScopeFactory>(),
                    new ApplicationWorkerIdentity("replacement-worker", TimeSpan.FromSeconds(1)), NullLogger<ApplicationRequestWorker>.Instance))
-            await worker.ProcessLeaseAsync(retry, CancellationToken.None);
-        var response = await rig.Bus.WaitForResponseAsync(request.Id, request.Deadline);
+            await worker.ProcessLeaseAsync(retry, CancellationToken.None).ConfigureAwait(false);
+        var response = await rig.Bus.WaitForResponseAsync(request.Id, request.Deadline).ConfigureAwait(false);
         Assert.IsFalse(response.IsError);
         using var document = JsonDocument.Parse(response.Payload);
         Assert.AreEqual((int)MailOperationKind.MutateAddressBooks, document.RootElement.GetProperty("operationResult").GetProperty("response").GetProperty("operation").GetInt32());
-        await using var database = rig.Context();
-        Assert.AreEqual(1, await database.ApplicationOperationReceipts.CountAsync());
-        Assert.AreEqual(1, await database.DavCollections.CountAsync(book => book.DisplayName == "Replay book"));
-        Assert.AreEqual(0, await database.DavResources.CountAsync(card => card.Uid == "replay-card-uid"));
+        var database = rig.Context();
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        Assert.AreEqual(1, await database.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
+        Assert.AreEqual(1, await database.DavCollections.CountAsync(book => book.DisplayName == "Replay book").ConfigureAwait(false));
+        Assert.AreEqual(0, await database.DavResources.CountAsync(card => card.Uid == "replay-card-uid").ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task VerificationOutboxWakesWorkerAndRetriesTheSameEffectAfterLostEnqueueAcknowledgement()
     {
-        await using var rig = await Rig.CreateAsync();
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         var batch = new JmapApplicationBatch([MailFeature.Basic], [new JmapApplicationCall(MailOperationKind.MutateNotificationSubscriptions,
             new JsonObject { ["create"] = new JsonObject { ["device"] = new JsonObject
             { ["deviceClientId"] = "replay-device", ["url"] = "https://push.example.test/verification" } } }, "push")]);
         var operation = Guid.CreateVersion7();
-        var initial = await rig.InvokeAsync(batch, operation);
+        var initial = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
         Assert.AreEqual(MailOperationKind.MutateNotificationSubscriptions, initial.Invocations[0].Operation);
         Assert.IsNotNull(initial.Invocations[0].Arguments["created"]?["device"]);
-        Assert.IsTrue((await new WorkerWakeProbe(rig.Source).ReadAsync()).HasDueWork);
+        Assert.IsTrue((await new WorkerWakeProbe(rig.Source).ReadAsync().ConfigureAwait(false)).HasDueWork);
         rig.Sink.FailAfterEnqueue = true;
         using (var scope = rig.Services.CreateScope())
-            Assert.IsTrue(await scope.ServiceProvider.GetRequiredService<ApplicationOperationReceiptStore>().DispatchNextEffectsAsync(CancellationToken.None));
-        await using (var count = rig.Source.CreateCommand("SELECT count(*) FROM presentation_requests"))
-            Assert.AreEqual(1L, await count.ExecuteScalarAsync());
-        var delayed = await new WorkerWakeProbe(rig.Source).ReadAsync();
+            Assert.IsTrue(await scope.ServiceProvider.GetRequiredService<ApplicationOperationReceiptStore>().DispatchNextEffectsAsync(CancellationToken.None).ConfigureAwait(false));
+        {
+            var count = rig.Source.CreateCommand("SELECT count(*) FROM presentation_requests");
+            await using var countLifetime = count.ConfigureAwait(false);
+            Assert.AreEqual(1L, await count.ExecuteScalarAsync().ConfigureAwait(false));
+        }
+        var delayed = await new WorkerWakeProbe(rig.Source).ReadAsync().ConfigureAwait(false);
         Assert.IsFalse(delayed.HasDueWork);
         Assert.IsTrue(delayed.NextDueAt > DateTimeOffset.UtcNow);
-        await using (var database = rig.Context())
         {
-            Assert.IsTrue((await database.ApplicationOperationReceipts.SingleAsync()).EffectsPending);
-            await database.ApplicationOperationReceipts.ExecuteUpdateAsync(update => update.SetProperty(receipt => receipt.EffectsRetryAt, DateTime.UtcNow.AddSeconds(-1)));
+            var database = rig.Context();
+            await using var databaseLifetime = database.ConfigureAwait(false);
+            Assert.IsTrue((await database.ApplicationOperationReceipts.SingleAsync().ConfigureAwait(false)).EffectsPending);
+            await database.ApplicationOperationReceipts.ExecuteUpdateAsync(update => update.SetProperty(receipt => receipt.EffectsRetryAt, DateTime.UtcNow.AddSeconds(-1))).ConfigureAwait(false);
         }
         rig.Sink.FailAfterEnqueue = false;
         using (var scope = rig.Services.CreateScope())
-            Assert.IsTrue(await scope.ServiceProvider.GetRequiredService<ApplicationOperationReceiptStore>().DispatchNextEffectsAsync(CancellationToken.None));
-        await using (var count = rig.Source.CreateCommand("SELECT count(*) FROM presentation_requests"))
-            Assert.AreEqual(1L, await count.ExecuteScalarAsync());
-        await using (var database = rig.Context())
+            Assert.IsTrue(await scope.ServiceProvider.GetRequiredService<ApplicationOperationReceiptStore>().DispatchNextEffectsAsync(CancellationToken.None).ConfigureAwait(false));
         {
-            Assert.IsFalse((await database.ApplicationOperationReceipts.SingleAsync()).EffectsPending);
-            Assert.AreEqual(1, await database.JmapPushSubscriptions.CountAsync());
+            var count = rig.Source.CreateCommand("SELECT count(*) FROM presentation_requests");
+            await using var countLifetime = count.ConfigureAwait(false);
+            Assert.AreEqual(1L, await count.ExecuteScalarAsync().ConfigureAwait(false));
         }
-        var replay = await rig.InvokeAsync(batch, operation);
-        Assert.AreEqual(JsonSerializer.Serialize(initial.Invocations), JsonSerializer.Serialize(replay.Invocations));
-        Assert.IsFalse((await new WorkerWakeProbe(rig.Source).ReadAsync()).HasDueWork);
+        {
+            var database = rig.Context();
+            await using var databaseLifetime = database.ConfigureAwait(false);
+            Assert.IsFalse((await database.ApplicationOperationReceipts.SingleAsync().ConfigureAwait(false)).EffectsPending);
+            Assert.AreEqual(1, await database.JmapPushSubscriptions.CountAsync().ConfigureAwait(false));
+        }
+        var replay = await rig.InvokeAsync(batch, operation).ConfigureAwait(false);
+        Assert.AreEqual(JsonSerializer.Serialize(initial.Invocations), JsonSerializer.Serialize(replay.Invocations), StringComparer.Ordinal);
+        Assert.IsFalse((await new WorkerWakeProbe(rig.Source).ReadAsync().ConfigureAwait(false)).HasDueWork);
     }
 
     private static LargeObjectReference Reference(ApplicationOperationReceiptDB row) =>
@@ -1583,12 +1713,15 @@ public sealed class JmapDurableReplayTests
     [TestMethod]
     public async Task BackupRestoreRebindsEncryptedReceiptsAndPreservesNativeReplay()
     {
-        await using var rig = await Rig.CreateAsync();
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         var operation = Guid.CreateVersion7();
-        var original = await rig.InvokeAsync(rig.ContactsBatch(), operation);
-        await using var targetDatabase = await PostgresTestDatabase.TryCreateAsync()
-            ?? throw new AssertFailedException("PostgreSQL is required.");
-        await using var targetSource = NpgsqlDataSource.Create(targetDatabase.ConnectionString);
+        var original = await rig.InvokeAsync(rig.ContactsBatch(), operation).ConfigureAwait(false);
+        var targetDatabase = (await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false)
+            ?? throw new AssertFailedException("PostgreSQL is required."));
+        await using var targetDatabaseLifetime = targetDatabase.ConfigureAwait(false);
+        var targetSource = NpgsqlDataSource.Create(targetDatabase.ConnectionString);
+        await using var targetSourceLifetime = targetSource.ConfigureAwait(false);
         var client = new BlobServiceClient(Environment.GetEnvironmentVariable("MK8_EMAIL_TEST_AZURE_BLOB_CONNECTION"));
         var container = client.GetBlobContainerClient($"mk8-receipt-restored-{Guid.NewGuid():N}");
         var objects = new AzureBlobLargeObjectStore(client, new AzureBlobLargeObjectStoreOptions
@@ -1599,27 +1732,29 @@ public sealed class JmapDurableReplayTests
             var dump = Environment.GetEnvironmentVariable("MK8_EMAIL_TEST_PG_DUMP") ?? "pg_dump";
             var restore = Path.GetDirectoryName(dump) is { Length: > 0 } directory ? Path.Combine(directory, "pg_restore") : "pg_restore";
             var destination = Path.Combine(temporary.FullName, "snapshot");
-            await DistributedBackupExporter.ExportAsync(rig.Source, rig.Objects, rig.Database.ConnectionString, destination, dump);
-            var manifest = await File.ReadAllLinesAsync(Path.Combine(destination, "references.jsonl"));
+            await DistributedBackupExporter.ExportAsync(rig.Source, rig.Objects, rig.Database.ConnectionString, destination, dump).ConfigureAwait(false);
+            var manifest = await File.ReadAllLinesAsync(Path.Combine(destination, "references.jsonl")).ConfigureAwait(false);
             Assert.AreEqual(2, manifest.Select(line => JsonSerializer.Deserialize<DistributedBlobReferenceRow>(line))
-                .Count(row => row?.Source == "application_operation_receipts.payload_object_name"));
-            await DistributedBackupRestorer.RestoreAsync(destination, targetSource, targetDatabase.ConnectionString, objects, restore);
-            await DistributedRestoreActivationGuard.RequireReadyAsync(targetSource);
-            await using var services = rig.ServicesFor(targetDatabase.ConnectionString, objects);
+                .Count(row => string.Equals(row?.Source, "application_operation_receipts.payload_object_name", StringComparison.Ordinal)));
+            await DistributedBackupRestorer.RestoreAsync(destination, targetSource, targetDatabase.ConnectionString, objects, restore).ConfigureAwait(false);
+            await DistributedRestoreActivationGuard.RequireReadyAsync(targetSource).ConfigureAwait(false);
+            var services = rig.ServicesFor(targetDatabase.ConnectionString, objects);
+            await using var servicesLifetime = services.ConfigureAwait(false);
             using var scope = services.CreateScope();
             var replay = await InvokeGatewayAsync(scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>(),
-                rig.ContactsBatch(), rig.User, operation);
-            Assert.AreEqual(JsonSerializer.Serialize(original.Invocations), JsonSerializer.Serialize(replay.Invocations));
+                rig.ContactsBatch(), rig.User, operation).ConfigureAwait(false);
+            Assert.AreEqual(JsonSerializer.Serialize(original.Invocations), JsonSerializer.Serialize(replay.Invocations), StringComparer.Ordinal);
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-            Assert.AreEqual(2, await database.ApplicationOperationReceipts.CountAsync());
-            Assert.AreEqual(1, await database.DavResources.CountAsync(card => card.Uid == "replay-card-uid"));
-            await using var originalDatabase = rig.Context();
-            Assert.AreNotEqual((await originalDatabase.ApplicationOperationReceipts.OrderBy(receipt => receipt.OperationId).FirstAsync()).ObjectEntityTag,
-                (await database.ApplicationOperationReceipts.OrderBy(receipt => receipt.OperationId).FirstAsync()).ObjectEntityTag);
+            Assert.AreEqual(2, await database.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
+            Assert.AreEqual(1, await database.DavResources.CountAsync(card => card.Uid == "replay-card-uid").ConfigureAwait(false));
+            var originalDatabase = rig.Context();
+            await using var originalDatabaseLifetime = originalDatabase.ConfigureAwait(false);
+            Assert.AreNotEqual((await originalDatabase.ApplicationOperationReceipts.OrderBy(receipt => receipt.OperationId).FirstAsync().ConfigureAwait(false)).ObjectEntityTag,
+                (await database.ApplicationOperationReceipts.OrderBy(receipt => receipt.OperationId).FirstAsync().ConfigureAwait(false)).ObjectEntityTag, StringComparer.Ordinal);
         }
         finally
         {
-            await container.DeleteIfExistsAsync();
+            await container.DeleteIfExistsAsync().ConfigureAwait(false);
             temporary.Delete(recursive: true);
         }
     }
@@ -1631,7 +1766,8 @@ public sealed class JmapDurableReplayTests
     [DataRow((MailOperationKind)999, true)]
     public async Task UnrenderablePrimaryOrAdditionalResultRollsBackBusinessWritesAndReceipt(MailOperationKind invalid, bool additional)
     {
-        await using var rig = await Rig.CreateAsync();
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         using var scope = rig.Services.CreateScope();
         var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
         var callbacks = 0;
@@ -1644,16 +1780,17 @@ public sealed class JmapDurableReplayTests
             scope.ServiceProvider.GetRequiredService<ApplicationOperationReceiptStore>());
         var result = await processor.ExecuteAsync(new MailOperationCommand(
             [MailFeature.Basic, MailFeature.Submission], MailOperationKind.MutateSubmissions,
-            new JsonObject(), new Dictionary<string, string>(), new Dictionary<string, string>()),
-            rig.User, Guid.CreateVersion7());
+            new JsonObject(), new Dictionary<string, string>(StringComparer.Ordinal), new Dictionary<string, string>(StringComparer.Ordinal)),
+            rig.User, Guid.CreateVersion7()).ConfigureAwait(false);
         Assert.AreEqual(MailOperationKind.Failure, result.Response.Operation);
         Assert.AreEqual("serverFail", ApplicationValueCodec.Decode(result.Response.Data)!["type"]!
-            .GetValue<string>());
+            .GetValue<string>(), StringComparer.Ordinal);
         Assert.IsFalse(result.KnownEntities.ContainsKey("transient"));
         Assert.AreEqual(0, callbacks);
-        await using var restored = rig.Context();
-        Assert.AreEqual(rig.User.Username, (await restored.Users.SingleAsync()).Username);
-        Assert.AreEqual(0, await restored.ApplicationOperationReceipts.CountAsync());
+        var restored = rig.Context();
+        await using var restoredLifetime = restored.ConfigureAwait(false);
+        Assert.AreEqual(rig.User.Username, (await restored.Users.SingleAsync().ConfigureAwait(false)).Username, StringComparer.Ordinal);
+        Assert.AreEqual(0, await restored.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
     }
 
     private static async Task<JmapApplicationBatchResult> InvokeGatewayAsync(
@@ -1663,14 +1800,15 @@ public sealed class JmapDurableReplayTests
         processor.ValidatePlan(new(batch.Features, batch.Invocations.Length));
         var execution = await GatewayJmapBatchExecutor.ExecuteAsync(new ProcessorGatewayJmapClient(processor, user, operation),
             new(ProtocolAuthenticationKinds.Password, user.Username, "test"),
-            batch, await processor.GetProfileAsync(user, token), token);
+            batch, await processor.GetProfileAsync(user, token).ConfigureAwait(false), token).ConfigureAwait(false);
         return execution.Batch!;
     }
 
     [TestMethod]
     public async Task ReceiptPreservesRawValuesAndGatewayReplaysNormalizedReferences()
     {
-        await using var rig = await Rig.CreateAsync();
+        var rig = (await Rig.CreateAsync().ConfigureAwait(false));
+        await using var rigLifetime = rig.ConfigureAwait(false);
         var identity = Guid.CreateVersion7();
         var command = new MailOperationCommand([MailFeature.Basic], MailOperationKind.FindFolders, new JsonObject(),
             new Dictionary<string, string>(StringComparer.Ordinal));
@@ -1683,30 +1821,31 @@ public sealed class JmapDurableReplayTests
             scope.ServiceProvider.GetRequiredService<EnvironmentConfig>(),
             scope.ServiceProvider.GetRequiredService<LargeObjectTransactionEffects>(),
             NullLogger<JmapRequestProcessor>.Instance, receipts);
-        var first = await processor.ExecuteAsync(command, rig.User, identity);
+        var first = await processor.ExecuteAsync(command, rig.User, identity).ConfigureAwait(false);
         var raw = ApplicationValueCodec.Decode(first.Response.Data)!.AsObject();
-        Assert.AreEqual("first", raw["\ud800"]!.GetValue<string>());
-        Assert.AreEqual("second", raw["\udfff"]!.GetValue<string>());
+        Assert.AreEqual("first", raw["\ud800"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("second", raw["\udfff"]!.GetValue<string>(), StringComparer.Ordinal);
         var hash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(
-            JsonSerializer.SerializeToUtf8Bytes(command, new JsonSerializerOptions(JsonSerializerDefaults.Web))));
-        await using (var transaction = await database.Database.BeginTransactionAsync())
+            JsonSerializer.SerializeToUtf8Bytes(command, SerializationOptions1)));
         {
-            var saved = await receipts.FindLockedAsync(new(identity, 0, rig.User.Id, "mail.operation", hash), CancellationToken.None);
+            var transaction = (await database.Database.BeginTransactionAsync().ConfigureAwait(false));
+            await using var transactionLifetime = transaction.ConfigureAwait(false);
+            var saved = await receipts.FindLockedAsync(new(identity, 0, rig.User.Id, "mail.operation", hash), CancellationToken.None).ConfigureAwait(false);
             Assert.IsNotNull(saved);
             var receipt = JsonSerializer.Deserialize<JmapReplayState>(saved.Result.Span,
-                new JsonSerializerOptions(JsonSerializerDefaults.Web) { MaxDepth = 256 })!;
+                SerializationOptions2)!;
             var persisted = ApplicationValueCodec.Decode(receipt.Response.Data)!.AsObject();
             CollectionAssert.AreEqual(raw.Select(member => member.Key).ToArray(), persisted.Select(member => member.Key).ToArray());
         }
-        var replay = await processor.ExecuteAsync(command, rig.User, identity);
+        var replay = await processor.ExecuteAsync(command, rig.User, identity).ConfigureAwait(false);
         Assert.AreEqual(1, calls);
         var completed = new List<JmapApplicationInvocation> {
             new(MailOperationKind.FindFolders, GatewayJmapJson.SanitizeResponse(ApplicationValueCodec.Decode(replay.Response.Data)!.AsObject()), "source") };
         Assert.IsTrue(GatewayJmapArgumentBindingResolver.TryResolve(new(MailOperationKind.Echo, new JsonObject(), "target",
             [new("copied", "source", MailOperationKind.FindFolders, [new("\ufffd~2")])]),
             completed, out var selected, out _));
-        Assert.AreEqual("second", selected["copied"]!.GetValue<string>());
-        Assert.AreEqual(1, await database.ApplicationOperationReceipts.CountAsync());
+        Assert.AreEqual("second", selected["copied"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual(1, await database.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
     }
 
     private sealed class RawValueMethod(Action invoked) : IJmapMethod
@@ -1730,11 +1869,11 @@ public sealed class JmapDurableReplayTests
         public MailOperationKind Operation => MailOperationKind.MutateSubmissions;
         public MailFeature Feature => MailFeature.Submission;
         public async Task<JmapMethodResponse> InvokeAsync(JmapInvocationContext context, JsonObject arguments,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken)
         {
-            var user = await database.Users.SingleAsync(cancellationToken);
+            var user = await database.Users.SingleAsync(cancellationToken).ConfigureAwait(false);
             user.Username = "must-roll-back@example.test";
-            await database.SaveChangesAsync(cancellationToken);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             context.CreatedIds["transient"] = "object-id";
             context.AddPostCommitAction(_ => { callback(); return Task.CompletedTask; });
             var unsupported = new JmapMethodResponse(invalid, new JsonObject());
@@ -1769,7 +1908,7 @@ public sealed class JmapDurableReplayTests
         {
             var connection = Environment.GetEnvironmentVariable("MK8_EMAIL_TEST_AZURE_BLOB_CONNECTION");
             if (string.IsNullOrWhiteSpace(connection)) Assert.Inconclusive("Azure Blob-compatible test configuration is required.");
-            var database = await PostgresTestDatabase.TryCreateAsync();
+            var database = await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false);
             if (database is null) Assert.Inconclusive("PostgreSQL test configuration is required.");
             var source = NpgsqlDataSource.Create(database!.ConnectionString);
             var client = new BlobServiceClient(connection);
@@ -1787,24 +1926,24 @@ public sealed class JmapDurableReplayTests
                 using (var scope = provider.CreateScope())
                 {
                     var context = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-                    await context.Database.EnsureCreatedAsync();
-                    await new MailRuntimeSchemaService(context).EnsureAsync();
+                    await context.Database.EnsureCreatedAsync().ConfigureAwait(false);
+                    await new MailRuntimeSchemaService(context).EnsureAsync().ConfigureAwait(false);
                     var company = new CompanyDB { Id = Guid.CreateVersion7(), Name = "Replay fixture" };
                     var address = new AddressDB { Id = Guid.CreateVersion7(), Domain = "example.test", Company = company, IsActive = true };
                     var owner = new UserDB { Id = user.Id, Username = user.Username, PasswordHash = "unused", Company = company };
-                    context.Inboxes.Add(new InboxDB { Id = inboxId, Name = "replay", Address = address, Owner = owner });
-                    await context.SaveChangesAsync();
+                    await context.Inboxes.AddAsync(new InboxDB { Id = inboxId, Name = "replay", Address = address, Owner = owner }).ConfigureAwait(false);
+                    await context.SaveChangesAsync().ConfigureAwait(false);
                 }
-                await PostgresMessagingSchema.EnsureAsync(source);
+                await PostgresMessagingSchema.EnsureAsync(source).ConfigureAwait(false);
                 return new Rig(database, source, container, objects, protector, provider, user, inboxId, bus, sink);
             }
             catch
             {
-                await provider.DisposeAsync();
-                await container.DeleteIfExistsAsync();
+                await provider.DisposeAsync().ConfigureAwait(false);
+                await container.DeleteIfExistsAsync().ConfigureAwait(false);
                 protector.Dispose();
-                await source.DisposeAsync();
-                await database.DisposeAsync();
+                await source.DisposeAsync().ConfigureAwait(false);
+                await database.DisposeAsync().ConfigureAwait(false);
                 throw;
             }
         }
@@ -1837,7 +1976,7 @@ public sealed class JmapDurableReplayTests
         public async Task<JmapApplicationBatchResult> InvokeAsync(JmapApplicationBatch batch, Guid operation, CancellationToken token = default)
         {
             using var scope = Services.CreateScope();
-            return await InvokeGatewayAsync(scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>(), batch, User, operation, token);
+            return await InvokeGatewayAsync(scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>(), batch, User, operation, token).ConfigureAwait(false);
         }
         public JmapApplicationBatch ContactsBatch() => new([MailFeature.Basic, MailFeature.Contacts],
         [
@@ -1846,15 +1985,15 @@ public sealed class JmapDurableReplayTests
             new(MailOperationKind.MutateContacts, new JsonObject { ["accountId"] = JmapId.Account(InboxId), ["create"] = new JsonObject
             { ["card"] = new JsonObject { ["@type"] = "Card", ["version"] = "1.0", ["uid"] = "replay-card-uid", ["kind"] = "individual",
                 ["name"] = new JsonObject { ["@type"] = "Name", ["full"] = "Replay person" }, ["addressBookIds"] = new JsonObject { ["#book"] = true } } } }, "card"),
-        ], new Dictionary<string, string>());
+        ], new Dictionary<string, string>(StringComparer.Ordinal));
 
         public async ValueTask DisposeAsync()
         {
-            await Services.DisposeAsync();
-            await Container.DeleteIfExistsAsync();
+            await Services.DisposeAsync().ConfigureAwait(false);
+            await Container.DeleteIfExistsAsync().ConfigureAwait(false);
             _protector.Dispose();
-            await Source.DisposeAsync();
-            await Database.DisposeAsync();
+            await Source.DisposeAsync().ConfigureAwait(false);
+            await Database.DisposeAsync().ConfigureAwait(false);
         }
     }
 
@@ -1885,7 +2024,7 @@ public sealed class JmapDurableReplayTests
         public bool FailAfterEnqueue { get; set; }
         public async Task EnqueueAsync(ApplicationRequest request, CancellationToken cancellationToken)
         {
-            await bus.EnqueueAsync(request, cancellationToken);
+            await bus.EnqueueAsync(request, cancellationToken).ConfigureAwait(false);
             if (FailAfterEnqueue) throw new TimeoutException("Simulated lost enqueue acknowledgement.");
         }
     }
@@ -1900,21 +2039,21 @@ public sealed class JmapDurableReplayTests
                 && Interlocked.CompareExchange(ref _paused, 1, 0) == 0)
             {
                 Entered.TrySetResult();
-                await Release.Task.WaitAsync(cancellationToken);
+                await Release.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
             }
             return result;
         }
     }
     private sealed class CancelReceipt(CancellationTokenSource cancellation) : SaveChangesInterceptor
     {
-        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData data, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData data, InterceptionResult<int> result, CancellationToken cancellationToken = default)
         {
             if (data.Context!.ChangeTracker.Entries<ApplicationOperationReceiptDB>().Any(entry => entry.State == EntityState.Added))
             {
-                cancellation.Cancel();
+                await cancellation.CancelAsync().ConfigureAwait(false);
                 throw new OperationCanceledException(cancellation.Token);
             }
-            return ValueTask.FromResult(result);
+            return await ValueTask.FromResult(result).ConfigureAwait(false);
         }
     }
     private sealed class CancelBeforePublication(IApplicationRequestConsumer consumer, CancellationTokenSource stop) : IApplicationRequestConsumer
@@ -1924,10 +2063,12 @@ public sealed class JmapDurableReplayTests
         public Task<bool> RenewLeaseAsync(ApplicationRequestLease lease, CancellationToken cancellationToken = default) => consumer.RenewLeaseAsync(lease, cancellationToken);
         public Task FailAsync(ApplicationRequestLease lease, string errorCode, string errorDetail, CancellationToken cancellationToken = default) =>
             throw new AssertFailedException("Host cancellation must leave the original lease retryable.");
-        public Task CompleteAsync(ApplicationRequestLease lease, ApplicationResponse response, CancellationToken cancellationToken = default)
+        public async Task CompleteAsync(ApplicationRequestLease lease, ApplicationResponse response, CancellationToken cancellationToken = default)
         {
-            stop.Cancel();
+            await stop.CancelAsync().ConfigureAwait(false);
             throw new OperationCanceledException(stop.Token);
         }
     }
+    private static readonly JsonSerializerOptions SerializationOptions1 = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+    private static readonly JsonSerializerOptions SerializationOptions2 = new JsonSerializerOptions(JsonSerializerDefaults.Web) { MaxDepth = 256 };
 }

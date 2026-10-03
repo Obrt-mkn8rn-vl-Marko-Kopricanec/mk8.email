@@ -24,7 +24,8 @@ namespace mk8.email.Application.Tests;
 
 [TestClass]
 [DoNotParallelize]
-public sealed class ManageSieveProtocolTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class ManageSieveProtocolTests
 {
     private const string TestUsername = "user@mk8n.com";
     private const string TestPassword = "correct horse battery staple";
@@ -39,35 +40,38 @@ public sealed class ManageSieveProtocolTests
     {
         var port = ReservePort();
         var journal = new RecordingSieveJournal();
-        await using (var server = await ServerFixture.StartAsync(
-                         CreateEnvironment(port), port, journal))
         {
-            await using var connection = await ProtocolConnection.ConnectAsync(port);
-            await connection.ReadCapabilityResponseAsync();
-            await connection.WriteLineAsync("NOOP");
-            Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("OK ", StringComparison.Ordinal));
+            var server = (await ServerFixture.StartAsync(
+                         CreateEnvironment(port), port, journal).ConfigureAwait(false));
+            await using var serverLifetime = server.ConfigureAwait(false);
+            var connection = (await ProtocolConnection.ConnectAsync(port).ConfigureAwait(false));
+            await using var connectionLifetime = connection.ConfigureAwait(false);
+            await connection.ReadCapabilityResponseAsync().ConfigureAwait(false);
+            await connection.WriteLineAsync("NOOP").ConfigureAwait(false);
+            Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("OK ", StringComparison.Ordinal));
         }
 
-        var sessionId = journal.Records.Single(record =>
-            record.Direction == GatewayTrafficDirections.Inbound
-            && Encoding.UTF8.GetString(record.Payload).Contains("NOOP\r\n", StringComparison.Ordinal))
+        var sessionId = journal.Records.Single(record => string.Equals(record.Direction, GatewayTrafficDirections.Inbound
+, StringComparison.Ordinal) && Encoding.UTF8.GetString(record.Payload).Contains("NOOP\r\n", StringComparison.Ordinal))
             .SessionId;
         var records = journal.Records.Where(record => record.SessionId == sessionId).ToArray();
-        Assert.IsTrue(records.Any(record => record.Direction == GatewayTrafficDirections.Outbound
-            && Encoding.UTF8.GetString(record.Payload).Contains("\"IMPLEMENTATION\"", StringComparison.Ordinal)));
-        Assert.IsTrue(records.All(record => record.Protocol == "sieve"));
+        Assert.IsTrue(records.Any(record => string.Equals(record.Direction, GatewayTrafficDirections.Outbound
+, StringComparison.Ordinal) && Encoding.UTF8.GetString(record.Payload).Contains("\"IMPLEMENTATION\"", StringComparison.Ordinal)));
+        Assert.IsTrue(records.All(record => string.Equals(record.Protocol, "sieve", StringComparison.Ordinal)));
         CollectionAssert.AreEqual(
             Enumerable.Range(0, records.Length).Select(value => (long)value).ToArray(),
             records.Select(record => record.Sequence).ToArray());
 
         var rejectedPort = ReservePort();
-        await using var rejectedServer = await ServerFixture.StartAsync(
+        var rejectedServer = (await ServerFixture.StartAsync(
             CreateEnvironment(rejectedPort),
             rejectedPort,
-            new RecordingSieveJournal { RejectWrites = true });
-        await using var rejectedConnection = await ProtocolConnection.ConnectAsync(rejectedPort);
+            new RecordingSieveJournal { RejectWrites = true }).ConfigureAwait(false));
+        await using var rejectedServerLifetime = rejectedServer.ConfigureAwait(false);
+        var rejectedConnection = (await ProtocolConnection.ConnectAsync(rejectedPort).ConfigureAwait(false));
+        await using var rejectedConnectionLifetime = rejectedConnection.ConfigureAwait(false);
         await Assert.ThrowsAsync<EndOfStreamException>(
-            () => rejectedConnection.ReadLineAsync());
+            () => rejectedConnection.ReadLineAsync()).ConfigureAwait(false);
     }
 
     [TestInitialize]
@@ -90,32 +94,34 @@ public sealed class ManageSieveProtocolTests
     public async Task ClearTextSessionAdvertisesStartTlsAndRejectsAuthentication()
     {
         var port = ReservePort();
-        await using var server = await ServerFixture.StartAsync(CreateEnvironment(port), port);
-        await using var connection = await ProtocolConnection.ConnectAsync(port);
+        var server = (await ServerFixture.StartAsync(CreateEnvironment(port), port).ConfigureAwait(false));
+        await using var serverLifetime = server.ConfigureAwait(false);
+        var connection = (await ProtocolConnection.ConnectAsync(port).ConfigureAwait(false));
+        await using var connectionLifetime = connection.ConfigureAwait(false);
 
-        var capabilities = await connection.ReadCapabilityResponseAsync();
+        var capabilities = await connection.ReadCapabilityResponseAsync().ConfigureAwait(false);
         CollectionAssert.Contains(capabilities, "\"VERSION\" \"1.0\"");
         CollectionAssert.Contains(capabilities, "\"SASL\" \"\"");
         CollectionAssert.Contains(capabilities, "\"STARTTLS\"");
         Assert.IsTrue(capabilities.Any(line => line.StartsWith("\"SIEVE\" ", StringComparison.Ordinal)));
         Assert.IsTrue(capabilities[^1].StartsWith("OK ", StringComparison.Ordinal));
 
-        await connection.WriteLineAsync($"AUTHENTICATE \"PLAIN\" \"{PlainCredentials()}\"");
-        StringAssert.Contains(await connection.ReadLineAsync(), "NO (ENCRYPT-NEEDED)");
+        await connection.WriteLineAsync($"AUTHENTICATE \"PLAIN\" \"{PlainCredentials()}\"").ConfigureAwait(false);
+        StringAssert.Contains(await connection.ReadLineAsync().ConfigureAwait(false), "NO (ENCRYPT-NEEDED)", StringComparison.Ordinal);
 
-        await connection.WriteLineAsync("LISTSCRIPTS");
-        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("NO ", StringComparison.Ordinal));
+        await connection.WriteLineAsync("LISTSCRIPTS").ConfigureAwait(false);
+        Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("NO ", StringComparison.Ordinal));
 
-        await connection.WriteLineAsync("NOOP \"sync-tag\"");
-        StringAssert.Contains(await connection.ReadLineAsync(), "OK (TAG \"sync-tag\")");
+        await connection.WriteLineAsync("NOOP \"sync-tag\"").ConfigureAwait(false);
+        StringAssert.Contains(await connection.ReadLineAsync().ConfigureAwait(false), "OK (TAG \"sync-tag\")", StringComparison.Ordinal);
 
         const string literalTag = "line one\r\nline two";
-        await connection.WriteLiteralCommandAsync("NOOP", literalTag, nonSynchronizing: true);
-        var tagMarker = await connection.ReadLineAsync();
-        Assert.AreEqual($"OK (TAG {{{Encoding.UTF8.GetByteCount(literalTag)}}}", tagMarker);
+        await connection.WriteLiteralCommandAsync("NOOP", literalTag, nonSynchronizing: true).ConfigureAwait(false);
+        var tagMarker = await connection.ReadLineAsync().ConfigureAwait(false);
+        Assert.AreEqual($"OK (TAG {{{Encoding.UTF8.GetByteCount(literalTag)}}}", tagMarker, StringComparer.Ordinal);
         Assert.AreEqual(literalTag, Encoding.UTF8.GetString(await connection.ReadBytesAsync(
-            Encoding.UTF8.GetByteCount(literalTag))));
-        Assert.AreEqual(") \"NOOP completed\"", await connection.ReadLineAsync());
+            Encoding.UTF8.GetByteCount(literalTag)).ConfigureAwait(false)), StringComparer.Ordinal);
+        Assert.AreEqual(") \"NOOP completed\"", await connection.ReadLineAsync().ConfigureAwait(false), StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -123,54 +129,56 @@ public sealed class ManageSieveProtocolTests
     public async Task TlsAuthenticatedSessionSupportsCompleteScriptLifecycle()
     {
         var port = ReservePort();
-        await using var server = await ServerFixture.StartAsync(CreateEnvironment(port), port);
-        await using var connection = await ConnectAuthenticatedAsync(port);
+        var server = (await ServerFixture.StartAsync(CreateEnvironment(port), port).ConfigureAwait(false));
+        await using var serverLifetime = server.ConfigureAwait(false);
+        var connection = (await ConnectAuthenticatedAsync(port).ConfigureAwait(false));
+        await using var connectionLifetime = connection.ConfigureAwait(false);
 
-        await connection.WriteLineAsync("CAPABILITY");
-        var authenticatedCapabilities = await connection.ReadCapabilityResponseAsync();
+        await connection.WriteLineAsync("CAPABILITY").ConfigureAwait(false);
+        var authenticatedCapabilities = await connection.ReadCapabilityResponseAsync().ConfigureAwait(false);
         CollectionAssert.Contains(authenticatedCapabilities, $"\"OWNER\" \"{TestUsername}\"");
         CollectionAssert.DoesNotContain(authenticatedCapabilities, "\"STARTTLS\"");
 
-        await connection.WriteLineAsync("HAVESPACE \"primary\" 128");
-        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("OK ", StringComparison.Ordinal));
+        await connection.WriteLineAsync("HAVESPACE \"primary\" 128").ConfigureAwait(false);
+        Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("OK ", StringComparison.Ordinal));
 
         var invalidScript = "fileinto \"Archive\";";
-        await connection.WriteLiteralCommandAsync("CHECKSCRIPT", invalidScript, nonSynchronizing: true);
-        var invalidResponse = await connection.ReadLineAsync();
+        await connection.WriteLiteralCommandAsync("CHECKSCRIPT", invalidScript, nonSynchronizing: true).ConfigureAwait(false);
+        var invalidResponse = await connection.ReadLineAsync().ConfigureAwait(false);
         Assert.IsTrue(invalidResponse.StartsWith("NO ", StringComparison.Ordinal));
-        StringAssert.Contains(invalidResponse, "require");
+        StringAssert.Contains(invalidResponse, "require", StringComparison.Ordinal);
 
         var script = "require [\"fileinto\"];\r\nfileinto \"Archive\";\r\n";
-        await connection.WriteLiteralCommandAsync("PUTSCRIPT \"primary\"", script, nonSynchronizing: true);
-        var putResponse = await connection.ReadLineAsync();
+        await connection.WriteLiteralCommandAsync("PUTSCRIPT \"primary\"", script, nonSynchronizing: true).ConfigureAwait(false);
+        var putResponse = await connection.ReadLineAsync().ConfigureAwait(false);
         Assert.IsTrue(putResponse.StartsWith("OK ", StringComparison.Ordinal), putResponse);
 
-        await connection.WriteLineAsync("SETACTIVE \"primary\"");
-        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("OK ", StringComparison.Ordinal));
+        await connection.WriteLineAsync("SETACTIVE \"primary\"").ConfigureAwait(false);
+        Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("OK ", StringComparison.Ordinal));
 
-        await connection.WriteLineAsync("LISTSCRIPTS");
-        Assert.AreEqual("\"primary\" ACTIVE", await connection.ReadLineAsync());
-        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("OK ", StringComparison.Ordinal));
+        await connection.WriteLineAsync("LISTSCRIPTS").ConfigureAwait(false);
+        Assert.AreEqual("\"primary\" ACTIVE", await connection.ReadLineAsync().ConfigureAwait(false), StringComparer.Ordinal);
+        Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("OK ", StringComparison.Ordinal));
 
-        await connection.WriteLineAsync("GETSCRIPT \"primary\"");
-        Assert.AreEqual(script, await connection.ReadLiteralResponseAsync());
-        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("OK ", StringComparison.Ordinal));
+        await connection.WriteLineAsync("GETSCRIPT \"primary\"").ConfigureAwait(false);
+        Assert.AreEqual(script, await connection.ReadLiteralResponseAsync().ConfigureAwait(false), StringComparer.Ordinal);
+        Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("OK ", StringComparison.Ordinal));
 
-        await connection.WriteLineAsync("RENAMESCRIPT \"primary\" \"renamed\"");
-        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("OK ", StringComparison.Ordinal));
+        await connection.WriteLineAsync("RENAMESCRIPT \"primary\" \"renamed\"").ConfigureAwait(false);
+        Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("OK ", StringComparison.Ordinal));
 
-        await connection.WriteLineAsync("DELETESCRIPT \"renamed\"");
-        StringAssert.Contains(await connection.ReadLineAsync(), "NO (ACTIVE)");
+        await connection.WriteLineAsync("DELETESCRIPT \"renamed\"").ConfigureAwait(false);
+        StringAssert.Contains(await connection.ReadLineAsync().ConfigureAwait(false), "NO (ACTIVE)", StringComparison.Ordinal);
 
-        await connection.WriteLineAsync("SETACTIVE \"\"");
-        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("OK ", StringComparison.Ordinal));
-        await connection.WriteLineAsync("DELETESCRIPT \"renamed\"");
-        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("OK ", StringComparison.Ordinal));
+        await connection.WriteLineAsync("SETACTIVE \"\"").ConfigureAwait(false);
+        Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("OK ", StringComparison.Ordinal));
+        await connection.WriteLineAsync("DELETESCRIPT \"renamed\"").ConfigureAwait(false);
+        Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("OK ", StringComparison.Ordinal));
 
-        await connection.WriteLineAsync("UNAUTHENTICATE");
-        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("OK ", StringComparison.Ordinal));
-        await connection.WriteLineAsync("LISTSCRIPTS");
-        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("NO ", StringComparison.Ordinal));
+        await connection.WriteLineAsync("UNAUTHENTICATE").ConfigureAwait(false);
+        Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("OK ", StringComparison.Ordinal));
+        await connection.WriteLineAsync("LISTSCRIPTS").ConfigureAwait(false);
+        Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("NO ", StringComparison.Ordinal));
     }
 
     [TestMethod]
@@ -178,33 +186,35 @@ public sealed class ManageSieveProtocolTests
     public async Task SynchronizingLiteralsAndScriptCountQuotaAreEnforced()
     {
         var port = ReservePort();
-        await using var server = await ServerFixture.StartAsync(
+        var server = (await ServerFixture.StartAsync(
             CreateEnvironment(port, maximumScripts: 1),
-            port);
-        await using var connection = await ConnectAuthenticatedAsync(port);
+            port).ConfigureAwait(false));
+        await using var serverLifetime = server.ConfigureAwait(false);
+        var connection = (await ConnectAuthenticatedAsync(port).ConfigureAwait(false));
+        await using var connectionLifetime = connection.ConfigureAwait(false);
 
-        await connection.WriteLiteralHeaderAsync("PUTSCRIPT \"first\"", "keep;", nonSynchronizing: false);
-        StringAssert.Contains(await connection.ReadLineAsync(), "OK \"Ready for literal data\"");
-        await connection.WriteLiteralBodyAsync("keep;");
-        var putResponse = await connection.ReadLineAsync();
+        await connection.WriteLiteralHeaderAsync("PUTSCRIPT \"first\"", "keep;", nonSynchronizing: false).ConfigureAwait(false);
+        StringAssert.Contains(await connection.ReadLineAsync().ConfigureAwait(false), "OK \"Ready for literal data\"", StringComparison.Ordinal);
+        await connection.WriteLiteralBodyAsync("keep;").ConfigureAwait(false);
+        var putResponse = await connection.ReadLineAsync().ConfigureAwait(false);
         Assert.IsTrue(putResponse.StartsWith("OK ", StringComparison.Ordinal), putResponse);
 
-        await connection.WriteLineAsync("HAVESPACE \"second\" 5");
-        StringAssert.Contains(await connection.ReadLineAsync(), "NO (QUOTA/MAXSCRIPTS)");
+        await connection.WriteLineAsync("HAVESPACE \"second\" 5").ConfigureAwait(false);
+        StringAssert.Contains(await connection.ReadLineAsync().ConfigureAwait(false), "NO (QUOTA/MAXSCRIPTS)", StringComparison.Ordinal);
 
-        await connection.WriteLineAsync("HAVESPACE \"first\" 5");
-        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("OK ", StringComparison.Ordinal));
+        await connection.WriteLineAsync("HAVESPACE \"first\" 5").ConfigureAwait(false);
+        Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("OK ", StringComparison.Ordinal));
 
-        await connection.WriteLiteralCommandAsync("PUTSCRIPT \"second\"", "keep;", nonSynchronizing: true);
-        StringAssert.Contains(await connection.ReadLineAsync(), "NO (QUOTA/MAXSCRIPTS)");
+        await connection.WriteLiteralCommandAsync("PUTSCRIPT \"second\"", "keep;", nonSynchronizing: true).ConfigureAwait(false);
+        StringAssert.Contains(await connection.ReadLineAsync().ConfigureAwait(false), "NO (QUOTA/MAXSCRIPTS)", StringComparison.Ordinal);
 
         await connection.WriteDeclaredLiteralHeaderAsync(
             "CHECKSCRIPT",
             1024 * 1024 + 1,
-            nonSynchronizing: false);
-        StringAssert.Contains(await connection.ReadLineAsync(), "NO (QUOTA/MAXSIZE)");
-        await connection.WriteLineAsync("NOOP");
-        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("OK ", StringComparison.Ordinal));
+            nonSynchronizing: false).ConfigureAwait(false);
+        StringAssert.Contains(await connection.ReadLineAsync().ConfigureAwait(false), "NO (QUOTA/MAXSIZE)", StringComparison.Ordinal);
+        await connection.WriteLineAsync("NOOP").ConfigureAwait(false);
+        Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("OK ", StringComparison.Ordinal));
     }
 
     [TestMethod]
@@ -212,20 +222,22 @@ public sealed class ManageSieveProtocolTests
     public async Task AuthenticationWithoutInitialResponseAndFailureLimitAreSupported()
     {
         var port = ReservePort();
-        await using var server = await ServerFixture.StartAsync(CreateEnvironment(port), port);
-        await using var connection = await ConnectTlsAsync(port);
+        var server = (await ServerFixture.StartAsync(CreateEnvironment(port), port).ConfigureAwait(false));
+        await using var serverLifetime = server.ConfigureAwait(false);
+        var connection = (await ConnectTlsAsync(port).ConfigureAwait(false));
+        await using var connectionLifetime = connection.ConfigureAwait(false);
 
-        await connection.WriteLineAsync("AUTHENTICATE \"PLAIN\"");
-        Assert.AreEqual("\"\"", await connection.ReadLineAsync());
-        await connection.WriteLineAsync($"\"{PlainCredentials()}\"");
-        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("OK ", StringComparison.Ordinal));
+        await connection.WriteLineAsync("AUTHENTICATE \"PLAIN\"").ConfigureAwait(false);
+        Assert.AreEqual("\"\"", await connection.ReadLineAsync().ConfigureAwait(false), StringComparer.Ordinal);
+        await connection.WriteLineAsync($"\"{PlainCredentials()}\"").ConfigureAwait(false);
+        Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("OK ", StringComparison.Ordinal));
 
-        await connection.WriteLineAsync("UNAUTHENTICATE");
-        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("OK ", StringComparison.Ordinal));
+        await connection.WriteLineAsync("UNAUTHENTICATE").ConfigureAwait(false);
+        Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("OK ", StringComparison.Ordinal));
         for (var attempt = 1; attempt <= 5; attempt++)
         {
-            await connection.WriteLineAsync("AUTHENTICATE \"PLAIN\" \"AGJhZABiYWQ=\"");
-            var response = await connection.ReadLineAsync();
+            await connection.WriteLineAsync("AUTHENTICATE \"PLAIN\" \"AGJhZABiYWQ=\"").ConfigureAwait(false);
+            var response = await connection.ReadLineAsync().ConfigureAwait(false);
             Assert.IsTrue(
                 response.StartsWith(attempt == 5 ? "BYE " : "NO ", StringComparison.Ordinal),
                 response);
@@ -237,44 +249,46 @@ public sealed class ManageSieveProtocolTests
     public async Task OAuthEnabledSessionAdvertisesAndAcceptsXOAuth2()
     {
         var port = ReservePort();
-        await using var server = await ServerFixture.StartAsync(
+        var server = (await ServerFixture.StartAsync(
             CreateEnvironment(port, enableOAuth: true),
-            port);
-        await using var connection = await ProtocolConnection.ConnectAsync(port);
-        await connection.ReadCapabilityResponseAsync();
-        await connection.WriteLineAsync("STARTTLS");
-        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("OK ", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com");
-        var capabilities = await connection.ReadCapabilityResponseAsync();
+            port).ConfigureAwait(false));
+        await using var serverLifetime = server.ConfigureAwait(false);
+        var connection = (await ProtocolConnection.ConnectAsync(port).ConfigureAwait(false));
+        await using var connectionLifetime = connection.ConfigureAwait(false);
+        await connection.ReadCapabilityResponseAsync().ConfigureAwait(false);
+        await connection.WriteLineAsync("STARTTLS").ConfigureAwait(false);
+        Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("OK ", StringComparison.Ordinal));
+        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        var capabilities = await connection.ReadCapabilityResponseAsync().ConfigureAwait(false);
         CollectionAssert.Contains(capabilities, "\"SASL\" \"PLAIN XOAUTH2\"");
 
         await connection.WriteLineAsync(
-            $"AUTHENTICATE \"XOAUTH2\" \"{XOAuth2Credentials()}\"");
+            $"AUTHENTICATE \"XOAUTH2\" \"{XOAuth2Credentials()}\"").ConfigureAwait(false);
 
-        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("OK ", StringComparison.Ordinal));
+        Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("OK ", StringComparison.Ordinal));
     }
 
-    private async Task<ProtocolConnection> ConnectAuthenticatedAsync(int port)
+    private static async Task<ProtocolConnection> ConnectAuthenticatedAsync(int port)
     {
-        var connection = await ConnectTlsAsync(port);
-        await connection.WriteLineAsync($"AUTHENTICATE \"PLAIN\" \"{PlainCredentials()}\"");
-        var response = await connection.ReadLineAsync();
+        var connection = await ConnectTlsAsync(port).ConfigureAwait(false);
+        await connection.WriteLineAsync($"AUTHENTICATE \"PLAIN\" \"{PlainCredentials()}\"").ConfigureAwait(false);
+        var response = await connection.ReadLineAsync().ConfigureAwait(false);
         if (!response.StartsWith("OK ", StringComparison.Ordinal))
         {
-            await connection.DisposeAsync();
+            await connection.DisposeAsync().ConfigureAwait(false);
             Assert.Fail($"ManageSieve authentication failed: {response}");
         }
         return connection;
     }
 
-    private async Task<ProtocolConnection> ConnectTlsAsync(int port)
+    private static async Task<ProtocolConnection> ConnectTlsAsync(int port)
     {
-        var connection = await ProtocolConnection.ConnectAsync(port);
-        await connection.ReadCapabilityResponseAsync();
-        await connection.WriteLineAsync("STARTTLS");
-        Assert.IsTrue((await connection.ReadLineAsync()).StartsWith("OK ", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com");
-        var capabilities = await connection.ReadCapabilityResponseAsync();
+        var connection = await ProtocolConnection.ConnectAsync(port).ConfigureAwait(false);
+        await connection.ReadCapabilityResponseAsync().ConfigureAwait(false);
+        await connection.WriteLineAsync("STARTTLS").ConfigureAwait(false);
+        Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("OK ", StringComparison.Ordinal));
+        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        var capabilities = await connection.ReadCapabilityResponseAsync().ConfigureAwait(false);
         CollectionAssert.Contains(capabilities, "\"SASL\" \"PLAIN\"");
         CollectionAssert.DoesNotContain(capabilities, "\"STARTTLS\"");
         return connection;
@@ -338,7 +352,7 @@ public sealed class ManageSieveProtocolTests
 
     private static int ReservePort()
     {
-        var listener = new TcpListener(IPAddress.Loopback, 0);
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         listener.Stop();
@@ -349,10 +363,34 @@ public sealed class ManageSieveProtocolTests
         ServiceProvider services,
         IHostedService hostedService) : IAsyncDisposable
     {
-        public static async Task<ServerFixture> StartAsync(
-            EnvironmentConfig environment,
-            int port,
-            IGatewayTrafficJournal? journal = null)
+
+        public static async Task<ServerFixture> StartAsync(EnvironmentConfig environment, int port, IGatewayTrafficJournal? journal = null)
+        {
+
+            // The returned fixture owns this allocation; finally releases untransferred resources if initialization fails.
+#pragma warning disable CA2000
+            ServiceProvider? services = CreateServices();
+
+#pragma warning restore CA2000
+            try
+            {
+                await SeedAsync(services).ConfigureAwait(false);
+                var fixture = await StartOwnedAsync(services, environment, port, journal).ConfigureAwait(false);
+                services = null;
+                return fixture;
+            }
+            finally
+            {
+
+                // Successful transfer clears the resource; initialization exceptions leave it non-null for finally cleanup.
+#pragma warning disable CA1508
+                if (services is not null) await services.DisposeAsync().ConfigureAwait(false);
+
+#pragma warning restore CA1508
+            }
+        }
+
+        private static ServiceProvider CreateServices()
         {
             var serviceCollection = new ServiceCollection();
             var databaseName = $"manage-sieve-{Guid.NewGuid():N}";
@@ -370,7 +408,12 @@ public sealed class ManageSieveProtocolTests
                 options.UseInMemoryDatabase(databaseName)
                     .ConfigureWarnings(warnings =>
                         warnings.Ignore(InMemoryEventId.TransactionIgnoredWarning)));
-            var services = serviceCollection.BuildServiceProvider();
+            return serviceCollection.BuildServiceProvider();
+
+        }
+
+        private static async Task SeedAsync(ServiceProvider services)
+        {
             using (var scope = services.CreateScope())
             {
                 var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
@@ -380,14 +423,14 @@ public sealed class ManageSieveProtocolTests
                     Name = "Test Company",
                     IsActive = true,
                 };
-                database.Addresses.Add(new AddressDB
+                await database.Addresses.AddAsync(new AddressDB
                 {
                     Id = Guid.CreateVersion7(),
                     Domain = "mk8n.com",
                     IsActive = true,
                     Company = company,
-                });
-                database.Users.Add(new UserDB
+                }).ConfigureAwait(false);
+                await database.Users.AddAsync(new UserDB
                 {
                     Id = TestUserId,
                     Username = TestUsername,
@@ -395,17 +438,51 @@ public sealed class ManageSieveProtocolTests
                     Role = "User",
                     IsActive = true,
                     Company = company,
-                });
-                database.SaveChanges();
+                }).ConfigureAwait(false);
+                await database.SaveChangesAsync().ConfigureAwait(false);
             }
 
-            var hostedService = new ManageSieveServerService(
+
+        }
+
+        private static async Task<ServerFixture> StartOwnedAsync(ServiceProvider services, EnvironmentConfig environment, int port, IGatewayTrafficJournal? journal)
+        {
+
+            // The returned fixture owns this allocation; finally releases untransferred resources if initialization fails.
+#pragma warning disable CA2000
+            ManageSieveServerService? hostedService = new ManageSieveServerService(
                 services.GetRequiredService<IServiceScopeFactory>(),
                 environment,
                 NullLogger<ManageSieveServerService>.Instance,
                 journal);
-            var fixture = new ServerFixture(services, hostedService);
-            await hostedService.StartAsync(CancellationToken.None);
+
+#pragma warning restore CA2000
+
+            try
+            {
+                await StartAndWaitAsync(hostedService, port).ConfigureAwait(false);
+                var fixture = new ServerFixture(services, hostedService);
+                hostedService = null;
+                return fixture;
+            }
+            finally
+            {
+
+                // Successful transfer clears the resource; initialization exceptions leave it non-null for finally cleanup.
+#pragma warning disable CA1508
+                if (hostedService is not null)
+                {
+                    try { await hostedService.StopAsync(CancellationToken.None).ConfigureAwait(false); }
+                    finally { hostedService.Dispose(); }
+                }
+
+#pragma warning restore CA1508
+            }
+        }
+
+        private static async Task StartAndWaitAsync(ManageSieveServerService hostedService, int port)
+        {
+            await hostedService.StartAsync(CancellationToken.None).ConfigureAwait(false);
 
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
             while (!timeout.IsCancellationRequested)
@@ -413,12 +490,12 @@ public sealed class ManageSieveProtocolTests
                 try
                 {
                     using var client = new TcpClient();
-                    await client.ConnectAsync(IPAddress.Loopback, port, timeout.Token);
-                    return fixture;
+                    await client.ConnectAsync(IPAddress.Loopback, port, timeout.Token).ConfigureAwait(false);
+                    return;
                 }
                 catch (SocketException)
                 {
-                    await Task.Delay(20, timeout.Token);
+                    await Task.Delay(20, timeout.Token).ConfigureAwait(false);
                 }
             }
             throw new TimeoutException($"The ManageSieve test server did not listen on port {port}.");
@@ -427,8 +504,15 @@ public sealed class ManageSieveProtocolTests
         public async ValueTask DisposeAsync()
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            await hostedService.StopAsync(timeout.Token);
-            await services.DisposeAsync();
+            try
+            {
+                await hostedService.StopAsync(timeout.Token).ConfigureAwait(false);
+            }
+            finally
+            {
+                (hostedService as IDisposable)?.Dispose();
+                await services.DisposeAsync().ConfigureAwait(false);
+            }
         }
     }
 
@@ -441,8 +525,8 @@ public sealed class ManageSieveProtocolTests
         {
             AuthenticatedMailUser? user =
                 string.Equals(username, TestUsername, StringComparison.OrdinalIgnoreCase)
-                && password == TestPassword
-                    ? new AuthenticatedMailUser(TestUserId, TestUsername)
+                && string.Equals(password, TestPassword
+, StringComparison.Ordinal) ? new AuthenticatedMailUser(TestUserId, TestUsername)
                     : null;
             return Task.FromResult(user);
         }
@@ -455,8 +539,8 @@ public sealed class ManageSieveProtocolTests
             string requiredScope,
             CancellationToken cancellationToken = default) =>
             Task.FromResult<AuthenticatedMailUser?>(
-                accessToken == TestAccessToken && requiredScope == "sieve"
-                    ? new(TestUserId, TestUsername)
+string.Equals(accessToken, TestAccessToken, StringComparison.Ordinal) && string.Equals(requiredScope, "sieve"
+, StringComparison.Ordinal) ? new(TestUserId, TestUsername)
                     : null);
 
         public Task<OAuthTokenPair?> CreateGrantAsync(
@@ -502,7 +586,7 @@ public sealed class ManageSieveProtocolTests
         {
             var client = new TcpClient();
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-            await client.ConnectAsync(IPAddress.Loopback, port, timeout.Token);
+            await client.ConnectAsync(IPAddress.Loopback, port, timeout.Token).ConfigureAwait(false);
             return new ProtocolConnection(client);
         }
 
@@ -511,7 +595,7 @@ public sealed class ManageSieveProtocolTests
             var lines = new List<string>();
             while (true)
             {
-                var line = await ReadLineAsync();
+                var line = await ReadLineAsync().ConfigureAwait(false);
                 lines.Add(line);
                 if (line.StartsWith("OK", StringComparison.Ordinal)
                     || line.StartsWith("NO", StringComparison.Ordinal)
@@ -529,7 +613,7 @@ public sealed class ManageSieveProtocolTests
             while (true)
             {
                 var single = new byte[1];
-                var read = await _stream.ReadAsync(single, timeout.Token);
+                var read = await _stream.ReadAsync(single, timeout.Token).ConfigureAwait(false);
                 if (read == 0)
                     throw new EndOfStreamException("The server closed the ManageSieve stream.");
                 if (single[0] == '\n')
@@ -544,7 +628,7 @@ public sealed class ManageSieveProtocolTests
 
         public async Task WriteLineAsync(string line)
         {
-            await WriteRawAsync(line + "\r\n");
+            await WriteRawAsync(line + "\r\n").ConfigureAwait(false);
         }
 
         public async Task WriteLiteralCommandAsync(
@@ -552,8 +636,8 @@ public sealed class ManageSieveProtocolTests
             string literal,
             bool nonSynchronizing)
         {
-            await WriteLiteralHeaderAsync(command, literal, nonSynchronizing);
-            await WriteLiteralBodyAsync(literal);
+            await WriteLiteralHeaderAsync(command, literal, nonSynchronizing).ConfigureAwait(false);
+            await WriteLiteralBodyAsync(literal).ConfigureAwait(false);
         }
 
         public Task WriteLiteralHeaderAsync(
@@ -575,13 +659,14 @@ public sealed class ManageSieveProtocolTests
 
         public async Task<string> ReadLiteralResponseAsync()
         {
-            var marker = await ReadLineAsync();
+            var marker = await ReadLineAsync().ConfigureAwait(false);
             Assert.IsTrue(marker.Length >= 3 && marker[0] == '{' && marker[^1] == '}');
-            Assert.IsTrue(int.TryParse(marker.AsSpan(1, marker.Length - 2), out var size));
+            Assert.IsTrue(int.TryParse(marker.AsSpan(1, marker.Length - 2), System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture, out var size));
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
             var bytes = new byte[size];
-            await _stream.ReadExactlyAsync(bytes, timeout.Token);
-            Assert.AreEqual(string.Empty, await ReadLineAsync());
+            await _stream.ReadExactlyAsync(bytes, timeout.Token).ConfigureAwait(false);
+            Assert.AreEqual(string.Empty, await ReadLineAsync().ConfigureAwait(false), StringComparer.Ordinal);
             return StrictUtf8.GetString(bytes);
         }
 
@@ -589,7 +674,7 @@ public sealed class ManageSieveProtocolTests
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
             var bytes = new byte[size];
-            await _stream.ReadExactlyAsync(bytes, timeout.Token);
+            await _stream.ReadExactlyAsync(bytes, timeout.Token).ConfigureAwait(false);
             return bytes;
         }
 
@@ -598,25 +683,25 @@ public sealed class ManageSieveProtocolTests
             var tlsStream = new SslStream(
                 _stream,
                 leaveInnerStreamOpen: false,
-                (_, _, _, _) => true);
+                (_, certificate, _, errors) => TestCertificateFactory.IsTrusted(certificate, errors));
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
             await tlsStream.AuthenticateAsClientAsync(
                 new SslClientAuthenticationOptions { TargetHost = hostName },
-                timeout.Token);
+                timeout.Token).ConfigureAwait(false);
             _stream = tlsStream;
         }
 
         public async ValueTask DisposeAsync()
         {
-            await _stream.DisposeAsync();
+            await _stream.DisposeAsync().ConfigureAwait(false);
             _client.Dispose();
         }
 
         private async Task WriteRawAsync(string value)
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-            await _stream.WriteAsync(StrictUtf8.GetBytes(value), timeout.Token);
-            await _stream.FlushAsync(timeout.Token);
+            await _stream.WriteAsync(StrictUtf8.GetBytes(value), timeout.Token).ConfigureAwait(false);
+            await _stream.FlushAsync(timeout.Token).ConfigureAwait(false);
         }
     }
 

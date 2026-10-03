@@ -15,7 +15,8 @@ namespace mk8.email.Messaging.Tests;
 
 [TestClass]
 [TestCategory("PostgreSQL")]
-public sealed class SmtpPresentationTransportTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class SmtpPresentationTransportTests
 {
     [TestMethod]
     public async Task UnavailableGatewayReturnsTemporaryDeliveryFailure()
@@ -28,25 +29,29 @@ public sealed class SmtpPresentationTransportTests
         var result = await application.RelayAsync(
             "sender@example.test",
             "recipient@remote.test",
-            "Subject: retry\r\n\r\nbody\r\n");
+            "Subject: retry\r\n\r\nbody\r\n").ConfigureAwait(false);
 
         Assert.AreEqual(OutboundDeliveryStatus.TemporaryFailure, result.Status);
-        Assert.AreEqual("4.4.2", result.EnhancedStatusCode);
+        Assert.AreEqual("4.4.2", result.EnhancedStatusCode, StringComparer.Ordinal);
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The SlowSmtpDeliveryDoesNotBlockAnotherGatewayPresentationRequest scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task SlowSmtpDeliveryDoesNotBlockAnotherGatewayPresentationRequest()
     {
-        await using var database = await PostgresTestDatabase.TryCreateAsync();
+        var database = (await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false));
+        await using var databaseLifetime = new NullableAsyncDisposable(database).ConfigureAwait(false);
         if (database is null)
         {
             Assert.Inconclusive("Set MK8_EMAIL_TEST_POSTGRES to a PostgreSQL admin connection string.");
             return;
         }
 
-        await using var applicationDataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await using var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await PostgresMessagingSchema.EnsureAsync(gatewayDataSource);
+        var applicationDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var applicationDataSourceLifetime = applicationDataSource.ConfigureAwait(false);
+        var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var gatewayDataSourceLifetime = gatewayDataSource.ConfigureAwait(false);
+        await PostgresMessagingSchema.EnsureAsync(gatewayDataSource).ConfigureAwait(false);
         using var applicationProtector = AesGcmPayloadProtectorTests.CreateProtector(
             "test", "smtp-concurrency-key");
         using var gatewayProtector = AesGcmPayloadProtectorTests.CreateProtector(
@@ -61,8 +66,9 @@ public sealed class SmtpPresentationTransportTests
             gatewayDataSource, gatewayProtector, options);
         var journal = new PostgresGatewayTrafficJournal(
             gatewayDataSource, gatewayProtector, options);
+        using var ownedResource1 = new HttpClientHandler();
         using var webPush = new GatewayWebPushService(
-            new HttpClientHandler(), journal, options.MaxPayloadBytes);
+            ownedResource1, journal, options.MaxPayloadBytes);
         var smtp = new BlockingSmtpRelay();
         var gatewayWorker = new GatewayPresentationWorker(
             gatewayBus,
@@ -76,7 +82,7 @@ public sealed class SmtpPresentationTransportTests
             applicationBus,
             new EnvironmentConfig(),
             NullLogger<OutboundSmtpPresentationClient>.Instance);
-        await gatewayWorker.StartAsync(CancellationToken.None);
+        await gatewayWorker.StartAsync(CancellationToken.None).ConfigureAwait(false);
         try
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
@@ -85,7 +91,7 @@ public sealed class SmtpPresentationTransportTests
                 "first@remote.test",
                 "Subject: first\r\n\r\nbody\r\n",
                 cancellationToken: timeout.Token);
-            await smtp.FirstEntered.Task.WaitAsync(timeout.Token);
+            await smtp.FirstEntered.Task.WaitAsync(timeout.Token).ConfigureAwait(false);
             var second = application.RelayAsync(
                 "sender@example.test",
                 "second@remote.test",
@@ -94,23 +100,24 @@ public sealed class SmtpPresentationTransportTests
 
             Assert.AreEqual(
                 OutboundDeliveryStatus.Delivered,
-                (await second.WaitAsync(timeout.Token)).Status);
+                (await second.WaitAsync(timeout.Token).ConfigureAwait(false)).Status);
             Assert.IsFalse(first.IsCompleted);
             smtp.ReleaseFirst.TrySetResult();
             Assert.AreEqual(
                 OutboundDeliveryStatus.Delivered,
-                (await first.WaitAsync(timeout.Token)).Status);
+                (await first.WaitAsync(timeout.Token).ConfigureAwait(false)).Status);
         }
         finally
         {
             smtp.ReleaseFirst.TrySetResult();
-            await gatewayWorker.StopAsync(CancellationToken.None);
+            await gatewayWorker.StopAsync(CancellationToken.None).ConfigureAwait(false);
             gatewayWorker.Dispose();
         }
     }
 
     [TestMethod]
     [TestCategory("AzureBlobCompatible")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The LargeOutboundMessageAndGatewayJournalUseAzureBlobObjects scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task LargeOutboundMessageAndGatewayJournalUseAzureBlobObjects()
     {
         var blobConnection = Environment.GetEnvironmentVariable(
@@ -121,7 +128,8 @@ public sealed class SmtpPresentationTransportTests
                 "Set MK8_EMAIL_TEST_AZURE_BLOB_CONNECTION to an Azure Blob-compatible test endpoint.");
             return;
         }
-        await using var database = await PostgresTestDatabase.TryCreateAsync();
+        var database = (await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false));
+        await using var databaseLifetime = new NullableAsyncDisposable(database).ConfigureAwait(false);
         if (database is null)
         {
             Assert.Inconclusive("Set MK8_EMAIL_TEST_POSTGRES to a PostgreSQL admin connection string.");
@@ -141,9 +149,11 @@ public sealed class SmtpPresentationTransportTests
             });
         try
         {
-            await using var applicationDataSource = NpgsqlDataSource.Create(database.ConnectionString);
-            await using var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
-            await PostgresMessagingSchema.EnsureAsync(gatewayDataSource);
+            var applicationDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+            await using var applicationDataSourceLifetime = applicationDataSource.ConfigureAwait(false);
+            var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+            await using var gatewayDataSourceLifetime = gatewayDataSource.ConfigureAwait(false);
+            await PostgresMessagingSchema.EnsureAsync(gatewayDataSource).ConfigureAwait(false);
             using var applicationProtector = AesGcmPayloadProtectorTests.CreateProtector(
                 "test", "smtp-large-blob-key");
             using var gatewayProtector = AesGcmPayloadProtectorTests.CreateProtector(
@@ -159,8 +169,9 @@ public sealed class SmtpPresentationTransportTests
                 gatewayDataSource, gatewayProtector, options, largeObjectStore: objects);
             var journal = new PostgresGatewayTrafficJournal(
                 gatewayDataSource, gatewayProtector, options, largeObjectStore: objects);
+            using var ownedResource2 = new HttpClientHandler();
             using var webPush = new GatewayWebPushService(
-                new HttpClientHandler(), journal, options.MaxPayloadBytes);
+                ownedResource2, journal, options.MaxPayloadBytes);
             var smtp = new RecordingSmtpRelay();
             var gatewayWorker = new GatewayPresentationWorker(
                 gatewayBus,
@@ -174,7 +185,7 @@ public sealed class SmtpPresentationTransportTests
                 applicationBus,
                 new EnvironmentConfig(),
                 NullLogger<OutboundSmtpPresentationClient>.Instance);
-            await gatewayWorker.StartAsync(CancellationToken.None);
+            await gatewayWorker.StartAsync(CancellationToken.None).ConfigureAwait(false);
             try
             {
                 using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -183,48 +194,54 @@ public sealed class SmtpPresentationTransportTests
                     "sender@example.test",
                     "recipient@remote.test",
                     rawMessage,
-                    cancellationToken: timeout.Token);
+                    cancellationToken: timeout.Token).ConfigureAwait(false);
                 Assert.AreEqual(OutboundDeliveryStatus.Delivered, result.Status);
-                Assert.AreEqual(rawMessage, smtp.Request?.RawMessage);
+                Assert.AreEqual(rawMessage, smtp.Request?.RawMessage, StringComparer.Ordinal);
 
-                await using var requestQuery = gatewayDataSource.CreateCommand(
+                var requestQuery = gatewayDataSource.CreateCommand(
                     "SELECT count(*) FROM presentation_requests "
                     + "WHERE operation = @operation AND request_payload_inline IS NULL "
                     + "AND request_payload_blob_provider = 'azure-blob'");
+                await using var requestQueryLifetime = requestQuery.ConfigureAwait(false);
                 requestQuery.Parameters.AddWithValue("operation", SmtpPresentationOperations.Relay);
-                Assert.AreEqual(1L, await requestQuery.ExecuteScalarAsync(timeout.Token));
+                Assert.AreEqual(1L, await requestQuery.ExecuteScalarAsync(timeout.Token).ConfigureAwait(false));
 
-                await using var journalQuery = gatewayDataSource.CreateCommand(
+                var journalQuery = gatewayDataSource.CreateCommand(
                     "SELECT count(*) FROM gateway_traffic_records "
                     + "WHERE protocol = 'smtp' AND direction = 'inbound' "
                     + "AND payload_inline IS NULL AND payload_blob_provider = 'azure-blob'");
-                Assert.AreEqual(1L, await journalQuery.ExecuteScalarAsync(timeout.Token));
+                await using var journalQueryLifetime = journalQuery.ConfigureAwait(false);
+                Assert.AreEqual(1L, await journalQuery.ExecuteScalarAsync(timeout.Token).ConfigureAwait(false));
             }
             finally
             {
-                await gatewayWorker.StopAsync(CancellationToken.None);
+                await gatewayWorker.StopAsync(CancellationToken.None).ConfigureAwait(false);
                 gatewayWorker.Dispose();
             }
         }
         finally
         {
-            await container.DeleteIfExistsAsync();
+            await container.DeleteIfExistsAsync().ConfigureAwait(false);
         }
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The WorkerMailDeliveryCrossesReverseLaneToGatewayWithoutExposingMessage scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task WorkerMailDeliveryCrossesReverseLaneToGatewayWithoutExposingMessage()
     {
-        await using var database = await PostgresTestDatabase.TryCreateAsync();
+        var database = (await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false));
+        await using var databaseLifetime = new NullableAsyncDisposable(database).ConfigureAwait(false);
         if (database is null)
         {
             Assert.Inconclusive("Set MK8_EMAIL_TEST_POSTGRES to a PostgreSQL admin connection string.");
             return;
         }
 
-        await using var applicationDataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await using var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await PostgresMessagingSchema.EnsureAsync(gatewayDataSource);
+        var applicationDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var applicationDataSourceLifetime = applicationDataSource.ConfigureAwait(false);
+        var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var gatewayDataSourceLifetime = gatewayDataSource.ConfigureAwait(false);
+        await PostgresMessagingSchema.EnsureAsync(gatewayDataSource).ConfigureAwait(false);
         using var applicationProtector = AesGcmPayloadProtectorTests.CreateProtector(
             "test", "smtp-presentation-key");
         using var gatewayProtector = AesGcmPayloadProtectorTests.CreateProtector(
@@ -239,8 +256,9 @@ public sealed class SmtpPresentationTransportTests
             gatewayDataSource, gatewayProtector, options);
         var journal = new PostgresGatewayTrafficJournal(
             gatewayDataSource, gatewayProtector, options);
+        using var ownedResource3 = new HttpClientHandler();
         using var webPush = new GatewayWebPushService(
-            new HttpClientHandler(), journal, options.MaxPayloadBytes);
+            ownedResource3, journal, options.MaxPayloadBytes);
         var smtp = new RecordingSmtpRelay();
         var gatewayWorker = new GatewayPresentationWorker(
             gatewayBus,
@@ -255,7 +273,7 @@ public sealed class SmtpPresentationTransportTests
             new EnvironmentConfig(),
             NullLogger<OutboundSmtpPresentationClient>.Instance);
 
-        await gatewayWorker.StartAsync(CancellationToken.None);
+        await gatewayWorker.StartAsync(CancellationToken.None).ConfigureAwait(false);
         try
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
@@ -267,35 +285,38 @@ public sealed class SmtpPresentationTransportTests
                 new OutboundMailOptions(
                     RequiresSmtpUtf8: true,
                     new MailDsnEnvelope("HDRS", "job+2B42")),
-                timeout.Token);
+                timeout.Token).ConfigureAwait(false);
 
             Assert.AreEqual(OutboundDeliveryStatus.Delivered, delivery.Status);
             Assert.IsNotNull(smtp.Request);
-            Assert.AreEqual(rawMessage, smtp.Request.RawMessage);
-            Assert.AreEqual("sender@example.test", smtp.Request.Sender);
-            Assert.AreEqual("recipient@remote.test", smtp.Request.Recipient);
-            Assert.AreEqual("job+2B42", smtp.Request.Options?.Dsn?.EnvelopeId);
+            Assert.AreEqual(rawMessage, smtp.Request.RawMessage, StringComparer.Ordinal);
+            Assert.AreEqual("sender@example.test", smtp.Request.Sender, StringComparer.Ordinal);
+            Assert.AreEqual("recipient@remote.test", smtp.Request.Recipient, StringComparer.Ordinal);
+            Assert.AreEqual("job+2B42", smtp.Request.Options?.Dsn?.EnvelopeId, StringComparer.Ordinal);
 
             Guid requestId;
-            await using (var requestQuery = gatewayDataSource.CreateCommand(
-                "SELECT id, request_payload_inline FROM presentation_requests WHERE operation = @operation"))
             {
+                var requestQuery = gatewayDataSource.CreateCommand(
+                "SELECT id, request_payload_inline FROM presentation_requests WHERE operation = @operation");
+                await using var requestQueryLifetime = requestQuery.ConfigureAwait(false);
                 requestQuery.Parameters.AddWithValue("operation", SmtpPresentationOperations.Relay);
-                await using var requestReader = await requestQuery.ExecuteReaderAsync(timeout.Token);
-                Assert.IsTrue(await requestReader.ReadAsync(timeout.Token));
+                var requestReader = (await requestQuery.ExecuteReaderAsync(timeout.Token).ConfigureAwait(false));
+                await using var requestReaderLifetime = requestReader.ConfigureAwait(false);
+                Assert.IsTrue(await requestReader.ReadAsync(timeout.Token).ConfigureAwait(false));
                 requestId = requestReader.GetGuid(0);
                 Assert.AreEqual(requestId, smtp.ApplicationRequestId);
-                var ciphertext = requestReader.GetFieldValue<byte[]>(1);
+                var ciphertext = await (requestReader.GetFieldValueAsync<byte[]>(1)).ConfigureAwait(false);
                 Assert.IsFalse(Encoding.UTF8.GetString(ciphertext).Contains("reverse lane", StringComparison.Ordinal));
             }
 
-            await using var trafficQuery = gatewayDataSource.CreateCommand(
+            var trafficQuery = gatewayDataSource.CreateCommand(
                 "SELECT DISTINCT session_id FROM gateway_traffic_records "
                 + "WHERE application_request_id = @request_id");
+            await using var trafficQueryLifetime = trafficQuery.ConfigureAwait(false);
             trafficQuery.Parameters.AddWithValue("request_id", requestId);
-            var sessionId = (Guid)(await trafficQuery.ExecuteScalarAsync(timeout.Token)
+            var sessionId = (Guid)(await trafficQuery.ExecuteScalarAsync(timeout.Token).ConfigureAwait(false)
                 ?? throw new AssertFailedException("The Gateway journal session is missing."));
-            var records = await journal.ReadSessionAsync(sessionId, timeout.Token);
+            var records = await journal.ReadSessionAsync(sessionId, timeout.Token).ConfigureAwait(false);
             Assert.HasCount(2, records);
             CollectionAssert.AreEqual(
                 new[] { GatewayTrafficDirections.Inbound, GatewayTrafficDirections.Outbound },
@@ -304,7 +325,7 @@ public sealed class SmtpPresentationTransportTests
         }
         finally
         {
-            await gatewayWorker.StopAsync(CancellationToken.None);
+            await gatewayWorker.StopAsync(CancellationToken.None).ConfigureAwait(false);
             gatewayWorker.Dispose();
         }
     }
@@ -340,10 +361,10 @@ public sealed class SmtpPresentationTransportTests
             Guid applicationRequestId,
             CancellationToken cancellationToken)
         {
-            if (request.Recipient == "first@remote.test")
+            if (string.Equals(request.Recipient, "first@remote.test", StringComparison.Ordinal))
             {
                 FirstEntered.TrySetResult();
-                await ReleaseFirst.Task.WaitAsync(cancellationToken);
+                await ReleaseFirst.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
             }
             return new OutboundDeliveryResult(
                 OutboundDeliveryStatus.Delivered,

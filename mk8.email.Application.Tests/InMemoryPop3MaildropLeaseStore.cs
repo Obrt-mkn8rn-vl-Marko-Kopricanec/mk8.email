@@ -2,6 +2,7 @@ using mk8.email.Messaging;
 
 namespace mk8.email.Application.Tests;
 
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "This fixture implementation is activated through the test service provider's registered generic interface mapping.")]
 internal sealed class InMemoryPop3MaildropLeaseStore : IPop3MaildropLeaseStore
 {
     private readonly Dictionary<Guid, Pop3MaildropLease> owners = [];

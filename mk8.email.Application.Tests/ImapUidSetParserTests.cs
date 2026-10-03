@@ -3,7 +3,8 @@ using mk8.email.MailWire;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class ImapUidSetParserTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class ImapUidSetParserTests
 {
     [TestMethod]
     public void UidSetParserPreservesStarAndReversedRangesForWorkerResolution()

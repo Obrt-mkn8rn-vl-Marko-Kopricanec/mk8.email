@@ -4,7 +4,8 @@ using mk8.email.MailWire;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class ConnectionLimiterTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class ConnectionLimiterTests
 {
     [TestMethod]
     public void FailedPerAddressAdmissionRestoresGlobalCapacityAndLeasesReleaseOnce()
@@ -15,7 +16,7 @@ public sealed class ConnectionLimiterTests
         var thirdAddress = IPAddress.Parse("192.0.2.3");
         var fourthAddress = IPAddress.Parse("192.0.2.4");
 
-        var first = limiter.TryAcquire(firstAddress, 1);
+        using var first = limiter.TryAcquire(firstAddress, 1);
         Assert.IsNotNull(first);
         Assert.IsNull(limiter.TryAcquire(firstAddress, 1));
         using var second = limiter.TryAcquire(secondAddress, 1);

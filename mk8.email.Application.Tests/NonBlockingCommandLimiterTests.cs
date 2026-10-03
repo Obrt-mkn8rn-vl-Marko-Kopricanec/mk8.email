@@ -3,7 +3,8 @@ using mk8.email.Imap.Presentation;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class NonBlockingCommandLimiterTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class NonBlockingCommandLimiterTests
 {
     [TestMethod]
     public void SlotsAreNonblockingAndALeaseReleasesOnlyOnce()

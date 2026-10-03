@@ -9,27 +9,37 @@ namespace mk8.email.Messaging.Tests;
 [TestClass]
 [DoNotParallelize]
 [TestCategory("PostgreSQL")]
-public sealed class WorkerWakeDatabasePrivilegesTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class WorkerWakeDatabasePrivilegesTests
 {
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The WakeRoleCanObserveWorkButCannotReadOtherTablesOrWrite scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task WakeRoleCanObserveWorkButCannotReadOtherTablesOrWrite()
     {
-        await using var database = await RequirePostgresAsync();
-        await using (var context = new EmailDbContext(
-                         new DbContextOptionsBuilder<EmailDbContext>()
-                             .UseNpgsql(database.ConnectionString).Options))
+        var database = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseLifetime = database.ConfigureAwait(false);
         {
-            await context.Database.EnsureCreatedAsync();
-            await new MailRuntimeSchemaService(context).EnsureAsync();
+            var context = new EmailDbContext(
+                         new DbContextOptionsBuilder<EmailDbContext>()
+                             .UseNpgsql(database.ConnectionString).Options);
+            await using var contextLifetime = context.ConfigureAwait(false);
+            await context.Database.EnsureCreatedAsync().ConfigureAwait(false);
+            await new MailRuntimeSchemaService(context).EnsureAsync().ConfigureAwait(false);
         }
 
-        await using var adminDataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await PostgresMessagingSchema.EnsureAsync(adminDataSource);
+        var adminDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var adminDataSourceLifetime = adminDataSource.ConfigureAwait(false);
+        await PostgresMessagingSchema.EnsureAsync(adminDataSource).ConfigureAwait(false);
         var role = $"mk8_wake_test_{Guid.NewGuid():N}";
         var password = Guid.NewGuid().ToString("N");
-        await using var admin = await adminDataSource.OpenConnectionAsync();
-        await using (var setup = admin.CreateCommand())
+        var admin = (await adminDataSource.OpenConnectionAsync().ConfigureAwait(false));
+        await using var adminLifetime = admin.ConfigureAwait(false);
         {
+            var setup = admin.CreateCommand();
+            await using var setupLifetime = setup.ConfigureAwait(false);
+
+            // Test-only DDL uses quoted GUID-generated identifiers or fixed tracked SQL; PostgreSQL identifiers cannot be value parameters.
+#pragma warning disable CA2100
             setup.CommandText = $"""
                 REVOKE ALL ON DATABASE "{database.DatabaseName}" FROM PUBLIC;
                 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
@@ -38,18 +48,28 @@ public sealed class WorkerWakeDatabasePrivilegesTests
                     NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION
                     NOBYPASSRLS NOINHERIT;
                 """;
-            await setup.ExecuteNonQueryAsync();
+
+#pragma warning restore CA2100
+
+            await setup.ExecuteNonQueryAsync().ConfigureAwait(false);
         }
 
         try
         {
-            await using (var grant = admin.CreateCommand())
             {
+                var grant = admin.CreateCommand();
+                await using var grantLifetime = grant.ConfigureAwait(false);
+
+                // Test-only DDL uses quoted GUID-generated identifiers or fixed tracked SQL; PostgreSQL identifiers cannot be value parameters.
+#pragma warning disable CA2100
                 grant.CommandText = $"""
                     GRANT CONNECT ON DATABASE "{database.DatabaseName}" TO "{role}";
                     GRANT USAGE ON SCHEMA public TO "{role}";
                     """;
-                await grant.ExecuteNonQueryAsync();
+
+#pragma warning restore CA2100
+
+                await grant.ExecuteNonQueryAsync().ConfigureAwait(false);
             }
 
             var wakeConnection = new NpgsqlConnectionStringBuilder(database.ConnectionString)
@@ -57,13 +77,18 @@ public sealed class WorkerWakeDatabasePrivilegesTests
                 Username = role,
                 Password = password,
             };
-            await using var wakeDataSource = NpgsqlDataSource.Create(
+            var wakeDataSource = NpgsqlDataSource.Create(
                 wakeConnection.ConnectionString);
+            await using var wakeDataSourceLifetime = wakeDataSource.ConfigureAwait(false);
             await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
-                WorkerWakeDatabasePrivilegeProbe.ProbeAsync(wakeDataSource));
+                WorkerWakeDatabasePrivilegeProbe.ProbeAsync(wakeDataSource)).ConfigureAwait(false);
 
-            await using (var grant = admin.CreateCommand())
             {
+                var grant = admin.CreateCommand();
+                await using var grantLifetime = grant.ConfigureAwait(false);
+
+                // Test-only DDL uses quoted GUID-generated identifiers or fixed tracked SQL; PostgreSQL identifiers cannot be value parameters.
+#pragma warning disable CA2100
                 grant.CommandText = $"""
                     GRANT SELECT (state, lease_expires_at, deadline_at)
                         ON application_requests TO "{role}";
@@ -80,10 +105,13 @@ public sealed class WorkerWakeDatabasePrivilegesTests
                     GRANT SELECT (id, is_active) ON companies TO "{role}";
                     GRANT SELECT (account_id, sequence) ON jmap_changes TO "{role}";
                     """;
-                await grant.ExecuteNonQueryAsync();
+
+#pragma warning restore CA2100
+
+                await grant.ExecuteNonQueryAsync().ConfigureAwait(false);
             }
-            await WorkerWakeDatabasePrivilegeProbe.ProbeAsync(wakeDataSource);
-            Assert.IsFalse((await new WorkerWakeProbe(wakeDataSource).ReadAsync()).HasDueWork);
+            await WorkerWakeDatabasePrivilegeProbe.ProbeAsync(wakeDataSource).ConfigureAwait(false);
+            Assert.IsFalse((await new WorkerWakeProbe(wakeDataSource).ReadAsync().ConfigureAwait(false)).HasDueWork);
             using (var protector = AesGcmPayloadProtectorTests.CreateProtector(
                        "wake", "restricted-role"))
             {
@@ -92,17 +120,18 @@ public sealed class WorkerWakeDatabasePrivilegesTests
                     new ApplicationRequest(
                         Guid.CreateVersion7(), Guid.CreateVersion7(), 0, "admin",
                         ApplicationOperations.SystemPing, "application/json",
-                        "{}"u8.ToArray(), new Dictionary<string, string>(),
-                        now, now.AddMinutes(2)));
+                        "{}"u8.ToArray(), new Dictionary<string, string>(StringComparer.Ordinal),
+                        now, now.AddMinutes(2))).ConfigureAwait(false);
             }
-            Assert.IsTrue((await new WorkerWakeProbe(wakeDataSource).ReadAsync()).HasDueWork);
+            Assert.IsTrue((await new WorkerWakeProbe(wakeDataSource).ReadAsync().ConfigureAwait(false)).HasDueWork);
 
-            await using (var privateRead = wakeDataSource.CreateCommand(
-                             "SELECT id FROM wake_private_mail_content"))
             {
+                var privateRead = wakeDataSource.CreateCommand(
+                             "SELECT id FROM wake_private_mail_content");
+                await using var privateReadLifetime = privateRead.ConfigureAwait(false);
                 var error = await Assert.ThrowsExactlyAsync<PostgresException>(
-                    () => privateRead.ExecuteScalarAsync());
-                Assert.AreEqual(PostgresErrorCodes.InsufficientPrivilege, error.SqlState);
+                    () => privateRead.ExecuteScalarAsync()).ConfigureAwait(false);
+                Assert.AreEqual(PostgresErrorCodes.InsufficientPrivilege, error.SqlState, StringComparer.Ordinal);
             }
             foreach (var sensitiveColumn in new[]
                      {
@@ -112,68 +141,78 @@ public sealed class WorkerWakeDatabasePrivilegesTests
                          "SELECT raw_message FROM mail_queue_messages",
                      })
             {
-                await using var sensitiveRead = wakeDataSource.CreateCommand(sensitiveColumn);
+                var sensitiveRead = wakeDataSource.CreateCommand(sensitiveColumn);
+                await using var sensitiveReadLifetime = sensitiveRead.ConfigureAwait(false);
                 var error = await Assert.ThrowsExactlyAsync<PostgresException>(
-                    () => sensitiveRead.ExecuteScalarAsync());
-                Assert.AreEqual(PostgresErrorCodes.InsufficientPrivilege, error.SqlState);
+                    () => sensitiveRead.ExecuteScalarAsync()).ConfigureAwait(false);
+                Assert.AreEqual(PostgresErrorCodes.InsufficientPrivilege, error.SqlState, StringComparer.Ordinal);
             }
-            await using (var forbiddenWrite = wakeDataSource.CreateCommand(
-                             "DELETE FROM application_requests"))
             {
+                var forbiddenWrite = wakeDataSource.CreateCommand(
+                             "DELETE FROM application_requests");
+                await using var forbiddenWriteLifetime = forbiddenWrite.ConfigureAwait(false);
                 var error = await Assert.ThrowsExactlyAsync<PostgresException>(
-                    () => forbiddenWrite.ExecuteNonQueryAsync());
-                Assert.AreEqual(PostgresErrorCodes.InsufficientPrivilege, error.SqlState);
+                    () => forbiddenWrite.ExecuteNonQueryAsync()).ConfigureAwait(false);
+                Assert.AreEqual(PostgresErrorCodes.InsufficientPrivilege, error.SqlState, StringComparer.Ordinal);
             }
 
             await AssertExcessGrantRejectedAsync(
                 admin, wakeDataSource,
                 $"GRANT SELECT ON wake_private_mail_content TO \"{role}\"",
-                $"REVOKE SELECT ON wake_private_mail_content FROM \"{role}\"");
+                $"REVOKE SELECT ON wake_private_mail_content FROM \"{role}\"").ConfigureAwait(false);
             await AssertExcessGrantRejectedAsync(
                 admin, wakeDataSource,
                 $"GRANT SELECT (id) ON wake_private_mail_content TO \"{role}\"",
-                $"REVOKE SELECT (id) ON wake_private_mail_content FROM \"{role}\"");
+                $"REVOKE SELECT (id) ON wake_private_mail_content FROM \"{role}\"").ConfigureAwait(false);
             await AssertExcessGrantRejectedAsync(
                 admin, wakeDataSource,
                 $"GRANT SELECT ON users TO \"{role}\"",
                 $"REVOKE SELECT ON users FROM \"{role}\"; " +
-                $"GRANT SELECT (id, is_active) ON users TO \"{role}\"");
+                $"GRANT SELECT (id, is_active) ON users TO \"{role}\"").ConfigureAwait(false);
             await AssertExcessGrantRejectedAsync(
                 admin, wakeDataSource,
                 $"GRANT SELECT (password_hash) ON users TO \"{role}\"",
-                $"REVOKE SELECT (password_hash) ON users FROM \"{role}\"");
+                $"REVOKE SELECT (password_hash) ON users FROM \"{role}\"").ConfigureAwait(false);
             await AssertExcessGrantRejectedAsync(
                 admin, wakeDataSource,
                 $"GRANT UPDATE ON application_requests TO \"{role}\"",
-                $"REVOKE UPDATE ON application_requests FROM \"{role}\"");
+                $"REVOKE UPDATE ON application_requests FROM \"{role}\"").ConfigureAwait(false);
             await AssertExcessGrantRejectedAsync(
                 admin, wakeDataSource,
                 $"GRANT UPDATE (id) ON application_requests TO \"{role}\"",
-                $"REVOKE UPDATE (id) ON application_requests FROM \"{role}\"");
+                $"REVOKE UPDATE (id) ON application_requests FROM \"{role}\"").ConfigureAwait(false);
             await AssertExcessGrantRejectedAsync(
                 admin, wakeDataSource,
                 $"GRANT CREATE ON SCHEMA public TO \"{role}\"",
-                $"REVOKE CREATE ON SCHEMA public FROM \"{role}\"");
+                $"REVOKE CREATE ON SCHEMA public FROM \"{role}\"").ConfigureAwait(false);
 
-            await using (var definer = admin.CreateCommand())
             {
+                var definer = admin.CreateCommand();
+                await using var definerLifetime = definer.ConfigureAwait(false);
                 definer.CommandText = """
                     CREATE FUNCTION wake_private_definer() RETURNS integer
                     LANGUAGE sql SECURITY DEFINER AS 'SELECT 1';
                     REVOKE ALL ON FUNCTION wake_private_definer() FROM PUBLIC;
                     """;
-                await definer.ExecuteNonQueryAsync();
+                await definer.ExecuteNonQueryAsync().ConfigureAwait(false);
             }
             await AssertExcessGrantRejectedAsync(
                 admin, wakeDataSource,
                 $"GRANT EXECUTE ON FUNCTION wake_private_definer() TO \"{role}\"",
-                $"REVOKE EXECUTE ON FUNCTION wake_private_definer() FROM \"{role}\"");
+                $"REVOKE EXECUTE ON FUNCTION wake_private_definer() FROM \"{role}\"").ConfigureAwait(false);
         }
         finally
         {
-            await using var cleanup = admin.CreateCommand();
+            var cleanup = admin.CreateCommand();
+            await using var cleanupLifetime = cleanup.ConfigureAwait(false);
+
+            // Test-only DDL uses quoted GUID-generated identifiers or fixed tracked SQL; PostgreSQL identifiers cannot be value parameters.
+#pragma warning disable CA2100
             cleanup.CommandText = $"DROP OWNED BY \"{role}\"; DROP ROLE \"{role}\";";
-            await cleanup.ExecuteNonQueryAsync();
+
+#pragma warning restore CA2100
+
+            await cleanup.ExecuteNonQueryAsync().ConfigureAwait(false);
         }
     }
 
@@ -183,25 +222,38 @@ public sealed class WorkerWakeDatabasePrivilegesTests
         string grant,
         string revoke)
     {
-        await using var command = admin.CreateCommand();
+        var command = admin.CreateCommand();
+        await using var commandLifetime = command.ConfigureAwait(false);
+
+        // Test-only DDL uses quoted GUID-generated identifiers or fixed tracked SQL; PostgreSQL identifiers cannot be value parameters.
+#pragma warning disable CA2100
         command.CommandText = grant;
-        await command.ExecuteNonQueryAsync();
+
+#pragma warning restore CA2100
+
+        await command.ExecuteNonQueryAsync().ConfigureAwait(false);
         try
         {
             await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
-                WorkerWakeDatabasePrivilegeProbe.ProbeAsync(wake));
+                WorkerWakeDatabasePrivilegeProbe.ProbeAsync(wake)).ConfigureAwait(false);
         }
         finally
         {
+
+            // Test-only DDL uses quoted GUID-generated identifiers or fixed tracked SQL; PostgreSQL identifiers cannot be value parameters.
+#pragma warning disable CA2100
             command.CommandText = revoke;
-            await command.ExecuteNonQueryAsync();
+
+#pragma warning restore CA2100
+
+            await command.ExecuteNonQueryAsync().ConfigureAwait(false);
         }
-        await WorkerWakeDatabasePrivilegeProbe.ProbeAsync(wake);
+        await WorkerWakeDatabasePrivilegeProbe.ProbeAsync(wake).ConfigureAwait(false);
     }
 
     private static async Task<PostgresTestDatabase> RequirePostgresAsync()
     {
-        var database = await PostgresTestDatabase.TryCreateAsync();
+        var database = await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false);
         if (database is null)
         {
             Assert.Inconclusive("Set MK8_EMAIL_TEST_POSTGRES.");

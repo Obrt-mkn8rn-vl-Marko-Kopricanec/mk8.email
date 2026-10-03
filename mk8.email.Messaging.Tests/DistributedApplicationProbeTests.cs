@@ -5,7 +5,8 @@ using mk8.email.Hosting;
 namespace mk8.email.Messaging.Tests;
 
 [TestClass]
-public sealed class DistributedApplicationProbeTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class DistributedApplicationProbeTests
 {
     [TestMethod]
     [DataRow(DistributedContractVersions.Current, true)]
@@ -20,11 +21,11 @@ public sealed class DistributedApplicationProbeTests
     {
         var client = new ProbeClient(version);
         if (compatible)
-            await DistributedApplicationProbe.ProbeAsync(client, TimeSpan.FromSeconds(5));
+            await DistributedApplicationProbe.ProbeAsync(client, TimeSpan.FromSeconds(5)).ConfigureAwait(false);
         else
-            await Assert.ThrowsAsync<InvalidOperationException>(() => DistributedApplicationProbe.ProbeAsync(client, TimeSpan.FromSeconds(5)));
-        Assert.AreEqual(ApplicationOperations.SystemPing, client.Request?.Operation);
-        Assert.AreEqual("health", client.Request?.Protocol);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => DistributedApplicationProbe.ProbeAsync(client, TimeSpan.FromSeconds(5))).ConfigureAwait(false);
+        Assert.AreEqual(ApplicationOperations.SystemPing, client.Request?.Operation, StringComparer.Ordinal);
+        Assert.AreEqual("health", client.Request?.Protocol, StringComparer.Ordinal);
     }
 
     private sealed class ProbeClient(string? version) : IApplicationRequestClient
@@ -34,8 +35,8 @@ public sealed class DistributedApplicationProbeTests
         {
             Request = request;
             return Task.FromResult(new ApplicationResponse(request.Id, "application/json",
-                JsonSerializer.SerializeToUtf8Bytes(new SystemPingResult(DateTimeOffset.UtcNow, version), new JsonSerializerOptions(JsonSerializerDefaults.Web)),
-                new Dictionary<string, string>()));
+                JsonSerializer.SerializeToUtf8Bytes(new SystemPingResult(DateTimeOffset.UtcNow, version), SerializationOptions1),
+                new Dictionary<string, string>(StringComparer.Ordinal)));
         }
 
         public Task EnqueueAsync(ApplicationRequest request, CancellationToken cancellationToken = default) =>
@@ -44,5 +45,6 @@ public sealed class DistributedApplicationProbeTests
             throw new NotSupportedException();
         public Task<ApplicationExchangeSnapshot?> GetAsync(Guid requestId, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
+        private static readonly JsonSerializerOptions SerializationOptions1 = new JsonSerializerOptions(JsonSerializerDefaults.Web);
     }
 }

@@ -9,7 +9,8 @@ using mk8.email.Jmap;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class JmapMimeSnapshotBoundaryTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class JmapMimeSnapshotBoundaryTests
 {
     [TestMethod]
     public void MimeSnapshotPreservesPresentationWithoutTransferringBinaryAttachments()
@@ -37,14 +38,14 @@ public sealed class JmapMimeSnapshotBoundaryTests
         var attachment = snapshot.Parts[snapshot.Parts[snapshot.RootPart.Value].Children[1]];
         Assert.AreEqual(128_000L, attachment.DecodedSize);
         Assert.IsNull(attachment.Text);
-        var json = JsonSerializer.Serialize(snapshot, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var json = JsonSerializer.Serialize(snapshot, SerializationOptions1);
         Assert.IsLessThan(10_000, json.Length);
-        var restored = JsonSerializer.Deserialize<MailMessageSnapshot>(json, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        var restored = JsonSerializer.Deserialize<MailMessageSnapshot>(json, SerializationOptions1)!;
         var rendered = GatewayEmailValueCodec.BuildEmail(restored,
             new(properties, bodyProperties, true, false, false, 10));
         // Frozen from the former Worker renderer before removing protocol presentation from it.
         Assert.AreEqual("AE48376C548CB00B655AFBF86CDC8C92ED5ADAC9555FE7601AFE0F7C1FD4C2BE",
-            Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(rendered.ToJsonString()))));
+            Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(rendered.ToJsonString()))), StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -56,7 +57,9 @@ public sealed class JmapMimeSnapshotBoundaryTests
         Assert.IsNotNull(snapshot.RootPart);
         Assert.IsNull(snapshot.Parts[snapshot.RootPart.Value].Text);
         var response = GatewayEmailValueCodec.BuildEmail(snapshot, new(["subject"], [], false, false, false, 0));
-        Assert.AreEqual("Metadata only", response["subject"]!.GetValue<string>());
-        CollectionAssert.AreEqual(new[] { "subject" }, response.Select(item => item.Key).ToArray());
+        Assert.AreEqual("Metadata only", response["subject"]!.GetValue<string>(), StringComparer.Ordinal);
+        CollectionAssert.AreEqual(ExpectedVector2, response.Select(item => item.Key).ToArray());
     }
+    private static readonly JsonSerializerOptions SerializationOptions1 = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+    private static readonly string[] ExpectedVector2 = new[] { "subject" };
 }

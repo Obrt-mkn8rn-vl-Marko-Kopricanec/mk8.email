@@ -13,14 +13,17 @@ namespace mk8.email.Messaging.Tests;
 [DoNotParallelize]
 [TestCategory("PostgreSQL")]
 [TestCategory("AzureBlobCompatible")]
-public sealed class WorkerProcessStartupTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class WorkerProcessStartupTests
 {
     private const long QueueMigrationLockKey = 3_415_682_194_307_812_221;
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The PreparedOneShotWorkerDrainsWithoutRepeatingBlobMigration scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task PreparedOneShotWorkerDrainsWithoutRepeatingBlobMigration()
     {
-        await using var database = await RequirePostgresAsync();
+        var database = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseLifetime = database.ConfigureAwait(false);
         var blobConnection = RequireAzureBlobConnection();
         var containerName = "mk8-worker-test-" + Guid.NewGuid().ToString("N");
         var container = new BlobServiceClient(blobConnection)
@@ -28,11 +31,12 @@ public sealed class WorkerProcessStartupTests
         var directory = Directory.CreateTempSubdirectory("mk8-worker-process-");
         try
         {
-            await using (var context = new EmailDbContext(
-                             new DbContextOptionsBuilder<EmailDbContext>()
-                                 .UseNpgsql(database.ConnectionString).Options))
             {
-                await context.Database.EnsureCreatedAsync();
+                var context = new EmailDbContext(
+                             new DbContextOptionsBuilder<EmailDbContext>()
+                                 .UseNpgsql(database.ConnectionString).Options);
+                await using var contextLifetime = context.ConfigureAwait(false);
+                await context.Database.EnsureCreatedAsync().ConfigureAwait(false);
             }
 
             var connection = new NpgsqlConnectionStringBuilder(database.ConnectionString);
@@ -66,37 +70,40 @@ public sealed class WorkerProcessStartupTests
             Assert.HasCount(0, config.Validate(
                 isDevelopment: false, EnvironmentValidationRole.ApplicationWorker));
             var configPath = Path.Combine(directory.FullName, "worker.json");
-            await File.WriteAllTextAsync(configPath, JsonSerializer.Serialize(config));
+            await File.WriteAllTextAsync(configPath, JsonSerializer.Serialize(config)).ConfigureAwait(false);
 
-            var prepared = await RunWorkerAsync("--prepare", configPath, TimeSpan.FromSeconds(60));
+            var prepared = await RunWorkerAsync("--prepare", configPath, TimeSpan.FromSeconds(60)).ConfigureAwait(false);
             Assert.AreEqual(0, prepared.ExitCode, prepared.Output);
-            StringAssert.Contains(prepared.Output, "schemas and Azure Blob references are prepared");
+            StringAssert.Contains(prepared.Output, "schemas and Azure Blob references are prepared", StringComparison.Ordinal);
 
-            await using var lockConnection = new NpgsqlConnection(database.ConnectionString);
-            await lockConnection.OpenAsync();
-            await using (var acquire = lockConnection.CreateCommand())
+            var lockConnection = new NpgsqlConnection(database.ConnectionString);
+            await using var lockConnectionLifetime = lockConnection.ConfigureAwait(false);
+            await lockConnection.OpenAsync().ConfigureAwait(false);
             {
+                var acquire = lockConnection.CreateCommand();
+                await using var acquireLifetime = acquire.ConfigureAwait(false);
                 acquire.CommandText = "SELECT pg_advisory_lock(@key)";
                 acquire.Parameters.AddWithValue("key", QueueMigrationLockKey);
-                await acquire.ExecuteNonQueryAsync();
+                await acquire.ExecuteNonQueryAsync().ConfigureAwait(false);
             }
             try
             {
-                var drained = await RunWorkerAsync("--drain", configPath, TimeSpan.FromSeconds(15));
+                var drained = await RunWorkerAsync("--drain", configPath, TimeSpan.FromSeconds(15)).ConfigureAwait(false);
                 Assert.AreEqual(0, drained.ExitCode, drained.Output);
-                StringAssert.Contains(drained.Output, "drained 0 requests and 0 queued messages");
+                StringAssert.Contains(drained.Output, "drained 0 requests and 0 queued messages", StringComparison.Ordinal);
             }
             finally
             {
-                await using var release = lockConnection.CreateCommand();
+                var release = lockConnection.CreateCommand();
+                await using var releaseLifetime = release.ConfigureAwait(false);
                 release.CommandText = "SELECT pg_advisory_unlock(@key)";
                 release.Parameters.AddWithValue("key", QueueMigrationLockKey);
-                await release.ExecuteNonQueryAsync();
+                await release.ExecuteNonQueryAsync().ConfigureAwait(false);
             }
         }
         finally
         {
-            await container.DeleteIfExistsAsync();
+            await container.DeleteIfExistsAsync().ConfigureAwait(false);
             directory.Delete(recursive: true);
         }
     }
@@ -134,20 +141,20 @@ public sealed class WorkerProcessStartupTests
         using var cancellation = new CancellationTokenSource(timeout);
         try
         {
-            await process.WaitForExitAsync(cancellation.Token);
+            await process.WaitForExitAsync(cancellation.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
             process.Kill(entireProcessTree: true);
-            await process.WaitForExitAsync();
+            await process.WaitForExitAsync().ConfigureAwait(false);
             Assert.Fail($"The Worker {mode} process exceeded {timeout}.");
         }
-        return (process.ExitCode, await output + await errors);
+        return (process.ExitCode, await output.ConfigureAwait(false) + await errors.ConfigureAwait(false));
     }
 
     private static async Task<PostgresTestDatabase> RequirePostgresAsync()
     {
-        var database = await PostgresTestDatabase.TryCreateAsync();
+        var database = await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false);
         if (database is null)
         {
             Assert.Inconclusive("Set MK8_EMAIL_TEST_POSTGRES.");

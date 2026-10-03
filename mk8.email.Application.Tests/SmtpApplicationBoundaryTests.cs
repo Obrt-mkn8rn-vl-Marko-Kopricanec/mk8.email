@@ -9,7 +9,8 @@ using mk8.email.Gateway.Protocols;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class SmtpApplicationBoundaryTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class SmtpApplicationBoundaryTests
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -17,22 +18,23 @@ public sealed class SmtpApplicationBoundaryTests
     public async Task GatewaySmtpOperationsCrossTypedApplicationBoundary()
     {
         var application = new RecordingApplication();
-        await using var services = new ServiceCollection()
+        var services = new ServiceCollection()
             .AddSingleton<ISmtpApplicationService>(application)
             .BuildServiceProvider();
+        await using var servicesLifetime = services.ConfigureAwait(false);
         var gateway = new GatewaySmtpApplicationService(
             new InProcessTransport(new ApplicationRequestDispatcher(services)));
 
         Assert.AreEqual("user@example.test", (await gateway.AuthenticatePasswordAsync(
-            new SmtpPasswordAuthentication("user@example.test", "secret"))).Username);
+            new SmtpPasswordAuthentication("user@example.test", "secret")).ConfigureAwait(false)).Username, StringComparer.Ordinal);
         Assert.AreEqual("user@example.test", (await gateway.AuthenticateOAuthAsync(
-            new SmtpOAuthAuthentication("access-token"))).Username);
+            new SmtpOAuthAuthentication("access-token")).ConfigureAwait(false)).Username, StringComparer.Ordinal);
         Assert.IsTrue(await gateway.CanSendAsAsync(
-            new SmtpSenderAuthorization("user@example.test", "user@example.test")));
+            new SmtpSenderAuthorization("user@example.test", "user@example.test")).ConfigureAwait(false));
         Assert.IsTrue(await gateway.HasMatchingFromAddressAsync(
-            new SmtpFromAddressCheck("From: user@example.test\r\n\r\nbody", "user@example.test")));
+            new SmtpFromAddressCheck("From: user@example.test\r\n\r\nbody", "user@example.test")).ConfigureAwait(false));
         Assert.IsTrue(await gateway.CanReceiveAsync(
-            new SmtpRecipientCheck("user@example.test")));
+            new SmtpRecipientCheck("user@example.test")).ConfigureAwait(false));
 
         var submission = new MailSubmission(
             Guid.CreateVersion7(),
@@ -42,10 +44,10 @@ public sealed class SmtpApplicationBoundaryTests
             "127.0.0.1",
             "client.example.test",
             "user@example.test");
-        Assert.AreEqual(submission.QueueId, await gateway.EnqueueAsync(submission));
-        Assert.AreEqual("secret", application.Password?.Password);
-        Assert.AreEqual("access-token", application.OAuth?.AccessToken);
-        Assert.AreEqual(submission.RawMessage, application.Submission?.RawMessage);
+        Assert.AreEqual(submission.QueueId, await gateway.EnqueueAsync(submission).ConfigureAwait(false));
+        Assert.AreEqual("secret", application.Password?.Password, StringComparer.Ordinal);
+        Assert.AreEqual("access-token", application.OAuth?.AccessToken, StringComparer.Ordinal);
+        Assert.AreEqual(submission.RawMessage, application.Submission?.RawMessage, StringComparer.Ordinal);
         Assert.AreEqual(submission.Recipients[0], application.Submission?.Recipients[0]);
     }
 
@@ -58,7 +60,7 @@ public sealed class SmtpApplicationBoundaryTests
             TRequest value,
             CancellationToken cancellationToken = default)
         {
-            Assert.AreEqual("smtp", protocol);
+            Assert.AreEqual("smtp", protocol, StringComparer.Ordinal);
             var now = DateTimeOffset.UtcNow;
             var request = new ApplicationRequest(
                 Guid.CreateVersion7(),
@@ -68,10 +70,10 @@ public sealed class SmtpApplicationBoundaryTests
                 operation,
                 "application/json",
                 JsonSerializer.SerializeToUtf8Bytes(value, JsonOptions),
-                new Dictionary<string, string>(),
+                new Dictionary<string, string>(StringComparer.Ordinal),
                 now,
                 now.AddMinutes(1));
-            var response = await dispatcher.DispatchAsync(request, cancellationToken);
+            var response = await dispatcher.DispatchAsync(request, cancellationToken).ConfigureAwait(false);
             Assert.IsFalse(response.IsError, response.ErrorCode);
             return JsonSerializer.Deserialize<TResponse>(response.Payload, JsonOptions)
                 ?? throw new InvalidOperationException("The application response was empty.");
@@ -103,7 +105,7 @@ public sealed class SmtpApplicationBoundaryTests
         public Task<bool> CanSendAsAsync(
             SmtpSenderAuthorization request,
             CancellationToken cancellationToken = default) =>
-            Task.FromResult(request.AuthenticatedUsername == request.SenderAddress);
+            Task.FromResult(string.Equals(request.AuthenticatedUsername, request.SenderAddress, StringComparison.Ordinal));
 
         public Task<bool> HasMatchingFromAddressAsync(
             SmtpFromAddressCheck request,
@@ -114,7 +116,7 @@ public sealed class SmtpApplicationBoundaryTests
         public Task<bool> CanReceiveAsync(
             SmtpRecipientCheck request,
             CancellationToken cancellationToken = default) =>
-            Task.FromResult(request.Recipient == "user@example.test");
+            Task.FromResult(string.Equals(request.Recipient, "user@example.test", StringComparison.Ordinal));
 
         public Task<Guid> EnqueueAsync(
             MailSubmission submission,

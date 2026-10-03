@@ -25,15 +25,20 @@ namespace mk8.email.Messaging.Tests;
 [TestClass]
 [DoNotParallelize]
 [TestCategory("PostgreSQL")]
-public sealed class JmapGatewayRouteTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class JmapGatewayRouteTests
 {
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The HttpApiRequestCrossesRemoteWorkerAndRecordsBothBoundaries scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task HttpApiRequestCrossesRemoteWorkerAndRecordsBothBoundaries()
     {
-        await using var database = await RequirePostgresAsync();
-        await using var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await using var workerDataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await PostgresMessagingSchema.EnsureAsync(gatewayDataSource);
+        var database = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var gatewayDataSourceLifetime = gatewayDataSource.ConfigureAwait(false);
+        var workerDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var workerDataSourceLifetime = workerDataSource.ConfigureAwait(false);
+        await PostgresMessagingSchema.EnsureAsync(gatewayDataSource).ConfigureAwait(false);
         using var gatewayProtector = AesGcmPayloadProtectorTests.CreateProtector(
             "test",
             "jmap-route-key");
@@ -61,7 +66,8 @@ public sealed class JmapGatewayRouteTests
             .AddSingleton<IJmapApplicationService>(jmap)
             .AddScoped<IApplicationRequestDispatcher>(serviceProvider =>
                 new ApplicationRequestDispatcher(serviceProvider));
-        await using var workerProvider = workerServices.BuildServiceProvider();
+        var workerProvider = workerServices.BuildServiceProvider();
+        await using var workerProviderLifetime = workerProvider.ConfigureAwait(false);
         var worker = new ApplicationRequestWorker(
             workerBus,
             workerProvider.GetRequiredService<IServiceScopeFactory>(),
@@ -94,8 +100,8 @@ public sealed class JmapGatewayRouteTests
         application.MapJmapEndpoints();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
 
-        await worker.StartAsync(timeout.Token);
-        await application.StartAsync(timeout.Token);
+        await worker.StartAsync(timeout.Token).ConfigureAwait(false);
+        await application.StartAsync(timeout.Token).ConfigureAwait(false);
         try
         {
             var address = application.Services.GetRequiredService<IServer>()
@@ -226,82 +232,82 @@ public sealed class JmapGatewayRouteTests
                 "Basic",
                 Convert.ToBase64String(
                     Encoding.UTF8.GetBytes("person@example.test:route-password-secret")));
-            using var response = await client.SendAsync(request, timeout.Token);
+            using var response = await client.SendAsync(request, timeout.Token).ConfigureAwait(false);
 
             using var discoveryRequest = new HttpRequestMessage(HttpMethod.Get, "/.well-known/jmap");
             discoveryRequest.Headers.Authorization = request.Headers.Authorization;
-            using var discoveryResponse = await client.SendAsync(discoveryRequest, timeout.Token);
+            using var discoveryResponse = await client.SendAsync(discoveryRequest, timeout.Token).ConfigureAwait(false);
             Assert.AreEqual(HttpStatusCode.OK, discoveryResponse.StatusCode);
-            using var discovery = JsonDocument.Parse(await discoveryResponse.Content.ReadAsStringAsync(timeout.Token));
+            using var discovery = JsonDocument.Parse(await discoveryResponse.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false));
 
             using var eventRequest = new HttpRequestMessage(HttpMethod.Get, "/jmap/event?types=Mailbox&closeafter=state&ping=0");
             eventRequest.Headers.Authorization = request.Headers.Authorization;
             eventRequest.Headers.Add("Last-Event-ID", "c0");
-            using var eventResponse = await client.SendAsync(eventRequest, timeout.Token);
+            using var eventResponse = await client.SendAsync(eventRequest, timeout.Token).ConfigureAwait(false);
             Assert.AreEqual(HttpStatusCode.OK, eventResponse.StatusCode);
-            StringAssert.Contains(await eventResponse.Content.ReadAsStringAsync(timeout.Token),
-                "data: {\"@type\":\"StateChange\",\"changed\":{\"account-id\":{\"Mailbox\":\"state-1\"}}}");
+            StringAssert.Contains(await eventResponse.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false),
+                "data: {\"@type\":\"StateChange\",\"changed\":{\"account-id\":{\"Mailbox\":\"state-1\"}}}", StringComparison.Ordinal);
 
             Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
-            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(timeout.Token));
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false));
             Assert.AreEqual(
                 GatewayJmapProfileCodec.Render(StubJmapApplicationService.Profile, environment)["state"]!.GetValue<string>(),
-                json.RootElement.GetProperty("sessionState").GetString());
-            Assert.AreEqual(discovery.RootElement.GetProperty("state").GetString(), json.RootElement.GetProperty("sessionState").GetString());
-            Assert.AreEqual("https://email.example.test/jmap/api", discovery.RootElement.GetProperty("apiUrl").GetString());
-            Assert.AreEqual("person@example.test", jmap.Request?.Authentication.Username);
-            Assert.AreEqual("route-password-secret", jmap.Request?.Authentication.Secret);
+                json.RootElement.GetProperty("sessionState").GetString(), StringComparer.Ordinal);
+            Assert.AreEqual(discovery.RootElement.GetProperty("state").GetString(), json.RootElement.GetProperty("sessionState").GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("https://email.example.test/jmap/api", discovery.RootElement.GetProperty("apiUrl").GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("person@example.test", jmap.Request?.Authentication.Username, StringComparer.Ordinal);
+            Assert.AreEqual("route-password-secret", jmap.Request?.Authentication.Secret, StringComparer.Ordinal);
             Assert.IsNotNull(jmap.Request?.Command);
             CollectionAssert.AreEqual(new[] { MailFeature.Basic, MailFeature.Messages, MailFeature.Submission,
                 MailFeature.Contacts, MailFeature.AutomaticReplies }, jmap.Request.Command.Features.ToArray());
             Assert.AreEqual(39, jmap.Executions);
-            Assert.AreEqual("invalidProperties", jmap.Commands[1].Arguments["ifInState"]!.GetValue<string>());
+            Assert.AreEqual("invalidProperties", jmap.Commands[1].Arguments["ifInState"]!.GetValue<string>(), StringComparer.Ordinal);
             Assert.IsFalse(jmap.Commands[1].Arguments.ContainsKey("#ifInState"));
             Assert.AreEqual(40, jmap.Plan?.Plan?.OperationCount);
             Assert.AreEqual(MailOperationKind.MutateSubmissions, jmap.Request.Command.Operation);
             var routedDraft = JsonSerializer.Deserialize<MailSubmissionMutationCommand>(
-                jmap.Request.Command.Arguments, new JsonSerializerOptions(JsonSerializerDefaults.Web))!.Creates[0].Draft;
+                jmap.Request.Command.Arguments, SerializationOptions1)!.Creates[0].Draft;
             Assert.IsTrue(routedDraft.InvalidFields);
             Assert.IsNull(routedDraft.MessageReference);
-            Assert.AreEqual("made", jmap.Request.Command.ReferenceAliases["#made"]);
-            Assert.AreEqual("object-id", jmap.Request.Command.KnownEntities?["made"]);
+            Assert.AreEqual("made", jmap.Request.Command.ReferenceAliases["#made"], StringComparer.Ordinal);
+            Assert.AreEqual("object-id", jmap.Request.Command.KnownEntities?["made"], StringComparer.Ordinal);
             var invocation = json.RootElement.GetProperty("methodResponses")[0];
-            Assert.AreEqual("EmailSubmission/set", invocation[0].GetString());
-            Assert.AreEqual("call-1", invocation[2].GetString());
+            Assert.AreEqual("EmailSubmission/set", invocation[0].GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("call-1", invocation[2].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("invalidProperties", invocation[1].GetProperty("notCreated")
-                .GetProperty("route").GetProperty("type").GetString());
+                .GetProperty("route").GetProperty("type").GetString(), StringComparer.Ordinal);
             Assert.AreEqual("invalidProperties", json.RootElement.GetProperty("methodResponses")[1][1]
-                .GetProperty("copied").GetString());
-            Assert.AreEqual("call-2", json.RootElement.GetProperty("methodResponses")[1][2].GetString());
-            Assert.AreEqual("object-id", json.RootElement.GetProperty("createdIds").GetProperty("made").GetString());
+                .GetProperty("copied").GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("call-2", json.RootElement.GetProperty("methodResponses")[1][2].GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("object-id", json.RootElement.GetProperty("createdIds").GetProperty("made").GetString(), StringComparer.Ordinal);
             var folderCommand = jmap.Commands[2];
             Assert.AreEqual(MailOperationKind.ReadFolders, folderCommand.Operation);
             Assert.IsFalse(folderCommand.Arguments.ContainsKey("ids"));
             Assert.IsFalse(folderCommand.Arguments.ContainsKey("properties"));
-            Assert.AreEqual("11111111-1111-1111-1111-111111111111", folderCommand.Arguments["accountId"]!.GetValue<string>());
+            Assert.AreEqual("11111111-1111-1111-1111-111111111111", folderCommand.Arguments["accountId"]!.GetValue<string>(), StringComparer.Ordinal);
             Assert.AreEqual(3, folderCommand.Arguments["folderIds"]!.AsArray().Count);
             var folderResponse = json.RootElement.GetProperty("methodResponses")[3];
-            Assert.AreEqual("Mailbox/get", folderResponse[0].GetString());
-            Assert.AreEqual("call-4", folderResponse[2].GetString());
+            Assert.AreEqual("Mailbox/get", folderResponse[0].GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("call-4", folderResponse[2].GetString(), StringComparer.Ordinal);
             var folderData = folderResponse[1];
-            Assert.AreEqual("A11111111111111111111111111111111", folderData.GetProperty("accountId").GetString());
-            Assert.AreEqual("s42", folderData.GetProperty("state").GetString());
+            Assert.AreEqual("A11111111111111111111111111111111", folderData.GetProperty("accountId").GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("s42", folderData.GetProperty("state").GetString(), StringComparer.Ordinal);
             Assert.AreEqual(1, folderData.GetProperty("list").GetArrayLength());
-            Assert.AreEqual("Inbox", folderData.GetProperty("list")[0].GetProperty("name").GetString());
+            Assert.AreEqual("Inbox", folderData.GetProperty("list")[0].GetProperty("name").GetString(), StringComparer.Ordinal);
             Assert.IsFalse(folderData.GetProperty("list")[0].GetProperty("myRights").GetProperty("mayDelete").GetBoolean());
             Assert.IsFalse(folderData.GetProperty("list")[0].TryGetProperty("totalEmails", out _));
-            Assert.AreEqual("M33333333333333333333333333333333", folderData.GetProperty("notFound")[0].GetString());
+            Assert.AreEqual("M33333333333333333333333333333333", folderData.GetProperty("notFound")[0].GetString(), StringComparer.Ordinal);
             var changesCommand = jmap.Commands[3];
             Assert.AreEqual(MailOperationKind.ReadFolderChanges, changesCommand.Operation);
             Assert.AreEqual(2L, changesCommand.Arguments["maxChanges"]!.GetValue<long>());
-            Assert.AreEqual("s0", changesCommand.Arguments["sinceState"]!.GetValue<string>());
+            Assert.AreEqual("s0", changesCommand.Arguments["sinceState"]!.GetValue<string>(), StringComparer.Ordinal);
             var changesResponse = json.RootElement.GetProperty("methodResponses")[4];
-            Assert.AreEqual("Mailbox/changes", changesResponse[0].GetString());
-            Assert.AreEqual("call-5", changesResponse[2].GetString());
-            Assert.AreEqual("s0", changesResponse[1].GetProperty("oldState").GetString());
-            Assert.AreEqual("s42", changesResponse[1].GetProperty("newState").GetString());
+            Assert.AreEqual("Mailbox/changes", changesResponse[0].GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("call-5", changesResponse[2].GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("s0", changesResponse[1].GetProperty("oldState").GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("s42", changesResponse[1].GetProperty("newState").GetString(), StringComparer.Ordinal);
             Assert.AreEqual("M22222222222222222222222222222222",
-                changesResponse[1].GetProperty("created")[0].GetString());
+                changesResponse[1].GetProperty("created")[0].GetString(), StringComparer.Ordinal);
             var changeOperations = new[]
             {
                 MailOperationKind.ReadThreadChanges, MailOperationKind.ReadMessageChanges,
@@ -318,9 +324,9 @@ public sealed class JmapGatewayRouteTests
                 Assert.AreEqual(changeOperations[index], jmap.Commands[index + 4].Operation);
                 Assert.IsTrue(jmap.Commands[index + 4].Arguments.ContainsKey("sinceState"));
                 var displayed = json.RootElement.GetProperty("methodResponses")[index + 5];
-                Assert.AreEqual(changeNames[index], displayed[0].GetString());
-                Assert.AreEqual($"call-{index + 6}", displayed[2].GetString());
-                Assert.AreEqual("s42", displayed[1].GetProperty("newState").GetString());
+                Assert.AreEqual(changeNames[index], displayed[0].GetString(), StringComparer.Ordinal);
+                Assert.AreEqual($"call-{index + 6}", displayed[2].GetString(), StringComparer.Ordinal);
+                Assert.AreEqual("s42", displayed[1].GetProperty("newState").GetString(), StringComparer.Ordinal);
                 Assert.AreEqual(1, displayed[1].GetProperty("created").GetArrayLength());
                 Assert.AreEqual(changeOperations[index] == MailOperationKind.ReadContactChanges,
                     displayed[1].TryGetProperty("updatedProperties", out _));
@@ -331,64 +337,64 @@ public sealed class JmapGatewayRouteTests
             Assert.IsFalse(bookCommand.Arguments.ContainsKey("properties"));
             Assert.AreEqual(2, bookCommand.Arguments["bookIds"]!.AsArray().Count);
             var bookResponse = json.RootElement.GetProperty("methodResponses")[11];
-            Assert.AreEqual("AddressBook/get", bookResponse[0].GetString());
-            Assert.AreEqual("call-12", bookResponse[2].GetString());
-            Assert.AreEqual("Personal", bookResponse[1].GetProperty("list")[0].GetProperty("name").GetString());
+            Assert.AreEqual("AddressBook/get", bookResponse[0].GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("call-12", bookResponse[2].GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("Personal", bookResponse[1].GetProperty("list")[0].GetProperty("name").GetString(), StringComparer.Ordinal);
             Assert.IsFalse(bookResponse[1].GetProperty("list")[0].GetProperty("myRights")
                 .GetProperty("mayDelete").GetBoolean());
             Assert.AreEqual("D33333333333333333333333333333333",
-                bookResponse[1].GetProperty("notFound")[0].GetString());
+                bookResponse[1].GetProperty("notFound")[0].GetString(), StringComparer.Ordinal);
             var identityCommand = jmap.Commands[11];
             Assert.AreEqual(MailOperationKind.ReadSenderIdentities, identityCommand.Operation);
             Assert.IsFalse(identityCommand.Arguments.ContainsKey("ids"));
             Assert.IsFalse(identityCommand.Arguments.ContainsKey("properties"));
             Assert.AreEqual(2, identityCommand.Arguments["identityIds"]!.AsArray().Count);
             var identityResponse = json.RootElement.GetProperty("methodResponses")[12];
-            Assert.AreEqual("Identity/get", identityResponse[0].GetString());
-            Assert.AreEqual("call-13", identityResponse[2].GetString());
+            Assert.AreEqual("Identity/get", identityResponse[0].GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("call-13", identityResponse[2].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("sender@example.test",
-                identityResponse[1].GetProperty("list")[0].GetProperty("email").GetString());
+                identityResponse[1].GetProperty("list")[0].GetProperty("email").GetString(), StringComparer.Ordinal);
             Assert.AreEqual("reply@example.test",
-                identityResponse[1].GetProperty("list")[0].GetProperty("replyTo")[0].GetProperty("email").GetString());
+                identityResponse[1].GetProperty("list")[0].GetProperty("replyTo")[0].GetProperty("email").GetString(), StringComparer.Ordinal);
             Assert.IsFalse(identityResponse[1].GetProperty("list")[0].TryGetProperty("name", out _));
             Assert.AreEqual("I33333333333333333333333333333333",
-                identityResponse[1].GetProperty("notFound")[0].GetString());
+                identityResponse[1].GetProperty("notFound")[0].GetString(), StringComparer.Ordinal);
             var vacationCommand = jmap.Commands[12];
             Assert.AreEqual(MailOperationKind.ReadVacationSettings, vacationCommand.Operation);
             Assert.IsTrue(vacationCommand.Arguments["includeSingleton"]!.GetValue<bool>());
             Assert.IsTrue(vacationCommand.Arguments["includeBodies"]!.GetValue<bool>());
             var vacationResponse = json.RootElement.GetProperty("methodResponses")[13];
-            Assert.AreEqual("VacationResponse/get", vacationResponse[0].GetString());
-            Assert.AreEqual("call-14", vacationResponse[2].GetString());
+            Assert.AreEqual("VacationResponse/get", vacationResponse[0].GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("call-14", vacationResponse[2].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("2026-09-29T12:34:56Z",
-                vacationResponse[1].GetProperty("list")[0].GetProperty("fromDate").GetString());
-            Assert.AreEqual("Away", vacationResponse[1].GetProperty("list")[0].GetProperty("textBody").GetString());
-            Assert.AreEqual("missing", vacationResponse[1].GetProperty("notFound")[0].GetString());
+                vacationResponse[1].GetProperty("list")[0].GetProperty("fromDate").GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("Away", vacationResponse[1].GetProperty("list")[0].GetProperty("textBody").GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("missing", vacationResponse[1].GetProperty("notFound")[0].GetString(), StringComparer.Ordinal);
             var pushCommand = jmap.Commands[13];
             Assert.AreEqual(MailOperationKind.ReadNotificationSubscriptions, pushCommand.Operation);
             Assert.AreEqual(2, pushCommand.Arguments["subscriptionIds"]!.AsArray().Count);
             var pushResponse = json.RootElement.GetProperty("methodResponses")[14];
-            Assert.AreEqual("PushSubscription/get", pushResponse[0].GetString());
-            Assert.AreEqual("call-15", pushResponse[2].GetString());
+            Assert.AreEqual("PushSubscription/get", pushResponse[0].GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("call-15", pushResponse[2].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("device", pushResponse[1].GetProperty("list")[0]
-                .GetProperty("deviceClientId").GetString());
+                .GetProperty("deviceClientId").GetString(), StringComparer.Ordinal);
             Assert.AreEqual("Mailbox", pushResponse[1].GetProperty("list")[0]
-                .GetProperty("types")[0].GetString());
+                .GetProperty("types")[0].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("P33333333333333333333333333333333",
-                pushResponse[1].GetProperty("notFound")[0].GetString());
+                pushResponse[1].GetProperty("notFound")[0].GetString(), StringComparer.Ordinal);
             var threadCommand = jmap.Commands[14];
             Assert.AreEqual(MailOperationKind.ReadThreads, threadCommand.Operation);
             Assert.AreEqual(1, threadCommand.Arguments.Count);
             Assert.AreEqual("11111111-1111-1111-1111-111111111111",
-                threadCommand.Arguments["accountId"]!.GetValue<string>());
+                threadCommand.Arguments["accountId"]!.GetValue<string>(), StringComparer.Ordinal);
             var threadResponse = json.RootElement.GetProperty("methodResponses")[15];
-            Assert.AreEqual("Thread/get", threadResponse[0].GetString());
-            Assert.AreEqual("call-16", threadResponse[2].GetString());
+            Assert.AreEqual("Thread/get", threadResponse[0].GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("call-16", threadResponse[2].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("TYyE", threadResponse[1].GetProperty("list")[0]
-                .GetProperty("id").GetString());
+                .GetProperty("id").GetString(), StringComparer.Ordinal);
             Assert.AreEqual("E22222222222222222222222222222222",
-                threadResponse[1].GetProperty("list")[0].GetProperty("emailIds")[0].GetString());
-            Assert.AreEqual("Tmissing", threadResponse[1].GetProperty("notFound")[0].GetString());
+                threadResponse[1].GetProperty("list")[0].GetProperty("emailIds")[0].GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("Tmissing", threadResponse[1].GetProperty("notFound")[0].GetString(), StringComparer.Ordinal);
             var submissionCommand = jmap.Commands[15];
             Assert.AreEqual(MailOperationKind.ReadSubmissions, submissionCommand.Operation);
             Assert.IsFalse(submissionCommand.Arguments.ContainsKey("ids"));
@@ -396,244 +402,244 @@ public sealed class JmapGatewayRouteTests
             Assert.AreEqual(2, submissionCommand.Arguments["submissionIds"]!.AsArray().Count);
             Assert.IsTrue(submissionCommand.Arguments["includeDeliveryStatus"]!.GetValue<bool>());
             var submissionResponse = json.RootElement.GetProperty("methodResponses")[16];
-            Assert.AreEqual("EmailSubmission/get", submissionResponse[0].GetString());
-            Assert.AreEqual("call-17", submissionResponse[2].GetString());
+            Assert.AreEqual("EmailSubmission/get", submissionResponse[0].GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("call-17", submissionResponse[2].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("12", submissionResponse[1].GetProperty("list")[0]
                 .GetProperty("envelope").GetProperty("mailFrom").GetProperty("parameters")
-                .GetProperty("SIZE").GetString());
+                .GetProperty("SIZE").GetString(), StringComparer.Ordinal);
             Assert.AreEqual("queued", submissionResponse[1].GetProperty("list")[0]
                 .GetProperty("deliveryStatus").GetProperty("recipient@example.test")
-                .GetProperty("delivered").GetString());
+                .GetProperty("delivered").GetString(), StringComparer.Ordinal);
             Assert.AreEqual("S33333333333333333333333333333333",
-                submissionResponse[1].GetProperty("notFound")[0].GetString());
+                submissionResponse[1].GetProperty("notFound")[0].GetString(), StringComparer.Ordinal);
             var copyCommand = jmap.Commands[16];
             Assert.AreEqual(MailOperationKind.CopyBinaryObjects, copyCommand.Operation);
             Assert.AreEqual("11111111-1111-1111-1111-111111111111",
-                copyCommand.Arguments["fromAccountId"]!.GetValue<string>());
+                copyCommand.Arguments["fromAccountId"]!.GetValue<string>(), StringComparer.Ordinal);
             Assert.AreEqual("22222222-2222-2222-2222-222222222222",
-                copyCommand.Arguments["accountId"]!.GetValue<string>());
+                copyCommand.Arguments["accountId"]!.GetValue<string>(), StringComparer.Ordinal);
             Assert.AreEqual(2, copyCommand.Arguments["blobIds"]!.AsArray().Count);
             var copyResponse = json.RootElement.GetProperty("methodResponses")[17];
-            Assert.AreEqual("Blob/copy", copyResponse[0].GetString());
-            Assert.AreEqual("call-18", copyResponse[2].GetString());
+            Assert.AreEqual("Blob/copy", copyResponse[0].GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("call-18", copyResponse[2].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("U55555555555555555555555555555555",
                 copyResponse[1].GetProperty("copied").GetProperty("U44444444444444444444444444444444")
-                    .GetString());
+                    .GetString(), StringComparer.Ordinal);
             Assert.AreEqual("notFound", copyResponse[1].GetProperty("notCopied")
-                .GetProperty("U66666666666666666666666666666666").GetProperty("type").GetString());
+                .GetProperty("U66666666666666666666666666666666").GetProperty("type").GetString(), StringComparer.Ordinal);
             var vacationSetCommand = jmap.Commands[17];
             Assert.AreEqual(MailOperationKind.MutateVacationSettings, vacationSetCommand.Operation);
             Assert.AreEqual("11111111-1111-1111-1111-111111111111",
-                vacationSetCommand.Arguments["accountId"]!.GetValue<string>());
-            Assert.AreEqual("s48", vacationSetCommand.Arguments["ifInState"]!.GetValue<string>());
+                vacationSetCommand.Arguments["accountId"]!.GetValue<string>(), StringComparer.Ordinal);
+            Assert.AreEqual("s48", vacationSetCommand.Arguments["ifInState"]!.GetValue<string>(), StringComparer.Ordinal);
             Assert.AreEqual(1, vacationSetCommand.Arguments["updates"]!.AsArray().Count);
             Assert.IsTrue(vacationSetCommand.Arguments["updates"]![0]!["setTextBody"]!.GetValue<bool>());
             Assert.IsFalse(vacationSetCommand.Arguments.ContainsKey("create"));
             Assert.IsFalse(vacationSetCommand.Arguments.ContainsKey("destroy"));
             var vacationSetResponse = json.RootElement.GetProperty("methodResponses")[18];
-            Assert.AreEqual("VacationResponse/set", vacationSetResponse[0].GetString());
-            Assert.AreEqual("call-19", vacationSetResponse[2].GetString());
+            Assert.AreEqual("VacationResponse/set", vacationSetResponse[0].GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("call-19", vacationSetResponse[2].GetString(), StringComparer.Ordinal);
             Assert.IsTrue(vacationSetResponse[1].GetProperty("updated").TryGetProperty("singleton", out _));
             Assert.AreEqual("notFound", vacationSetResponse[1].GetProperty("notUpdated")
-                .GetProperty("missing").GetProperty("type").GetString());
+                .GetProperty("missing").GetProperty("type").GetString(), StringComparer.Ordinal);
             Assert.AreEqual("singleton", vacationSetResponse[1].GetProperty("notCreated")
-                .GetProperty("new").GetProperty("type").GetString());
+                .GetProperty("new").GetProperty("type").GetString(), StringComparer.Ordinal);
             Assert.AreEqual("singleton", vacationSetResponse[1].GetProperty("notDestroyed")
-                .GetProperty("singleton").GetProperty("type").GetString());
+                .GetProperty("singleton").GetProperty("type").GetString(), StringComparer.Ordinal);
             var queryCommand = jmap.Commands[18];
             Assert.AreEqual(MailOperationKind.FindSubmissions, queryCommand.Operation);
             Assert.AreEqual("11111111-1111-1111-1111-111111111111",
-                queryCommand.Arguments["accountId"]!.GetValue<string>());
-            Assert.AreEqual("final", queryCommand.Arguments["criteria"]!["filter"]!["undoStatus"]!.GetValue<string>());
+                queryCommand.Arguments["accountId"]!.GetValue<string>(), StringComparer.Ordinal);
+            Assert.AreEqual("final", queryCommand.Arguments["criteria"]!["filter"]!["undoStatus"]!.GetValue<string>(), StringComparer.Ordinal);
             Assert.AreEqual(1, queryCommand.Arguments["limit"]!.GetValue<int>());
             Assert.IsFalse(queryCommand.Arguments.ContainsKey("filter"));
             var queryResponse = json.RootElement.GetProperty("methodResponses")[19];
-            Assert.AreEqual("EmailSubmission/query", queryResponse[0].GetString());
-            Assert.AreEqual("call-20", queryResponse[2].GetString());
+            Assert.AreEqual("EmailSubmission/query", queryResponse[0].GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("call-20", queryResponse[2].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("S22222222222222222222222222222222",
-                queryResponse[1].GetProperty("ids")[0].GetString());
+                queryResponse[1].GetProperty("ids")[0].GetString(), StringComparer.Ordinal);
             Assert.AreEqual(1, queryResponse[1].GetProperty("total").GetInt32());
             var queryChangesCommand = jmap.Commands[19];
             Assert.AreEqual(MailOperationKind.FindSubmissionChanges, queryChangesCommand.Operation);
-            Assert.AreEqual("s50", queryChangesCommand.Arguments["sinceState"]!.GetValue<string>());
+            Assert.AreEqual("s50", queryChangesCommand.Arguments["sinceState"]!.GetValue<string>(), StringComparer.Ordinal);
             Assert.AreEqual(2, queryChangesCommand.Arguments["maxChanges"]!.GetValue<int>());
             var queryChangesResponse = json.RootElement.GetProperty("methodResponses")[20];
-            Assert.AreEqual("EmailSubmission/queryChanges", queryChangesResponse[0].GetString());
-            Assert.AreEqual("call-21", queryChangesResponse[2].GetString());
+            Assert.AreEqual("EmailSubmission/queryChanges", queryChangesResponse[0].GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("call-21", queryChangesResponse[2].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("S22222222222222222222222222222222",
-                queryChangesResponse[1].GetProperty("removed")[0].GetString());
+                queryChangesResponse[1].GetProperty("removed")[0].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("S33333333333333333333333333333333",
-                queryChangesResponse[1].GetProperty("added")[0].GetProperty("id").GetString());
+                queryChangesResponse[1].GetProperty("added")[0].GetProperty("id").GetString(), StringComparer.Ordinal);
             var folderQueryCommand = jmap.Commands[20];
             Assert.AreEqual(MailOperationKind.FindFolders, folderQueryCommand.Operation);
             Assert.AreEqual("11111111-1111-1111-1111-111111111111",
-                folderQueryCommand.Arguments["accountId"]!.GetValue<string>());
-            Assert.AreEqual("inbox", folderQueryCommand.Arguments["criteria"]!["filter"]!["role"]!.GetValue<string>());
+                folderQueryCommand.Arguments["accountId"]!.GetValue<string>(), StringComparer.Ordinal);
+            Assert.AreEqual("inbox", folderQueryCommand.Arguments["criteria"]!["filter"]!["role"]!.GetValue<string>(), StringComparer.Ordinal);
             Assert.AreEqual(1, folderQueryCommand.Arguments["criteria"]!["sort"]!.AsArray().Count);
             Assert.IsTrue(folderQueryCommand.Arguments["criteria"]!["filterAsTree"]!.GetValue<bool>());
             Assert.IsFalse(folderQueryCommand.Arguments.ContainsKey("filter"));
             var folderQueryResponse = json.RootElement.GetProperty("methodResponses")[21];
-            Assert.AreEqual("Mailbox/query", folderQueryResponse[0].GetString());
-            Assert.AreEqual("call-22", folderQueryResponse[2].GetString());
+            Assert.AreEqual("Mailbox/query", folderQueryResponse[0].GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("call-22", folderQueryResponse[2].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("M22222222222222222222222222222222",
-                folderQueryResponse[1].GetProperty("ids")[0].GetString());
+                folderQueryResponse[1].GetProperty("ids")[0].GetString(), StringComparer.Ordinal);
             Assert.IsFalse(folderQueryResponse[1].GetProperty("canCalculateChanges").GetBoolean());
             Assert.AreEqual(1, folderQueryResponse[1].GetProperty("total").GetInt32());
             var folderChangesCommand = jmap.Commands[21];
             Assert.AreEqual(MailOperationKind.FindFolderChanges, folderChangesCommand.Operation);
-            Assert.AreEqual("s52", folderChangesCommand.Arguments["sinceState"]!.GetValue<string>());
+            Assert.AreEqual("s52", folderChangesCommand.Arguments["sinceState"]!.GetValue<string>(), StringComparer.Ordinal);
             Assert.AreEqual(2, folderChangesCommand.Arguments["maxChanges"]!.GetValue<int>());
             var folderChangesResponse = json.RootElement.GetProperty("methodResponses")[22];
-            Assert.AreEqual("Mailbox/queryChanges", folderChangesResponse[0].GetString());
-            Assert.AreEqual("call-23", folderChangesResponse[2].GetString());
+            Assert.AreEqual("Mailbox/queryChanges", folderChangesResponse[0].GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("call-23", folderChangesResponse[2].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("M22222222222222222222222222222222",
-                folderChangesResponse[1].GetProperty("removed")[0].GetString());
+                folderChangesResponse[1].GetProperty("removed")[0].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("M33333333333333333333333333333333",
-                folderChangesResponse[1].GetProperty("added")[0].GetProperty("id").GetString());
+                folderChangesResponse[1].GetProperty("added")[0].GetProperty("id").GetString(), StringComparer.Ordinal);
             var contactCopyCommand = jmap.Commands[22];
             Assert.AreEqual(MailOperationKind.CopyContacts, contactCopyCommand.Operation);
             Assert.AreEqual("11111111-1111-1111-1111-111111111111",
-                contactCopyCommand.Arguments["sourceAccountId"]!.GetValue<string>());
+                contactCopyCommand.Arguments["sourceAccountId"]!.GetValue<string>(), StringComparer.Ordinal);
             Assert.AreEqual("22222222-2222-2222-2222-222222222222",
-                contactCopyCommand.Arguments["targetAccountId"]!.GetValue<string>());
-            Assert.AreEqual("copy", contactCopyCommand.Arguments["creationIds"]![0]!.GetValue<string>());
+                contactCopyCommand.Arguments["targetAccountId"]!.GetValue<string>(), StringComparer.Ordinal);
+            Assert.AreEqual("copy", contactCopyCommand.Arguments["creationIds"]![0]!.GetValue<string>(), StringComparer.Ordinal);
             Assert.IsFalse(contactCopyCommand.Arguments.ContainsKey("create"));
             var contactCopyResponse = json.RootElement.GetProperty("methodResponses")[23];
-            Assert.AreEqual("ContactCard/copy", contactCopyResponse[0].GetString());
-            Assert.AreEqual("call-24", contactCopyResponse[2].GetString());
+            Assert.AreEqual("ContactCard/copy", contactCopyResponse[0].GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("call-24", contactCopyResponse[2].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("forbidden", contactCopyResponse[1].GetProperty("notCreated")
-                .GetProperty("copy").GetProperty("type").GetString());
+                .GetProperty("copy").GetProperty("type").GetString(), StringComparer.Ordinal);
             var contactQueryCommand = jmap.Commands[23];
             Assert.AreEqual(MailOperationKind.FindContacts, contactQueryCommand.Operation);
             Assert.AreEqual("11111111-1111-1111-1111-111111111111",
-                contactQueryCommand.Arguments["accountId"]!.GetValue<string>());
-            Assert.AreEqual("person@example.test", contactQueryCommand.Arguments["criteria"]!["filter"]!["terms"]![0]!["value"]!.GetValue<string>());
+                contactQueryCommand.Arguments["accountId"]!.GetValue<string>(), StringComparer.Ordinal);
+            Assert.AreEqual("person@example.test", contactQueryCommand.Arguments["criteria"]!["filter"]!["terms"]![0]!["value"]!.GetValue<string>(), StringComparer.Ordinal);
             Assert.IsFalse(contactQueryCommand.Arguments.ContainsKey("filter"));
             var contactQueryResponse = json.RootElement.GetProperty("methodResponses")[24];
-            Assert.AreEqual("ContactCard/query", contactQueryResponse[0].GetString());
-            Assert.AreEqual("call-25", contactQueryResponse[2].GetString());
+            Assert.AreEqual("ContactCard/query", contactQueryResponse[0].GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("call-25", contactQueryResponse[2].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("C22222222222222222222222222222222",
-                contactQueryResponse[1].GetProperty("ids")[0].GetString());
+                contactQueryResponse[1].GetProperty("ids")[0].GetString(), StringComparer.Ordinal);
             Assert.AreEqual(1, contactQueryResponse[1].GetProperty("total").GetInt32());
             var contactChangesCommand = jmap.Commands[24];
             Assert.AreEqual(MailOperationKind.FindContactChanges, contactChangesCommand.Operation);
-            Assert.AreEqual("s55", contactChangesCommand.Arguments["sinceState"]!.GetValue<string>());
+            Assert.AreEqual("s55", contactChangesCommand.Arguments["sinceState"]!.GetValue<string>(), StringComparer.Ordinal);
             Assert.AreEqual(2, contactChangesCommand.Arguments["maxChanges"]!.GetValue<int>());
             var contactChangesResponse = json.RootElement.GetProperty("methodResponses")[25];
-            Assert.AreEqual("ContactCard/queryChanges", contactChangesResponse[0].GetString());
-            Assert.AreEqual("call-26", contactChangesResponse[2].GetString());
+            Assert.AreEqual("ContactCard/queryChanges", contactChangesResponse[0].GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("call-26", contactChangesResponse[2].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("C22222222222222222222222222222222",
-                contactChangesResponse[1].GetProperty("removed")[0].GetString());
+                contactChangesResponse[1].GetProperty("removed")[0].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("C33333333333333333333333333333333",
-                contactChangesResponse[1].GetProperty("added")[0].GetProperty("id").GetString());
+                contactChangesResponse[1].GetProperty("added")[0].GetProperty("id").GetString(), StringComparer.Ordinal);
             var contactReadCommand = jmap.Commands[25];
             Assert.AreEqual(MailOperationKind.ReadContacts, contactReadCommand.Operation);
             Assert.AreEqual("11111111-1111-1111-1111-111111111111",
-                contactReadCommand.Arguments["accountId"]!.GetValue<string>());
+                contactReadCommand.Arguments["accountId"]!.GetValue<string>(), StringComparer.Ordinal);
             Assert.AreEqual(2, contactReadCommand.Arguments["cardIds"]!.AsArray().Count);
             Assert.IsFalse(contactReadCommand.Arguments.ContainsKey("properties"));
             var contactReadResponse = json.RootElement.GetProperty("methodResponses")[26];
-            Assert.AreEqual("ContactCard/get", contactReadResponse[0].GetString());
-            Assert.AreEqual("call-27", contactReadResponse[2].GetString());
+            Assert.AreEqual("ContactCard/get", contactReadResponse[0].GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("call-27", contactReadResponse[2].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("contact-uid", contactReadResponse[1].GetProperty("list")[0]
-                .GetProperty("uid").GetString());
+                .GetProperty("uid").GetString(), StringComparer.Ordinal);
             Assert.AreEqual("D44444444444444444444444444444444", contactReadResponse[1]
-                .GetProperty("list")[0].GetProperty("addressBookIds").EnumerateObject().Single().Name);
+                .GetProperty("list")[0].GetProperty("addressBookIds").EnumerateObject().Single().Name, StringComparer.Ordinal);
             Assert.IsFalse(contactReadResponse[1].GetProperty("list")[0].TryGetProperty("version", out _));
             Assert.AreEqual("C33333333333333333333333333333333", contactReadResponse[1]
-                .GetProperty("notFound")[0].GetString());
+                .GetProperty("notFound")[0].GetString(), StringComparer.Ordinal);
             var importCommand = jmap.Commands[26];
             Assert.AreEqual(MailOperationKind.ImportMessages, importCommand.Operation);
             Assert.AreEqual("11111111-1111-1111-1111-111111111111",
-                importCommand.Arguments["accountId"]!.GetValue<string>());
-            Assert.AreEqual("draft", importCommand.Arguments["items"]![0]!["creationId"]!.GetValue<string>());
+                importCommand.Arguments["accountId"]!.GetValue<string>(), StringComparer.Ordinal);
+            Assert.AreEqual("draft", importCommand.Arguments["items"]![0]!["creationId"]!.GetValue<string>(), StringComparer.Ordinal);
             Assert.AreEqual("33333333-3333-3333-3333-333333333333",
-                importCommand.Arguments["items"]![0]!["mailboxId"]!.GetValue<string>());
+                importCommand.Arguments["items"]![0]!["mailboxId"]!.GetValue<string>(), StringComparer.Ordinal);
             Assert.IsFalse(importCommand.Arguments.ContainsKey("emails"));
             var importResponse = json.RootElement.GetProperty("methodResponses")[27];
-            Assert.AreEqual("Email/import", importResponse[0].GetString());
-            Assert.AreEqual("call-28", importResponse[2].GetString());
+            Assert.AreEqual("Email/import", importResponse[0].GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("call-28", importResponse[2].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("E55555555555555555555555555555555", importResponse[1]
-                .GetProperty("created").GetProperty("draft").GetProperty("id").GetString());
+                .GetProperty("created").GetProperty("draft").GetProperty("id").GetString(), StringComparer.Ordinal);
             Assert.AreEqual("B55555555555555555555555555555555", importResponse[1]
-                .GetProperty("created").GetProperty("draft").GetProperty("blobId").GetString());
+                .GetProperty("created").GetProperty("draft").GetProperty("blobId").GetString(), StringComparer.Ordinal);
             var emailCopyCommand = jmap.Commands[27];
             Assert.AreEqual(MailOperationKind.CopyMessages, emailCopyCommand.Operation);
             Assert.AreEqual("11111111-1111-1111-1111-111111111111",
-                emailCopyCommand.Arguments["sourceAccountId"]!.GetValue<string>());
+                emailCopyCommand.Arguments["sourceAccountId"]!.GetValue<string>(), StringComparer.Ordinal);
             Assert.AreEqual("22222222-2222-2222-2222-222222222222",
-                emailCopyCommand.Arguments["targetAccountId"]!.GetValue<string>());
+                emailCopyCommand.Arguments["targetAccountId"]!.GetValue<string>(), StringComparer.Ordinal);
             Assert.AreEqual("11111111-1111-1111-1111-111111111111",
-                emailCopyCommand.Arguments["items"]![0]!["sourceEmailId"]!.GetValue<string>());
+                emailCopyCommand.Arguments["items"]![0]!["sourceEmailId"]!.GetValue<string>(), StringComparer.Ordinal);
             Assert.IsFalse(emailCopyCommand.Arguments.ContainsKey("create"));
             var emailCopyResponse = json.RootElement.GetProperty("methodResponses")[28];
-            Assert.AreEqual("Email/copy", emailCopyResponse[0].GetString());
-            Assert.AreEqual("call-29", emailCopyResponse[2].GetString());
+            Assert.AreEqual("Email/copy", emailCopyResponse[0].GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("call-29", emailCopyResponse[2].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("E77777777777777777777777777777777", emailCopyResponse[1]
-                .GetProperty("created").GetProperty("copied").GetProperty("id").GetString());
+                .GetProperty("created").GetProperty("copied").GetProperty("id").GetString(), StringComparer.Ordinal);
             var destroyResponse = json.RootElement.GetProperty("methodResponses")[29];
-            Assert.AreEqual("Email/set", destroyResponse[0].GetString());
+            Assert.AreEqual("Email/set", destroyResponse[0].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("E11111111111111111111111111111111", destroyResponse[1]
-                .GetProperty("destroyed")[0].GetString());
+                .GetProperty("destroyed")[0].GetString(), StringComparer.Ordinal);
             var messageQueryCommand = jmap.Commands[28];
             Assert.AreEqual(MailOperationKind.FindMessages, messageQueryCommand.Operation);
             Assert.AreEqual("11111111-1111-1111-1111-111111111111",
-                messageQueryCommand.Arguments["accountId"]!.GetValue<string>());
+                messageQueryCommand.Arguments["accountId"]!.GetValue<string>(), StringComparer.Ordinal);
             Assert.AreEqual("needle", messageQueryCommand.Arguments["criteria"]!["filter"]!["terms"]![0]!["text"]!
-                .GetValue<string>());
+                .GetValue<string>(), StringComparer.Ordinal);
             Assert.AreEqual("$seen", messageQueryCommand.Arguments["criteria"]!["filter"]!["terms"]![1]!["text"]!
-                .GetValue<string>());
+                .GetValue<string>(), StringComparer.Ordinal);
             Assert.AreEqual(1, messageQueryCommand.Arguments["limit"]!.GetValue<int>());
             Assert.IsFalse(messageQueryCommand.Arguments.ContainsKey("filter"));
             var messageQueryResponse = json.RootElement.GetProperty("methodResponses")[30];
-            Assert.AreEqual("Email/query", messageQueryResponse[0].GetString());
-            Assert.AreEqual("call-30", messageQueryResponse[2].GetString());
+            Assert.AreEqual("Email/query", messageQueryResponse[0].GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("call-30", messageQueryResponse[2].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("E22222222222222222222222222222222",
-                messageQueryResponse[1].GetProperty("ids")[0].GetString());
+                messageQueryResponse[1].GetProperty("ids")[0].GetString(), StringComparer.Ordinal);
             Assert.AreEqual(1, messageQueryResponse[1].GetProperty("total").GetInt32());
             var messageChangesCommand = jmap.Commands[29];
             Assert.AreEqual(MailOperationKind.FindMessageChanges, messageChangesCommand.Operation);
-            Assert.AreEqual("s62", messageChangesCommand.Arguments["sinceState"]!.GetValue<string>());
+            Assert.AreEqual("s62", messageChangesCommand.Arguments["sinceState"]!.GetValue<string>(), StringComparer.Ordinal);
             Assert.AreEqual(2, messageChangesCommand.Arguments["maxChanges"]!.GetValue<int>());
             var messageChangesResponse = json.RootElement.GetProperty("methodResponses")[31];
-            Assert.AreEqual("Email/queryChanges", messageChangesResponse[0].GetString());
-            Assert.AreEqual("call-31", messageChangesResponse[2].GetString());
+            Assert.AreEqual("Email/queryChanges", messageChangesResponse[0].GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("call-31", messageChangesResponse[2].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("E22222222222222222222222222222222",
-                messageChangesResponse[1].GetProperty("removed")[0].GetString());
+                messageChangesResponse[1].GetProperty("removed")[0].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("E33333333333333333333333333333333",
-                messageChangesResponse[1].GetProperty("added")[0].GetProperty("id").GetString());
+                messageChangesResponse[1].GetProperty("added")[0].GetProperty("id").GetString(), StringComparer.Ordinal);
             var snippetCommand = jmap.Commands[30];
             Assert.AreEqual(MailOperationKind.ReadSearchSnippets, snippetCommand.Operation);
             Assert.IsFalse(snippetCommand.Arguments.ContainsKey("filter"));
-            Assert.AreEqual("needle", snippetCommand.Arguments["terms"]![0]!.GetValue<string>());
+            Assert.AreEqual("needle", snippetCommand.Arguments["terms"]![0]!.GetValue<string>(), StringComparer.Ordinal);
             Assert.AreEqual(1, snippetCommand.Arguments["messageIds"]!.AsArray().Count);
             var snippetResponse = json.RootElement.GetProperty("methodResponses")[32];
-            Assert.AreEqual("SearchSnippet/get", snippetResponse[0].GetString());
-            Assert.AreEqual("call-32", snippetResponse[2].GetString());
+            Assert.AreEqual("SearchSnippet/get", snippetResponse[0].GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("call-32", snippetResponse[2].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("<mark>needle</mark> subject",
-                snippetResponse[1].GetProperty("list")[0].GetProperty("subject").GetString());
-            Assert.AreEqual("missing", snippetResponse[1].GetProperty("notFound")[0].GetString());
+                snippetResponse[1].GetProperty("list")[0].GetProperty("subject").GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("missing", snippetResponse[1].GetProperty("notFound")[0].GetString(), StringComparer.Ordinal);
             var identitySetCommand = jmap.Commands[31];
             Assert.AreEqual(MailOperationKind.MutateSenderIdentities, identitySetCommand.Operation);
             Assert.AreEqual("person@example.test", identitySetCommand.Arguments["creates"]![0]!["values"]!["email"]!
-                .GetValue<string>());
+                .GetValue<string>(), StringComparer.Ordinal);
             Assert.IsFalse(identitySetCommand.Arguments.ContainsKey("create"));
             var identitySetResponse = json.RootElement.GetProperty("methodResponses")[33];
-            Assert.AreEqual("Identity/set", identitySetResponse[0].GetString());
+            Assert.AreEqual("Identity/set", identitySetResponse[0].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("I55555555555555555555555555555555",
                 identitySetResponse[1].GetProperty("created").GetProperty("route-identity")
-                    .GetProperty("id").GetString());
+                    .GetProperty("id").GetString(), StringComparer.Ordinal);
             var bookSetCommand = jmap.Commands[32];
             Assert.AreEqual(MailOperationKind.MutateAddressBooks, bookSetCommand.Operation);
             Assert.AreEqual("Route Book", bookSetCommand.Arguments["creates"]![0]!["values"]!["name"]!
-                .GetValue<string>());
+                .GetValue<string>(), StringComparer.Ordinal);
             Assert.AreEqual("route-book", bookSetCommand.Arguments["onSuccessSetIsDefault"]!["createdKey"]!
-                .GetValue<string>());
+                .GetValue<string>(), StringComparer.Ordinal);
             Assert.IsFalse(bookSetCommand.Arguments.ContainsKey("create"));
             var bookSetResponse = json.RootElement.GetProperty("methodResponses")[34];
-            Assert.AreEqual("AddressBook/set", bookSetResponse[0].GetString());
+            Assert.AreEqual("AddressBook/set", bookSetResponse[0].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("D88888888888888888888888888888888",
-                bookSetResponse[1].GetProperty("created").GetProperty("route-book").GetProperty("id").GetString());
+                bookSetResponse[1].GetProperty("created").GetProperty("route-book").GetProperty("id").GetString(), StringComparer.Ordinal);
             Assert.IsTrue(bookSetResponse[1].GetProperty("created").GetProperty("route-book")
                 .GetProperty("isDefault").GetBoolean());
             Assert.IsFalse(bookSetResponse[1].GetProperty("updated").GetProperty("D22222222222222222222222222222222")
@@ -641,83 +647,88 @@ public sealed class JmapGatewayRouteTests
             var pushSetCommand = jmap.Commands[33];
             Assert.AreEqual(MailOperationKind.MutateNotificationSubscriptions, pushSetCommand.Operation);
             Assert.AreEqual("route-device", pushSetCommand.Arguments["creates"]![0]!["values"]!["deviceClientId"]!
-                .GetValue<string>());
+                .GetValue<string>(), StringComparer.Ordinal);
             Assert.IsFalse(pushSetCommand.Arguments.ContainsKey("create"));
             var pushSetResponse = json.RootElement.GetProperty("methodResponses")[35];
-            Assert.AreEqual("PushSubscription/set", pushSetResponse[0].GetString());
+            Assert.AreEqual("PushSubscription/set", pushSetResponse[0].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("P99999999999999999999999999999999",
-                pushSetResponse[1].GetProperty("created").GetProperty("route-push").GetProperty("id").GetString());
+                pushSetResponse[1].GetProperty("created").GetProperty("route-push").GetProperty("id").GetString(), StringComparer.Ordinal);
             var contactSetCommand = jmap.Commands[34];
             Assert.AreEqual(MailOperationKind.MutateContacts, contactSetCommand.Operation);
             Assert.IsFalse(contactSetCommand.Arguments.ContainsKey("create"));
             Assert.AreEqual("88888888-8888-8888-8888-888888888888",
-                contactSetCommand.Arguments["creates"]![0]!["addressBookId"]!.GetValue<string>());
+                contactSetCommand.Arguments["creates"]![0]!["addressBookId"]!.GetValue<string>(), StringComparer.Ordinal);
             var contactSetResponse = json.RootElement.GetProperty("methodResponses")[36];
-            Assert.AreEqual("ContactCard/set", contactSetResponse[0].GetString());
+            Assert.AreEqual("ContactCard/set", contactSetResponse[0].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("C77777777777777777777777777777777",
                 contactSetResponse[1].GetProperty("created").GetProperty("route-card")
-                    .GetProperty("id").GetString());
+                    .GetProperty("id").GetString(), StringComparer.Ordinal);
             var folderSetCommand = jmap.Commands[35];
             Assert.AreEqual(MailOperationKind.MutateFolders, folderSetCommand.Operation);
             Assert.IsFalse(folderSetCommand.Arguments.ContainsKey("create"));
             Assert.AreEqual("route-folder", folderSetCommand.Arguments["creates"]![0]!["creationId"]!
-                .GetValue<string>());
+                .GetValue<string>(), StringComparer.Ordinal);
             var folderSetResponse = json.RootElement.GetProperty("methodResponses")[37];
-            Assert.AreEqual("Mailbox/set", folderSetResponse[0].GetString());
+            Assert.AreEqual("Mailbox/set", folderSetResponse[0].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("Maaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 folderSetResponse[1].GetProperty("created").GetProperty("route-folder")
-                    .GetProperty("id").GetString());
+                    .GetProperty("id").GetString(), StringComparer.Ordinal);
             var messageReadCommand = jmap.Commands[36];
             Assert.AreEqual(MailOperationKind.ReadMessages, messageReadCommand.Operation);
             Assert.IsFalse(messageReadCommand.Arguments.ContainsKey("ids"));
             Assert.AreEqual("22222222-2222-2222-2222-222222222222",
-                messageReadCommand.Arguments["messageIds"]![0]!.GetValue<string>());
+                messageReadCommand.Arguments["messageIds"]![0]!.GetValue<string>(), StringComparer.Ordinal);
             var messageReadResponse = json.RootElement.GetProperty("methodResponses")[38];
-            Assert.AreEqual("Email/get", messageReadResponse[0].GetString());
+            Assert.AreEqual("Email/get", messageReadResponse[0].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("Route Subject", messageReadResponse[1].GetProperty("list")[0]
-                .GetProperty("subject").GetString());
-            Assert.AreEqual("missing", messageReadResponse[1].GetProperty("notFound")[0].GetString());
+                .GetProperty("subject").GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("missing", messageReadResponse[1].GetProperty("notFound")[0].GetString(), StringComparer.Ordinal);
             var messageParseCommand = jmap.Commands[37];
             Assert.AreEqual(MailOperationKind.ParseMessages, messageParseCommand.Operation);
             Assert.IsFalse(messageParseCommand.Arguments.ContainsKey("projection"));
             Assert.IsFalse(messageParseCommand.Arguments["includeText"]!.GetValue<bool>());
             var messageParseResponse = json.RootElement.GetProperty("methodResponses")[39];
-            Assert.AreEqual("Email/parse", messageParseResponse[0].GetString());
+            Assert.AreEqual("Email/parse", messageParseResponse[0].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("Parsed Subject", messageParseResponse[1].GetProperty("parsed")
-                .GetProperty("U44444444444444444444444444444444").GetProperty("subject").GetString());
-            Assert.AreEqual("Umissing", messageParseResponse[1].GetProperty("notFound")[0].GetString());
+                .GetProperty("U44444444444444444444444444444444").GetProperty("subject").GetString(), StringComparer.Ordinal);
+            Assert.AreEqual("Umissing", messageParseResponse[1].GetProperty("notFound")[0].GetString(), StringComparer.Ordinal);
             var messageSetCommand = jmap.Commands[38];
             Assert.AreEqual(MailOperationKind.MutateMessages, messageSetCommand.Operation);
             Assert.IsFalse(messageSetCommand.Arguments.ContainsKey("create"));
             Assert.AreEqual("route-email", messageSetCommand.Arguments["creates"]![0]!["creationId"]!
-                .GetValue<string>());
+                .GetValue<string>(), StringComparer.Ordinal);
             var messageSetResponse = json.RootElement.GetProperty("methodResponses")[40];
-            Assert.AreEqual("Email/set", messageSetResponse[0].GetString());
+            Assert.AreEqual("Email/set", messageSetResponse[0].GetString(), StringComparer.Ordinal);
             Assert.AreEqual("Ebbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", messageSetResponse[1]
-                .GetProperty("created").GetProperty("route-email").GetProperty("id").GetString());
+                .GetProperty("created").GetProperty("route-email").GetProperty("id").GetString(), StringComparer.Ordinal);
 
-            await using var countCommand = gatewayDataSource.CreateCommand(
+            var countCommand = gatewayDataSource.CreateCommand(
                 "SELECT count(*), count(*) FILTER (WHERE metadata ->> 'layer' = 'presentation') "
                 + "FROM gateway_traffic_records WHERE protocol = 'jmap'");
-            await using var countReader = await countCommand.ExecuteReaderAsync(timeout.Token);
-            Assert.IsTrue(await countReader.ReadAsync(timeout.Token));
+            await using var countCommandLifetime = countCommand.ConfigureAwait(false);
+            var countReader = (await countCommand.ExecuteReaderAsync(timeout.Token).ConfigureAwait(false));
+            await using var countReaderLifetime = countReader.ConfigureAwait(false);
+            Assert.IsTrue(await countReader.ReadAsync(timeout.Token).ConfigureAwait(false));
             // SSE records its headers and streamed body separately, in addition
             // to the request and two application-boundary records.
             Assert.AreEqual(91L, countReader.GetInt64(0));
             Assert.AreEqual(7L, countReader.GetInt64(1));
 
-            await using var operationCommand = gatewayDataSource.CreateCommand(
+            var operationCommand = gatewayDataSource.CreateCommand(
                 "SELECT operation FROM application_requests WHERE operation = @operation LIMIT 1");
+            await using var operationCommandLifetime = operationCommand.ConfigureAwait(false);
             operationCommand.Parameters.AddWithValue("operation", ApplicationOperations.MailOperationExecute);
             Assert.AreEqual(
                 ApplicationOperations.MailOperationExecute,
-                await operationCommand.ExecuteScalarAsync(timeout.Token));
-            await using var ciphertextCommand = gatewayDataSource.CreateCommand(
+                await operationCommand.ExecuteScalarAsync(timeout.Token).ConfigureAwait(false));
+            var ciphertextCommand = gatewayDataSource.CreateCommand(
                 "SELECT payload_inline FROM gateway_traffic_records WHERE payload_inline IS NOT NULL");
-            await using var ciphertextReader = await ciphertextCommand.ExecuteReaderAsync(timeout.Token);
-            while (await ciphertextReader.ReadAsync(timeout.Token))
+            await using var ciphertextCommandLifetime = ciphertextCommand.ConfigureAwait(false);
+            var ciphertextReader = (await ciphertextCommand.ExecuteReaderAsync(timeout.Token).ConfigureAwait(false));
+            await using var ciphertextReaderLifetime = ciphertextReader.ConfigureAwait(false);
+            while (await ciphertextReader.ReadAsync(timeout.Token).ConfigureAwait(false))
             {
-                var ciphertext = ciphertextReader.GetFieldValue<byte[]>(0);
+                var ciphertext = await (ciphertextReader.GetFieldValueAsync<byte[]>(0)).ConfigureAwait(false);
                 Assert.IsFalse(
                     Encoding.UTF8.GetString(ciphertext)
                         .Contains("route-password-secret", StringComparison.Ordinal));
@@ -725,16 +736,16 @@ public sealed class JmapGatewayRouteTests
         }
         finally
         {
-            await application.StopAsync(timeout.Token);
-            await application.DisposeAsync();
-            await worker.StopAsync(timeout.Token);
+            await application.StopAsync(timeout.Token).ConfigureAwait(false);
+            await application.DisposeAsync().ConfigureAwait(false);
+            await worker.StopAsync(timeout.Token).ConfigureAwait(false);
             worker.Dispose();
         }
     }
 
     private static async Task<PostgresTestDatabase> RequirePostgresAsync()
     {
-        var database = await PostgresTestDatabase.TryCreateAsync();
+        var database = await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false);
         if (database is null)
         {
             Assert.Inconclusive(
@@ -779,366 +790,8 @@ public sealed class JmapGatewayRouteTests
             Request ??= request;
             Executions++;
             Commands.Add(request.Command);
-            if (request.Command.Operation == MailOperationKind.MutateSubmissions)
-            {
-                var creates = Executions == 1
-                    ? new MailSubmissionCreateOutcome[]
-                    {
-                        new("route", null, new(MailSubmissionMutationError.InvalidProperties,
-                            null, null, null, null, null)),
-                    }
-                    : [];
-                var mutation = new MailSubmissionMutationResult(MailSubmissionMutationStatus.Ok,
-                    "s40", "s40", creates, [], [], null, null);
-                var node = JsonSerializer.SerializeToNode(mutation,
-                    new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                    OperationResult: new(new(MailOperationKind.MutateSubmissions,
-                        ApplicationValueCodec.Encode(node)), request.Command.KnownEntities!, Profile)));
-            }
-            if (request.Command.Operation == MailOperationKind.ReadFolders)
-            {
-                var read = new MailFolderReadResult(MailFolderReadStatus.Ok, "s42",
-                    [new MailFolderSnapshot(Guid.Parse("22222222-2222-2222-2222-222222222222"),
-                        "Inbox", null, "inbox", 0, true, 2, 1, 2, 1, true)]);
-                var node = JsonSerializer.SerializeToNode(read, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                    OperationResult: new(new(MailOperationKind.ReadFolders, ApplicationValueCodec.Encode(node)),
-                        request.Command.KnownEntities!, Profile)));
-            }
-            if (MailChangeOperations.TryGetFeature(request.Command.Operation, out _))
-            {
-                var objectId = request.Command.Operation switch
-                {
-                    MailOperationKind.ReadFolderChanges => "M22222222222222222222222222222222",
-                    MailOperationKind.ReadThreadChanges => "T22222222222222222222222222222222",
-                    MailOperationKind.ReadMessageChanges => "E22222222222222222222222222222222",
-                    MailOperationKind.ReadSenderIdentityChanges => "I22222222222222222222222222222222",
-                    MailOperationKind.ReadSubmissionChanges => "S22222222222222222222222222222222",
-                    MailOperationKind.ReadAddressBookChanges => "D22222222222222222222222222222222",
-                    MailOperationKind.ReadContactChanges => "C22222222222222222222222222222222",
-                    _ => throw new InvalidOperationException(),
-                };
-                var changes = new MailChangesResult(MailChangesStatus.Ok, "s0", "s42", false,
-                    [objectId], [], []);
-                var node = JsonSerializer.SerializeToNode(changes, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                    OperationResult: new(new(request.Command.Operation, ApplicationValueCodec.Encode(node)),
-                        request.Command.KnownEntities!, Profile)));
-            }
-            if (request.Command.Operation == MailOperationKind.ReadAddressBooks)
-            {
-                var books = new MailAddressBookReadResult(MailAddressBookReadStatus.Ok, "s43",
-                    [new MailAddressBookSnapshot(Guid.Parse("22222222-2222-2222-2222-222222222222"),
-                        "Personal", "private", 0, true, true, true)]);
-                var node = JsonSerializer.SerializeToNode(books, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                    OperationResult: new(new(MailOperationKind.ReadAddressBooks, ApplicationValueCodec.Encode(node)),
-                        request.Command.KnownEntities!, Profile)));
-            }
-            if (request.Command.Operation == MailOperationKind.ReadSenderIdentities)
-            {
-                var identities = new MailIdentityReadResult(MailIdentityReadStatus.Ok, "s44",
-                    [new MailIdentitySnapshot(Guid.Parse("22222222-2222-2222-2222-222222222222"),
-                        "Sender", "sender@example.test",
-                        new MailIdentityAddressListSnapshot(
-                            [new MailIdentityAddressSnapshot("Reply", "reply@example.test")]), null,
-                        "", "", true)]);
-                var node = JsonSerializer.SerializeToNode(identities, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                    OperationResult: new(new(MailOperationKind.ReadSenderIdentities, ApplicationValueCodec.Encode(node)),
-                        request.Command.KnownEntities!, Profile)));
-            }
-            if (request.Command.Operation == MailOperationKind.ReadVacationSettings)
-            {
-                var vacation = new MailVacationReadResult(MailVacationReadStatus.Ok, "s45",
-                    new MailVacationSnapshot(true,
-                        new DateTime(2026, 9, 29, 12, 34, 56, DateTimeKind.Utc),
-                        null, "Away", "Away", null));
-                var node = JsonSerializer.SerializeToNode(vacation, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                    OperationResult: new(new(MailOperationKind.ReadVacationSettings, ApplicationValueCodec.Encode(node)),
-                        request.Command.KnownEntities!, Profile)));
-            }
-            if (request.Command.Operation == MailOperationKind.ReadNotificationSubscriptions)
-            {
-                var subscriptions = new MailPushSubscriptionReadResult(MailPushSubscriptionReadStatus.Ok,
-                    [new MailPushSubscriptionSnapshot(Guid.Parse("22222222-2222-2222-2222-222222222222"),
-                        "device", null, new DateTime(2026, 9, 29, 12, 34, 56, DateTimeKind.Utc),
-                        ["Mailbox"])]);
-                var node = JsonSerializer.SerializeToNode(subscriptions, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                    OperationResult: new(new(MailOperationKind.ReadNotificationSubscriptions, ApplicationValueCodec.Encode(node)),
-                        request.Command.KnownEntities!, Profile)));
-            }
-            if (request.Command.Operation == MailOperationKind.ReadThreads)
-            {
-                var threads = new MailThreadReadResult(MailThreadReadStatus.Ok, "s46",
-                    [new MailThreadEmailSnapshot(Guid.Parse("22222222-2222-2222-2222-222222222222"),
-                        "c!")]);
-                var node = JsonSerializer.SerializeToNode(threads, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                    OperationResult: new(new(MailOperationKind.ReadThreads, ApplicationValueCodec.Encode(node)),
-                        request.Command.KnownEntities!, Profile)));
-            }
-            if (request.Command.Operation == MailOperationKind.ReadSubmissions)
-            {
-                var submissions = new MailSubmissionReadResult(MailSubmissionReadStatus.Ok, "s47",
-                    [new MailSubmissionSnapshot(Guid.Parse("22222222-2222-2222-2222-222222222222"),
-                        "I11111111111111111111111111111111", "E11111111111111111111111111111111",
-                        "TYyE", new(new("sender@example.test", new Dictionary<string, string> { ["SIZE"] = "12" }), []),
-                        "sender@example.test", ["recipient@example.test"],
-                        new DateTime(2026, 9, 29, 12, 34, 56, DateTimeKind.Utc), "final",
-                        [new MailSubmissionDeliverySnapshot("recipient@example.test",
-                            MailSubmissionDeliveryState.Pending, null)])]);
-                var node = JsonSerializer.SerializeToNode(submissions, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                    OperationResult: new(new(MailOperationKind.ReadSubmissions, ApplicationValueCodec.Encode(node)),
-                        request.Command.KnownEntities!, Profile)));
-            }
-            if (request.Command.Operation == MailOperationKind.CopyBinaryObjects)
-            {
-                var copied = new MailBlobCopyResult(MailBlobCopyStatus.Ok,
-                    [new MailBlobCopyItemResult("U44444444444444444444444444444444",
-                        MailBlobCopyItemStatus.Copied, "U55555555555555555555555555555555"),
-                     new MailBlobCopyItemResult("U66666666666666666666666666666666",
-                        MailBlobCopyItemStatus.NotFound, null)]);
-                var node = JsonSerializer.SerializeToNode(copied, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                    OperationResult: new(new(MailOperationKind.CopyBinaryObjects, ApplicationValueCodec.Encode(node)),
-                        request.Command.KnownEntities!, Profile)));
-            }
-            if (request.Command.Operation == MailOperationKind.MutateVacationSettings)
-            {
-                var mutation = new MailVacationSetResult(MailVacationSetStatus.Ok, "s48", "s49", [new(true, [])]);
-                var node = JsonSerializer.SerializeToNode(mutation, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                    OperationResult: new(new(MailOperationKind.MutateVacationSettings, ApplicationValueCodec.Encode(node)),
-                        request.Command.KnownEntities!, Profile)));
-            }
-            if (request.Command.Operation == MailOperationKind.FindSubmissions)
-            {
-                var query = new MailSubmissionQueryResult(MailSubmissionQueryStatus.Ok, "s50", 0,
-                    [Guid.Parse("22222222-2222-2222-2222-222222222222")], 1);
-                var node = JsonSerializer.SerializeToNode(query, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                    OperationResult: new(new(MailOperationKind.FindSubmissions, ApplicationValueCodec.Encode(node)),
-                        request.Command.KnownEntities!, Profile)));
-            }
-            if (request.Command.Operation == MailOperationKind.FindSubmissionChanges)
-            {
-                var changes = new MailSubmissionQueryChangesResult(MailSubmissionQueryStatus.Ok, "s51",
-                    ["S22222222222222222222222222222222"],
-                    [new(Guid.Parse("33333333-3333-3333-3333-333333333333"), 0)], 1);
-                var node = JsonSerializer.SerializeToNode(changes, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                    OperationResult: new(new(MailOperationKind.FindSubmissionChanges, ApplicationValueCodec.Encode(node)),
-                        request.Command.KnownEntities!, Profile)));
-            }
-            if (request.Command.Operation == MailOperationKind.FindFolders)
-            {
-                var query = new MailFolderQueryResult(MailFolderQueryStatus.Ok, "s52", 0,
-                    [Guid.Parse("22222222-2222-2222-2222-222222222222")], 1);
-                var node = JsonSerializer.SerializeToNode(query, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                    OperationResult: new(new(MailOperationKind.FindFolders, ApplicationValueCodec.Encode(node)),
-                        request.Command.KnownEntities!, Profile)));
-            }
-            if (request.Command.Operation == MailOperationKind.FindFolderChanges)
-            {
-                var changes = new MailFolderQueryChangesResult(MailFolderQueryStatus.Ok, "s53",
-                    ["M22222222222222222222222222222222"],
-                    [new(Guid.Parse("33333333-3333-3333-3333-333333333333"), 0)], 1);
-                var node = JsonSerializer.SerializeToNode(changes, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                    OperationResult: new(new(MailOperationKind.FindFolderChanges, ApplicationValueCodec.Encode(node)),
-                        request.Command.KnownEntities!, Profile)));
-            }
-            if (request.Command.Operation == MailOperationKind.FindMessages)
-            {
-                var query = new MailMessageQueryResult(MailMessageQueryStatus.Ok, "s62", 0,
-                    [Guid.Parse("22222222-2222-2222-2222-222222222222")], 1);
-                var node = JsonSerializer.SerializeToNode(query, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                    OperationResult: new(new(MailOperationKind.FindMessages, ApplicationValueCodec.Encode(node)),
-                        request.Command.KnownEntities!, Profile)));
-            }
-            if (request.Command.Operation == MailOperationKind.FindMessageChanges)
-            {
-                var changes = new MailMessageQueryChangesResult(MailMessageQueryStatus.Ok, "s63",
-                    ["E22222222222222222222222222222222"],
-                    [new(Guid.Parse("33333333-3333-3333-3333-333333333333"), 0)], 1);
-                var node = JsonSerializer.SerializeToNode(changes, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                    OperationResult: new(new(MailOperationKind.FindMessageChanges, ApplicationValueCodec.Encode(node)),
-                        request.Command.KnownEntities!, Profile)));
-            }
-            if (request.Command.Operation == MailOperationKind.ReadSearchSnippets)
-            {
-                var snippets = new MailSearchSnippetResult(MailSearchSnippetStatus.Ok,
-                    [new(Guid.Parse("22222222-2222-2222-2222-222222222222"),
-                        "needle subject", "before needle after")]);
-                var node = JsonSerializer.SerializeToNode(snippets, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                    OperationResult: new(new(MailOperationKind.ReadSearchSnippets, ApplicationValueCodec.Encode(node)),
-                        request.Command.KnownEntities!, Profile)));
-            }
-            if (request.Command.Operation == MailOperationKind.MutateSenderIdentities)
-            {
-                var mutation = new MailIdentityMutationResult(MailIdentityMutationStatus.Ok, "s64", "s65",
-                    [new("route-identity", Guid.Parse("55555555-5555-5555-5555-555555555555"),
-                        MailIdentityMutationError.None)], [], []);
-                var node = JsonSerializer.SerializeToNode(mutation, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                    OperationResult: new(new(MailOperationKind.MutateSenderIdentities, ApplicationValueCodec.Encode(node)),
-                        request.Command.KnownEntities!, Profile)));
-            }
-            if (request.Command.Operation == MailOperationKind.MutateAddressBooks)
-            {
-                var created = new MailAddressBookSnapshot(Guid.Parse("88888888-8888-8888-8888-888888888888"),
-                    "Route Book", null, 0, true, true, true);
-                var formerDefault = new MailAddressBookSnapshot(Guid.Parse("22222222-2222-2222-2222-222222222222"),
-                    "Default", null, 0, false, true, true);
-                var mutation = new MailAddressBookMutationResult(MailAddressBookMutationStatus.Ok, "s66", "s67",
-                    [new("route-book", created, MailAddressBookMutationError.None, null)], [], [],
-                    [formerDefault, created]);
-                var node = JsonSerializer.SerializeToNode(mutation, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-                var known = request.Command.KnownEntities!.ToDictionary(item => item.Key, item => item.Value,
-                    StringComparer.Ordinal);
-                known["route-book"] = "D88888888888888888888888888888888";
-                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                    OperationResult: new(new(MailOperationKind.MutateAddressBooks, ApplicationValueCodec.Encode(node)),
-                        known, Profile)));
-            }
-            if (request.Command.Operation == MailOperationKind.MutateNotificationSubscriptions)
-            {
-                var mutation = new MailPushSubscriptionMutationResult(
-                    [new("route-push", Guid.Parse("99999999-9999-9999-9999-999999999999"),
-                        MailPushSubscriptionMutationError.None,
-                        new DateTime(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc), null, null)], [], []);
-                var node = JsonSerializer.SerializeToNode(mutation, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                    OperationResult: new(new(MailOperationKind.MutateNotificationSubscriptions,
-                        ApplicationValueCodec.Encode(node)), request.Command.KnownEntities!, Profile)));
-            }
-            if (request.Command.Operation == MailOperationKind.MutateContacts)
-            {
-                var card = new JsonObject { ["@type"] = "Card", ["version"] = "1.0", ["uid"] = "route-uid" };
-                var mutation = new MailContactMutationResult(MailContactMutationStatus.Ok, "s68", "s69",
-                    [new("route-card", Guid.Parse("77777777-7777-7777-7777-777777777777"),
-                        ApplicationValueCodec.Encode(card), MailContactMutationError.None, null)], [], []);
-                var node = JsonSerializer.SerializeToNode(mutation, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                    OperationResult: new(new(MailOperationKind.MutateContacts, ApplicationValueCodec.Encode(node)),
-                        request.Command.KnownEntities!, Profile)));
-            }
-            if (request.Command.Operation == MailOperationKind.MutateFolders)
-            {
-                var folder = new MailFolderCreatedSnapshot(
-                    Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"), "Route Folder", null, null, 0, true);
-                var mutation = new MailFolderMutationResult(MailFolderMutationStatus.Ok, "s70", "s71",
-                    [new("route-folder", folder, null)], [], []);
-                var node = JsonSerializer.SerializeToNode(mutation, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-                var known = request.Command.KnownEntities!.ToDictionary(item => item.Key, item => item.Value,
-                    StringComparer.Ordinal);
-                known["route-folder"] = "Maaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                    OperationResult: new(new(MailOperationKind.MutateFolders, ApplicationValueCodec.Encode(node)),
-                        known, Profile)));
-            }
-            if (request.Command.Operation == MailOperationKind.ReadMessages)
-            {
-                var id = Guid.Parse("22222222-2222-2222-2222-222222222222");
-                var read = new MailMessageReadResult(MailMessageReadStatus.Ok, "s72",
-                    [new(id, Snapshot(id, "Route Subject"))]);
-                var node = JsonSerializer.SerializeToNode(read, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                    OperationResult: new(new(MailOperationKind.ReadMessages, ApplicationValueCodec.Encode(node)),
-                        request.Command.KnownEntities!, Profile)));
-            }
-            if (request.Command.Operation == MailOperationKind.ParseMessages)
-            {
-                var parsed = new MailMessageParseResult(MailMessageParseStatus.Ok,
-                [
-                    new("U44444444444444444444444444444444", MailMessageParseItemStatus.Parsed,
-                        Snapshot(null, "Parsed Subject", "U44444444444444444444444444444444")),
-                    new("Umissing", MailMessageParseItemStatus.NotFound, null),
-                ]);
-                var node = JsonSerializer.SerializeToNode(parsed, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                    OperationResult: new(new(MailOperationKind.ParseMessages, ApplicationValueCodec.Encode(node)),
-                        request.Command.KnownEntities!, Profile)));
-            }
-            if (request.Command.Operation == MailOperationKind.MutateMessages)
-            {
-                var mutation = new MailMessageMutationResult(MailMessageMutationStatus.Ok, "s73", "s74",
-                    [new("route-email", new(Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"), "route-thread", 321), null)],
-                    [], []);
-                var node = JsonSerializer.SerializeToNode(mutation, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                    OperationResult: new(new(MailOperationKind.MutateMessages, ApplicationValueCodec.Encode(node)),
-                        request.Command.KnownEntities!, Profile)));
-            }
-            if (request.Command.Operation == MailOperationKind.CopyContacts)
-            {
-                var copy = new MailContactCopyResult(MailContactCopyStatus.Ok, "s54");
-                var node = JsonSerializer.SerializeToNode(copy, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                    OperationResult: new(new(MailOperationKind.CopyContacts, ApplicationValueCodec.Encode(node)),
-                        request.Command.KnownEntities!, Profile)));
-            }
-            if (request.Command.Operation == MailOperationKind.FindContacts)
-            {
-                var query = new MailContactQueryResult(MailContactQueryStatus.Ok, "s55", 0,
-                    [Guid.Parse("22222222-2222-2222-2222-222222222222")], 1);
-                var node = JsonSerializer.SerializeToNode(query, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                    OperationResult: new(new(MailOperationKind.FindContacts, ApplicationValueCodec.Encode(node)),
-                        request.Command.KnownEntities!, Profile)));
-            }
-            if (request.Command.Operation == MailOperationKind.FindContactChanges)
-            {
-                var changes = new MailContactQueryChangesResult(MailContactQueryStatus.Ok, "s56",
-                    ["C22222222222222222222222222222222"],
-                    [new(Guid.Parse("33333333-3333-3333-3333-333333333333"), 0)], 1);
-                var node = JsonSerializer.SerializeToNode(changes, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                    OperationResult: new(new(MailOperationKind.FindContactChanges, ApplicationValueCodec.Encode(node)),
-                        request.Command.KnownEntities!, Profile)));
-            }
-            if (request.Command.Operation == MailOperationKind.ReadContacts)
-            {
-                var read = new MailContactReadResult(MailContactReadStatus.Ok, "s57",
-                    [new MailContactCardSnapshot(Guid.Parse("22222222-2222-2222-2222-222222222222"),
-                        Guid.Parse("44444444-4444-4444-4444-444444444444"), "contact-uid",
-                        """{"@type":"Card","version":"1.0","uid":"contact-uid","name":{"full":"Contact Person"}}""")]);
-                var node = JsonSerializer.SerializeToNode(read, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                    OperationResult: new(new(MailOperationKind.ReadContacts, ApplicationValueCodec.Encode(node)),
-                        request.Command.KnownEntities!, Profile)));
-            }
-            if (request.Command.Operation == MailOperationKind.ImportMessages)
-            {
-                var imported = new MailImportResult(MailImportStatus.Ok, "s57", "s58",
-                    [new("draft", MailImportItemError.None,
-                        Guid.Parse("55555555-5555-5555-5555-555555555555"), "thread:import", 123)]);
-                var node = JsonSerializer.SerializeToNode(imported, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                    OperationResult: new(new(MailOperationKind.ImportMessages, ApplicationValueCodec.Encode(node)),
-                        request.Command.KnownEntities!, Profile)));
-            }
-            if (request.Command.Operation == MailOperationKind.CopyMessages)
-            {
-                var copied = new MailCopyResult(MailCopyStatus.Ok, "s59", "s60",
-                    [new("copied", MailCopyItemError.None,
-                        Guid.Parse("77777777-7777-7777-7777-777777777777"), "thread:copy", 234)],
-                    new(MailCopyDestroyStatus.Completed, "s58", "s61",
-                        [Guid.Parse("11111111-1111-1111-1111-111111111111")], []));
-                var node = JsonSerializer.SerializeToNode(copied, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
-                return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                    OperationResult: new(new(MailOperationKind.CopyMessages, ApplicationValueCodec.Encode(node)),
-                        request.Command.KnownEntities!, Profile)));
-            }
+
+            if (TryCreateKnownOperationResult(request, out var known)) return known;
             var data = (System.Text.Json.Nodes.JsonObject)request.Command.Arguments.DeepClone();
             if (Executions == 1)
             {
@@ -1146,8 +799,52 @@ public sealed class JmapGatewayRouteTests
                 data["\udfff"] = "second";
             }
             return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok,
-                OperationResult: new(new(request.Command.Operation, ApplicationValueCodec.Encode(data)),
-                    request.Command.KnownEntities!, Profile)));
+                            OperationResult: new(new(request.Command.Operation, ApplicationValueCodec.Encode(data)),
+                                request.Command.KnownEntities!, Profile)));
+        }
+
+
+        private bool TryCreateKnownOperationResult(MailOperationApplicationRequest request,
+            [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out Task<JmapApplicationResult>? result)
+        {
+            if (MailChangeOperations.TryGetFeature(request.Command.Operation, out _))
+            { result = CreateOperationResult3Async(request); return true; }
+            result = request.Command.Operation switch
+            {
+                MailOperationKind.MutateSubmissions => CreateOperationResult1Async(request),
+                MailOperationKind.ReadFolders => CreateOperationResult2Async(request),
+                MailOperationKind.ReadAddressBooks => CreateOperationResult4Async(request),
+                MailOperationKind.ReadSenderIdentities => CreateOperationResult5Async(request),
+                MailOperationKind.ReadVacationSettings => CreateOperationResult6Async(request),
+                MailOperationKind.ReadNotificationSubscriptions => CreateOperationResult7Async(request),
+                MailOperationKind.ReadThreads => CreateOperationResult8Async(request),
+                MailOperationKind.ReadSubmissions => CreateOperationResult9Async(request),
+                MailOperationKind.CopyBinaryObjects => CreateOperationResult10Async(request),
+                MailOperationKind.MutateVacationSettings => CreateOperationResult11Async(request),
+                MailOperationKind.FindSubmissions => CreateOperationResult12Async(request),
+                MailOperationKind.FindSubmissionChanges => CreateOperationResult13Async(request),
+                MailOperationKind.FindFolders => CreateOperationResult14Async(request),
+                MailOperationKind.FindFolderChanges => CreateOperationResult15Async(request),
+                MailOperationKind.FindMessages => CreateOperationResult16Async(request),
+                MailOperationKind.FindMessageChanges => CreateOperationResult17Async(request),
+                MailOperationKind.ReadSearchSnippets => CreateOperationResult18Async(request),
+                MailOperationKind.MutateSenderIdentities => CreateOperationResult19Async(request),
+                MailOperationKind.MutateAddressBooks => CreateOperationResult20Async(request),
+                MailOperationKind.MutateNotificationSubscriptions => CreateOperationResult21Async(request),
+                MailOperationKind.MutateContacts => CreateOperationResult22Async(request),
+                MailOperationKind.MutateFolders => CreateOperationResult23Async(request),
+                MailOperationKind.ReadMessages => CreateOperationResult24Async(request),
+                MailOperationKind.ParseMessages => CreateOperationResult25Async(request),
+                MailOperationKind.MutateMessages => CreateOperationResult26Async(request),
+                MailOperationKind.CopyContacts => CreateOperationResult27Async(request),
+                MailOperationKind.FindContacts => CreateOperationResult28Async(request),
+                MailOperationKind.FindContactChanges => CreateOperationResult29Async(request),
+                MailOperationKind.ReadContacts => CreateOperationResult30Async(request),
+                MailOperationKind.ImportMessages => CreateOperationResult31Async(request),
+                MailOperationKind.CopyMessages => CreateOperationResult32Async(request),
+                _ => null,
+            };
+            return result is not null;
         }
 
         public Task<JmapApplicationResult> UploadAsync(
@@ -1164,9 +861,235 @@ public sealed class JmapGatewayRouteTests
             JmapChangesApplicationRequest request,
             CancellationToken cancellationToken = default) =>
             Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, Cursor: 42,
-                Changes: new JmapApplicationChanges(new Dictionary<string, IReadOnlyDictionary<string, string>>
+                Changes: new JmapApplicationChanges(new Dictionary<string, IReadOnlyDictionary<string, string>>(StringComparer.Ordinal)
                 {
-                    ["account-id"] = new Dictionary<string, string> { ["Mailbox"] = "state-1" },
+                    ["account-id"] = new Dictionary<string, string>(StringComparer.Ordinal) { ["Mailbox"] = "state-1" },
                 })));
+        private static readonly JsonSerializerOptions SerializationOptions1 = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        private Task<JmapApplicationResult> CreateOperationResult1Async(MailOperationApplicationRequest request)
+        {
+            var creates = Executions == 1 ? new MailSubmissionCreateOutcome[]
+            {
+        new("route", null, new(MailSubmissionMutationError.InvalidProperties, null, null, null, null, null)),
+            }
+
+            : [];
+            var mutation = new MailSubmissionMutationResult(MailSubmissionMutationStatus.Ok, "s40", "s40", creates, [], [], null, null);
+            var node = JsonSerializer.SerializeToNode(mutation, SerializationOptions1)!;
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, OperationResult: new(new(MailOperationKind.MutateSubmissions, ApplicationValueCodec.Encode(node)), request.Command.KnownEntities!, Profile)));
+        }
+        private static Task<JmapApplicationResult> CreateOperationResult2Async(MailOperationApplicationRequest request)
+        {
+            var read = new MailFolderReadResult(MailFolderReadStatus.Ok, "s42", [new MailFolderSnapshot(Guid.Parse("22222222-2222-2222-2222-222222222222"), "Inbox", null, "inbox", 0, true, 2, 1, 2, 1, true)]);
+            var node = JsonSerializer.SerializeToNode(read, SerializationOptions1)!;
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, OperationResult: new(new(MailOperationKind.ReadFolders, ApplicationValueCodec.Encode(node)), request.Command.KnownEntities!, Profile)));
+        }
+        private static Task<JmapApplicationResult> CreateOperationResult3Async(MailOperationApplicationRequest request)
+        {
+            var objectId = request.Command.Operation switch
+            {
+                MailOperationKind.ReadFolderChanges => "M22222222222222222222222222222222",
+                MailOperationKind.ReadThreadChanges => "T22222222222222222222222222222222",
+                MailOperationKind.ReadMessageChanges => "E22222222222222222222222222222222",
+                MailOperationKind.ReadSenderIdentityChanges => "I22222222222222222222222222222222",
+                MailOperationKind.ReadSubmissionChanges => "S22222222222222222222222222222222",
+                MailOperationKind.ReadAddressBookChanges => "D22222222222222222222222222222222",
+                MailOperationKind.ReadContactChanges => "C22222222222222222222222222222222",
+                _ => throw new InvalidOperationException(),
+            };
+            var changes = new MailChangesResult(MailChangesStatus.Ok, "s0", "s42", false, [objectId], [], []);
+            var node = JsonSerializer.SerializeToNode(changes, SerializationOptions1)!;
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, OperationResult: new(new(request.Command.Operation, ApplicationValueCodec.Encode(node)), request.Command.KnownEntities!, Profile)));
+        }
+        private static Task<JmapApplicationResult> CreateOperationResult4Async(MailOperationApplicationRequest request)
+        {
+            var books = new MailAddressBookReadResult(MailAddressBookReadStatus.Ok, "s43", [new MailAddressBookSnapshot(Guid.Parse("22222222-2222-2222-2222-222222222222"), "Personal", "private", 0, true, true, true)]);
+            var node = JsonSerializer.SerializeToNode(books, SerializationOptions1)!;
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, OperationResult: new(new(MailOperationKind.ReadAddressBooks, ApplicationValueCodec.Encode(node)), request.Command.KnownEntities!, Profile)));
+        }
+        private static Task<JmapApplicationResult> CreateOperationResult5Async(MailOperationApplicationRequest request)
+        {
+            var identities = new MailIdentityReadResult(MailIdentityReadStatus.Ok, "s44", [new MailIdentitySnapshot(Guid.Parse("22222222-2222-2222-2222-222222222222"), "Sender", "sender@example.test", new MailIdentityAddressListSnapshot([new MailIdentityAddressSnapshot("Reply", "reply@example.test")]), null, "", "", true)]);
+            var node = JsonSerializer.SerializeToNode(identities, SerializationOptions1)!;
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, OperationResult: new(new(MailOperationKind.ReadSenderIdentities, ApplicationValueCodec.Encode(node)), request.Command.KnownEntities!, Profile)));
+        }
+        private static Task<JmapApplicationResult> CreateOperationResult6Async(MailOperationApplicationRequest request)
+        {
+            var vacation = new MailVacationReadResult(MailVacationReadStatus.Ok, "s45", new MailVacationSnapshot(true, new DateTime(2026, 9, 29, 12, 34, 56, DateTimeKind.Utc), null, "Away", "Away", null));
+            var node = JsonSerializer.SerializeToNode(vacation, SerializationOptions1)!;
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, OperationResult: new(new(MailOperationKind.ReadVacationSettings, ApplicationValueCodec.Encode(node)), request.Command.KnownEntities!, Profile)));
+        }
+        private static Task<JmapApplicationResult> CreateOperationResult7Async(MailOperationApplicationRequest request)
+        {
+            var subscriptions = new MailPushSubscriptionReadResult(MailPushSubscriptionReadStatus.Ok, [new MailPushSubscriptionSnapshot(Guid.Parse("22222222-2222-2222-2222-222222222222"), "device", null, new DateTime(2026, 9, 29, 12, 34, 56, DateTimeKind.Utc), ["Mailbox"])]);
+            var node = JsonSerializer.SerializeToNode(subscriptions, SerializationOptions1)!;
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, OperationResult: new(new(MailOperationKind.ReadNotificationSubscriptions, ApplicationValueCodec.Encode(node)), request.Command.KnownEntities!, Profile)));
+        }
+        private static Task<JmapApplicationResult> CreateOperationResult8Async(MailOperationApplicationRequest request)
+        {
+            var threads = new MailThreadReadResult(MailThreadReadStatus.Ok, "s46", [new MailThreadEmailSnapshot(Guid.Parse("22222222-2222-2222-2222-222222222222"), "c!")]);
+            var node = JsonSerializer.SerializeToNode(threads, SerializationOptions1)!;
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, OperationResult: new(new(MailOperationKind.ReadThreads, ApplicationValueCodec.Encode(node)), request.Command.KnownEntities!, Profile)));
+        }
+        private static Task<JmapApplicationResult> CreateOperationResult9Async(MailOperationApplicationRequest request)
+        {
+            var submissions = new MailSubmissionReadResult(MailSubmissionReadStatus.Ok, "s47", [new MailSubmissionSnapshot(Guid.Parse("22222222-2222-2222-2222-222222222222"), "I11111111111111111111111111111111", "E11111111111111111111111111111111", "TYyE", new(new("sender@example.test", new Dictionary<string, string>(StringComparer.Ordinal) { ["SIZE"] = "12" }), []), "sender@example.test", ["recipient@example.test"], new DateTime(2026, 9, 29, 12, 34, 56, DateTimeKind.Utc), "final", [new MailSubmissionDeliverySnapshot("recipient@example.test", MailSubmissionDeliveryState.Pending, null)])]);
+            var node = JsonSerializer.SerializeToNode(submissions, SerializationOptions1)!;
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, OperationResult: new(new(MailOperationKind.ReadSubmissions, ApplicationValueCodec.Encode(node)), request.Command.KnownEntities!, Profile)));
+        }
+        private static Task<JmapApplicationResult> CreateOperationResult10Async(MailOperationApplicationRequest request)
+        {
+            var copied = new MailBlobCopyResult(MailBlobCopyStatus.Ok, [new MailBlobCopyItemResult("U44444444444444444444444444444444", MailBlobCopyItemStatus.Copied, "U55555555555555555555555555555555"), new MailBlobCopyItemResult("U66666666666666666666666666666666", MailBlobCopyItemStatus.NotFound, null)]);
+            var node = JsonSerializer.SerializeToNode(copied, SerializationOptions1)!;
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, OperationResult: new(new(MailOperationKind.CopyBinaryObjects, ApplicationValueCodec.Encode(node)), request.Command.KnownEntities!, Profile)));
+        }
+        private static Task<JmapApplicationResult> CreateOperationResult11Async(MailOperationApplicationRequest request)
+        {
+            var mutation = new MailVacationSetResult(MailVacationSetStatus.Ok, "s48", "s49", [new(true, [])]);
+            var node = JsonSerializer.SerializeToNode(mutation, SerializationOptions1)!;
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, OperationResult: new(new(MailOperationKind.MutateVacationSettings, ApplicationValueCodec.Encode(node)), request.Command.KnownEntities!, Profile)));
+        }
+        private static Task<JmapApplicationResult> CreateOperationResult12Async(MailOperationApplicationRequest request)
+        {
+            var query = new MailSubmissionQueryResult(MailSubmissionQueryStatus.Ok, "s50", 0, [Guid.Parse("22222222-2222-2222-2222-222222222222")], 1);
+            var node = JsonSerializer.SerializeToNode(query, SerializationOptions1)!;
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, OperationResult: new(new(MailOperationKind.FindSubmissions, ApplicationValueCodec.Encode(node)), request.Command.KnownEntities!, Profile)));
+        }
+        private static Task<JmapApplicationResult> CreateOperationResult13Async(MailOperationApplicationRequest request)
+        {
+            var changes = new MailSubmissionQueryChangesResult(MailSubmissionQueryStatus.Ok, "s51", ["S22222222222222222222222222222222"], [new(Guid.Parse("33333333-3333-3333-3333-333333333333"), 0)], 1);
+            var node = JsonSerializer.SerializeToNode(changes, SerializationOptions1)!;
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, OperationResult: new(new(MailOperationKind.FindSubmissionChanges, ApplicationValueCodec.Encode(node)), request.Command.KnownEntities!, Profile)));
+        }
+        private static Task<JmapApplicationResult> CreateOperationResult14Async(MailOperationApplicationRequest request)
+        {
+            var query = new MailFolderQueryResult(MailFolderQueryStatus.Ok, "s52", 0, [Guid.Parse("22222222-2222-2222-2222-222222222222")], 1);
+            var node = JsonSerializer.SerializeToNode(query, SerializationOptions1)!;
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, OperationResult: new(new(MailOperationKind.FindFolders, ApplicationValueCodec.Encode(node)), request.Command.KnownEntities!, Profile)));
+        }
+        private static Task<JmapApplicationResult> CreateOperationResult15Async(MailOperationApplicationRequest request)
+        {
+            var changes = new MailFolderQueryChangesResult(MailFolderQueryStatus.Ok, "s53", ["M22222222222222222222222222222222"], [new(Guid.Parse("33333333-3333-3333-3333-333333333333"), 0)], 1);
+            var node = JsonSerializer.SerializeToNode(changes, SerializationOptions1)!;
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, OperationResult: new(new(MailOperationKind.FindFolderChanges, ApplicationValueCodec.Encode(node)), request.Command.KnownEntities!, Profile)));
+        }
+        private static Task<JmapApplicationResult> CreateOperationResult16Async(MailOperationApplicationRequest request)
+        {
+            var query = new MailMessageQueryResult(MailMessageQueryStatus.Ok, "s62", 0, [Guid.Parse("22222222-2222-2222-2222-222222222222")], 1);
+            var node = JsonSerializer.SerializeToNode(query, SerializationOptions1)!;
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, OperationResult: new(new(MailOperationKind.FindMessages, ApplicationValueCodec.Encode(node)), request.Command.KnownEntities!, Profile)));
+        }
+        private static Task<JmapApplicationResult> CreateOperationResult17Async(MailOperationApplicationRequest request)
+        {
+            var changes = new MailMessageQueryChangesResult(MailMessageQueryStatus.Ok, "s63", ["E22222222222222222222222222222222"], [new(Guid.Parse("33333333-3333-3333-3333-333333333333"), 0)], 1);
+            var node = JsonSerializer.SerializeToNode(changes, SerializationOptions1)!;
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, OperationResult: new(new(MailOperationKind.FindMessageChanges, ApplicationValueCodec.Encode(node)), request.Command.KnownEntities!, Profile)));
+        }
+        private static Task<JmapApplicationResult> CreateOperationResult18Async(MailOperationApplicationRequest request)
+        {
+            var snippets = new MailSearchSnippetResult(MailSearchSnippetStatus.Ok, [new(Guid.Parse("22222222-2222-2222-2222-222222222222"), "needle subject", "before needle after")]);
+            var node = JsonSerializer.SerializeToNode(snippets, SerializationOptions1)!;
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, OperationResult: new(new(MailOperationKind.ReadSearchSnippets, ApplicationValueCodec.Encode(node)), request.Command.KnownEntities!, Profile)));
+        }
+        private static Task<JmapApplicationResult> CreateOperationResult19Async(MailOperationApplicationRequest request)
+        {
+            var mutation = new MailIdentityMutationResult(MailIdentityMutationStatus.Ok, "s64", "s65", [new("route-identity", Guid.Parse("55555555-5555-5555-5555-555555555555"), MailIdentityMutationError.None)], [], []);
+            var node = JsonSerializer.SerializeToNode(mutation, SerializationOptions1)!;
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, OperationResult: new(new(MailOperationKind.MutateSenderIdentities, ApplicationValueCodec.Encode(node)), request.Command.KnownEntities!, Profile)));
+        }
+        private static Task<JmapApplicationResult> CreateOperationResult20Async(MailOperationApplicationRequest request)
+        {
+            var created = new MailAddressBookSnapshot(Guid.Parse("88888888-8888-8888-8888-888888888888"), "Route Book", null, 0, true, true, true);
+            var formerDefault = new MailAddressBookSnapshot(Guid.Parse("22222222-2222-2222-2222-222222222222"), "Default", null, 0, false, true, true);
+            var mutation = new MailAddressBookMutationResult(MailAddressBookMutationStatus.Ok, "s66", "s67", [new("route-book", created, MailAddressBookMutationError.None, null)], [], [], [formerDefault, created]);
+            var node = JsonSerializer.SerializeToNode(mutation, SerializationOptions1)!;
+            var known = request.Command.KnownEntities!.ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal);
+            known["route-book"] = "D88888888888888888888888888888888";
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, OperationResult: new(new(MailOperationKind.MutateAddressBooks, ApplicationValueCodec.Encode(node)), known, Profile)));
+        }
+        private static Task<JmapApplicationResult> CreateOperationResult21Async(MailOperationApplicationRequest request)
+        {
+            var mutation = new MailPushSubscriptionMutationResult([new("route-push", Guid.Parse("99999999-9999-9999-9999-999999999999"), MailPushSubscriptionMutationError.None, new DateTime(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc), null, null)], [], []);
+            var node = JsonSerializer.SerializeToNode(mutation, SerializationOptions1)!;
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, OperationResult: new(new(MailOperationKind.MutateNotificationSubscriptions, ApplicationValueCodec.Encode(node)), request.Command.KnownEntities!, Profile)));
+        }
+        private static Task<JmapApplicationResult> CreateOperationResult22Async(MailOperationApplicationRequest request)
+        {
+            var card = new JsonObject
+            {
+                ["@type"] = "Card",
+                ["version"] = "1.0",
+                ["uid"] = "route-uid"
+            };
+            var mutation = new MailContactMutationResult(MailContactMutationStatus.Ok, "s68", "s69", [new("route-card", Guid.Parse("77777777-7777-7777-7777-777777777777"), ApplicationValueCodec.Encode(card), MailContactMutationError.None, null)], [], []);
+            var node = JsonSerializer.SerializeToNode(mutation, SerializationOptions1)!;
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, OperationResult: new(new(MailOperationKind.MutateContacts, ApplicationValueCodec.Encode(node)), request.Command.KnownEntities!, Profile)));
+        }
+        private static Task<JmapApplicationResult> CreateOperationResult23Async(MailOperationApplicationRequest request)
+        {
+            var folder = new MailFolderCreatedSnapshot(Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"), "Route Folder", null, null, 0, true);
+            var mutation = new MailFolderMutationResult(MailFolderMutationStatus.Ok, "s70", "s71", [new("route-folder", folder, null)], [], []);
+            var node = JsonSerializer.SerializeToNode(mutation, SerializationOptions1)!;
+            var known = request.Command.KnownEntities!.ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal);
+            known["route-folder"] = "Maaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, OperationResult: new(new(MailOperationKind.MutateFolders, ApplicationValueCodec.Encode(node)), known, Profile)));
+        }
+        private static Task<JmapApplicationResult> CreateOperationResult24Async(MailOperationApplicationRequest request)
+        {
+            var id = Guid.Parse("22222222-2222-2222-2222-222222222222");
+            var read = new MailMessageReadResult(MailMessageReadStatus.Ok, "s72", [new(id, Snapshot(id, "Route Subject"))]);
+            var node = JsonSerializer.SerializeToNode(read, SerializationOptions1)!;
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, OperationResult: new(new(MailOperationKind.ReadMessages, ApplicationValueCodec.Encode(node)), request.Command.KnownEntities!, Profile)));
+        }
+        private static Task<JmapApplicationResult> CreateOperationResult25Async(MailOperationApplicationRequest request)
+        {
+            var parsed = new MailMessageParseResult(MailMessageParseStatus.Ok, [new("U44444444444444444444444444444444", MailMessageParseItemStatus.Parsed, Snapshot(null, "Parsed Subject", "U44444444444444444444444444444444")), new("Umissing", MailMessageParseItemStatus.NotFound, null),]);
+            var node = JsonSerializer.SerializeToNode(parsed, SerializationOptions1)!;
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, OperationResult: new(new(MailOperationKind.ParseMessages, ApplicationValueCodec.Encode(node)), request.Command.KnownEntities!, Profile)));
+        }
+        private static Task<JmapApplicationResult> CreateOperationResult26Async(MailOperationApplicationRequest request)
+        {
+            var mutation = new MailMessageMutationResult(MailMessageMutationStatus.Ok, "s73", "s74", [new("route-email", new(Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"), "route-thread", 321), null)], [], []);
+            var node = JsonSerializer.SerializeToNode(mutation, SerializationOptions1)!;
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, OperationResult: new(new(MailOperationKind.MutateMessages, ApplicationValueCodec.Encode(node)), request.Command.KnownEntities!, Profile)));
+        }
+        private static Task<JmapApplicationResult> CreateOperationResult27Async(MailOperationApplicationRequest request)
+        {
+            var copy = new MailContactCopyResult(MailContactCopyStatus.Ok, "s54");
+            var node = JsonSerializer.SerializeToNode(copy, SerializationOptions1)!;
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, OperationResult: new(new(MailOperationKind.CopyContacts, ApplicationValueCodec.Encode(node)), request.Command.KnownEntities!, Profile)));
+        }
+        private static Task<JmapApplicationResult> CreateOperationResult28Async(MailOperationApplicationRequest request)
+        {
+            var query = new MailContactQueryResult(MailContactQueryStatus.Ok, "s55", 0, [Guid.Parse("22222222-2222-2222-2222-222222222222")], 1);
+            var node = JsonSerializer.SerializeToNode(query, SerializationOptions1)!;
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, OperationResult: new(new(MailOperationKind.FindContacts, ApplicationValueCodec.Encode(node)), request.Command.KnownEntities!, Profile)));
+        }
+        private static Task<JmapApplicationResult> CreateOperationResult29Async(MailOperationApplicationRequest request)
+        {
+            var changes = new MailContactQueryChangesResult(MailContactQueryStatus.Ok, "s56", ["C22222222222222222222222222222222"], [new(Guid.Parse("33333333-3333-3333-3333-333333333333"), 0)], 1);
+            var node = JsonSerializer.SerializeToNode(changes, SerializationOptions1)!;
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, OperationResult: new(new(MailOperationKind.FindContactChanges, ApplicationValueCodec.Encode(node)), request.Command.KnownEntities!, Profile)));
+        }
+        private static Task<JmapApplicationResult> CreateOperationResult30Async(MailOperationApplicationRequest request)
+        {
+            var read = new MailContactReadResult(MailContactReadStatus.Ok, "s57", [new MailContactCardSnapshot(Guid.Parse("22222222-2222-2222-2222-222222222222"), Guid.Parse("44444444-4444-4444-4444-444444444444"), "contact-uid", """{"@type":"Card","version":"1.0","uid":"contact-uid","name":{"full":"Contact Person"}}""")]);
+            var node = JsonSerializer.SerializeToNode(read, SerializationOptions1)!;
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, OperationResult: new(new(MailOperationKind.ReadContacts, ApplicationValueCodec.Encode(node)), request.Command.KnownEntities!, Profile)));
+        }
+        private static Task<JmapApplicationResult> CreateOperationResult31Async(MailOperationApplicationRequest request)
+        {
+            var imported = new MailImportResult(MailImportStatus.Ok, "s57", "s58", [new("draft", MailImportItemError.None, Guid.Parse("55555555-5555-5555-5555-555555555555"), "thread:import", 123)]);
+            var node = JsonSerializer.SerializeToNode(imported, SerializationOptions1)!;
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, OperationResult: new(new(MailOperationKind.ImportMessages, ApplicationValueCodec.Encode(node)), request.Command.KnownEntities!, Profile)));
+        }
+        private static Task<JmapApplicationResult> CreateOperationResult32Async(MailOperationApplicationRequest request)
+        {
+            var copied = new MailCopyResult(MailCopyStatus.Ok, "s59", "s60", [new("copied", MailCopyItemError.None, Guid.Parse("77777777-7777-7777-7777-777777777777"), "thread:copy", 234)], new(MailCopyDestroyStatus.Completed, "s58", "s61", [Guid.Parse("11111111-1111-1111-1111-111111111111")], []));
+            var node = JsonSerializer.SerializeToNode(copied, SerializationOptions1)!;
+            return Task.FromResult(new JmapApplicationResult(JmapApplicationOutcomes.Ok, OperationResult: new(new(MailOperationKind.CopyMessages, ApplicationValueCodec.Encode(node)), request.Command.KnownEntities!, Profile)));
+        }
+
     }
+    private static readonly JsonSerializerOptions SerializationOptions1 = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 }

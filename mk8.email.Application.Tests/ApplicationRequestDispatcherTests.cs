@@ -8,26 +8,28 @@ using mk8.email.Contracts.Messaging;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class ApplicationRequestDispatcherTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class ApplicationRequestDispatcherTests
 {
     [TestMethod]
     public async Task PingReturnsAJsonResponseWithoutAnyPresentationDependency()
     {
-        await using var services = new ServiceCollection().BuildServiceProvider();
+        var services = new ServiceCollection().BuildServiceProvider();
+        await using var servicesLifetime = services.ConfigureAwait(false);
         var dispatcher = new ApplicationRequestDispatcher(services);
         var request = NewRequest(ApplicationOperations.SystemPing, "{}"u8.ToArray());
 
-        var response = await dispatcher.DispatchAsync(request);
+        var response = await dispatcher.DispatchAsync(request).ConfigureAwait(false);
 
         Assert.AreEqual(request.Id, response.RequestId);
-        Assert.AreEqual("application/json", response.ContentType);
+        Assert.AreEqual("application/json", response.ContentType, StringComparer.Ordinal);
         Assert.IsFalse(response.IsError);
         var value = JsonSerializer.Deserialize<SystemPingResult>(
             response.Payload,
-            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            SerializationOptions1);
         Assert.IsNotNull(value);
         Assert.IsTrue(value.RespondedAt <= DateTimeOffset.UtcNow);
-        Assert.AreEqual(DistributedContractVersions.Current, value.ContractVersion);
+        Assert.AreEqual(DistributedContractVersions.Current, value.ContractVersion, StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -61,31 +63,33 @@ public sealed class ApplicationRequestDispatcherTests
     [DataRow("dav.unknown")]
     public async Task UnknownOperationReturnsAStableApplicationError(string operation)
     {
-        await using var services = new ServiceCollection().BuildServiceProvider();
+        var services = new ServiceCollection().BuildServiceProvider();
+        await using var servicesLifetime = services.ConfigureAwait(false);
         var dispatcher = new ApplicationRequestDispatcher(services);
         var request = NewRequest(operation, "{}"u8.ToArray());
 
-        var response = await dispatcher.DispatchAsync(request);
+        var response = await dispatcher.DispatchAsync(request).ConfigureAwait(false);
 
         Assert.IsTrue(response.IsError);
-        Assert.AreEqual("unknown-operation", response.ErrorCode);
-        Assert.AreEqual("application/problem+json", response.ContentType);
+        Assert.AreEqual("unknown-operation", response.ErrorCode, StringComparer.Ordinal);
+        Assert.AreEqual("application/problem+json", response.ContentType, StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task MalformedDelegatedPayloadReturnsInvalidArguments()
     {
-        await using var services = new ServiceCollection()
+        var services = new ServiceCollection()
             .AddSingleton<IJmapApplicationService>(new StubJmapApplicationService())
             .BuildServiceProvider();
+        await using var servicesLifetime = services.ConfigureAwait(false);
         var dispatcher = new ApplicationRequestDispatcher(services);
         var request = NewRequest(ApplicationOperations.MailOperationExecute, "{"u8.ToArray());
 
-        var response = await dispatcher.DispatchAsync(request);
+        var response = await dispatcher.DispatchAsync(request).ConfigureAwait(false);
 
         Assert.IsTrue(response.IsError);
-        Assert.AreEqual("invalid-arguments", response.ErrorCode);
-        Assert.AreEqual("application/problem+json", response.ContentType);
+        Assert.AreEqual("invalid-arguments", response.ErrorCode, StringComparer.Ordinal);
+        Assert.AreEqual("application/problem+json", response.ContentType, StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -94,15 +98,16 @@ public sealed class ApplicationRequestDispatcherTests
     public async Task LegacyOrWrongCaseReferenceAliasEnvelopeFailsBeforeDispatch(bool wrongCase)
     {
         var service = new StubJmapApplicationService();
-        await using var services = new ServiceCollection()
+        var services = new ServiceCollection()
             .AddSingleton<IJmapApplicationService>(service)
             .BuildServiceProvider();
+        await using var servicesLifetime = services.ConfigureAwait(false);
         var value = new MailOperationApplicationRequest(
             new(ProtocolAuthenticationKinds.Password, "person@example.test", "secret"),
             new([MailFeature.Basic], MailOperationKind.ReadFolders, new JsonObject(),
                 new Dictionary<string, string>(StringComparer.Ordinal)));
         var payload = JsonNode.Parse(JsonSerializer.SerializeToUtf8Bytes(value,
-            new JsonSerializerOptions(JsonSerializerDefaults.Web)))!.AsObject();
+            SerializationOptions1))!.AsObject();
         var command = payload["command"]!.AsObject();
         command.Remove("referenceAliases");
         if (wrongCase)
@@ -110,10 +115,10 @@ public sealed class ApplicationRequestDispatcherTests
 
         var response = await new ApplicationRequestDispatcher(services).DispatchAsync(
             NewRequest(ApplicationOperations.MailOperationExecute,
-                JsonSerializer.SerializeToUtf8Bytes(payload)));
+                JsonSerializer.SerializeToUtf8Bytes(payload))).ConfigureAwait(false);
 
         Assert.IsTrue(response.IsError);
-        Assert.AreEqual("invalid-arguments", response.ErrorCode);
+        Assert.AreEqual("invalid-arguments", response.ErrorCode, StringComparer.Ordinal);
         Assert.IsNull(service.Request);
     }
 
@@ -121,9 +126,10 @@ public sealed class ApplicationRequestDispatcherTests
     public async Task OAuthAuthorizationDispatchesWithoutAnyPresentationType()
     {
         var service = new StubOAuthApplicationService();
-        await using var services = new ServiceCollection()
+        var services = new ServiceCollection()
             .AddSingleton<IOAuthApplicationService>(service)
             .BuildServiceProvider();
+        await using var servicesLifetime = services.ConfigureAwait(false);
         var dispatcher = new ApplicationRequestDispatcher(services);
         var value = new OAuthAuthorizeApplicationRequest(
             "person@example.test",
@@ -139,30 +145,31 @@ public sealed class ApplicationRequestDispatcherTests
             ApplicationOperations.OAuthAuthorize,
             JsonSerializer.SerializeToUtf8Bytes(
                 value,
-                new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+                SerializationOptions1));
 
-        var response = await dispatcher.DispatchAsync(request);
+        var response = await dispatcher.DispatchAsync(request).ConfigureAwait(false);
 
         Assert.IsFalse(response.IsError);
-        Assert.AreEqual(value.Username, service.Request?.Username);
-        Assert.AreEqual(value.ClientId, service.Request?.ClientId);
+        Assert.AreEqual(value.Username, service.Request?.Username, StringComparer.Ordinal);
+        Assert.AreEqual(value.ClientId, service.Request?.ClientId, StringComparer.Ordinal);
         CollectionAssert.AreEqual(value.Scopes.ToArray(), service.Request?.Scopes.ToArray());
         var result = JsonSerializer.Deserialize<OAuthAuthorizeApplicationResult>(
             response.Payload,
-            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            SerializationOptions1);
         Assert.AreEqual(OAuthAuthorizationOutcome.Succeeded, result?.Outcome);
-        Assert.AreEqual("authorization-code", result?.AuthorizationCode);
+        Assert.AreEqual("authorization-code", result?.AuthorizationCode, StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task LegacyRawJmapOperationFailsClosed()
     {
-        await using var services = new ServiceCollection().BuildServiceProvider();
+        var services = new ServiceCollection().BuildServiceProvider();
+        await using var servicesLifetime = services.ConfigureAwait(false);
         var response = await new ApplicationRequestDispatcher(services).DispatchAsync(
-            NewRequest("jmap.api.process", "{\"document\":\"e30=\"}"u8.ToArray()));
+            NewRequest("jmap.api.process", "{\"document\":\"e30=\"}"u8.ToArray())).ConfigureAwait(false);
 
         Assert.IsTrue(response.IsError);
-        Assert.AreEqual("unknown-operation", response.ErrorCode);
+        Assert.AreEqual("unknown-operation", response.ErrorCode, StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -172,17 +179,19 @@ public sealed class ApplicationRequestDispatcherTests
     [DataRow("jmap.batch.execute.v2")]
     public async Task SupersededPresentationContractsFailClosed(string operation)
     {
-        await using var services = new ServiceCollection().BuildServiceProvider();
-        var result = await new ApplicationRequestDispatcher(services).DispatchAsync(NewRequest(operation, "{}"u8.ToArray()));
+        var services = new ServiceCollection().BuildServiceProvider();
+        await using var servicesLifetime = services.ConfigureAwait(false);
+        var result = await new ApplicationRequestDispatcher(services).DispatchAsync(NewRequest(operation, "{}"u8.ToArray())).ConfigureAwait(false);
         Assert.IsTrue(result.IsError);
-        Assert.AreEqual("unknown-operation", result.ErrorCode);
+        Assert.AreEqual("unknown-operation", result.ErrorCode, StringComparer.Ordinal);
     }
 
     [TestMethod]
     public async Task MailOperationDispatchesResolvedArgumentsAndLosslessResults()
     {
         var service = new StubJmapApplicationService();
-        await using var services = new ServiceCollection().AddSingleton<IJmapApplicationService>(service).BuildServiceProvider();
+        var services = new ServiceCollection().AddSingleton<IJmapApplicationService>(service).BuildServiceProvider();
+        await using var servicesLifetime = services.ConfigureAwait(false);
         var dispatcher = new ApplicationRequestDispatcher(services);
         var value = new MailOperationApplicationRequest(new(ProtocolAuthenticationKinds.Password, "person@example.test", "secret"),
             new([MailFeature.Basic], MailOperationKind.ReadFolders, new System.Text.Json.Nodes.JsonObject
@@ -192,12 +201,12 @@ public sealed class ApplicationRequestDispatcherTests
                 ["X"] = 2,
                 ["nested"] = new System.Text.Json.Nodes.JsonObject { ["key"] = 3, ["Key"] = 4 },
             }, new Dictionary<string, string>(StringComparer.Ordinal),
-            new Dictionary<string, string> { ["created"] = "object-id" }));
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["created"] = "object-id" }));
         var request = NewRequest(ApplicationOperations.MailOperationExecute,
-            JsonSerializer.SerializeToUtf8Bytes(value, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
-        var response = await dispatcher.DispatchAsync(request);
+            JsonSerializer.SerializeToUtf8Bytes(value, SerializationOptions1));
+        var response = await dispatcher.DispatchAsync(request).ConfigureAwait(false);
         Assert.IsFalse(response.IsError);
-        Assert.AreEqual(value.Authentication.Username, service.Request?.Authentication.Username);
+        Assert.AreEqual(value.Authentication.Username, service.Request?.Authentication.Username, StringComparer.Ordinal);
         Assert.AreEqual(request.Id, service.OperationId);
         Assert.IsNotNull(service.Request?.Command);
         CollectionAssert.AreEqual(value.Command.Features.ToArray(), service.Request.Command.Features.ToArray());
@@ -207,13 +216,13 @@ public sealed class ApplicationRequestDispatcherTests
         Assert.AreEqual(2, service.Request.Command.Arguments["X"]!.GetValue<int>());
         Assert.AreEqual(3, service.Request.Command.Arguments["nested"]!["key"]!.GetValue<int>());
         Assert.AreEqual(4, service.Request.Command.Arguments["nested"]!["Key"]!.GetValue<int>());
-        Assert.AreEqual("object-id", service.Request.Command.KnownEntities?["created"]);
+        Assert.AreEqual("object-id", service.Request.Command.KnownEntities?["created"], StringComparer.Ordinal);
         Assert.AreEqual(0, service.Request.Command.ReferenceAliases.Count);
         var result = JsonSerializer.Deserialize<JmapApplicationResult>(response.Payload,
-            new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = false });
-        Assert.AreEqual(JmapApplicationOutcomes.Ok, result?.Outcome);
+            SerializationOptions2);
+        Assert.AreEqual(JmapApplicationOutcomes.Ok, result?.Outcome, StringComparer.Ordinal);
         Assert.IsNotNull(result?.OperationResult);
-        Assert.AreEqual("worker-person", result.OperationResult.Profile.Username);
+        Assert.AreEqual("worker-person", result.OperationResult.Profile.Username, StringComparer.Ordinal);
         Assert.AreEqual(MailOperationKind.ReadFolders, result.OperationResult.Response.Operation);
         var data = ApplicationValueCodec.Decode(result.OperationResult.Response.Data)!;
         Assert.IsTrue(data["ok"]!.GetValue<bool>());
@@ -233,7 +242,7 @@ public sealed class ApplicationRequestDispatcherTests
             operation,
             "application/json",
             payload,
-            new Dictionary<string, string>(),
+            new Dictionary<string, string>(StringComparer.Ordinal),
             now,
             now.AddMinutes(1));
     }
@@ -318,4 +327,6 @@ public sealed class ApplicationRequestDispatcherTests
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
     }
+    private static readonly JsonSerializerOptions SerializationOptions1 = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+    private static readonly JsonSerializerOptions SerializationOptions2 = new JsonSerializerOptions(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = false };
 }

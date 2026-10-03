@@ -5,7 +5,8 @@ using mk8.email.Storage;
 namespace mk8.email.Messaging.Tests;
 
 [TestClass]
-public sealed class AzureBlobLargeObjectStoreTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class AzureBlobLargeObjectStoreTests
 {
     [TestMethod]
     [TestCategory("AzureBlobCompatible")]
@@ -36,34 +37,37 @@ public sealed class AzureBlobLargeObjectStoreTests
 
         try
         {
-            await using var firstStream = new MemoryStream(content, writable: false);
+            var firstStream = new MemoryStream(content, writable: false);
+            await using var firstStreamLifetime = firstStream.ConfigureAwait(false);
             var first = await store.PutIfAbsentAsync(
                 "objects/round-trip",
                 firstStream,
                 content.LongLength,
                 hash,
-                "application/octet-stream");
+                "application/octet-stream").ConfigureAwait(false);
             Assert.IsTrue(first.Created);
 
-            await using var secondStream = new MemoryStream(content, writable: false);
+            var secondStream = new MemoryStream(content, writable: false);
+            await using var secondStreamLifetime = secondStream.ConfigureAwait(false);
             var second = await store.PutIfAbsentAsync(
                 "objects/round-trip",
                 secondStream,
                 content.LongLength,
                 hash,
-                "application/octet-stream");
+                "application/octet-stream").ConfigureAwait(false);
             Assert.IsFalse(second.Created);
             Assert.AreEqual(first.Reference, second.Reference);
 
-            await using var destination = new MemoryStream();
-            await store.CopyToAsync(first.Reference, destination);
+            var destination = new MemoryStream();
+            await using var destinationLifetime = destination.ConfigureAwait(false);
+            await store.CopyToAsync(first.Reference, destination).ConfigureAwait(false);
             CollectionAssert.AreEqual(content, destination.ToArray());
-            Assert.IsTrue(await store.DeleteIfMatchAsync(first.Reference));
-            Assert.IsFalse(await store.DeleteIfMatchAsync(first.Reference));
+            Assert.IsTrue(await store.DeleteIfMatchAsync(first.Reference).ConfigureAwait(false));
+            Assert.IsFalse(await store.DeleteIfMatchAsync(first.Reference).ConfigureAwait(false));
         }
         finally
         {
-            await container.DeleteIfExistsAsync();
+            await container.DeleteIfExistsAsync().ConfigureAwait(false);
         }
     }
 
@@ -79,12 +83,12 @@ public sealed class AzureBlobLargeObjectStoreTests
             new AzureBlobLargeObjectStore(
                 serviceClient,
                 new AzureBlobLargeObjectStoreOptions { ContainerName = "X" }));
-        Assert.AreEqual("options", invalidContainer.ParamName);
+        Assert.AreEqual("options", invalidContainer.ParamName, StringComparer.Ordinal);
 
         var invalidPrefix = Assert.ThrowsExactly<ArgumentException>(() =>
             new AzureBlobLargeObjectStore(
                 serviceClient,
                 new AzureBlobLargeObjectStoreOptions { ObjectPrefix = "/objects" }));
-        Assert.AreEqual("options", invalidPrefix.ParamName);
+        Assert.AreEqual("options", invalidPrefix.ParamName, StringComparer.Ordinal);
     }
 }

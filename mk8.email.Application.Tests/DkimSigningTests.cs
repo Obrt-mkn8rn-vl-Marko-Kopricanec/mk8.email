@@ -8,7 +8,8 @@ using Org.BouncyCastle.Crypto;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class DkimSigningTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class DkimSigningTests
 {
     private const string RawMessage =
         "From: Sender <sender@mk8n.com>\r\n" +
@@ -28,7 +29,7 @@ public sealed class DkimSigningTests
     public void SigningExceptionProvidesStandardConstructors()
     {
         Assert.IsNotNull(new DkimSigningException().Message);
-        Assert.AreEqual("missing key", new DkimSigningException("missing key").Message);
+        Assert.AreEqual("missing key", new DkimSigningException("missing key").Message, StringComparer.Ordinal);
         var cause = new InvalidOperationException("invalid key");
         Assert.AreSame(cause, new DkimSigningException("signing failed", cause).InnerException);
     }
@@ -59,10 +60,10 @@ public sealed class DkimSigningTests
 
         Assert.IsGreaterThanOrEqualTo(0, signatureIndex);
         var signature = message.Headers[signatureIndex];
-        StringAssert.Contains(signature.Value, "a=rsa-sha256");
-        StringAssert.Contains(signature.Value, "c=relaxed/relaxed");
-        StringAssert.Contains(signature.Value, "d=mk8n.com");
-        StringAssert.Contains(signature.Value, "s=default");
+        StringAssert.Contains(signature.Value, "a=rsa-sha256", StringComparison.Ordinal);
+        StringAssert.Contains(signature.Value, "c=relaxed/relaxed", StringComparison.Ordinal);
+        StringAssert.Contains(signature.Value, "d=mk8n.com", StringComparison.Ordinal);
+        StringAssert.Contains(signature.Value, "s=default", StringComparison.Ordinal);
 
         var verifier = new DkimVerifier(new TestPublicKeyLocator(_key.PublicDnsRecord));
         Assert.IsTrue(verifier.Verify(message, signature));

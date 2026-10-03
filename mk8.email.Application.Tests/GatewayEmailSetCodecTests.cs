@@ -9,7 +9,8 @@ using mk8.email.Jmap;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class GatewayEmailSetCodecTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class GatewayEmailSetCodecTests
 {
     private const string AccountId = "A11111111111111111111111111111111";
     private const string EmailId = "E22222222222222222222222222222";
@@ -36,7 +37,7 @@ public sealed class GatewayEmailSetCodecTests
             ["destroy"] = new JsonArray(EmailId, EmailId),
         };
         Assert.IsFalse(GatewayEmailSetCodec.TryParse(arguments, 3, out _, out var failure));
-        Assert.AreEqual("requestTooLarge", failure);
+        Assert.AreEqual("requestTooLarge", failure, StringComparer.Ordinal);
         Assert.IsTrue(GatewayEmailSetCodec.TryParse(arguments, 4, out var call, out failure));
         Assert.IsNull(failure);
         Assert.IsNotNull(call);
@@ -46,8 +47,8 @@ public sealed class GatewayEmailSetCodecTests
         Assert.HasCount(1, call.Command.Destroys);
         var draft = call.Command.Creates[0].Draft;
         Assert.IsNotNull(draft.Mime);
-        var subject = draft.Mime.Headers.First(header => Encoding.ASCII.GetString(header.RawField.Span) == "Subject");
-        Assert.AreEqual("Draft", Encoding.UTF8.GetString(subject.RawValue.Span).Trim());
+        var subject = draft.Mime.Headers.First(header => string.Equals(Encoding.ASCII.GetString(header.RawField.Span), "Subject", StringComparison.Ordinal));
+        Assert.AreEqual("Draft", Encoding.UTF8.GetString(subject.RawValue.Span).Trim(), StringComparer.Ordinal);
 
         var result = new MailMessageMutationResult(MailMessageMutationStatus.Ok, "s1", "s2",
         [
@@ -61,14 +62,14 @@ public sealed class GatewayEmailSetCodecTests
         ]);
         var response = GatewayEmailSetCodec.Render(call, result);
         Assert.AreEqual(MailOperationKind.MutateMessages, response.Operation);
-        Assert.AreEqual("s2", response.Data["newState"]!.GetValue<string>());
+        Assert.AreEqual("s2", response.Data["newState"]!.GetValue<string>(), StringComparer.Ordinal);
         var created = response.Data["created"]!["created"]!;
-        Assert.AreEqual("E44444444444444444444444444444444", created["id"]!.GetValue<string>());
-        Assert.AreEqual("B44444444444444444444444444444444", created["blobId"]!.GetValue<string>());
-        Assert.AreEqual("Tthread-1", created["threadId"]!.GetValue<string>());
+        Assert.AreEqual("E44444444444444444444444444444444", created["id"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("B44444444444444444444444444444444", created["blobId"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("Tthread-1", created["threadId"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(123, created["size"]!.GetValue<int>());
         Assert.IsNull(response.Data["updated"]!["E44444444444444444444444444444444"]);
-        Assert.AreEqual("notFound", response.Data["notDestroyed"]![EmailId]!["type"]!.GetValue<string>());
+        Assert.AreEqual("notFound", response.Data["notDestroyed"]![EmailId]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -84,17 +85,17 @@ public sealed class GatewayEmailSetCodecTests
         Assert.AreEqual(MailMessageMutationError.InvalidProperties, call.Command.Creates[0].Draft.Failure!.Error);
         var denied = GatewayEmailSetCodec.Render(call,
             new MailMessageMutationResult(MailMessageMutationStatus.AccountNotFound, null, null, [], [], []));
-        Assert.AreEqual("accountNotFound", denied.Data["type"]!.GetValue<string>());
+        Assert.AreEqual("accountNotFound", denied.Data["type"]!.GetValue<string>(), StringComparer.Ordinal);
         arguments["unexpected"] = true;
         Assert.IsFalse(GatewayEmailSetCodec.TryParse(arguments, 2, out _, out var failure));
-        Assert.AreEqual("invalidArguments", failure);
+        Assert.AreEqual("invalidArguments", failure, StringComparer.Ordinal);
         arguments.Remove("unexpected");
         arguments["create"] = new JsonObject { ["bad#key"] = new JsonObject() };
         Assert.IsFalse(GatewayEmailSetCodec.TryParse(arguments, 2, out _, out failure));
-        Assert.AreEqual("invalidArguments", failure);
+        Assert.AreEqual("invalidArguments", failure, StringComparer.Ordinal);
         arguments["create"] = new JsonObject { ["created"] = JsonValue.Create("not-an-object") };
         Assert.IsFalse(GatewayEmailSetCodec.TryParse(arguments, 2, out _, out failure));
-        Assert.AreEqual("invalidArguments", failure);
+        Assert.AreEqual("invalidArguments", failure, StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -116,9 +117,9 @@ public sealed class GatewayEmailSetCodecTests
                 new(MailMessageMutationError.BlobNotFound, null, null, ["Umissing"]))],
         };
         var response = GatewayEmailSetCodec.Render(call, blobFailure);
-        Assert.AreEqual("blobNotFound", response.Data["notCreated"]!["created"]!["type"]!.GetValue<string>());
+        Assert.AreEqual("blobNotFound", response.Data["notCreated"]!["created"]!["type"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual("Umissing", response.Data["notCreated"]!["created"]!["notFound"]![0]!
-            .GetValue<string>());
+            .GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -137,17 +138,17 @@ public sealed class GatewayEmailSetCodecTests
         Assert.IsTrue(GatewayEmailSetCodec.TryParse(arguments, 10, out var call, out _));
         var draft = call!.Command.Creates[0].Draft;
         Assert.IsNull(draft.Failure);
-        Assert.AreEqual("#folder", draft.FolderReference);
-        CollectionAssert.AreEqual(new[] { "$draft" }, draft.Keywords.ToArray());
+        Assert.AreEqual("#folder", draft.FolderReference, StringComparer.Ordinal);
+        CollectionAssert.AreEqual(ExpectedVector1, draft.Keywords.ToArray());
         Assert.AreEqual(DateTimeKind.Utc, draft.ReceivedAt!.Value.Kind);
         Assert.IsNotNull(draft.Mime);
         Assert.HasCount(3, draft.Mime.Parts);
         var root = draft.Mime.Parts[draft.Mime.RootPart];
-        CollectionAssert.AreEqual(new[] { 0, 1 }, root.Children.ToArray());
-        Assert.AreEqual("Inline content", draft.Mime.Parts[0].Text);
+        CollectionAssert.AreEqual(ExpectedVector2, root.Children.ToArray());
+        Assert.AreEqual("Inline content", draft.Mime.Parts[0].Text, StringComparer.Ordinal);
         Assert.IsNull(draft.Mime.Parts[1].Text);
-        Assert.AreEqual("U44444444444444444444444444444444", draft.Mime.Parts[1].BlobReference);
-        var json = JsonSerializer.Serialize(draft, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.AreEqual("U44444444444444444444444444444444", draft.Mime.Parts[1].BlobReference, StringComparer.Ordinal);
+        var json = JsonSerializer.Serialize(draft, SerializationOptions3);
         Assert.IsFalse(json.Contains("bodyValues", StringComparison.Ordinal));
         Assert.IsFalse(json.Contains("bodyStructure", StringComparison.Ordinal));
         Assert.IsFalse(json.Contains("header:", StringComparison.Ordinal));
@@ -156,7 +157,8 @@ public sealed class GatewayEmailSetCodecTests
     [TestMethod]
     public async Task WorkerRejectsLegacyDraftTreesAndCyclicTypedMimeBeforeMutation()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         using var scope = fixture.Services.CreateScope();
         var processor = scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>();
         var arguments = new JsonObject
@@ -170,28 +172,29 @@ public sealed class GatewayEmailSetCodecTests
         };
         Assert.IsTrue(GatewayEmailSetCodec.TryParse(arguments, 2, out var call, out _));
         var serialized = JsonSerializer.SerializeToNode(call!.Command,
-            new JsonSerializerOptions(JsonSerializerDefaults.Web))!.AsObject();
+            SerializationOptions3)!.AsObject();
         var original = serialized["creates"]![0]!["draft"]!.DeepClone();
         serialized["creates"]![0]!["draft"] = JsonSerializer.SerializeToNode(ApplicationValueCodec.Encode(
             new JsonObject { ["subject"] = "Legacy tree" }));
         var command = new MailOperationCommand([MailFeature.Basic, MailFeature.Messages],
-            MailOperationKind.MutateMessages, serialized, new Dictionary<string, string>());
+            MailOperationKind.MutateMessages, serialized, new Dictionary<string, string>(StringComparer.Ordinal));
         var failure = await Assert.ThrowsAsync<MailApplicationException>(() =>
-            processor.ExecuteAsync(command, fixture.User, null));
+            processor.ExecuteAsync(command, fixture.User, null)).ConfigureAwait(false);
         Assert.AreEqual(MailFailureKind.MalformedBatch, failure.Failure.Kind);
         serialized["creates"]![0]!["draft"] = original;
         var mime = original["mime"]!;
         var root = mime["rootPart"]!.GetValue<int>();
         mime["parts"]![root]!["children"] = new JsonArray(root);
         failure = await Assert.ThrowsAsync<MailApplicationException>(() =>
-            processor.ExecuteAsync(command, fixture.User, null));
+            processor.ExecuteAsync(command, fixture.User, null)).ConfigureAwait(false);
         Assert.AreEqual(MailFailureKind.MalformedBatch, failure.Failure.Kind);
     }
 
     [TestMethod]
     public async Task WorkerRejectsMalformedTypedMutationBeforeBusinessWork()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         using var scope = fixture.Services.CreateScope();
         var processor = scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>();
         var command = new MailOperationCommand([MailFeature.Basic, MailFeature.Messages],
@@ -203,14 +206,17 @@ public sealed class GatewayEmailSetCodecTests
                 ["updates"] = new JsonArray(),
                 ["destroys"] = new JsonArray(),
                 ["extra"] = true,
-            }, new Dictionary<string, string>());
+            }, new Dictionary<string, string>(StringComparer.Ordinal));
         var failure = await Assert.ThrowsAsync<MailApplicationException>(() =>
-            processor.ExecuteAsync(command, fixture.User, null));
+            processor.ExecuteAsync(command, fixture.User, null)).ConfigureAwait(false);
         Assert.AreEqual(MailFailureKind.MalformedBatch, failure.Failure.Kind);
         command.Arguments.Remove("extra");
         command.Arguments.Remove("creates");
         failure = await Assert.ThrowsAsync<MailApplicationException>(() =>
-            processor.ExecuteAsync(command, fixture.User, null));
+            processor.ExecuteAsync(command, fixture.User, null)).ConfigureAwait(false);
         Assert.AreEqual(MailFailureKind.MalformedBatch, failure.Failure.Kind);
     }
+    private static readonly string[] ExpectedVector1 = new[] { "$draft" };
+    private static readonly int[] ExpectedVector2 = new[] { 0, 1 };
+    private static readonly JsonSerializerOptions SerializationOptions3 = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 }

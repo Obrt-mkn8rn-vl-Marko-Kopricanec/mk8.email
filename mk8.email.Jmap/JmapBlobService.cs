@@ -23,6 +23,12 @@ public sealed class JmapBlobService(
     ILogger<JmapBlobService> logger)
 {
     private static readonly ConcurrentDictionary<Guid, SemaphoreSlim> AccountLocks = new();
+    private static readonly Action<ILogger, Exception?> RollbackWarning = LoggerMessage.Define(
+        LogLevel.Warning, new EventId(1210, "BlobRollback"), "Could not roll back a failed JMAP blob transaction");
+    private static readonly Action<ILogger, Exception?> DisposeWarning = LoggerMessage.Define(
+        LogLevel.Warning, new EventId(1211, "BlobDispose"), "Could not dispose a completed JMAP blob transaction");
+    private static readonly Action<ILogger, string, Exception?> DeleteWarning = LoggerMessage.Define<string>(
+        LogLevel.Warning, new EventId(1212, "BlobDelete"), "Could not delete unreferenced JMAP object {ObjectName}");
 
     internal async Task<JmapBlobContent?> GetAsync(
         Guid accountId,
@@ -71,6 +77,13 @@ public sealed class JmapBlobService(
         if (!isPath && !isHash)
             return null;
 
+        return await GetBodyPartAsync(accountId, sourceId, isPath ? partId : null, isHash ? pathHash : null,
+            nestingDepth, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<JmapBlobContent?> GetBodyPartAsync(Guid accountId, Guid sourceId, string? partId,
+        byte[]? pathHash, int nestingDepth, CancellationToken cancellationToken)
+    {
         var sourceEmail = await FindEmailAsync(accountId, sourceId, cancellationToken).ConfigureAwait(false);
         if (sourceEmail is not null)
         {
@@ -79,8 +92,8 @@ public sealed class JmapBlobService(
             return ResolveBodyPart(
                 message,
                 sourceId,
-                isPath ? partId : null,
-                isHash ? pathHash : null,
+                partId,
+                pathHash,
                 nestingDepth);
         }
 
@@ -99,8 +112,8 @@ public sealed class JmapBlobService(
             return ResolveBodyPart(
                 message,
                 sourceId,
-                isPath ? partId : null,
-                isHash ? pathHash : null,
+                partId,
+                pathHash,
                 nestingDepth);
         }
         catch (FormatException)
@@ -228,49 +241,9 @@ public sealed class JmapBlobService(
         {
             await AcquireAccountLockAsync(accountId, cancellationToken).ConfigureAwait(false);
             var now = DateTime.UtcNow;
-            var expired = await database.JmapBlobs
-                .Where(blob => blob.AccountId == accountId && blob.ExpiresAt <= now)
-                .ToListAsync(cancellationToken).ConfigureAwait(false);
-            if (expired.Count > 0)
-            {
-                removedReferences.AddRange(expired
-                    .Select(TryGetReference)
-                    .Where(candidate => candidate is not null)
-                    .Select(candidate => candidate!));
-                database.JmapBlobs.RemoveRange(expired);
-            }
-            var accountBlobs = await database.JmapBlobs
-                .Where(blob => blob.AccountId == accountId && blob.ExpiresAt > now)
-                .OrderBy(blob => blob.CreatedAt)
-                .ThenBy(blob => blob.Id)
-                .ToListAsync(cancellationToken).ConfigureAwait(false);
-            var usedBytes = accountBlobs.Sum(blob => blob.SizeBytes);
-            for (var blobIndex = 0; blobIndex < accountBlobs.Count; blobIndex++)
-            {
-                var existing = accountBlobs[blobIndex];
-                if (usedBytes + reference.Length
-                    <= environment.Jmap.MaxUnreferencedBlobBytesPerAccount)
-                {
-                    break;
-                }
-                var removed = TryGetReference(existing);
-                if (removed is not null)
-                    removedReferences.Add(removed);
-                database.JmapBlobs.Remove(existing);
-                usedBytes -= existing.SizeBytes;
-            }
-            var blob = new JmapBlobDB
-            {
-                Id = id,
-                BlobId = JmapId.UploadedBlob(id),
-                AccountId = accountId,
-                ContentType = contentType,
-                Name = name,
-                SizeBytes = reference.Length,
-                CreatedAt = now,
-                ExpiresAt = now.AddHours(environment.Jmap.UploadRetentionHours),
-            };
-            JmapBlobLargeObjectMigrationService.ApplyReference(blob, reference);
+            removedReferences = await PruneBlobsAsync(accountId, reference.Length, now, cancellationToken)
+                .ConfigureAwait(false);
+            var blob = CreateBlob(id, reference, accountId, contentType, name, now);
             await database.JmapBlobs.AddAsync(blob, cancellationToken).ConfigureAwait(false);
             await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             if (ownedTransaction is not null)
@@ -293,39 +266,89 @@ public sealed class JmapBlobService(
         }
         catch (Exception exception)
         {
-            if (ownedTransaction is not null)
-            {
-                try
-                {
-                    await ownedTransaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
-                }
-                catch (Exception rollbackException)
-                {
-                    logger.LogWarning(
-                        rollbackException,
-                        "Could not roll back a failed JMAP blob transaction");
-                }
-            }
+            await RollbackBestEffortAsync(ownedTransaction).ConfigureAwait(false);
             if (commitAttempted)
                 throw new JmapBlobCommitOutcomeUnknownException(exception);
             throw;
         }
         finally
         {
-            if (ownedTransaction is not null)
-            {
-                try
-                {
-                    await ownedTransaction.DisposeAsync().ConfigureAwait(false);
-                }
-                catch (Exception disposeException)
-                {
-                    logger.LogWarning(
-                        disposeException,
-                        "Could not dispose a completed JMAP blob transaction");
-                }
-            }
+            await DisposeBestEffortAsync(ownedTransaction).ConfigureAwait(false);
         }
+    }
+
+    private async Task<List<LargeObjectReference>> PruneBlobsAsync(
+        Guid accountId, long incomingLength, DateTime now, CancellationToken cancellationToken)
+    {
+        var removedReferences = new List<LargeObjectReference>();
+        var expired = await database.JmapBlobs
+            .Where(blob => blob.AccountId == accountId && blob.ExpiresAt <= now)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        if (expired.Count > 0)
+        {
+            removedReferences.AddRange(expired
+                .Select(TryGetReference)
+                .Where(candidate => candidate is not null)
+                .Select(candidate => candidate!));
+            database.JmapBlobs.RemoveRange(expired);
+        }
+        var accountBlobs = await database.JmapBlobs
+            .Where(blob => blob.AccountId == accountId && blob.ExpiresAt > now)
+            .OrderBy(blob => blob.CreatedAt)
+            .ThenBy(blob => blob.Id)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        var usedBytes = accountBlobs.Sum(blob => blob.SizeBytes);
+        for (var blobIndex = 0; blobIndex < accountBlobs.Count; blobIndex++)
+        {
+            var existing = accountBlobs[blobIndex];
+            if (usedBytes + incomingLength
+                <= environment.Jmap.MaxUnreferencedBlobBytesPerAccount)
+            {
+                break;
+            }
+            var removed = TryGetReference(existing);
+            if (removed is not null)
+                removedReferences.Add(removed);
+            database.JmapBlobs.Remove(existing);
+            usedBytes -= existing.SizeBytes;
+        }
+        return removedReferences;
+    }
+
+    private JmapBlobDB CreateBlob(Guid id, LargeObjectReference reference, Guid accountId,
+        string contentType, string? name, DateTime now)
+    {
+        var blob = new JmapBlobDB
+        {
+            Id = id,
+            BlobId = JmapId.UploadedBlob(id),
+            AccountId = accountId,
+            ContentType = contentType,
+            Name = name,
+            SizeBytes = reference.Length,
+            CreatedAt = now,
+            ExpiresAt = now.AddHours(environment.Jmap.UploadRetentionHours),
+        };
+        JmapBlobLargeObjectMigrationService.ApplyReference(blob, reference);
+        return blob;
+    }
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1031",
+        Justification = "Compensating rollback must not mask the original write or ambiguous-commit failure.")]
+    private async Task RollbackBestEffortAsync(IDbContextTransaction? transaction)
+    {
+        if (transaction is null) return;
+        try { await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false); }
+        catch (Exception exception) { RollbackWarning(logger, exception); }
+    }
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1031",
+        Justification = "Disposal of an already completed transaction must not alter its recorded outcome.")]
+    private async Task DisposeBestEffortAsync(IDbContextTransaction? transaction)
+    {
+        if (transaction is null) return;
+        try { await transaction.DisposeAsync().ConfigureAwait(false); }
+        catch (Exception exception) { DisposeWarning(logger, exception); }
     }
 
     private async Task<byte[]> ReadContentAsync(
@@ -385,6 +408,8 @@ public sealed class JmapBlobService(
         "Npgsql.EntityFrameworkCore.PostgreSQL",
         StringComparison.Ordinal);
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1031",
+        Justification = "Post-commit orphan cleanup is best effort; a cleanup failure cannot turn a committed blob into a failed write.")]
     private async Task DeleteBestEffortAsync(LargeObjectReference reference)
     {
         try
@@ -393,10 +418,7 @@ public sealed class JmapBlobService(
         }
         catch (Exception exception)
         {
-            logger.LogWarning(
-                exception,
-                "Could not delete unreferenced JMAP object {ObjectName}",
-                reference.ObjectName);
+            DeleteWarning(logger, reference.ObjectName, exception);
         }
     }
 

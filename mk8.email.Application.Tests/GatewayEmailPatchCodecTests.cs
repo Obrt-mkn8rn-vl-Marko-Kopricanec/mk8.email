@@ -8,7 +8,8 @@ using mk8.email.Jmap;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class GatewayEmailPatchCodecTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class GatewayEmailPatchCodecTests
 {
     [TestMethod]
     public void GatewayProducesCanonicalDomainAssertionsAndTypedFlagChanges()
@@ -24,18 +25,18 @@ public sealed class GatewayEmailPatchCodecTests
         Assert.HasCount(1, parsed.Flags);
         Assert.AreEqual(MailMessageFlagField.Keywords, parsed.Flags[0].Field);
         Assert.AreEqual(MailMessageFlagChangeKind.Set, parsed.Flags[0].Kind);
-        Assert.AreEqual("$seen", parsed.Flags[0].Entries[0].Key);
+        Assert.AreEqual("$seen", parsed.Flags[0].Entries[0].Key, StringComparer.Ordinal);
         var body = parsed.Assertions.First(item => item.Field == MailMessageObservationField.BodyTree);
         var expected = ApplicationValueCodec.Decode(body.Changes[0].Value)!;
-        Assert.AreEqual("text/plain", expected["MediaType"]!.GetValue<string>());
-        Assert.AreEqual("1", expected["Path"]!.GetValue<string>());
+        Assert.AreEqual("text/plain", expected["MediaType"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("1", expected["Path"]!.GetValue<string>(), StringComparer.Ordinal);
         Assert.IsNull(expected["type"]);
         var custom = parsed.PartFields.First(item => item.Field == MailMimePartField.Header);
-        Assert.AreEqual("sender@example.test", expected[custom.Key]![0]!["Address"]!.GetValue<string>());
-        Assert.AreEqual("Sender", expected[custom.Key]![0]!["DisplayName"]!.GetValue<string>());
+        Assert.AreEqual("sender@example.test", expected[custom.Key]![0]!["Address"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("Sender", expected[custom.Key]![0]!["DisplayName"]!.GetValue<string>(), StringComparer.Ordinal);
         var text = parsed.Assertions.First(item => item.Field == MailMessageObservationField.TextValues);
         Assert.IsTrue(text.MatchVisibleTextValues);
-        Assert.AreEqual("Text", ApplicationValueCodec.Decode(text.Changes[0].Value)!["1"]!["Text"]!.GetValue<string>());
+        Assert.AreEqual("Text", ApplicationValueCodec.Decode(text.Changes[0].Value)!["1"]!["Text"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -67,7 +68,7 @@ public sealed class GatewayEmailPatchCodecTests
         { ["keywords"] = new JsonObject(), ["keywords/$seen"] = true, ["unregistered"] = true });
         combined = MailMessagePatchMerger.Merge(conflict);
         Assert.AreEqual(MailMessageMutationError.InvalidProperties, combined.Failure!.Error);
-        CollectionAssert.AreEqual(new[] { "unregistered" }, combined.Failure.Properties!.ToArray());
+        CollectionAssert.AreEqual(ExpectedVector1, combined.Failure.Properties!.ToArray());
     }
 
     [TestMethod]
@@ -85,7 +86,8 @@ public sealed class GatewayEmailPatchCodecTests
     [TestMethod]
     public async Task WorkerRejectsLegacyAndUndefinedTypedPatchFieldsBeforeMutation()
     {
-        await using var fixture = await JmapFixture.CreateAsync();
+        var fixture = (await JmapFixture.CreateAsync().ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         using var scope = fixture.Services.CreateScope();
         var processor = scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>();
         var arguments = new JsonObject
@@ -99,19 +101,21 @@ public sealed class GatewayEmailPatchCodecTests
         };
         Assert.IsTrue(GatewayEmailSetCodec.TryParse(arguments, 2, out var call, out _));
         var encoded = JsonSerializer.SerializeToNode(call!.Command,
-            new JsonSerializerOptions(JsonSerializerDefaults.Web))!.AsObject();
+            SerializationOptions2)!.AsObject();
         var original = encoded["updates"]![0]!["patch"]!.DeepClone();
         encoded["updates"]![0]!["patch"] = JsonSerializer.SerializeToNode(
             ApplicationValueCodec.Encode(new JsonObject { ["keywords/$seen"] = true }));
         var command = new MailOperationCommand([MailFeature.Basic, MailFeature.Messages],
-            MailOperationKind.MutateMessages, encoded, new Dictionary<string, string>());
+            MailOperationKind.MutateMessages, encoded, new Dictionary<string, string>(StringComparer.Ordinal));
         var failure = await Assert.ThrowsAsync<MailApplicationException>(() =>
-            processor.ExecuteAsync(command, fixture.User, null));
+            processor.ExecuteAsync(command, fixture.User, null)).ConfigureAwait(false);
         Assert.AreEqual(MailFailureKind.MalformedBatch, failure.Failure.Kind);
         encoded["updates"]![0]!["patch"] = original;
         original["flags"]![0]!["field"] = 999;
         failure = await Assert.ThrowsAsync<MailApplicationException>(() =>
-            processor.ExecuteAsync(command, fixture.User, null));
+            processor.ExecuteAsync(command, fixture.User, null)).ConfigureAwait(false);
         Assert.AreEqual(MailFailureKind.MalformedBatch, failure.Failure.Kind);
     }
+    private static readonly string[] ExpectedVector1 = new[] { "unregistered" };
+    private static readonly JsonSerializerOptions SerializationOptions2 = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 }

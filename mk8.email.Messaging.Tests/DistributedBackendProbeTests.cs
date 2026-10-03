@@ -7,7 +7,8 @@ using Npgsql;
 namespace mk8.email.Messaging.Tests;
 
 [TestClass]
-public sealed class DistributedBackendProbeTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class DistributedBackendProbeTests
 {
     [TestMethod]
     public async Task CorruptBlobReadFailsClosedAndStillDeletesTheCanary()
@@ -15,7 +16,7 @@ public sealed class DistributedBackendProbeTests
         var objects = new CorruptingObjectStore();
 
         await Assert.ThrowsExactlyAsync<InvalidOperationException>(
-            () => DistributedBackendProbe.ProbeObjectStorageAsync(objects));
+            () => DistributedBackendProbe.ProbeObjectStorageAsync(objects)).ConfigureAwait(false);
 
         Assert.AreEqual(1, objects.DeleteCount);
     }
@@ -26,7 +27,7 @@ public sealed class DistributedBackendProbeTests
         var objects = new CorruptingObjectStore(failDelete: true);
 
         var failure = await Assert.ThrowsExactlyAsync<AggregateException>(
-            () => DistributedBackendProbe.ProbeObjectStorageAsync(objects));
+            () => DistributedBackendProbe.ProbeObjectStorageAsync(objects)).ConfigureAwait(false);
 
         Assert.AreEqual(2, failure.InnerExceptions.Count);
         Assert.IsInstanceOfType<InvalidOperationException>(failure.InnerExceptions[0]);
@@ -47,14 +48,16 @@ public sealed class DistributedBackendProbeTests
             return;
         }
 
-        await using var database = await PostgresTestDatabase.TryCreateAsync();
+        var database = (await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false));
+        await using var databaseLifetime = new NullableAsyncDisposable(database).ConfigureAwait(false);
         if (database is null)
         {
             Assert.Inconclusive("Set MK8_EMAIL_TEST_POSTGRES.");
             return;
         }
 
-        await using var dataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        var dataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var dataSourceLifetime = dataSource.ConfigureAwait(false);
         var service = new BlobServiceClient(connectionString);
         var container = service.GetBlobContainerClient($"mk8-probe-{Guid.NewGuid():N}");
         var objects = new AzureBlobLargeObjectStore(
@@ -66,14 +69,14 @@ public sealed class DistributedBackendProbeTests
             });
         try
         {
-            await DistributedBackendProbe.ProbeAsync(dataSource, objects);
+            await DistributedBackendProbe.ProbeAsync(dataSource, objects).ConfigureAwait(false);
 
-            await foreach (var _ in container.GetBlobsAsync())
+            await foreach (var _ in container.GetBlobsAsync().ConfigureAwait(false))
                 Assert.Fail("The backend probe left an Azure Blob object behind.");
         }
         finally
         {
-            await container.DeleteIfExistsAsync();
+            await container.DeleteIfExistsAsync().ConfigureAwait(false);
         }
     }
 
@@ -97,7 +100,7 @@ public sealed class DistributedBackendProbeTests
             LargeObjectReference reference,
             Stream destination,
             CancellationToken cancellationToken = default) =>
-            await destination.WriteAsync(new byte[checked((int)reference.Length)], cancellationToken);
+            await destination.WriteAsync(new byte[checked((int)reference.Length)], cancellationToken).ConfigureAwait(false);
 
         public Task<bool> DeleteIfMatchAsync(
             LargeObjectReference reference,

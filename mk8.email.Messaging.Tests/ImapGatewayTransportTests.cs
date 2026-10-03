@@ -14,22 +14,27 @@ namespace mk8.email.Messaging.Tests;
 
 [TestClass]
 [TestCategory("PostgreSQL")]
-public sealed class ImapGatewayTransportTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class ImapGatewayTransportTests
 {
     [TestMethod]
     [Timeout(20_000)]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ImapAuthenticationUsesRemoteWorkerAndEncryptedTrafficRecords scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task ImapAuthenticationUsesRemoteWorkerAndEncryptedTrafficRecords()
     {
-        await using var database = await PostgresTestDatabase.TryCreateAsync();
+        var database = (await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false));
+        await using var databaseLifetime = new NullableAsyncDisposable(database).ConfigureAwait(false);
         if (database is null)
         {
             Assert.Inconclusive("Set MK8_EMAIL_TEST_POSTGRES to a PostgreSQL admin connection string.");
             return;
         }
 
-        await using var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await using var workerDataSource = NpgsqlDataSource.Create(database.ConnectionString);
-        await PostgresMessagingSchema.EnsureAsync(gatewayDataSource);
+        var gatewayDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var gatewayDataSourceLifetime = gatewayDataSource.ConfigureAwait(false);
+        var workerDataSource = NpgsqlDataSource.Create(database.ConnectionString);
+        await using var workerDataSourceLifetime = workerDataSource.ConfigureAwait(false);
+        await PostgresMessagingSchema.EnsureAsync(gatewayDataSource).ConfigureAwait(false);
         using var gatewayProtector = AesGcmPayloadProtectorTests.CreateProtector(
             "test", "imap-auth-key");
         using var workerProtector = AesGcmPayloadProtectorTests.CreateProtector(
@@ -46,11 +51,12 @@ public sealed class ImapGatewayTransportTests
         var journal = new PostgresGatewayTrafficJournal(
             gatewayDataSource, gatewayProtector, options, largeObjectStore: objects);
         var application = new RecordingImapApplication();
-        await using var workerProvider = new ServiceCollection()
+        var workerProvider = new ServiceCollection()
             .AddSingleton<IImapApplicationService>(application)
             .AddScoped<IApplicationRequestDispatcher>(provider =>
                 new ApplicationRequestDispatcher(provider))
             .BuildServiceProvider();
+        await using var workerProviderLifetime = workerProvider.ConfigureAwait(false);
         var worker = new ApplicationRequestWorker(
             workerBus,
             workerProvider.GetRequiredService<IServiceScopeFactory>(),
@@ -63,38 +69,38 @@ public sealed class ImapGatewayTransportTests
                 "gateway@imap-test-host", TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(5)));
         var client = new GatewayImapApplicationService(transport);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        await worker.StartAsync(timeout.Token);
+        await worker.StartAsync(timeout.Token).ConfigureAwait(false);
         try
         {
             var password = await client.AuthenticatePasswordAsync(
-                new ImapPasswordAuthentication("user@example.test", "imap-secret"), timeout.Token);
+                new ImapPasswordAuthentication("user@example.test", "imap-secret"), timeout.Token).ConfigureAwait(false);
             var oauth = await client.AuthenticateOAuthAsync(
-                new ImapOAuthAuthentication("user@example.test", "imap-access-token"), timeout.Token);
+                new ImapOAuthAuthentication("user@example.test", "imap-access-token"), timeout.Token).ConfigureAwait(false);
             var mailboxes = await client.ListMailboxesAsync(
-                new ImapMailboxListRequest(application.UserId, SubscribedOnly: true), timeout.Token);
+                new ImapMailboxListRequest(application.UserId, SubscribedOnly: true), timeout.Token).ConfigureAwait(false);
             var statuses = await client.GetMailboxStatusesAsync(
                 new ImapMailboxStatusRequest(application.UserId, ["INBOX"], true, true, true),
-                timeout.Token);
+                timeout.Token).ConfigureAwait(false);
             var subscription = await client.SetMailboxSubscriptionAsync(
                 new ImapMailboxSubscriptionRequest(application.UserId, "INBOX", false),
-                timeout.Token);
+                timeout.Token).ConfigureAwait(false);
             var created = await client.CreateMailboxAsync(
-                new ImapMailboxCreateRequest(application.UserId, "Projects"), timeout.Token);
+                new ImapMailboxCreateRequest(application.UserId, "Projects"), timeout.Token).ConfigureAwait(false);
             var renamed = await client.RenameMailboxAsync(
                 new ImapMailboxRenameRequest(application.UserId, "Projects", "Archive"),
-                timeout.Token);
+                timeout.Token).ConfigureAwait(false);
             var deleted = await client.DeleteMailboxAsync(
-                new ImapMailboxDeleteRequest(application.UserId, "Archive"), timeout.Token);
+                new ImapMailboxDeleteRequest(application.UserId, "Archive"), timeout.Token).ConfigureAwait(false);
             var selected = await client.SelectMailboxAsync(
-                new ImapMailboxSelectRequest(application.UserId, "INBOX", 1, 2), timeout.Token);
+                new ImapMailboxSelectRequest(application.UserId, "INBOX", 1, 2), timeout.Token).ConfigureAwait(false);
             var quota = await client.GetQuotaAsync(
-                new ImapQuotaRequest(application.UserId, "INBOX"), timeout.Token);
+                new ImapQuotaRequest(application.UserId, "INBOX"), timeout.Token).ConfigureAwait(false);
             var idle = await client.GetIdleSnapshotAsync(
                 new ImapIdleSnapshotRequest(application.UserId, Guid.CreateVersion7()),
-                timeout.Token);
+                timeout.Token).ConfigureAwait(false);
             var expunged = await client.ExpungeDeletedAsync(
                 new ImapExpungeRequest(application.UserId, Guid.CreateVersion7(),
-                    new ImapUidSelection([new ImapUidRange(2, null)], null)), timeout.Token);
+                    new ImapUidSelection([new ImapUidRange(2, null)], null)), timeout.Token).ConfigureAwait(false);
             var stored = await client.StoreFlagsAsync(new ImapStoreRequest(
                 application.UserId,
                 Guid.CreateVersion7(),
@@ -102,65 +108,65 @@ public sealed class ImapGatewayTransportTests
                 new ImapMessageSelection([new ImapMessageRange(1, null)], null),
                 5,
                 ImapFlagMutationMode.Add,
-                ["\\Seen", "$Label1"]), timeout.Token);
+                ["\\Seen", "$Label1"]), timeout.Token).ConfigureAwait(false);
             var moved = await client.MoveMessagesAsync(new ImapMoveRequest(
                 application.UserId,
                 Guid.CreateVersion7(),
                 "Archive",
                 true,
-                new ImapMessageSelection([new ImapMessageRange(1, null)], null)), timeout.Token);
+                new ImapMessageSelection([new ImapMessageRange(1, null)], null)), timeout.Token).ConfigureAwait(false);
             var copied = await client.CopyMessagesAsync(new ImapCopyRequest(
                 application.UserId,
                 Guid.CreateVersion7(),
                 "Archive",
                 false,
-                new ImapMessageSelection(null, [2])), timeout.Token);
+                new ImapMessageSelection(null, [2])), timeout.Token).ConfigureAwait(false);
             var append = await client.CheckAppendCapacityAsync(
                 new ImapAppendPreflightRequest(application.UserId, "INBOX", 512),
-                timeout.Token);
+                timeout.Token).ConfigureAwait(false);
             var appendBody = Encoding.UTF8.GetBytes(
                 "Subject: transport blob\r\n\r\n" + new string('x', 300 * 1024));
             var appended = await client.AppendMessagesAsync(new ImapAppendRequest(
                 application.UserId, "INBOX", false,
                 [new ImapAppendMessage(Guid.CreateVersion7(), ["\\Seen"], null,
-                    appendBody)]), timeout.Token);
+                    appendBody)]), timeout.Token).ConfigureAwait(false);
             var searched = await client.SearchMessagesAsync(new ImapSearchRequest(
                 application.UserId, Guid.CreateVersion7(), "SUBJECT transport", [7], false),
-                timeout.Token);
+                timeout.Token).ConfigureAwait(false);
             var sorted = await client.SortMessagesAsync(new ImapSortRequest(
                 application.UserId, Guid.CreateVersion7(), "ALL", [7], false,
                 "US-ASCII", [new ImapSortCriterion(ImapSortKey.Subject, true)]),
-                timeout.Token);
+                timeout.Token).ConfigureAwait(false);
             var threaded = await client.ThreadMessagesAsync(new ImapThreadRequest(
                 application.UserId, Guid.CreateVersion7(), "ALL", [7], false,
-                "US-ASCII", ImapThreadAlgorithm.References, true), timeout.Token);
+                "US-ASCII", ImapThreadAlgorithm.References, true), timeout.Token).ConfigureAwait(false);
             var seenId = Guid.CreateVersion7();
             var seen = await client.MarkMessagesSeenAsync(new ImapMarkSeenRequest(
-                application.UserId, Guid.CreateVersion7(), [seenId]), timeout.Token);
+                application.UserId, Guid.CreateVersion7(), [seenId]), timeout.Token).ConfigureAwait(false);
             var fetchPage = await client.GetFetchPageAsync(new ImapFetchPageRequest(
                 application.UserId, Guid.CreateVersion7(), true,
                 new ImapMessageSelection([new ImapMessageRange(1, null)], null),
-                0, null, null, null, true), timeout.Token);
+                0, null, null, null, true), timeout.Token).ConfigureAwait(false);
             Assert.AreEqual(application.UserId, password.UserId);
             Assert.AreEqual(application.UserId, oauth.UserId);
-            Assert.AreEqual("imap-secret", application.Password);
-            Assert.AreEqual("imap-access-token", application.AccessToken);
+            Assert.AreEqual("imap-secret", application.Password, StringComparer.Ordinal);
+            Assert.AreEqual("imap-access-token", application.AccessToken, StringComparer.Ordinal);
             Assert.HasCount(1, mailboxes.Mailboxes);
-            Assert.AreEqual("INBOX", mailboxes.Mailboxes[0].FolderName);
+            Assert.AreEqual("INBOX", mailboxes.Mailboxes[0].FolderName, StringComparer.Ordinal);
             Assert.AreEqual(2, statuses.Statuses["INBOX"].MessageCount);
             Assert.IsTrue(subscription.Found);
             Assert.IsFalse(application.IsSubscribed);
             Assert.AreEqual(ImapMailboxCreateDisposition.Created, created.Disposition);
-            Assert.AreEqual("Projects", application.CreatedMailbox);
+            Assert.AreEqual("Projects", application.CreatedMailbox, StringComparer.Ordinal);
             Assert.AreEqual(ImapMailboxRenameDisposition.Renamed, renamed.Disposition);
-            Assert.AreEqual("Archive", application.RenamedMailbox);
+            Assert.AreEqual("Archive", application.RenamedMailbox, StringComparer.Ordinal);
             Assert.AreEqual(ImapMailboxDeleteDisposition.Deleted, deleted.Disposition);
-            Assert.AreEqual("Archive", application.DeletedMailbox);
+            Assert.AreEqual("Archive", application.DeletedMailbox, StringComparer.Ordinal);
             Assert.IsNotNull(selected.Mailbox);
             Assert.AreEqual(2, selected.Mailbox.MessageCount);
-            Assert.AreEqual("INBOX", application.SelectedMailbox);
+            Assert.AreEqual("INBOX", application.SelectedMailbox, StringComparer.Ordinal);
             Assert.AreEqual(2048L, quota.LimitBytes);
-            Assert.AreEqual("INBOX", application.QuotaMailbox);
+            Assert.AreEqual("INBOX", application.QuotaMailbox, StringComparer.Ordinal);
             Assert.IsTrue(idle.FolderFound);
             Assert.HasCount(1, idle.Messages);
             Assert.IsTrue(expunged.FolderFound);
@@ -175,20 +181,20 @@ public sealed class ImapGatewayTransportTests
             Assert.IsNotNull(recordedStore);
             Assert.AreEqual(ImapFlagMutationMode.Add, recordedStore.Mode);
             Assert.AreEqual(5L, recordedStore.UnchangedSince);
-            CollectionAssert.AreEqual(new[] { "\\Seen", "$Label1" }, recordedStore.Flags);
+            CollectionAssert.AreEqual(ExpectedVector1, recordedStore.Flags);
             Assert.AreEqual(ImapMoveDisposition.Moved, moved.Disposition);
-            Assert.AreEqual("Archive", application.LastMoveRequest?.DestinationMailboxName);
+            Assert.AreEqual("Archive", application.LastMoveRequest?.DestinationMailboxName, StringComparer.Ordinal);
             Assert.AreEqual(ImapCopyDisposition.Copied, copied.Disposition);
-            Assert.AreEqual("Archive", application.LastCopyRequest?.DestinationMailboxName);
+            Assert.AreEqual("Archive", application.LastCopyRequest?.DestinationMailboxName, StringComparer.Ordinal);
             Assert.AreEqual(ImapAppendPreflightDisposition.Ready, append.Disposition);
             Assert.AreEqual(512L, application.LastAppendRequest?.AddedBytes);
             Assert.AreEqual(ImapAppendDisposition.Appended, appended.Disposition);
-            Assert.AreEqual("INBOX", application.LastAppendCommit?.MailboxName);
+            Assert.AreEqual("INBOX", application.LastAppendCommit?.MailboxName, StringComparer.Ordinal);
             CollectionAssert.AreEqual(appendBody,
                 application.LastAppendCommit?.Messages[0].RawMessage);
             Assert.HasCount(1, searched.Matches);
             Assert.AreEqual(5L, searched.HighestModSequence);
-            Assert.AreEqual("SUBJECT transport", application.LastSearchRequest?.Criteria);
+            Assert.AreEqual("SUBJECT transport", application.LastSearchRequest?.Criteria, StringComparer.Ordinal);
             Assert.HasCount(1, sorted.SortedMatches);
             Assert.AreEqual(ImapSortKey.Subject, application.LastSortRequest?.SortCriteria[0].Key);
             Assert.HasCount(2, threaded.Nodes);
@@ -201,11 +207,13 @@ public sealed class ImapGatewayTransportTests
             Assert.HasCount(1, fetchPage.Messages);
             Assert.IsTrue(fetchPage.Messages[0].RawMessage is { Length: > 300 * 1024 });
 
-            await using var operations = gatewayDataSource.CreateCommand(
+            var operations = gatewayDataSource.CreateCommand(
                 "SELECT operation FROM application_requests ORDER BY created_at");
-            await using var operationReader = await operations.ExecuteReaderAsync(timeout.Token);
+            await using var operationsLifetime = operations.ConfigureAwait(false);
+            var operationReader = (await operations.ExecuteReaderAsync(timeout.Token).ConfigureAwait(false));
+            await using var operationReaderLifetime = operationReader.ConfigureAwait(false);
             var observed = new List<string>();
-            while (await operationReader.ReadAsync(timeout.Token))
+            while (await operationReader.ReadAsync(timeout.Token).ConfigureAwait(false))
                 observed.Add(operationReader.GetString(0));
             CollectionAssert.AreEqual(
                 new[]
@@ -235,45 +243,51 @@ public sealed class ImapGatewayTransportTests
                 },
                 observed);
 
-            await using (var appendStorage = gatewayDataSource.CreateCommand(
+            {
+                var appendStorage = gatewayDataSource.CreateCommand(
                 "SELECT request_payload_inline IS NULL, request_payload_blob_provider "
-                + "FROM application_requests WHERE operation = @operation"))
-            {
+                + "FROM application_requests WHERE operation = @operation");
+                await using var appendStorageLifetime = appendStorage.ConfigureAwait(false);
                 appendStorage.Parameters.AddWithValue("operation", ApplicationOperations.ImapAppendMessages);
-                await using var storedReader = await appendStorage.ExecuteReaderAsync(timeout.Token);
-                Assert.IsTrue(await storedReader.ReadAsync(timeout.Token));
+                var storedReader = (await appendStorage.ExecuteReaderAsync(timeout.Token).ConfigureAwait(false));
+                await using var storedReaderLifetime = storedReader.ConfigureAwait(false);
+                Assert.IsTrue(await storedReader.ReadAsync(timeout.Token).ConfigureAwait(false));
                 Assert.IsTrue(storedReader.GetBoolean(0));
-                Assert.AreEqual("azure-blob", storedReader.GetString(1));
+                Assert.AreEqual("azure-blob", storedReader.GetString(1), StringComparer.Ordinal);
             }
-            await using (var fetchStorage = gatewayDataSource.CreateCommand(
-                "SELECT response_payload_inline IS NULL, response_payload_blob_provider "
-                + "FROM application_requests WHERE operation = @operation"))
             {
+                var fetchStorage = gatewayDataSource.CreateCommand(
+                "SELECT response_payload_inline IS NULL, response_payload_blob_provider "
+                + "FROM application_requests WHERE operation = @operation");
+                await using var fetchStorageLifetime = fetchStorage.ConfigureAwait(false);
                 fetchStorage.Parameters.AddWithValue("operation", ApplicationOperations.ImapFetchPage);
-                await using var storedReader = await fetchStorage.ExecuteReaderAsync(timeout.Token);
-                Assert.IsTrue(await storedReader.ReadAsync(timeout.Token));
+                var storedReader = (await fetchStorage.ExecuteReaderAsync(timeout.Token).ConfigureAwait(false));
+                await using var storedReaderLifetime = storedReader.ConfigureAwait(false);
+                Assert.IsTrue(await storedReader.ReadAsync(timeout.Token).ConfigureAwait(false));
                 Assert.IsTrue(storedReader.GetBoolean(0));
-                Assert.AreEqual("azure-blob", storedReader.GetString(1));
+                Assert.AreEqual("azure-blob", storedReader.GetString(1), StringComparer.Ordinal);
             }
             Assert.IsTrue(objects.ObjectCount > 0);
 
-            await using var records = gatewayDataSource.CreateCommand(
+            var records = gatewayDataSource.CreateCommand(
                 "SELECT payload_inline, payload_blob_provider FROM gateway_traffic_records "
                 + "WHERE protocol = 'imap' AND application_request_id IS NOT NULL");
-            await using var recordReader = await records.ExecuteReaderAsync(timeout.Token);
+            await using var recordsLifetime = records.ConfigureAwait(false);
+            var recordReader = (await records.ExecuteReaderAsync(timeout.Token).ConfigureAwait(false));
+            await using var recordReaderLifetime = recordReader.ConfigureAwait(false);
             var recordCount = 0;
             var blobRecordCount = 0;
-            while (await recordReader.ReadAsync(timeout.Token))
+            while (await recordReader.ReadAsync(timeout.Token).ConfigureAwait(false))
             {
                 recordCount++;
-                if (recordReader.IsDBNull(0))
+                if (await (recordReader.IsDBNullAsync(0)).ConfigureAwait(false))
                 {
                     blobRecordCount++;
-                    Assert.AreEqual("azure-blob", recordReader.GetString(1));
+                    Assert.AreEqual("azure-blob", recordReader.GetString(1), StringComparer.Ordinal);
                 }
                 else
                 {
-                    var ciphertext = Encoding.UTF8.GetString(recordReader.GetFieldValue<byte[]>(0));
+                    var ciphertext = Encoding.UTF8.GetString(await (recordReader.GetFieldValueAsync<byte[]>(0)).ConfigureAwait(false));
                     Assert.IsFalse(ciphertext.Contains("imap-secret", StringComparison.Ordinal));
                     Assert.IsFalse(ciphertext.Contains("imap-access-token", StringComparison.Ordinal));
                 }
@@ -283,7 +297,7 @@ public sealed class ImapGatewayTransportTests
         }
         finally
         {
-            await worker.StopAsync(CancellationToken.None);
+            await worker.StopAsync(CancellationToken.None).ConfigureAwait(false);
             worker.Dispose();
         }
     }
@@ -336,7 +350,7 @@ public sealed class ImapGatewayTransportTests
         public Task<ImapMailboxStatusResult> GetMailboxStatusesAsync(
             ImapMailboxStatusRequest request,
             CancellationToken cancellationToken = default) =>
-            Task.FromResult(new ImapMailboxStatusResult(new Dictionary<string, ImapMailboxStatus>
+            Task.FromResult(new ImapMailboxStatusResult(new Dictionary<string, ImapMailboxStatus>(StringComparer.Ordinal)
             {
                 ["INBOX"] = new(Guid.CreateVersion7(), 1, 3, 5, "mailbox-id", 2, 1, 12),
             }));
@@ -505,4 +519,5 @@ public sealed class ImapGatewayTransportTests
                     null, raw)]));
         }
     }
+    private static readonly string[] ExpectedVector1 = new[] { "\\Seen", "$Label1" };
 }

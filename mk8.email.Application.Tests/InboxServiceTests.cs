@@ -8,7 +8,8 @@ using mk8.email.Infrastructure.Models;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class InboxServiceTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class InboxServiceTests
 {
     [TestMethod]
     [DataRow(UserRole.User, true, true)]
@@ -18,7 +19,8 @@ public sealed class InboxServiceTests
     [DataRow(UserRole.SuperAdmin, false, true)]
     public async Task CreationRetainsRoleAndCompanyBoundaries(UserRole role, bool sameCompany, bool allowed)
     {
-        await using var fixture = await InboxFixture.CreateAsync(role, sameCompany).ConfigureAwait(false);
+        var fixture = (await InboxFixture.CreateAsync(role, sameCompany).ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var result = await fixture.Service.CreateInboxAsync(fixture.User.Id,
             new CreateInboxRequestDTO("new", fixture.Address.Id)).ConfigureAwait(false);
         Assert.AreEqual(allowed, result is not null);
@@ -33,7 +35,8 @@ public sealed class InboxServiceTests
     [DataRow(UserRole.SuperAdmin, true)]
     public async Task CreatingForAnotherOwnerRetainsRolePolicy(UserRole role, bool allowed)
     {
-        await using var fixture = await InboxFixture.CreateAsync(role).ConfigureAwait(false);
+        var fixture = (await InboxFixture.CreateAsync(role).ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var other = new UserDB
         {
             Id = Guid.CreateVersion7(),
@@ -41,7 +44,7 @@ public sealed class InboxServiceTests
             PasswordHash = "unused",
             CompanyId = fixture.User.CompanyId,
         };
-        fixture.Database.Users.Add(other);
+        await (fixture.Database.Users.AddAsync(other)).ConfigureAwait(false);
         await fixture.Database.SaveChangesAsync().ConfigureAwait(false);
         var result = await fixture.Service.CreateInboxAsync(fixture.User.Id,
             new CreateInboxRequestDTO("new", fixture.Address.Id, other.Id)).ConfigureAwait(false);
@@ -60,7 +63,8 @@ public sealed class InboxServiceTests
     [DataRow(true)]
     public async Task OnlyPrimaryInboxesReceiveDefaultFolders(bool alias)
     {
-        await using var fixture = await InboxFixture.CreateAsync(UserRole.SuperAdmin).ConfigureAwait(false);
+        var fixture = (await InboxFixture.CreateAsync(UserRole.SuperAdmin).ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var target = await fixture.AddExistingInboxAsync().ConfigureAwait(false);
         var result = await fixture.Service.CreateInboxAsync(fixture.User.Id,
             new CreateInboxRequestDTO("new", fixture.Address.Id, AliasForInboxId: alias ? target.Id : null))
@@ -71,13 +75,14 @@ public sealed class InboxServiceTests
             .Select(folder => folder.Name).ToArrayAsync().ConfigureAwait(false);
         CollectionAssert.AreEquivalent(alias ? Array.Empty<string>() : DefaultFolders.All.ToArray(), folders);
         var listed = await fixture.Service.GetUserInboxesAsync(fixture.User.Id).ConfigureAwait(false);
-        Assert.IsTrue(listed.Any(inbox => inbox.Id == result.Id && inbox.Domain == fixture.Address.Domain));
+        Assert.IsTrue(listed.Any(inbox => inbox.Id == result.Id && string.Equals(inbox.Domain, fixture.Address.Domain, StringComparison.Ordinal)));
     }
 
     [TestMethod]
     public async Task OrdinaryUserCannotCreateASecondInbox()
     {
-        await using var fixture = await InboxFixture.CreateAsync(UserRole.User).ConfigureAwait(false);
+        var fixture = (await InboxFixture.CreateAsync(UserRole.User).ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         await fixture.AddExistingInboxAsync().ConfigureAwait(false);
         Assert.IsNull(await fixture.Service.CreateInboxAsync(fixture.User.Id,
             new CreateInboxRequestDTO("second", fixture.Address.Id)).ConfigureAwait(false));
@@ -95,18 +100,19 @@ public sealed class InboxServiceTests
     public async Task CapacityRetainsGlobalFallbackAndExplicitUnlimitedOverrides(
         bool domainLimit, int globalLimit, int? companyLimit, bool allowed)
     {
-        await using var fixture = await InboxFixture.CreateAsync(UserRole.CompanyAdmin).ConfigureAwait(false);
+        var fixture = (await InboxFixture.CreateAsync(UserRole.CompanyAdmin).ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         await fixture.AddExistingInboxAsync().ConfigureAwait(false);
         var global = await fixture.Database.GlobalLimits.SingleAsync().ConfigureAwait(false);
         global.DefaultMaxInboxesPerCompany = domainLimit ? 0 : globalLimit;
         global.DefaultMaxInboxesPerDomain = domainLimit ? globalLimit : 0;
-        fixture.Database.CompanyLimits.Add(new CompanyLimitsDB
+        await (fixture.Database.CompanyLimits.AddAsync(new CompanyLimitsDB
         {
             Id = Guid.CreateVersion7(),
             CompanyId = fixture.Address.CompanyId,
             MaxInboxes = domainLimit ? null : companyLimit,
             MaxInboxesPerDomain = domainLimit ? companyLimit : null,
-        });
+        })).ConfigureAwait(false);
         await fixture.Database.SaveChangesAsync().ConfigureAwait(false);
         var result = await fixture.Service.CreateInboxAsync(fixture.User.Id,
             new CreateInboxRequestDTO("second", fixture.Address.Id)).ConfigureAwait(false);
@@ -119,7 +125,8 @@ public sealed class InboxServiceTests
     [DataRow(true, true)]
     public async Task CompanyCapacityCountsOtherDomainsButDomainCapacityDoesNot(bool domainLimit, bool allowed)
     {
-        await using var fixture = await InboxFixture.CreateAsync(UserRole.CompanyAdmin).ConfigureAwait(false);
+        var fixture = (await InboxFixture.CreateAsync(UserRole.CompanyAdmin).ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var existing = await fixture.AddExistingInboxAsync().ConfigureAwait(false);
         var otherAddress = new AddressDB
         {
@@ -127,7 +134,7 @@ public sealed class InboxServiceTests
             Domain = "other.example.test",
             CompanyId = fixture.Address.CompanyId,
         };
-        fixture.Database.Addresses.Add(otherAddress);
+        await (fixture.Database.Addresses.AddAsync(otherAddress)).ConfigureAwait(false);
         existing.Address = otherAddress;
         var global = await fixture.Database.GlobalLimits.SingleAsync().ConfigureAwait(false);
         global.DefaultMaxInboxesPerCompany = domainLimit ? 0 : 1;
@@ -143,7 +150,8 @@ public sealed class InboxServiceTests
     [DataRow(true)]
     public async Task MissingUserOrAddressCannotCreateAnInbox(bool missingUser)
     {
-        await using var fixture = await InboxFixture.CreateAsync(UserRole.SuperAdmin).ConfigureAwait(false);
+        var fixture = (await InboxFixture.CreateAsync(UserRole.SuperAdmin).ConfigureAwait(false));
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
         Assert.IsNull(await fixture.Service.CreateInboxAsync(missingUser ? Guid.NewGuid() : fixture.User.Id,
             new CreateInboxRequestDTO("new", missingUser ? fixture.Address.Id : Guid.NewGuid())).ConfigureAwait(false));
         Assert.AreEqual(0, await fixture.Database.Inboxes.CountAsync().ConfigureAwait(false));
@@ -159,29 +167,48 @@ public sealed class InboxServiceTests
 
         public static async Task<InboxFixture> CreateAsync(UserRole role, bool sameCompany = true)
         {
-            var database = new EmailDbContext(new DbContextOptionsBuilder<EmailDbContext>()
+
+            // The returned fixture owns this allocation; finally releases untransferred resources if initialization fails.
+#pragma warning disable CA2000
+            EmailDbContext? database = new EmailDbContext(new DbContextOptionsBuilder<EmailDbContext>()
                 .UseInMemoryDatabase($"inbox-policy-{Guid.NewGuid():N}").Options);
-            await database.Database.EnsureCreatedAsync().ConfigureAwait(false);
-            var company = new CompanyDB { Id = Guid.CreateVersion7(), Name = "Inbox policy" };
-            var user = new UserDB
+
+#pragma warning restore CA2000
+            try
             {
-                Id = Guid.CreateVersion7(),
-                Username = "owner",
-                PasswordHash = "unused",
-                Role = role.ToString(),
-                Company = company,
-            };
-            var address = new AddressDB
+                await database.Database.EnsureCreatedAsync().ConfigureAwait(false);
+                var company = new CompanyDB { Id = Guid.CreateVersion7(), Name = "Inbox policy" };
+                var user = new UserDB
+                {
+                    Id = Guid.CreateVersion7(),
+                    Username = "owner",
+                    PasswordHash = "unused",
+                    Role = role.ToString(),
+                    Company = company,
+                };
+                var address = new AddressDB
+                {
+                    Id = Guid.CreateVersion7(),
+                    Domain = "mail.example.test",
+                    IsActive = true,
+                    Company = sameCompany ? company : new CompanyDB { Id = Guid.CreateVersion7(), Name = "Other company" },
+                };
+                await database.Users.AddAsync(user).ConfigureAwait(false);
+                await database.Addresses.AddAsync(address).ConfigureAwait(false);
+                await database.SaveChangesAsync().ConfigureAwait(false);
+                var fixture = new InboxFixture(database, user, address);
+                database = null;
+                return fixture;
+            }
+            finally
             {
-                Id = Guid.CreateVersion7(),
-                Domain = "mail.example.test",
-                IsActive = true,
-                Company = sameCompany ? company : new CompanyDB { Id = Guid.CreateVersion7(), Name = "Other company" },
-            };
-            database.Users.Add(user);
-            database.Addresses.Add(address);
-            await database.SaveChangesAsync().ConfigureAwait(false);
-            return new InboxFixture(database, user, address);
+
+                // Successful transfer clears the resource; initialization exceptions leave it non-null for finally cleanup.
+#pragma warning disable CA1508
+                if (database is not null) await database.DisposeAsync().ConfigureAwait(false);
+
+#pragma warning restore CA1508
+            }
         }
 
         public async Task<InboxDB> AddExistingInboxAsync()
@@ -193,7 +220,7 @@ public sealed class InboxServiceTests
                 Address = Address,
                 Owner = User,
             };
-            Database.Inboxes.Add(inbox);
+            await Database.Inboxes.AddAsync(inbox).ConfigureAwait(false);
             await Database.SaveChangesAsync().ConfigureAwait(false);
             return inbox;
         }

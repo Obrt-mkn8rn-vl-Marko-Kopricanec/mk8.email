@@ -7,27 +7,28 @@ using mk8.email.Infrastructure.Models;
 namespace mk8.email.Application.Tests;
 
 [TestClass]
-public sealed class SmtpDsnTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class SmtpDsnTests
 {
     [TestMethod]
     public void DsnParametersNormalizeAndRejectAmbiguousValues()
     {
         Assert.IsTrue(SmtpDsn.TryNormalizeReturnContent("hdrs", out var returnContent));
-        Assert.AreEqual("HDRS", returnContent);
+        Assert.AreEqual("HDRS", returnContent, StringComparer.Ordinal);
         Assert.IsFalse(SmtpDsn.TryNormalizeReturnContent("body", out _));
 
         Assert.IsTrue(SmtpDsn.TryNormalizeNotify(
             "success,failure,delay",
             out var notify));
-        Assert.AreEqual("SUCCESS,FAILURE,DELAY", notify);
+        Assert.AreEqual("SUCCESS,FAILURE,DELAY", notify, StringComparer.Ordinal);
         Assert.IsTrue(SmtpDsn.TryNormalizeNotify("never", out notify));
-        Assert.AreEqual("NEVER", notify);
+        Assert.AreEqual("NEVER", notify, StringComparer.Ordinal);
         Assert.IsFalse(SmtpDsn.TryNormalizeNotify("NEVER,FAILURE", out _));
         Assert.IsFalse(SmtpDsn.TryNormalizeNotify("FAILURE,FAILURE", out _));
 
         Assert.IsTrue(SmtpDsn.TryValidateEnvelopeId("job+2B42+3Ddone"));
         Assert.IsTrue(SmtpDsn.TryDecodeEnvelopeId("job+2B42+3Ddone", out var envelopeId));
-        Assert.AreEqual("job+42=done", envelopeId);
+        Assert.AreEqual("job+42=done", envelopeId, StringComparer.Ordinal);
         Assert.IsFalse(SmtpDsn.TryValidateEnvelopeId("job+2b42"));
         Assert.IsFalse(SmtpDsn.TryValidateEnvelopeId("job=42"));
     }
@@ -40,16 +41,16 @@ public sealed class SmtpDsnTests
             smtpUtf8: false,
             out var addressType,
             out var decoded));
-        Assert.AreEqual("rfc822", addressType);
-        Assert.AreEqual("old+tag@example.net", decoded);
+        Assert.AreEqual("rfc822", addressType, StringComparer.Ordinal);
+        Assert.AreEqual("old+tag@example.net", decoded, StringComparer.Ordinal);
 
         Assert.IsTrue(SmtpDsn.TryValidateOriginalRecipient(
             @"utf-8;\x{3B4}\x{3BF}\x{3BA}\x{3B9}\x{3BC}\x{3AE}@example.net",
             smtpUtf8: false,
             out addressType,
             out decoded));
-        Assert.AreEqual("utf-8", addressType);
-        Assert.AreEqual("δοκιμή@example.net", decoded);
+        Assert.AreEqual("utf-8", addressType, StringComparer.Ordinal);
+        Assert.AreEqual("δοκιμή@example.net", decoded, StringComparer.Ordinal);
 
         Assert.IsFalse(SmtpDsn.TryValidateOriginalRecipient(
             "utf-8;δοκιμή@example.net",
@@ -89,24 +90,24 @@ public sealed class SmtpDsnTests
         Assert.IsFalse(built.RequiresSmtpUtf8);
         using var parsed = MimeMessage.Load(new MemoryStream(
             Encoding.Latin1.GetBytes(built.RawMessage)));
-        Assert.AreEqual("auto-replied", parsed.Headers[HeaderId.AutoSubmitted]);
+        Assert.AreEqual("auto-replied", parsed.Headers[HeaderId.AutoSubmitted], StringComparer.Ordinal);
         var report = Assert.IsInstanceOfType<MultipartReport>(parsed.Body);
-        Assert.AreEqual("delivery-status", report.ContentType.Parameters["report-type"]);
+        Assert.AreEqual("delivery-status", report.ContentType.Parameters["report-type"], StringComparer.Ordinal);
         Assert.HasCount(3, report);
         var status = Assert.IsInstanceOfType<MessageDeliveryStatus>(report[1]);
         Assert.HasCount(2, status.StatusGroups);
-        Assert.AreEqual("job+42=done", status.StatusGroups[0]["Original-Envelope-ID"]);
-        Assert.AreEqual("dns; email.mk8n.com", status.StatusGroups[0]["Reporting-MTA"]);
+        Assert.AreEqual("job+42=done", status.StatusGroups[0]["Original-Envelope-ID"], StringComparer.Ordinal);
+        Assert.AreEqual("dns; email.mk8n.com", status.StatusGroups[0]["Reporting-MTA"], StringComparer.Ordinal);
         Assert.AreEqual(
             "rfc822; old+tag@example.net",
-            status.StatusGroups[1]["Original-Recipient"]);
+            status.StatusGroups[1]["Original-Recipient"], StringComparer.Ordinal);
         Assert.AreEqual(
             "rfc822; recipient@example.com",
-            status.StatusGroups[1]["Final-Recipient"]);
-        Assert.AreEqual("failed", status.StatusGroups[1]["Action"]);
-        Assert.AreEqual("5.1.1", status.StatusGroups[1]["Status"]);
-        Assert.AreEqual("dns; mx.example.com", status.StatusGroups[1]["Remote-MTA"]);
-        Assert.AreEqual("message/rfc822", report[2].ContentType.MimeType);
+            status.StatusGroups[1]["Final-Recipient"], StringComparer.Ordinal);
+        Assert.AreEqual("failed", status.StatusGroups[1]["Action"], StringComparer.Ordinal);
+        Assert.AreEqual("5.1.1", status.StatusGroups[1]["Status"], StringComparer.Ordinal);
+        Assert.AreEqual("dns; mx.example.com", status.StatusGroups[1]["Remote-MTA"], StringComparer.Ordinal);
+        Assert.AreEqual("message/rfc822", report[2].ContentType.MimeType, StringComparer.Ordinal);
     }
 
     [TestMethod]
@@ -135,16 +136,16 @@ public sealed class SmtpDsnTests
             Encoding.Latin1.GetBytes(built.RawMessage)));
         var report = Assert.IsInstanceOfType<MultipartReport>(parsed.Body);
         var statusPart = Assert.IsInstanceOfType<MimePart>(report[1]);
-        Assert.AreEqual("message/global-delivery-status", statusPart.ContentType.MimeType);
+        Assert.AreEqual("message/global-delivery-status", statusPart.ContentType.MimeType, StringComparer.Ordinal);
         Assert.AreEqual(ContentEncoding.Base64, statusPart.ContentTransferEncoding);
         var status = DecodePart(statusPart);
-        StringAssert.Contains(status, "Original-Recipient: utf-8; δοκιμή@example.com");
-        StringAssert.Contains(status, "Final-Recipient: utf-8; δοκιμή@example.com");
-        StringAssert.Contains(status, "Diagnostic-Code: smtp; Το γραμματοκιβώτιο λείπει");
+        StringAssert.Contains(status, "Original-Recipient: utf-8; δοκιμή@example.com", StringComparison.Ordinal);
+        StringAssert.Contains(status, "Final-Recipient: utf-8; δοκιμή@example.com", StringComparison.Ordinal);
+        StringAssert.Contains(status, "Diagnostic-Code: smtp; Το γραμματοκιβώτιο λείπει", StringComparison.Ordinal);
         var returnedHeaders = Assert.IsInstanceOfType<MimePart>(report[2]);
-        Assert.AreEqual("message/global-headers", returnedHeaders.ContentType.MimeType);
+        Assert.AreEqual("message/global-headers", returnedHeaders.ContentType.MimeType, StringComparer.Ordinal);
         Assert.AreEqual(ContentEncoding.Base64, returnedHeaders.ContentTransferEncoding);
-        StringAssert.Contains(DecodePart(returnedHeaders), "Subject: Žuta pošta");
+        StringAssert.Contains(DecodePart(returnedHeaders), "Subject: Žuta pošta", StringComparison.Ordinal);
     }
 
     [TestMethod]
@@ -175,12 +176,12 @@ public sealed class SmtpDsnTests
 
         using var parsed = MimeMessage.Load(new MemoryStream(
             Encoding.Latin1.GetBytes(built.RawMessage)));
-        Assert.AreEqual($"Delivery Status Notification ({subjectSuffix})", parsed.Subject);
+        Assert.AreEqual($"Delivery Status Notification ({subjectSuffix})", parsed.Subject, StringComparer.Ordinal);
         var report = Assert.IsInstanceOfType<MultipartReport>(parsed.Body);
         var deliveryStatus = Assert.IsInstanceOfType<MessageDeliveryStatus>(report[1]);
-        Assert.AreEqual(actionName, deliveryStatus.StatusGroups[1]["Action"]);
-        Assert.AreEqual(statusCode, deliveryStatus.StatusGroups[1]["Status"]);
-        Assert.AreEqual(returnedType, report[2].ContentType.MimeType);
+        Assert.AreEqual(actionName, deliveryStatus.StatusGroups[1]["Action"], StringComparer.Ordinal);
+        Assert.AreEqual(statusCode, deliveryStatus.StatusGroups[1]["Status"], StringComparer.Ordinal);
+        Assert.AreEqual(returnedType, report[2].ContentType.MimeType, StringComparer.Ordinal);
     }
 
     private static MailQueueMessageDB CreateMessage(

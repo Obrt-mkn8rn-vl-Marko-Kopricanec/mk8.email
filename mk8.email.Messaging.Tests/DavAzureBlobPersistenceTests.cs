@@ -16,12 +16,15 @@ namespace mk8.email.Messaging.Tests;
 [DoNotParallelize]
 [TestCategory("PostgreSQL")]
 [TestCategory("AzureBlobCompatible")]
-public sealed class DavAzureBlobPersistenceTests
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
+internal sealed class DavAzureBlobPersistenceTests
 {
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ConcurrentLegacyMigrationExternalizesDavBodiesAndRejectsInlineRows scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task ConcurrentLegacyMigrationExternalizesDavBodiesAndRejectsInlineRows()
     {
-        await using var databaseServer = await RequirePostgresAsync();
+        var databaseServer = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseServerLifetime = databaseServer.ConfigureAwait(false);
         var connectionString = RequireAzureBlobConnection();
         var serviceClient = new BlobServiceClient(connectionString);
         var containerName = $"mk8-dav-{Guid.NewGuid():N}";
@@ -29,38 +32,40 @@ public sealed class DavAzureBlobPersistenceTests
         var store = CreateStore(serviceClient, containerName);
         var resourceId = Guid.CreateVersion7();
         var content = Calendar("legacy-dav-resource", "Legacy body");
-        await CreateSchemaAsync(databaseServer.ConnectionString);
-        var collectionId = await InsertCollectionAsync(databaseServer.ConnectionString);
+        await CreateSchemaAsync(databaseServer.ConnectionString).ConfigureAwait(false);
+        var collectionId = await InsertCollectionAsync(databaseServer.ConnectionString).ConfigureAwait(false);
         await InsertLegacyAsync(
             databaseServer.ConnectionString,
             collectionId,
             resourceId,
-            content);
+            content).ConfigureAwait(false);
 
         try
         {
             async Task MigrateAsync()
             {
-                await using var context = CreateContext(databaseServer.ConnectionString);
+                var context = CreateContext(databaseServer.ConnectionString);
+                await using var contextLifetime = context.ConfigureAwait(false);
                 await new DavResourceLargeObjectMigrationService(
                     context,
                     store,
                     NullLogger<DavResourceLargeObjectMigrationService>.Instance)
-                    .MigrateAsync();
+                    .MigrateAsync().ConfigureAwait(false);
             }
 
-            await Task.WhenAll(MigrateAsync(), MigrateAsync());
+            await Task.WhenAll(MigrateAsync(), MigrateAsync()).ConfigureAwait(false);
 
-            await using var verification = CreateContext(databaseServer.ConnectionString);
+            var verification = CreateContext(databaseServer.ConnectionString);
+            await using var verificationLifetime = verification.ConfigureAwait(false);
             var migrated = await verification.DavResources.AsNoTracking()
-                .SingleAsync(candidate => candidate.Id == resourceId);
+                .SingleAsync(candidate => candidate.Id == resourceId).ConfigureAwait(false);
             Assert.IsNull(migrated.Content);
-            Assert.AreEqual(LargeObjectProviders.AzureBlob, migrated.ObjectProvider);
+            Assert.AreEqual(LargeObjectProviders.AzureBlob, migrated.ObjectProvider, StringComparer.Ordinal);
             Assert.AreEqual(
                 DavResourceContentService.BuildObjectName(resourceId, migrated.Etag),
-                migrated.ObjectName);
+                migrated.ObjectName, StringComparer.Ordinal);
             Assert.AreEqual(content.LongLength, migrated.SizeBytes);
-            Assert.AreEqual(migrated.Etag, migrated.ObjectSha256);
+            Assert.AreEqual(migrated.Etag, migrated.ObjectSha256, StringComparer.Ordinal);
             Assert.IsFalse(string.IsNullOrWhiteSpace(migrated.ObjectEntityTag));
 
             var effects = new LargeObjectTransactionEffects(
@@ -70,7 +75,7 @@ public sealed class DavAzureBlobPersistenceTests
                     store,
                     effects,
                     NullLogger<DavResourceContentService>.Instance)
-                .ReadAsync(migrated, CancellationToken.None);
+                .ReadAsync(migrated, CancellationToken.None).ConfigureAwait(false);
             CollectionAssert.AreEqual(content, body);
 
             var exception = await Assert.ThrowsExactlyAsync<PostgresException>(() =>
@@ -78,87 +83,96 @@ public sealed class DavAzureBlobPersistenceTests
                     databaseServer.ConnectionString,
                     collectionId,
                     Guid.CreateVersion7(),
-                    Calendar("forbidden-inline", "Rejected")));
-            Assert.AreEqual(PostgresErrorCodes.CheckViolation, exception.SqlState);
+                    Calendar("forbidden-inline", "Rejected"))).ConfigureAwait(false);
+            Assert.AreEqual(PostgresErrorCodes.CheckViolation, exception.SqlState, StringComparer.Ordinal);
         }
         finally
         {
-            await container.DeleteIfExistsAsync();
+            await container.DeleteIfExistsAsync().ConfigureAwait(false);
         }
     }
 
     [TestMethod]
     public async Task FailedLegacyMigrationRetainsDavRowAndRemovesCreatedBlob()
     {
-        await using var databaseServer = await RequirePostgresAsync();
+        var databaseServer = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseServerLifetime = databaseServer.ConfigureAwait(false);
         var serviceClient = new BlobServiceClient(RequireAzureBlobConnection());
         var containerName = $"mk8-dav-{Guid.NewGuid():N}";
         var container = serviceClient.GetBlobContainerClient(containerName);
         var store = CreateStore(serviceClient, containerName);
         var resourceId = Guid.CreateVersion7();
         var content = Calendar("rollback-dav-resource", "Keep legacy body");
-        await CreateSchemaAsync(databaseServer.ConnectionString);
-        var collectionId = await InsertCollectionAsync(databaseServer.ConnectionString);
-        await InsertLegacyAsync(databaseServer.ConnectionString, collectionId, resourceId, content);
-        await using (var constraint = CreateContext(databaseServer.ConnectionString))
+        await CreateSchemaAsync(databaseServer.ConnectionString).ConfigureAwait(false);
+        var collectionId = await InsertCollectionAsync(databaseServer.ConnectionString).ConfigureAwait(false);
+        await InsertLegacyAsync(databaseServer.ConnectionString, collectionId, resourceId, content).ConfigureAwait(false);
         {
+            var constraint = CreateContext(databaseServer.ConnectionString);
+            await using var constraintLifetime = constraint.ConfigureAwait(false);
             await constraint.Database.ExecuteSqlRawAsync(
-                "ALTER TABLE dav_resources ADD CONSTRAINT ck_test_keep_legacy_dav CHECK (content IS NOT NULL)");
+                "ALTER TABLE dav_resources ADD CONSTRAINT ck_test_keep_legacy_dav CHECK (content IS NOT NULL)").ConfigureAwait(false);
         }
 
         try
         {
-            await using (var migration = CreateContext(databaseServer.ConnectionString))
             {
+                var migration = CreateContext(databaseServer.ConnectionString);
+                await using var migrationLifetime = migration.ConfigureAwait(false);
                 await Assert.ThrowsExactlyAsync<DbUpdateException>(() =>
                     new DavResourceLargeObjectMigrationService(
                         migration,
                         store,
                         NullLogger<DavResourceLargeObjectMigrationService>.Instance)
-                        .MigrateAsync());
+                        .MigrateAsync()).ConfigureAwait(false);
             }
 
-            await using var verification = CreateContext(databaseServer.ConnectionString);
+            var verification = CreateContext(databaseServer.ConnectionString);
+            await using var verificationLifetime = verification.ConfigureAwait(false);
             var legacy = await verification.DavResources.AsNoTracking()
-                .SingleAsync(resource => resource.Id == resourceId);
+                .SingleAsync(resource => resource.Id == resourceId).ConfigureAwait(false);
             CollectionAssert.AreEqual(content, legacy.Content);
             Assert.IsNull(legacy.ObjectName);
-            Assert.HasCount(0, await GetBlobNamesAsync(container, resourceId));
+            Assert.HasCount(0, await GetBlobNamesAsync(container, resourceId).ConfigureAwait(false));
         }
         finally
         {
-            await container.DeleteIfExistsAsync();
+            await container.DeleteIfExistsAsync().ConfigureAwait(false);
         }
     }
 
     [TestMethod]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The CallerTransactionsCleanUpCreatedReplacedAndDeletedDavObjects scenario keeps one fixture's ordered setup, operation and invariant assertions together.")]
     public async Task CallerTransactionsCleanUpCreatedReplacedAndDeletedDavObjects()
     {
-        await using var databaseServer = await RequirePostgresAsync();
+        var databaseServer = (await RequirePostgresAsync().ConfigureAwait(false));
+        await using var databaseServerLifetime = databaseServer.ConfigureAwait(false);
         var connectionString = RequireAzureBlobConnection();
         var serviceClient = new BlobServiceClient(connectionString);
         var containerName = $"mk8-dav-{Guid.NewGuid():N}";
         var container = serviceClient.GetBlobContainerClient(containerName);
         var store = CreateStore(serviceClient, containerName);
-        await CreateSchemaAsync(databaseServer.ConnectionString);
-        var collectionId = await InsertCollectionAsync(databaseServer.ConnectionString);
-        await using (var migrationContext = CreateContext(databaseServer.ConnectionString))
+        await CreateSchemaAsync(databaseServer.ConnectionString).ConfigureAwait(false);
+        var collectionId = await InsertCollectionAsync(databaseServer.ConnectionString).ConfigureAwait(false);
         {
+            var migrationContext = CreateContext(databaseServer.ConnectionString);
+            await using var migrationContextLifetime = migrationContext.ConfigureAwait(false);
             await new DavResourceLargeObjectMigrationService(
                 migrationContext,
                 store,
                 NullLogger<DavResourceLargeObjectMigrationService>.Instance)
-                .MigrateAsync();
+                .MigrateAsync().ConfigureAwait(false);
         }
 
         try
         {
             var failedId = Guid.CreateVersion7();
-            await using (var failedContext = CreateContext(databaseServer.ConnectionString))
             {
+                var failedContext = CreateContext(databaseServer.ConnectionString);
+                await using var failedContextLifetime = failedContext.ConfigureAwait(false);
                 var effects = Effects(store);
                 var marker = effects.Mark();
-                await using var transaction = await failedContext.Database.BeginTransactionAsync();
+                var transaction = (await failedContext.Database.BeginTransactionAsync().ConfigureAwait(false));
+                await using var transactionLifetime = transaction.ConfigureAwait(false);
                 var failed = NewResource(
                     collectionId,
                     failedId,
@@ -167,105 +181,113 @@ public sealed class DavAzureBlobPersistenceTests
                 await Content(store, effects).SetAsync(
                     failed,
                     Calendar("failed", "Must roll back"),
-                    CancellationToken.None);
-                failedContext.DavResources.Add(failed);
+                    CancellationToken.None).ConfigureAwait(false);
+                await (failedContext.DavResources.AddAsync(failed)).ConfigureAwait(false);
                 await Assert.ThrowsExactlyAsync<DbUpdateException>(() =>
-                    failedContext.SaveChangesAsync());
-                await transaction.RollbackAsync();
-                await effects.RollbackAsync(marker);
+                    failedContext.SaveChangesAsync()).ConfigureAwait(false);
+                await transaction.RollbackAsync().ConfigureAwait(false);
+                await effects.RollbackAsync(marker).ConfigureAwait(false);
             }
-            Assert.HasCount(0, await GetBlobNamesAsync(container, failedId));
+            Assert.HasCount(0, await GetBlobNamesAsync(container, failedId).ConfigureAwait(false));
 
             var resourceId = Guid.CreateVersion7();
             var firstBody = Calendar("transactional", "First body");
-            await using (var createContext = CreateContext(databaseServer.ConnectionString))
             {
+                var createContext = CreateContext(databaseServer.ConnectionString);
+                await using var createContextLifetime = createContext.ConfigureAwait(false);
                 var effects = Effects(store);
                 var marker = effects.Mark();
-                await using var transaction = await createContext.Database.BeginTransactionAsync();
+                var transaction = (await createContext.Database.BeginTransactionAsync().ConfigureAwait(false));
+                await using var transactionLifetime = transaction.ConfigureAwait(false);
                 var resource = NewResource(
                     collectionId,
                     resourceId,
                     "transactional",
                     firstBody);
-                await Content(store, effects).SetAsync(resource, firstBody, CancellationToken.None);
-                createContext.DavResources.Add(resource);
-                await createContext.SaveChangesAsync();
-                await transaction.CommitAsync();
-                await effects.CommitAsync(marker);
+                await Content(store, effects).SetAsync(resource, firstBody, CancellationToken.None).ConfigureAwait(false);
+                await (createContext.DavResources.AddAsync(resource)).ConfigureAwait(false);
+                await createContext.SaveChangesAsync().ConfigureAwait(false);
+                await transaction.CommitAsync().ConfigureAwait(false);
+                await effects.CommitAsync(marker).ConfigureAwait(false);
             }
-            var firstNames = await GetBlobNamesAsync(container, resourceId);
+            var firstNames = await GetBlobNamesAsync(container, resourceId).ConfigureAwait(false);
             Assert.HasCount(1, firstNames);
 
             var rollbackBody = Calendar("transactional", "Rolled back body");
-            await using (var rollbackContext = CreateContext(databaseServer.ConnectionString))
             {
+                var rollbackContext = CreateContext(databaseServer.ConnectionString);
+                await using var rollbackContextLifetime = rollbackContext.ConfigureAwait(false);
                 var effects = Effects(store);
                 var marker = effects.Mark();
-                await using var transaction = await rollbackContext.Database.BeginTransactionAsync();
+                var transaction = (await rollbackContext.Database.BeginTransactionAsync().ConfigureAwait(false));
+                await using var transactionLifetime = transaction.ConfigureAwait(false);
                 var resource = await rollbackContext.DavResources.SingleAsync(
-                    candidate => candidate.Id == resourceId);
+                    candidate => candidate.Id == resourceId).ConfigureAwait(false);
                 SetUpdatedIntegrity(resource, rollbackBody);
                 await Content(store, effects).SetAsync(
                     resource,
                     rollbackBody,
-                    CancellationToken.None);
-                await rollbackContext.SaveChangesAsync();
-                Assert.HasCount(2, await GetBlobNamesAsync(container, resourceId));
-                await transaction.RollbackAsync();
-                await effects.RollbackAsync(marker);
+                    CancellationToken.None).ConfigureAwait(false);
+                await rollbackContext.SaveChangesAsync().ConfigureAwait(false);
+                Assert.HasCount(2, await GetBlobNamesAsync(container, resourceId).ConfigureAwait(false));
+                await transaction.RollbackAsync().ConfigureAwait(false);
+                await effects.RollbackAsync(marker).ConfigureAwait(false);
             }
-            CollectionAssert.AreEqual(firstNames, await GetBlobNamesAsync(container, resourceId));
+            CollectionAssert.AreEqual(firstNames, await GetBlobNamesAsync(container, resourceId).ConfigureAwait(false));
             await AssertStoredBodyAsync(
                 databaseServer.ConnectionString,
                 store,
                 resourceId,
-                firstBody);
+                firstBody).ConfigureAwait(false);
 
             var committedBody = Calendar("transactional", "Committed body");
-            await using (var updateContext = CreateContext(databaseServer.ConnectionString))
             {
+                var updateContext = CreateContext(databaseServer.ConnectionString);
+                await using var updateContextLifetime = updateContext.ConfigureAwait(false);
                 var effects = Effects(store);
                 var marker = effects.Mark();
-                await using var transaction = await updateContext.Database.BeginTransactionAsync();
+                var transaction = (await updateContext.Database.BeginTransactionAsync().ConfigureAwait(false));
+                await using var transactionLifetime = transaction.ConfigureAwait(false);
                 var resource = await updateContext.DavResources.SingleAsync(
-                    candidate => candidate.Id == resourceId);
+                    candidate => candidate.Id == resourceId).ConfigureAwait(false);
                 SetUpdatedIntegrity(resource, committedBody);
                 await Content(store, effects).SetAsync(
                     resource,
                     committedBody,
-                    CancellationToken.None);
-                await updateContext.SaveChangesAsync();
-                await transaction.CommitAsync();
-                await effects.CommitAsync(marker);
+                    CancellationToken.None).ConfigureAwait(false);
+                await updateContext.SaveChangesAsync().ConfigureAwait(false);
+                await transaction.CommitAsync().ConfigureAwait(false);
+                await effects.CommitAsync(marker).ConfigureAwait(false);
             }
-            var committedNames = await GetBlobNamesAsync(container, resourceId);
+            var committedNames = await GetBlobNamesAsync(container, resourceId).ConfigureAwait(false);
             Assert.HasCount(1, committedNames);
-            Assert.AreNotEqual(firstNames[0], committedNames[0]);
+            Assert.AreNotEqual(firstNames[0], committedNames[0], StringComparer.Ordinal);
             await AssertStoredBodyAsync(
                 databaseServer.ConnectionString,
                 store,
                 resourceId,
-                committedBody);
+                committedBody).ConfigureAwait(false);
 
-            await using (var deleteContext = CreateContext(databaseServer.ConnectionString))
             {
+                var deleteContext = CreateContext(databaseServer.ConnectionString);
+                await using var deleteContextLifetime = deleteContext.ConfigureAwait(false);
                 var effects = Effects(store);
                 var marker = effects.Mark();
-                await using var transaction = await deleteContext.Database.BeginTransactionAsync();
+                var transaction = (await deleteContext.Database.BeginTransactionAsync().ConfigureAwait(false));
+                await using var transactionLifetime = transaction.ConfigureAwait(false);
                 var resource = await deleteContext.DavResources.SingleAsync(
-                    candidate => candidate.Id == resourceId);
+                    candidate => candidate.Id == resourceId).ConfigureAwait(false);
                 Content(store, effects).DeleteOnCommit(resource);
                 deleteContext.DavResources.Remove(resource);
-                await deleteContext.SaveChangesAsync();
-                await transaction.CommitAsync();
-                await effects.CommitAsync(marker);
+                await deleteContext.SaveChangesAsync().ConfigureAwait(false);
+                await transaction.CommitAsync().ConfigureAwait(false);
+                await effects.CommitAsync(marker).ConfigureAwait(false);
             }
-            Assert.HasCount(0, await GetBlobNamesAsync(container, resourceId));
+            Assert.HasCount(0, await GetBlobNamesAsync(container, resourceId).ConfigureAwait(false));
         }
         finally
         {
-            await container.DeleteIfExistsAsync();
+            await container.DeleteIfExistsAsync().ConfigureAwait(false);
         }
     }
 
@@ -298,8 +320,9 @@ public sealed class DavAzureBlobPersistenceTests
 
     private static async Task CreateSchemaAsync(string connectionString)
     {
-        await using var context = CreateContext(connectionString);
-        await context.Database.EnsureCreatedAsync();
+        var context = CreateContext(connectionString);
+        await using var contextLifetime = context.ConfigureAwait(false);
+        await context.Database.EnsureCreatedAsync().ConfigureAwait(false);
     }
 
     private static async Task<Guid> InsertCollectionAsync(string connectionString)
@@ -329,9 +352,10 @@ public sealed class DavAzureBlobPersistenceTests
             Components = ["VEVENT"],
             SyncToken = 1,
         };
-        await using var context = CreateContext(connectionString);
-        context.DavCollections.Add(collection);
-        await context.SaveChangesAsync();
+        var context = CreateContext(connectionString);
+        await using var contextLifetime = context.ConfigureAwait(false);
+        await (context.DavCollections.AddAsync(collection)).ConfigureAwait(false);
+        await context.SaveChangesAsync().ConfigureAwait(false);
         return collection.Id;
     }
 
@@ -342,9 +366,11 @@ public sealed class DavAzureBlobPersistenceTests
         byte[] content)
     {
         var hash = Convert.ToHexStringLower(SHA256.HashData(content));
-        await using var connection = new NpgsqlConnection(connectionString);
-        await connection.OpenAsync();
-        await using var command = connection.CreateCommand();
+        var connection = new NpgsqlConnection(connectionString);
+        await using var connectionLifetime = connection.ConfigureAwait(false);
+        await connection.OpenAsync().ConfigureAwait(false);
+        var command = connection.CreateCommand();
+        await using var commandLifetime = command.ConfigureAwait(false);
         command.CommandText =
             """
             INSERT INTO dav_resources (
@@ -362,7 +388,7 @@ public sealed class DavAzureBlobPersistenceTests
         command.Parameters.AddWithValue("etag", hash);
         command.Parameters.AddWithValue("size_bytes", content.Length);
         command.Parameters.AddWithValue("now", DateTime.UtcNow);
-        await command.ExecuteNonQueryAsync();
+        await command.ExecuteNonQueryAsync().ConfigureAwait(false);
     }
 
     private static DavResourceDB NewResource(
@@ -403,12 +429,13 @@ public sealed class DavAzureBlobPersistenceTests
         Guid resourceId,
         byte[] expected)
     {
-        await using var context = CreateContext(connectionString);
+        var context = CreateContext(connectionString);
+        await using var contextLifetime = context.ConfigureAwait(false);
         var stored = await context.DavResources.AsNoTracking()
-            .SingleAsync(candidate => candidate.Id == resourceId);
+            .SingleAsync(candidate => candidate.Id == resourceId).ConfigureAwait(false);
         Assert.IsNull(stored.Content);
         var effects = Effects(store);
-        var actual = await Content(store, effects).ReadAsync(stored, CancellationToken.None);
+        var actual = await Content(store, effects).ReadAsync(stored, CancellationToken.None).ConfigureAwait(false);
         CollectionAssert.AreEqual(expected, actual);
     }
 
@@ -421,7 +448,7 @@ public sealed class DavAzureBlobPersistenceTests
                            BlobTraits.None,
                            BlobStates.None,
                            $"objects/dav/resources/{resourceId:N}/",
-                           CancellationToken.None))
+                           CancellationToken.None).ConfigureAwait(false))
         {
             names.Add(item.Name);
         }
@@ -431,7 +458,7 @@ public sealed class DavAzureBlobPersistenceTests
 
     private static async Task<PostgresTestDatabase> RequirePostgresAsync()
     {
-        var database = await PostgresTestDatabase.TryCreateAsync();
+        var database = await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false);
         if (database is null)
         {
             Assert.Inconclusive(

@@ -59,6 +59,12 @@ public sealed class JmapRequestProcessor
     {
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
     };
+    private static readonly Action<ILogger, Exception?> PostCommitWarning = LoggerMessage.Define(
+        LogLevel.Warning, new EventId(1218, "OperationPostCommit"), "A JMAP post-commit action failed");
+    private static readonly Action<ILogger, MailOperationKind, Exception?> OperationError = LoggerMessage.Define<MailOperationKind>(
+        LogLevel.Error, new EventId(1219, "OperationFailure"), "Mail operation {Operation} failed");
+    private static readonly Action<ILogger, Exception?> RollbackError = LoggerMessage.Define(
+        LogLevel.Error, new EventId(1220, "OperationRollback"), "Could not roll back a failed JMAP method");
     private static readonly Action<ILogger, string, Exception?> PushVerificationWarning =
         LoggerMessage.Define<string>(LogLevel.Warning, new EventId(1201, "PushVerificationDelivery"),
             "Could not deliver JMAP push verification for {PushSubscriptionId}");
@@ -185,113 +191,54 @@ public sealed class JmapRequestProcessor
         var receiptKey = relational
             ? new ApplicationReceiptKey(operationId!.Value, 0, user.Id, "mail.operation", inputHash)
             : null;
-        MailOperationResponse response;
-        if (_methods.TryGetValue(command.Operation, out var method) && features.Contains(method.Feature))
-            response = await ExecuteLegacyMethodAsync(method, command.Arguments, context, receiptKey,
-                cancellationToken).ConfigureAwait(false);
-        else if (command.Operation == MailOperationKind.ReadFolders && features.Contains(MailFeature.Messages))
-            response = await ExecuteFoldersAsync(command, context, user, receiptKey,
-                cancellationToken).ConfigureAwait(false);
-        else if (command.Operation == MailOperationKind.MutateFolders && features.Contains(MailFeature.Messages))
-            response = await ExecuteFolderMutationAsync(command, context, receiptKey,
-                cancellationToken).ConfigureAwait(false);
-        else if (command.Operation == MailOperationKind.ReadMessages && features.Contains(MailFeature.Messages))
-            response = await ExecuteMessageReadAsync(command, context, user, receiptKey,
-                cancellationToken).ConfigureAwait(false);
-        else if (command.Operation == MailOperationKind.ParseMessages && features.Contains(MailFeature.Messages))
-            response = await ExecuteMessageParseAsync(command, context, user, receiptKey,
-                cancellationToken).ConfigureAwait(false);
-        else if (command.Operation == MailOperationKind.MutateMessages && features.Contains(MailFeature.Messages))
-            response = await ExecuteMessageMutationAsync(command, context, user, receiptKey,
-                cancellationToken).ConfigureAwait(false);
-        else if (command.Operation == MailOperationKind.MutateSubmissions && features.Contains(MailFeature.Submission))
-            response = await ExecuteSubmissionMutationAsync(command, context, user, receiptKey,
-                cancellationToken).ConfigureAwait(false);
-        else if (MailChangeOperations.TryGetFeature(command.Operation, out var changeFeature)
-            && features.Contains(changeFeature))
-            response = await ExecuteChangesAsync(command, context, user, receiptKey, cancellationToken)
-                .ConfigureAwait(false);
-        else if (command.Operation == MailOperationKind.ReadAddressBooks && features.Contains(MailFeature.Contacts))
-            response = await ExecuteAddressBooksAsync(command, context, user, receiptKey, cancellationToken)
-                .ConfigureAwait(false);
-        else if (command.Operation == MailOperationKind.MutateAddressBooks && features.Contains(MailFeature.Contacts))
-            response = await ExecuteAddressBookMutationAsync(command, context, user, receiptKey, cancellationToken)
-                .ConfigureAwait(false);
-        else if (command.Operation == MailOperationKind.ReadSenderIdentities && features.Contains(MailFeature.Submission))
-            response = await ExecuteIdentitiesAsync(command, context, user, receiptKey, cancellationToken)
-                .ConfigureAwait(false);
-        else if (command.Operation == MailOperationKind.MutateSenderIdentities && features.Contains(MailFeature.Submission))
-            response = await ExecuteIdentityMutationAsync(command, context, user, receiptKey, cancellationToken)
-                .ConfigureAwait(false);
-        else if (command.Operation == MailOperationKind.ReadVacationSettings && features.Contains(MailFeature.AutomaticReplies))
-            response = await ExecuteVacationAsync(command, context, user, receiptKey, cancellationToken)
-                .ConfigureAwait(false);
-        else if (command.Operation == MailOperationKind.ReadNotificationSubscriptions && features.Contains(MailFeature.Basic))
-            response = await ExecutePushSubscriptionsAsync(command, context, user, receiptKey, cancellationToken)
-                .ConfigureAwait(false);
-        else if (command.Operation == MailOperationKind.MutateNotificationSubscriptions && features.Contains(MailFeature.Basic))
-            response = await ExecutePushMutationAsync(command, context, user, receiptKey, cancellationToken)
-                .ConfigureAwait(false);
-        else if (command.Operation == MailOperationKind.ReadThreads && features.Contains(MailFeature.Messages))
-            response = await ExecuteThreadsAsync(command, context, user, receiptKey, cancellationToken)
-                .ConfigureAwait(false);
-        else if (command.Operation == MailOperationKind.ReadSubmissions && features.Contains(MailFeature.Submission))
-            response = await ExecuteSubmissionsAsync(command, context, user, receiptKey, cancellationToken)
-                .ConfigureAwait(false);
-        else if (command.Operation == MailOperationKind.CopyBinaryObjects && features.Contains(MailFeature.Basic))
-            response = await ExecuteBlobCopyAsync(command, context, user, receiptKey, cancellationToken)
-                .ConfigureAwait(false);
-        else if (command.Operation == MailOperationKind.MutateVacationSettings && features.Contains(MailFeature.AutomaticReplies))
-            response = await ExecuteVacationSetAsync(command, context, user, receiptKey, cancellationToken)
-                .ConfigureAwait(false);
-        else if (command.Operation == MailOperationKind.FindSubmissions && features.Contains(MailFeature.Submission))
-            response = await ExecuteSubmissionQueryAsync(command, context, user, receiptKey, cancellationToken)
-                .ConfigureAwait(false);
-        else if (command.Operation == MailOperationKind.FindSubmissionChanges && features.Contains(MailFeature.Submission))
-            response = await ExecuteSubmissionQueryChangesAsync(command, context, user, receiptKey, cancellationToken)
-                .ConfigureAwait(false);
-        else if (command.Operation == MailOperationKind.FindFolders && features.Contains(MailFeature.Messages))
-            response = await ExecuteFolderQueryAsync(command, context, user, receiptKey, cancellationToken)
-                .ConfigureAwait(false);
-        else if (command.Operation == MailOperationKind.FindFolderChanges && features.Contains(MailFeature.Messages))
-            response = await ExecuteFolderQueryChangesAsync(command, context, user, receiptKey, cancellationToken)
-                .ConfigureAwait(false);
-        else if (command.Operation == MailOperationKind.FindMessages && features.Contains(MailFeature.Messages))
-            response = await ExecuteMessageQueryAsync(command, context, user, receiptKey, cancellationToken)
-                .ConfigureAwait(false);
-        else if (command.Operation == MailOperationKind.FindMessageChanges && features.Contains(MailFeature.Messages))
-            response = await ExecuteMessageQueryChangesAsync(command, context, user, receiptKey, cancellationToken)
-                .ConfigureAwait(false);
-        else if (command.Operation == MailOperationKind.ReadSearchSnippets && features.Contains(MailFeature.Messages))
-            response = await ExecuteSearchSnippetsAsync(command, context, user, receiptKey, cancellationToken)
-                .ConfigureAwait(false);
-        else if (command.Operation == MailOperationKind.CopyContacts && features.Contains(MailFeature.Contacts))
-            response = await ExecuteContactCopyAsync(command, context, user, receiptKey, cancellationToken)
-                .ConfigureAwait(false);
-        else if (command.Operation == MailOperationKind.FindContacts && features.Contains(MailFeature.Contacts))
-            response = await ExecuteContactQueryAsync(command, context, user, receiptKey, cancellationToken)
-                .ConfigureAwait(false);
-        else if (command.Operation == MailOperationKind.FindContactChanges && features.Contains(MailFeature.Contacts))
-            response = await ExecuteContactQueryChangesAsync(command, context, user, receiptKey, cancellationToken)
-                .ConfigureAwait(false);
-        else if (command.Operation == MailOperationKind.ReadContacts && features.Contains(MailFeature.Contacts))
-            response = await ExecuteContactsAsync(command, context, user, receiptKey, cancellationToken)
-                .ConfigureAwait(false);
-        else if (command.Operation == MailOperationKind.MutateContacts && features.Contains(MailFeature.Contacts))
-            response = await ExecuteContactMutationAsync(command, context, user, receiptKey, cancellationToken)
-                .ConfigureAwait(false);
-        else if (command.Operation == MailOperationKind.ImportMessages && features.Contains(MailFeature.Messages))
-            response = await ExecuteImportAsync(command, context, user, receiptKey, cancellationToken)
-                .ConfigureAwait(false);
-        else if (command.Operation == MailOperationKind.CopyMessages && features.Contains(MailFeature.Messages))
-            response = await ExecuteCopyAsync(command, context, user, receiptKey, cancellationToken)
-                .ConfigureAwait(false);
-        else
-        {
-            response = EncodeResponse(JmapMethodResponse.Error("unknownMethod"));
-        }
+        var response = await DispatchAsync(command, context, user, receiptKey, cancellationToken).ConfigureAwait(false);
         var profile = await _sessions.GetProfileAsync(user, cancellationToken).ConfigureAwait(false);
         return new MailOperationResult(response, createdIds, profile);
+    }
+
+    private Task<MailOperationResponse> DispatchAsync(MailOperationCommand command, JmapInvocationContext context,
+        AuthenticatedMailUser user, ApplicationReceiptKey? receiptKey, CancellationToken cancellationToken)
+    {
+        var features = context.Features;
+        if (_methods.TryGetValue(command.Operation, out var method) && features.Contains(method.Feature))
+            return ExecuteLegacyMethodAsync(method, command.Arguments, context, receiptKey, cancellationToken);
+        if (MailChangeOperations.TryGetFeature(command.Operation, out var changeFeature) && features.Contains(changeFeature))
+            return ExecuteChangesAsync(command, context, user, receiptKey, cancellationToken);
+        return command.Operation switch
+        {
+            MailOperationKind.ReadFolders when features.Contains(MailFeature.Messages) => ExecuteFoldersAsync(command, context, user, receiptKey, cancellationToken),
+            MailOperationKind.MutateFolders when features.Contains(MailFeature.Messages) => ExecuteFolderMutationAsync(command, context, receiptKey, cancellationToken),
+            MailOperationKind.ReadMessages when features.Contains(MailFeature.Messages) => ExecuteMessageReadAsync(command, context, user, receiptKey, cancellationToken),
+            MailOperationKind.ParseMessages when features.Contains(MailFeature.Messages) => ExecuteMessageParseAsync(command, context, user, receiptKey, cancellationToken),
+            MailOperationKind.MutateMessages when features.Contains(MailFeature.Messages) => ExecuteMessageMutationAsync(command, context, user, receiptKey, cancellationToken),
+            MailOperationKind.MutateSubmissions when features.Contains(MailFeature.Submission) => ExecuteSubmissionMutationAsync(command, context, user, receiptKey, cancellationToken),
+            MailOperationKind.ReadAddressBooks when features.Contains(MailFeature.Contacts) => ExecuteAddressBooksAsync(command, context, user, receiptKey, cancellationToken),
+            MailOperationKind.MutateAddressBooks when features.Contains(MailFeature.Contacts) => ExecuteAddressBookMutationAsync(command, context, user, receiptKey, cancellationToken),
+            MailOperationKind.ReadSenderIdentities when features.Contains(MailFeature.Submission) => ExecuteIdentitiesAsync(command, context, user, receiptKey, cancellationToken),
+            MailOperationKind.MutateSenderIdentities when features.Contains(MailFeature.Submission) => ExecuteIdentityMutationAsync(command, context, user, receiptKey, cancellationToken),
+            MailOperationKind.ReadVacationSettings when features.Contains(MailFeature.AutomaticReplies) => ExecuteVacationAsync(command, context, user, receiptKey, cancellationToken),
+            MailOperationKind.ReadNotificationSubscriptions when features.Contains(MailFeature.Basic) => ExecutePushSubscriptionsAsync(command, context, user, receiptKey, cancellationToken),
+            MailOperationKind.MutateNotificationSubscriptions when features.Contains(MailFeature.Basic) => ExecutePushMutationAsync(command, context, user, receiptKey, cancellationToken),
+            MailOperationKind.ReadThreads when features.Contains(MailFeature.Messages) => ExecuteThreadsAsync(command, context, user, receiptKey, cancellationToken),
+            MailOperationKind.ReadSubmissions when features.Contains(MailFeature.Submission) => ExecuteSubmissionsAsync(command, context, user, receiptKey, cancellationToken),
+            MailOperationKind.CopyBinaryObjects when features.Contains(MailFeature.Basic) => ExecuteBlobCopyAsync(command, context, user, receiptKey, cancellationToken),
+            MailOperationKind.MutateVacationSettings when features.Contains(MailFeature.AutomaticReplies) => ExecuteVacationSetAsync(command, context, user, receiptKey, cancellationToken),
+            MailOperationKind.FindSubmissions when features.Contains(MailFeature.Submission) => ExecuteSubmissionQueryAsync(command, context, user, receiptKey, cancellationToken),
+            MailOperationKind.FindSubmissionChanges when features.Contains(MailFeature.Submission) => ExecuteSubmissionQueryChangesAsync(command, context, user, receiptKey, cancellationToken),
+            MailOperationKind.FindFolders when features.Contains(MailFeature.Messages) => ExecuteFolderQueryAsync(command, context, user, receiptKey, cancellationToken),
+            MailOperationKind.FindFolderChanges when features.Contains(MailFeature.Messages) => ExecuteFolderQueryChangesAsync(command, context, user, receiptKey, cancellationToken),
+            MailOperationKind.FindMessages when features.Contains(MailFeature.Messages) => ExecuteMessageQueryAsync(command, context, user, receiptKey, cancellationToken),
+            MailOperationKind.FindMessageChanges when features.Contains(MailFeature.Messages) => ExecuteMessageQueryChangesAsync(command, context, user, receiptKey, cancellationToken),
+            MailOperationKind.ReadSearchSnippets when features.Contains(MailFeature.Messages) => ExecuteSearchSnippetsAsync(command, context, user, receiptKey, cancellationToken),
+            MailOperationKind.CopyContacts when features.Contains(MailFeature.Contacts) => ExecuteContactCopyAsync(command, context, user, receiptKey, cancellationToken),
+            MailOperationKind.FindContacts when features.Contains(MailFeature.Contacts) => ExecuteContactQueryAsync(command, context, user, receiptKey, cancellationToken),
+            MailOperationKind.FindContactChanges when features.Contains(MailFeature.Contacts) => ExecuteContactQueryChangesAsync(command, context, user, receiptKey, cancellationToken),
+            MailOperationKind.ReadContacts when features.Contains(MailFeature.Contacts) => ExecuteContactsAsync(command, context, user, receiptKey, cancellationToken),
+            MailOperationKind.MutateContacts when features.Contains(MailFeature.Contacts) => ExecuteContactMutationAsync(command, context, user, receiptKey, cancellationToken),
+            MailOperationKind.ImportMessages when features.Contains(MailFeature.Messages) => ExecuteImportAsync(command, context, user, receiptKey, cancellationToken),
+            MailOperationKind.CopyMessages when features.Contains(MailFeature.Messages) => ExecuteCopyAsync(command, context, user, receiptKey, cancellationToken),
+            _ => Task.FromResult(EncodeResponse(JmapMethodResponse.Error("unknownMethod"))),
+        };
     }
 
     private Task<MailOperationResponse> ExecuteLegacyMethodAsync(
@@ -2196,6 +2143,8 @@ public sealed class JmapRequestProcessor
         return features;
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1031",
+        Justification = "This transaction boundary sanitizes unexpected handler/provider failures after compensation; caller cancellation is rethrown.")]
     private async Task<MailOperationResponse> InvokeAtomicallyAsync(
         MailOperationKind operation,
         JmapInvocationContext context,
@@ -2214,20 +2163,8 @@ public sealed class JmapRequestProcessor
             if (_database.Database.IsRelational())
                 transaction = await _database.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
 
-            if (receiptKey is not null)
-            {
-                var existing = await _receipts!.FindLockedAsync(receiptKey, cancellationToken).ConfigureAwait(false);
-                if (existing is not null)
-                {
-                    var replay = JsonSerializer.Deserialize<JmapReplayState>(existing.Result.Span, ReceiptJsonOptions)
-                        ?? throw new InvalidOperationException("The invocation receipt result is incomplete.");
-                    ValidateEncodedResponse(replay.Response);
-                    context.CreatedIds.Clear();
-                    foreach (var item in replay.CreatedIds)
-                        context.CreatedIds[item.Key] = item.Value;
-                    return replay.Response;
-                }
-            }
+            var replay = await TryReplayAsync(receiptKey, context, cancellationToken).ConfigureAwait(false);
+            if (replay is not null) return replay;
 
             var encoded = await invoke(cancellationToken).ConfigureAwait(false);
             ValidateEncodedResponse(encoded);
@@ -2240,14 +2177,7 @@ public sealed class JmapRequestProcessor
                 return encoded;
             }
 
-            if (receiptKey is not null)
-            {
-                var result = JsonSerializer.SerializeToUtf8Bytes(new JmapReplayState(
-                    encoded, context.CreatedIds.ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal)), ReceiptJsonOptions);
-                await _receipts!.SaveAsync(receiptKey,
-                    new ApplicationReceiptContent(result, context.PresentationEffectsSince(presentationMarker)),
-                    cancellationToken).ConfigureAwait(false);
-            }
+            await SaveReceiptAsync(receiptKey, context, encoded, presentationMarker, cancellationToken).ConfigureAwait(false);
 
             if (transaction is not null)
             {
@@ -2255,38 +2185,20 @@ public sealed class JmapRequestProcessor
                 await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             }
             await _blobEffects.CommitAsync(blobEffectMarker).ConfigureAwait(false);
-            var actions = context.TakePostCommitActions(postCommitMarker);
-            foreach (var action in actions)
-            {
-                try
-                {
-                    // The database commit makes these actions durable work.
-                    // A client disconnect must not prevent push verification
-                    // (or any future committed external effect) from running.
-                    await action(CancellationToken.None).ConfigureAwait(false);
-                }
-                catch (Exception exception)
-                {
-                    _logger.LogWarning(exception, "A JMAP post-commit action failed");
-                }
-            }
+            await RunPostCommitActionsAsync(context, postCommitMarker).ConfigureAwait(false);
             return encoded;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            await RollBackAsync(transaction).ConfigureAwait(false);
-            await CompleteBlobRollbackAsync(blobEffectMarker, commitAttempted).ConfigureAwait(false);
-            RestoreInvocationState(context, createdIds, postCommitMarker);
-            context.DiscardPresentationEffects(presentationMarker);
+            await RestoreFailedInvocationAsync(transaction, context, createdIds, postCommitMarker,
+                blobEffectMarker, presentationMarker, commitAttempted).ConfigureAwait(false);
             throw;
         }
         catch (Exception exception)
         {
-            await RollBackAsync(transaction).ConfigureAwait(false);
-            await CompleteBlobRollbackAsync(blobEffectMarker, commitAttempted).ConfigureAwait(false);
-            RestoreInvocationState(context, createdIds, postCommitMarker);
-            context.DiscardPresentationEffects(presentationMarker);
-            _logger.LogError(exception, "Mail operation {Operation} failed", operation);
+            await RestoreFailedInvocationAsync(transaction, context, createdIds, postCommitMarker,
+                blobEffectMarker, presentationMarker, commitAttempted).ConfigureAwait(false);
+            OperationError(_logger, operation, exception);
             return EncodeResponse(JmapMethodResponse.Error("serverFail"));
         }
         finally
@@ -2294,6 +2206,62 @@ public sealed class JmapRequestProcessor
             if (transaction is not null)
                 await transaction.DisposeAsync().ConfigureAwait(false);
             context.DiscardPresentationEffects(presentationMarker);
+        }
+    }
+
+    private async Task<MailOperationResponse?> TryReplayAsync(ApplicationReceiptKey? receiptKey,
+        JmapInvocationContext context, CancellationToken cancellationToken)
+    {
+        if (receiptKey is not null)
+        {
+            var existing = await _receipts!.FindLockedAsync(receiptKey, cancellationToken).ConfigureAwait(false);
+            if (existing is not null)
+            {
+                var replay = JsonSerializer.Deserialize<JmapReplayState>(existing.Result.Span, ReceiptJsonOptions)
+                    ?? throw new InvalidOperationException("The invocation receipt result is incomplete.");
+                ValidateEncodedResponse(replay.Response);
+                context.CreatedIds.Clear();
+                foreach (var item in replay.CreatedIds)
+                    context.CreatedIds[item.Key] = item.Value;
+                return replay.Response;
+            }
+        }
+
+        return null;
+    }
+
+    private async Task SaveReceiptAsync(ApplicationReceiptKey? receiptKey, JmapInvocationContext context,
+        MailOperationResponse encoded, int presentationMarker, CancellationToken cancellationToken)
+    {
+        if (receiptKey is not null)
+        {
+            var result = JsonSerializer.SerializeToUtf8Bytes(new JmapReplayState(
+                encoded, context.CreatedIds.ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal)), ReceiptJsonOptions);
+            await _receipts!.SaveAsync(receiptKey,
+                new ApplicationReceiptContent(result, context.PresentationEffectsSince(presentationMarker)),
+                cancellationToken).ConfigureAwait(false);
+        }
+
+    }
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1031",
+        Justification = "A best-effort action failure after durable commit cannot roll back or misreport the committed operation.")]
+    private async Task RunPostCommitActionsAsync(JmapInvocationContext context, int postCommitMarker)
+    {
+        var actions = context.TakePostCommitActions(postCommitMarker);
+        foreach (var action in actions)
+        {
+            try
+            {
+                // The database commit makes these actions durable work.
+                // A client disconnect must not prevent push verification
+                // (or any future committed external effect) from running.
+                await action(CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                PostCommitWarning(_logger, exception);
+            }
         }
     }
 
@@ -2311,6 +2279,16 @@ public sealed class JmapRequestProcessor
             foreach (var additional in response.AdditionalResults)
                 ValidateEncodedResponse(additional);
         }
+    }
+
+    private async Task RestoreFailedInvocationAsync(IDbContextTransaction? transaction, JmapInvocationContext context,
+        Dictionary<string, string> createdIds, int postCommitMarker, int blobEffectMarker,
+        int presentationMarker, bool commitAttempted)
+    {
+        await RollBackAsync(transaction).ConfigureAwait(false);
+        await CompleteBlobRollbackAsync(blobEffectMarker, commitAttempted).ConfigureAwait(false);
+        RestoreInvocationState(context, createdIds, postCommitMarker);
+        context.DiscardPresentationEffects(presentationMarker);
     }
 
     private async Task CompleteBlobRollbackAsync(int marker, bool commitAttempted)
@@ -2333,6 +2311,8 @@ public sealed class JmapRequestProcessor
             || !typeValue.TryGetValue<string>(out var type)
             || !string.Equals(type, "serverPartialFail", StringComparison.Ordinal));
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1031",
+        Justification = "Rollback compensation must preserve the original sanitized outcome even if the database connection fails.")]
     private async Task RollBackAsync(IDbContextTransaction? transaction)
     {
         if (transaction is null)
@@ -2343,7 +2323,7 @@ public sealed class JmapRequestProcessor
         }
         catch (Exception exception)
         {
-            _logger.LogError(exception, "Could not roll back a failed JMAP method");
+            RollbackError(_logger, exception);
         }
     }
 

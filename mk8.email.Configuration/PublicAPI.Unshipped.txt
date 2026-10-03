@@ -1,1 +1,9 @@
 #nullable enable
+const mk8.email.Configuration.GatewayHttpPayloadBudget.MetadataBytes = 262144 -> int
+const mk8.email.Configuration.GatewayHttpPayloadBudget.RequestHeadersBytes = 32768 -> int
+const mk8.email.Configuration.GatewayHttpPayloadBudget.RequestLineBytes = 8192 -> int
+const mk8.email.Configuration.GatewayHttpPayloadBudget.SmallRequestBytes = 65536 -> int
+mk8.email.Configuration.GatewayHttpPayloadBudget
+static mk8.email.Configuration.GatewayHttpPayloadBudget.BinaryEnvelopeBytes(long bodyBytes) -> long
+static mk8.email.Configuration.GatewayHttpPayloadBudget.MaximumBinaryBodyBytes(int payloadBytes) -> long
+static mk8.email.Configuration.GatewayHttpPayloadBudget.TextEnvelopeBytes(long bodyBytes) -> long

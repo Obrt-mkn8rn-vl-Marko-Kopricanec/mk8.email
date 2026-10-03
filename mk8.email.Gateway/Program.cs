@@ -30,6 +30,8 @@ var environmentConfig = EnvironmentLoader.Load(
 builder.WebHost.ConfigureKestrel(options =>
 {
     options.AddServerHeader = false;
+    options.Limits.MaxRequestHeadersTotalSize = GatewayHttpPayloadBudget.RequestHeadersBytes;
+    options.Limits.MaxRequestLineSize = GatewayHttpPayloadBudget.RequestLineBytes;
     options.Limits.MaxRequestBodySize = environmentConfig.Jmap.EnableJmap
         ? Math.Max(
             64 * 1024,
@@ -152,30 +154,7 @@ builder.Services.AddRazorPages(options =>
 
 var app = builder.Build();
 
-if (!app.Environment.IsDevelopment())
-    app.UseExceptionHandler("/Error");
-
-app.UseMiddleware<GatewayProtocolTrafficCaptureMiddleware>();
-app.UseMiddleware<GatewayApplicationFailureMiddleware>();
-app.UseForwardedHeaders();
-app.UseWhen(
-    context => !GatewayProtocolPaths.IsPublicProtocol(context.Request.Path),
-    branch => branch.UseMiddleware<AdminNetworkMiddleware>());
-app.Use(async (context, next) =>
-{
-    context.Response.Headers["X-Content-Type-Options"] = "nosniff";
-    context.Response.Headers["Referrer-Policy"] = "no-referrer";
-    context.Response.Headers["Content-Security-Policy"] =
-        "default-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'";
-    context.Response.Headers["Cache-Control"] = "no-store";
-    await next(context).ConfigureAwait(false);
-});
-app.UseHttpsRedirection();
-app.UseStaticFiles();
-app.UseRouting();
-app.UseRateLimiter();
-app.UseAuthentication();
-app.UseAuthorization();
+GatewayHttpPipeline.Configure(app);
 
 app.MapGet("/health/live", () => Results.Ok(new { status = "live" })).AllowAnonymous();
 app.MapGet("/health/ready", async (

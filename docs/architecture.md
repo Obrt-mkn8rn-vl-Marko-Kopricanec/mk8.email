@@ -46,6 +46,31 @@ Stored mailbox messages, including MIME attachments, also use reference-only Azu
 
 ## Availability semantics
 
+Public HTTP protocol failures are rendered inside the durable capture boundary,
+not by the administrator `/Error` page. With working persistence, a rejected
+request records bounded original-session metadata (status, declared length,
+route limit and bytes observed), followed by the final protocol JSON response
+before it is sent. An unexpected downstream exception follows the same outbound
+path. OAuth errors use OAuth JSON; JMAP/DAV errors use problem JSON. A failed
+journal still fails closed with 503 and never releases the buffered business
+response. Administrative HTML exception handling remains separate.
+
+Capture reads incrementally, sets writable per-request Kestrel body limits before
+reading, and stops at the protocol limit plus one detection byte. Uploads use the
+upload budget; JMAP API calls use the request budget; OAuth is capped at 64 KiB.
+Accepted request/response buffers have bounded capacity and are serialized as
+native base64 byte memory, without intermediate body arrays/base64 strings.
+Streaming responses journal bounded 16 KiB chunks before writing them.
+
+Both Gateway and Worker reject incompatible configured limits before readiness.
+`GatewayHttpPayloadBudget` reserves 256 KiB for bounded HTTP and transport
+metadata (32 KiB headers, 8 KiB request line, 1 KiB content type), in addition to
+`4 * ceil(bodyBytes / 3)` for binary envelopes or `6 * bodyBytes` for worst-case
+JSON-escaped JMAP/DAV text. This validation precedes Azure Blob externalization:
+Blob storage cannot rescue an oversized logical envelope. Buffered outbound
+bodies and metadata also have dynamic encoded-envelope limits; an oversized
+response becomes a bounded, journaled protocol failure, not journal-unavailable.
+
 PostgreSQL `LISTEN`/`NOTIFY` wakes the independent Wake process, not Application; a bounded fallback scan recovers missed notifications and expired leases. The standalone Worker accepts `--prepare` for schema creation, seeding, and legacy Azure Blob migration during activation or after an upgrade has stopped the old path/drain. Routine `--drain` launches do none of that preparation: they claim and process existing application requests and due mail queue entries, run the JMAP push batch when enabled, check twice for newly arrived work, and exit when currently due work is exhausted. The split-host activation path starts that Worker through a systemd path only when Wake signals durable work. A separate daily timer starts the same one-shot drain for completed-mail queue and Blob retention cleanup even if no new mail arrives. The prior resident `--serve` unit remains installed but must be inactive; privileged operational validation remains before this is an approved production scale-to-zero deployment.
 
 `mk8.email.Wake` is the independent wake-side process. It references Npgsql but no Application, Gateway, ASP.NET, or Blob SDK assembly. Its PostgreSQL probe checks due application requests, receipt outbox retries, mail retries and expired leases, JMAP push retries/expiry, and changes missed while it was offline; it returns the next scheduled wake instant. The monitor listens to all three notification channels, also rechecks on a bounded timeout, and creates one idempotent file in a configured local trigger directory for the systemd path unit. It reads only a dedicated database connection-string file, not Worker configuration or Blob credentials. Before either probing or monitoring, it requires SELECT only on the scheduling columns of nine tables and rejects whole-table SELECT, sensitive or unrelated column access, elevated or inherited roles, write privileges, schema creation, and callable security-definer functions. PostgreSQL coverage exercises the probe with a restricted role. The `mk8email-wake.service` and `mk8email-worker.path` units are installed disabled with a dedicated OS-only `mk8wake` identity. The path targets a separate `mk8email-worker-drain.service`: its privileged fixed-path pre-start removes the consumed trigger before `--drain`, allowing a new trigger to survive until the path is rechecked after process exit. No wake connection secret is created or service started by installation.

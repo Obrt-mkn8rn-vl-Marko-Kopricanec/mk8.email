@@ -22,6 +22,11 @@ assert messaging["EncryptionKeyId"] == "primary"
 assert messaging["EncryptionKeyFile"] == "/etc/mk8email/secrets/messaging_encryption_key"
 assert "EncryptionKey" not in messaging
 assert messaging["MaxPayloadBytes"] >= (4 * native["Limits"]["MaxMessageSizeBytes"] + 2) // 3 + 1_048_576
+# Match GatewayHttpPayloadBudget, including bounded HTTP/transport metadata.
+http_metadata_bytes = 256 * 1024
+assert messaging["MaxPayloadBytes"] >= 4 * ((native["Jmap"]["MaxUploadSizeBytes"] + 2) // 3) + http_metadata_bytes
+assert messaging["MaxPayloadBytes"] >= 6 * native["Jmap"]["MaxRequestSizeBytes"] + http_metadata_bytes
+assert messaging["MaxPayloadBytes"] >= 6 * native["Dav"]["MaxResourceSizeBytes"] + http_metadata_bytes
 assert storage["Provider"] == "azure-blob"
 assert storage["ConnectionStringFile"] == "/etc/mk8email/secrets/object_storage_connection"
 assert "ConnectionString" not in storage

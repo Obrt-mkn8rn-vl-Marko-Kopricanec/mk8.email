@@ -377,6 +377,7 @@ public sealed class EnvironmentConfig
         }
         if (Messaging.MaxPayloadBytes is < 65_536 or > 1_073_741_824)
             errors.Add("Messaging.MaxPayloadBytes must be from 65536 through 1073741824.");
+        ValidateHttpPayloadBudgets(errors);
         // APPEND sends a typed JSON request containing base64-encoded message octets.
         // Reserve one MiB for MULTIAPPEND flags, mailbox names, and request metadata.
         var minimumAppendPayloadBytes =
@@ -402,6 +403,29 @@ public sealed class EnvironmentConfig
             && !IsMessagingIdentifier(workerId, 128, allowAtAndSlash: true))
         {
             errors.Add("Messaging.WorkerId is invalid.");
+        }
+    }
+
+    private void ValidateHttpPayloadBudgets(List<string> errors)
+    {
+        if (Messaging.MaxPayloadBytes < GatewayHttpPayloadBudget.BinaryEnvelopeBytes(
+                GatewayHttpPayloadBudget.SmallRequestBytes))
+            errors.Add("Messaging.MaxPayloadBytes must accommodate bounded HTTP presentation metadata and small protocol bodies.");
+        if (Jmap.EnableJmap)
+        {
+            if (Jmap.MaxUploadSizeBytes is > 0 and <= 1_073_741_824
+                && Messaging.MaxPayloadBytes < GatewayHttpPayloadBudget.BinaryEnvelopeBytes(Jmap.MaxUploadSizeBytes))
+                errors.Add("Messaging.MaxPayloadBytes must accommodate base64-encoded Jmap.MaxUploadSizeBytes plus bounded HTTP and transport metadata.");
+            if (Jmap.MaxRequestSizeBytes is > 0 and <= 104_857_600
+                && Messaging.MaxPayloadBytes < GatewayHttpPayloadBudget.TextEnvelopeBytes(Jmap.MaxRequestSizeBytes))
+                errors.Add("Messaging.MaxPayloadBytes must accommodate JSON-escaped Jmap.MaxRequestSizeBytes plus bounded HTTP and transport metadata.");
+        }
+        if (Dav.EnableDav && Dav.MaxResourceSizeBytes > 0)
+        {
+            if (Messaging.MaxPayloadBytes < GatewayHttpPayloadBudget.TextEnvelopeBytes(Dav.MaxResourceSizeBytes)
+                || Messaging.MaxPayloadBytes < GatewayHttpPayloadBudget.BinaryEnvelopeBytes(
+                    Math.Max(1_048_576, Dav.MaxResourceSizeBytes)))
+                errors.Add("Messaging.MaxPayloadBytes must accommodate encoded Dav.MaxResourceSizeBytes plus bounded HTTP and transport metadata.");
         }
     }
 

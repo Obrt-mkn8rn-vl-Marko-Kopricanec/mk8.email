@@ -368,6 +368,26 @@ public sealed class EnvironmentConfigTests
     }
 
     [TestMethod]
+    [DataRow(EnvironmentValidationRole.Gateway)]
+    [DataRow(EnvironmentValidationRole.ApplicationWorker)]
+    public void DistributedHttpLimitsMustFitEncodedPayloadInBothRoles(EnvironmentValidationRole role)
+    {
+        var configuration = CreateValidConfiguration(messagingEnabled: true,
+            messagingEncryptionKey: Convert.ToBase64String(new byte[32]),
+            objectStorageConnectionString: "DefaultEndpointsProtocol=https;AccountName=mk8;AccountKey=test;BlobEndpoint=https://blob.example.test/;",
+            jmap: new JmapConfig { MaxUploadSizeBytes = 80_000_000, MaxUnreferencedBlobBytesPerAccount = 100_000_000 });
+        StringAssert.Contains(string.Join('|', configuration.Validate(role: role)),
+            "base64-encoded Jmap.MaxUploadSizeBytes", StringComparison.Ordinal);
+        var requestConfiguration = CreateValidConfiguration(messagingEnabled: true,
+            messagingEncryptionKey: Convert.ToBase64String(new byte[32]),
+            objectStorageConnectionString: "DefaultEndpointsProtocol=https;AccountName=mk8;AccountKey=test;BlobEndpoint=https://blob.example.test/;",
+            jmap: new JmapConfig { MaxRequestSizeBytes = 20_000_000 }, davMaxResourceSizeBytes: 20_000_000);
+        var errors = string.Join('|', requestConfiguration.Validate(role: role));
+        StringAssert.Contains(errors, "JSON-escaped Jmap.MaxRequestSizeBytes", StringComparison.Ordinal);
+        StringAssert.Contains(errors, "encoded Dav.MaxResourceSizeBytes", StringComparison.Ordinal);
+    }
+
+    [TestMethod]
     public void LoaderReadsDistributedMessagingSecretsFromFiles()
     {
         var activeKey = Convert.ToBase64String(
@@ -516,7 +536,8 @@ public sealed class EnvironmentConfigTests
         string objectStorageProvider = "azure-blob",
         string objectStorageConnectionString = "",
         string? objectStorageConnectionStringFile = null,
-        string objectStorageContainerName = "mk8-email-objects")
+        string objectStorageContainerName = "mk8-email-objects",
+        JmapConfig? jmap = null)
     {
         return new EnvironmentConfig
         {
@@ -572,6 +593,7 @@ public sealed class EnvironmentConfigTests
                 MaxCollectionsPerUser = davMaxCollectionsPerUser,
                 MaxResourcesPerCollection = davMaxResourcesPerCollection,
             },
+            Jmap = jmap ?? new JmapConfig(),
             OAuth = new OAuthConfig
             {
                 EnableOAuth = oauthEnable,

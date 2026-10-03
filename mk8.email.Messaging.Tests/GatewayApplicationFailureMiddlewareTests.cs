@@ -137,14 +137,111 @@ internal sealed class GatewayApplicationFailureMiddlewareTests
         Assert.IsTrue(journal.Records.All(record => record.SessionId == journal.Records[0].SessionId));
     }
 
+    [TestMethod]
+    public async Task UnknownLengthBodyStopsAtLimitPlusOneAndRecordsRejectionWithoutDispatch()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Post;
+        context.Request.Path = "/oauth/token";
+        var input = new LimitProbeStream();
+        await using var inputLifetime = input.ConfigureAwait(false);
+        context.Request.Body = input;
+        var output = new MemoryStream();
+        await using var outputLifetime = output.ConfigureAwait(false);
+        context.Response.Body = output;
+        var calls = 0;
+        var journal = new StubTrafficJournal();
+        var middleware = new GatewayProtocolTrafficCaptureMiddleware(_ =>
+        {
+            calls++;
+            return Task.CompletedTask;
+        }, NullLogger<GatewayProtocolTrafficCaptureMiddleware>.Instance);
+        await middleware.InvokeAsync(context, journal,
+            new GatewayApplicationOptions("gateway@test", TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10)),
+            new EnvironmentConfig()).ConfigureAwait(false);
+
+        Assert.AreEqual(65_537, input.BytesRead);
+        Assert.AreEqual(0, calls);
+        Assert.AreEqual(413, context.Response.StatusCode);
+        Assert.HasCount(2, journal.Records);
+        using var inbound = JsonDocument.Parse(journal.Records[0].Payload);
+        Assert.AreEqual(65_537, inbound.RootElement.GetProperty("rejection").GetProperty("observedBytes").GetInt32());
+        Assert.AreEqual(string.Empty, inbound.RootElement.GetProperty("bodyBase64").GetString(), StringComparer.Ordinal);
+        Assert.AreSame(input, context.Request.Body);
+    }
+
+    [TestMethod]
+    public void CaptureBufferBoundsEveryWriteAndSetLength()
+    {
+        using var buffer = new GatewayCaptureBuffer(65_536, 413);
+        buffer.Write(new byte[65_536]);
+        Assert.IsLessThanOrEqualTo(65_536, buffer.Capacity);
+        Assert.ThrowsExactly<BadHttpRequestException>(() => buffer.WriteByte(1));
+        Assert.ThrowsExactly<BadHttpRequestException>(() => buffer.SetLength(65_537));
+        Assert.AreEqual(65_536L, buffer.Length);
+    }
+
+    [TestMethod]
+    [DataRow(GatewayTrafficDirections.Inbound, 0)]
+    [DataRow(GatewayTrafficDirections.Outbound, 1)]
+    public async Task JournalFailureRemainsFailClosed(string failedDirection, int expectedCalls)
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Path = "/oauth/token";
+        var output = new MemoryStream();
+        await using var outputLifetime = output.ConfigureAwait(false);
+        context.Response.Body = output;
+        var journal = new StubTrafficJournal { FailedDirection = failedDirection };
+        var calls = 0;
+        var middleware = new GatewayProtocolTrafficCaptureMiddleware(async request =>
+        {
+            calls++;
+            await request.Response.WriteAsync("business-secret").ConfigureAwait(false);
+        }, NullLogger<GatewayProtocolTrafficCaptureMiddleware>.Instance);
+        await middleware.InvokeAsync(context, journal,
+            new GatewayApplicationOptions("gateway@test", TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10)),
+            new EnvironmentConfig()).ConfigureAwait(false);
+        Assert.AreEqual(expectedCalls, calls);
+        Assert.AreEqual(503, context.Response.StatusCode);
+        var body = Encoding.UTF8.GetString(output.ToArray());
+        StringAssert.Contains(body, "temporarily_unavailable", StringComparison.Ordinal);
+        Assert.IsFalse(body.Contains("business-secret", StringComparison.Ordinal));
+    }
+
+    private sealed class LimitProbeStream : Stream
+    {
+        public int BytesRead { get; private set; }
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Assert.IsLessThanOrEqualTo(65_537, BytesRead + buffer.Length, "Capture read beyond the detection byte.");
+            buffer.Span.Fill(65);
+            BytesRead += buffer.Length;
+            return ValueTask.FromResult(buffer.Length);
+        }
+    }
+
     private sealed class StubTrafficJournal : IGatewayTrafficJournal
     {
         public List<GatewayTrafficRecord> Records { get; } = [];
+        public string? FailedDirection { get; init; }
 
         public Task AppendAsync(
             GatewayTrafficRecord record,
             CancellationToken cancellationToken = default)
         {
+            if (string.Equals(record.Direction, FailedDirection, StringComparison.Ordinal))
+                throw new IOException("Injected journal failure.");
             Records.Add(record);
             return Task.CompletedTask;
         }

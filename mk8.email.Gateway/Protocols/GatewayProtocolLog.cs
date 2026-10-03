@@ -31,4 +31,8 @@ internal static partial class GatewayProtocolLog
         Exception exception,
         string direction,
         string protocol);
+
+    [LoggerMessage(EventId = 7, Level = LogLevel.Error,
+        Message = "Captured {Protocol} HTTP session {SessionId} failed")]
+    public static partial void CapturedHttpFailure(ILogger logger, Exception exception, string protocol, Guid sessionId);
 }

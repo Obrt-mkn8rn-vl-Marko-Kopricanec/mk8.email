@@ -174,7 +174,7 @@ internal sealed class JmapPushWorker(
         await using var scopeLifetime = scope.ConfigureAwait(false);
         var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
         var stateChanges = scope.ServiceProvider.GetRequiredService<JmapStateChangeService>();
-        var subscription = await database.JmapPushSubscriptions.SingleOrDefaultAsync(
+        var subscription = await database.JmapPushSubscriptions.FirstOrDefaultAsync(
             candidate => candidate.Id == id,
             cancellationToken).ConfigureAwait(false);
         if (subscription is null

@@ -90,7 +90,7 @@ internal sealed class EmailSubmissionSetMethod(
             var resolvedId = context.ResolveId(item.RequestedId);
             if (!JmapId.TryParseSubmission(resolvedId, out var id))
             {
-                updated.Add(new(item.RequestedId, null, Failure("notFound")));
+                updated.Add(new(item.RequestedId, null, Failure(MailSubmissionMutationError.NotFound)));
                 continue;
             }
             var submission = await database.JmapEmailSubmissions.FirstOrDefaultAsync(
@@ -98,7 +98,7 @@ internal sealed class EmailSubmissionSetMethod(
                 cancellationToken).ConfigureAwait(false);
             if (submission is null)
             {
-                updated.Add(new(item.RequestedId, null, Failure("notFound")));
+                updated.Add(new(item.RequestedId, null, Failure(MailSubmissionMutationError.NotFound)));
                 continue;
             }
             var current = await SnapshotAsync(submission, cancellationToken).ConfigureAwait(false);
@@ -122,7 +122,7 @@ internal sealed class EmailSubmissionSetMethod(
             var resolvedId = context.ResolveId(item.RequestedId);
             if (!JmapId.TryParseSubmission(resolvedId, out var id))
             {
-                destroyed.Add(new(item.RequestedId, null, Failure("notFound")));
+                destroyed.Add(new(item.RequestedId, null, Failure(MailSubmissionMutationError.NotFound)));
                 continue;
             }
             var submission = await database.JmapEmailSubmissions.FirstOrDefaultAsync(
@@ -130,7 +130,7 @@ internal sealed class EmailSubmissionSetMethod(
                 cancellationToken).ConfigureAwait(false);
             if (submission is null)
             {
-                destroyed.Add(new(item.RequestedId, null, Failure("notFound")));
+                destroyed.Add(new(item.RequestedId, null, Failure(MailSubmissionMutationError.NotFound)));
                 continue;
             }
             successful[resolvedId!] = submission.EmailId;
@@ -156,7 +156,7 @@ internal sealed class EmailSubmissionSetMethod(
             || !JmapId.TryParseIdentity(context.ResolveId(value.IdentityReference), out var identityId)
             || !JmapId.TryParseEmail(context.ResolveId(value.MessageReference), out var emailId))
         {
-            return SubmissionCreateResult.Failed("invalidProperties");
+            return SubmissionCreateResult.Failed(MailSubmissionMutationError.InvalidProperties);
         }
         var identity = await database.JmapIdentities.AsNoTracking().FirstOrDefaultAsync(
             candidate => candidate.Id == identityId && candidate.AccountId == account.InboxId,
@@ -167,7 +167,7 @@ internal sealed class EmailSubmissionSetMethod(
                 && !candidate.IsDeleted,
             cancellationToken).ConfigureAwait(false);
         if (identity is null || email is null)
-            return SubmissionCreateResult.Failed("invalidProperties");
+            return SubmissionCreateResult.Failed(MailSubmissionMutationError.InvalidProperties);
         var rawBytes = await mailboxContent.ReadAsync(email, cancellationToken).ConfigureAwait(false);
         if (rawBytes.LongLength > environment.Limits.MaxMessageSizeBytes)
         {
@@ -193,7 +193,7 @@ internal sealed class EmailSubmissionSetMethod(
         }
 
         if (!TryBuildDeliveryMessage(rawBytes, out var deliveryMessage))
-            return SubmissionCreateResult.Failed("invalidEmail");
+            return SubmissionCreateResult.Failed(MailSubmissionMutationError.InvalidEmail);
         return await QueueAsync(account.InboxId, identity.Id, email, context, envelope.Envelope,
             envelopeRecipients, deliveryMessage, cancellationToken).ConfigureAwait(false);
     }
@@ -208,16 +208,16 @@ internal sealed class EmailSubmissionSetMethod(
         }
         var raw = Encoding.Latin1.GetString(rawBytes);
         if (!senderAuthorization.HasMatchingFromAddress(raw, identityEmail))
-            return (null, Failure("forbiddenFrom"));
+            return (null, Failure(MailSubmissionMutationError.ForbiddenFrom));
         var envelope = MailSubmissionEnvelopeBuilder.Build(draft, rawBytes, identityEmail,
             environment.Limits.MaxMessageSizeBytes);
         if (envelope.Failure is not null) return (null, envelope.Failure);
         var sender = envelope.Envelope!.Sender.Address;
         var recipients = envelope.Envelope.Recipients.Select(address => address.Address).ToArray();
         if (!await senderAuthorization.CanSendAsAsync(context.User.Username, sender, cancellationToken).ConfigureAwait(false))
-            return (null, Failure("forbiddenMailFrom"));
+            return (null, Failure(MailSubmissionMutationError.ForbiddenMailFrom));
         if (recipients.Length == 0)
-            return (null, Failure("noRecipients"));
+            return (null, Failure(MailSubmissionMutationError.NoRecipients));
         if (recipients.Length > environment.Limits.MaxRecipientsPerMessage)
         {
             return (null, new(MailSubmissionMutationError.TooManyRecipients, null, null, null, null, environment.Limits.MaxRecipientsPerMessage));
@@ -334,29 +334,15 @@ internal sealed class EmailSubmissionSetMethod(
             emailDestroys.Select(id => new MailMessageDestroy(id)).ToArray());
     }
 
-    private static MailSubmissionMutationFailure Failure(string type,
+    private static MailSubmissionMutationFailure Failure(MailSubmissionMutationError type,
         IReadOnlyList<string>? properties = null) =>
-        new(ParseError(type), null, properties, null, null, null);
+        new(type, null, properties, null, null, null);
 
-    private static MailSubmissionMutationError ParseError(string type) => type switch
-    {
-        "invalidProperties" => MailSubmissionMutationError.InvalidProperties,
-        "invalidPatch" => MailSubmissionMutationError.InvalidPatch,
-        "notFound" => MailSubmissionMutationError.NotFound,
-        "cannotUnsend" => MailSubmissionMutationError.CannotUnsend,
-        "invalidEmail" => MailSubmissionMutationError.InvalidEmail,
-        "forbiddenFrom" => MailSubmissionMutationError.ForbiddenFrom,
-        "forbiddenMailFrom" => MailSubmissionMutationError.ForbiddenMailFrom,
-        "noRecipients" => MailSubmissionMutationError.NoRecipients,
-        "tooManyRecipients" => MailSubmissionMutationError.TooManyRecipients,
-        "invalidRecipients" => MailSubmissionMutationError.InvalidRecipients,
-        "tooLarge" => MailSubmissionMutationError.TooLarge,
-        _ => throw new InvalidOperationException("The submission failure has an unknown kind."),
-    };
+
 
     private sealed record SubmissionCreateResult(JmapEmailSubmissionDB? Submission, MailSubmissionMutationFailure? Error)
     {
-        public static SubmissionCreateResult Failed(string type) =>
+        public static SubmissionCreateResult Failed(MailSubmissionMutationError type) =>
             new(null, Failure(type));
     }
 }

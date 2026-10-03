@@ -63,47 +63,14 @@ internal static class GatewayEmailProjectionCodec
     }
 
     private static bool TryStringArray(JsonObject arguments, string name, bool nullable,
-        out IReadOnlyList<string>? values)
-    {
-        values = null;
-        if (!arguments.TryGetPropertyValue(name, out var node)) return true;
-        if (node is null) return nullable;
-        if (node is not JsonArray array || array.Any(item => item is not JsonValue value
-            || !value.TryGetValue<string>(out var text) || text is null)) return false;
-        values = array.Select(item => item!.GetValue<string>()).ToArray();
-        return true;
-    }
+        out IReadOnlyList<string>? values) =>
+        GatewayDocumentValues.TryGetStringArray(arguments, name, nullable, out values);
 
-    private static bool TryBoolean(JsonObject arguments, string name, out bool value)
-    {
-        value = false;
-        return !arguments.TryGetPropertyValue(name, out var node)
-            || node is JsonValue scalar && scalar.TryGetValue<bool>(out value);
-    }
+    private static bool TryBoolean(JsonObject arguments, string name, out bool value) =>
+        GatewayDocumentValues.TryGetOptionalBoolean(arguments, name, false, out value);
 
-    private static bool TryUnsigned(JsonObject arguments, string name, out long? value)
-    {
-        value = null;
-        if (!arguments.TryGetPropertyValue(name, out var node)) return true;
-        if (node is not JsonValue scalar || !TryInteger(scalar, out var parsed)
-            || parsed is < 0 or > 9_007_199_254_740_991) return false;
-        value = parsed;
-        return true;
-    }
-
-    private static bool TryInteger(JsonValue value, out long result)
-    {
-        if (value.TryGetValue<long>(out result)) return true;
-        if (value.TryGetValue<int>(out var signed)) { result = signed; return true; }
-        if (value.TryGetValue<uint>(out var unsigned)) { result = unsigned; return true; }
-        if (value.TryGetValue<ulong>(out var wide) && wide <= long.MaxValue)
-        {
-            result = checked((long)wide);
-            return true;
-        }
-        result = 0;
-        return false;
-    }
+    private static bool TryUnsigned(JsonObject arguments, string name, out long? value) =>
+        GatewayDocumentValues.TryGetOptionalUnsignedInt(arguments, name, out value, allowNull: false);
 
     internal static bool IsValidProperty(string property, bool body) =>
         (body ? BodyProperties : MessageProperties).Contains(property)

@@ -51,7 +51,7 @@ internal static class JmapLanguageTag
                 return false;
         }
 
-        languages = parsed;
+        languages = parsed.ToArray();
         return parsed.Count > 0;
     }
 

@@ -1,28 +1,11 @@
 using System.Text.Json.Nodes;
 
-namespace mk8.email.Jmap;
+namespace mk8.email.Gateway.Protocols.Jmap;
 
-internal static class JmapMethodHelpers
+internal static class GatewayDocumentValues
 {
     public const long MaximumInt = 9_007_199_254_740_991;
     public const long MinimumInt = -MaximumInt;
-
-    public static bool HasOnlyProperties(JsonObject value, params string[] propertyNames)
-    {
-        var allowed = propertyNames.ToHashSet(StringComparer.Ordinal);
-        return value.All(property => allowed.Contains(property.Key));
-    }
-
-    public static bool TryGetRequiredString(
-        JsonObject arguments,
-        string name,
-        out string value)
-    {
-        value = string.Empty;
-        return arguments[name] is JsonValue jsonValue
-            && jsonValue.TryGetValue<string>(out value!)
-            && value is not null;
-    }
 
     public static bool TryGetOptionalString(
         JsonObject arguments,
@@ -118,9 +101,6 @@ internal static class JmapMethodHelpers
         return false;
     }
 
-    public static int ClampToServerLimit(long? requested, int serverMaximum) =>
-        checked((int)Math.Min(requested ?? serverMaximum, serverMaximum));
-
     public static bool TryGetStringArray(
         JsonObject arguments,
         string name,
@@ -147,107 +127,8 @@ internal static class JmapMethodHelpers
             result.Add(parsed);
         }
 
-        values = result;
+        values = result.ToArray();
         return true;
-    }
-
-    public static bool TryGetIdArray(
-        JsonObject arguments,
-        string name,
-        bool nullable,
-        out IReadOnlyList<string>? values)
-    {
-        values = null;
-        if (!arguments.TryGetPropertyValue(name, out var node) || node is null)
-            return nullable;
-        if (node is not JsonArray array)
-            return false;
-
-        var result = new List<string>(array.Count);
-        foreach (var item in array)
-        {
-            if (item is not JsonValue value
-                || !value.TryGetValue<string>(out var requested)
-                || requested is null
-                || !JmapId.IsValidId(requested))
-            {
-                return false;
-            }
-            result.Add(requested);
-        }
-
-        values = result;
-        return true;
-    }
-
-    public static bool TryGetOptionalId(
-        JsonObject arguments,
-        string name,
-        out string? value)
-    {
-        value = null;
-        if (!arguments.TryGetPropertyValue(name, out var node) || node is null)
-            return true;
-        if (node is not JsonValue jsonValue
-            || !jsonValue.TryGetValue<string>(out var requested)
-            || requested is null
-            || !JmapId.IsValidId(requested))
-        {
-            return false;
-        }
-
-        value = requested;
-        return true;
-    }
-
-    public static bool TryGetQueryWindow(
-        JsonObject arguments,
-        out long position,
-        out string? anchor,
-        out long anchorOffset)
-    {
-        position = 0;
-        anchor = null;
-        anchorOffset = 0;
-        if (!TryGetOptionalId(arguments, "anchor", out anchor))
-            return false;
-
-        // RFC 8620 requires position to be ignored when an anchor is
-        // supplied, and anchorOffset to be ignored when it is not. Do not
-        // reject a query based on the syntax of an inactive argument.
-        return anchor is null
-            ? TryGetOptionalInt(arguments, "position", 0, out position)
-            : TryGetOptionalInt(arguments, "anchorOffset", 0, out anchorOffset);
-    }
-
-    public static bool AreValidCreationIds(IEnumerable<string>? values) =>
-        values is null || values.All(JmapId.IsValidId);
-
-    public static bool AreValidIdReferences(IEnumerable<string>? values, JmapInvocationContext context) =>
-        values is null || values.All(value =>
-            JmapId.IsValidId(value)
-            || context.TryGetReferenceKey(value, out var creationKey)
-                && JmapId.IsValidId(creationKey));
-
-    public static JsonArray ToJsonArray(IEnumerable<string> values)
-    {
-        var result = new JsonArray();
-        foreach (var value in values)
-            result.Add(value);
-        return result;
-    }
-
-    public static JsonObject SetError(
-        string type,
-        string? description = null,
-        IEnumerable<string>? properties = null)
-    {
-        var error = new JsonObject { ["type"] = type };
-        if (!string.IsNullOrWhiteSpace(description))
-            error["description"] = description;
-        if (properties is not null)
-            error["properties"] = ToJsonArray(properties);
-        return error;
     }
 
     public static bool TryApplyPatch(
@@ -301,34 +182,6 @@ internal static class JmapMethodHelpers
         return true;
     }
 
-    public static bool TryApplyPatchAllowingUnchangedProperties(
-        JsonObject source,
-        JsonObject patch,
-        IReadOnlySet<string> mutableProperties,
-        out JsonObject result,
-        out IReadOnlyList<string> invalidProperties)
-    {
-        invalidProperties = [];
-        if (!TryApplyPatch(source, patch, out result))
-            return false;
-
-        var invalid = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var property in patch.KeysForPatch())
-        {
-            if (mutableProperties.Contains(property))
-                continue;
-            if (!source.TryGetPropertyValue(property, out var original)
-                || (result.TryGetPropertyValue(property, out var revised)
-                    ? !JsonNode.DeepEquals(original, revised)
-                    : original is not null))
-            {
-                invalid.Add(property);
-            }
-        }
-        invalidProperties = invalid.Order(StringComparer.Ordinal).ToArray();
-        return true;
-    }
-
     private static bool TryParsePatchPath(string value, out IReadOnlyList<string> path)
     {
         path = [];
@@ -342,7 +195,7 @@ internal static class JmapMethodHelpers
                 return false;
             result.Add(decoded);
         }
-        path = result;
+        path = result.ToArray();
         return true;
     }
 

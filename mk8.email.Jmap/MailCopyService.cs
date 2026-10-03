@@ -88,12 +88,11 @@ internal sealed class MailCopyService(
             item.ReceivedAt ?? source.ReceivedAt, cancellationToken).ConfigureAwait(false);
         if (stored.Error is not null)
         {
-            var type = stored.Error["type"]?.GetValue<string>();
-            return Failed(item, type switch
+            return Failed(item, stored.Error.Error switch
             {
-                "tooLarge" => MailCopyItemError.TooLarge,
-                "overQuota" => MailCopyItemError.OverQuota,
-                "invalidEmail" => MailCopyItemError.InvalidEmail,
+                MailMessageMutationError.TooLarge => MailCopyItemError.TooLarge,
+                MailMessageMutationError.OverQuota => MailCopyItemError.OverQuota,
+                MailMessageMutationError.InvalidEmail => MailCopyItemError.InvalidEmail,
                 _ => throw new InvalidOperationException("The message store returned an invalid copy failure."),
             });
         }

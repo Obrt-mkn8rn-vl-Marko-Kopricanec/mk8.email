@@ -53,7 +53,7 @@ public sealed class JmapStateService(
             return null;
         }
 
-        var limit = JmapMethodHelpers.ClampToServerLimit(maximumChanges, serverMaximum);
+        var limit = checked((int)Math.Min(maximumChanges ?? serverMaximum, serverMaximum));
         if (limit < 1)
             return null;
 

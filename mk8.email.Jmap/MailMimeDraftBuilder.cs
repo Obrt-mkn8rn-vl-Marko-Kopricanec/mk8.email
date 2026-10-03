@@ -41,7 +41,7 @@ internal sealed class MailMimeDraftBuilder(JmapBlobService blobs)
         Guid accountId, JmapInvocationContext context, IReadOnlyList<string> references,
         CancellationToken cancellationToken)
     {
-        if (!JmapMethodHelpers.AreValidIdReferences(references, context)
+        if (!MailEntityReferences.AreValid(references, context)
             || references.Any(reference => context.ResolveId(reference) is null))
             return (null, new(MailMessageMutationError.InvalidProperties, null, ["blobId"], null));
         var contents = new Dictionary<string, byte[]>(StringComparer.Ordinal);

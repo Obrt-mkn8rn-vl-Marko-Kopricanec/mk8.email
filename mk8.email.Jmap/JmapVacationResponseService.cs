@@ -24,7 +24,7 @@ internal sealed class JmapVacationResponseService(
         Guid accountId,
         CancellationToken cancellationToken)
     {
-        var response = await database.JmapVacationResponses.SingleOrDefaultAsync(
+        var response = await database.JmapVacationResponses.FirstOrDefaultAsync(
             item => item.AccountId == accountId,
             cancellationToken).ConfigureAwait(false);
         if (response is not null)
@@ -54,7 +54,7 @@ internal sealed class JmapVacationResponseService(
             {
                 entry.State = EntityState.Detached;
             }
-            var stored = await database.JmapVacationResponses.SingleOrDefaultAsync(
+            var stored = await database.JmapVacationResponses.FirstOrDefaultAsync(
                 item => item.AccountId == accountId,
                 cancellationToken).ConfigureAwait(false);
             if (stored is null)

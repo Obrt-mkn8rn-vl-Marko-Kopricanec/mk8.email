@@ -766,7 +766,7 @@ public sealed class JmapContactsTests
                 ["blobId"] = replacementBlobId,
             },
         };
-        Assert.IsTrue(JmapMethodHelpers.TryApplyPatch(expectedCache, clientPatch, out var patchedCache));
+        Assert.IsTrue(GatewayDocumentValues.TryApplyPatch(expectedCache, clientPatch, out var patchedCache));
         var update = Arguments(await InvokeAsync(fixture, "ContactCard/set", new JsonObject
         {
             ["accountId"] = fixture.AccountId,

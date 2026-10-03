@@ -1,6 +1,6 @@
 using System.Globalization;
 using System.Text;
-using System.Text.Json.Nodes;
+using mk8.email.Contracts.Messaging;
 using Microsoft.EntityFrameworkCore;
 using MimeKit;
 using mk8.email.Application.Services;
@@ -24,12 +24,12 @@ internal sealed class JmapEmailStore(
         CancellationToken cancellationToken)
     {
         if (raw.LongLength > environment.Limits.MaxMessageSizeBytes)
-            return new JmapStoredEmailResult(null, JmapMethodHelpers.SetError("tooLarge"));
+            return new JmapStoredEmailResult(null, new(MailMessageMutationError.TooLarge, null, null, null));
         var used = await GetUsedStorageAsync(account.UserId, cancellationToken).ConfigureAwait(false);
         if (account.QuotaBytes > 0
             && (used >= account.QuotaBytes || raw.LongLength > account.QuotaBytes - used))
         {
-            return new JmapStoredEmailResult(null, JmapMethodHelpers.SetError("overQuota"));
+            return new JmapStoredEmailResult(null, new(MailMessageMutationError.OverQuota, null, null, null));
         }
 
         MimeMessage message;
@@ -39,7 +39,7 @@ internal sealed class JmapEmailStore(
         }
         catch (FormatException)
         {
-            return new JmapStoredEmailResult(null, JmapMethodHelpers.SetError("invalidEmail"));
+            return new JmapStoredEmailResult(null, new(MailMessageMutationError.InvalidEmail, null, null, null));
         }
         using (message)
         {
@@ -54,48 +54,54 @@ internal sealed class JmapEmailStore(
                 inReplyTo,
                 messageId,
                 cancellationToken).ConfigureAwait(false);
-            var rawText = Encoding.Latin1.GetString(raw);
-            var separator = rawText.IndexOf("\r\n\r\n", StringComparison.Ordinal);
-            var separatorLength = 4;
-            if (separator < 0)
-            {
-                separator = rawText.IndexOf("\n\n", StringComparison.Ordinal);
-                separatorLength = 2;
-            }
-            var headers = separator < 0 ? rawText : rawText[..separator];
-            var body = separator < 0 ? string.Empty : rawText[(separator + separatorLength)..];
-            var id = Guid.CreateVersion7();
-            var sender = message.From.Mailboxes.FirstOrDefault()?.Address ?? account.Address;
-            var recipient = string.Join(", ", message.To.Mailboxes.Select(mailbox => mailbox.Address));
-            if (recipient.Length > 255) recipient = recipient[..255];
-            var cc = message.Cc.ToString();
-            if (cc.Length > 255) cc = cc[..255];
-            var subject = message.Subject ?? string.Empty;
-            if (subject.Length > 998) subject = subject[..998];
-            var email = new EmailDB
-            {
-                Id = id,
-                Sender = sender.Length > 255 ? sender[..255] : sender,
-                Recipient = recipient,
-                Cc = string.IsNullOrEmpty(cc) ? null : cc,
-                Subject = subject,
-                Body = body,
-                RawHeaders = headers,
-                MessageId = messageId,
-                InReplyTo = inReplyTo,
-                EmailObjectId = id.ToString("N"),
-                ThreadObjectId = threadId,
-                ReceivedAt = receivedAt.ToUniversalTime(),
-                FolderId = folder.Id,
-                Uid = folder.NextUid++,
-                ModSeq = ++folder.HighestModSeq,
-            };
+            var email = CreateRow(account, folder, message, raw, receivedAt, messageId, inReplyTo, threadId);
             ApplyKeywords(email, keywords);
             await content.SetAsync(email, raw, cancellationToken).ConfigureAwait(false);
             await database.Emails.AddAsync(email, cancellationToken).ConfigureAwait(false);
             await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             return new JmapStoredEmailResult(email, null);
         }
+    }
+
+    private static EmailDB CreateRow(JmapAccount account, FolderDB folder, MimeMessage message, byte[] raw,
+        DateTime receivedAt, string messageId, string? inReplyTo, string threadId)
+    {
+        var rawText = Encoding.Latin1.GetString(raw);
+        var separator = rawText.IndexOf("\r\n\r\n", StringComparison.Ordinal);
+        var separatorLength = 4;
+        if (separator < 0)
+        {
+            separator = rawText.IndexOf("\n\n", StringComparison.Ordinal);
+            separatorLength = 2;
+        }
+        var headers = separator < 0 ? rawText : rawText[..separator];
+        var body = separator < 0 ? string.Empty : rawText[(separator + separatorLength)..];
+        var id = Guid.CreateVersion7();
+        var sender = message.From.Mailboxes.FirstOrDefault()?.Address ?? account.Address;
+        var recipient = string.Join(", ", message.To.Mailboxes.Select(mailbox => mailbox.Address));
+        if (recipient.Length > 255) recipient = recipient[..255];
+        var cc = message.Cc.ToString();
+        if (cc.Length > 255) cc = cc[..255];
+        var subject = message.Subject ?? string.Empty;
+        if (subject.Length > 998) subject = subject[..998];
+        return new EmailDB
+        {
+            Id = id,
+            Sender = sender.Length > 255 ? sender[..255] : sender,
+            Recipient = recipient,
+            Cc = string.IsNullOrEmpty(cc) ? null : cc,
+            Subject = subject,
+            Body = body,
+            RawHeaders = headers,
+            MessageId = messageId,
+            InReplyTo = inReplyTo,
+            EmailObjectId = id.ToString("N"),
+            ThreadObjectId = threadId,
+            ReceivedAt = receivedAt.ToUniversalTime(),
+            FolderId = folder.Id,
+            Uid = folder.NextUid++,
+            ModSeq = ++folder.HighestModSeq,
+        };
     }
 
     public static void ApplyKeywords(EmailDB email, IReadOnlySet<string> keywords)
@@ -108,56 +114,6 @@ internal sealed class JmapEmailStore(
             .Where(keyword => keyword is not ("$seen" or "$flagged" or "$draft" or "$answered"))
             .Order(StringComparer.Ordinal)
             .ToArray();
-    }
-
-    public static bool TryParseKeywords(
-        JsonNode? node,
-        out IReadOnlySet<string> keywords,
-        out string? error)
-    {
-        keywords = new HashSet<string>(StringComparer.Ordinal);
-        error = null;
-        if (node is null)
-            return true;
-        if (node is not JsonObject map)
-            return false;
-        var result = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var item in map)
-        {
-            if (item.Value is not JsonValue value
-                || !value.TryGetValue<bool>(out var enabled)
-                || !enabled)
-            {
-                return false;
-            }
-            var normalized = item.Key.ToProtocolLowerInvariant();
-            if (!JmapEmailCodec.IsValidKeyword(normalized))
-                return false;
-            result.Add(normalized);
-        }
-        if (result.Count > 128)
-        {
-            error = "tooManyKeywords";
-            return false;
-        }
-        keywords = result;
-        return true;
-    }
-
-    public static bool TryParseReceivedAt(JsonNode? node, out DateTime value)
-    {
-        value = DateTime.UtcNow;
-        if (node is null)
-            return true;
-        if (node is not JsonValue jsonValue
-            || !jsonValue.TryGetValue<string>(out var text)
-            || text is null
-            || !JmapDate.TryParseUtcDate(text, out var parsed))
-        {
-            return false;
-        }
-        value = parsed.UtcDateTime;
-        return true;
     }
 
     private async Task<long> GetUsedStorageAsync(

@@ -144,7 +144,7 @@ internal sealed class JmapApplicationService(
         if (user is null)
             return Unauthorized();
 
-        IReadOnlySet<string>? types = null;
+        HashSet<string>? types = null;
         if (request.Types is not null)
         {
             var requested = request.Types.ToHashSet(StringComparer.Ordinal);

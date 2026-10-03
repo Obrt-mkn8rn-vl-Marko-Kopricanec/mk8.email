@@ -45,7 +45,7 @@ internal static class MailMimeDraftValidator
                 return false;
             if (part.Text is not null && !string.Equals(type.MediaType, "text", StringComparison.OrdinalIgnoreCase)
                 || part.BlobReference is { } reference && (!references.Contains(reference, StringComparer.Ordinal)
-                    || !JmapMethodHelpers.AreValidIdReferences([reference], context)))
+                    || !MailEntityReferences.AreValid([reference], context)))
                 return false;
             foreach (var child in part.Children)
                 if (child < 0 || child >= index || ++parents[child] != 1) return false;

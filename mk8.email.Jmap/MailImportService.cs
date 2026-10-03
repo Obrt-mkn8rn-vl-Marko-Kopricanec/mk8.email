@@ -59,17 +59,16 @@ internal sealed class MailImportService(
                 ? MailImportItemError.TooManyKeywords : MailImportItemError.InvalidKeywords);
         if (item.InvalidReceivedAt)
             return Failed(item, MailImportItemError.InvalidReceivedAt);
-        var receivedAt = item.ReceivedAt ?? JmapEmailMutationHelpers.DetermineReceivedAt(blob.Content);
+        var receivedAt = item.ReceivedAt ?? MailArrivalDate.DetermineReceivedAt(blob.Content);
         var stored = await store.StoreAsync(account, folder, blob.Content,
             item.Keywords.ToHashSet(StringComparer.Ordinal), receivedAt, cancellationToken).ConfigureAwait(false);
         if (stored.Error is not null)
         {
-            var type = stored.Error["type"]?.GetValue<string>();
-            return Failed(item, type switch
+            return Failed(item, stored.Error.Error switch
             {
-                "tooLarge" => MailImportItemError.TooLarge,
-                "overQuota" => MailImportItemError.OverQuota,
-                "invalidEmail" => MailImportItemError.InvalidEmail,
+                MailMessageMutationError.TooLarge => MailImportItemError.TooLarge,
+                MailMessageMutationError.OverQuota => MailImportItemError.OverQuota,
+                MailMessageMutationError.InvalidEmail => MailImportItemError.InvalidEmail,
                 _ => throw new InvalidOperationException("The message store returned an invalid import failure."),
             });
         }

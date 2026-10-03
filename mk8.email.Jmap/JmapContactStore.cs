@@ -70,7 +70,7 @@ public sealed class JmapContactStore(
         if (!JmapContactCodec.TryValidate(card, out var validationErrors))
             invalid.UnionWith(validationErrors);
 
-        IReadOnlyDictionary<string, JsonObject> localizedCards =
+        Dictionary<string, JsonObject> localizedCards =
             new Dictionary<string, JsonObject>(StringComparer.Ordinal);
         if (invalid.Count == 0
             && !JmapContactValidator.TryGetLocalizedCards(card, out localizedCards))

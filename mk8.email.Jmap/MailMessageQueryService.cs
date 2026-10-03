@@ -48,7 +48,7 @@ internal sealed class MailMessageQueryService(
         }
         finally
         {
-            foreach (var item in all) item.Dispose();
+            for (var index = 0; index < all.Count; index++) all[index].Dispose();
         }
     }
 
@@ -115,7 +115,7 @@ internal sealed class MailMessageQueryService(
         }
         finally
         {
-            foreach (var item in all) item.Dispose();
+            for (var index = 0; index < all.Count; index++) all[index].Dispose();
         }
     }
 

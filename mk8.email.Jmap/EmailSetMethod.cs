@@ -1,5 +1,4 @@
 using mk8.email.Contracts.Messaging;
-using System.Text.Json.Nodes;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using mk8.email.Application.Interfaces;
@@ -59,16 +58,16 @@ internal sealed class EmailSetMethod(
     {
         var value = item.Draft;
         if (!JmapId.IsValidId(item.CreationId))
-            return new(item.CreationId, null, Failure("invalidProperties"));
+            return new(item.CreationId, null, Failure(MailMessageMutationError.InvalidProperties));
         var mailbox = await ResolveDraftMailboxAsync(account.InboxId, value, context,
             cancellationToken).ConfigureAwait(false);
         if (mailbox.Failure is not null)
             return new(item.CreationId, null, mailbox.Failure);
         if (value.KeywordIssue != MailMessageKeywordIssue.None)
             return new(item.CreationId, null, Failure(value.KeywordIssue == MailMessageKeywordIssue.TooMany
-                ? "tooManyKeywords" : "invalidProperties"));
+                ? MailMessageMutationError.TooManyKeywords : MailMessageMutationError.InvalidProperties));
         if (value.InvalidReceivedAt)
-            return new(item.CreationId, null, Failure("invalidProperties", properties: ["receivedAt"]));
+            return new(item.CreationId, null, Failure(MailMessageMutationError.InvalidProperties, properties: ["receivedAt"]));
         var built = await builder.BuildAsync(account.InboxId, account.Address, context, value,
             cancellationToken).ConfigureAwait(false);
         if (built.Failure is not null)
@@ -77,7 +76,7 @@ internal sealed class EmailSetMethod(
             value.Keywords.ToHashSet(StringComparer.Ordinal), value.ReceivedAt ?? DateTime.UtcNow,
             cancellationToken).ConfigureAwait(false);
         if (stored.Error is not null)
-            return new(item.CreationId, null, Failure(stored.Error));
+            return new(item.CreationId, null, stored.Error);
         var email = stored.Email!;
         context.CreatedIds[item.CreationId] = JmapId.Email(email.Id);
         return new(item.CreationId, new(email.Id,
@@ -90,7 +89,7 @@ internal sealed class EmailSetMethod(
     {
         var resolvedId = context.ResolveId(item.RequestedId);
         if (!JmapId.TryParseEmail(resolvedId, out var emailId))
-            return new(item.RequestedId, null, Failure("notFound"));
+            return new(item.RequestedId, null, Failure(MailMessageMutationError.NotFound));
         var error = await UpdateAsync(accountId, emailId, context, item.Patch, cancellationToken)
             .ConfigureAwait(false);
         return error is null
@@ -104,7 +103,7 @@ internal sealed class EmailSetMethod(
     {
         var resolvedId = context.ResolveId(item.RequestedId);
         if (!JmapId.TryParseEmail(resolvedId, out var emailId))
-            return new(item.RequestedId, null, Failure("notFound"));
+            return new(item.RequestedId, null, Failure(MailMessageMutationError.NotFound));
         var error = await DestroyAsync(accountId, emailId, cancellationToken).ConfigureAwait(false);
         return error is null
             ? new(item.RequestedId, emailId, null)
@@ -112,40 +111,17 @@ internal sealed class EmailSetMethod(
     }
 
     private static MailMessageMutationFailure Failure(
-        string type, string? description = null, IReadOnlyList<string>? properties = null) =>
-        new(ParseError(type), description, properties, null);
+        MailMessageMutationError type, string? description = null, IReadOnlyList<string>? properties = null) =>
+        new(type, description, properties, null);
 
-    private static MailMessageMutationFailure Failure(JsonObject error)
-    {
-        var type = error["type"]?.GetValue<string>()
-            ?? throw new InvalidOperationException("The message operation returned an error without a kind.");
-        return new(ParseError(type), error["description"]?.GetValue<string>(),
-            ReadStrings(error["properties"]), ReadStrings(error["notFound"]));
-    }
 
-    private static MailMessageMutationError ParseError(string type) => type switch
-    {
-        "invalidProperties" => MailMessageMutationError.InvalidProperties,
-        "invalidPatch" => MailMessageMutationError.InvalidPatch,
-        "notFound" => MailMessageMutationError.NotFound,
-        "tooManyMailboxes" => MailMessageMutationError.TooManyMailboxes,
-        "blobNotFound" => MailMessageMutationError.BlobNotFound,
-        "tooManyKeywords" => MailMessageMutationError.TooManyKeywords,
-        "invalidEmail" => MailMessageMutationError.InvalidEmail,
-        "tooLarge" => MailMessageMutationError.TooLarge,
-        "overQuota" => MailMessageMutationError.OverQuota,
-        _ => throw new InvalidOperationException("The message operation returned an unknown error kind."),
-    };
-
-    private static string[]? ReadStrings(JsonNode? value) =>
-        value is JsonArray array ? array.Select(item => item!.GetValue<string>()).ToArray() : null;
 
     private async Task<MailMessageMutationFailure?> UpdateAsync(Guid accountId, Guid emailId,
         JmapInvocationContext context, MailMessagePatch patch, CancellationToken cancellationToken)
     {
         var email = await database.Emails.Include(item => item.Folder).FirstOrDefaultAsync(item => item.Id == emailId
             && item.Folder.InboxId == accountId && !item.IsDeleted, cancellationToken).ConfigureAwait(false);
-        if (email is null) return Failure("notFound");
+        if (email is null) return Failure(MailMessageMutationError.NotFound);
         var assertionFailure = await VerifyAsync(email, patch, cancellationToken).ConfigureAwait(false);
         if (assertionFailure is not null) return assertionFailure;
         var folders = MailMessageFlagMutations.Apply(patch, MailMessageFlagField.Folders, [JmapId.Mailbox(email.FolderId)]);
@@ -173,7 +149,7 @@ internal sealed class EmailSetMethod(
         }
         catch (FormatException)
         {
-            return Failure("invalidProperties", "The immutable MIME representation could not be verified.");
+            return Failure(MailMessageMutationError.InvalidProperties, "The immutable MIME representation could not be verified.");
         }
     }
 
@@ -212,7 +188,7 @@ internal sealed class EmailSetMethod(
                 && !item.IsDeleted,
                 cancellationToken).ConfigureAwait(false);
         if (email is null)
-            return Failure("notFound");
+            return Failure(MailMessageMutationError.NotFound);
         await database.ExpungedUids.AddAsync(new ExpungedUidDB
         {
             Id = Guid.CreateVersion7(),
@@ -229,15 +205,15 @@ internal sealed class EmailSetMethod(
     private async Task<MailboxResult> ResolveMailboxAsync(Guid accountId, IReadOnlyList<MailMessageFlagEntry>? entries,
         JmapInvocationContext context, CancellationToken cancellationToken)
     {
-        if (entries is null || entries.Count == 0) return new(null, Failure("invalidProperties"));
-        if (entries.Count > 1) return new(null, Failure("tooManyMailboxes"));
+        if (entries is null || entries.Count == 0) return new(null, Failure(MailMessageMutationError.InvalidProperties));
+        if (entries.Count > 1) return new(null, Failure(MailMessageMutationError.TooManyMailboxes));
         var entry = entries[0];
         if (entry.Value != MailMessageFlagValue.Enabled
             || !JmapId.TryParseMailbox(context.ResolveId(entry.Key), out var folderId))
-            return new(null, Failure("invalidProperties"));
+            return new(null, Failure(MailMessageMutationError.InvalidProperties));
         var folder = await database.Folders.FirstOrDefaultAsync(candidate => candidate.Id == folderId
             && candidate.InboxId == accountId, cancellationToken).ConfigureAwait(false);
-        return folder is null ? new(null, Failure("invalidProperties")) : new(folder, null);
+        return folder is null ? new(null, Failure(MailMessageMutationError.InvalidProperties)) : new(folder, null);
     }
 
     private async Task<MailboxResult> ResolveDraftMailboxAsync(Guid accountId, MailMessageDraft draft,
@@ -245,12 +221,12 @@ internal sealed class EmailSetMethod(
     {
         if (draft.FolderIssue != MailMessageMailboxIssue.None)
             return new(null, Failure(draft.FolderIssue == MailMessageMailboxIssue.TooMany
-                ? "tooManyMailboxes" : "invalidProperties"));
+                ? MailMessageMutationError.TooManyMailboxes : MailMessageMutationError.InvalidProperties));
         if (!JmapId.TryParseMailbox(context.ResolveId(draft.FolderReference!), out var folderId))
-            return new(null, Failure("invalidProperties"));
+            return new(null, Failure(MailMessageMutationError.InvalidProperties));
         var folder = await database.Folders.FirstOrDefaultAsync(candidate => candidate.Id == folderId
             && candidate.InboxId == accountId, cancellationToken).ConfigureAwait(false);
-        return folder is null ? new(null, Failure("invalidProperties")) : new(folder, null);
+        return folder is null ? new(null, Failure(MailMessageMutationError.InvalidProperties)) : new(folder, null);
     }
 
     private sealed record MailboxResult(FolderDB? Folder, MailMessageMutationFailure? Failure);

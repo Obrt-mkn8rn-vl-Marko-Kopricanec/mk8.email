@@ -145,7 +145,7 @@ internal static class JmapContactValidator
 
     internal static bool TryGetLocalizedCards(
         JsonObject card,
-        out IReadOnlyDictionary<string, JsonObject> localizedCards)
+        out Dictionary<string, JsonObject> localizedCards)
     {
         var result = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
         localizedCards = result;
@@ -785,7 +785,7 @@ internal static class JmapContactValidator
                 return false;
             result.Add(decoded);
         }
-        path = result;
+        path = result.ToArray();
         return true;
     }
 
@@ -1150,7 +1150,7 @@ internal static class JmapContactValidator
         if (node is not JsonValue value)
             return false;
         if (value.TryGetValue<long>(out result))
-            return result is >= 0 and <= JmapMethodHelpers.MaximumInt;
+            return result is >= 0 and <= 9_007_199_254_740_991L;
         if (value.TryGetValue<int>(out var integer))
         {
             result = integer;

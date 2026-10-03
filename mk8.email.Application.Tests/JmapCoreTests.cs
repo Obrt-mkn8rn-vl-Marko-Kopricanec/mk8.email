@@ -630,17 +630,17 @@ public sealed class JmapCoreTests
             }
             """)!.AsObject();
 
-        Assert.IsTrue(JmapMethodHelpers.TryGetOptionalInt(
+        Assert.IsTrue(GatewayDocumentValues.TryGetOptionalInt(
             values, "minimum", 0, out var minimum));
-        Assert.AreEqual(JmapMethodHelpers.MinimumInt, minimum);
-        Assert.IsTrue(JmapMethodHelpers.TryGetOptionalInt(
+        Assert.AreEqual(GatewayDocumentValues.MinimumInt, minimum);
+        Assert.IsTrue(GatewayDocumentValues.TryGetOptionalInt(
             values, "maximum", 0, out var maximum));
-        Assert.AreEqual(JmapMethodHelpers.MaximumInt, maximum);
-        Assert.IsFalse(JmapMethodHelpers.TryGetOptionalInt(
+        Assert.AreEqual(GatewayDocumentValues.MaximumInt, maximum);
+        Assert.IsFalse(GatewayDocumentValues.TryGetOptionalInt(
             values, "tooSmall", 0, out _));
-        Assert.IsFalse(JmapMethodHelpers.TryGetOptionalUnsignedInt(
+        Assert.IsFalse(GatewayDocumentValues.TryGetOptionalUnsignedInt(
             values, "tooLarge", out _));
-        Assert.IsTrue(JmapMethodHelpers.TryGetOptionalUnsignedInt(
+        Assert.IsTrue(GatewayDocumentValues.TryGetOptionalUnsignedInt(
             values, "unsigned", out var unsigned));
         Assert.AreEqual(4_294_967_296L, unsigned);
 
@@ -680,23 +680,23 @@ public sealed class JmapCoreTests
             """{"flag":null,"position":null,"size":null,"name":null,"items":null}""")!
             .AsObject();
 
-        Assert.IsFalse(JmapMethodHelpers.TryGetOptionalBoolean(values, "flag", false, out _));
-        Assert.IsFalse(JmapMethodHelpers.TryGetOptionalInt(values, "position", 0, out _));
-        Assert.IsFalse(JmapMethodHelpers.TryGetOptionalUnsignedInt(
+        Assert.IsFalse(GatewayDocumentValues.TryGetOptionalBoolean(values, "flag", false, out _));
+        Assert.IsFalse(GatewayDocumentValues.TryGetOptionalInt(values, "position", 0, out _));
+        Assert.IsFalse(GatewayDocumentValues.TryGetOptionalUnsignedInt(
             values,
             "size",
             out _,
             allowNull: false));
-        Assert.IsFalse(JmapMethodHelpers.TryGetOptionalString(
+        Assert.IsFalse(GatewayDocumentValues.TryGetOptionalString(
             values,
             "name",
             out _,
             allowNull: false));
-        Assert.IsFalse(JmapMethodHelpers.TryGetStringArray(values, "items", false, out _));
+        Assert.IsFalse(GatewayDocumentValues.TryGetStringArray(values, "items", false, out _));
 
-        Assert.IsTrue(JmapMethodHelpers.TryGetOptionalUnsignedInt(values, "size", out _));
-        Assert.IsTrue(JmapMethodHelpers.TryGetOptionalString(values, "name", out _));
-        Assert.IsTrue(JmapMethodHelpers.TryGetStringArray(values, "items", true, out _));
+        Assert.IsTrue(GatewayDocumentValues.TryGetOptionalUnsignedInt(values, "size", out _));
+        Assert.IsTrue(GatewayDocumentValues.TryGetOptionalString(values, "name", out _));
+        Assert.IsTrue(GatewayDocumentValues.TryGetStringArray(values, "items", true, out _));
     }
 
     [TestMethod]
@@ -808,7 +808,7 @@ public sealed class JmapCoreTests
         var values = JsonNode.Parse("""{"properties":["id","id","name"]}""")!
             .AsObject();
 
-        Assert.IsTrue(JmapMethodHelpers.TryGetStringArray(
+        Assert.IsTrue(GatewayDocumentValues.TryGetStringArray(
             values,
             "properties",
             true,

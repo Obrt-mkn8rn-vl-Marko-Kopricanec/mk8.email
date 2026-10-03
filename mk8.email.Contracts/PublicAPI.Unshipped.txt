@@ -3,8 +3,8 @@ mk8.email.Contracts.Messaging.MailSubmissionCreate.Deconstruct(out string! Creat
 mk8.email.Contracts.Messaging.MailSubmissionUpdate.Deconstruct(out string! RequestedId, out mk8.email.Contracts.Messaging.MailSubmissionPatch! Patch) -> void
 mk8.email.Contracts.Messaging.MailSubmissionMutationFailure.Deconstruct(out mk8.email.Contracts.Messaging.MailSubmissionMutationError Error, out string? Description, out System.Collections.Generic.IReadOnlyList<string!>? Properties, out System.Collections.Generic.IReadOnlyList<string!>? InvalidRecipients, out long? MaxSize, out int? MaxRecipients, out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailSubmissionEmailIssue>? EmailIssues) -> void
 mk8.email.Contracts.Messaging.MailSubmissionSnapshot.Deconstruct(out System.Guid Id, out string! IdentityId, out string! EmailId, out string! ThreadId, out mk8.email.Contracts.Messaging.MailSubmissionEnvelope? Envelope, out string! EnvelopeSender, out System.Collections.Generic.IReadOnlyList<string!>! EnvelopeRecipients, out System.DateTime SendAt, out string! UndoStatus, out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailSubmissionDeliverySnapshot!>? DeliveryRecipients) -> void
-const mk8.email.Contracts.Messaging.ApplicationOperations.MailOperationExecute = "mail.operation.execute.v34" -> string!
-const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v41" -> string!
+const mk8.email.Contracts.Messaging.ApplicationOperations.MailOperationExecute = "mail.operation.execute.v35" -> string!
+const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v42" -> string!
 mk8.email.Contracts.Messaging.MailEnvelopeAddress
 mk8.email.Contracts.Messaging.MailEnvelopeAddress.<Clone>$() -> mk8.email.Contracts.Messaging.MailEnvelopeAddress!
 mk8.email.Contracts.Messaging.MailEnvelopeAddress.Address.get -> string!
@@ -88,6 +88,25 @@ mk8.email.Contracts.Messaging.MailSubmissionEnvelope.MailSubmissionEnvelope(mk8.
 mk8.email.Contracts.Messaging.MailSubmissionEnvelope.Recipients.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailEnvelopeAddress!>!
 mk8.email.Contracts.Messaging.MailSubmissionEnvelope.Recipients.init -> void
 mk8.email.Contracts.Messaging.MailSubmissionEnvelope.Sender.get -> mk8.email.Contracts.Messaging.MailEnvelopeAddress!
+mk8.email.Contracts.Messaging.MailOperationFailure
+mk8.email.Contracts.Messaging.MailOperationFailure.<Clone>$() -> mk8.email.Contracts.Messaging.MailOperationFailure!
+mk8.email.Contracts.Messaging.MailOperationFailure.Deconstruct(out mk8.email.Contracts.Messaging.MailOperationFailureReason Reason, out string? Explanation) -> void
+mk8.email.Contracts.Messaging.MailOperationFailure.Equals(mk8.email.Contracts.Messaging.MailOperationFailure? other) -> bool
+mk8.email.Contracts.Messaging.MailOperationFailure.Explanation.get -> string?
+mk8.email.Contracts.Messaging.MailOperationFailure.Explanation.init -> void
+mk8.email.Contracts.Messaging.MailOperationFailure.MailOperationFailure(mk8.email.Contracts.Messaging.MailOperationFailureReason Reason, string? Explanation = null) -> void
+mk8.email.Contracts.Messaging.MailOperationFailure.Reason.get -> mk8.email.Contracts.Messaging.MailOperationFailureReason
+mk8.email.Contracts.Messaging.MailOperationFailure.Reason.init -> void
+mk8.email.Contracts.Messaging.MailOperationFailureReason
+mk8.email.Contracts.Messaging.MailOperationFailureReason.InternalFailure = 2 -> mk8.email.Contracts.Messaging.MailOperationFailureReason
+mk8.email.Contracts.Messaging.MailOperationFailureReason.None = 0 -> mk8.email.Contracts.Messaging.MailOperationFailureReason
+mk8.email.Contracts.Messaging.MailOperationFailureReason.NotSupported = 1 -> mk8.email.Contracts.Messaging.MailOperationFailureReason
+mk8.email.Contracts.Messaging.MailOperationFailureReason.PartiallyCompleted = 3 -> mk8.email.Contracts.Messaging.MailOperationFailureReason
+override mk8.email.Contracts.Messaging.MailOperationFailure.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailOperationFailure.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailOperationFailure.ToString() -> string!
+static mk8.email.Contracts.Messaging.MailOperationFailure.operator !=(mk8.email.Contracts.Messaging.MailOperationFailure? left, mk8.email.Contracts.Messaging.MailOperationFailure? right) -> bool
+static mk8.email.Contracts.Messaging.MailOperationFailure.operator ==(mk8.email.Contracts.Messaging.MailOperationFailure? left, mk8.email.Contracts.Messaging.MailOperationFailure? right) -> bool
 mk8.email.Contracts.Messaging.MailSubmissionEnvelope.Sender.init -> void
 mk8.email.Contracts.Messaging.MailSubmissionEnvelopeDraft
 mk8.email.Contracts.Messaging.MailSubmissionEnvelopeDraft.<Clone>$() -> mk8.email.Contracts.Messaging.MailSubmissionEnvelopeDraft!

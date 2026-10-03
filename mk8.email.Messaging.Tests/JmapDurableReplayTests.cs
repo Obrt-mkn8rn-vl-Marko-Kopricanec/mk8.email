@@ -1760,18 +1760,23 @@ internal sealed class JmapDurableReplayTests
     }
 
     [TestMethod]
-    [DataRow(MailOperationKind.None, false)]
-    [DataRow(MailOperationKind.None, true)]
-    [DataRow((MailOperationKind)999, false)]
-    [DataRow((MailOperationKind)999, true)]
-    public async Task UnrenderablePrimaryOrAdditionalResultRollsBackBusinessWritesAndReceipt(MailOperationKind invalid, bool additional)
+    [DataRow(MailOperationKind.None, false, false)]
+    [DataRow(MailOperationKind.None, true, false)]
+    [DataRow((MailOperationKind)999, false, false)]
+    [DataRow((MailOperationKind)999, true, false)]
+    [DataRow(MailOperationKind.Failure, false, false)]
+    [DataRow(MailOperationKind.Failure, true, false)]
+    [DataRow(MailOperationKind.Failure, false, true)]
+    [DataRow(MailOperationKind.Failure, true, true)]
+    public async Task UnrenderablePrimaryOrAdditionalResultRollsBackBusinessWritesAndReceipt(
+        MailOperationKind invalid, bool additional, bool legacy)
     {
         var rig = (await Rig.CreateAsync().ConfigureAwait(false));
         await using var rigLifetime = rig.ConfigureAwait(false);
         using var scope = rig.Services.CreateScope();
         var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
         var callbacks = 0;
-        var handler = new InvalidResultMethod(database, invalid, additional, () => callbacks++);
+        var handler = new MutatingResultMethod(database, invalid, additional, legacy, () => callbacks++);
         var processor = new JmapRequestProcessor([handler],
             scope.ServiceProvider.GetRequiredService<JmapAccountProfileService>(), database,
             scope.ServiceProvider.GetRequiredService<EnvironmentConfig>(),
@@ -1783,14 +1788,49 @@ internal sealed class JmapDurableReplayTests
             new JsonObject(), new Dictionary<string, string>(StringComparer.Ordinal), new Dictionary<string, string>(StringComparer.Ordinal)),
             rig.User, Guid.CreateVersion7()).ConfigureAwait(false);
         Assert.AreEqual(MailOperationKind.Failure, result.Response.Operation);
-        Assert.AreEqual("serverFail", ApplicationValueCodec.Decode(result.Response.Data)!["type"]!
-            .GetValue<string>(), StringComparer.Ordinal);
+        var failure = GatewayMailOperationFailureCodec.Decode((JsonObject)ApplicationValueCodec.Decode(result.Response.Data)!);
+        Assert.AreEqual(MailOperationFailureReason.InternalFailure, failure.Reason);
+        Assert.IsNull(ApplicationValueCodec.Decode(result.Response.Data)!["type"]);
         Assert.IsFalse(result.KnownEntities.ContainsKey("transient"));
         Assert.AreEqual(0, callbacks);
         var restored = rig.Context();
         await using var restoredLifetime = restored.ConfigureAwait(false);
         Assert.AreEqual(rig.User.Username, (await restored.Users.SingleAsync().ConfigureAwait(false)).Username, StringComparer.Ordinal);
         Assert.AreEqual(0, await restored.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
+    }
+
+    [TestMethod]
+    public async Task NeutralPartialFailureCommitsAndReplaysWithoutRepeatingDomainEffects()
+    {
+        var rig = await Rig.CreateAsync().ConfigureAwait(false);
+        await using var rigLifetime = rig.ConfigureAwait(false);
+        using var scope = rig.Services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var callbacks = 0;
+        var handler = new MutatingResultMethod(database, MailOperationKind.Failure, additional: false, legacy: false,
+            () => callbacks++, MailOperationFailureReason.PartiallyCompleted);
+        var processor = new JmapRequestProcessor([handler],
+            scope.ServiceProvider.GetRequiredService<JmapAccountProfileService>(), database,
+            scope.ServiceProvider.GetRequiredService<EnvironmentConfig>(),
+            scope.ServiceProvider.GetRequiredService<LargeObjectTransactionEffects>(),
+            NullLogger<JmapRequestProcessor>.Instance,
+            scope.ServiceProvider.GetRequiredService<ApplicationOperationReceiptStore>());
+        var command = new MailOperationCommand([MailFeature.Basic, MailFeature.Submission],
+            MailOperationKind.MutateSubmissions, new JsonObject(),
+            new Dictionary<string, string>(StringComparer.Ordinal), new Dictionary<string, string>(StringComparer.Ordinal));
+        var identity = Guid.CreateVersion7();
+        var first = await processor.ExecuteAsync(command, rig.User, identity).ConfigureAwait(false);
+        var replay = await processor.ExecuteAsync(command, rig.User, identity).ConfigureAwait(false);
+        var data = (JsonObject)ApplicationValueCodec.Decode(replay.Response.Data)!;
+        Assert.AreEqual(MailOperationFailureReason.PartiallyCompleted, GatewayMailOperationFailureCodec.Decode(data).Reason);
+        Assert.IsFalse(data.ContainsKey("type"));
+        Assert.IsTrue(JsonNode.DeepEquals(ApplicationValueCodec.Decode(first.Response.Data), data));
+        Assert.AreEqual("object-id", replay.KnownEntities["transient"], StringComparer.Ordinal);
+        Assert.AreEqual(1, callbacks);
+        var restored = rig.Context();
+        await using var restoredLifetime = restored.ConfigureAwait(false);
+        Assert.AreEqual("changed@example.test", (await restored.Users.SingleAsync().ConfigureAwait(false)).Username, StringComparer.Ordinal);
+        Assert.AreEqual(1, await restored.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
     }
 
     private static async Task<JmapApplicationBatchResult> InvokeGatewayAsync(
@@ -1864,7 +1904,8 @@ internal sealed class JmapDurableReplayTests
         }
     }
 
-    private sealed class InvalidResultMethod(EmailDbContext database, MailOperationKind invalid, bool additional, Action callback) : IJmapMethod
+    private sealed class MutatingResultMethod(EmailDbContext database, MailOperationKind invalid, bool additional, bool legacy,
+        Action callback, MailOperationFailureReason? acceptedReason = null) : IJmapMethod
     {
         public MailOperationKind Operation => MailOperationKind.MutateSubmissions;
         public MailFeature Feature => MailFeature.Submission;
@@ -1872,11 +1913,13 @@ internal sealed class JmapDurableReplayTests
             CancellationToken cancellationToken)
         {
             var user = await database.Users.SingleAsync(cancellationToken).ConfigureAwait(false);
-            user.Username = "must-roll-back@example.test";
+            user.Username = "changed@example.test";
             await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             context.CreatedIds["transient"] = "object-id";
             context.AddPostCommitAction(_ => { callback(); return Task.CompletedTask; });
-            var unsupported = new JmapMethodResponse(invalid, new JsonObject());
+            var failureData = legacy ? new JsonObject { ["type"] = "serverPartialFail" } : new JsonObject { ["reason"] = 999 };
+            var unsupported = acceptedReason is { } reason ? JmapMethodResponse.Failure(reason)
+                : new JmapMethodResponse(invalid, invalid == MailOperationKind.Failure ? failureData : new JsonObject());
             return additional ? new JmapMethodResponse(Operation, new JsonObject(), [unsupported]) : unsupported;
         }
     }

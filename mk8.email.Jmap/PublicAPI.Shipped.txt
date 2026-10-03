@@ -153,7 +153,7 @@ static mk8.email.Jmap.JmapId.TryParseSubmission(string? value, out System.Guid i
 static mk8.email.Jmap.JmapId.TryParseThread(string? value, out string! storedThreadId) -> bool
 static mk8.email.Jmap.JmapId.TryParseUploadedBlob(string? value, out System.Guid id) -> bool
 static mk8.email.Jmap.JmapId.UploadedBlob(System.Guid blobId) -> string!
-static mk8.email.Jmap.JmapMethodResponse.Error(string! type, string? description = null) -> mk8.email.Jmap.JmapMethodResponse!
+static mk8.email.Jmap.JmapMethodResponse.Failure(mk8.email.Contracts.Messaging.MailOperationFailureReason reason, string? explanation = null) -> mk8.email.Jmap.JmapMethodResponse!
 static mk8.email.Jmap.JmapMethodResponse.operator !=(mk8.email.Jmap.JmapMethodResponse? left, mk8.email.Jmap.JmapMethodResponse? right) -> bool
 static mk8.email.Jmap.JmapMethodResponse.operator ==(mk8.email.Jmap.JmapMethodResponse? left, mk8.email.Jmap.JmapMethodResponse? right) -> bool
 static mk8.email.Jmap.JmapServiceExtensions.AddJmapApplication(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!

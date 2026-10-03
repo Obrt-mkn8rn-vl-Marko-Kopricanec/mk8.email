@@ -12,6 +12,60 @@ namespace mk8.email.Application.Tests;
 internal sealed class JmapOperationBoundaryTests
 {
     [TestMethod]
+    [DataRow(MailOperationFailureReason.NotSupported, "unknownMethod")]
+    [DataRow(MailOperationFailureReason.InternalFailure, "serverFail")]
+    [DataRow(MailOperationFailureReason.PartiallyCompleted, "serverPartialFail")]
+    public void GatewayRendersNeutralOperationFailures(MailOperationFailureReason reason, string expected)
+    {
+        var response = JmapMethodResponse.Failure(reason, "domain explanation");
+        Assert.IsFalse(response.Arguments.ContainsKey("type"));
+        Assert.IsFalse(response.Arguments.ContainsKey("description"));
+        var decoded = GatewayMailOperationFailureCodec.Decode(response.Arguments);
+        Assert.AreEqual(reason, decoded.Reason);
+        var rendered = GatewayMailOperationFailureCodec.Render(decoded);
+        Assert.AreEqual(expected, rendered["type"]!.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("domain explanation", rendered["description"]!.GetValue<string>(), StringComparer.Ordinal);
+    }
+
+    [TestMethod]
+    [DataRow(MailOperationFailureReason.None)]
+    [DataRow((MailOperationFailureReason)999)]
+    public void InvalidNeutralFailureReasonsAreRejected(MailOperationFailureReason reason)
+    {
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => JmapMethodResponse.Failure(reason));
+        Assert.ThrowsExactly<InvalidOperationException>(() => GatewayMailOperationFailureCodec.Decode(
+            new JsonObject { ["reason"] = (int)reason }));
+        Assert.ThrowsExactly<InvalidOperationException>(() => GatewayMailOperationFailureCodec.Render(new(reason)));
+    }
+
+    [TestMethod]
+    public void LegacyWireErrorsCannotMasqueradeAsNeutralFailures()
+    {
+        Assert.ThrowsExactly<JsonException>(() => GatewayMailOperationFailureCodec.Decode(
+            new JsonObject { ["type"] = "serverPartialFail" }));
+        Assert.ThrowsExactly<JsonException>(() => GatewayMailOperationFailureCodec.Decode(
+            new JsonObject { ["reason"] = (int)MailOperationFailureReason.InternalFailure, ["type"] = "serverFail" }));
+    }
+
+    [TestMethod]
+    public async Task WorkerUnsupportedOperationReturnsOnlyDomainFailureData()
+    {
+        var fixture = await JmapFixture.CreateAsync().ConfigureAwait(false);
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
+        using var scope = fixture.Services.CreateScope();
+        var processor = scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>();
+        var result = await processor.ExecuteAsync(new MailOperationCommand(
+            [MailFeature.Basic], MailOperationKind.None, new JsonObject(),
+            new Dictionary<string, string>(StringComparer.Ordinal), new Dictionary<string, string>(StringComparer.Ordinal)),
+            fixture.User, Guid.CreateVersion7()).ConfigureAwait(false);
+        Assert.AreEqual(MailOperationKind.Failure, result.Response.Operation);
+        var data = (JsonObject)ApplicationValueCodec.Decode(result.Response.Data)!;
+        Assert.AreEqual(MailOperationFailureReason.NotSupported, GatewayMailOperationFailureCodec.Decode(data).Reason);
+        Assert.IsFalse(data.ContainsKey("type"));
+        Assert.IsFalse(data.ContainsKey("description"));
+    }
+
+    [TestMethod]
     [DataRow("Core/echo", MailOperationKind.Echo, 2)]
     [DataRow("Mailbox/get", MailOperationKind.ReadFolders, 10)]
     [DataRow("Mailbox/query", MailOperationKind.FindFolders, 11)]

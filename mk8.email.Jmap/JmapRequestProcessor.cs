@@ -237,7 +237,7 @@ public sealed class JmapRequestProcessor
             MailOperationKind.MutateContacts when features.Contains(MailFeature.Contacts) => ExecuteContactMutationAsync(command, context, user, receiptKey, cancellationToken),
             MailOperationKind.ImportMessages when features.Contains(MailFeature.Messages) => ExecuteImportAsync(command, context, user, receiptKey, cancellationToken),
             MailOperationKind.CopyMessages when features.Contains(MailFeature.Messages) => ExecuteCopyAsync(command, context, user, receiptKey, cancellationToken),
-            _ => Task.FromResult(EncodeResponse(JmapMethodResponse.Error("unknownMethod"))),
+            _ => Task.FromResult(EncodeResponse(JmapMethodResponse.Failure(MailOperationFailureReason.NotSupported))),
         };
     }
 
@@ -2199,7 +2199,7 @@ public sealed class JmapRequestProcessor
             await RestoreFailedInvocationAsync(transaction, context, createdIds, postCommitMarker,
                 blobEffectMarker, presentationMarker, commitAttempted).ConfigureAwait(false);
             OperationError(_logger, operation, exception);
-            return EncodeResponse(JmapMethodResponse.Error("serverFail"));
+            return EncodeResponse(JmapMethodResponse.Failure(MailOperationFailureReason.InternalFailure));
         }
         finally
         {
@@ -2272,8 +2272,10 @@ public sealed class JmapRequestProcessor
     private static void ValidateEncodedResponse(MailOperationResponse response)
     {
         if (response is null || !Enum.IsDefined(response.Operation) || response.Operation is MailOperationKind.None or MailOperationKind.Echo
-            || response.Data is null || ApplicationValueCodec.Decode(response.Data) is not JsonObject)
+            || response.Data is null || ApplicationValueCodec.Decode(response.Data) is not JsonObject data)
             throw new InvalidOperationException("A mail operation receipt contains an invalid result.");
+        if (response.Operation == MailOperationKind.Failure)
+            _ = DecodeFailure(data);
         if (response.AdditionalResults is not null)
         {
             foreach (var additional in response.AdditionalResults)
@@ -2305,11 +2307,17 @@ public sealed class JmapRequestProcessor
 
     private static bool MustRollBack(MailOperationResponse response) =>
         response.Operation == MailOperationKind.Failure
-        && (ApplicationValueCodec.Decode(response.Data) is not JsonObject arguments
-            || !arguments.TryGetPropertyValue("type", out var typeNode)
-            || typeNode is not JsonValue typeValue
-            || !typeValue.TryGetValue<string>(out var type)
-            || !string.Equals(type, "serverPartialFail", StringComparison.Ordinal));
+        && DecodeFailure((JsonObject)ApplicationValueCodec.Decode(response.Data)!).Reason
+            != MailOperationFailureReason.PartiallyCompleted;
+
+    private static MailOperationFailure DecodeFailure(JsonObject data)
+    {
+        var failure = data.Deserialize<MailOperationFailure>(StrictReceiptJsonOptions)
+            ?? throw new InvalidOperationException("A mail operation failure is incomplete.");
+        if (!Enum.IsDefined(failure.Reason) || failure.Reason == MailOperationFailureReason.None)
+            throw new InvalidOperationException("A mail operation failure has an invalid reason.");
+        return failure;
+    }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1031",
         Justification = "Rollback compensation must preserve the original sanitized outcome even if the database connection fails.")]

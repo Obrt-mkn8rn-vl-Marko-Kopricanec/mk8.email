@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using mk8.email.Contracts.Messaging;
 
@@ -8,11 +9,13 @@ public sealed record JmapMethodResponse(
     JsonObject Arguments,
     IReadOnlyList<JmapMethodResponse>? AdditionalResponses = null)
 {
-    public static JmapMethodResponse Error(string type, string? description = null)
+    private static readonly JsonSerializerOptions FailureJsonOptions = new(JsonSerializerDefaults.Web);
+
+    public static JmapMethodResponse Failure(MailOperationFailureReason reason, string? explanation = null)
     {
-        var arguments = new JsonObject { ["type"] = type };
-        if (!string.IsNullOrEmpty(description))
-            arguments["description"] = description;
+        if (!Enum.IsDefined(reason) || reason == MailOperationFailureReason.None)
+            throw new ArgumentOutOfRangeException(nameof(reason));
+        var arguments = JsonSerializer.SerializeToNode(new MailOperationFailure(reason, explanation), FailureJsonOptions)!.AsObject();
         return new JmapMethodResponse(MailOperationKind.Failure, arguments);
     }
 }

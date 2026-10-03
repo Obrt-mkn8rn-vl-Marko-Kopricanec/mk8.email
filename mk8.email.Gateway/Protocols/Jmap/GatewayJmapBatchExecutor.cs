@@ -112,7 +112,7 @@ internal static class GatewayJmapBatchExecutor
         if (operation.Response.AdditionalResults is not null)
         {
             foreach (var additional in operation.Response.AdditionalResults)
-                displayed.Add((additional.Operation, (JsonObject)ApplicationValueCodec.Decode(additional.Data)!));
+                displayed.Add(DecodePrimary(additional, selection: null));
         }
         return new(null, result, displayed);
     }
@@ -438,11 +438,12 @@ internal static class GatewayJmapBatchExecutor
         MailOperationResponse response,
         TypedOperationSelection? selection)
     {
-        if (selection is null)
-            return (response.Operation, (JsonObject)ApplicationValueCodec.Decode(response.Data)!);
-        if (response.AdditionalResults is not null)
+        if (selection is not null && response.AdditionalResults is not null)
             throw new InvalidOperationException("A typed operation returned unexpected additional results.");
         if (response.Operation == MailOperationKind.Failure)
+            return (response.Operation, GatewayMailOperationFailureCodec.Render(
+                GatewayMailOperationFailureCodec.Decode((JsonObject)ApplicationValueCodec.Decode(response.Data)!)));
+        if (selection is null)
             return (response.Operation, (JsonObject)ApplicationValueCodec.Decode(response.Data)!);
         if (response.Operation != selection.Operation)
             throw new InvalidOperationException("The Application returned a different typed operation.");
@@ -463,8 +464,10 @@ internal static class GatewayJmapBatchExecutor
     private static void ValidateResponse(MailOperationResponse response)
     {
         if (response is null || !Enum.IsDefined(response.Operation) || response.Operation == MailOperationKind.None
-            || response.Data is null || ApplicationValueCodec.Decode(response.Data) is not JsonObject)
+            || response.Data is null || ApplicationValueCodec.Decode(response.Data) is not JsonObject data)
             throw new InvalidOperationException("The Application returned an invalid mail operation result.");
+        if (response.Operation == MailOperationKind.Failure)
+            _ = GatewayMailOperationFailureCodec.Decode(data);
         if (response.AdditionalResults is not null)
         {
             foreach (var additional in response.AdditionalResults)

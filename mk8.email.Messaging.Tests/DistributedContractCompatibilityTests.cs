@@ -328,6 +328,17 @@ internal sealed class DistributedContractCompatibilityTests
     }
 
     [TestMethod]
+    public async Task V34MailOperationsAreBlockedBeforeV35Dispatch()
+    {
+        await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
+            "mail.operation.execute.v34", false, false).ConfigureAwait(false);
+        await SupersededPendingAndLeasedWorkBlocksWithoutChangingOpaqueData(
+            "mail.operation.execute.v34", false, true).ConfigureAwait(false);
+        await ElapsedLegacyDeadlinesRemainBlockedAndAreNotAutomaticallyExpired(
+            "mail.operation.execute.v34", false).ConfigureAwait(false);
+    }
+
+    [TestMethod]
     public async Task FreshSchemasAndCurrentOrTerminalWorkAreCompatible()
     {
         var database = (await RequirePostgresAsync().ConfigureAwait(false));

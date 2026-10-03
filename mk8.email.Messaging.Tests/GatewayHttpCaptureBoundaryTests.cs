@@ -197,7 +197,8 @@ internal sealed class GatewayHttpCaptureBoundaryTests
             var maximumPayloadBytes = checked((int)GatewayHttpPayloadBudget.BinaryEnvelopeBytes(UploadBytes));
             var options = new PostgresMessagingOptions
             {
-                MaxPayloadBytes = maximumPayloadBytes, InlinePayloadThresholdBytes = 1024,
+                MaxPayloadBytes = maximumPayloadBytes,
+                InlinePayloadThresholdBytes = 1024,
                 NotificationFallbackInterval = TimeSpan.FromMilliseconds(100),
             };
             var bus = new PostgresApplicationBus(dataSource, protector, options, largeObjectStore: store);
@@ -259,10 +260,20 @@ internal sealed class GatewayHttpCaptureBoundaryTests
             Dav = new DavConfig { EnableDav = false },
             Jmap = new JmapConfig { MaxUploadSizeBytes = UploadBytes, MaxRequestSizeBytes = 65_536 },
             Limits = new LimitsConfig { MaxMessageSizeBytes = 1_048_576 },
-            Admin = new AdminConfig { AllowedNetworks = ["127.0.0.0/8"], DataProtectionKeyPath = "/tmp/mk8-capture-keys",
-                AuditLogPath = "/tmp/mk8-capture-audit", HealthStatusPath = "/tmp/mk8-capture-health" },
-            Messaging = new MessagingConfig { Enabled = true, MaxPayloadBytes = maximumPayloadBytes,
-                EncryptionKey = Convert.ToBase64String(new byte[32]), InlinePayloadThresholdBytes = 1024 },
+            Admin = new AdminConfig
+            {
+                AllowedNetworks = ["127.0.0.0/8"],
+                DataProtectionKeyPath = "/tmp/mk8-capture-keys",
+                AuditLogPath = "/tmp/mk8-capture-audit",
+                HealthStatusPath = "/tmp/mk8-capture-health"
+            },
+            Messaging = new MessagingConfig
+            {
+                Enabled = true,
+                MaxPayloadBytes = maximumPayloadBytes,
+                EncryptionKey = Convert.ToBase64String(new byte[32]),
+                InlinePayloadThresholdBytes = 1024
+            },
             ObjectStorage = new ObjectStorageConfig { ConnectionString = blobConnection },
         };
 

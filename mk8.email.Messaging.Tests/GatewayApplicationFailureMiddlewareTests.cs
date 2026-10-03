@@ -208,6 +208,44 @@ internal sealed class GatewayApplicationFailureMiddlewareTests
         Assert.IsFalse(body.Contains("business-secret", StringComparison.Ordinal));
     }
 
+    [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task OversizedOutboundBodyOrMetadataBecomesJournaledFailureNotUnavailable(bool oversizedHeaders)
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Path = "/jmap/api";
+        var output = new MemoryStream();
+        await using var outputLifetime = output.ConfigureAwait(false);
+        context.Response.Body = output;
+        var journal = new StubTrafficJournal();
+        var environment = new EnvironmentConfig
+        {
+            Messaging = new MessagingConfig { MaxPayloadBytes = 2_500_000 },
+        };
+        var middleware = new GatewayProtocolTrafficCaptureMiddleware(async request =>
+        {
+            await request.Response.WriteAsync("partial-business-secret").ConfigureAwait(false);
+            if (oversizedHeaders)
+                request.Response.Headers["X-Too-Large"] = new string('x', 32_769);
+            else
+                await request.Response.Body.WriteAsync(new byte[checked((int)GatewayHttpPayloadBudget
+                    .MaximumBinaryBodyBytes(environment.Messaging.MaxPayloadBytes) + 1)]).ConfigureAwait(false);
+        }, NullLogger<GatewayProtocolTrafficCaptureMiddleware>.Instance);
+        await middleware.InvokeAsync(context, journal,
+            new GatewayApplicationOptions("gateway@test", TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10)),
+            environment).ConfigureAwait(false);
+        Assert.AreEqual(500, context.Response.StatusCode);
+        Assert.HasCount(2, journal.Records);
+        var body = Encoding.UTF8.GetString(output.ToArray());
+        Assert.IsFalse(body.Contains("partial-business-secret", StringComparison.Ordinal));
+        Assert.IsFalse(body.Contains("journal unavailable", StringComparison.Ordinal));
+        using var outbound = JsonDocument.Parse(journal.Records[1].Payload);
+        Assert.AreEqual(500, outbound.RootElement.GetProperty("status").GetInt32());
+        Assert.AreEqual(body, Encoding.UTF8.GetString(Convert.FromBase64String(
+            outbound.RootElement.GetProperty("bodyBase64").GetString()!)), StringComparer.Ordinal);
+    }
+
     private sealed class LimitProbeStream : Stream
     {
         public int BytesRead { get; private set; }

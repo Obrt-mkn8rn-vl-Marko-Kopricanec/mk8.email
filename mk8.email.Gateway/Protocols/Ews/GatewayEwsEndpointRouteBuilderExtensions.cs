@@ -1,3 +1,4 @@
+using System.Text;
 using Microsoft.Net.Http.Headers;
 using mk8.email.Configuration;
 using mk8.email.Contracts.Messaging;
@@ -53,7 +54,7 @@ internal static class GatewayEwsEndpointRouteBuilderExtensions
                 await FaultAsync(context, "ErrorServerBusy", StatusCodes.Status503ServiceUnavailable).ConfigureAwait(false);
                 return;
             }
-            await ExecuteAsync(context, application, authentication, request, options, cancellationToken).ConfigureAwait(false);
+            await ExecuteAsync(context, application, authentication, request, environment, options, cancellationToken).ConfigureAwait(false);
         }
         catch (GatewayEwsRequestException exception)
         {
@@ -70,7 +71,7 @@ internal static class GatewayEwsEndpointRouteBuilderExtensions
     }
 
     private static async Task ExecuteAsync(HttpContext context, GatewayEwsClient application,
-        ProtocolAuthentication authentication, GatewayEwsRequest request, GatewayApplicationOptions options,
+        ProtocolAuthentication authentication, GatewayEwsRequest request, EnvironmentConfig environment, GatewayApplicationOptions options,
         CancellationToken cancellationToken)
     {
         using var deadline = GatewayApplicationDeadline.Begin(options.RequestTimeout);
@@ -88,8 +89,13 @@ internal static class GatewayEwsEndpointRouteBuilderExtensions
             cancellationToken).ConfigureAwait(false);
         var graph = read?.Status == MailFolderReadStatus.Ok ? new GatewayEwsFolderGraph(accountId, read.State!, read.Folders) : null;
         var error = read?.Status == MailFolderReadStatus.RequestTooLarge ? "ErrorExceededFindCountLimit" : "ErrorFolderNotFound";
-        await GatewayEwsSoap.WriteAsync(context, context.Response.Body,
-            GatewayEwsFolderResponse.Render(request, graph, profile.Username, error)).ConfigureAwait(false);
+        var xml = GatewayEwsFolderResponse.Render(request, graph, profile.Username, error);
+        if (GatewayHttpPayloadBudget.BinaryEnvelopeBytes(Encoding.UTF8.GetByteCount(xml)) > environment.Messaging.MaxPayloadBytes)
+        {
+            await FaultAsync(context, "ErrorDataSizeLimitExceeded", StatusCodes.Status500InternalServerError).ConfigureAwait(false);
+            return;
+        }
+        await GatewayEwsSoap.WriteAsync(context, context.Response.Body, xml).ConfigureAwait(false);
     }
 
     private static Task UnauthorizedAsync(HttpContext context)

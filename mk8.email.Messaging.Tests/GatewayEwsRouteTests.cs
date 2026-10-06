@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Xml.Linq;
+using mk8.email.Configuration;
 using mk8.email.Contracts.Messaging;
 using mk8.email.Gateway.Protocols.Ews;
 using CaptureFixture = mk8.email.Messaging.Tests.GatewayHttpCaptureBoundaryTests.CaptureFixture;
@@ -176,6 +177,59 @@ internal sealed class GatewayEwsRouteTests
         Assert.AreEqual(accepted, XDocument.Parse(body).Descendants(Types + "Folder").Any());
         await fixture.AssertRecordedResponseAsync("ews", CanonicalPath, 200, body, rejection: false).ConfigureAwait(false);
         if (!accepted) await fixture.AssertWorkerOperationsAsync(ApplicationOperations.JmapProfileGet, ApplicationOperations.MailOperationExecute).ConfigureAwait(false);
+    }
+
+    [TestMethod]
+    [DataRow(312, true)]
+    [DataRow(313, false)]
+    public async Task SmallEnvelopeWithJmapHttpDisabledHonorsTheEncodedSnapshotBoundary(int additional, bool accepted)
+    {
+        var fixture = await CaptureFixture.CreateAsync(mailFolders: true, additionalFolders: additional,
+            maximumPayloadOverride: 1_572_864, disableJmap: true).ConfigureAwait(false);
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
+        Authenticate(fixture);
+        using var content = XmlContent(Request("GetFolder", "<t:DistinguishedFolderId Id='inbox' />"));
+        using var response = await fixture.Client.PostAsync(new Uri(CanonicalPath, UriKind.Relative), content).ConfigureAwait(false);
+        var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+        Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
+        Assert.AreEqual(accepted ? "NoError" : "ErrorExceededFindCountLimit",
+            XDocument.Parse(body).Descendants(Messages + "ResponseCode").Single().Value, StringComparer.Ordinal);
+        Assert.AreEqual(accepted, XDocument.Parse(body).Descendants(Types + "Folder").Any());
+        await fixture.AssertRecordedResponseAsync("ews", CanonicalPath, 200, body, rejection: false).ConfigureAwait(false);
+        if (accepted) await AssertReadOperationsAsync(fixture).ConfigureAwait(false);
+        else await fixture.AssertWorkerOperationsAsync(ApplicationOperations.JmapProfileGet, ApplicationOperations.MailOperationExecute).ConfigureAwait(false);
+    }
+
+    [TestMethod]
+    public async Task LargeBatchedSoapReplyIsARecordedSizeFaultNotAStorageFailure()
+    {
+        var fixture = await CaptureFixture.CreateAsync(mailFolders: true, additionalFolders: 312,
+            maximumPayloadOverride: 1_572_864, disableJmap: true).ConfigureAwait(false);
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
+        Authenticate(fixture);
+        var references = string.Concat(Enumerable.Repeat("<t:DistinguishedFolderId Id='msgfolderroot' />", 32));
+        var xml = Request("FindFolder", references,
+            page: "<m:IndexedPageFolderView BasePoint='Beginning' Offset='0' MaxEntriesReturned='100' />");
+        using var withinContent = XmlContent(xml);
+        using var withinResponse = await fixture.Client.PostAsync(new Uri(CanonicalPath, UriKind.Relative), withinContent).ConfigureAwait(false);
+        var withinBody = await withinResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
+        Assert.AreEqual(HttpStatusCode.OK, withinResponse.StatusCode);
+        Assert.IsLessThanOrEqualTo(1_572_864L, GatewayHttpPayloadBudget.BinaryEnvelopeBytes(Encoding.UTF8.GetByteCount(withinBody)));
+        Assert.IsTrue(XDocument.Parse(withinBody).Descendants(Messages + "ResponseCode").All(code => string.Equals(code.Value, "NoError", StringComparison.Ordinal)));
+        await fixture.AssertRecordedResponseAsync("ews", CanonicalPath, 200, withinBody, rejection: false).ConfigureAwait(false);
+        xml = xml.Replace("</t:BaseShape>", "</t:BaseShape><t:AdditionalProperties>"
+            + "<t:FieldURI FieldURI='folder:ParentFolderId' /><t:FieldURI FieldURI='folder:FolderClass' />"
+            + "</t:AdditionalProperties>", StringComparison.Ordinal);
+        using var content = XmlContent(xml);
+        using var response = await fixture.Client.PostAsync(new Uri(CanonicalPath, UriKind.Relative), content).ConfigureAwait(false);
+        var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+        Assert.AreEqual(HttpStatusCode.InternalServerError, response.StatusCode);
+        AssertFault(body, "ErrorDataSizeLimitExceeded");
+        Assert.IsFalse(body.Contains("Extra-", StringComparison.Ordinal));
+        await fixture.AssertRecordedResponseAsync("ews", CanonicalPath, 500, body, rejection: false).ConfigureAwait(false);
+        await fixture.AssertWorkerOperationsAsync(ApplicationOperations.JmapProfileGet, ApplicationOperations.MailOperationExecute,
+            ApplicationOperations.MailOperationExecute, ApplicationOperations.JmapProfileGet, ApplicationOperations.MailOperationExecute,
+            ApplicationOperations.MailOperationExecute).ConfigureAwait(false);
     }
 
     [TestMethod]

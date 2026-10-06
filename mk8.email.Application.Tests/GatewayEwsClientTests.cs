@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using mk8.email.Configuration;
 using mk8.email.Contracts.Messaging;
 using mk8.email.Gateway.ApplicationBridge;
 using mk8.email.Gateway.Protocols.Ews;
@@ -21,7 +22,7 @@ internal sealed class GatewayEwsClientTests
     public async Task ExistingTypedContractsCarryEwsTrafficWithoutRawSoapOrNewOperation()
     {
         var transport = new Transport([new(JmapApplicationOutcomes.Ok, Profile: Profile), Query(1), Read()]);
-        var client = new GatewayEwsClient(transport);
+        var client = Client(transport);
         var profile = await client.AuthenticateAsync(Authentication, CancellationToken.None).ConfigureAwait(false);
         Assert.IsNotNull(profile);
         var graph = await client.ReadGraphAsync(Authentication, profile, Account, CancellationToken.None).ConfigureAwait(false);
@@ -36,7 +37,7 @@ internal sealed class GatewayEwsClientTests
     public async Task OversizedCountNeverRequestsAFullEncodedSnapshot(int count)
     {
         var transport = new Transport([Query(count)]);
-        var result = await new GatewayEwsClient(transport).ReadGraphAsync(Authentication, Profile, Account, CancellationToken.None).ConfigureAwait(false);
+        var result = await Client(transport).ReadGraphAsync(Authentication, Profile, Account, CancellationToken.None).ConfigureAwait(false);
         Assert.AreEqual(MailFolderReadStatus.RequestTooLarge, result.Status);
         Assert.HasCount(0, result.Folders);
         Assert.HasCount(1, transport.Operations);
@@ -46,7 +47,7 @@ internal sealed class GatewayEwsClientTests
     public async Task CountAndSnapshotStateDisagreementIsBusyInsteadOfAnInconsistentPage()
     {
         var transport = new Transport([Query(1), Read(state: "changed")]);
-        var error = await Assert.ThrowsAsync<GatewayEwsRequestException>(() => new GatewayEwsClient(transport)
+        var error = await Assert.ThrowsAsync<GatewayEwsRequestException>(() => Client(transport)
             .ReadGraphAsync(Authentication, Profile, Account, CancellationToken.None)).ConfigureAwait(false);
         Assert.AreEqual("ErrorServerBusy", error.Code, StringComparer.Ordinal);
         Assert.AreEqual(503, error.Status);
@@ -82,7 +83,7 @@ internal sealed class GatewayEwsClientTests
             }
         };
         var transport = new Transport([Query(mode is "duplicate-id" ? 2 : 1), read]);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => new GatewayEwsClient(transport).ReadGraphAsync(Authentication, Profile, Account, CancellationToken.None)).ConfigureAwait(false);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => Client(transport).ReadGraphAsync(Authentication, Profile, Account, CancellationToken.None)).ConfigureAwait(false);
     }
 
     [TestMethod]
@@ -90,13 +91,46 @@ internal sealed class GatewayEwsClientTests
     {
         var denied = Reply(MailOperationKind.FindFolders, new MailFolderQueryResult(MailFolderQueryStatus.AccountNotFound, null, 0, [], 0));
         var deniedTransport = new Transport([denied]);
-        var result = await new GatewayEwsClient(deniedTransport).ReadGraphAsync(Authentication, Profile, Account, CancellationToken.None).ConfigureAwait(false);
+        var result = await Client(deniedTransport).ReadGraphAsync(Authentication, Profile, Account, CancellationToken.None).ConfigureAwait(false);
         Assert.AreEqual(MailFolderReadStatus.AccountNotFound, result.Status);
         Assert.HasCount(1, deniedTransport.Operations);
         var expired = new Transport([new(JmapApplicationOutcomes.Unauthorized)]);
-        var exception = await Assert.ThrowsAsync<GatewayEwsRequestException>(() => new GatewayEwsClient(expired).ReadGraphAsync(Authentication, Profile, Account, CancellationToken.None)).ConfigureAwait(false);
+        var exception = await Assert.ThrowsAsync<GatewayEwsRequestException>(() => Client(expired).ReadGraphAsync(Authentication, Profile, Account, CancellationToken.None)).ConfigureAwait(false);
         Assert.AreEqual(401, exception.Status);
     }
+
+    [TestMethod]
+    public async Task SmallEnvelopeCapacityRefusesBeforeRequestingTheSnapshot()
+    {
+        const int payloadBytes = 1_572_864;
+        var capacity = GatewayEwsClient.MaximumFolders(Profile, payloadBytes);
+        Assert.AreEqual(319, capacity);
+        var transport = new Transport([Query(capacity + 1)]);
+        var result = await new GatewayEwsClient(transport, new EnvironmentConfig
+        {
+            Messaging = new MessagingConfig { MaxPayloadBytes = payloadBytes },
+        }).ReadGraphAsync(Authentication, Profile, Account, CancellationToken.None).ConfigureAwait(false);
+        Assert.AreEqual(MailFolderReadStatus.RequestTooLarge, result.Status);
+        Assert.HasCount(1, transport.Operations);
+    }
+
+    [TestMethod]
+    public void ConservativePerFolderBudgetCoversWorstCaseEncodedDomainValues()
+    {
+        var folder = new MailFolderSnapshot(Folder, new string('`', 255), Account, new string('`', 32),
+            long.MinValue, true, int.MaxValue, int.MaxValue, int.MaxValue, int.MaxValue, true);
+        var result = Reply(MailOperationKind.ReadFolders, new MailFolderReadResult(MailFolderReadStatus.Ok, new string('`', 256), [folder]));
+        var encodedBytes = JsonSerializer.SerializeToUtf8Bytes(result, JsonOptions).Length;
+        var empty = Reply(MailOperationKind.ReadFolders, new MailFolderReadResult(MailFolderReadStatus.Ok, new string('`', 256), []));
+        var fixedBytes = JsonSerializer.SerializeToUtf8Bytes(empty, JsonOptions).Length;
+        var profileBytes = JsonSerializer.SerializeToUtf8Bytes(Profile, JsonOptions).Length;
+        Assert.IsLessThan(GatewayEwsClient.EncodedFolderBudgetBytes, encodedBytes - fixedBytes);
+        Assert.IsLessThan(GatewayHttpPayloadBudget.MetadataBytes + profileBytes, fixedBytes);
+        Assert.AreEqual(500, GatewayEwsClient.MaximumFolders(Profile, 64 * 1024 * 1024));
+        Assert.AreEqual(0, GatewayEwsClient.MaximumFolders(Profile, GatewayHttpPayloadBudget.MetadataBytes));
+    }
+
+    private static GatewayEwsClient Client(Transport transport) => new(transport, new EnvironmentConfig());
 
     private static JmapApplicationResult Query(int total) => Reply(MailOperationKind.FindFolders,
         new MailFolderQueryResult(MailFolderQueryStatus.Ok, "state", 0, [], total));

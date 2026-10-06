@@ -207,7 +207,8 @@ internal sealed class GatewayHttpCaptureBoundaryTests
         private int ErrorPageCalls { get; set; }
 
         public static async Task<CaptureFixture> CreateAsync(bool ordinaryClient = false, long? failSequence = null,
-            bool discoveryListeners = false, bool mailFolders = false, int additionalFolders = 0)
+            bool discoveryListeners = false, bool mailFolders = false, int additionalFolders = 0,
+            int? maximumPayloadOverride = null, bool disableJmap = false)
         {
             var database = await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false);
             var blobConnection = Environment.GetEnvironmentVariable("MK8_EMAIL_TEST_AZURE_BLOB_CONNECTION");
@@ -220,7 +221,7 @@ internal sealed class GatewayHttpCaptureBoundaryTests
             var container = new BlobServiceClient(blobConnection).GetBlobContainerClient($"mk8-capture-{Guid.NewGuid():N}");
             var store = new AzureBlobLargeObjectStore(new BlobServiceClient(blobConnection),
                 new AzureBlobLargeObjectStoreOptions { ContainerName = container.Name, CreateContainerIfMissing = true });
-            var maximumPayloadBytes = checked((int)GatewayHttpPayloadBudget.BinaryEnvelopeBytes(UploadBytes));
+            var maximumPayloadBytes = maximumPayloadOverride ?? checked((int)GatewayHttpPayloadBudget.BinaryEnvelopeBytes(UploadBytes));
             var options = new PostgresMessagingOptions
             {
                 MaxPayloadBytes = maximumPayloadBytes,
@@ -232,7 +233,7 @@ internal sealed class GatewayHttpCaptureBoundaryTests
             var faultingJournal = new FaultingJournal(journal, failSequence);
             var application = new UploadApplication();
             var certificatePath = discoveryListeners ? await CreateDiscoveryCertificateAsync().ConfigureAwait(false) : null;
-            var environment = CreateEnvironment(maximumPayloadBytes, blobConnection, certificatePath);
+            var environment = CreateEnvironment(maximumPayloadBytes, blobConnection, certificatePath, disableJmap);
             var services = new ServiceCollection().AddSingleton<IJmapApplicationService>(application)
                 .AddScoped<IApplicationRequestDispatcher>(provider => new GatewayAutodiscoverFixtureDispatcher(provider));
             if (mailFolders) GatewayEwsFixtureDomain.Configure(services, database.ConnectionString, store, protector, environment);
@@ -345,7 +346,7 @@ internal sealed class GatewayHttpCaptureBoundaryTests
         }
 
         private static EnvironmentConfig CreateEnvironment(int maximumPayloadBytes, string blobConnection,
-            string? discoveryCertificatePath) => new()
+            string? discoveryCertificatePath, bool disableJmap) => new()
             {
                 Database = new DatabaseConfig { Host = "database.test", Password = "test-only-database-secret" },
                 Smtp = new SmtpConfig { Hostname = "email.example.test", EnableSmtp = false, EnableImplicitTls = discoveryCertificatePath is not null },
@@ -353,8 +354,8 @@ internal sealed class GatewayHttpCaptureBoundaryTests
                 Pop3 = new Pop3Config { EnableImplicitTls = discoveryCertificatePath is not null },
                 Tls = new TlsConfig { CertificatePath = discoveryCertificatePath },
                 Dav = new DavConfig { EnableDav = false },
-                Jmap = new JmapConfig { MaxUploadSizeBytes = UploadBytes, MaxRequestSizeBytes = 65_536 },
-                Limits = new LimitsConfig { MaxMessageSizeBytes = 1_048_576 },
+                Jmap = new JmapConfig { EnableJmap = !disableJmap, IsDefault = !disableJmap, MaxUploadSizeBytes = UploadBytes, MaxRequestSizeBytes = 65_536 },
+                Limits = new LimitsConfig { MaxMessageSizeBytes = disableJmap ? 65_536 : 1_048_576 },
                 Admin = new AdminConfig
                 {
                     AllowedNetworks = ["127.0.0.1/32"],

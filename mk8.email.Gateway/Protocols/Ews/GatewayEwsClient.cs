@@ -1,18 +1,23 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using mk8.email.Configuration;
 using mk8.email.Contracts.Messaging;
 using mk8.email.Gateway.ApplicationBridge;
 using mk8.email.MailWire;
 
 namespace mk8.email.Gateway.Protocols.Ews;
 
-internal sealed class GatewayEwsClient(IGatewayApplicationTransport transport)
+internal sealed class GatewayEwsClient(IGatewayApplicationTransport transport, EnvironmentConfig environment)
 {
     internal const int MaximumGraphSize = 500;
+    // Eleven fixed ApplicationValue members, bounded domain strings and numeric
+    // counters fit this conservative per-row encoded budget, including key text.
+    internal const int EncodedFolderBudgetBytes = 4096;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
-        PropertyNameCaseInsensitive = false, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+        PropertyNameCaseInsensitive = false,
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
     };
 
     public async Task<JmapApplicationProfile?> AuthenticateAsync(ProtocolAuthentication authentication,
@@ -49,7 +54,7 @@ internal sealed class GatewayEwsClient(IGatewayApplicationTransport transport)
             if (query.State is not null || query.Total != 0) Invalid();
             return new(MailFolderReadStatus.AccountNotFound, null, []);
         }
-        var limit = Math.Min(MaximumGraphSize, profile.Limits.MaxObjectsInGet);
+        var limit = MaximumFolders(profile, environment.Messaging.MaxPayloadBytes);
         if (query.Total > limit) return new(MailFolderReadStatus.RequestTooLarge, null, []);
         RequireState(query.State);
         var data = await ExecuteAsync<MailFolderReadCommand>(authentication, profile, MailOperationKind.ReadFolders,
@@ -91,11 +96,21 @@ internal sealed class GatewayEwsClient(IGatewayApplicationTransport transport)
         if (!string.Equals(result.Outcome, JmapApplicationOutcomes.Ok, StringComparison.Ordinal) || result.Failure is not null || response is null
             || response.Response is null || response.Response.Operation != operation || response.Response.Data is null
             || response.Response.AdditionalResults is not null || response.Profile is null
+            || response.KnownEntities is not { Count: 0 }
             || !string.Equals(response.Profile.Username, profile.Username, StringComparison.Ordinal)
             || response.Profile.Accounts is null
             || !response.Profile.Accounts.Select(account => account.Id).SequenceEqual(profile.Accounts.Select(account => account.Id), StringComparer.Ordinal))
             Invalid();
         return ApplicationValueCodec.Decode(response.Response.Data) as JsonObject ?? throw InvalidResult();
+    }
+
+    internal static int MaximumFolders(JmapApplicationProfile profile, int payloadBytes)
+    {
+        var profileBytes = JsonSerializer.SerializeToUtf8Bytes(profile, JsonOptions).Length;
+        // Reserve the shared metadata allowance for wrapper/state/authentication,
+        // then account for the profile that accompanies every operation reply.
+        var capacity = Math.Max(0, (payloadBytes - GatewayHttpPayloadBudget.MetadataBytes - profileBytes) / EncodedFolderBudgetBytes);
+        return Math.Min(MaximumGraphSize, Math.Min(profile.Limits.MaxObjectsInGet, capacity));
     }
 
     internal static bool TryAccount(string value, out Guid account)

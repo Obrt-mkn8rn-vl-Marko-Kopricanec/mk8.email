@@ -353,6 +353,34 @@ internal sealed class GatewayEwsRouteTests
     }
 
     [TestMethod]
+    [DataRow("before")]
+    [DataRow("after")]
+    [DataRow("shape")]
+    [DataRow("address")]
+    [DataRow("optional")]
+    [DataRow("other-actor")]
+    public async Task ProcessingInstructionsAreJournaledRefusalsWithoutWorkerDispatch(string location)
+    {
+        var fixture = await CaptureFixture.CreateAsync(ordinaryClient: true, mailFolders: true).ConfigureAwait(false);
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
+        Authenticate(fixture);
+        const string instruction = "<?opaque inert?>";
+        var header = location is "optional" or "other-actor"
+            ? $"<t:Unknown s:mustUnderstand='0'{(location is "other-actor" ? " s:actor='urn:other'" : "")}><t:Nested>{instruction}</t:Nested></t:Unknown>" : "";
+        var xml = Request("GetFolder", $"<t:DistinguishedFolderId Id='inbox'><t:Mailbox><t:EmailAddress>owner@example.test{(location is "address" ? instruction : "")}</t:EmailAddress></t:Mailbox></t:DistinguishedFolderId>", header: header);
+        if (location is "shape") xml = xml.Replace("Default", $"Default{instruction}", StringComparison.Ordinal);
+        if (location is "before") xml = instruction + xml;
+        if (location is "after") xml += instruction;
+        using var content = XmlContent(xml);
+        using var response = await fixture.Client.PostAsync(new Uri(CanonicalPath, UriKind.Relative), content).ConfigureAwait(false);
+        var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+        Assert.AreEqual(HttpStatusCode.InternalServerError, response.StatusCode);
+        AssertFault(body, "ErrorSchemaValidation");
+        await fixture.AssertNoWorkerRequestsAsync().ConfigureAwait(false);
+        await fixture.AssertRecordedResponseAsync("ews", CanonicalPath, 500, body, rejection: false).ConfigureAwait(false);
+    }
+
+    [TestMethod]
     [DataRow("DTD", "ErrorInvalidRequest")]
     [DataRow("impersonation", "ErrorAccessDenied")]
     [DataRow("action", "ErrorInvalidRequest")]

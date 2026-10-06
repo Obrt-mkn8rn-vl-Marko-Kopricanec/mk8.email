@@ -58,7 +58,7 @@ internal static class GatewayEwsRequestParser
                 IgnoreComments = true,
             });
             var document = await XDocument.LoadAsync(reader, LoadOptions.None, cancellationToken).ConfigureAwait(false);
-            if (!MatchesEncoding(document.Declaration?.Encoding, kind)) Invalid();
+            ValidateDocument(document, kind);
             return Parse(document);
         }
         catch (Exception exception) when (exception is XmlException or DecoderFallbackException)
@@ -70,6 +70,14 @@ internal static class GatewayEwsRequestParser
     private static bool MatchesEncoding(string? name, int kind) => string.IsNullOrEmpty(name)
         || string.Equals(name, kind == 0 ? "utf-8" : "utf-16", StringComparison.OrdinalIgnoreCase)
         || kind != 0 && string.Equals(name, kind == 1 ? "utf-16le" : "utf-16be", StringComparison.OrdinalIgnoreCase);
+
+    private static void ValidateDocument(XDocument document, int kind)
+    {
+        // SOAP 1.1 forbids PIs anywhere, including document-level nodes and
+        // optional headers/scalars whose contents are otherwise not interpreted.
+        if (document.DescendantNodes().OfType<XProcessingInstruction>().Any()
+            || !MatchesEncoding(document.Declaration?.Encoding, kind)) Invalid();
+    }
 
     private static GatewayEwsRequest Parse(XDocument document)
     {

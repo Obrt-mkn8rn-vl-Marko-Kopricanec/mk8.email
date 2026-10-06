@@ -33,6 +33,27 @@ internal sealed class GatewayEwsTests
     }
 
     [TestMethod]
+    [DataRow("before")]
+    [DataRow("after")]
+    [DataRow("shape")]
+    [DataRow("address")]
+    [DataRow("optional")]
+    [DataRow("other-actor")]
+    public async Task ProcessingInstructionsAreForbiddenThroughoutTheDocument(string location)
+    {
+        const string instruction = "<?opaque inert?>";
+        var header = location is "optional" or "other-actor"
+            ? $"<t:Unknown s:mustUnderstand='0'{(location is "other-actor" ? " s:actor='urn:other'" : "")}><t:Nested>{instruction}</t:Nested></t:Unknown>" : "";
+        var xml = Request("GetFolder", $"<t:DistinguishedFolderId Id='inbox'><t:Mailbox><t:EmailAddress>owner@example.test{(location is "address" ? instruction : "")}</t:EmailAddress></t:Mailbox></t:DistinguishedFolderId>", header: header);
+        if (location is "shape") xml = xml.Replace("Default", $"Default{instruction}", StringComparison.Ordinal);
+        if (location is "before") xml = instruction + xml;
+        if (location is "after") xml += instruction;
+        using var body = new MemoryStream(Encoding.UTF8.GetBytes(xml));
+        var error = await Assert.ThrowsAsync<GatewayEwsRequestException>(() => GatewayEwsRequestParser.ReadAsync(body, CancellationToken.None)).ConfigureAwait(false);
+        Assert.AreEqual("ErrorSchemaValidation", error.Code, StringComparer.Ordinal);
+    }
+
+    [TestMethod]
     [DataRow("<broken>", "ErrorInvalidRequest")]
     [DataRow("<!DOCTYPE x SYSTEM 'file:///never-mk8-secret'><x />", "ErrorInvalidRequest")]
     [DataRow("<Envelope xmlns='urn:wrong'><Body /></Envelope>", "VersionMismatch")]

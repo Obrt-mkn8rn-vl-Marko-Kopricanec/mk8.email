@@ -52,8 +52,12 @@ internal sealed class GatewayEwsFolderGraph(Guid account, string state, IReadOnl
         if (string.Equals(reference.Id, "msgfolderroot", StringComparison.Ordinal)) return (Guid.Empty, null);
         var role = reference.Id switch
         {
-            "inbox" => "inbox", "sentitems" => "sent", "drafts" => "drafts",
-            "deleteditems" => "trash", "junkemail" => "junk", _ => null,
+            "inbox" => "inbox",
+            "sentitems" => "sent",
+            "drafts" => "drafts",
+            "deleteditems" => "trash",
+            "junkemail" => "junk",
+            _ => null,
         };
         var matches = role is null ? [] : _folders.Values.Where(folder => string.Equals(folder.Role, role, StringComparison.Ordinal)).ToArray();
         return matches.Length == 1 ? (matches[0].Id, null) : (Guid.Empty, "ErrorFolderNotFound");

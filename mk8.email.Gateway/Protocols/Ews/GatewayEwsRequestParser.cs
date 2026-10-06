@@ -51,8 +51,11 @@ internal static class GatewayEwsRequestParser
             using var text = new StringReader(encoding.GetString(bytes, skip, count - skip));
             using var reader = XmlReader.Create(text, new XmlReaderSettings
             {
-                Async = true, DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null,
-                MaxCharactersInDocument = GatewayHttpPayloadBudget.SmallRequestBytes, IgnoreComments = true,
+                Async = true,
+                DtdProcessing = DtdProcessing.Prohibit,
+                XmlResolver = null,
+                MaxCharactersInDocument = GatewayHttpPayloadBudget.SmallRequestBytes,
+                IgnoreComments = true,
             });
             var document = await XDocument.LoadAsync(reader, LoadOptions.None, cancellationToken).ConfigureAwait(false);
             if (!MatchesEncoding(document.Declaration?.Encoding, kind)) Invalid();

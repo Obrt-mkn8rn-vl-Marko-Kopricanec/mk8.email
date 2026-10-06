@@ -151,6 +151,28 @@ internal sealed class GatewayAutodiscoverRouteTests
     }
 
     [TestMethod]
+    [DataRow("utf-16")]
+    [DataRow("utf-32")]
+    [DataRow("invalid")]
+    public async Task NonUtf8InputIsAJournaledRequestErrorWithoutWorkerDispatch(string encoding)
+    {
+        var fixture = await CaptureFixture.CreateAsync(ordinaryClient: true).ConfigureAwait(false);
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
+        using var valid = XmlContent();
+        var xml = await valid.ReadAsStringAsync().ConfigureAwait(false);
+        byte[] payload = string.Equals(encoding, "invalid", StringComparison.Ordinal)
+            ? [0xFF, 0xFE, .. Encoding.UTF8.GetBytes(xml)] : Encoding.GetEncoding(encoding).GetBytes(xml);
+        using var content = new ByteArrayContent(payload);
+        content.Headers.ContentType = new MediaTypeHeaderValue("text/xml");
+        using var response = await fixture.Client.PostAsync(new Uri(CanonicalPath, UriKind.Relative), content).ConfigureAwait(false);
+        var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+        Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
+        AssertError(body, 600);
+        await fixture.AssertRecordedResponseAsync("autodiscover", CanonicalPath, 200, body, rejection: false).ConfigureAwait(false);
+        await fixture.AssertNoWorkerRequestsAsync().ConfigureAwait(false);
+    }
+
+    [TestMethod]
     [DataRow(0L)]
     [DataRow(1L)]
     public async Task JournalFailureWithholdsSettingsAndFailsClosed(long sequence)

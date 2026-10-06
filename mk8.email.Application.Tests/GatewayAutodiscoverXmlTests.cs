@@ -89,6 +89,44 @@ internal sealed class GatewayAutodiscoverXmlTests
     }
 
     [TestMethod]
+    [DataRow("utf-16")]
+    [DataRow("utf-32")]
+    public async Task NonUtf8WireEncodingsAreRejected(string encoding)
+    {
+        var payload = Encoding.GetEncoding(encoding).GetBytes(Request());
+        using var body = new MemoryStream(payload);
+        Assert.AreEqual(600, (await GatewayAutodiscoverXml.ReadAsync(body, CancellationToken.None).ConfigureAwait(false)).ErrorCode);
+    }
+
+    [TestMethod]
+    [DataRow("utf-16")]
+    [DataRow("iso-8859-1")]
+    public async Task IncorrectDeclarationCannotOverrideUtf8WireEncoding(string encoding)
+    {
+        var payload = Encoding.UTF8.GetBytes($"<?xml version='1.0' encoding='{encoding}'?>" + Request());
+        using var body = new MemoryStream(payload);
+        Assert.AreEqual(600, (await GatewayAutodiscoverXml.ReadAsync(body, CancellationToken.None).ConfigureAwait(false)).ErrorCode);
+    }
+
+    [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task Utf8DeclarationAndOptionalBomAreSupported(bool bom)
+    {
+        var encoding = new UTF8Encoding(bom, true);
+        var xml = "<?xml version='1.0' encoding='UTF-8'?>" + Request();
+        using var body = new MemoryStream([.. encoding.GetPreamble(), .. encoding.GetBytes(xml)]);
+        Assert.AreEqual(0, (await GatewayAutodiscoverXml.ReadAsync(body, CancellationToken.None).ConfigureAwait(false)).ErrorCode);
+    }
+
+    [TestMethod]
+    public async Task InvalidUtf8IsAProtocolRequestError()
+    {
+        using var body = new MemoryStream([0xFF, 0xFE, .. Encoding.UTF8.GetBytes(Request())]);
+        Assert.AreEqual(600, (await GatewayAutodiscoverXml.ReadAsync(body, CancellationToken.None).ConfigureAwait(false)).ErrorCode);
+    }
+
+    [TestMethod]
     public async Task XmlParserHasAnIndependentDocumentBudget()
     {
         var xml = Request().Replace("<Request>", "<Request>" + new string(' ', 65_537), StringComparison.Ordinal);
@@ -131,6 +169,7 @@ internal sealed class GatewayAutodiscoverXmlTests
         Assert.AreEqual("on", protocols[0].Element(response + "AuthRequired")!.Value, StringComparer.Ordinal);
         Assert.AreEqual("off", protocols[0].Element(response + "SPA")!.Value, StringComparer.Ordinal);
         Assert.AreEqual("owner@example.test", protocols[0].Element(response + "LoginName")!.Value, StringComparer.Ordinal);
+        CollectionAssert.AreEqual(ExpectedProtocolElements, protocols[0].Elements().Select(element => element.Name.LocalName).ToArray());
     }
 
     [TestMethod]
@@ -163,4 +202,6 @@ internal sealed class GatewayAutodiscoverXmlTests
             new XElement(request + "AcceptableResponseSchema", GatewayAutodiscoverXml.ResponseNamespace)))
             .ToString(SaveOptions.DisableFormatting);
     }
+
+    private static readonly string[] ExpectedProtocolElements = ["Type", "Server", "Port", "LoginName", "DomainRequired", "SPA", "SSL", "AuthRequired"];
 }

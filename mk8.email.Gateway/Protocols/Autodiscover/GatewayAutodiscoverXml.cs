@@ -16,7 +16,9 @@ internal static class GatewayAutodiscoverXml
 
     public static async Task<GatewayAutodiscoverRequest> ReadAsync(Stream body, CancellationToken cancellationToken)
     {
-        using var reader = XmlReader.Create(body, new XmlReaderSettings
+        using var text = new StreamReader(body, new UTF8Encoding(true, true),
+            detectEncodingFromByteOrderMarks: false, bufferSize: 1024, leaveOpen: true);
+        using var reader = XmlReader.Create(text, new XmlReaderSettings
         {
             Async = true,
             DtdProcessing = DtdProcessing.Prohibit,
@@ -29,7 +31,7 @@ internal static class GatewayAutodiscoverXml
             var document = await XDocument.LoadAsync(reader, LoadOptions.None, cancellationToken).ConfigureAwait(false);
             return Parse(document);
         }
-        catch (XmlException)
+        catch (Exception exception) when (exception is XmlException or DecoderFallbackException)
         {
             return new GatewayAutodiscoverRequest(null, 600);
         }
@@ -37,6 +39,9 @@ internal static class GatewayAutodiscoverXml
 
     private static GatewayAutodiscoverRequest Parse(XDocument document)
     {
+        if (document.Declaration?.Encoding is { Length: > 0 } encoding
+            && !string.Equals(encoding, "utf-8", StringComparison.OrdinalIgnoreCase))
+            return new GatewayAutodiscoverRequest(null, 600);
         XNamespace requestNamespace = RequestNamespace;
         var root = document.Root;
         if (root is null || root.Name != requestNamespace + "Autodiscover" || root.Elements().Count() != 1
@@ -110,8 +115,8 @@ internal static class GatewayAutodiscoverXml
             new XElement(responseNamespace + "Type", type),
             new XElement(responseNamespace + "Server", hostname),
             new XElement(responseNamespace + "Port", port.ToString(CultureInfo.InvariantCulture)),
-            new XElement(responseNamespace + "DomainRequired", "off"),
             new XElement(responseNamespace + "LoginName", username),
+            new XElement(responseNamespace + "DomainRequired", "off"),
             new XElement(responseNamespace + "SPA", "off"),
             new XElement(responseNamespace + "SSL", "on"),
             new XElement(responseNamespace + "AuthRequired", "on"));

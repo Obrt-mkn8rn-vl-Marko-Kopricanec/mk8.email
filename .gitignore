@@ -1,6 +1,8 @@
 /docs/internal
 /deploy/secrets/
 /artifacts/
+**/[Aa][Gg][Ee][Nn][Tt].[Mm][Dd]
+**/[Aa][Gg][Ee][Nn][Tt][Ss].[Mm][Dd]
 
 ## This is mostly just takekazuomi's gitignore
 ## Except I may add or remove lines for my own convenience.

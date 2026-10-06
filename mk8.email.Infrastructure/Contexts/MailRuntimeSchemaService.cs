@@ -4,7 +4,7 @@ using mk8.email.Infrastructure.Models;
 
 namespace mk8.email.Infrastructure.Data;
 
-public sealed class MailRuntimeSchemaService(EmailDbContext database)
+public sealed partial class MailRuntimeSchemaService(EmailDbContext database)
 {
     private static readonly Dictionary<string, string> RequiredMessageColumns =
         new Dictionary<string, string>(StringComparer.Ordinal)
@@ -1259,6 +1259,7 @@ public sealed class MailRuntimeSchemaService(EmailDbContext database)
             """,
             cancellationToken).ConfigureAwait(false);
 
+        await EnsureFolderWriteCoordinationAsync(cancellationToken).ConfigureAwait(false);
         await EnsureContactUidInvariantAsync(cancellationToken).ConfigureAwait(false);
 
         await ValidateTableAsync("application_operation_receipts", RequiredOperationReceiptColumns, cancellationToken).ConfigureAwait(false);

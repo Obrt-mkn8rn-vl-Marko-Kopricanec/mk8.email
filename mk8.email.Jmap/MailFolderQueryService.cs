@@ -1,12 +1,14 @@
 using mk8.email.Application.Interfaces;
 using mk8.email.Contracts.Messaging;
+using mk8.email.Infrastructure.Data;
 
 namespace mk8.email.Jmap;
 
 internal sealed class MailFolderQueryService(
     JmapAccountService accounts,
     JmapMailboxStore folders,
-    JmapStateService states) : IMailFolderQueryService
+    JmapStateService states,
+    EmailDbContext database) : IMailFolderQueryService
 {
     public async Task<MailFolderQueryResult> QueryAsync(
         MailFolderQueryCommand command,
@@ -19,6 +21,9 @@ internal sealed class MailFolderQueryService(
             return new(MailFolderQueryStatus.AccountNotFound, null, 0, [], 0);
         if (command.CheckAccountOnly)
             return new(MailFolderQueryStatus.Authorized, null, 0, [], 0);
+        await MailFolderAccountLock.AcquireAsync(database, account.InboxId, cancellationToken).ConfigureAwait(false);
+        account = await accounts.GetAccountByInboxIdAsync(user, command.AccountId, cancellationToken).ConfigureAwait(false);
+        if (account is null) return new(MailFolderQueryStatus.AccountNotFound, null, 0, [], 0);
         var ordered = await LoadSortedAsync(account.InboxId, command.Criteria, cancellationToken)
             .ConfigureAwait(false);
         var ids = ordered.Select(folder => folder.Id).ToArray();
@@ -52,6 +57,9 @@ internal sealed class MailFolderQueryService(
             return new(MailFolderQueryStatus.AccountNotFound, null, [], [], 0);
         if (command.CheckAccountOnly)
             return new(MailFolderQueryStatus.Authorized, null, [], [], 0);
+        await MailFolderAccountLock.AcquireAsync(database, account.InboxId, cancellationToken).ConfigureAwait(false);
+        account = await accounts.GetAccountByInboxIdAsync(user, command.AccountId, cancellationToken).ConfigureAwait(false);
+        if (account is null) return new(MailFolderQueryStatus.AccountNotFound, null, [], [], 0);
         var ordered = await LoadSortedAsync(account.InboxId, command.Criteria, cancellationToken)
             .ConfigureAwait(false);
         var changes = await states.GetChangesAsync(account.InboxId, JmapConstants.MailboxDataType,

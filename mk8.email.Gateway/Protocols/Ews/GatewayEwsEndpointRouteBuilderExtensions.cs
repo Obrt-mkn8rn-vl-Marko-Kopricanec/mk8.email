@@ -89,7 +89,10 @@ internal static class GatewayEwsEndpointRouteBuilderExtensions
             cancellationToken).ConfigureAwait(false);
         var graph = read?.Status == MailFolderReadStatus.Ok ? new GatewayEwsFolderGraph(accountId, read.State!, read.Folders) : null;
         var error = read?.Status == MailFolderReadStatus.RequestTooLarge ? "ErrorExceededFindCountLimit" : "ErrorFolderNotFound";
-        var xml = GatewayEwsFolderResponse.Render(request, graph, profile.Username, error);
+        var xml = request.IsMutation
+            ? await GatewayEwsFolderMutations.ExecuteAsync(application, authentication, profile, accountId, request, graph,
+                GatewayEwsClient.MaximumFolders(profile, environment.Messaging.MaxPayloadBytes), error, cancellationToken).ConfigureAwait(false)
+            : GatewayEwsFolderResponse.Render(request, graph, profile.Username, error);
         if (GatewayHttpPayloadBudget.BinaryEnvelopeBytes(Encoding.UTF8.GetByteCount(xml)) > environment.Messaging.MaxPayloadBytes)
         {
             await FaultAsync(context, "ErrorDataSizeLimitExceeded", StatusCodes.Status500InternalServerError).ConfigureAwait(false);

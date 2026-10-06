@@ -42,10 +42,11 @@ public sealed class EnvironmentConfigTests
     {
         var configuration = new EnvironmentConfig
         {
-            Jmap = new JmapConfig { EnableJmap = false, IsDefault = false, MaxObjectsInGet = 0, MaxConcurrentRequests = 0 },
+            Jmap = new JmapConfig { EnableJmap = false, IsDefault = false, MaxObjectsInGet = 0, MaxObjectsInSet = 0, MaxConcurrentRequests = 0 },
         };
         var errors = configuration.Validate(isDevelopment: true, role: role);
         StringAssert.Contains(string.Join('|', errors), "Jmap.MaxObjectsInGet must be from 1 through 10000.", StringComparison.Ordinal);
+        StringAssert.Contains(string.Join('|', errors), "Jmap.MaxObjectsInSet must be from 1 through 10000.", StringComparison.Ordinal);
         StringAssert.Contains(string.Join('|', errors), "Jmap.MaxConcurrentRequests must be from 1 through 1024.", StringComparison.Ordinal);
     }
 

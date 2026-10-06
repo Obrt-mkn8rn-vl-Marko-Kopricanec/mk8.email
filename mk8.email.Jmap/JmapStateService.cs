@@ -213,12 +213,28 @@ public sealed class JmapStateService(
         Guid accountId,
         CancellationToken cancellationToken)
     {
-        if (await database.JmapChanges.AsNoTracking().AnyAsync(
-            change => change.AccountId == accountId && change.DataType == BaselineDataType,
-            cancellationToken).ConfigureAwait(false))
+        if (await HasBaselineAsync(accountId, cancellationToken).ConfigureAwait(false)) return;
+        if (MailFolderAccountLock.UsesPostgreSql(database) && database.Database.CurrentTransaction is null)
         {
-            return;
+            var transaction = await database.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+            await using var lifetime = transaction.ConfigureAwait(false);
+            await InitializeBaselineAsync(accountId, cancellationToken).ConfigureAwait(false);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
+        else await InitializeBaselineAsync(accountId, cancellationToken).ConfigureAwait(false);
+    }
+
+    private Task<bool> HasBaselineAsync(Guid accountId, CancellationToken cancellationToken) =>
+        database.JmapChanges.AsNoTracking().AnyAsync(
+            change => change.AccountId == accountId && change.DataType == BaselineDataType,
+            cancellationToken);
+
+    private async Task InitializeBaselineAsync(Guid accountId, CancellationToken cancellationToken)
+    {
+        // Baseline sequences must not overtake an uncommitted folder/message
+        // delta and then hide that writer's commit behind a larger MAX(sequence).
+        await MailFolderAccountLock.AcquireAsync(database, accountId, cancellationToken).ConfigureAwait(false);
+        if (await HasBaselineAsync(accountId, cancellationToken).ConfigureAwait(false)) return;
 
         var accountExists = await database.Inboxes.AsNoTracking().AnyAsync(
             inbox => inbox.Id == accountId && inbox.AliasForInboxId == null && inbox.Name != "*",

@@ -33,6 +33,37 @@ internal sealed class GatewayEwsTests
     }
 
     [TestMethod]
+    [DataRow("CreateFolder", "<m:ParentFolderId><t:DistinguishedFolderId Id='msgfolderroot'/></m:ParentFolderId><m:Folders><t:Folder><t:DisplayName>A &amp; B</t:DisplayName></t:Folder></m:Folders>", "A & B")]
+    [DataRow("UpdateFolder", "<m:FolderChanges><t:FolderChange><t:FolderId Id='opaque' ChangeKey='czE='/><t:Updates><t:SetFolderField><t:FieldURI FieldURI='folder:DisplayName'/><t:Folder><t:DisplayName>New</t:DisplayName></t:Folder></t:SetFolderField></t:Updates></t:FolderChange></m:FolderChanges>", "New")]
+    [DataRow("DeleteFolder", "<m:FolderIds><t:FolderId Id='opaque'/></m:FolderIds>", null)]
+    public async Task MutationShapesUseRegisteredElementOrderAndKeepVersionReferences(string operation, string fields, string? name)
+    {
+        var xml = Mutation(operation, fields);
+        using var body = new MemoryStream(Encoding.UTF8.GetBytes(xml));
+        var result = await GatewayEwsRequestParser.ReadAsync(body, CancellationToken.None).ConfigureAwait(false);
+        Assert.IsTrue(result.IsMutation);
+        Assert.AreEqual(operation, result.Operation, StringComparer.Ordinal);
+        Assert.AreEqual(name, result.Names!.Count == 0 ? null : result.Names[0], StringComparer.Ordinal);
+        if (operation is "UpdateFolder") Assert.AreEqual("czE=", result.Folders[0].ChangeKey, StringComparer.Ordinal);
+    }
+
+    [TestMethod]
+    [DataRow("CreateFolder", "<m:ParentFolderId><t:DistinguishedFolderId Id='msgfolderroot'/></m:ParentFolderId><m:Folders><t:CalendarFolder><t:DisplayName>Calendar</t:DisplayName></t:CalendarFolder></m:Folders>", "ErrorInvalidPropertySet")]
+    [DataRow("CreateFolder", "<m:ParentFolderId><t:DistinguishedFolderId Id='msgfolderroot'/></m:ParentFolderId><m:Folders><t:Folder><t:DisplayName>Invalid/path</t:DisplayName></t:Folder></m:Folders>", "ErrorInvalidFolderName")]
+    [DataRow("CreateFolder", "<m:Folders/><m:ParentFolderId/>", "ErrorSchemaValidation")]
+    [DataRow("UpdateFolder", "<m:FolderChanges><t:FolderChange><t:FolderId Id='opaque'/><t:Updates><t:DeleteFolderField><t:FieldURI FieldURI='folder:DisplayName'/></t:DeleteFolderField></t:Updates></t:FolderChange></m:FolderChanges>", "ErrorInvalidPropertySet")]
+    [DataRow("DeleteFolder", "<m:FolderIds><t:FolderId Id='same'/><t:FolderId Id='same'/></m:FolderIds>", "ErrorInvalidRequest")]
+    public async Task UnsupportedOrAmbiguousMutationShapesDoNotBecomeCommands(string operation, string fields, string code)
+    {
+        using var body = new MemoryStream(Encoding.UTF8.GetBytes(Mutation(operation, fields)));
+        var exception = await Assert.ThrowsAsync<GatewayEwsRequestException>(() => GatewayEwsRequestParser.ReadAsync(body, CancellationToken.None)).ConfigureAwait(false);
+        Assert.AreEqual(code, exception.Code, StringComparer.Ordinal);
+    }
+
+    private static string Mutation(string operation, string fields) =>
+        $"<s:Envelope xmlns:s='{GatewayEwsSoap.Soap}' xmlns:m='{GatewayEwsSoap.Messages}' xmlns:t='{GatewayEwsSoap.Types}'><s:Body><m:{operation}{(operation is "DeleteFolder" ? " DeleteType='HardDelete'" : "")}>{fields}</m:{operation}></s:Body></s:Envelope>";
+
+    [TestMethod]
     [DataRow("before")]
     [DataRow("after")]
     [DataRow("shape")]

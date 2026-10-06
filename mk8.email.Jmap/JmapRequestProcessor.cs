@@ -125,7 +125,7 @@ public sealed class JmapRequestProcessor
         var accountService = new JmapAccountService(database);
         var stateService = new JmapStateService(database, accountService);
         _folderReader = folderReader ?? new MailFolderReader(accountService,
-            new JmapMailboxStore(database), stateService, environment);
+            new JmapMailboxStore(database), stateService, environment, database);
         _folderMutationService = folderMutationService;
         _messageProjectionService = messageProjectionService;
         _messageMutationService = messageMutationService;

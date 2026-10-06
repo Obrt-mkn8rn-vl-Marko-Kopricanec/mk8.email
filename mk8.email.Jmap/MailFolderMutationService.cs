@@ -28,6 +28,10 @@ internal sealed class MailFolderMutationService(
         var account = await accounts.GetAccountByInboxIdAsync(context.User, command.AccountId, cancellationToken)
             .ConfigureAwait(false);
         if (account is null) return Empty(MailFolderMutationStatus.AccountNotFound);
+        await MailFolderAccountLock.AcquireAsync(database, account.InboxId, cancellationToken).ConfigureAwait(false);
+        account = await accounts.GetAccountByInboxIdAsync(context.User, command.AccountId, cancellationToken)
+            .ConfigureAwait(false);
+        if (account is null) return Empty(MailFolderMutationStatus.AccountNotFound);
         var oldState = await states.GetStateAsync(account.InboxId, JmapConstants.MailboxDataType,
             cancellationToken).ConfigureAwait(false);
         if (command.IfInState is not null && !string.Equals(command.IfInState, oldState, StringComparison.Ordinal))

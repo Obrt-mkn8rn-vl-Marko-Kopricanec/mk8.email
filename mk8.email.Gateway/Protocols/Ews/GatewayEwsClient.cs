@@ -30,7 +30,7 @@ internal sealed class GatewayEwsClient(IGatewayApplicationTransport transport, E
             || result.OperationResult is not null || result.Content is not null) Invalid();
         var profile = result.Profile;
         if (!SmtpAddress.TryNormalize(profile.Username, allowEmpty: false, out _)
-            || profile.Accounts is null || profile.Limits is null || profile.Limits.MaxObjectsInGet <= 0
+            || profile.Accounts is null || profile.Limits is null || profile.Limits.MaxObjectsInGet <= 0 || profile.Limits.MaxObjectsInSet <= 0
             || profile.Accounts.Any(account => account is null || !TryAccount(account.Id, out _)
                 || !SmtpAddress.TryNormalize(account.Name, allowEmpty: false, out _))
             || profile.Accounts.Select(account => account.Id).Distinct(StringComparer.Ordinal).Count() != profile.Accounts.Length)
@@ -85,6 +85,14 @@ internal sealed class GatewayEwsClient(IGatewayApplicationTransport transport, E
     private async Task<JsonObject> ExecuteAsync<T>(ProtocolAuthentication authentication, JmapApplicationProfile profile,
         MailOperationKind operation, T command, CancellationToken cancellationToken)
     {
+        var response = await ExecuteOperationAsync(authentication, profile, operation, command, cancellationToken).ConfigureAwait(false);
+        if (response.KnownEntities.Count != 0) Invalid();
+        return ApplicationValueCodec.Decode(response.Response.Data!) as JsonObject ?? throw InvalidResult();
+    }
+
+    internal async Task<MailOperationResult> ExecuteOperationAsync<T>(ProtocolAuthentication authentication, JmapApplicationProfile profile,
+        MailOperationKind operation, T command, CancellationToken cancellationToken)
+    {
         var arguments = JsonSerializer.SerializeToNode(command, JsonOptions) as JsonObject ?? throw InvalidResult();
         var request = new MailOperationApplicationRequest(authentication,
             new([MailFeature.Basic, MailFeature.Messages], operation, arguments, new Dictionary<string, string>(StringComparer.Ordinal)));
@@ -96,12 +104,12 @@ internal sealed class GatewayEwsClient(IGatewayApplicationTransport transport, E
         if (!string.Equals(result.Outcome, JmapApplicationOutcomes.Ok, StringComparison.Ordinal) || result.Failure is not null || response is null
             || response.Response is null || response.Response.Operation != operation || response.Response.Data is null
             || response.Response.AdditionalResults is not null || response.Profile is null
-            || response.KnownEntities is not { Count: 0 }
+            || response.KnownEntities is null
             || !string.Equals(response.Profile.Username, profile.Username, StringComparison.Ordinal)
             || response.Profile.Accounts is null
             || !response.Profile.Accounts.Select(account => account.Id).SequenceEqual(profile.Accounts.Select(account => account.Id), StringComparer.Ordinal))
             Invalid();
-        return ApplicationValueCodec.Decode(response.Response.Data) as JsonObject ?? throw InvalidResult();
+        return response;
     }
 
     internal static int MaximumFolders(JmapApplicationProfile profile, int payloadBytes)

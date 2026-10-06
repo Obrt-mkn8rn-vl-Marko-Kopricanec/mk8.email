@@ -132,6 +132,44 @@ internal sealed class GatewayEwsClientTests
 
     private static GatewayEwsClient Client(Transport transport) => new(transport, new EnvironmentConfig());
 
+    [TestMethod]
+    [DataRow("valid")]
+    [DataRow("missing-field")]
+    [DataRow("missing-status")]
+    [DataRow("unknown-field")]
+    [DataRow("wrong-token")]
+    [DataRow("wrong-name")]
+    [DataRow("wrong-parent")]
+    [DataRow("empty-id")]
+    [DataRow("wrong-state")]
+    [DataRow("known-entity")]
+    [DataRow("missing-map")]
+    [DataRow("both-outcomes")]
+    [DataRow("null-update")]
+    public void MutationRepliesRequireCompleteCorrelatedTypedOutcomes(string mode)
+    {
+        var command = new MailFolderMutationCommand(Account, "state", true, [new("ews0", new("New", null, null, 0, false), null)], [], []);
+        var result = new MailFolderMutationResult(MailFolderMutationStatus.Ok, "state", "newState",
+            [new("ews0", new(Folder, "New", null, null, 0, false), null)], [], []);
+        var data = (JsonObject)JsonSerializer.SerializeToNode(result, JsonOptions)!;
+        var item = (JsonObject)data["created"]![0]!;
+        if (mode is "missing-field") ((JsonObject)item["folder"]!).Remove("sortOrder");
+        if (mode is "missing-status") data.Remove("status");
+        if (mode is "unknown-field") item["untrusted"] = true;
+        if (mode is "wrong-token") item["creationId"] = "other";
+        if (mode is "wrong-name") item["folder"]!["name"] = "Other";
+        if (mode is "wrong-parent") item["folder"]!["parentId"] = Account;
+        if (mode is "empty-id") item["folder"]!["id"] = Guid.Empty;
+        if (mode is "wrong-state") data["oldState"] = "other";
+        if (mode is "both-outcomes") item["failure"] = JsonSerializer.SerializeToNode(new MailFolderMutationFailure(MailFolderMutationError.Forbidden), JsonOptions);
+        if (mode is "null-update") ((JsonArray)data["updated"]!).Add((JsonNode?)null);
+        var known = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (mode is not "missing-map") known.Add("ews0", $"M{(mode is "known-entity" ? Account : Folder):N}");
+        var reply = new MailOperationResult(new(MailOperationKind.MutateFolders, ApplicationValueCodec.Encode(data)), known, Profile);
+        if (mode is "valid") Assert.AreEqual(Folder, GatewayEwsMutationReply.Decode(reply, command).Created[0].Folder!.Id);
+        else Assert.Throws<InvalidOperationException>(() => GatewayEwsMutationReply.Decode(reply, command));
+    }
+
     private static JmapApplicationResult Query(int total) => Reply(MailOperationKind.FindFolders,
         new MailFolderQueryResult(MailFolderQueryStatus.Ok, "state", 0, [], total));
 

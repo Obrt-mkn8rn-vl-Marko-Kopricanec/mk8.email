@@ -132,10 +132,12 @@ public sealed class EnvironmentConfig
 
         if (Jmap.IsDefault && !Jmap.EnableJmap)
             errors.Add("Jmap.IsDefault requires Jmap.EnableJmap.");
-        // These existing domain limits also govern EWS folder reads, even when
+        // These existing domain limits also govern EWS folder operations, even when
         // the JMAP HTTP front is disabled. Both roles must validate them.
         if (Jmap.MaxObjectsInGet is < 1 or > 10000)
             errors.Add("Jmap.MaxObjectsInGet must be from 1 through 10000.");
+        if (Jmap.MaxObjectsInSet is < 1 or > 10000)
+            errors.Add("Jmap.MaxObjectsInSet must be from 1 through 10000.");
         if (Jmap.MaxConcurrentRequests is < 1 or > 1024)
             errors.Add("Jmap.MaxConcurrentRequests must be from 1 through 1024.");
         if (Jmap.EnableJmap)
@@ -156,8 +158,6 @@ public sealed class EnvironmentConfig
                 errors.Add("Jmap.MaxRequestSizeBytes must be from 65536 through 104857600.");
             if (Jmap.MaxCallsInRequest is < 1 or > 1024)
                 errors.Add("Jmap.MaxCallsInRequest must be from 1 through 1024.");
-            if (Jmap.MaxObjectsInSet is < 1 or > 10000)
-                errors.Add("Jmap.MaxObjectsInSet must be from 1 through 10000.");
             if (Jmap.MaxConcurrentUploads is < 1 or > 128)
                 errors.Add("Jmap.MaxConcurrentUploads must be from 1 through 128.");
             if (Jmap.UploadRetentionHours is < 1 or > 168)

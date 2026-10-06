@@ -1,6 +1,7 @@
 using mk8.email.Application.Interfaces;
 using mk8.email.Configuration;
 using mk8.email.Contracts.Messaging;
+using mk8.email.Infrastructure.Data;
 
 namespace mk8.email.Jmap;
 
@@ -8,7 +9,8 @@ internal sealed class MailFolderReader(
     JmapAccountService accounts,
     JmapMailboxStore mailboxes,
     JmapStateService states,
-    EnvironmentConfig environment) : IMailFolderReader
+    EnvironmentConfig environment,
+    EmailDbContext database) : IMailFolderReader
 {
     public async Task<MailFolderReadResult> ReadAsync(
         MailFolderReadCommand command,
@@ -22,6 +24,10 @@ internal sealed class MailFolderReader(
 
         if (command.CheckAccountOnly)
             return new(MailFolderReadStatus.Ok, null, []);
+
+        await MailFolderAccountLock.AcquireAsync(database, account.InboxId, cancellationToken).ConfigureAwait(false);
+        account = await accounts.GetAccountByInboxIdAsync(user, command.AccountId, cancellationToken).ConfigureAwait(false);
+        if (account is null) return new(MailFolderReadStatus.AccountNotFound, null, []);
 
         if (command.FolderIds?.Count > environment.Jmap.MaxObjectsInGet)
             return new(MailFolderReadStatus.RequestTooLarge, null, []);

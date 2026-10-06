@@ -17,7 +17,7 @@ namespace mk8.email.Messaging.Tests;
 [TestCategory("PostgreSQL")]
 [TestCategory("AzureBlobCompatible")]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals executes this real-Kestrel/PostgreSQL/domain fixture; case discovery is retained.")]
-internal sealed class GatewayEwsRouteTests
+internal sealed partial class GatewayEwsRouteTests
 {
     private const string CanonicalPath = "/EWS/Exchange.asmx";
     private static readonly XNamespace Messages = GatewayEwsSoap.Messages;

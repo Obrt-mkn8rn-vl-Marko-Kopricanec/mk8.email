@@ -11,6 +11,14 @@ internal sealed class GatewayEwsFolderGraph(Guid account, string state, IReadOnl
     private readonly ILookup<Guid?, MailFolderSnapshot> _children = folders.ToLookup(folder => folder.ParentId);
     private readonly string _changeKey = Convert.ToBase64String(Encoding.UTF8.GetBytes(state));
 
+    internal string State => state;
+    internal string ChangeKey => _changeKey;
+    internal int Count => _folders.Count;
+    internal MailFolderSnapshot? Snapshot(Guid id) => _folders.GetValueOrDefault(id);
+    internal bool HasChildren(Guid id) => _children[id == Guid.Empty ? null : id].Any();
+    internal bool HasName(Guid? parentId, string name, Guid? excluding = null) =>
+        _children[parentId].Any(folder => folder.Id != excluding && string.Equals(folder.Name, name, StringComparison.OrdinalIgnoreCase));
+
     public static void Validate(IReadOnlyList<MailFolderSnapshot> folders)
     {
         var ids = new HashSet<Guid>();

@@ -101,7 +101,12 @@ internal static class GatewayEwsRequestParser
         Container(body);
         var operations = body.Elements().ToArray();
         if (operations.Length != 1 || operations[0].Name.Namespace != GatewayEwsSoap.Messages) Invalid();
-        var operation = operations[0];
+        return operations[0].Name.LocalName is "CreateFolder" or "UpdateFolder" or "DeleteFolder"
+            ? GatewayEwsMutationRequestParser.Parse(operations[0]) : ParseFolderRead(operations[0]);
+    }
+
+    private static GatewayEwsRequest ParseFolderRead(XElement operation)
+    {
         var find = string.Equals(operation.Name.LocalName, "FindFolder", StringComparison.Ordinal);
         if (!find && !string.Equals(operation.Name.LocalName, "GetFolder", StringComparison.Ordinal))
             throw new GatewayEwsRequestException("ErrorInvalidRequest");
@@ -202,14 +207,14 @@ internal static class GatewayEwsRequestParser
         return (offset, Math.Min(limit, MaximumPageSize), true);
     }
 
-    private static GatewayEwsFolderReference ParseReference(XElement reference)
+    internal static GatewayEwsFolderReference ParseReference(XElement reference)
     {
         if (reference.Name == GatewayEwsSoap.Types + "FolderId")
         {
             Empty(reference, "Id", "ChangeKey");
             var id = (string?)reference.Attribute("Id");
             if (string.IsNullOrEmpty(id) || id.Length > 512) Invalid();
-            return new(id, false, null);
+            return new(id, false, null, (string?)reference.Attribute("ChangeKey"));
         }
         if (reference.Name != GatewayEwsSoap.Types + "DistinguishedFolderId") Invalid();
         Container(reference, "Id", "ChangeKey");
@@ -217,7 +222,7 @@ internal static class GatewayEwsRequestParser
         if (distinguished is null || !DistinguishedNames.Contains(distinguished)) Invalid();
         var mailboxes = reference.Elements().ToArray();
         if (mailboxes.Length > 1) Invalid();
-        if (mailboxes.Length == 0) return new(distinguished, true, null);
+        if (mailboxes.Length == 0) return new(distinguished, true, null, (string?)reference.Attribute("ChangeKey"));
         var mailbox = mailboxes[0];
         if (mailbox.Name != GatewayEwsSoap.Types + "Mailbox") Invalid();
         Container(mailbox);
@@ -226,21 +231,21 @@ internal static class GatewayEwsRequestParser
         var address = addresses[0];
         Scalar(address);
         if (!SmtpAddress.TryNormalize(address.Value, allowEmpty: false, out var normalized)) Invalid();
-        return new(distinguished, true, normalized);
+        return new(distinguished, true, normalized, (string?)reference.Attribute("ChangeKey"));
     }
 
-    private static void Empty(XElement element, params string[] attributes)
+    internal static void Empty(XElement element, params string[] attributes)
     {
         Container(element, attributes);
         if (element.HasElements) Invalid();
     }
 
-    private static void Scalar(XElement element)
+    internal static void Scalar(XElement element)
     {
         if (element.HasElements || element.Attributes().Any(attribute => !attribute.IsNamespaceDeclaration)) Invalid();
     }
 
-    private static void Container(XElement element, params string[] attributes)
+    internal static void Container(XElement element, params string[] attributes)
     {
         if (element.Nodes().Any(node => node is XProcessingInstruction
                 || node is XText text && !string.IsNullOrWhiteSpace(text.Value))

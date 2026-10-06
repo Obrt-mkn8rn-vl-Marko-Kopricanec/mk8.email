@@ -157,6 +157,8 @@ internal sealed class GatewayHttpCaptureBoundaryTests
 
     internal sealed class CaptureFixture : IAsyncDisposable
     {
+        internal string ApplicationConnection => _database.ConnectionString;
+        internal IServiceScopeFactory DomainScopes => _workerProvider.GetRequiredService<IServiceScopeFactory>();
         internal const int UploadBytes = 2 * 1024 * 1024;
         private readonly PostgresTestDatabase _database;
         private readonly NpgsqlDataSource _dataSource;

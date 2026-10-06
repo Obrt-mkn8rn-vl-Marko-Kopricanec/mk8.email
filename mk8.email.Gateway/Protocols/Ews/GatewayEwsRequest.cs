@@ -7,4 +7,8 @@ internal sealed record GatewayEwsRequest(
     bool Deep,
     int Offset,
     int Limit,
-    bool Indexed);
+    bool Indexed,
+    IReadOnlyList<string>? Names = null)
+{
+    public bool IsMutation => Operation is "CreateFolder" or "UpdateFolder" or "DeleteFolder";
+}

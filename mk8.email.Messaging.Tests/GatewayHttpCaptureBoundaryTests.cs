@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Sockets;
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
 using Azure.Storage.Blobs;
@@ -22,10 +23,13 @@ using mk8.email.Application.Services;
 using mk8.email.Application.Worker;
 using mk8.email.Configuration;
 using mk8.email.Contracts.Messaging;
+using mk8.email.Contracts.Imap;
 using mk8.email.Gateway.ApplicationBridge;
 using mk8.email.Gateway.Protocols;
+using mk8.email.Gateway.Protocols.Autodiscover;
 using mk8.email.Gateway.Protocols.Dav;
 using mk8.email.Gateway.Protocols.Jmap;
+using mk8.email.Gateway.Protocols.Imap;
 using mk8.email.Gateway.Protocols.OAuth;
 using mk8.email.Gateway.Security;
 using mk8.email.Storage;
@@ -163,11 +167,12 @@ internal sealed class GatewayHttpCaptureBoundaryTests
         private readonly PostgresGatewayTrafficJournal _journal;
         private readonly int _maximumPayloadBytes;
         private readonly SocketsHttpHandler _clientHandler;
+        private readonly string? _discoveryCertificatePath;
 
         private CaptureFixture(PostgresTestDatabase database, NpgsqlDataSource dataSource, AesGcmPayloadProtector protector,
             BlobContainerClient container, ServiceProvider workerProvider, ApplicationRequestWorker worker,
             WebApplication host, PostgresGatewayTrafficJournal journal, UploadApplication application, int maximumPayloadBytes,
-            bool ordinaryClient, FaultingJournal faultingJournal)
+            bool ordinaryClient, FaultingJournal faultingJournal, string? discoveryCertificatePath)
         {
             _database = database;
             _dataSource = dataSource;
@@ -180,6 +185,7 @@ internal sealed class GatewayHttpCaptureBoundaryTests
             Application = application;
             _maximumPayloadBytes = maximumPayloadBytes;
             Faults = faultingJournal;
+            _discoveryCertificatePath = discoveryCertificatePath;
             Address = new Uri(host.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
             _clientHandler = new SocketsHttpHandler
             {
@@ -199,7 +205,8 @@ internal sealed class GatewayHttpCaptureBoundaryTests
         public int EndpointCalls { get; private set; }
         private int ErrorPageCalls { get; set; }
 
-        public static async Task<CaptureFixture> CreateAsync(bool ordinaryClient = false, long? failSequence = null)
+        public static async Task<CaptureFixture> CreateAsync(bool ordinaryClient = false, long? failSequence = null,
+            bool discoveryListeners = false)
         {
             var database = await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false);
             var blobConnection = Environment.GetEnvironmentVariable("MK8_EMAIL_TEST_AZURE_BLOB_CONNECTION");
@@ -223,10 +230,11 @@ internal sealed class GatewayHttpCaptureBoundaryTests
             var faultingJournal = new FaultingJournal(journal, failSequence);
             var application = new UploadApplication();
             var provider = new ServiceCollection().AddSingleton<IJmapApplicationService>(application)
-                .AddScoped<IApplicationRequestDispatcher>(services => new ApplicationRequestDispatcher(services)).BuildServiceProvider();
+                .AddScoped<IApplicationRequestDispatcher>(services => new GatewayAutodiscoverFixtureDispatcher(services)).BuildServiceProvider();
             var worker = new ApplicationRequestWorker(bus, provider.GetRequiredService<IServiceScopeFactory>(),
                 new ApplicationWorkerIdentity("worker@http-boundary", TimeSpan.FromSeconds(30)), NullLogger<ApplicationRequestWorker>.Instance);
-            var environment = CreateEnvironment(maximumPayloadBytes, blobConnection);
+            var certificatePath = discoveryListeners ? await CreateDiscoveryCertificateAsync().ConfigureAwait(false) : null;
+            var environment = CreateEnvironment(maximumPayloadBytes, blobConnection, certificatePath);
             Assert.HasCount(0, environment.Validate(role: EnvironmentValidationRole.Gateway));
             Assert.HasCount(0, environment.Validate(role: EnvironmentValidationRole.ApplicationWorker));
             var host = BuildProductionHost(environment, bus, faultingJournal);
@@ -235,8 +243,19 @@ internal sealed class GatewayHttpCaptureBoundaryTests
             await worker.StartAsync(CancellationToken.None).ConfigureAwait(false);
             await host.StartAsync(CancellationToken.None).ConfigureAwait(false);
             fixture = new CaptureFixture(database, dataSource, protector, container, provider, worker, host, journal, application,
-                maximumPayloadBytes, ordinaryClient, faultingJournal);
+                maximumPayloadBytes, ordinaryClient, faultingJournal, certificatePath);
             return fixture;
+        }
+
+        private static async Task<string> CreateDiscoveryCertificateAsync()
+        {
+            var directory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"mk8-discovery-{Guid.NewGuid():N}"));
+            var path = Path.Combine(directory.FullName, "certificate.pem");
+            using var key = RSA.Create(2048);
+            var request = new CertificateRequest("CN=email.example.test", key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+            using var certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddHours(1));
+            await File.WriteAllTextAsync(path, certificate.ExportCertificatePem()).ConfigureAwait(false);
+            return path;
         }
 
         private static void MapProtocolRoutes(WebApplication host, Func<CaptureFixture> getFixture)
@@ -263,6 +282,7 @@ internal sealed class GatewayHttpCaptureBoundaryTests
             host.MapJmapEndpoints();
             host.MapOAuthEndpoints();
             host.MapDavEndpoints();
+            host.MapAutodiscoverEndpoints();
         }
 
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA2000", Justification = "The returned NetworkStream explicitly owns the Socket; every construction/connect failure disposes it in catch. HttpClient owns the returned stream and the fixture disposes its client/handler after each real-peer test.")]
@@ -298,6 +318,7 @@ internal sealed class GatewayHttpCaptureBoundaryTests
             builder.Services.AddSingleton(environment).AddSingleton(environment.Admin).AddSingleton<AdminNetworkPolicy>();
             builder.Services.AddSingleton<IApplicationRequestClient>(bus).AddSingleton<IGatewayTrafficJournal>(journal);
             builder.Services.AddGatewayApplicationClient();
+            builder.Services.AddSingleton<IImapApplicationService, GatewayImapApplicationService>();
             builder.Services.AddSingleton<GatewayDavStore>();
             builder.Services.AddDataProtection().UseEphemeralDataProtectionProvider();
             builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme).AddCookie();
@@ -318,31 +339,34 @@ internal sealed class GatewayHttpCaptureBoundaryTests
             return host;
         }
 
-        private static EnvironmentConfig CreateEnvironment(int maximumPayloadBytes, string blobConnection) => new()
-        {
-            Database = new DatabaseConfig { Host = "database.test", Password = "test-only-database-secret" },
-            Smtp = new SmtpConfig { Hostname = "email.example.test", EnableSmtp = false },
-            Imap = new ImapConfig { EnableImap = false, EnableImplicitTls = false },
-            Dav = new DavConfig { EnableDav = false },
-            Jmap = new JmapConfig { MaxUploadSizeBytes = UploadBytes, MaxRequestSizeBytes = 65_536 },
-            Limits = new LimitsConfig { MaxMessageSizeBytes = 1_048_576 },
-            Admin = new AdminConfig
+        private static EnvironmentConfig CreateEnvironment(int maximumPayloadBytes, string blobConnection,
+            string? discoveryCertificatePath) => new()
             {
-                AllowedNetworks = ["127.0.0.1/32"],
-                DataProtectionKeyPath = "/tmp/mk8-capture-keys",
-                AuditLogPath = "/tmp/mk8-capture-audit",
-                HealthStatusPath = "/tmp/mk8-capture-health"
-            },
-            Messaging = new MessagingConfig
-            {
-                Enabled = true,
-                MaxPayloadBytes = maximumPayloadBytes,
-                EncryptionKey = Convert.ToBase64String(new byte[32]),
-                InlinePayloadThresholdBytes = 1024
-            },
-            ObjectStorage = new ObjectStorageConfig { ConnectionString = blobConnection },
-            OAuth = CreateOAuthConfig(),
-        };
+                Database = new DatabaseConfig { Host = "database.test", Password = "test-only-database-secret" },
+                Smtp = new SmtpConfig { Hostname = "email.example.test", EnableSmtp = false, EnableImplicitTls = discoveryCertificatePath is not null },
+                Imap = new ImapConfig { EnableImap = false, EnableImplicitTls = discoveryCertificatePath is not null },
+                Pop3 = new Pop3Config { EnableImplicitTls = discoveryCertificatePath is not null },
+                Tls = new TlsConfig { CertificatePath = discoveryCertificatePath },
+                Dav = new DavConfig { EnableDav = false },
+                Jmap = new JmapConfig { MaxUploadSizeBytes = UploadBytes, MaxRequestSizeBytes = 65_536 },
+                Limits = new LimitsConfig { MaxMessageSizeBytes = 1_048_576 },
+                Admin = new AdminConfig
+                {
+                    AllowedNetworks = ["127.0.0.1/32"],
+                    DataProtectionKeyPath = "/tmp/mk8-capture-keys",
+                    AuditLogPath = "/tmp/mk8-capture-audit",
+                    HealthStatusPath = "/tmp/mk8-capture-health"
+                },
+                Messaging = new MessagingConfig
+                {
+                    Enabled = true,
+                    MaxPayloadBytes = maximumPayloadBytes,
+                    EncryptionKey = Convert.ToBase64String(new byte[32]),
+                    InlinePayloadThresholdBytes = 1024
+                },
+                ObjectStorage = new ObjectStorageConfig { ConnectionString = blobConnection },
+                OAuth = CreateOAuthConfig(),
+            };
 
         private static OAuthConfig CreateOAuthConfig()
         {
@@ -386,6 +410,25 @@ internal sealed class GatewayHttpCaptureBoundaryTests
             var command = _dataSource.CreateCommand("SELECT count(*) FROM application_requests");
             await using var commandLifetime = command.ConfigureAwait(false);
             Assert.AreEqual(0L, await command.ExecuteScalarAsync().ConfigureAwait(false));
+        }
+
+        public async Task AssertPresentationRecordCountAsync(long expected)
+        {
+            var command = _dataSource.CreateCommand("SELECT count(*) FROM gateway_traffic_records WHERE metadata->>'layer' = 'presentation'");
+            await using var commandLifetime = command.ConfigureAwait(false);
+            Assert.AreEqual(expected, await command.ExecuteScalarAsync().ConfigureAwait(false));
+        }
+
+        public async Task AssertWorkerOperationsAsync(params string[] expected)
+        {
+            var command = _dataSource.CreateCommand("SELECT operation FROM application_requests ORDER BY created_at, id");
+            await using var commandLifetime = command.ConfigureAwait(false);
+            var reader = await command.ExecuteReaderAsync().ConfigureAwait(false);
+            await using var readerLifetime = reader.ConfigureAwait(false);
+            var actual = new List<string>();
+            while (await reader.ReadAsync().ConfigureAwait(false))
+                actual.Add(reader.GetString(0));
+            CollectionAssert.AreEqual(expected, actual);
         }
 
         public async Task AssertPayloadBudgetsAndBlobReferencesAsync()
@@ -441,6 +484,11 @@ internal sealed class GatewayHttpCaptureBoundaryTests
             _protector.Dispose();
             await _dataSource.DisposeAsync().ConfigureAwait(false);
             await _database.DisposeAsync().ConfigureAwait(false);
+            if (_discoveryCertificatePath is not null)
+            {
+                File.Delete(_discoveryCertificatePath);
+                Directory.Delete(Path.GetDirectoryName(_discoveryCertificatePath)!);
+            }
         }
     }
 
@@ -489,8 +537,8 @@ internal sealed class GatewayHttpCaptureBoundaryTests
         public Task AppendAsync(GatewayTrafficRecord record, CancellationToken cancellationToken = default)
         {
             if (record.Metadata.TryGetValue("layer", out var layer) && string.Equals(layer, "presentation", StringComparison.Ordinal)
-                && string.Equals(record.Direction, GatewayTrafficDirections.Outbound, StringComparison.Ordinal)
-                && (record.Sequence == failSequence || (FailNextChunk && record.Sequence >= 2)))
+                && (record.Sequence == failSequence
+                    || (FailNextChunk && record.Sequence >= 2 && string.Equals(record.Direction, GatewayTrafficDirections.Outbound, StringComparison.Ordinal))))
             {
                 Failure.TrySetResult(record);
                 throw new InvalidOperationException("Deliberate journal write failure.");

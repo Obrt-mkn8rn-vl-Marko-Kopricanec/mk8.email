@@ -10,11 +10,16 @@ public static class GatewayProtocolPaths
             return "jmap";
         if (IsDav(path))
             return "dav";
+        if (IsAutodiscover(path))
+            return "autodiscover";
         return null;
     }
 
     public static bool IsPublicProtocol(PathString path) =>
-        IsOAuth(path) || IsJmap(path) || IsDav(path);
+        IsOAuth(path) || IsJmap(path) || IsDav(path) || IsAutodiscover(path);
+
+    public static bool IsAutodiscover(PathString path) =>
+        path.StartsWithSegments("/autodiscover", StringComparison.OrdinalIgnoreCase);
 
     public static bool IsOAuth(PathString path) =>
         path.StartsWithSegments("/oauth", StringComparison.OrdinalIgnoreCase)

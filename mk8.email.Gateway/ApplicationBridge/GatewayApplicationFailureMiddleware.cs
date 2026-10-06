@@ -1,5 +1,6 @@
 using System.Text.Json;
 using mk8.email.Gateway.Protocols;
+using mk8.email.Gateway.Protocols.Autodiscover;
 
 namespace mk8.email.Gateway.ApplicationBridge;
 
@@ -24,6 +25,13 @@ public sealed class GatewayApplicationFailureMiddleware(
             context.Response.Headers.CacheControl = "no-store";
             if (exception.IsUnavailable)
                 context.Response.Headers.RetryAfter = "5";
+            if (GatewayProtocolPaths.IsAutodiscover(context.Request.Path))
+            {
+                await GatewayAutodiscoverXml.WriteAsync(context, context.Response.Body,
+                    GatewayAutodiscoverXml.Error(603, "The application service could not complete the request."),
+                    context.Response.StatusCode).ConfigureAwait(false);
+                return;
+            }
             if (GatewayProtocolPaths.IsOAuth(context.Request.Path))
             {
                 context.Response.ContentType = "application/json; charset=utf-8";

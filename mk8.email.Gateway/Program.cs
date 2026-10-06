@@ -10,6 +10,7 @@ using mk8.email.Contracts.Pop3;
 using mk8.email.Contracts.Sieve;
 using mk8.email.Gateway.ApplicationBridge;
 using mk8.email.Gateway.Protocols;
+using mk8.email.Gateway.Protocols.Autodiscover;
 using mk8.email.Gateway.Protocols.Dav;
 using mk8.email.Gateway.Protocols.Jmap;
 using mk8.email.Gateway.Protocols.Imap;
@@ -165,6 +166,7 @@ app.MapGet("/health/ready", async (
     return ready ? Results.Ok(new { status = "ready" }) : Results.StatusCode(503);
 }).AllowAnonymous();
 app.MapGet("/health/application", GatewayApplicationHealth.CheckAsync).AllowAnonymous();
+app.MapAutodiscoverEndpoints();
 if (environmentConfig.OAuth.EnableOAuth)
     app.MapOAuthEndpoints();
 if (environmentConfig.Jmap.EnableJmap)

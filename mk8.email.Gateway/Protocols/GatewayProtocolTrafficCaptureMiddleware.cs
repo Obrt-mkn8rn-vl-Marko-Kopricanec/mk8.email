@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http.Features;
 using mk8.email.Configuration;
 using mk8.email.Contracts.Messaging;
 using mk8.email.Gateway.ApplicationBridge;
+using mk8.email.Gateway.Protocols.Autodiscover;
 using mk8.email.Messaging;
 
 namespace mk8.email.Gateway.Protocols;
@@ -287,6 +288,13 @@ public sealed class GatewayProtocolTrafficCaptureMiddleware(
         context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
         context.Response.Headers.CacheControl = "no-store";
         context.Response.Headers.RetryAfter = "5";
+        if (string.Equals(protocol, "autodiscover", StringComparison.Ordinal))
+        {
+            await GatewayAutodiscoverXml.WriteAsync(context, output,
+                GatewayAutodiscoverXml.Error(603, "The gateway traffic journal is unavailable."),
+                StatusCodes.Status503ServiceUnavailable).ConfigureAwait(false);
+            return;
+        }
         if (string.Equals(protocol, "oauth", StringComparison.Ordinal))
         {
             context.Response.ContentType = "application/json; charset=utf-8";

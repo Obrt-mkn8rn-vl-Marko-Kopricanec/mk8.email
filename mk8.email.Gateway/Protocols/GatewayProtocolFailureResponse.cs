@@ -1,4 +1,5 @@
 using System.Text.Json;
+using mk8.email.Gateway.Protocols.Autodiscover;
 
 namespace mk8.email.Gateway.Protocols;
 
@@ -9,6 +10,15 @@ internal static class GatewayProtocolFailureResponse
         context.Response.Clear();
         context.Response.StatusCode = status;
         context.Response.Headers.CacheControl = "no-store";
+        if (string.Equals(protocol, "autodiscover", StringComparison.Ordinal))
+        {
+            await GatewayAutodiscoverXml.WriteAsync(context, context.Response.Body,
+                GatewayAutodiscoverXml.Error(status < 500 ? 600 : 603,
+                    status == StatusCodes.Status413PayloadTooLarge
+                        ? "The request body exceeds the server limit." : "The gateway could not complete the request."), status)
+                .ConfigureAwait(false);
+            return;
+        }
         if (string.Equals(protocol, "oauth", StringComparison.Ordinal))
         {
             context.Response.ContentType = "application/json; charset=utf-8";

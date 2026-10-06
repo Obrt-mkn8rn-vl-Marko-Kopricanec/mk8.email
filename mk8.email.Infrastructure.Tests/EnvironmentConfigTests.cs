@@ -36,6 +36,20 @@ public sealed class EnvironmentConfigTests
     }
 
     [TestMethod]
+    [DataRow(EnvironmentValidationRole.Gateway)]
+    [DataRow(EnvironmentValidationRole.ApplicationWorker)]
+    public void EwsSharedReadLimitsRemainValidatedWithJmapHttpDisabled(EnvironmentValidationRole role)
+    {
+        var configuration = new EnvironmentConfig
+        {
+            Jmap = new JmapConfig { EnableJmap = false, IsDefault = false, MaxObjectsInGet = 0, MaxConcurrentRequests = 0 },
+        };
+        var errors = configuration.Validate(isDevelopment: true, role: role);
+        StringAssert.Contains(string.Join('|', errors), "Jmap.MaxObjectsInGet must be from 1 through 10000.", StringComparison.Ordinal);
+        StringAssert.Contains(string.Join('|', errors), "Jmap.MaxConcurrentRequests must be from 1 through 1024.", StringComparison.Ordinal);
+    }
+
+    [TestMethod]
     public void ProductionSubmissionRequiresStartTls()
     {
         var errors = CreateValidConfiguration(enableStartTls: false, enableImap: false).Validate();

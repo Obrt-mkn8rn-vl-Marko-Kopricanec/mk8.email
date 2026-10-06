@@ -1,5 +1,6 @@
 using System.Text.Json;
 using mk8.email.Gateway.Protocols.Autodiscover;
+using mk8.email.Gateway.Protocols.Ews;
 
 namespace mk8.email.Gateway.Protocols;
 
@@ -10,6 +11,14 @@ internal static class GatewayProtocolFailureResponse
         context.Response.Clear();
         context.Response.StatusCode = status;
         context.Response.Headers.CacheControl = "no-store";
+        if (string.Equals(protocol, "ews", StringComparison.Ordinal))
+        {
+            await GatewayEwsSoap.WriteAsync(context, context.Response.Body,
+                GatewayEwsSoap.Fault(status == StatusCodes.Status413PayloadTooLarge
+                    ? "ErrorDataSizeLimitExceeded" : "ErrorInternalServerError", "The gateway could not complete the request."), status)
+                .ConfigureAwait(false);
+            return;
+        }
         if (string.Equals(protocol, "autodiscover", StringComparison.Ordinal))
         {
             await GatewayAutodiscoverXml.WriteAsync(context, context.Response.Body,

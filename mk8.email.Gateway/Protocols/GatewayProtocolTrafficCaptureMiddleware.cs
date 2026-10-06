@@ -5,6 +5,7 @@ using mk8.email.Configuration;
 using mk8.email.Contracts.Messaging;
 using mk8.email.Gateway.ApplicationBridge;
 using mk8.email.Gateway.Protocols.Autodiscover;
+using mk8.email.Gateway.Protocols.Ews;
 using mk8.email.Messaging;
 
 namespace mk8.email.Gateway.Protocols;
@@ -288,6 +289,13 @@ public sealed class GatewayProtocolTrafficCaptureMiddleware(
         context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
         context.Response.Headers.CacheControl = "no-store";
         context.Response.Headers.RetryAfter = "5";
+        if (string.Equals(protocol, "ews", StringComparison.Ordinal))
+        {
+            await GatewayEwsSoap.WriteAsync(context, output,
+                GatewayEwsSoap.Fault("ErrorServerBusy", "The gateway traffic journal is unavailable."),
+                StatusCodes.Status503ServiceUnavailable).ConfigureAwait(false);
+            return;
+        }
         if (string.Equals(protocol, "autodiscover", StringComparison.Ordinal))
         {
             await GatewayAutodiscoverXml.WriteAsync(context, output,

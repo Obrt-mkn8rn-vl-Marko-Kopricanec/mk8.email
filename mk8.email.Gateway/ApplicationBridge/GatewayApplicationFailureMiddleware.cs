@@ -1,6 +1,7 @@
 using System.Text.Json;
 using mk8.email.Gateway.Protocols;
 using mk8.email.Gateway.Protocols.Autodiscover;
+using mk8.email.Gateway.Protocols.Ews;
 
 namespace mk8.email.Gateway.ApplicationBridge;
 
@@ -25,6 +26,13 @@ public sealed class GatewayApplicationFailureMiddleware(
             context.Response.Headers.CacheControl = "no-store";
             if (exception.IsUnavailable)
                 context.Response.Headers.RetryAfter = "5";
+            if (GatewayProtocolPaths.IsEws(context.Request.Path))
+            {
+                await GatewayEwsSoap.WriteAsync(context, context.Response.Body,
+                    GatewayEwsSoap.Fault(exception.IsUnavailable ? "ErrorServerBusy" : "ErrorInternalServerError",
+                        "The application service could not complete the request."), context.Response.StatusCode).ConfigureAwait(false);
+                return;
+            }
             if (GatewayProtocolPaths.IsAutodiscover(context.Request.Path))
             {
                 await GatewayAutodiscoverXml.WriteAsync(context, context.Response.Body,

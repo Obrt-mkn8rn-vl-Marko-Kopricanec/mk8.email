@@ -1,5 +1,6 @@
 using mk8.email.Gateway.Protocols.OAuth;
 using mk8.email.Gateway.Protocols.Jmap;
+using mk8.email.Gateway.Protocols.Ews;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace mk8.email.Gateway.ApplicationBridge;
@@ -17,6 +18,7 @@ public static class GatewayApplicationServiceExtensions
         services.AddSingleton<IGatewayApplicationClient, GatewayApplicationClient>();
         services.AddSingleton<IGatewayOAuthClient, GatewayOAuthClient>();
         services.AddSingleton<IGatewayJmapClient, GatewayJmapClient>();
+        services.AddSingleton<GatewayEwsClient>();
         services.TryAddSingleton<GatewayJmapBatchLimiter>();
         return services;
     }

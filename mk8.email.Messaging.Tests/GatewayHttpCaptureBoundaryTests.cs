@@ -27,6 +27,7 @@ using mk8.email.Contracts.Imap;
 using mk8.email.Gateway.ApplicationBridge;
 using mk8.email.Gateway.Protocols;
 using mk8.email.Gateway.Protocols.Autodiscover;
+using mk8.email.Gateway.Protocols.Ews;
 using mk8.email.Gateway.Protocols.Dav;
 using mk8.email.Gateway.Protocols.Jmap;
 using mk8.email.Gateway.Protocols.Imap;
@@ -206,12 +207,13 @@ internal sealed class GatewayHttpCaptureBoundaryTests
         private int ErrorPageCalls { get; set; }
 
         public static async Task<CaptureFixture> CreateAsync(bool ordinaryClient = false, long? failSequence = null,
-            bool discoveryListeners = false)
+            bool discoveryListeners = false, bool mailFolders = false, int additionalFolders = 0)
         {
             var database = await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false);
             var blobConnection = Environment.GetEnvironmentVariable("MK8_EMAIL_TEST_AZURE_BLOB_CONNECTION");
             if (database is null || string.IsNullOrWhiteSpace(blobConnection))
                 throw new AssertInconclusiveException("PostgreSQL and an Azure Blob-compatible test endpoint are required.");
+            if (mailFolders) await GatewayEwsFixtureDomain.SeedAsync(database.ConnectionString, additionalFolders).ConfigureAwait(false);
             var dataSource = NpgsqlDataSource.Create(database.ConnectionString);
             await PostgresMessagingSchema.EnsureAsync(dataSource).ConfigureAwait(false);
             var protector = AesGcmPayloadProtectorTests.CreateProtector("test", "http-boundary-key");
@@ -229,12 +231,14 @@ internal sealed class GatewayHttpCaptureBoundaryTests
             var journal = new PostgresGatewayTrafficJournal(dataSource, protector, options, store);
             var faultingJournal = new FaultingJournal(journal, failSequence);
             var application = new UploadApplication();
-            var provider = new ServiceCollection().AddSingleton<IJmapApplicationService>(application)
-                .AddScoped<IApplicationRequestDispatcher>(services => new GatewayAutodiscoverFixtureDispatcher(services)).BuildServiceProvider();
-            var worker = new ApplicationRequestWorker(bus, provider.GetRequiredService<IServiceScopeFactory>(),
-                new ApplicationWorkerIdentity("worker@http-boundary", TimeSpan.FromSeconds(30)), NullLogger<ApplicationRequestWorker>.Instance);
             var certificatePath = discoveryListeners ? await CreateDiscoveryCertificateAsync().ConfigureAwait(false) : null;
             var environment = CreateEnvironment(maximumPayloadBytes, blobConnection, certificatePath);
+            var services = new ServiceCollection().AddSingleton<IJmapApplicationService>(application)
+                .AddScoped<IApplicationRequestDispatcher>(provider => new GatewayAutodiscoverFixtureDispatcher(provider));
+            if (mailFolders) GatewayEwsFixtureDomain.Configure(services, database.ConnectionString, store, protector, environment);
+            var provider = services.BuildServiceProvider();
+            var worker = new ApplicationRequestWorker(bus, provider.GetRequiredService<IServiceScopeFactory>(),
+                new ApplicationWorkerIdentity("worker@http-boundary", TimeSpan.FromSeconds(30)), NullLogger<ApplicationRequestWorker>.Instance);
             Assert.HasCount(0, environment.Validate(role: EnvironmentValidationRole.Gateway));
             Assert.HasCount(0, environment.Validate(role: EnvironmentValidationRole.ApplicationWorker));
             var host = BuildProductionHost(environment, bus, faultingJournal);
@@ -283,6 +287,7 @@ internal sealed class GatewayHttpCaptureBoundaryTests
             host.MapOAuthEndpoints();
             host.MapDavEndpoints();
             host.MapAutodiscoverEndpoints();
+            host.MapEwsEndpoints();
         }
 
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA2000", Justification = "The returned NetworkStream explicitly owns the Socket; every construction/connect failure disposes it in catch. HttpClient owns the returned stream and the fixture disposes its client/handler after each real-peer test.")]

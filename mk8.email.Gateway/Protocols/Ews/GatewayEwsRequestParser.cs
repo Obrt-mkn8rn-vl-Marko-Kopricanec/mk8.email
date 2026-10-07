@@ -103,6 +103,7 @@ internal static class GatewayEwsRequestParser
         if (operations.Length != 1 || operations[0].Name.Namespace != GatewayEwsSoap.Messages) Invalid();
         if (operations[0].Name.LocalName is "GetItem") return GatewayEwsItemRequestParser.Parse(operations[0]);
         if (operations[0].Name.LocalName is "GetAttachment") return GatewayEwsAttachmentRequestParser.Parse(operations[0]);
+        if (operations[0].Name.LocalName is "DeleteItem") return GatewayEwsItemDeleteParser.Parse(operations[0]);
         if (operations[0].Name.LocalName is "FindItem") return GatewayEwsFindItemRequestParser.Parse(operations[0]);
         return operations[0].Name.LocalName is "CreateFolder" or "UpdateFolder" or "DeleteFolder"
             ? GatewayEwsMutationRequestParser.Parse(operations[0]) : ParseFolderRead(operations[0]);

@@ -85,7 +85,7 @@ internal static class GatewayEwsItemRequestParser
         return (index, type);
     }
 
-    private static GatewayEwsItemReference Reference(XElement reference)
+    internal static GatewayEwsItemReference Reference(XElement reference)
     {
         if (reference.Name != GatewayEwsSoap.Types + "ItemId") Invalid();
         GatewayEwsRequestParser.Empty(reference, "Id", "ChangeKey");

@@ -394,6 +394,12 @@ internal sealed class GatewayHttpCaptureBoundaryTests
             Assert.AreEqual(ordinaryClient ? HttpStatusCode.NotFound : HttpStatusCode.OK, response.StatusCode);
         }
 
+        // This fixture's Azure store uses this exact container with no object
+        // prefix. Check existence without If-Match; a conditional read failure
+        // alone cannot distinguish deletion from an ETag mismatch.
+        public async Task<bool> BlobExistsAsync(string objectName) =>
+            (await _container.GetBlobClient(objectName).ExistsAsync().ConfigureAwait(false)).Value;
+
         public async Task<IReadOnlyList<GatewayTrafficRecord>> ReadPresentationSessionAsync()
         {
             var command = _dataSource.CreateCommand("SELECT session_id FROM gateway_traffic_records WHERE sequence = 0 AND metadata->>'layer' = 'presentation' ORDER BY recorded_at DESC LIMIT 1");

@@ -83,6 +83,14 @@ internal static class GatewayEwsEndpointRouteBuilderExtensions
         }
         var primary = profile.Accounts.Where(account => string.Equals(account.Name, profile.Username, StringComparison.OrdinalIgnoreCase)).ToArray();
         if (primary.Length > 1) throw new InvalidOperationException("The EWS primary account is ambiguous.");
+        if (request.Attachments is not null)
+        {
+            var attachmentAccount = primary.Length == 0 ? Guid.Empty : GatewayEwsClient.TryAccount(primary[0].Id, out var parsed)
+                ? parsed : throw new InvalidOperationException("Invalid EWS account.");
+            var attachments = await GatewayEwsAttachmentResponse.ExecuteAsync(application, authentication, profile, attachmentAccount, request, cancellationToken).ConfigureAwait(false);
+            await WriteBoundedAsync(context, attachments, environment).ConfigureAwait(false);
+            return;
+        }
         if (request.Items is not null)
         {
             var itemAccount = primary.Length == 0 ? Guid.Empty : GatewayEwsClient.TryAccount(primary[0].Id, out var parsed)

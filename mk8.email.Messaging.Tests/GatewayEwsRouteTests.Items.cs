@@ -81,7 +81,7 @@ internal sealed partial class GatewayEwsRouteTests
     [TestMethod]
     [DataRow("<t:AdditionalProperties><t:FieldURI FieldURI='item:MimeContentUTF8'/></t:AdditionalProperties>")]
     [DataRow("<t:FilterHtmlContent>true</t:FilterHtmlContent>")]
-    [DataRow("<t:AdditionalProperties><t:FieldURI FieldURI='item:Attachments'/></t:AdditionalProperties>")]
+    [DataRow("<t:AdditionalProperties><t:FieldURI FieldURI='item:ExtendedProperty'/></t:AdditionalProperties>")]
     [DataRow("<t:AdditionalProperties><t:IndexedFieldURI FieldURI='contacts:EmailAddress' FieldIndex='EmailAddress1'/></t:AdditionalProperties>")]
     public async Task UnsupportedItemPropertiesHaveJournaledSoapRefusalWithoutAnyDispatch(string fields)
     {

@@ -7,7 +7,7 @@ internal static class GatewayEwsItemRequestParser
     private static readonly HashSet<string> Fields = new(StringComparer.Ordinal)
     {
         "item:ItemId", "item:ParentFolderId", "item:ItemClass", "item:Subject", "item:DateTimeReceived", "item:Size",
-        "item:IsDraft", "item:DateTimeSent", "item:HasAttachments", "item:Body", "message:Sender", "message:ToRecipients",
+        "item:IsDraft", "item:DateTimeSent", "item:HasAttachments", "item:Body", "item:Attachments", "message:Sender", "message:ToRecipients",
         "message:CcRecipients", "message:BccRecipients", "message:From", "message:InternetMessageId", "message:IsRead", "message:ReplyTo",
     };
 
@@ -58,7 +58,7 @@ internal static class GatewayEwsItemRequestParser
             if (field.Name != GatewayEwsSoap.Types + "FieldURI") throw new GatewayEwsRequestException("ErrorInvalidPropertyRequest");
             GatewayEwsRequestParser.Empty(field, "FieldURI");
             var uri = (string?)field.Attribute("FieldURI");
-            if (uri is null || !Fields.Contains(uri) || uri is "item:Body" && !allowBody)
+            if (uri is null || !Fields.Contains(uri) || uri is "item:Body" or "item:Attachments" && !allowBody)
                 throw new GatewayEwsRequestException("ErrorInvalidPropertyRequest");
             properties.Add(uri[(uri.IndexOf(':', StringComparison.Ordinal) + 1)..]);
         }

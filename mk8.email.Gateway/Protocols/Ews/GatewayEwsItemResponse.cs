@@ -20,7 +20,7 @@ internal static class GatewayEwsItemResponse
         var references = request.Items ?? throw new InvalidOperationException("The EWS item request is incomplete.");
         var plans = references.Select(reference => Resolve(reference, account)).ToArray();
         var ids = plans.Where(plan => plan.Code is null).Select(plan => plan.Id).Distinct().ToArray();
-        if (ids.Length != 0 && request.Properties.Contains("MimeContent"))
+        if (ids.Length != 0 && (request.Properties.Contains("MimeContent") || request.Properties.Contains("Attachments")))
         {
             var content = await application.ReadItemContentAsync(authentication, profile, account, ids,
                 request.Properties.Contains("Body"), cancellationToken).ConfigureAwait(false);
@@ -75,7 +75,7 @@ internal static class GatewayEwsItemResponse
             else if (code is null)
             {
                 try { item = Message(account, read!.State!, snapshot!, request.Properties, request.BodyType, native?.Content); }
-                catch (XmlException) { code = "ErrorInvalidPropertyRequest"; }
+                catch (Exception exception) when (exception is XmlException or FormatException) { code = "ErrorInvalidPropertyRequest"; }
                 catch (GatewayEwsRequestException exception) { code = exception.Code; }
             }
             var response = new XElement(GatewayEwsSoap.Messages + "GetItemResponseMessage", new XAttribute("ResponseClass", code is null ? "Success" : "Error"));
@@ -83,7 +83,7 @@ internal static class GatewayEwsItemResponse
             response.Add(new XElement(GatewayEwsSoap.Messages + "ResponseCode", code ?? "NoError"));
             if (code is not null) response.Add(new XElement(GatewayEwsSoap.Messages + "DescriptiveLinkKey", 0));
             response.Add(new XElement(GatewayEwsSoap.Messages + "Items", item));
-            if (request.Properties.Contains("Body") || request.Properties.Contains("MimeContent"))
+            if (request.Properties.Contains("Body") || request.Properties.Contains("MimeContent") || request.Properties.Contains("Attachments"))
             {
                 responseBytes += Encoding.UTF8.GetByteCount(GatewayEwsSoap.Envelope(new XElement(response)));
                 if (GatewayHttpPayloadBudget.BinaryEnvelopeBytes(responseBytes) > maximumPayloadBytes)
@@ -119,11 +119,18 @@ internal static class GatewayEwsItemResponse
         Add(result, properties, "ItemClass", "IPM.Note");
         Add(result, properties, "Subject", value["subject"]?.GetValue<string>() ?? "");
         if (properties.Contains("Body")) result.Add(GatewayEwsBodyCodec.Render(snapshot, bodyType));
+        if (properties.Contains("Attachments"))
+        {
+            if (mimeContent is not { } raw || raw.Length != snapshot.RawSize || raw.Length != stored.Size)
+                throw new InvalidOperationException("The Application omitted requested attachment source content.");
+            using var attachments = GatewayEwsAttachmentCatalog.Load(raw);
+            result.Add(attachments.Metadata(account, stored.Id));
+        }
         Add(result, properties, "DateTimeReceived", stored.ReceivedAt.ToString("O", System.Globalization.CultureInfo.InvariantCulture));
         Add(result, properties, "Size", stored.Size);
         Add(result, properties, "IsDraft", stored.Keywords.Contains("$draft", StringComparer.Ordinal));
         Add(result, properties, "DateTimeSent", value["sentAt"]?.GetValue<string>());
-        Add(result, properties, "HasAttachments", value["hasAttachment"]!.GetValue<bool>());
+        if (properties.Contains("HasAttachments")) Add(result, properties, "HasAttachments", GatewayEwsAttachmentCatalog.HasNonInlineAttachments(snapshot));
         AddRecipients(result, properties, "Sender", value["sender"] ?? value["from"], single: true);
         AddRecipients(result, properties, "ToRecipients", value["to"], single: false);
         AddRecipients(result, properties, "CcRecipients", value["cc"], single: false);

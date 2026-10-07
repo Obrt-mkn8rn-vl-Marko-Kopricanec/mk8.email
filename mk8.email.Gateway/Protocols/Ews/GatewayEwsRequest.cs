@@ -10,7 +10,8 @@ internal sealed record GatewayEwsRequest(
     bool Indexed,
     IReadOnlyList<string>? Names = null,
     IReadOnlyList<GatewayEwsItemReference>? Items = null,
-    string BodyType = "Best")
+    string BodyType = "Best",
+    IReadOnlyList<string>? Attachments = null)
 {
     public bool IsMutation => Operation is "CreateFolder" or "UpdateFolder" or "DeleteFolder";
 }

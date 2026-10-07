@@ -97,6 +97,8 @@ internal static class GatewayEwsEndpointRouteBuilderExtensions
                 ? parsed : throw new InvalidOperationException("Invalid EWS account.");
             var items = request.Operation is "DeleteItem"
                 ? await GatewayEwsItemDelete.ExecuteAsync(application, authentication, profile, itemAccount, request, cancellationToken).ConfigureAwait(false)
+                : request.Operation is "CopyItem"
+                ? await GatewayEwsItemCopy.ExecuteAsync(application, authentication, profile, itemAccount, request, cancellationToken).ConfigureAwait(false)
                 : await GatewayEwsItemResponse.ExecuteAsync(application, authentication, profile, itemAccount, request, cancellationToken).ConfigureAwait(false);
             await WriteBoundedAsync(context, items, environment).ConfigureAwait(false);
             return;

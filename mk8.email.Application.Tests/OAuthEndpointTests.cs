@@ -31,6 +31,18 @@ internal sealed class OAuthEndpointTests
 {
     private const string Username = "oauth.user@example.com";
     private const string Password = "primary-password-for-oauth";
+    // Public synthetic fixture credential only. Setup need not generate another
+    // cost-13 hash; fresh-scope and HTTP logins still use production verification.
+    private const string PasswordHash = "{BLF-CRYPT}$2a$13$c6r/7YZLvppd9K/PNeopxe1UG.zGM9im7e8m4Mx/Wc8Dx1hOi566a";
+
+    [TestMethod]
+    public void OAuthFixturePasswordRetainsProductionHashPolicyAndVerification()
+    {
+        var policyPrefix = PasswordHash[..(PasswordHasher.BcryptSchemePrefix.Length + 7)];
+        StringAssert.StartsWith(PasswordHasher.Hash(Password), policyPrefix, StringComparison.Ordinal);
+        Assert.IsTrue(PasswordHasher.Verify(Password, PasswordHash));
+        Assert.IsFalse(PasswordHasher.Verify("not-the-fixture-password", PasswordHash));
+    }
 
     [TestMethod]
     [Timeout(15_000)]
@@ -575,7 +587,7 @@ new Uri("/oauth/token", UriKind.RelativeOrAbsolute),
                 {
                     Id = Guid.CreateVersion7(),
                     Username = Username,
-                    PasswordHash = PasswordHasher.Hash(Password),
+                    PasswordHash = PasswordHash,
                     Company = company,
                     IsActive = true,
                 }).ConfigureAwait(false);

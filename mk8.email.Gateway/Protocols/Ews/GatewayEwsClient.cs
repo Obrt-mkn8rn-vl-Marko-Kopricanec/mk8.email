@@ -117,6 +117,31 @@ internal sealed class GatewayEwsClient(IGatewayApplicationTransport transport, E
         return read;
     }
 
+    internal async Task<MailMessageQueryResult> QueryItemsAsync(ProtocolAuthentication authentication,
+        JmapApplicationProfile profile, Guid account, Guid folder, int offset, int limit, CancellationToken cancellationToken)
+    {
+        if (account == Guid.Empty || folder == Guid.Empty || offset < 0 || limit <= 0
+            || limit > Math.Min(GatewayEwsRequestParser.MaximumReferences, profile.Limits.MaxObjectsInGet))
+            throw new GatewayEwsRequestException("ErrorExceededFindCountLimit");
+        var criteria = new MailMessageQueryCriteria(new(MailMessageFilterOperator.Condition, null,
+            [new(MailMessageFilterField.InMailbox, $"M{folder:N}", null, null, null, null, null)]),
+            [new(MailMessageSortField.ReceivedAt, false, null, MailStringCollation.UnicodeCasemap)], false);
+        var data = await ExecuteAsync(authentication, profile, MailOperationKind.FindMessages,
+            new MailMessageQueryCommand(account, criteria, false, offset, null, 0, limit), cancellationToken).ConfigureAwait(false);
+        RequireMembers(data, "status", "state", "position", "ids", "total");
+        var query = data.Deserialize<MailMessageQueryResult>(JsonOptions) ?? throw InvalidResult();
+        if (query.Ids is null || query.Total < 0 || query.Status is not (MailMessageQueryStatus.Ok or MailMessageQueryStatus.AccountNotFound)) Invalid();
+        if (query.Status == MailMessageQueryStatus.AccountNotFound)
+        {
+            if (query.State is not null || query.Position != 0 || query.Ids.Count != 0 || query.Total != 0) Invalid();
+            return query;
+        }
+        RequireState(query.State);
+        if (query.Position != offset || query.Ids.Count != Math.Min(limit, Math.Max(0, query.Total - offset))
+            || query.Ids.Any(id => id == Guid.Empty) || query.Ids.Distinct().Count() != query.Ids.Count) Invalid();
+        return query;
+    }
+
     internal async Task<MailOperationResult> ExecuteOperationAsync<T>(ProtocolAuthentication authentication, JmapApplicationProfile profile,
         MailOperationKind operation, T command, CancellationToken cancellationToken)
     {

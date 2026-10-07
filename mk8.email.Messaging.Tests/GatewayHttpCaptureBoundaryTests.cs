@@ -211,7 +211,8 @@ internal sealed class GatewayHttpCaptureBoundaryTests
         public static async Task<CaptureFixture> CreateAsync(bool ordinaryClient = false, long? failSequence = null,
             bool discoveryListeners = false, bool mailFolders = false, int additionalFolders = 0,
             int? maximumPayloadOverride = null, bool disableJmap = false,
-            Microsoft.EntityFrameworkCore.Diagnostics.DbCommandInterceptor? folderLockInterceptor = null)
+            Microsoft.EntityFrameworkCore.Diagnostics.DbCommandInterceptor? folderLockInterceptor = null,
+            Func<IApplicationRequestDispatcher, IApplicationRequestDispatcher>? decorateDispatcher = null)
         {
             var database = await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false);
             var blobConnection = Environment.GetEnvironmentVariable("MK8_EMAIL_TEST_AZURE_BLOB_CONNECTION");
@@ -238,7 +239,11 @@ internal sealed class GatewayHttpCaptureBoundaryTests
             var certificatePath = discoveryListeners ? await CreateDiscoveryCertificateAsync().ConfigureAwait(false) : null;
             var environment = CreateEnvironment(maximumPayloadBytes, blobConnection, certificatePath, disableJmap);
             var services = new ServiceCollection().AddSingleton<IJmapApplicationService>(application)
-                .AddScoped<IApplicationRequestDispatcher>(provider => new GatewayAutodiscoverFixtureDispatcher(provider));
+                .AddScoped<IApplicationRequestDispatcher>(provider =>
+                {
+                    var dispatcher = new GatewayAutodiscoverFixtureDispatcher(provider);
+                    return decorateDispatcher?.Invoke(dispatcher) ?? dispatcher;
+                });
             if (mailFolders) GatewayEwsFixtureDomain.Configure(services, database.ConnectionString, store, protector, environment, folderLockInterceptor);
             var provider = services.BuildServiceProvider();
             var worker = new ApplicationRequestWorker(bus, provider.GetRequiredService<IServiceScopeFactory>(),

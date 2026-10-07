@@ -26,7 +26,7 @@ internal static class GatewayEwsItemRequestParser
         return new("GetItem", properties, [], false, 0, 0, false, Items: references);
     }
 
-    private static HashSet<string> Shape(XElement shape)
+    internal static HashSet<string> Shape(XElement shape)
     {
         GatewayEwsRequestParser.Container(shape);
         var fields = shape.Elements().ToArray();

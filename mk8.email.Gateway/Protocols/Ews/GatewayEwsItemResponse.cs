@@ -20,6 +20,15 @@ internal static class GatewayEwsItemResponse
         var references = request.Items ?? throw new InvalidOperationException("The EWS item request is incomplete.");
         var plans = references.Select(reference => Resolve(reference, account)).ToArray();
         var ids = plans.Where(plan => plan.Code is null).Select(plan => plan.Id).Distinct().ToArray();
+        if (ids.Length != 0 && request.Properties.Contains("MimeContent"))
+        {
+            var content = await application.ReadItemContentAsync(authentication, profile, account, ids,
+                request.Properties.Contains("Body"), cancellationToken).ConfigureAwait(false);
+            var snapshots = content.Messages.Where(item => item.Status == MailMessageContentStatus.Ok)
+                .Select(item => new MailMessageProjectedItem(item.MessageId, item.Value!)).ToArray();
+            return Render(request, plans, account, new(content.Status, content.State, snapshots), application.MaximumPayloadBytes,
+                content.Messages.ToDictionary(item => item.MessageId));
+        }
         var read = ids.Length == 0 ? null : await application.ReadItemsAsync(authentication, profile, account, ids, cancellationToken,
             includeText: request.Properties.Contains("Body")).ConfigureAwait(false);
         return Render(request, plans, account, read, application.MaximumPayloadBytes);
@@ -43,7 +52,8 @@ internal static class GatewayEwsItemResponse
     }
 
     private static string Render(GatewayEwsRequest request, (Guid Id, string? Code)[] plans,
-        Guid account, MailMessageReadResult? read, int maximumPayloadBytes)
+        Guid account, MailMessageReadResult? read, int maximumPayloadBytes,
+        Dictionary<Guid, MailMessageContentItem>? content = null)
     {
         var byId = read?.Messages.ToDictionary(item => item.MessageId, item => item.Value) ?? [];
         var failure = read?.Status == MailMessageReadStatus.RequestTooLarge ? "ErrorDataSizeLimitExceeded" : "ErrorItemNotFound";
@@ -57,10 +67,14 @@ internal static class GatewayEwsItemResponse
             var code = plan.Code;
             XElement? item = null;
             byId.TryGetValue(plan.Id, out var snapshot);
+            MailMessageContentItem? native = null;
+            content?.TryGetValue(plan.Id, out native);
+            if (code is null && native is { Status: MailMessageContentStatus.TooLarge }) code = "ErrorDataSizeLimitExceeded";
+            if (code is null && native is { Status: MailMessageContentStatus.NotParsable }) code = "ErrorInvalidPropertyRequest";
             if (code is null && snapshot is null) code = failure;
             else if (code is null)
             {
-                try { item = Message(account, read!.State!, snapshot!, request.Properties, request.BodyType); }
+                try { item = Message(account, read!.State!, snapshot!, request.Properties, request.BodyType, native?.Content); }
                 catch (XmlException) { code = "ErrorInvalidPropertyRequest"; }
                 catch (GatewayEwsRequestException exception) { code = exception.Code; }
             }
@@ -69,7 +83,7 @@ internal static class GatewayEwsItemResponse
             response.Add(new XElement(GatewayEwsSoap.Messages + "ResponseCode", code ?? "NoError"));
             if (code is not null) response.Add(new XElement(GatewayEwsSoap.Messages + "DescriptiveLinkKey", 0));
             response.Add(new XElement(GatewayEwsSoap.Messages + "Items", item));
-            if (request.Properties.Contains("Body"))
+            if (request.Properties.Contains("Body") || request.Properties.Contains("MimeContent"))
             {
                 responseBytes += Encoding.UTF8.GetByteCount(GatewayEwsSoap.Envelope(new XElement(response)));
                 if (GatewayHttpPayloadBudget.BinaryEnvelopeBytes(responseBytes) > maximumPayloadBytes)
@@ -80,13 +94,26 @@ internal static class GatewayEwsItemResponse
         return GatewayEwsSoap.Envelope(new XElement(GatewayEwsSoap.Messages + "GetItemResponse", responses));
     }
 
-    internal static XElement Message(Guid account, string state, MailMessageSnapshot snapshot, IReadOnlySet<string> properties, string bodyType = "Best")
+    internal static XElement Message(Guid account, string state, MailMessageSnapshot snapshot, IReadOnlySet<string> properties, string bodyType = "Best",
+        ReadOnlyMemory<byte>? mimeContent = null)
     {
         var value = GatewayEmailValueCodec.BuildEmail(snapshot, Projection);
         var stored = snapshot.Stored ?? throw new InvalidOperationException("The EWS item has no stored identity.");
         var result = new XElement(GatewayEwsSoap.Types + "Message", new XElement(GatewayEwsSoap.Types + "ItemId",
             new XAttribute("Id", GatewayEwsItemIdCodec.Encode(account, stored.Id)),
             new XAttribute("ChangeKey", Convert.ToBase64String(Encoding.UTF8.GetBytes(state)))));
+        if (properties.Contains("MimeContent"))
+        {
+            if (mimeContent is not { } raw || raw.IsEmpty || raw.Length != snapshot.RawSize
+                || raw.Length != stored.Size || raw.Length > GatewayEwsClient.MaximumMimeBytes)
+                throw new InvalidOperationException("The Application omitted valid requested native content.");
+            // MimeContent is the ASCII MIME stream, not MimeContentUTF8. Do not
+            // transcode an 8-bit stream or silently label it as ASCII.
+            foreach (ref readonly var octet in raw.Span)
+                if (octet > 127) throw new GatewayEwsRequestException("ErrorInvalidPropertyRequest");
+            result.AddFirst(new XElement(GatewayEwsSoap.Types + "MimeContent", new XAttribute("CharacterSet", "us-ascii"),
+                Convert.ToBase64String(raw.Span)));
+        }
         if (properties.Contains("ParentFolderId")) result.Add(new XElement(GatewayEwsSoap.Types + "ParentFolderId",
             new XAttribute("Id", GatewayEwsFolderIdCodec.Encode(account, stored.FolderId))));
         Add(result, properties, "ItemClass", "IPM.Note");

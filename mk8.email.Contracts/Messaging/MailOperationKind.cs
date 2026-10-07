@@ -23,6 +23,7 @@ public enum MailOperationKind
     CopyMessages = 36,
     ParseMessages = 37,
     ReadSearchSnippets = 38,
+    ReadMessageContent = 39,
     ReadSenderIdentities = 40,
     ReadSenderIdentityChanges = 41,
     MutateSenderIdentities = 42,

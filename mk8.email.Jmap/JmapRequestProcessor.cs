@@ -209,6 +209,7 @@ public sealed class JmapRequestProcessor
             MailOperationKind.ReadFolders when features.Contains(MailFeature.Messages) => ExecuteFoldersAsync(command, context, user, receiptKey, cancellationToken),
             MailOperationKind.MutateFolders when features.Contains(MailFeature.Messages) => ExecuteFolderMutationAsync(command, context, receiptKey, cancellationToken),
             MailOperationKind.ReadMessages when features.Contains(MailFeature.Messages) => ExecuteMessageReadAsync(command, context, user, receiptKey, cancellationToken),
+            MailOperationKind.ReadMessageContent when features.Contains(MailFeature.Messages) => ExecuteMessageContentAsync(command, context, user, receiptKey, cancellationToken),
             MailOperationKind.ParseMessages when features.Contains(MailFeature.Messages) => ExecuteMessageParseAsync(command, context, user, receiptKey, cancellationToken),
             MailOperationKind.MutateMessages when features.Contains(MailFeature.Messages) => ExecuteMessageMutationAsync(command, context, user, receiptKey, cancellationToken),
             MailOperationKind.MutateSubmissions when features.Contains(MailFeature.Submission) => ExecuteSubmissionMutationAsync(command, context, user, receiptKey, cancellationToken),
@@ -320,6 +321,37 @@ public sealed class JmapRequestProcessor
             var data = JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)
                 ?? throw new InvalidOperationException("The message reader returned an incomplete result.");
             return new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(data));
+        }, receiptKey, cancellationToken);
+    }
+
+    private Task<MailOperationResponse> ExecuteMessageContentAsync(MailOperationCommand command, JmapInvocationContext context,
+        AuthenticatedMailUser user, ApplicationReceiptKey? receiptKey, CancellationToken cancellationToken)
+    {
+        var arguments = command.Arguments;
+        if (arguments.Count != 4 || !arguments.ContainsKey("accountId") || !arguments.ContainsKey("messageIds")
+            || !arguments.ContainsKey("includeText") || !arguments.ContainsKey("maximumBytes"))
+            throw NotRequest("The native message command has an invalid shape.");
+        MailMessageContentCommand read;
+        try { read = arguments.Deserialize<MailMessageContentCommand>(StrictReceiptJsonOptions) ?? throw NotRequest("The native message command is missing."); }
+        catch (JsonException) { throw NotRequest("The native message command contains invalid values."); }
+        if (read.AccountId == Guid.Empty || read.MessageIds is null || read.MessageIds.Count == 0
+            || read.MessageIds.Count > _environment.Jmap.MaxObjectsInGet || read.MessageIds.Contains(Guid.Empty)
+            || read.MessageIds.Distinct().Count() != read.MessageIds.Count || read.MaximumBytes <= 0
+            || read.MaximumBytes > _environment.Limits.MaxMessageSizeBytes
+            || GatewayHttpPayloadBudget.BinaryEnvelopeBytes(read.MaximumBytes) > _environment.Messaging.MaxPayloadBytes)
+            throw NotRequest("The native message command exceeds its admitted bounds.");
+        var service = _messageProjectionService ?? throw new InvalidOperationException("The message projection service is not configured.");
+        return InvokeAtomicallyAsync(command.Operation, context, async token =>
+        {
+            var result = await service.ReadContentAsync(read, user, token).ConfigureAwait(false);
+            var response = new MailOperationResponse(command.Operation, ApplicationValueCodec.Encode(JsonSerializer.SerializeToNode(result, ReceiptJsonOptions)!));
+            var profile = await _sessions.GetProfileAsync(user, token).ConfigureAwait(false);
+            var envelope = new JmapApplicationResult(JmapApplicationOutcomes.Ok,
+                OperationResult: new(response, context.CreatedIds.ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal), profile));
+            if (JsonSerializer.SerializeToUtf8Bytes(envelope, ReceiptJsonOptions).Length > _environment.Messaging.MaxPayloadBytes)
+                response = new(command.Operation, ApplicationValueCodec.Encode(JsonSerializer.SerializeToNode(
+                    new MailMessageContentResult(MailMessageReadStatus.RequestTooLarge, null, []), ReceiptJsonOptions)!));
+            return response;
         }, receiptKey, cancellationToken);
     }
 

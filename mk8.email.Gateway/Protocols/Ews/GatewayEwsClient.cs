@@ -15,6 +15,7 @@ internal sealed class GatewayEwsClient(IGatewayApplicationTransport transport, E
     // counters fit this conservative per-row encoded budget, including key text.
     internal const int EncodedFolderBudgetBytes = 4096;
     internal int MaximumPayloadBytes => environment.Messaging.MaxPayloadBytes;
+    internal const int MaximumMimeBytes = 1_048_576;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = false,
@@ -113,6 +114,44 @@ internal sealed class GatewayEwsClient(IGatewayApplicationTransport transport, E
         {
             if (item is null || !ids.Contains(item.MessageId) || !seen.Add(item.MessageId) || item.Value is null
                 || item.Value.Stored?.Id != item.MessageId || item.Value.ContentSourceId != item.MessageId
+                || item.Value.UploadedContentId is not null || item.Value.PartPrefix is not null) Invalid();
+        }
+        return read;
+    }
+
+    internal async Task<MailMessageContentResult> ReadItemContentAsync(ProtocolAuthentication authentication,
+        JmapApplicationProfile profile, Guid account, IReadOnlyList<Guid> ids, bool includeText, CancellationToken cancellationToken)
+    {
+        if (ids.Count == 0 || ids.Count > Math.Min(GatewayEwsRequestParser.MaximumReferences, profile.Limits.MaxObjectsInGet)
+            || ids.Any(id => id == Guid.Empty) || ids.Distinct().Count() != ids.Count)
+            throw new GatewayEwsRequestException("ErrorExceededFindCountLimit");
+        var maximum = (int)Math.Min(MaximumMimeBytes, Math.Min(profile.Limits.MaxMessageSizeBytes,
+            GatewayHttpPayloadBudget.MaximumBinaryBodyBytes(MaximumPayloadBytes) / 2));
+        if (maximum <= 0) throw new GatewayEwsRequestException("ErrorDataSizeLimitExceeded");
+        var data = await ExecuteAsync(authentication, profile, MailOperationKind.ReadMessageContent,
+            new MailMessageContentCommand(account, ids, includeText, maximum), cancellationToken).ConfigureAwait(false);
+        RequireMembers(data, "status", "state", "messages");
+        var read = data.Deserialize<MailMessageContentResult>(JsonOptions) ?? throw InvalidResult();
+        if (!Enum.IsDefined(read.Status) || read.Messages is null) Invalid();
+        if (read.Status != MailMessageReadStatus.Ok)
+        {
+            if (read.State is not null || read.Messages.Count != 0) Invalid();
+            return read;
+        }
+        RequireState(read.State);
+        if (read.Messages.Count != ids.Count) Invalid();
+        for (var index = 0; index < ids.Count; index++)
+        {
+            var item = read.Messages[index];
+            if (item is null || item.MessageId != ids[index] || !Enum.IsDefined(item.Status)) Invalid();
+            if (item.Status != MailMessageContentStatus.Ok)
+            {
+                if (item.Value is not null || !item.Content.IsEmpty) Invalid();
+                continue;
+            }
+            if (item.Content.IsEmpty || item.Content.Length > maximum || item.Value is null
+                || item.Value.Stored?.Id != item.MessageId || item.Value.ContentSourceId != item.MessageId
+                || item.Value.RawSize != item.Content.Length || item.Value.Stored.Size != item.Content.Length
                 || item.Value.UploadedContentId is not null || item.Value.PartPrefix is not null) Invalid();
         }
         return read;

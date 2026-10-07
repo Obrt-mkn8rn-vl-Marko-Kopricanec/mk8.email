@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 using mk8.email.Application.Interfaces;
 using mk8.email.Application.Services;
 using mk8.email.Configuration;
@@ -15,6 +16,50 @@ internal sealed class MailMessageProjectionService(
     JmapBlobService blobs,
     EnvironmentConfig environment) : IMailMessageProjectionService
 {
+    public async Task<MailMessageContentResult> ReadContentAsync(
+        MailMessageContentCommand command, AuthenticatedMailUser user, CancellationToken cancellationToken)
+    {
+        var account = await accounts.GetAccountByInboxIdAsync(user, command.AccountId, cancellationToken).ConfigureAwait(false);
+        if (account is null) return new(MailMessageReadStatus.AccountNotFound, null, []);
+        // The caller's complete invocation holds the gate-first write coordination
+        // transaction, so snapshots, content ownership and returned state agree.
+        var emails = await database.Emails.AsNoTracking()
+            .Where(email => command.MessageIds.Contains(email.Id) && email.Folder.InboxId == account.InboxId && !email.IsDeleted)
+            .ToDictionaryAsync(email => email.Id, cancellationToken).ConfigureAwait(false);
+        var items = new List<MailMessageContentItem>(command.MessageIds.Count);
+        long encodedBytes = GatewayHttpPayloadBudget.MetadataBytes;
+        foreach (var id in command.MessageIds)
+        {
+            MailMessageContentItem item;
+            if (!emails.TryGetValue(id, out var email)) item = new(id, MailMessageContentStatus.NotFound, null, default);
+            else if (email.SizeBytes <= 0 || email.SizeBytes > command.MaximumBytes || email.SizeBytes > environment.Limits.MaxMessageSizeBytes)
+                item = new(id, MailMessageContentStatus.TooLarge, null, default);
+            else if (content.TryGetReference(email) is null && email.RawMessage is null)
+                item = new(id, MailMessageContentStatus.NotParsable, null, default);
+            else
+            {
+                // Azure downloads verify the reference's declared length and ETag
+                // before transfer; ReadAsync also verifies length and SHA-256.
+                var raw = await content.ReadAsync(email, cancellationToken).ConfigureAwait(false);
+                if (raw.Length > command.MaximumBytes) throw new InvalidOperationException("The native message length is invalid.");
+                try
+                {
+                    using var message = JmapEmailCodec.Parse(raw);
+                    item = new(id, MailMessageContentStatus.Ok,
+                        JmapEmailCodec.Capture(message, id, raw.Length, command.IncludeText, email), raw);
+                }
+                catch (FormatException) { item = new(id, MailMessageContentStatus.NotParsable, null, default); }
+            }
+            var node = JsonSerializer.SerializeToNode(item, JsonSerializerOptions.Web)!;
+            encodedBytes += JsonSerializer.SerializeToUtf8Bytes(ApplicationValueCodec.Encode(node), JsonSerializerOptions.Web).Length;
+            if (encodedBytes > environment.Messaging.MaxPayloadBytes)
+                return new(MailMessageReadStatus.RequestTooLarge, null, []);
+            items.Add(item);
+        }
+        var state = await states.GetStateAsync(account.InboxId, JmapConstants.EmailDataType, cancellationToken).ConfigureAwait(false);
+        return new(MailMessageReadStatus.Ok, state, items);
+    }
+
     public async Task<MailMessageReadResult> ReadAsync(
         MailMessageReadCommand command, AuthenticatedMailUser user,
         CancellationToken cancellationToken)

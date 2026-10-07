@@ -130,7 +130,7 @@ internal sealed class JmapOperationBoundaryTests
                     MailOperationKind.ReadThreads,
                     MailOperationKind.ReadFolderChanges,
                     MailOperationKind.ReadThreadChanges, MailOperationKind.ReadMessageChanges,
-                    MailOperationKind.ReadMessages, MailOperationKind.ParseMessages,
+                    MailOperationKind.ReadMessages, MailOperationKind.ParseMessages, MailOperationKind.ReadMessageContent,
                     MailOperationKind.MutateMessages,
                     MailOperationKind.ReadSenderIdentityChanges, MailOperationKind.ReadSubmissionChanges,
                     MailOperationKind.ReadAddressBooks, MailOperationKind.ReadAddressBookChanges,

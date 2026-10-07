@@ -40,8 +40,13 @@ internal static class GatewayEwsItemRequestParser
         if (index < fields.Length && fields[index].Name == GatewayEwsSoap.Types + "IncludeMimeContent")
         {
             GatewayEwsRequestParser.Scalar(fields[index]);
-            if (fields[index].Value is "true" or "1") throw new GatewayEwsRequestException("ErrorInvalidPropertyRequest");
-            if (fields[index++].Value is not ("false" or "0")) Invalid();
+            if (fields[index].Value is "true" or "1")
+            {
+                if (!allowBody) throw new GatewayEwsRequestException("ErrorInvalidPropertyRequest");
+                properties.Add("MimeContent");
+            }
+            else if (fields[index].Value is not ("false" or "0")) Invalid();
+            index++;
         }
         (index, bodyType) = BodyOptions(fields, index, allowBody);
         if (index == fields.Length) return properties;

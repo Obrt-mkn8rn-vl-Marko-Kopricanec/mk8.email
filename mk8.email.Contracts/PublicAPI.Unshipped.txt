@@ -1,10 +1,68 @@
 #nullable enable
+mk8.email.Contracts.Messaging.MailMessageContentCommand
+mk8.email.Contracts.Messaging.MailMessageContentCommand.<Clone>$() -> mk8.email.Contracts.Messaging.MailMessageContentCommand!
+mk8.email.Contracts.Messaging.MailMessageContentCommand.AccountId.get -> System.Guid
+mk8.email.Contracts.Messaging.MailMessageContentCommand.AccountId.init -> void
+mk8.email.Contracts.Messaging.MailMessageContentCommand.Deconstruct(out System.Guid AccountId, out System.Collections.Generic.IReadOnlyList<System.Guid>! MessageIds, out bool IncludeText, out int MaximumBytes) -> void
+mk8.email.Contracts.Messaging.MailMessageContentCommand.Equals(mk8.email.Contracts.Messaging.MailMessageContentCommand? other) -> bool
+mk8.email.Contracts.Messaging.MailMessageContentCommand.IncludeText.get -> bool
+mk8.email.Contracts.Messaging.MailMessageContentCommand.IncludeText.init -> void
+mk8.email.Contracts.Messaging.MailMessageContentCommand.MailMessageContentCommand(System.Guid AccountId, System.Collections.Generic.IReadOnlyList<System.Guid>! MessageIds, bool IncludeText, int MaximumBytes) -> void
+mk8.email.Contracts.Messaging.MailMessageContentCommand.MaximumBytes.get -> int
+mk8.email.Contracts.Messaging.MailMessageContentCommand.MaximumBytes.init -> void
+mk8.email.Contracts.Messaging.MailMessageContentCommand.MessageIds.get -> System.Collections.Generic.IReadOnlyList<System.Guid>!
+mk8.email.Contracts.Messaging.MailMessageContentCommand.MessageIds.init -> void
+mk8.email.Contracts.Messaging.MailMessageContentItem
+mk8.email.Contracts.Messaging.MailMessageContentItem.<Clone>$() -> mk8.email.Contracts.Messaging.MailMessageContentItem!
+mk8.email.Contracts.Messaging.MailMessageContentItem.Content.get -> System.ReadOnlyMemory<byte>
+mk8.email.Contracts.Messaging.MailMessageContentItem.Content.init -> void
+mk8.email.Contracts.Messaging.MailMessageContentItem.Deconstruct(out System.Guid MessageId, out mk8.email.Contracts.Messaging.MailMessageContentStatus Status, out mk8.email.Contracts.Messaging.MailMessageSnapshot? Value, out System.ReadOnlyMemory<byte> Content) -> void
+mk8.email.Contracts.Messaging.MailMessageContentItem.Equals(mk8.email.Contracts.Messaging.MailMessageContentItem? other) -> bool
+mk8.email.Contracts.Messaging.MailMessageContentItem.MailMessageContentItem(System.Guid MessageId, mk8.email.Contracts.Messaging.MailMessageContentStatus Status, mk8.email.Contracts.Messaging.MailMessageSnapshot? Value, System.ReadOnlyMemory<byte> Content) -> void
+mk8.email.Contracts.Messaging.MailMessageContentItem.MessageId.get -> System.Guid
+mk8.email.Contracts.Messaging.MailMessageContentItem.MessageId.init -> void
+mk8.email.Contracts.Messaging.MailMessageContentItem.Status.get -> mk8.email.Contracts.Messaging.MailMessageContentStatus
+mk8.email.Contracts.Messaging.MailMessageContentItem.Status.init -> void
+mk8.email.Contracts.Messaging.MailMessageContentItem.Value.get -> mk8.email.Contracts.Messaging.MailMessageSnapshot?
+mk8.email.Contracts.Messaging.MailMessageContentItem.Value.init -> void
+mk8.email.Contracts.Messaging.MailMessageContentResult
+mk8.email.Contracts.Messaging.MailMessageContentResult.<Clone>$() -> mk8.email.Contracts.Messaging.MailMessageContentResult!
+mk8.email.Contracts.Messaging.MailMessageContentResult.Deconstruct(out mk8.email.Contracts.Messaging.MailMessageReadStatus Status, out string? State, out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailMessageContentItem!>! Messages) -> void
+mk8.email.Contracts.Messaging.MailMessageContentResult.Equals(mk8.email.Contracts.Messaging.MailMessageContentResult? other) -> bool
+mk8.email.Contracts.Messaging.MailMessageContentResult.MailMessageContentResult(mk8.email.Contracts.Messaging.MailMessageReadStatus Status, string? State, System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailMessageContentItem!>! Messages) -> void
+mk8.email.Contracts.Messaging.MailMessageContentResult.Messages.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailMessageContentItem!>!
+mk8.email.Contracts.Messaging.MailMessageContentResult.Messages.init -> void
+mk8.email.Contracts.Messaging.MailMessageContentResult.State.get -> string?
+mk8.email.Contracts.Messaging.MailMessageContentResult.State.init -> void
+mk8.email.Contracts.Messaging.MailMessageContentResult.Status.get -> mk8.email.Contracts.Messaging.MailMessageReadStatus
+mk8.email.Contracts.Messaging.MailMessageContentResult.Status.init -> void
+mk8.email.Contracts.Messaging.MailMessageContentStatus
+mk8.email.Contracts.Messaging.MailMessageContentStatus.NotFound = 1 -> mk8.email.Contracts.Messaging.MailMessageContentStatus
+mk8.email.Contracts.Messaging.MailMessageContentStatus.NotParsable = 3 -> mk8.email.Contracts.Messaging.MailMessageContentStatus
+mk8.email.Contracts.Messaging.MailMessageContentStatus.Ok = 0 -> mk8.email.Contracts.Messaging.MailMessageContentStatus
+mk8.email.Contracts.Messaging.MailMessageContentStatus.TooLarge = 2 -> mk8.email.Contracts.Messaging.MailMessageContentStatus
+mk8.email.Contracts.Messaging.MailOperationKind.ReadMessageContent = 39 -> mk8.email.Contracts.Messaging.MailOperationKind
+override mk8.email.Contracts.Messaging.MailMessageContentCommand.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailMessageContentCommand.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailMessageContentCommand.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailMessageContentItem.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailMessageContentItem.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailMessageContentItem.ToString() -> string!
+override mk8.email.Contracts.Messaging.MailMessageContentResult.Equals(object? obj) -> bool
+override mk8.email.Contracts.Messaging.MailMessageContentResult.GetHashCode() -> int
+override mk8.email.Contracts.Messaging.MailMessageContentResult.ToString() -> string!
+static mk8.email.Contracts.Messaging.MailMessageContentCommand.operator !=(mk8.email.Contracts.Messaging.MailMessageContentCommand? left, mk8.email.Contracts.Messaging.MailMessageContentCommand? right) -> bool
+static mk8.email.Contracts.Messaging.MailMessageContentCommand.operator ==(mk8.email.Contracts.Messaging.MailMessageContentCommand? left, mk8.email.Contracts.Messaging.MailMessageContentCommand? right) -> bool
+static mk8.email.Contracts.Messaging.MailMessageContentItem.operator !=(mk8.email.Contracts.Messaging.MailMessageContentItem? left, mk8.email.Contracts.Messaging.MailMessageContentItem? right) -> bool
+static mk8.email.Contracts.Messaging.MailMessageContentItem.operator ==(mk8.email.Contracts.Messaging.MailMessageContentItem? left, mk8.email.Contracts.Messaging.MailMessageContentItem? right) -> bool
+static mk8.email.Contracts.Messaging.MailMessageContentResult.operator !=(mk8.email.Contracts.Messaging.MailMessageContentResult? left, mk8.email.Contracts.Messaging.MailMessageContentResult? right) -> bool
+static mk8.email.Contracts.Messaging.MailMessageContentResult.operator ==(mk8.email.Contracts.Messaging.MailMessageContentResult? left, mk8.email.Contracts.Messaging.MailMessageContentResult? right) -> bool
 mk8.email.Contracts.Messaging.MailSubmissionCreate.Deconstruct(out string! CreationId, out mk8.email.Contracts.Messaging.MailSubmissionDraft! Draft) -> void
 mk8.email.Contracts.Messaging.MailSubmissionUpdate.Deconstruct(out string! RequestedId, out mk8.email.Contracts.Messaging.MailSubmissionPatch! Patch) -> void
 mk8.email.Contracts.Messaging.MailSubmissionMutationFailure.Deconstruct(out mk8.email.Contracts.Messaging.MailSubmissionMutationError Error, out string? Description, out System.Collections.Generic.IReadOnlyList<string!>? Properties, out System.Collections.Generic.IReadOnlyList<string!>? InvalidRecipients, out long? MaxSize, out int? MaxRecipients, out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailSubmissionEmailIssue>? EmailIssues) -> void
 mk8.email.Contracts.Messaging.MailSubmissionSnapshot.Deconstruct(out System.Guid Id, out string! IdentityId, out string! EmailId, out string! ThreadId, out mk8.email.Contracts.Messaging.MailSubmissionEnvelope? Envelope, out string! EnvelopeSender, out System.Collections.Generic.IReadOnlyList<string!>! EnvelopeRecipients, out System.DateTime SendAt, out string! UndoStatus, out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailSubmissionDeliverySnapshot!>? DeliveryRecipients) -> void
-const mk8.email.Contracts.Messaging.ApplicationOperations.MailOperationExecute = "mail.operation.execute.v35" -> string!
-const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v42" -> string!
+const mk8.email.Contracts.Messaging.ApplicationOperations.MailOperationExecute = "mail.operation.execute.v36" -> string!
+const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v43" -> string!
 mk8.email.Contracts.Messaging.MailEnvelopeAddress
 mk8.email.Contracts.Messaging.MailEnvelopeAddress.<Clone>$() -> mk8.email.Contracts.Messaging.MailEnvelopeAddress!
 mk8.email.Contracts.Messaging.MailEnvelopeAddress.Address.get -> string!

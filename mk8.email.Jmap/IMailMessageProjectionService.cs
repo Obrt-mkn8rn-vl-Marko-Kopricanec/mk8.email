@@ -5,6 +5,9 @@ namespace mk8.email.Jmap;
 
 internal interface IMailMessageProjectionService
 {
+    Task<MailMessageContentResult> ReadContentAsync(MailMessageContentCommand command,
+        AuthenticatedMailUser user, CancellationToken cancellationToken);
+
     Task<MailMessageReadResult> ReadAsync(MailMessageReadCommand command,
         AuthenticatedMailUser user, CancellationToken cancellationToken);
 

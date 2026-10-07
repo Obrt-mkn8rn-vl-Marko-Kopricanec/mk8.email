@@ -29,7 +29,7 @@ wrong-case or undefined internal discriminators fail closed before any mutation.
 Handler registration rejects duplicate or invalid identifiers, and primary/additional
 result identifiers are checked before commit and on receipt replay. Opaque business
 values named `name` or `sourceName` are untouched. This is a coordinated contract
-change (`mk8.distributed.v42`), not evidence that the final analyzer/review gates pass.
+change (`mk8.distributed.v43`), not evidence that the final analyzer/review gates pass.
 
 `Mailbox/get`, `Thread/get`, `AddressBook/get`, `Identity/get`, `EmailSubmission/get`, `VacationResponse/get`,
 `PushSubscription/get` and all seven simple `/changes` methods have fully typed commands/results across this
@@ -137,11 +137,18 @@ protocol-neutral text-inclusion flag. Gateway keeps property grammar, header
 forms, body selection, truncation, preview and output limits locally. Worker
 authorizes the account, reads stored MIME or account-scoped Azure Blob content
 and returns a MIME snapshot: raw header octets, part metadata, decoded text when
-needed, and stored message metadata. Binary attachment payloads do not cross this
-boundary; their content remains behind authorized Azure-backed Blob IDs.
+needed, and stored message metadata. Binary attachment payloads do not cross these
+two snapshot operations; their content remains behind authorized Azure-backed Blob IDs.
 Gateway renders the complete inner Email value as well as ordered results and
 missing/invalid IDs. The encrypted receipt freezes the MIME snapshot for retries
 independently of later message/blob deletion.
+The separate `ReadMessageContent` domain operation admits bounded, explicit native
+message retrieval (currently consumed by Gateway's GetItem IncludeMimeContent).
+It returns original message bytes, including MIME attachment data, and the matching
+stored snapshot in one gate-first transaction, with independently rechecked active
+account ownership. Its before-read per-item and encoded-batch budgets are distinct
+from ordinary metadata/body selection. Large replies and encrypted receipts retain
+the Azure Blob-backed transport path; no Worker SOAP/XML formatting is introduced.
 Email creation values now contain typed folder references, keywords, received dates
 and a flat MIME draft. Gateway validates JMAP header/body syntax and creates
 raw MIME header snapshots, decoded inline text and blob references. Worker
@@ -235,7 +242,7 @@ This changes the durable operation contracts. The old `jmap.api.process`,
 `mail.operation.execute.v24`, `mail.operation.execute.v25`,
 `mail.operation.execute.v26`, `mail.operation.execute.v27`,
 `mail.operation.execute.v28`, `mail.operation.execute.v29`, `mail.operation.execute.v30`,
-`mail.operation.execute.v31`, `mail.operation.execute.v32`, `mail.operation.execute.v33`, `mail.operation.execute.v34` operations
+`mail.operation.execute.v31`, `mail.operation.execute.v32`, `mail.operation.execute.v33`, `mail.operation.execute.v34`, `mail.operation.execute.v35` operations
 are unsupported. The current operations are `mail.plan.validate`,
 `mail.operation.execute.v35`, `jmap.profile.get.v2`, `jmap.upload.v2`,
 `jmap.download.v2`, `jmap.changes.poll.v2` and `webpush.send.v2`. Old requests must

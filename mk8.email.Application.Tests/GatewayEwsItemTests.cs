@@ -59,7 +59,7 @@ internal sealed class GatewayEwsItemTests
     [TestMethod]
     [DataRow("Default", "", "ErrorInvalidPropertyRequest")]
     [DataRow("AllProperties", "", "ErrorInvalidPropertyRequest")]
-    [DataRow("IdOnly", "<t:IncludeMimeContent>true</t:IncludeMimeContent>", "ErrorInvalidPropertyRequest")]
+    [DataRow("IdOnly", "<t:AdditionalProperties><t:FieldURI FieldURI='item:MimeContentUTF8'/></t:AdditionalProperties>", "ErrorInvalidPropertyRequest")]
     [DataRow("IdOnly", "<t:BodyType>text</t:BodyType>", "ErrorSchemaValidation")]
     [DataRow("IdOnly", "<t:FilterHtmlContent>true</t:FilterHtmlContent>", "ErrorInvalidPropertyRequest")]
     [DataRow("IdOnly", "<t:AdditionalProperties><t:ExtendedFieldURI PropertyTag='0x3001' PropertyType='String'/></t:AdditionalProperties>", "ErrorInvalidPropertyRequest")]

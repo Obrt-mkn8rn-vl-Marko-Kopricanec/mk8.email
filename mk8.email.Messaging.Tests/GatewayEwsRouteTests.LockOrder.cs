@@ -51,10 +51,12 @@ internal sealed partial class GatewayEwsRouteTests
         barrier.Arm();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         var mutation = RunLockOrderMutationAsync(fixture, key, delete, deadline.Token);
+        Task<int>? saving = null;
+        Exception? failure = null;
         try
         {
             var ownerPid = await barrier.Locked.Task.WaitAsync(deadline.Token).ConfigureAwait(false);
-            var saving = command.ExecuteNonQueryAsync(deadline.Token);
+            saving = command.ExecuteNonQueryAsync(deadline.Token);
             await AssertBlockedWriterAsync(fixture, writer.ProcessID, ownerPid, legacy, deadline.Token).ConfigureAwait(false);
             Assert.IsFalse(saving.IsCompleted);
             barrier.Resume();
@@ -63,17 +65,16 @@ internal sealed partial class GatewayEwsRouteTests
             if (legacy)
                 AssertLegacyDeadlockResult(result, writerError, barrier);
             else
-            {
-                Assert.IsNull(writerError);
-                AssertMutationSucceeded(result);
-                Assert.IsFalse(barrier.ProviderErrors.Contains(PostgresErrorCodes.DeadlockDetected, StringComparer.Ordinal));
-                await AssertLockOrderResultAsync(fixture, emailId, delete).ConfigureAwait(false);
-            }
+                await AssertGuardedSqlResultAsync(fixture, emailId, delete, result, writerError, barrier).ConfigureAwait(false);
         }
+        // Preserve the original assertion/provider failure if cleanup also fails.
+#pragma warning disable CA1031
+        catch (Exception exception) { failure = exception; throw; }
+#pragma warning restore CA1031
         finally
         {
             barrier.Resume();
-            await ObserveMutationCleanupAsync(mutation, deadline).ConfigureAwait(false);
+            await ObserveWriterCleanupAsync(mutation, saving, deadline, failure, legacy: legacy).ConfigureAwait(false);
         }
     }
 
@@ -96,10 +97,12 @@ internal sealed partial class GatewayEwsRouteTests
         barrier.Arm();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         var mutation = RunLockOrderMutationAsync(fixture, key, delete, deadline.Token);
+        Task<int>? saving = null;
+        Exception? failure = null;
         try
         {
             var ownerPid = await barrier.Locked.Task.WaitAsync(deadline.Token).ConfigureAwait(false);
-            var saving = writer.SaveChangesAsync(deadline.Token);
+            saving = writer.SaveChangesAsync(deadline.Token);
             var pid = ((NpgsqlConnection)writer.Database.GetDbConnection()).ProcessID;
             await AssertBlockedWriterAsync(fixture, pid, ownerPid, legacy: false, deadline.Token).ConfigureAwait(false);
             Assert.AreEqual(0, writer.ChangeTracker.Entries<JmapChangeDB>().Count());
@@ -115,10 +118,14 @@ internal sealed partial class GatewayEwsRouteTests
             else Assert.IsGreaterThan(0, await saving.ConfigureAwait(false));
             await AssertLockOrderResultAsync(fixture, emailId, delete).ConfigureAwait(false);
         }
+        // Cleanup observes both independently started transactions, retaining failures.
+#pragma warning disable CA1031
+        catch (Exception exception) { failure = exception; throw; }
+#pragma warning restore CA1031
         finally
         {
             barrier.Resume();
-            await ObserveMutationCleanupAsync(mutation, deadline).ConfigureAwait(false);
+            await ObserveWriterCleanupAsync(mutation, saving, deadline, failure, concurrency: delete).ConfigureAwait(false);
         }
     }
 
@@ -159,16 +166,31 @@ internal sealed partial class GatewayEwsRouteTests
         await using var writerLifetime = writer.ConfigureAwait(false);
         await writer.Database.OpenConnectionAsync().ConfigureAwait(false);
         (await writer.Emails.SingleAsync(item => item.Id == emailId).ConfigureAwait(false)).IsRead = true;
-        var saving = writer.SaveChangesAsync();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        await AssertBlockedWriterAsync(fixture, ((NpgsqlConnection)writer.Database.GetDbConnection()).ProcessID,
-            ((NpgsqlConnection)owner.Database.GetDbConnection()).ProcessID, legacy: false, deadline.Token).ConfigureAwait(false);
-        Assert.AreEqual(0, writer.ChangeTracker.Entries<JmapChangeDB>().Count());
-        await transaction.CommitAsync().ConfigureAwait(false);
-        await saving.WaitAsync(deadline.Token).ConfigureAwait(false);
-        var changes = await owner.JmapChanges.AsNoTracking().Where(item => item.Sequence > before).ToListAsync().ConfigureAwait(false);
-        Assert.IsNotEmpty(changes);
-        Assert.IsTrue(changes.All(item => item.AccountId == GatewayEwsFixtureDomain.ForeignAccountId));
+        var saving = writer.SaveChangesAsync(deadline.Token);
+        Exception? failure = null;
+        var committed = false;
+        try
+        {
+            await AssertBlockedWriterAsync(fixture, ((NpgsqlConnection)writer.Database.GetDbConnection()).ProcessID,
+                ((NpgsqlConnection)owner.Database.GetDbConnection()).ProcessID, legacy: false, deadline.Token).ConfigureAwait(false);
+            Assert.AreEqual(0, writer.ChangeTracker.Entries<JmapChangeDB>().Count());
+            await transaction.CommitAsync(deadline.Token).ConfigureAwait(false);
+            committed = true;
+            await saving.WaitAsync(deadline.Token).ConfigureAwait(false);
+            var changes = await owner.JmapChanges.AsNoTracking().Where(item => item.Sequence > before).ToListAsync().ConfigureAwait(false);
+            Assert.IsNotEmpty(changes);
+            Assert.IsTrue(changes.All(item => item.AccountId == GatewayEwsFixtureDomain.ForeignAccountId));
+        }
+        // Scope-collection assertions also own the independently started writer through failure.
+#pragma warning disable CA1031
+        catch (Exception exception) { failure = exception; throw; }
+#pragma warning restore CA1031
+        finally
+        {
+            if (!committed) await transaction.RollbackAsync().ConfigureAwait(false);
+            await ObserveWriterCleanupAsync(Task.CompletedTask, saving, deadline, failure).ConfigureAwait(false);
+        }
     }
 
     [TestMethod]
@@ -237,10 +259,12 @@ internal sealed partial class GatewayEwsRouteTests
         barrier.Arm();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         var mutation = RunParentLockOrderMutationAsync(fixture, key, deadline.Token);
+        Task<int>? deleting = null;
+        Exception? failure = null;
         try
         {
             var ownerPid = await barrier.Locked.Task.WaitAsync(deadline.Token).ConfigureAwait(false);
-            var deleting = command.ExecuteNonQueryAsync(deadline.Token);
+            deleting = command.ExecuteNonQueryAsync(deadline.Token);
             await AssertBlockedWriterAsync(fixture, writer.ProcessID, ownerPid, legacy: false, deadline.Token).ConfigureAwait(false);
             barrier.Resume();
             var updated = await mutation.WaitAsync(deadline.Token).ConfigureAwait(false);
@@ -253,10 +277,14 @@ internal sealed partial class GatewayEwsRouteTests
             Assert.IsFalse(await result.Inboxes.AnyAsync(item => item.Id == GatewayEwsFixtureDomain.AccountId).ConfigureAwait(false));
             Assert.IsFalse(await result.Folders.AnyAsync(item => item.InboxId == GatewayEwsFixtureDomain.AccountId).ConfigureAwait(false));
         }
+        // Do not dispose the command/connection while the parent writer is running.
+#pragma warning disable CA1031
+        catch (Exception exception) { failure = exception; throw; }
+#pragma warning restore CA1031
         finally
         {
             barrier.Resume();
-            await ObserveMutationCleanupAsync(mutation, deadline).ConfigureAwait(false);
+            await ObserveWriterCleanupAsync(mutation, deleting, deadline, failure).ConfigureAwait(false);
         }
     }
 
@@ -270,14 +298,13 @@ internal sealed partial class GatewayEwsRouteTests
         return id;
     }
 
-    private static async Task ObserveMutationCleanupAsync<T>(Task<T> mutation, CancellationTokenSource deadline)
+    private static async Task AssertGuardedSqlResultAsync(CaptureFixture fixture, Guid emailId, bool delete,
+        MailOperationResult result, string? writerError, FolderLockBarrier barrier)
     {
-        await deadline.CancelAsync().ConfigureAwait(false);
-        // The test started this independent transaction; observe it before disposing its fixture.
-#pragma warning disable VSTHRD003
-        try { await mutation.ConfigureAwait(false); }
-#pragma warning restore VSTHRD003
-        catch (OperationCanceledException) when (deadline.IsCancellationRequested) { }
+        Assert.IsNull(writerError);
+        AssertMutationSucceeded(result);
+        Assert.IsFalse(barrier.ProviderErrors.Contains(PostgresErrorCodes.DeadlockDetected, StringComparer.Ordinal));
+        await AssertLockOrderResultAsync(fixture, emailId, delete).ConfigureAwait(false);
     }
 
     private static void SetParentCascadeCommand(NpgsqlCommand command, string parent)

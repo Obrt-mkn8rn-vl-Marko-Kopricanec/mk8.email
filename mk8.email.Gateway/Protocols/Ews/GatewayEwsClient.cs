@@ -90,6 +90,33 @@ internal sealed class GatewayEwsClient(IGatewayApplicationTransport transport, E
         return ApplicationValueCodec.Decode(response.Response.Data!) as JsonObject ?? throw InvalidResult();
     }
 
+    internal async Task<MailMessageReadResult> ReadItemsAsync(ProtocolAuthentication authentication,
+        JmapApplicationProfile profile, Guid account, IReadOnlyList<Guid> ids, CancellationToken cancellationToken)
+    {
+        if (ids.Count == 0 || ids.Count > Math.Min(GatewayEwsRequestParser.MaximumReferences, profile.Limits.MaxObjectsInGet)
+            || ids.Any(id => id == Guid.Empty) || ids.Distinct().Count() != ids.Count)
+            throw new GatewayEwsRequestException("ErrorExceededFindCountLimit");
+        var data = await ExecuteAsync(authentication, profile, MailOperationKind.ReadMessages,
+            new MailMessageReadCommand(account, ids, false), cancellationToken).ConfigureAwait(false);
+        RequireMembers(data, "status", "state", "messages");
+        var read = data.Deserialize<MailMessageReadResult>(JsonOptions) ?? throw InvalidResult();
+        if (!Enum.IsDefined(read.Status) || read.Messages is null || read.Messages.Count > ids.Count) Invalid();
+        if (read.Status != MailMessageReadStatus.Ok)
+        {
+            if (read.State is not null || read.Messages.Count != 0) Invalid();
+            return read;
+        }
+        RequireState(read.State);
+        var seen = new HashSet<Guid>();
+        foreach (var item in read.Messages)
+        {
+            if (item is null || !ids.Contains(item.MessageId) || !seen.Add(item.MessageId) || item.Value is null
+                || item.Value.Stored?.Id != item.MessageId || item.Value.ContentSourceId != item.MessageId
+                || item.Value.UploadedContentId is not null || item.Value.PartPrefix is not null) Invalid();
+        }
+        return read;
+    }
+
     internal async Task<MailOperationResult> ExecuteOperationAsync<T>(ProtocolAuthentication authentication, JmapApplicationProfile profile,
         MailOperationKind operation, T command, CancellationToken cancellationToken)
     {

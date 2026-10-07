@@ -83,6 +83,14 @@ internal static class GatewayEwsEndpointRouteBuilderExtensions
         }
         var primary = profile.Accounts.Where(account => string.Equals(account.Name, profile.Username, StringComparison.OrdinalIgnoreCase)).ToArray();
         if (primary.Length > 1) throw new InvalidOperationException("The EWS primary account is ambiguous.");
+        if (request.Items is not null)
+        {
+            var itemAccount = primary.Length == 0 ? Guid.Empty : GatewayEwsClient.TryAccount(primary[0].Id, out var parsed)
+                ? parsed : throw new InvalidOperationException("Invalid EWS account.");
+            var items = await GatewayEwsItemResponse.ExecuteAsync(application, authentication, profile, itemAccount, request, cancellationToken).ConfigureAwait(false);
+            await WriteBoundedAsync(context, items, environment).ConfigureAwait(false);
+            return;
+        }
         var accountId = Guid.Empty;
         var read = primary.Length == 0 ? null : await application.ReadGraphAsync(authentication, profile,
             GatewayEwsClient.TryAccount(primary[0].Id, out accountId) ? accountId : throw new InvalidOperationException("Invalid EWS account."),
@@ -93,6 +101,11 @@ internal static class GatewayEwsEndpointRouteBuilderExtensions
             ? await GatewayEwsFolderMutations.ExecuteAsync(application, authentication, profile, accountId, request, graph,
                 GatewayEwsClient.MaximumFolders(profile, environment.Messaging.MaxPayloadBytes), error, cancellationToken).ConfigureAwait(false)
             : GatewayEwsFolderResponse.Render(request, graph, profile.Username, error);
+        await WriteBoundedAsync(context, xml, environment).ConfigureAwait(false);
+    }
+
+    private static async Task WriteBoundedAsync(HttpContext context, string xml, EnvironmentConfig environment)
+    {
         if (GatewayHttpPayloadBudget.BinaryEnvelopeBytes(Encoding.UTF8.GetByteCount(xml)) > environment.Messaging.MaxPayloadBytes)
         {
             await FaultAsync(context, "ErrorDataSizeLimitExceeded", StatusCodes.Status500InternalServerError).ConfigureAwait(false);

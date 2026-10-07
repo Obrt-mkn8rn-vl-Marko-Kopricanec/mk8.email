@@ -188,8 +188,8 @@ internal sealed partial class GatewayEwsRouteTests
 #pragma warning restore CA1031
         finally
         {
-            if (!committed) await transaction.RollbackAsync().ConfigureAwait(false);
-            await ObserveWriterCleanupAsync(Task.CompletedTask, saving, deadline, failure).ConfigureAwait(false);
+            await ObserveWriterCleanupAsync(Task.CompletedTask, saving, deadline, failure,
+                rollback: committed ? null : transaction.RollbackAsync).ConfigureAwait(false);
         }
     }
 

@@ -56,7 +56,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t projects < <(rg -l '<EnforceCodeStyleInBuild>true' mk8.email.*/*.csproj | sort)
+          shopt -s nullglob
+          projects=(*/*.csproj)
+          test "${#projects[@]}" -gt 0
+          printf 'Analyzing %s projects.\n' "${#projects[@]}"
           for project in "${projects[@]}"; do
             dotnet build "$project" --configuration Release --no-restore --no-dependencies --target:Rebuild \
               --property:TreatWarningsAsErrors=true \
@@ -157,6 +160,7 @@ jobs:
               deploy/tests/mail_smoke.py deploy/tests/multi_domain_smoke.py
           python3 deploy/tests/distributed_config_smoke.py
           python3 -m unittest discover -s deploy/tests -p test_release_archive_smoke.py
+          python3 -m unittest discover -s deploy/tests -p test_ci_analyzer_gate.py
           sh deploy/tests/gateway_database_access_smoke deploy/scripts/configure-gateway-database-access deploy/postgresql/restricted-role-posture.sql
           sh deploy/tests/wake_database_access_smoke deploy/scripts/configure-wake-database-access deploy/postgresql/restricted-role-posture.sql
           sh deploy/tests/container_on_demand_smoke \

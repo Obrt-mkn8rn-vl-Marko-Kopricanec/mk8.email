@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using System.Xml;
 using System.Xml.Linq;
+using mk8.email.Configuration;
 using mk8.email.Contracts.Messaging;
 using mk8.email.Gateway.Protocols.Jmap;
 
@@ -19,8 +20,9 @@ internal static class GatewayEwsItemResponse
         var references = request.Items ?? throw new InvalidOperationException("The EWS item request is incomplete.");
         var plans = references.Select(reference => Resolve(reference, account)).ToArray();
         var ids = plans.Where(plan => plan.Code is null).Select(plan => plan.Id).Distinct().ToArray();
-        var read = ids.Length == 0 ? null : await application.ReadItemsAsync(authentication, profile, account, ids, cancellationToken).ConfigureAwait(false);
-        return Render(request.Properties, plans, account, read);
+        var read = ids.Length == 0 ? null : await application.ReadItemsAsync(authentication, profile, account, ids, cancellationToken,
+            includeText: request.Properties.Contains("Body")).ConfigureAwait(false);
+        return Render(request, plans, account, read, application.MaximumPayloadBytes);
     }
 
     private static (Guid Id, string? Code) Resolve(GatewayEwsItemReference reference, Guid account)
@@ -40,12 +42,16 @@ internal static class GatewayEwsItemResponse
         return (id, null);
     }
 
-    private static string Render(IReadOnlySet<string> properties, (Guid Id, string? Code)[] plans,
-        Guid account, MailMessageReadResult? read)
+    private static string Render(GatewayEwsRequest request, (Guid Id, string? Code)[] plans,
+        Guid account, MailMessageReadResult? read, int maximumPayloadBytes)
     {
         var byId = read?.Messages.ToDictionary(item => item.MessageId, item => item.Value) ?? [];
         var failure = read?.Status == MailMessageReadStatus.RequestTooLarge ? "ErrorDataSizeLimitExceeded" : "ErrorItemNotFound";
         var responses = new XElement(GatewayEwsSoap.Messages + "ResponseMessages");
+        // Conservatively count each row in its own prefix-qualified SOAP envelope.
+        // The fixed reserve covers the actual GetItem/ResponseMessages wrappers;
+        // duplicated per-row envelope overhead prevents undercounting namespaces.
+        long responseBytes = 1024;
         foreach (var plan in plans)
         {
             var code = plan.Code;
@@ -54,7 +60,7 @@ internal static class GatewayEwsItemResponse
             if (code is null && snapshot is null) code = failure;
             else if (code is null)
             {
-                try { item = Message(account, read!.State!, snapshot!, properties); }
+                try { item = Message(account, read!.State!, snapshot!, request.Properties, request.BodyType); }
                 catch (XmlException) { code = "ErrorInvalidPropertyRequest"; }
                 catch (GatewayEwsRequestException exception) { code = exception.Code; }
             }
@@ -63,12 +69,18 @@ internal static class GatewayEwsItemResponse
             response.Add(new XElement(GatewayEwsSoap.Messages + "ResponseCode", code ?? "NoError"));
             if (code is not null) response.Add(new XElement(GatewayEwsSoap.Messages + "DescriptiveLinkKey", 0));
             response.Add(new XElement(GatewayEwsSoap.Messages + "Items", item));
+            if (request.Properties.Contains("Body"))
+            {
+                responseBytes += Encoding.UTF8.GetByteCount(GatewayEwsSoap.Envelope(new XElement(response)));
+                if (GatewayHttpPayloadBudget.BinaryEnvelopeBytes(responseBytes) > maximumPayloadBytes)
+                    throw new GatewayEwsRequestException("ErrorDataSizeLimitExceeded");
+            }
             responses.Add(response);
         }
         return GatewayEwsSoap.Envelope(new XElement(GatewayEwsSoap.Messages + "GetItemResponse", responses));
     }
 
-    internal static XElement Message(Guid account, string state, MailMessageSnapshot snapshot, IReadOnlySet<string> properties)
+    internal static XElement Message(Guid account, string state, MailMessageSnapshot snapshot, IReadOnlySet<string> properties, string bodyType = "Best")
     {
         var value = GatewayEmailValueCodec.BuildEmail(snapshot, Projection);
         var stored = snapshot.Stored ?? throw new InvalidOperationException("The EWS item has no stored identity.");
@@ -79,6 +91,7 @@ internal static class GatewayEwsItemResponse
             new XAttribute("Id", GatewayEwsFolderIdCodec.Encode(account, stored.FolderId))));
         Add(result, properties, "ItemClass", "IPM.Note");
         Add(result, properties, "Subject", value["subject"]?.GetValue<string>() ?? "");
+        if (properties.Contains("Body")) result.Add(GatewayEwsBodyCodec.Render(snapshot, bodyType));
         Add(result, properties, "DateTimeReceived", stored.ReceivedAt.ToString("O", System.Globalization.CultureInfo.InvariantCulture));
         Add(result, properties, "Size", stored.Size);
         Add(result, properties, "IsDraft", stored.Keywords.Contains("$draft", StringComparer.Ordinal));

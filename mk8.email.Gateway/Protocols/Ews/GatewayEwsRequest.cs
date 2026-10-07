@@ -9,7 +9,8 @@ internal sealed record GatewayEwsRequest(
     int Limit,
     bool Indexed,
     IReadOnlyList<string>? Names = null,
-    IReadOnlyList<GatewayEwsItemReference>? Items = null)
+    IReadOnlyList<GatewayEwsItemReference>? Items = null,
+    string BodyType = "Best")
 {
     public bool IsMutation => Operation is "CreateFolder" or "UpdateFolder" or "DeleteFolder";
 }

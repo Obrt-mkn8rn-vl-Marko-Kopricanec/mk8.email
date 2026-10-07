@@ -19,7 +19,7 @@ internal static class GatewayEwsFindItemRequestParser
         var fields = operation.Elements().ToArray();
         if (fields.Length is < 2 or > 3 || fields[0].Name != GatewayEwsSoap.Messages + "ItemShape"
             || fields[^1].Name != GatewayEwsSoap.Messages + "ParentFolderIds") Invalid();
-        var properties = GatewayEwsItemRequestParser.Shape(fields[0]);
+        var properties = GatewayEwsItemRequestParser.Shape(fields[0], out _);
         // FindItem does not expose GetItem's recipient lists/full Sender/From addresses.
         if (properties.Any(property => !Properties.Contains(property)))
             throw new GatewayEwsRequestException("ErrorInvalidPropertyRequest");

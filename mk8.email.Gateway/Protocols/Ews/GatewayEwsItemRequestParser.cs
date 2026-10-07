@@ -7,7 +7,7 @@ internal static class GatewayEwsItemRequestParser
     private static readonly HashSet<string> Fields = new(StringComparer.Ordinal)
     {
         "item:ItemId", "item:ParentFolderId", "item:ItemClass", "item:Subject", "item:DateTimeReceived", "item:Size",
-        "item:IsDraft", "item:DateTimeSent", "item:HasAttachments", "message:Sender", "message:ToRecipients",
+        "item:IsDraft", "item:DateTimeSent", "item:HasAttachments", "item:Body", "message:Sender", "message:ToRecipients",
         "message:CcRecipients", "message:BccRecipients", "message:From", "message:InternetMessageId", "message:IsRead", "message:ReplyTo",
     };
 
@@ -17,17 +17,18 @@ internal static class GatewayEwsItemRequestParser
         var fields = operation.Elements().ToArray();
         if (fields.Length != 2 || fields[0].Name != GatewayEwsSoap.Messages + "ItemShape"
             || fields[1].Name != GatewayEwsSoap.Messages + "ItemIds") Invalid();
-        var properties = Shape(fields[0]);
+        var properties = Shape(fields[0], out var bodyType, allowBody: true);
         GatewayEwsRequestParser.Container(fields[1]);
         var references = fields[1].Elements().Select(Reference).ToArray();
         if (references.Length == 0) Invalid();
         if (references.Length > GatewayEwsRequestParser.MaximumReferences)
             throw new GatewayEwsRequestException("ErrorExceededFindCountLimit");
-        return new("GetItem", properties, [], false, 0, 0, false, Items: references);
+        return new("GetItem", properties, [], false, 0, 0, false, Items: references, BodyType: bodyType);
     }
 
-    internal static HashSet<string> Shape(XElement shape)
+    internal static HashSet<string> Shape(XElement shape, out string bodyType, bool allowBody = false)
     {
+        bodyType = "Best";
         GatewayEwsRequestParser.Container(shape);
         var fields = shape.Elements().ToArray();
         if (fields.Length == 0 || fields[0].Name != GatewayEwsSoap.Types + "BaseShape") Invalid();
@@ -42,6 +43,7 @@ internal static class GatewayEwsItemRequestParser
             if (fields[index].Value is "true" or "1") throw new GatewayEwsRequestException("ErrorInvalidPropertyRequest");
             if (fields[index++].Value is not ("false" or "0")) Invalid();
         }
+        (index, bodyType) = BodyOptions(fields, index, allowBody);
         if (index == fields.Length) return properties;
         if (index != fields.Length - 1 || fields[index].Name != GatewayEwsSoap.Types + "AdditionalProperties")
             throw new GatewayEwsRequestException("ErrorInvalidPropertyRequest");
@@ -51,10 +53,31 @@ internal static class GatewayEwsItemRequestParser
             if (field.Name != GatewayEwsSoap.Types + "FieldURI") throw new GatewayEwsRequestException("ErrorInvalidPropertyRequest");
             GatewayEwsRequestParser.Empty(field, "FieldURI");
             var uri = (string?)field.Attribute("FieldURI");
-            if (uri is null || !Fields.Contains(uri)) throw new GatewayEwsRequestException("ErrorInvalidPropertyRequest");
+            if (uri is null || !Fields.Contains(uri) || uri is "item:Body" && !allowBody)
+                throw new GatewayEwsRequestException("ErrorInvalidPropertyRequest");
             properties.Add(uri[(uri.IndexOf(':', StringComparison.Ordinal) + 1)..]);
         }
         return properties;
+    }
+
+    private static (int Index, string Type) BodyOptions(XElement[] fields, int index, bool allowBody)
+    {
+        var type = "Best";
+        if (index < fields.Length && fields[index].Name == GatewayEwsSoap.Types + "BodyType")
+        {
+            GatewayEwsRequestParser.Scalar(fields[index]);
+            type = fields[index++].Value;
+            if (type is not ("Best" or "Text" or "HTML")) Invalid();
+            if (!allowBody) throw new GatewayEwsRequestException("ErrorInvalidPropertyRequest");
+        }
+        if (index < fields.Length && fields[index].Name == GatewayEwsSoap.Types + "FilterHtmlContent")
+        {
+            GatewayEwsRequestParser.Scalar(fields[index]);
+            if (fields[index].Value is "true" or "1") throw new GatewayEwsRequestException("ErrorInvalidPropertyRequest");
+            if (fields[index++].Value is not ("false" or "0")) Invalid();
+            if (!allowBody) throw new GatewayEwsRequestException("ErrorInvalidPropertyRequest");
+        }
+        return (index, type);
     }
 
     private static GatewayEwsItemReference Reference(XElement reference)

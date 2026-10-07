@@ -14,6 +14,7 @@ internal sealed class GatewayEwsClient(IGatewayApplicationTransport transport, E
     // Eleven fixed ApplicationValue members, bounded domain strings and numeric
     // counters fit this conservative per-row encoded budget, including key text.
     internal const int EncodedFolderBudgetBytes = 4096;
+    internal int MaximumPayloadBytes => environment.Messaging.MaxPayloadBytes;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = false,
@@ -91,13 +92,13 @@ internal sealed class GatewayEwsClient(IGatewayApplicationTransport transport, E
     }
 
     internal async Task<MailMessageReadResult> ReadItemsAsync(ProtocolAuthentication authentication,
-        JmapApplicationProfile profile, Guid account, IReadOnlyList<Guid> ids, CancellationToken cancellationToken)
+        JmapApplicationProfile profile, Guid account, IReadOnlyList<Guid> ids, CancellationToken cancellationToken, bool includeText = false)
     {
         if (ids.Count == 0 || ids.Count > Math.Min(GatewayEwsRequestParser.MaximumReferences, profile.Limits.MaxObjectsInGet)
             || ids.Any(id => id == Guid.Empty) || ids.Distinct().Count() != ids.Count)
             throw new GatewayEwsRequestException("ErrorExceededFindCountLimit");
         var data = await ExecuteAsync(authentication, profile, MailOperationKind.ReadMessages,
-            new MailMessageReadCommand(account, ids, false), cancellationToken).ConfigureAwait(false);
+            new MailMessageReadCommand(account, ids, includeText), cancellationToken).ConfigureAwait(false);
         RequireMembers(data, "status", "state", "messages");
         var read = data.Deserialize<MailMessageReadResult>(JsonOptions) ?? throw InvalidResult();
         if (!Enum.IsDefined(read.Status) || read.Messages is null || read.Messages.Count > ids.Count) Invalid();

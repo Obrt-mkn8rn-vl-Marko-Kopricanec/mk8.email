@@ -80,7 +80,7 @@ internal sealed partial class GatewayEwsRouteTests
 
     [TestMethod]
     [DataRow("<t:IncludeMimeContent>true</t:IncludeMimeContent>")]
-    [DataRow("<t:AdditionalProperties><t:FieldURI FieldURI='item:Body'/></t:AdditionalProperties>")]
+    [DataRow("<t:FilterHtmlContent>true</t:FilterHtmlContent>")]
     [DataRow("<t:AdditionalProperties><t:FieldURI FieldURI='item:Attachments'/></t:AdditionalProperties>")]
     [DataRow("<t:AdditionalProperties><t:IndexedFieldURI FieldURI='contacts:EmailAddress' FieldIndex='EmailAddress1'/></t:AdditionalProperties>")]
     public async Task UnsupportedItemPropertiesHaveJournaledSoapRefusalWithoutAnyDispatch(string fields)
@@ -142,7 +142,7 @@ internal sealed partial class GatewayEwsRouteTests
         await fixture.AssertPresentationRecordCountAsync(sequence).ConfigureAwait(false);
     }
 
-    private static async Task<Guid> SeedItemAsync(CaptureFixture fixture, Guid folder)
+    private static async Task<Guid> SeedItemAsync(CaptureFixture fixture, Guid folder, string mime = ItemMime)
     {
         using var scope = fixture.DomainScopes.CreateScope();
         var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
@@ -156,7 +156,7 @@ internal sealed partial class GatewayEwsRouteTests
             ReceivedAt = new DateTime(2026, 10, 7, 1, 0, 0, DateTimeKind.Utc)
         };
         await database.Emails.AddAsync(email).ConfigureAwait(false);
-        await scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>().SetAsync(email, Encoding.UTF8.GetBytes(ItemMime), CancellationToken.None).ConfigureAwait(false);
+        await scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>().SetAsync(email, Encoding.UTF8.GetBytes(mime), CancellationToken.None).ConfigureAwait(false);
         await database.SaveChangesAsync().ConfigureAwait(false);
         await transaction.CommitAsync().ConfigureAwait(false);
         return email.Id;

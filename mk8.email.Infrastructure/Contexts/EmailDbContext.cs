@@ -3,7 +3,7 @@ using mk8.email.Infrastructure.Models;
 
 namespace mk8.email.Infrastructure.Data;
 
-public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContext(options)
+public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContext(WithMailWriteCoordination(options))
 {
     private bool _collectingJmapChanges;
 
@@ -43,21 +43,52 @@ public class EmailDbContext(DbContextOptions<EmailDbContext> options) : DbContex
     private static readonly Guid GlobalConfigSeedId = Guid.Parse("00000000-0000-0000-0000-000000000001");
     private static readonly Guid GlobalLimitsSeedId = Guid.Parse("00000000-0000-0000-0000-000000000002");
 
+    private static DbContextOptions<EmailDbContext> WithMailWriteCoordination(DbContextOptions<EmailDbContext> options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        // Includes receipt/queue claimers and schema work, before they can retain
+        // other row locks and enter a later coordinated save or cascade.
+        return new DbContextOptionsBuilder<EmailDbContext>(options)
+            .AddInterceptors(MailWriteTransactionInterceptor.Instance).Options;
+    }
+
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
-        // EF's synchronous override must finish change collection before committing synchronously.
+        // The synchronous EF contract uses the same coordinated save/commit boundary.
 #pragma warning disable VSTHRD002
-        PrepareJmapChangesAsync(CancellationToken.None).GetAwaiter().GetResult();
+        return SaveChangesAsync(acceptAllChangesOnSuccess, CancellationToken.None).GetAwaiter().GetResult();
 #pragma warning restore VSTHRD002
-        return base.SaveChanges(acceptAllChangesOnSuccess);
     }
 
     public override async Task<int> SaveChangesAsync(
         bool acceptAllChangesOnSuccess,
         CancellationToken cancellationToken = default)
     {
-        await PrepareJmapChangesAsync(cancellationToken).ConfigureAwait(false);
-        return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken).ConfigureAwait(false);
+        var postgres = string.Equals(Database.ProviderName, "Npgsql.EntityFrameworkCore.PostgreSQL", StringComparison.Ordinal);
+        var ownedTransaction = postgres && Database.CurrentTransaction is null
+            ? await Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false) : null;
+        try
+        {
+            // Acquire before the collector resolves persisted folder/message scope,
+            // not only when SQL later reaches a row trigger. Hold through commit.
+            if (postgres)
+                await Database.ExecuteSqlRawAsync("SELECT pg_catalog.pg_advisory_xact_lock(1296775238, 1)",
+                    cancellationToken).ConfigureAwait(false);
+            await PrepareJmapChangesAsync(cancellationToken).ConfigureAwait(false);
+            var count = await base.SaveChangesAsync(ownedTransaction is null && acceptAllChangesOnSuccess,
+                cancellationToken).ConfigureAwait(false);
+            if (ownedTransaction is not null)
+            {
+                await ownedTransaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                if (acceptAllChangesOnSuccess) ChangeTracker.AcceptAllChanges();
+            }
+            return count;
+        }
+        finally
+        {
+            if (ownedTransaction is not null)
+                await ownedTransaction.DisposeAsync().ConfigureAwait(false);
+        }
     }
 
     private async Task PrepareJmapChangesAsync(CancellationToken cancellationToken)

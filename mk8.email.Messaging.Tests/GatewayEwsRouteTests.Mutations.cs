@@ -341,7 +341,7 @@ internal sealed partial class GatewayEwsRouteTests
         {
             var command = connection.CreateCommand();
             await using var commandLifetime = command.ConfigureAwait(false);
-            command.CommandText = "SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%FOR NO KEY UPDATE%'";
+            command.CommandText = "SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND (query LIKE '%FOR NO KEY UPDATE%' OR query LIKE '%pg_advisory_xact_lock(1296775238, 1)%')";
             if ((long)(await command.ExecuteScalarAsync(deadline.Token).ConfigureAwait(false))! >= count) return;
             await Task.Delay(25, deadline.Token).ConfigureAwait(false);
         }

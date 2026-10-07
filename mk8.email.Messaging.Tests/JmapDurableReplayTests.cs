@@ -1,3 +1,5 @@
+using System.Buffers.Binary;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -1496,7 +1498,7 @@ internal sealed class JmapDurableReplayTests
     }
 
     [TestMethod]
-    public async Task ConcurrentWorkersWaitForTheDatabaseReceiptLockAndDoNotRepeatNativeMutations()
+    public async Task ConcurrentWorkersWaitForTransactionCoordinationAndDoNotRepeatNativeMutations()
     {
         var pause = new ReceiptPause();
         var rig = (await Rig.CreateAsync(pause).ConfigureAwait(false));
@@ -1526,6 +1528,41 @@ internal sealed class JmapDurableReplayTests
         Assert.AreEqual(2, await database.ApplicationOperationReceipts.CountAsync().ConfigureAwait(false));
         Assert.AreEqual(1, await database.DavCollections.CountAsync(book => book.DisplayName == "Replay book").ConfigureAwait(false));
         Assert.AreEqual(1, await database.DavResources.CountAsync(card => card.Uid == "replay-card-uid").ConfigureAwait(false));
+    }
+
+    [TestMethod]
+    public async Task ReceiptHashLockRemainsDistinctAndBlocksBeforeBusinessMutation()
+    {
+        var rig = await Rig.CreateAsync().ConfigureAwait(false);
+        await using var rigLifetime = rig.ConfigureAwait(false);
+        var operation = Guid.CreateVersion7();
+        var blocker = await rig.Source.OpenConnectionAsync().ConfigureAwait(false);
+        await using var blockerLifetime = blocker.ConfigureAwait(false);
+        var transaction = await blocker.BeginTransactionAsync().ConfigureAwait(false);
+        await using var transactionLifetime = transaction.ConfigureAwait(false);
+        var command = blocker.CreateCommand();
+        await using var commandLifetime = command.ConfigureAwait(false);
+        command.Transaction = transaction;
+        command.CommandText = "SELECT pg_advisory_xact_lock(@key)";
+        var invocationId = ProcessorGatewayJmapClient.ReplayOperationId(operation, 0);
+        command.Parameters.AddWithValue("key", BinaryPrimitives.ReadInt64BigEndian(SHA256.HashData(invocationId.ToByteArray())));
+        await command.ExecuteNonQueryAsync().ConfigureAwait(false);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var pending = rig.InvokeAsync(rig.ContactsBatch(), operation, deadline.Token);
+        var waiting = rig.Source.CreateCommand("SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype='advisory' AND NOT granted AND objsubid=1 AND @owner=ANY(pg_blocking_pids(pid)))");
+        await using var waitingLifetime = waiting.ConfigureAwait(false);
+        waiting.Parameters.AddWithValue("owner", blocker.ProcessID);
+        try
+        {
+            while (await waiting.ExecuteScalarAsync(deadline.Token).ConfigureAwait(false) is not true)
+                await Task.Delay(25, deadline.Token).ConfigureAwait(false);
+            Assert.IsFalse(pending.IsCompleted);
+            var database = rig.Context();
+            await using var databaseLifetime = database.ConfigureAwait(false);
+            Assert.IsFalse(await database.DavCollections.AnyAsync(book => book.DisplayName == "Replay book").ConfigureAwait(false));
+        }
+        finally { await transaction.CommitAsync().ConfigureAwait(false); }
+        await pending.WaitAsync(deadline.Token).ConfigureAwait(false);
     }
 
     [TestMethod]

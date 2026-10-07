@@ -2163,6 +2163,10 @@ public sealed class JmapRequestProcessor
             if (_database.Database.IsRelational())
                 transaction = await _database.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
 
+            // Reserve coordination before receipts, foreign-key locks or any handler
+            // can precede a later folder operation in this atomic invocation.
+            await MailFolderAccountLock.AcquireGateAsync(_database, cancellationToken).ConfigureAwait(false);
+
             var replay = await TryReplayAsync(receiptKey, context, cancellationToken).ConfigureAwait(false);
             if (replay is not null) return replay;
 

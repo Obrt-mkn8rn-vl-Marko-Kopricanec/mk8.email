@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using mk8.email.Application.Interfaces;
 using mk8.email.Configuration;
@@ -23,12 +24,16 @@ internal static class GatewayEwsFixtureDomain
     internal static readonly Guid ForeignFolderId = new("1738f53b-3efa-4a59-8602-e215c0df1e35");
 
     public static void Configure(IServiceCollection services, string connection, ILargeObjectStore objects,
-        AesGcmPayloadProtector protector, EnvironmentConfig environment)
+        AesGcmPayloadProtector protector, EnvironmentConfig environment, DbCommandInterceptor? interceptor = null)
     {
         services.AddLogging().AddSingleton(environment).AddSingleton(objects)
             .AddSingleton<IStoredContentProtector>(new MessagingStoredContentProtector(protector))
             .AddSingleton<IMailAuthenticator>(new Authenticator());
-        services.AddDbContext<EmailDbContext>(options => options.UseNpgsql(connection));
+        services.AddDbContext<EmailDbContext>(options =>
+        {
+            options.UseNpgsql(connection);
+            if (interceptor is not null) options.AddInterceptors(interceptor);
+        });
         services.AddJmapApplication();
     }
 

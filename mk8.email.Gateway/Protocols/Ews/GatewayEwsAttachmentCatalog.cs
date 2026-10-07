@@ -1,5 +1,4 @@
 using System.Security.Cryptography;
-using System.Text;
 using System.Xml;
 using System.Xml.Linq;
 using MimeKit;
@@ -46,8 +45,12 @@ internal sealed class GatewayEwsAttachmentCatalog : IDisposable
             // A multipart disposition applies to the whole subtree. Do not
             // fabricate child file attachments from a grouped attachment.
             if (entity.IsAttachment || entity.ContentDisposition is not null && !IsInline(entity.ContentDisposition.Disposition)) Unsupported();
+            var isRelated = multipart is MultipartRelated;
+            var rootIndex = isRelated ? GatewayEwsRelatedRoot.Resolve(
+                multipart.Headers.Select(header => ((ReadOnlyMemory<byte>)header.RawField, (ReadOnlyMemory<byte>)header.RawValue)),
+                multipart.Select(child => (child.ContentType.MimeType, child.ContentId))) : -1;
             for (var index = 0; index < multipart.Count; index++)
-                Visit(multipart[index], related || multipart is MultipartRelated relatedParts && !ReferenceEquals(multipart[index], relatedParts.Root), depth + 1);
+                Visit(multipart[index], related || isRelated && index != rootIndex, depth + 1);
             return;
         }
         var part = entity as MimePart ?? throw new GatewayEwsRequestException("ErrorInvalidPropertyRequest"); // Exchange item attachments need their own profile.
@@ -57,7 +60,7 @@ internal sealed class GatewayEwsAttachmentCatalog : IDisposable
         if (!part.IsAttachment && part.FileName is null && text && !related) return;
         if (part.Content is null) Unsupported();
         if (_files.Count == GatewayEwsAttachmentIdCodec.MaximumAttachments) throw new GatewayEwsRequestException("ErrorDataSizeLimitExceeded");
-        _files.Add((part, IsInline(disposition?.Disposition) || related && !part.IsAttachment));
+        _files.Add((part, IsInline(disposition?.Disposition) || related));
     }
 
     internal XElement Metadata(Guid account, Guid parent)
@@ -112,28 +115,21 @@ internal sealed class GatewayEwsAttachmentCatalog : IDisposable
         var attached = string.Equals(part.Disposition, "attachment", StringComparison.OrdinalIgnoreCase);
         if (part.MediaType.StartsWith("multipart/", StringComparison.OrdinalIgnoreCase))
         {
-            if (attached) return true;
-            var rootChild = part.Children.Count == 0 ? -1 : part.Children[0];
-            var isRelated = string.Equals(part.MediaType, "multipart/related", StringComparison.OrdinalIgnoreCase);
-            if (isRelated)
-            {
-                var header = part.Headers.FirstOrDefault(value => value.RawField.Span.SequenceEqual("Content-Type"u8)
-                    || Encoding.ASCII.GetString(value.RawField.Span).Equals("Content-Type", StringComparison.OrdinalIgnoreCase));
-                if (header is not null && ContentType.TryParse(Encoding.ASCII.GetString(header.RawValue.Span), out var type)
-                    && type.Parameters["start"] is { } start)
-                {
-                    rootChild = part.Children.FirstOrDefault(child => child >= 0 && child < index
-                        && string.Equals(snapshot.Parts[child].ContentId, start.Trim('<', '>'), StringComparison.Ordinal), -1);
-                }
-            }
+            if (attached) return !related;
             foreach (var child in part.Children)
-            {
                 if (child < 0 || child >= index) throw new InvalidOperationException("Invalid attachment snapshot ancestry.");
-                if (VisitSnapshot(snapshot, child, related || isRelated && child != rootChild, depth + 1)) return true;
+            var isRelated = string.Equals(part.MediaType, "multipart/related", StringComparison.OrdinalIgnoreCase);
+            var rootPosition = isRelated ? GatewayEwsRelatedRoot.Resolve(
+                part.Headers.Select(header => (header.RawField, header.RawValue)),
+                part.Children.Select(child => (snapshot.Parts[child].MediaType, snapshot.Parts[child].ContentId))) : -1;
+            var hasAttachment = false;
+            for (var position = 0; position < part.Children.Count; position++)
+            {
+                if (VisitSnapshot(snapshot, part.Children[position], related || isRelated && position != rootPosition, depth + 1)) hasAttachment = true;
             }
-            return false;
+            return hasAttachment;
         }
-        if (IsInline(part.Disposition) || related && !attached) return false;
+        if (IsInline(part.Disposition) || related) return false;
         var text = part.MediaType.Equals("text/plain", StringComparison.OrdinalIgnoreCase) || part.MediaType.Equals("text/html", StringComparison.OrdinalIgnoreCase);
         return attached || part.Name is not null || !text;
     }

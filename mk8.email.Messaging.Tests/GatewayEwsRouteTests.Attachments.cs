@@ -4,11 +4,13 @@ using System.Text;
 using System.Xml.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using MimeKit;
 using mk8.email.Application.Services;
 using mk8.email.Contracts.Messaging;
 using mk8.email.Contracts.Storage;
 using mk8.email.Gateway.Protocols.Ews;
 using mk8.email.Infrastructure.Data;
+using mk8.email.Jmap;
 using CaptureFixture = mk8.email.Messaging.Tests.GatewayHttpCaptureBoundaryTests.CaptureFixture;
 
 namespace mk8.email.Messaging.Tests;
@@ -22,6 +24,9 @@ internal sealed partial class GatewayEwsRouteTests
         + "Content-Transfer-Encoding: base64\r\n\r\nAAECA//+\r\n--files--\r\n";
     private static readonly byte[] AttachmentBytes = [0, 1, 2, 3, 255, 254];
     private static readonly string[] AttachmentOutcomes = ["ErrorInvalidAttachmentId", "ErrorAccessDenied", "ErrorInvalidAttachmentId", "NoError", "NoError"];
+    private const string RelatedHasFields = "<t:AdditionalProperties><t:FieldURI FieldURI='item:HasAttachments'/></t:AdditionalProperties>";
+    private static readonly string[] RelatedReadFields = [RelatedHasFields,
+        "<t:AdditionalProperties><t:FieldURI FieldURI='item:HasAttachments'/><t:FieldURI FieldURI='item:Attachments'/></t:AdditionalProperties>"];
 
     [TestMethod]
     [DataRow(CanonicalPath, false)]
@@ -270,6 +275,136 @@ internal sealed partial class GatewayEwsRouteTests
         Assert.AreEqual("ErrorInvalidPropertyRequest", XDocument.Parse(xml).Descendants(Messages + "ResponseCode").Single().Value, StringComparer.Ordinal);
         Assert.IsFalse(xml.Contains("PRIVATE ATTACHMENT", StringComparison.Ordinal));
         Assert.IsEmpty(XDocument.Parse(xml).Descendants(Types + "Content"));
+    }
+
+    [TestMethod]
+    [DataRow(null, false)]
+    [DataRow(null, true)]
+    [DataRow("inline", false)]
+    [DataRow("inline", true)]
+    [DataRow("attachment", false)]
+    [DataRow("attachment", true)]
+    public async Task RelatedAttachmentDispositionStaysInlineAcrossActualStoredAndHttpProjections(string? disposition, bool reversed)
+    {
+        await AssertRelatedHttpProjectionsAsync(RelatedRouteMime("valid", disposition, reversed), expected: false, refuse: false).ConfigureAwait(false);
+    }
+
+    [TestMethod]
+    [DataRow("absent", false, false)]
+    [DataRow("default", true, false)]
+    [DataRow("valid", false, false)]
+    [DataRow("comments", false, false)]
+    [DataRow("unmatched", true, false)]
+    [DataRow("malformed", true, false)]
+    [DataRow("empty", false, true)]
+    [DataRow("single", true, false)]
+    public async Task RelatedRootSelectionAgreesAcrossAttachmentAndMetadataOnlyHttpReads(string mode, bool expected, bool refuse)
+    {
+        await AssertRelatedHttpProjectionsAsync(RelatedRouteMime(mode, null, reversed: true), expected, refuse).ConfigureAwait(false);
+    }
+
+    private static async Task AssertRelatedHttpProjectionsAsync(string mime, bool expected, bool refuse)
+    {
+        var fixture = await CaptureFixture.CreateAsync(mailFolders: true).ConfigureAwait(false);
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
+        var item = await SeedItemAsync(fixture, GatewayEwsFixtureDomain.ChildId, mime).ConfigureAwait(false);
+        await AssertRelatedStoredSnapshotAsync(fixture, item, mime, expected, refuse).ConfigureAwait(false);
+        Authenticate(fixture);
+        string? attachment = null;
+        foreach (var fields in RelatedReadFields)
+        {
+            using var content = XmlContent(ItemRequest($"<t:ItemId Id='{ItemId(item)}'/>", fields));
+            using var response = await fixture.Client.PostAsync(new Uri(CanonicalPath, UriKind.Relative), content).ConfigureAwait(false);
+            var xml = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
+            var document = XDocument.Parse(xml);
+            Assert.AreEqual(refuse ? "ErrorInvalidPropertyRequest" : "NoError", document.Descendants(Messages + "ResponseCode").Single().Value, StringComparer.Ordinal);
+            Assert.IsEmpty(document.Descendants(Types + "Content"));
+            Assert.IsEmpty(document.Descendants(Types + "Body"));
+            Assert.IsEmpty(document.Descendants(Types + "MimeContent"));
+            if (!refuse)
+            {
+                Assert.AreEqual(expected, bool.Parse(document.Descendants(Types + "HasAttachments").Single().Value));
+                if (fields.Contains("item:Attachments", StringComparison.Ordinal))
+                {
+                    var photo = document.Descendants(Types + "FileAttachment").Single(file => file.Element(Types + "Name")!.Value is "photo.png");
+                    Assert.AreEqual(!expected, bool.Parse(photo.Element(Types + "IsInline")!.Value));
+                    attachment = (string)photo.Element(Types + "AttachmentId")!.Attribute("Id")!;
+                }
+            }
+            await fixture.AssertRecordedResponseAsync("ews", CanonicalPath, 200, xml, rejection: false).ConfigureAwait(false);
+        }
+        await AssertRelatedFindItemAsync(fixture, expected, refuse).ConfigureAwait(false);
+        attachment ??= GatewayEwsAttachmentIdCodec.Encode(GatewayEwsFixtureDomain.AccountId, item, SHA256.HashData(Encoding.ASCII.GetBytes(mime)), 0);
+        var retrievedXml = await AttachmentResponseAsync(fixture, $"<t:AttachmentId Id='{attachment}'/>").ConfigureAwait(false);
+        var retrieved = XDocument.Parse(retrievedXml);
+        Assert.AreEqual(refuse ? "ErrorInvalidPropertyRequest" : "NoError", retrieved.Descendants(Messages + "ResponseCode").Single().Value, StringComparer.Ordinal);
+        if (!refuse)
+        {
+            Assert.AreEqual(!expected, bool.Parse(retrieved.Descendants(Types + "IsInline").Single().Value));
+            CollectionAssert.AreEqual(AttachmentBytes, Convert.FromBase64String(retrieved.Descendants(Types + "Content").Single().Value));
+        }
+        else Assert.IsEmpty(retrieved.Descendants(Types + "Content"));
+    }
+
+    private static async Task AssertRelatedFindItemAsync(CaptureFixture fixture, bool expected, bool refuse)
+    {
+        var folder = GatewayEwsFolderIdCodec.Encode(GatewayEwsFixtureDomain.AccountId, GatewayEwsFixtureDomain.ChildId);
+        using var content = XmlContent(FindRequest($"<t:FolderId Id='{folder}'/>", fields: RelatedHasFields));
+        using var response = await fixture.Client.PostAsync(new Uri(CanonicalPath, UriKind.Relative), content).ConfigureAwait(false);
+        var xml = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+        Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
+        var document = XDocument.Parse(xml);
+        Assert.AreEqual(refuse ? "ErrorInvalidPropertyRequest" : "NoError", document.Descendants(Messages + "ResponseCode").Single().Value, StringComparer.Ordinal);
+        if (!refuse) Assert.AreEqual(expected, bool.Parse(document.Descendants(Types + "HasAttachments").Single().Value));
+        Assert.IsEmpty(document.Descendants(Types + "Attachments"));
+        await fixture.AssertRecordedResponseAsync("ews", CanonicalPath, 200, xml, rejection: false).ConfigureAwait(false);
+    }
+
+    [TestMethod]
+    public async Task EarlierVisibleAttachmentCannotHideLaterRelatedRefusalInHttpProjections()
+    {
+        var related = RelatedRouteMime("empty", null, reversed: true);
+        related = related[(related.IndexOf("Content-Type:", StringComparison.Ordinal))..];
+        var mime = "Subject: Related admission ordering\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=outer\r\n\r\n--outer\r\n"
+            + "Content-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=earlier.bin\r\n\r\nEARLIER FILE\r\n--outer\r\n"
+            + related + "--outer--\r\n";
+        await AssertRelatedHttpProjectionsAsync(mime, expected: false, refuse: true).ConfigureAwait(false);
+    }
+
+    private static async Task AssertRelatedStoredSnapshotAsync(CaptureFixture fixture, Guid item, string mime, bool expected, bool refuse)
+    {
+        using var scope = fixture.DomainScopes.CreateScope();
+        var email = await scope.ServiceProvider.GetRequiredService<EmailDbContext>().Emails.SingleAsync(value => value.Id == item).ConfigureAwait(false);
+        Assert.IsNull(email.RawMessage);
+        Assert.AreEqual("azure-blob", email.RawMessageObjectProvider, StringComparer.Ordinal);
+        var raw = await scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>().ReadAsync(email, CancellationToken.None).ConfigureAwait(false);
+        CollectionAssert.AreEqual(Encoding.ASCII.GetBytes(mime), raw);
+        using var input = new MemoryStream(raw);
+        using var message = await MimeMessage.LoadAsync(input, CancellationToken.None).ConfigureAwait(false);
+        var stored = JmapEmailCodec.Capture(message, item, raw.Length, includeText: false, stored: email);
+        if (refuse) Assert.AreEqual("ErrorInvalidPropertyRequest", Assert.Throws<GatewayEwsRequestException>(() => GatewayEwsAttachmentCatalog.HasNonInlineAttachments(stored)).Code, StringComparer.Ordinal);
+        else Assert.AreEqual(expected, GatewayEwsAttachmentCatalog.HasNonInlineAttachments(stored));
+    }
+
+    private static string RelatedRouteMime(string mode, string? disposition, bool reversed)
+    {
+        var parameters = mode switch
+        {
+            "default" => "",
+            "absent" => "; type=\"text/html\"",
+            "valid" => "; type=\"text/html\"; start=\"<body@example.test>\"",
+            "comments" => "; type=\"text/html\"; start=\"(root) <body@example.test>\"",
+            "malformed" => "; type=\"image/png\"; start=\"not-a-message-id\"",
+            "empty" => "; type=\"image/png\"; start=\"\"",
+            _ => "; type=\"image/png\"; start=\"<missing@example.test>\"",
+        };
+        var image = "Content-Type: image/png; name=photo.png\r\nContent-ID: <photo@example.test>\r\n"
+            + (disposition is null ? "" : $"Content-Disposition: {disposition}; filename=photo.png\r\n")
+            + "Content-Transfer-Encoding: base64\r\n\r\nAAECA//+\r\n";
+        const string body = "Content-Type: text/html\r\nContent-ID: <body@example.test>\r\n\r\n<img src='cid:photo@example.test'>\r\n";
+        return "Subject: Related source\r\nMIME-Version: 1.0\r\nContent-Type: multipart/related; boundary=related" + parameters + "\r\n\r\n--related\r\n"
+            + (mode is "single" ? image : (reversed ? image : body) + "--related\r\n" + (reversed ? body : image)) + "--related--\r\n";
     }
 
     private static async Task<XDocument> AttachmentMetadataAsync(CaptureFixture fixture, Guid item, string path = CanonicalPath)

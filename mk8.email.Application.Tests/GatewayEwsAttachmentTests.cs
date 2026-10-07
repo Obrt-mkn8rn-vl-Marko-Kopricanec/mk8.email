@@ -2,10 +2,12 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Xml.Linq;
+using MimeKit;
 using mk8.email.Configuration;
 using mk8.email.Contracts.Messaging;
 using mk8.email.Gateway.ApplicationBridge;
 using mk8.email.Gateway.Protocols.Ews;
+using mk8.email.Jmap;
 
 namespace mk8.email.Application.Tests;
 
@@ -165,7 +167,7 @@ internal sealed class GatewayEwsAttachmentTests
     [DataRow("attachment", false, true)]
     [DataRow("inline", false, false)]
     [DataRow(null, false, true)]
-    [DataRow(null, true, false)]
+    [DataRow(null, true, true)]
     public void AttachmentIndicatorExcludesRelatedAndExplicitInlineResources(string? disposition, bool related, bool expected)
     {
         var part = new MailMimePartSnapshot("1", 6, [], "photo.png", "image/png", null, disposition, "photo", null, null, null, false, []);
@@ -175,6 +177,94 @@ internal sealed class GatewayEwsAttachmentTests
         { Headers = [new("Content-Type"u8.ToArray(), " multipart/related; start=\"<missing-body>\"\r\n"u8.ToArray())] });
         var snapshot = new MailMessageSnapshot(Item, null, null, 6, null, [], parts.Count - 1, parts);
         Assert.AreEqual(expected, GatewayEwsAttachmentCatalog.HasNonInlineAttachments(snapshot));
+    }
+
+    [TestMethod]
+    [DataRow(null, false)]
+    [DataRow(null, true)]
+    [DataRow("inline", false)]
+    [DataRow("inline", true)]
+    [DataRow("attachment", false)]
+    [DataRow("attachment", true)]
+    public void RelatedAttachmentDispositionCannotOverrideResourceAncestry(string? disposition, bool reversed)
+    {
+        var mime = RelatedMime("valid", disposition, reversed);
+        AssertRelatedProjections(mime, expected: false, refuse: false);
+    }
+
+    [TestMethod]
+    [DataRow("absent", false, false)]
+    [DataRow("default", true, false)]
+    [DataRow("valid", false, false)]
+    [DataRow("comments", false, false)]
+    [DataRow("unmatched", true, false)]
+    [DataRow("malformed", true, false)]
+    [DataRow("empty", false, true)]
+    [DataRow("single", true, false)]
+    public void RelatedRootSelectionAgreesForTheSameRawMimeAndNeutralSnapshot(string mode, bool expected, bool refuse)
+    {
+        AssertRelatedProjections(RelatedMime(mode, null, reversed: true), expected, refuse);
+    }
+
+    private static void AssertRelatedProjections(string mime, bool expected, bool refuse)
+    {
+        var raw = Encoding.ASCII.GetBytes(mime);
+        using var input = new MemoryStream(raw);
+        using var message = MimeMessage.Load(input);
+        var snapshot = JmapEmailCodec.Capture(message, Item, raw.Length, includeText: false);
+        var before = JsonSerializer.Serialize(snapshot, JsonSerializerOptions.Web);
+        if (refuse)
+        {
+            Assert.AreEqual("ErrorInvalidPropertyRequest", Assert.Throws<GatewayEwsRequestException>(() => GatewayEwsAttachmentCatalog.HasNonInlineAttachments(snapshot)).Code, StringComparer.Ordinal);
+            Assert.AreEqual("ErrorInvalidPropertyRequest", Assert.Throws<GatewayEwsRequestException>(() =>
+            {
+                using var refused = GatewayEwsAttachmentCatalog.Load(raw);
+            }).Code, StringComparer.Ordinal);
+        }
+        else
+        {
+            using var catalog = GatewayEwsAttachmentCatalog.Load(raw);
+            var files = catalog.Metadata(Account, Item);
+            Assert.AreEqual(expected, GatewayEwsAttachmentCatalog.HasNonInlineAttachments(snapshot));
+            Assert.AreEqual(expected, files.Elements().Any(file => file.Element(GatewayEwsSoap.Types + "IsInline")!.Value is "false"));
+            var photo = files.Elements().Single(file => file.Element(GatewayEwsSoap.Types + "ContentType")!.Value is "image/png");
+            Assert.AreEqual(!expected, bool.Parse(photo.Element(GatewayEwsSoap.Types + "IsInline")!.Value));
+            var id = (string)photo.Element(GatewayEwsSoap.Types + "AttachmentId")!.Attribute("Id")!;
+            Assert.IsTrue(GatewayEwsAttachmentIdCodec.TryDecode(id, out _, out _, out var hash, out var position));
+            var decoded = catalog.Get(Account, Item, hash, position);
+            Assert.AreEqual(photo.Element(GatewayEwsSoap.Types + "IsInline")!.Value, decoded.Element(GatewayEwsSoap.Types + "IsInline")!.Value, StringComparer.Ordinal);
+            CollectionAssert.AreEqual(Bytes, Convert.FromBase64String(decoded.Element(GatewayEwsSoap.Types + "Content")!.Value));
+        }
+        Assert.AreEqual(before, JsonSerializer.Serialize(snapshot, JsonSerializerOptions.Web), StringComparer.Ordinal);
+    }
+
+    [TestMethod]
+    public void EarlierVisibleAttachmentCannotSkipLaterRelatedRootAdmission()
+    {
+        var related = RelatedMime("empty", null, reversed: true)[Headers.Length..];
+        var mime = Headers + "Content-Type: multipart/mixed; boundary=outer\r\n\r\n--outer\r\n"
+            + FileHeaders + "--outer\r\n" + related + "--outer--\r\n";
+        AssertRelatedProjections(mime, expected: false, refuse: true);
+    }
+
+    private static string RelatedMime(string mode, string? disposition, bool reversed)
+    {
+        var parameters = mode switch
+        {
+            "default" => "",
+            "absent" => "; type=\"text/html\"",
+            "valid" => "; type=\"text/html\"; start=\"<body@example.test>\"",
+            "comments" => "; type=\"text/html\"; start=\"(root) <body@example.test>\"",
+            "malformed" => "; type=\"image/png\"; start=\"not-a-message-id\"",
+            "empty" => "; type=\"image/png\"; start=\"\"",
+            _ => "; type=\"image/png\"; start=\"<missing@example.test>\"",
+        };
+        var image = "Content-Type: image/png; name=photo.png\r\nContent-ID: <photo@example.test>\r\n"
+            + (disposition is null ? "" : $"Content-Disposition: {disposition}; filename=photo.png\r\n")
+            + "Content-Transfer-Encoding: base64\r\n\r\nAAECA//+\r\n";
+        const string body = "Content-Type: text/html\r\nContent-ID: <body@example.test>\r\n\r\n<img src='cid:photo@example.test'>\r\n";
+        return Headers + "Content-Type: multipart/related; boundary=related" + parameters + "\r\n\r\n--related\r\n"
+            + (mode is "single" ? image : (reversed ? image : body) + "--related\r\n" + (reversed ? body : image)) + "--related--\r\n";
     }
 
     [TestMethod]

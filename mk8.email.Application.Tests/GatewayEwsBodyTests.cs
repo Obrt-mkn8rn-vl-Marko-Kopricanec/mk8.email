@@ -106,6 +106,102 @@ internal sealed class GatewayEwsBodyTests
     }
 
     [TestMethod]
+    [DataRow("mixed", "visible", "Best")]
+    [DataRow("mixed", "visible", "Text")]
+    [DataRow("mixed", "visible", "HTML")]
+    [DataRow("alternative", "visible", "Best")]
+    [DataRow("alternative", "visible", "Text")]
+    [DataRow("alternative", "visible", "HTML")]
+    [DataRow("mixed", "visible-alternative", "Best")]
+    [DataRow("mixed", "visible-alternative", "Text")]
+    [DataRow("mixed", "visible-alternative", "HTML")]
+    [DataRow("alternative", "visible-alternative", "Best")]
+    [DataRow("alternative", "visible-alternative", "Text")]
+    [DataRow("alternative", "visible-alternative", "HTML")]
+    [DataRow("mixed", "nested-only", "Best")]
+    [DataRow("mixed", "nested-only", "Text")]
+    [DataRow("mixed", "nested-only", "HTML")]
+    [DataRow("alternative", "nested-only", "Best")]
+    [DataRow("alternative", "nested-only", "Text")]
+    [DataRow("alternative", "nested-only", "HTML")]
+    [DataRow("mixed", "root-only", "Best")]
+    [DataRow("mixed", "root-only", "Text")]
+    [DataRow("mixed", "root-only", "HTML")]
+    [DataRow("alternative", "root-only", "Best")]
+    [DataRow("alternative", "root-only", "Text")]
+    [DataRow("alternative", "root-only", "HTML")]
+    public void AttachedMultipartSubtreesCannotChooseOrLeakBody(string subtype, string layout, string requested)
+    {
+        var parts = new List<MailMimePartSnapshot>
+        {
+            Part("2.1", "text/plain", "PRIVATE ATTACHMENT PLAIN", disposition: "inline"),
+            Part("2.2", "text/html", "<p>PRIVATE ATTACHMENT HTML</p>", disposition: "inline"),
+            Part(null, "multipart/" + subtype, null, disposition: "AtTaChMeNt", children: [0, 1]),
+        };
+        if (layout is "nested-only")
+            parts.Add(Part(null, "multipart/mixed", null, disposition: "inline", children: [2]));
+        else if (layout is "visible")
+        {
+            parts.Add(Part("1", "text/plain", "Visible body"));
+            parts.Add(Part(null, "multipart/mixed", null, children: [3, 2]));
+        }
+        else if (layout is "visible-alternative")
+        {
+            parts.Add(Part("1.1", "text/plain", "Visible plain"));
+            parts.Add(Part("1.2", "text/html", "<p>Visible HTML</p>"));
+            parts.Add(Part(null, "multipart/alternative", null, children: [3, 4]));
+            parts.Add(Part(null, "multipart/mixed", null, children: [5, 2]));
+        }
+        var snapshot = Snapshot(parts.ToArray());
+        var body = GatewayEwsBodyCodec.Render(snapshot, requested);
+        var html = requested is "HTML" || requested is "Best" && layout is "visible-alternative";
+        var expected = layout switch
+        {
+            "visible" => html ? "<pre>Visible body</pre>" : "Visible body",
+            "visible-alternative" => html ? "<p>Visible HTML</p>" : "Visible plain",
+            _ => "",
+        };
+        Assert.AreEqual(html ? "HTML" : "Text", (string?)body.Attribute("BodyType"), StringComparer.Ordinal);
+        Assert.AreEqual(expected, body.Value, StringComparer.Ordinal);
+        Assert.AreEqual("false", (string?)body.Attribute("IsTruncated"), StringComparer.Ordinal);
+        Assert.IsFalse(body.ToString().Contains("PRIVATE", StringComparison.Ordinal));
+        Assert.AreEqual("PRIVATE ATTACHMENT PLAIN", snapshot.Parts[0].Text, StringComparer.Ordinal);
+        Assert.HasCount(2, snapshot.Parts[2].Children);
+    }
+
+    [TestMethod]
+    [DataRow("Best")]
+    [DataRow("Text")]
+    [DataRow("HTML")]
+    public void AttachedUnsupportedAndInvalidTextCannotTriggerBodyRefusal(string requested)
+    {
+        var snapshot = Snapshot(Part("1.1", "text/rtf", "PRIVATE unsupported"),
+            Part("1.2", "text/html", "PRIVATE\0invalid") with { EncodingProblem = true },
+            Part(null, "multipart/mixed", null, disposition: "attachment", children: [0, 1]),
+            Part(null, "multipart/mixed", null, children: [2]));
+        Assert.AreEqual("", GatewayEwsBodyCodec.Render(snapshot, requested).Value, StringComparer.Ordinal);
+    }
+
+    [TestMethod]
+    [DataRow("Best")]
+    [DataRow("Text")]
+    [DataRow("HTML")]
+    public void UnknownMultipartDispositionRequiresSeparatePresentation(string requested)
+    {
+        var snapshot = Snapshot(Part("1.1", "text/plain", "PRIVATE UNKNOWN DISPOSITION"),
+            Part(null, "multipart/mixed", null, disposition: "x-restricted", children: [0]));
+        Assert.AreEqual("", GatewayEwsBodyCodec.Render(snapshot, requested).Value, StringComparer.Ordinal);
+    }
+
+    [TestMethod]
+    public void VisibilityProjectionRefusesInvalidAttachedGraphRatherThanRepairingIt()
+    {
+        var snapshot = Snapshot(Part(null, "multipart/mixed", null, disposition: "attachment", children: [0]));
+        Assert.Throws<InvalidOperationException>(() => GatewayEwsBodyCodec.Render(snapshot, "Best"));
+        Assert.Throws<InvalidOperationException>(() => GatewayEwsBodyCodec.Render(snapshot with { RootPart = 100 }, "Best"));
+    }
+
+    [TestMethod]
     [DataRow("Best", "Text")]
     [DataRow("Text", "Text")]
     [DataRow("HTML", "HTML")]

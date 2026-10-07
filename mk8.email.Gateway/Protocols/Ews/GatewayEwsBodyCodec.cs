@@ -21,20 +21,21 @@ internal static class GatewayEwsBodyCodec
     internal static XElement Render(MailMessageSnapshot snapshot, string requestedType)
     {
         if (requestedType is not ("Best" or "Text" or "HTML")) throw new InvalidOperationException("Invalid EWS body format.");
-        var projection = GatewayEmailValueCodec.BuildEmail(snapshot, Projection);
+        var visible = GatewayEwsBodyVisibility.Project(snapshot);
+        var projection = GatewayEmailValueCodec.BuildEmail(visible, Projection);
         var htmlParts = (JsonArray)projection["htmlBody"]!;
         var html = requestedType is "HTML" || requestedType is "Best" && htmlParts.Any(part => part!["type"]!.GetValue<string>() is "text/html");
         var parts = html ? htmlParts : (JsonArray)projection["textBody"]!;
         var values = (JsonObject)projection["bodyValues"]!;
         if (!parts.Any(part => part!["type"]!.GetValue<string>() is "text/plain" or "text/html")
-            && snapshot.Parts.Any(part => part.Children.Count == 0 && part.Name is null
+            && visible.Parts.Any(part => part.Children.Count == 0 && part.Name is null
                 && !string.Equals(part.Disposition, "attachment", StringComparison.OrdinalIgnoreCase)
                 && !part.MediaType.StartsWith("multipart/", StringComparison.Ordinal)
                 && !part.MediaType.StartsWith("image/", StringComparison.Ordinal)
                 && !part.MediaType.StartsWith("audio/", StringComparison.Ordinal)
                 && !part.MediaType.StartsWith("video/", StringComparison.Ordinal)))
             throw new GatewayEwsRequestException("ErrorInvalidPropertyRequest");
-        var sources = snapshot.Parts.Where(part => part.Path is not null).ToDictionary(part => part.Path!, StringComparer.Ordinal);
+        var sources = visible.Parts.Where(part => part.Path is not null).ToDictionary(part => part.Path!, StringComparer.Ordinal);
         var output = new StringBuilder();
         var usedBytes = 0;
         var sourceBytes = 0;

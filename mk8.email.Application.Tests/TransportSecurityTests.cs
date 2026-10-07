@@ -35,9 +35,21 @@ internal sealed class TransportSecurityTests
 {
     private const string TestUsername = "user@mk8n.com";
     private const string TestPassword = "correct horse battery staple";
+    // Public synthetic fixture credential only. Avoid generating the same costly
+    // password hash on every setup; each login still uses production verification.
+    private const string TestPasswordHash = "{BLF-CRYPT}$2a$13$ivgpgSaFWcZVeTw7rqOwaej4EtphTOZdwAXYnkw9vIs0INaqprf4S";
 
     private string _testDirectory = null!;
     private string _certificatePath = null!;
+
+    [TestMethod]
+    public void ProtocolFixturePasswordRetainsProductionHashPolicyAndVerification()
+    {
+        var policyPrefix = TestPasswordHash[..(PasswordHasher.BcryptSchemePrefix.Length + 7)];
+        StringAssert.StartsWith(PasswordHasher.Hash(TestPassword), policyPrefix, StringComparison.Ordinal);
+        Assert.IsTrue(PasswordHasher.Verify(TestPassword, TestPasswordHash));
+        Assert.IsFalse(PasswordHasher.Verify("not-the-fixture-password", TestPasswordHash));
+    }
 
     [TestMethod]
     [Timeout(10_000)]
@@ -4929,7 +4941,7 @@ internal sealed class TransportSecurityTests
                 {
                     Id = Guid.CreateVersion7(),
                     Username = TestUsername,
-                    PasswordHash = PasswordHasher.Hash(TestPassword),
+                    PasswordHash = TestPasswordHash,
                     Role = nameof(UserRole.User),
                     IsActive = true,
                     Company = company,

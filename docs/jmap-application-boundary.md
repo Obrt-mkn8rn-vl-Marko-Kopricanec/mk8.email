@@ -4,7 +4,7 @@ Gateway parses and validates I-JSON and the outer JMAP request envelope. Its
 batch, call, result and reference-selector models exist only in Gateway, not in
 the shared durable Contracts assembly. It sends a protocol-neutral
 authentication/feature/operation-count admission plan through `mail.plan.validate`, then
-one resolved mail operation at a time through `mail.operation.execute.v35`. Worker
+one resolved mail operation at a time through `mail.operation.execute.v36`. Worker
 returns a typed operation result, domain failures, known entity mappings and an
 account profile. Gateway alone sequences the batch, handles Core/echo, and renders
 the response envelope and HTTP problems. Worker receives neither the original
@@ -214,7 +214,8 @@ Gateway also recognizes creation-reference tokens in argument keys and values an
 provides a typed alias map with each business command. Worker resolves only those
 aliases against its current known-entity map, so a create followed by a reference
 inside one operation still works without Worker parsing the JMAP `#` marker.
-The alias map is required on the v35 command. Opaque non-ID values are not rewritten.
+The alias map became mandatory in the historical v35 command and remains required
+on the current v36 command. Opaque non-ID values are not rewritten.
 
 Worker returns typed accounts, feature limits and change maps, never session URLs
 or event/push JSON. Gateway renders discovery documents, chooses its public URLs,
@@ -244,7 +245,7 @@ This changes the durable operation contracts. The old `jmap.api.process`,
 `mail.operation.execute.v28`, `mail.operation.execute.v29`, `mail.operation.execute.v30`,
 `mail.operation.execute.v31`, `mail.operation.execute.v32`, `mail.operation.execute.v33`, `mail.operation.execute.v34`, `mail.operation.execute.v35` operations
 are unsupported. The current operations are `mail.plan.validate`,
-`mail.operation.execute.v35`, `jmap.profile.get.v2`, `jmap.upload.v2`,
+`mail.operation.execute.v36`, `jmap.profile.get.v2`, `jmap.upload.v2`,
 `jmap.download.v2`, `jmap.changes.poll.v2` and `webpush.send.v2`. Old requests must
 not be reinterpreted as new empty or incomplete data.
 Before upgrading an existing distributed installation, stop admission, drain or

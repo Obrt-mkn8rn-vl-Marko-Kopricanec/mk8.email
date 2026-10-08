@@ -19,7 +19,7 @@ env:
   DOTNET_NOLOGO: "1"
 
 jobs:
-  build-test-package:
+  validate:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:
@@ -160,7 +160,7 @@ jobs:
               deploy/tests/mail_smoke.py deploy/tests/multi_domain_smoke.py
           python3 deploy/tests/distributed_config_smoke.py
           python3 -m unittest discover -s deploy/tests -p test_release_archive_smoke.py
-          python3 -m unittest discover -s deploy/tests -p test_ci_analyzer_gate.py
+          python3 -m unittest discover -s deploy/tests -p 'test_ci_*.py'
           sh deploy/tests/gateway_database_access_smoke deploy/scripts/configure-gateway-database-access deploy/postgresql/restricted-role-posture.sql
           sh deploy/tests/wake_database_access_smoke deploy/scripts/configure-wake-database-access deploy/postgresql/restricted-role-posture.sql
           sh deploy/tests/container_on_demand_smoke \
@@ -198,15 +198,76 @@ jobs:
           ./tools/deployment/Test-Mk8DeploymentProfile.ps1 `
             -TaskRoot (Join-Path $env:RUNNER_TEMP 'mk8email-deployment-profile')
 
-      - name: Test application
-        run: dotnet test mk8.email.Application.Tests/mk8.email.Application.Tests.csproj --configuration Release --no-build --logger "trx;LogFileName=application.trx" --results-directory artifacts/test-results
+  test:
+    # Each suite gets its own runner and unchanged 30-minute deadline. A failed
+    # suite must not cancel the other suites or discard their raw evidence.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: application
+            project: mk8.email.Application.Tests/mk8.email.Application.Tests.csproj
+          - suite: infrastructure
+            project: mk8.email.Infrastructure.Tests/mk8.email.Infrastructure.Tests.csproj
+          - suite: messaging
+            project: mk8.email.Messaging.Tests/mk8.email.Messaging.Tests.csproj
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: mk8email-ci-only
+        ports:
+          - 5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
 
-      - name: Test infrastructure
+      - name: Install .NET
+        uses: actions/setup-dotnet@d4c94342e560b34958eacfc5d055d21461ed1c5d
+        with:
+          dotnet-version: 10.0.x
+          cache: true
+          cache-dependency-path: "**/packages.lock.json"
+
+      - name: Restore locked dependencies
+        run: dotnet restore mk8.email.slnx --locked-mode
+
+      - name: Build test project
+        # Analysis remains mandatory in validate; this runner compiles its own
+        # exact checkout rather than consuming another job's mutable bin/obj.
+        run: dotnet build "${{ matrix.project }}" --configuration Release --no-restore --property:TreatWarningsAsErrors=true --property:ContinuousIntegrationBuild=true --property:RunAnalyzers=false
+
+      - name: Install backup test tools
+        if: matrix.suite == 'messaging'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y age postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
+          /usr/lib/postgresql/17/bin/pg_dump --version
+
+      - name: Test application or infrastructure
+        if: matrix.suite != 'messaging'
+        shell: bash
         env:
           MK8_EMAIL_TEST_POSTGRES: Host=127.0.0.1;Port=${{ job.services.postgres.ports['5432'] }};Database=postgres;Username=postgres;Password=mk8email-ci-only;Pooling=false
-        run: dotnet test mk8.email.Infrastructure.Tests/mk8.email.Infrastructure.Tests.csproj --configuration Release --no-build --logger "trx;LogFileName=infrastructure.trx" --results-directory artifacts/test-results
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/test-results
+          dotnet test "${{ matrix.project }}" --configuration Release --no-build --no-restore \
+            --logger "trx;LogFileName=${{ matrix.suite }}.trx" \
+            --results-directory artifacts/test-results 2>&1 | tee "artifacts/test-results/${{ matrix.suite }}.log"
 
       - name: Test distributed messaging with PostgreSQL and Azure Blob
+        if: matrix.suite == 'messaging'
         shell: bash
         env:
           MK8_EMAIL_TEST_POSTGRES: Host=127.0.0.1;Port=${{ job.services.postgres.ports['5432'] }};Database=postgres;Username=postgres;Password=mk8email-ci-only;Pooling=false
@@ -231,25 +292,67 @@ jobs:
             sleep 1
           done
           test "$azurite_ready" = true
+          mkdir -p artifacts/test-results
           dotnet test mk8.email.Messaging.Tests/mk8.email.Messaging.Tests.csproj \
-            --configuration Release --no-build \
+            --configuration Release --no-build --no-restore \
             --blame-hang-timeout 10m --blame-hang-dump-type none \
             --logger "trx;LogFileName=messaging.trx" \
-            --results-directory artifacts/test-results
+            --results-directory artifacts/test-results 2>&1 | tee artifacts/test-results/messaging.log
 
       - name: Require all test cases to execute
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          from xml.etree import ElementTree
+        run: python3 deploy/tests/verify_ci_test_results.py artifacts/test-results "${{ matrix.suite }}"
 
-          results = Path('artifacts/test-results')
-          for name in ('application.trx', 'infrastructure.trx', 'messaging.trx'):
-              report = results / name
-              counters = ElementTree.parse(report).find('.//{*}Counters')
-              if counters is None or counters.get('total') != counters.get('passed'):
-                  raise SystemExit(f'Tests failed or did not execute: {report}')
-          PY
+      - name: Save test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: tests-${{ matrix.suite }}-${{ github.sha }}
+          path: artifacts/test-results/*
+          # A build/fixture failure may have no results; that is not success.
+          if-no-files-found: warn
+          retention-days: 14
+
+  build-test-package:
+    # Keep the original required check name, but make it an explicit aggregate
+    # gate: skipped/failed/cancelled prerequisites cannot produce a green check.
+    needs: [validate, test]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Require successful validation and every test suite
+        env:
+          VALIDATION_RESULT: ${{ needs.validate.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+        run: |
+          test "$VALIDATION_RESULT" = success
+          test "$TEST_RESULT" = success
+
+      - name: Check out source
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+
+      - name: Download this run's test evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: tests-*-${{ github.sha }}
+          path: artifacts/test-results
+          merge-multiple: true
+
+      - name: Require all three complete passing reports
+        run: python3 deploy/tests/verify_ci_test_results.py artifacts/test-results
+
+      - name: Install .NET
+        uses: actions/setup-dotnet@d4c94342e560b34958eacfc5d055d21461ed1c5d
+        with:
+          dotnet-version: 10.0.x
+          cache: true
+          cache-dependency-path: "**/packages.lock.json"
+
+      - name: Restore locked dependencies
+        run: dotnet restore mk8.email.slnx --locked-mode
+
+      - name: Build all projects
+        run: dotnet build mk8.email.slnx --configuration Release --no-restore --property:TreatWarningsAsErrors=true --property:ContinuousIntegrationBuild=true --property:RunAnalyzers=false
 
       - name: Publish management command
         run: dotnet publish mk8.email.CLI/mk8.email.Application.CLI.csproj --configuration Release --no-build --output artifacts/cli --property:UseAppHost=false

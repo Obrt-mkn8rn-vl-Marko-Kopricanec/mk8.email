@@ -20,7 +20,8 @@ internal sealed record GatewayEwsRequest(
     string? SyncState = null,
     bool SyncScopeSpecified = false,
     MailMessageFilter? Restriction = null,
-    IReadOnlyList<MailMessageSort>? SortOrder = null)
+    IReadOnlyList<MailMessageSort>? SortOrder = null,
+    GatewayEwsFolderReference? Destination = null)
 {
-    public bool IsMutation => Operation is "CreateFolder" or "UpdateFolder" or "DeleteFolder" or "DeleteItem" or "CopyItem" or "MoveItem" or "UpdateItem" or "CreateItem";
+    public bool IsMutation => Operation is "CreateFolder" or "UpdateFolder" or "DeleteFolder" or "MoveFolder" or "DeleteItem" or "CopyItem" or "MoveItem" or "UpdateItem" or "CreateItem";
 }

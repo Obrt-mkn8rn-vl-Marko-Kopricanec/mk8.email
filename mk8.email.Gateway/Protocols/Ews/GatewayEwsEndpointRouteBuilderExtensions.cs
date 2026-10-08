@@ -124,6 +124,8 @@ internal static class GatewayEwsEndpointRouteBuilderExtensions
             ? await GatewayEwsItemSync.ExecuteAsync(application, authentication, profile, accountId, request, graph, error, cancellationToken).ConfigureAwait(false)
             : request.Operation is "FindItem"
             ? await GatewayEwsFindItemResponse.ExecuteAsync(application, authentication, profile, accountId, request, graph, error, cancellationToken).ConfigureAwait(false)
+            : request.Operation is "MoveFolder"
+            ? await GatewayEwsFolderMove.ExecuteAsync(application, authentication, profile, accountId, request, graph, error, cancellationToken).ConfigureAwait(false)
             : request.IsMutation
             ? await GatewayEwsFolderMutations.ExecuteAsync(application, authentication, profile, accountId, request, graph,
                 GatewayEwsClient.MaximumFolders(profile, environment.Messaging.MaxPayloadBytes), error, cancellationToken).ConfigureAwait(false)

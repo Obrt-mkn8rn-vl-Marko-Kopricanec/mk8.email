@@ -109,6 +109,7 @@ internal static class GatewayEwsRequestParser
         if (operations[0].Name.LocalName is "CopyItem" or "MoveItem") return GatewayEwsItemCopyParser.Parse(operations[0]);
         if (operations[0].Name.LocalName is "FindItem") return GatewayEwsFindItemRequestParser.Parse(operations[0]);
         if (operations[0].Name.LocalName is "SyncFolderHierarchy") return GatewayEwsFolderSyncParser.Parse(operations[0]);
+        if (operations[0].Name.LocalName is "SyncFolderItems") return GatewayEwsItemSyncParser.Parse(operations[0]);
         return operations[0].Name.LocalName is "CreateFolder" or "UpdateFolder" or "DeleteFolder"
             ? GatewayEwsMutationRequestParser.Parse(operations[0]) : ParseFolderRead(operations[0]);
     }

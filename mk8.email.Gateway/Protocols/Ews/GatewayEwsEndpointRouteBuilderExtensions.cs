@@ -120,7 +120,9 @@ internal static class GatewayEwsEndpointRouteBuilderExtensions
             cancellationToken).ConfigureAwait(false);
         var graph = read?.Status == MailFolderReadStatus.Ok ? new GatewayEwsFolderGraph(accountId, read.State!, read.Folders) : null;
         var error = read?.Status == MailFolderReadStatus.RequestTooLarge ? "ErrorExceededFindCountLimit" : "ErrorFolderNotFound";
-        var xml = request.Operation is "FindItem"
+        var xml = request.Operation is "SyncFolderItems"
+            ? await GatewayEwsItemSync.ExecuteAsync(application, authentication, profile, accountId, request, graph, error, cancellationToken).ConfigureAwait(false)
+            : request.Operation is "FindItem"
             ? await GatewayEwsFindItemResponse.ExecuteAsync(application, authentication, profile, accountId, request, graph, error, cancellationToken).ConfigureAwait(false)
             : request.IsMutation
             ? await GatewayEwsFolderMutations.ExecuteAsync(application, authentication, profile, accountId, request, graph,

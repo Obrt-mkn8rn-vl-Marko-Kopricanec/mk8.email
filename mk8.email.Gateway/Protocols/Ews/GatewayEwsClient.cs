@@ -102,6 +102,16 @@ internal sealed class GatewayEwsClient(IGatewayApplicationTransport transport, E
         return GatewayEwsFolderSyncReply.Decode(data, sinceState, maximum);
     }
 
+    internal async Task<MailChangesResult> ReadItemChangesAsync(ProtocolAuthentication authentication,
+        JmapApplicationProfile profile, Guid account, string sinceState, CancellationToken cancellationToken)
+    {
+        var maximum = MaximumFolders(profile, MaximumPayloadBytes);
+        if (maximum <= 0) throw new GatewayEwsRequestException("ErrorExceededFindCountLimit");
+        var data = await ExecuteAsync(authentication, profile, MailOperationKind.ReadMessageChanges,
+            new MailChangesCommand(account, sinceState, maximum, true), cancellationToken).ConfigureAwait(false);
+        return GatewayEwsItemSyncReply.Decode(data, sinceState, maximum);
+    }
+
     internal async Task<MailMessageReadResult> ReadItemsAsync(ProtocolAuthentication authentication,
         JmapApplicationProfile profile, Guid account, IReadOnlyList<Guid> ids, CancellationToken cancellationToken, bool includeText = false)
     {

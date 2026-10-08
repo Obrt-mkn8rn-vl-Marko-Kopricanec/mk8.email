@@ -119,6 +119,34 @@ internal sealed class GatewayEwsClient(IGatewayApplicationTransport transport, E
         return read;
     }
 
+    internal async Task<string?> ReadMessageStateAsync(ProtocolAuthentication authentication,
+        JmapApplicationProfile profile, Guid account, CancellationToken cancellationToken)
+    {
+        // An explicit empty list reads only the independently authorized state,
+        // never a null/unbounded all-message snapshot.
+        var data = await ExecuteAsync(authentication, profile, MailOperationKind.ReadMessages,
+            new MailMessageReadCommand(account, [], false), cancellationToken).ConfigureAwait(false);
+        RequireMembers(data, "status", "state", "messages");
+        var read = data.Deserialize<MailMessageReadResult>(JsonOptions) ?? throw InvalidResult();
+        if (read.Messages is null || read.Messages.Count != 0
+            || read.Status is not (MailMessageReadStatus.Ok or MailMessageReadStatus.AccountNotFound)) Invalid();
+        if (read.Status == MailMessageReadStatus.AccountNotFound)
+        {
+            if (read.State is not null) Invalid();
+            return null;
+        }
+        RequireState(read.State);
+        return read.State;
+    }
+
+    internal async Task<string> UploadMimeAsync(ProtocolAuthentication authentication, Guid account,
+        byte[] content, CancellationToken cancellationToken)
+    {
+        var result = await transport.SendAsync<JmapUploadApplicationRequest, JmapApplicationResult>("ews",
+            ApplicationOperations.JmapUpload, new(authentication, $"A{account:N}", "message/rfc822", content), cancellationToken).ConfigureAwait(false);
+        return GatewayEwsMimeUploadReply.Decode(result, content.Length);
+    }
+
     internal async Task<MailMessageContentResult> ReadItemContentAsync(ProtocolAuthentication authentication,
         JmapApplicationProfile profile, Guid account, IReadOnlyList<Guid> ids, bool includeText, CancellationToken cancellationToken)
     {

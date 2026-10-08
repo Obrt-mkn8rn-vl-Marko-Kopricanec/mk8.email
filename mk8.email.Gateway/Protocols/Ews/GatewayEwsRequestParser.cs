@@ -108,6 +108,7 @@ internal static class GatewayEwsRequestParser
         if (operations[0].Name.LocalName is "CreateItem") return GatewayEwsItemCreateParser.Parse(operations[0]);
         if (operations[0].Name.LocalName is "CopyItem" or "MoveItem") return GatewayEwsItemCopyParser.Parse(operations[0]);
         if (operations[0].Name.LocalName is "FindItem") return GatewayEwsFindItemRequestParser.Parse(operations[0]);
+        if (operations[0].Name.LocalName is "SyncFolderHierarchy") return GatewayEwsFolderSyncParser.Parse(operations[0]);
         return operations[0].Name.LocalName is "CreateFolder" or "UpdateFolder" or "DeleteFolder"
             ? GatewayEwsMutationRequestParser.Parse(operations[0]) : ParseFolderRead(operations[0]);
     }
@@ -165,7 +166,7 @@ internal static class GatewayEwsRequestParser
         }
     }
 
-    private static HashSet<string> ParseShape(XElement shape)
+    internal static HashSet<string> ParseShape(XElement shape)
     {
         Container(shape);
         var fields = shape.Elements().ToArray();

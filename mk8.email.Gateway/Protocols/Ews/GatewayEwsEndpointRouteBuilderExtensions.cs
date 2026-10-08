@@ -83,39 +83,40 @@ internal static class GatewayEwsEndpointRouteBuilderExtensions
         }
         var primary = profile.Accounts.Where(account => string.Equals(account.Name, profile.Username, StringComparison.OrdinalIgnoreCase)).ToArray();
         if (primary.Length > 1) throw new InvalidOperationException("The EWS primary account is ambiguous.");
+        var accountId = primary.Length == 0 ? Guid.Empty : GatewayEwsClient.TryAccount(primary[0].Id, out var parsed)
+            ? parsed : throw new InvalidOperationException("Invalid EWS account.");
+        if (request.Operation is "SyncFolderHierarchy")
+        {
+            var synchronized = await GatewayEwsFolderSync.ExecuteAsync(application, authentication, profile, accountId, request, cancellationToken).ConfigureAwait(false);
+            await WriteBoundedAsync(context, synchronized, environment).ConfigureAwait(false);
+            return;
+        }
         if (request.MimeCreates is not null)
         {
-            var createAccount = primary.Length == 0 ? Guid.Empty : GatewayEwsClient.TryAccount(primary[0].Id, out var parsed)
-                ? parsed : throw new InvalidOperationException("Invalid EWS account.");
-            var created = await GatewayEwsItemCreate.ExecuteAsync(application, authentication, profile, createAccount, request, cancellationToken).ConfigureAwait(false);
+            var created = await GatewayEwsItemCreate.ExecuteAsync(application, authentication, profile, accountId, request, cancellationToken).ConfigureAwait(false);
             await WriteBoundedAsync(context, created, environment).ConfigureAwait(false);
             return;
         }
         if (request.Attachments is not null)
         {
-            var attachmentAccount = primary.Length == 0 ? Guid.Empty : GatewayEwsClient.TryAccount(primary[0].Id, out var parsed)
-                ? parsed : throw new InvalidOperationException("Invalid EWS account.");
-            var attachments = await GatewayEwsAttachmentResponse.ExecuteAsync(application, authentication, profile, attachmentAccount, request, cancellationToken).ConfigureAwait(false);
+            var attachments = await GatewayEwsAttachmentResponse.ExecuteAsync(application, authentication, profile, accountId, request, cancellationToken).ConfigureAwait(false);
             await WriteBoundedAsync(context, attachments, environment).ConfigureAwait(false);
             return;
         }
         if (request.Items is not null)
         {
-            var itemAccount = primary.Length == 0 ? Guid.Empty : GatewayEwsClient.TryAccount(primary[0].Id, out var parsed)
-                ? parsed : throw new InvalidOperationException("Invalid EWS account.");
             var items = request.Operation is "DeleteItem"
-                ? await GatewayEwsItemDelete.ExecuteAsync(application, authentication, profile, itemAccount, request, cancellationToken).ConfigureAwait(false)
+                ? await GatewayEwsItemDelete.ExecuteAsync(application, authentication, profile, accountId, request, cancellationToken).ConfigureAwait(false)
                 : request.Operation is "UpdateItem"
-                ? await GatewayEwsItemUpdate.ExecuteAsync(application, authentication, profile, itemAccount, request, cancellationToken).ConfigureAwait(false)
+                ? await GatewayEwsItemUpdate.ExecuteAsync(application, authentication, profile, accountId, request, cancellationToken).ConfigureAwait(false)
                 : request.Operation is "CopyItem" or "MoveItem"
-                ? await GatewayEwsItemCopy.ExecuteAsync(application, authentication, profile, itemAccount, request, cancellationToken).ConfigureAwait(false)
-                : await GatewayEwsItemResponse.ExecuteAsync(application, authentication, profile, itemAccount, request, cancellationToken).ConfigureAwait(false);
+                ? await GatewayEwsItemCopy.ExecuteAsync(application, authentication, profile, accountId, request, cancellationToken).ConfigureAwait(false)
+                : await GatewayEwsItemResponse.ExecuteAsync(application, authentication, profile, accountId, request, cancellationToken).ConfigureAwait(false);
             await WriteBoundedAsync(context, items, environment).ConfigureAwait(false);
             return;
         }
-        var accountId = Guid.Empty;
         var read = primary.Length == 0 ? null : await application.ReadGraphAsync(authentication, profile,
-            GatewayEwsClient.TryAccount(primary[0].Id, out accountId) ? accountId : throw new InvalidOperationException("Invalid EWS account."),
+            accountId,
             cancellationToken).ConfigureAwait(false);
         var graph = read?.Status == MailFolderReadStatus.Ok ? new GatewayEwsFolderGraph(accountId, read.State!, read.Folders) : null;
         var error = read?.Status == MailFolderReadStatus.RequestTooLarge ? "ErrorExceededFindCountLimit" : "ErrorFolderNotFound";

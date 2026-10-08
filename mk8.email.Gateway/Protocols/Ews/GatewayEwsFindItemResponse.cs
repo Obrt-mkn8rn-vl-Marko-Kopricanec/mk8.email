@@ -48,7 +48,8 @@ internal static class GatewayEwsFindItemResponse
         GatewayEwsRequest request, CancellationToken cancellationToken)
     {
         var limit = Math.Min(request.Limit, profile.Limits.MaxObjectsInGet);
-        var query = await application.QueryItemsAsync(authentication, profile, account, folder, request.Offset, limit, cancellationToken).ConfigureAwait(false);
+        var query = await application.QueryItemsAsync(authentication, profile, account, folder, request.Offset, limit, cancellationToken,
+            request.Restriction, request.SortOrder).ConfigureAwait(false);
         if (query.Status != MailMessageQueryStatus.Ok) return (null, "ErrorFolderNotFound", null);
         if (!request.Indexed && query.Total > limit) return (null, "ErrorExceededFindCountLimit", query.State);
         IReadOnlyList<MailMessageSnapshot> items = [];

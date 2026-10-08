@@ -206,14 +206,18 @@ internal sealed class GatewayEwsClient(IGatewayApplicationTransport transport, E
     }
 
     internal async Task<MailMessageQueryResult> QueryItemsAsync(ProtocolAuthentication authentication,
-        JmapApplicationProfile profile, Guid account, Guid folder, int offset, int limit, CancellationToken cancellationToken)
+        JmapApplicationProfile profile, Guid account, Guid folder, int offset, int limit, CancellationToken cancellationToken,
+        MailMessageFilter? restriction = null, IReadOnlyList<MailMessageSort>? sort = null)
     {
         if (account == Guid.Empty || folder == Guid.Empty || offset < 0 || limit <= 0
             || limit > Math.Min(GatewayEwsRequestParser.MaximumReferences, profile.Limits.MaxObjectsInGet))
             throw new GatewayEwsRequestException("ErrorExceededFindCountLimit");
-        var criteria = new MailMessageQueryCriteria(new(MailMessageFilterOperator.Condition, null,
-            [new(MailMessageFilterField.InMailbox, $"M{folder:N}", null, null, null, null, null)]),
-            [new(MailMessageSortField.ReceivedAt, false, null, MailStringCollation.UnicodeCasemap)], false);
+        // The authenticated direct-folder scope is always OUTSIDE the caller's
+        // expression: NOT/OR cannot negate or broaden account/folder authority.
+        var scope = new MailMessageFilter(MailMessageFilterOperator.Condition, null,
+            [new(MailMessageFilterField.InMailbox, $"M{folder:N}", null, null, null, null, null)]);
+        var criteria = new MailMessageQueryCriteria(restriction is null ? scope : new(MailMessageFilterOperator.And, [scope, restriction], null),
+            sort ?? [new(MailMessageSortField.ReceivedAt, false, null, MailStringCollation.UnicodeCasemap)], false);
         var data = await ExecuteAsync(authentication, profile, MailOperationKind.FindMessages,
             new MailMessageQueryCommand(account, criteria, false, offset, null, 0, limit), cancellationToken).ConfigureAwait(false);
         RequireMembers(data, "status", "state", "position", "ids", "total");

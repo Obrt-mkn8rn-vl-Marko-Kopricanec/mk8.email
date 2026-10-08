@@ -1,3 +1,5 @@
+using mk8.email.Contracts.Messaging;
+
 namespace mk8.email.Gateway.Protocols.Ews;
 
 internal sealed record GatewayEwsRequest(
@@ -16,7 +18,9 @@ internal sealed record GatewayEwsRequest(
     IReadOnlyList<bool>? ReadStates = null,
     IReadOnlyList<byte[]>? MimeCreates = null,
     string? SyncState = null,
-    bool SyncScopeSpecified = false)
+    bool SyncScopeSpecified = false,
+    MailMessageFilter? Restriction = null,
+    IReadOnlyList<MailMessageSort>? SortOrder = null)
 {
     public bool IsMutation => Operation is "CreateFolder" or "UpdateFolder" or "DeleteFolder" or "DeleteItem" or "CopyItem" or "MoveItem" or "UpdateItem" or "CreateItem";
 }

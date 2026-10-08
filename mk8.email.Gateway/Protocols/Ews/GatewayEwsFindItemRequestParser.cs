@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Xml.Linq;
+using mk8.email.Contracts.Messaging;
 
 namespace mk8.email.Gateway.Protocols.Ews;
 
@@ -17,20 +18,28 @@ internal static class GatewayEwsFindItemRequestParser
         if ((string?)operation.Attribute("Traversal") is not "Shallow")
             throw new GatewayEwsRequestException("ErrorInvalidTraversal");
         var fields = operation.Elements().ToArray();
-        if (fields.Length is < 2 or > 3 || fields[0].Name != GatewayEwsSoap.Messages + "ItemShape"
+        if (fields.Length is < 2 or > 5 || fields[0].Name != GatewayEwsSoap.Messages + "ItemShape"
             || fields[^1].Name != GatewayEwsSoap.Messages + "ParentFolderIds") Invalid();
         var properties = GatewayEwsItemRequestParser.Shape(fields[0], out _);
         // FindItem does not expose GetItem's recipient lists/full Sender/From addresses.
         if (properties.Any(property => !Properties.Contains(property)))
             throw new GatewayEwsRequestException("ErrorInvalidPropertyRequest");
-        var (offset, limit, indexed) = fields.Length == 3 ? Page(fields[1])
+        var index = 1;
+        var (offset, limit, indexed) = fields[index].Name == GatewayEwsSoap.Messages + "IndexedPageItemView" ? Page(fields[index++])
             : (0, GatewayEwsRequestParser.MaximumReferences, false);
+        MailMessageFilter? restriction = null;
+        IReadOnlyList<MailMessageSort>? sort = null;
+        if (fields[index].Name == GatewayEwsSoap.Messages + "Restriction")
+            restriction = GatewayEwsItemSearchParser.Restriction(fields[index++]);
+        if (fields[index].Name == GatewayEwsSoap.Messages + "SortOrder")
+            sort = GatewayEwsItemSearchParser.Sort(fields[index++]);
+        if (index != fields.Length - 1) throw new GatewayEwsRequestException("ErrorInvalidRequest");
         GatewayEwsRequestParser.Container(fields[^1]);
         var references = fields[^1].Elements().Select(GatewayEwsRequestParser.ParseReference).ToArray();
         if (references.Length == 0) Invalid();
         if (references.Length > GatewayEwsRequestParser.MaximumReferences)
             throw new GatewayEwsRequestException("ErrorExceededFindCountLimit");
-        return new("FindItem", properties, references, false, offset, limit, indexed);
+        return new("FindItem", properties, references, false, offset, limit, indexed, Restriction: restriction, SortOrder: sort);
     }
 
     private static (int Offset, int Limit, bool Indexed) Page(XElement view)

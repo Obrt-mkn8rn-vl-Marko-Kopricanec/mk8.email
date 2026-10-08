@@ -215,6 +215,114 @@ internal sealed class GatewayEwsItemCopyTests
         Assert.AreEqual(Target, command.Items[0].MailboxId);
     }
 
+    [TestMethod]
+    [DataRow("", true)]
+    [DataRow("<m:ReturnNewItemIds>true</m:ReturnNewItemIds>", true)]
+    [DataRow("<m:ReturnNewItemIds>1</m:ReturnNewItemIds>", true)]
+    [DataRow("<m:ReturnNewItemIds>false</m:ReturnNewItemIds>", false)]
+    [DataRow("<m:ReturnNewItemIds>0</m:ReturnNewItemIds>", false)]
+    public async Task MoveParserPreservesIdentityReturnAndMutationAdmission(string option, bool returns)
+    {
+        using var body = new MemoryStream(Encoding.UTF8.GetBytes(Envelope(
+            $"<m:ToFolderId><t:FolderId Id='folder'/></m:ToFolderId><m:ItemIds><t:ItemId Id='item'/></m:ItemIds>{option}")
+            .Replace("CopyItem", "MoveItem", StringComparison.Ordinal)));
+        var request = await GatewayEwsRequestParser.ReadAsync(body, CancellationToken.None).ConfigureAwait(false);
+        Assert.AreEqual("MoveItem", request.Operation, StringComparer.Ordinal);
+        Assert.IsTrue(request.IsMutation);
+        Assert.AreEqual(returns, request.ReturnNewItemIds);
+    }
+
+    [TestMethod]
+    [DataRow("valid")]
+    [DataRow("missing-destroy")]
+    [DataRow("empty-destroy")]
+    [DataRow("missing-field")]
+    [DataRow("extra-field")]
+    [DataRow("not-attempted")]
+    [DataRow("state-mismatch")]
+    [DataRow("unknown-status")]
+    [DataRow("wrong-old")]
+    [DataRow("empty-new")]
+    [DataRow("control-new")]
+    [DataRow("unchanged-new")]
+    [DataRow("original-new")]
+    [DataRow("missing-source")]
+    [DataRow("wrong-source")]
+    [DataRow("duplicate-source")]
+    [DataRow("not-found")]
+    [DataRow("null-destroyed")]
+    [DataRow("null-not-found")]
+    public void MoveRepliesCannotClaimSuccessWithoutExactCompletedSourceDestruction(string mode)
+    {
+        var data = (JsonObject)JsonSerializer.SerializeToNode(MoveSuccess(), JsonSerializerOptions.Web)!;
+        CorruptMove(mode, data);
+        var reply = Operation(data, new Dictionary<string, string>(StringComparer.Ordinal) { ["ewsMove0"] = $"E{Created:N}" });
+        if (mode is "valid") Assert.AreEqual("s12", GatewayEwsItemCopyReply.Decode(reply, MoveCommand(), Sources()).Destroy!.NewState, StringComparer.Ordinal);
+        else Assert.Throws<InvalidOperationException>(() => GatewayEwsItemCopyReply.Decode(reply, MoveCommand(), Sources()));
+    }
+
+    private static void CorruptMove(string mode, JsonObject data)
+    {
+        var destroy = (JsonObject)data["destroy"]!;
+        if (mode is "missing-destroy") data["destroy"] = null;
+        if (mode is "empty-destroy") data["destroy"] = new JsonObject();
+        if (mode is "missing-field") destroy.Remove("notFound");
+        if (mode is "extra-field") destroy["unexpected"] = true;
+        if (mode is "not-attempted") destroy["status"] = (int)MailCopyDestroyStatus.NotAttempted;
+        if (mode is "state-mismatch") destroy["status"] = (int)MailCopyDestroyStatus.StateMismatch;
+        if (mode is "unknown-status") destroy["status"] = 99;
+        if (mode is "wrong-old") destroy["oldState"] = "s10";
+        if (mode is "empty-new") destroy["newState"] = "";
+        if (mode is "control-new") destroy["newState"] = "s12\n";
+        if (mode is "unchanged-new") destroy["newState"] = "s11";
+        if (mode is "original-new") destroy["newState"] = "s10";
+        if (mode is "missing-source") destroy["destroyed"] = new JsonArray();
+        if (mode is "wrong-source") destroy["destroyed"]![0] = Created;
+        if (mode is "duplicate-source") ((JsonArray)destroy["destroyed"]!).Add(JsonValue.Create(Source));
+        if (mode is "not-found") ((JsonArray)destroy["notFound"]!).Add(JsonValue.Create(Source));
+        if (mode is "null-destroyed") destroy["destroyed"] = null;
+        if (mode is "null-not-found") destroy["notFound"] = null;
+    }
+
+    [TestMethod]
+    public async Task MoveUsesBothAdmittedStatesAndReturnsThePostDestructionChangeKey()
+    {
+        var sources = Sources();
+        sources[Source] = sources[Source] with { Stored = sources[Source].Stored! with { FolderId = Source } };
+        var transport = new Transport([Reply(MailOperationKind.ReadMessages, new MailMessageReadResult(MailMessageReadStatus.Ok, "s10", [new(Source, sources[Source])])),
+            new(JmapApplicationOutcomes.Ok, OperationResult: Operation(JsonSerializer.SerializeToNode(MoveSuccess(), JsonSerializerOptions.Web)!,
+                new Dictionary<string, string>(StringComparer.Ordinal) { ["ewsMove0"] = $"E{Created:N}" }))]);
+        var xml = await GatewayEwsItemCopy.ExecuteAsync(new(transport, new()), Authentication, Profile, Account,
+            Request([new(GatewayEwsItemIdCodec.Encode(Account, Source), null)]) with { Operation = "MoveItem" }, CancellationToken.None).ConfigureAwait(false);
+        var command = transport.Commands[1].Arguments.Deserialize<MailCopyCommand>(JsonSerializerOptions.Web)!;
+        Assert.AreEqual("s10", command.IfFromInState, StringComparer.Ordinal);
+        Assert.AreEqual("s10", command.IfInState, StringComparer.Ordinal);
+        Assert.IsTrue(command.DestroyOriginal);
+        Assert.IsNull(command.DestroyFromIfInState);
+        Assert.IsNull(command.Items[0].Keywords);
+        Assert.IsNull(command.Items[0].ReceivedAt);
+        var document = XDocument.Parse(xml);
+        Assert.IsNotNull(document.Descendants(GatewayEwsSoap.Messages + "MoveItemResponseMessage").SingleOrDefault());
+        Assert.AreEqual("czEy", (string?)document.Descendants(GatewayEwsSoap.Types + "ItemId").Single().Attribute("ChangeKey"), StringComparer.Ordinal);
+    }
+
+    [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public void MoveCannotAcceptDeletionOnAWholeOrAllItemFailure(bool whole)
+    {
+        var value = whole ? new MailCopyResult(MailCopyStatus.StateMismatch, null, null, [], MoveSuccess().Destroy)
+            : new MailCopyResult(MailCopyStatus.Ok, "s10", "s10", [new("ewsMove0", MailCopyItemError.InvalidMailbox, null, null, null)], MoveSuccess().Destroy);
+        Assert.Throws<InvalidOperationException>(() => GatewayEwsItemCopyReply.Decode(Operation(JsonSerializer.SerializeToNode(value, JsonSerializerOptions.Web)!,
+            new Dictionary<string, string>(StringComparer.Ordinal)), MoveCommand(), Sources()));
+        var refused = value with { Destroy = null };
+        Assert.AreEqual(refused.Status, GatewayEwsItemCopyReply.Decode(Operation(JsonSerializer.SerializeToNode(refused, JsonSerializerOptions.Web)!,
+            new Dictionary<string, string>(StringComparer.Ordinal)), MoveCommand(), Sources()).Status);
+    }
+
+    private static MailCopyCommand MoveCommand() => Command with { DestroyOriginal = true, Items = [Command.Items[0] with { CreationId = "ewsMove0" }] };
+    private static MailCopyResult MoveSuccess() => new(MailCopyStatus.Ok, "s10", "s11", [new("ewsMove0", MailCopyItemError.None, Created, "thread", 100)],
+        new(MailCopyDestroyStatus.Completed, "s11", "s12", [Source], []));
     private static MailCopyResult Success() => new(MailCopyStatus.Ok, "s10", "s11", [new("ewsCopy0", MailCopyItemError.None, Created, "thread", 100)], null);
     private static Dictionary<Guid, MailMessageSnapshot> Sources() => new() { [Source] = new(Source, null, null, 100, new(Source, Target, "thread", [], 100, DateTime.UtcNow), [], null, []) };
     private static MailOperationResult Operation(JsonNode data, IReadOnlyDictionary<string, string> known) => new(new(MailOperationKind.CopyMessages, ApplicationValueCodec.Encode(data)), known, Profile);

@@ -27,16 +27,16 @@ internal static class GatewayEwsItemCopyResponse
                     _ => outcome is null ? throw new InvalidOperationException("The EWS copy outcome is missing.") : Failure(outcome.Error),
                 };
             }
-            responses.Add(Response(account, code, outcome, result?.NewTargetState, request.ReturnNewItemIds));
+            responses.Add(Response(request.Operation, account, code, outcome, result?.Destroy?.NewState ?? result?.NewTargetState, request.ReturnNewItemIds));
         }
-        return GatewayEwsSoap.Envelope(new XElement(GatewayEwsSoap.Messages + "CopyItemResponse", responses));
+        return GatewayEwsSoap.Envelope(new XElement(GatewayEwsSoap.Messages + request.Operation + "Response", responses));
     }
 
-    private static XElement Response(Guid account, string? code, MailCopyItemOutcome? outcome, string? state, bool returnIds)
+    private static XElement Response(string operation, Guid account, string? code, MailCopyItemOutcome? outcome, string? state, bool returnIds)
     {
         var messages = GatewayEwsSoap.Messages;
-        var response = new XElement(messages + "CopyItemResponseMessage", new XAttribute("ResponseClass", code is null ? "Success" : "Error"));
-        if (code is not null) response.Add(new XElement(messages + "MessageText", "The mail-item copy was refused."));
+        var response = new XElement(messages + operation + "ResponseMessage", new XAttribute("ResponseClass", code is null ? "Success" : "Error"));
+        if (code is not null) response.Add(new XElement(messages + "MessageText", operation is "MoveItem" ? "The mail-item move was refused." : "The mail-item copy was refused."));
         response.Add(new XElement(messages + "ResponseCode", code ?? "NoError"));
         if (code is not null) response.Add(new XElement(messages + "DescriptiveLinkKey", 0));
         var items = new XElement(messages + "Items");

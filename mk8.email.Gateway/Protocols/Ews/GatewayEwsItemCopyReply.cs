@@ -18,7 +18,12 @@ internal static class GatewayEwsItemCopyReply
     {
         var data = ApplicationValueCodec.Decode(reply.Response.Data!) as JsonObject ?? throw Invalid();
         RequireMembers(data, "status", "oldTargetState", "newTargetState", "items", "destroy");
-        if (data["items"] is not JsonArray items || data["destroy"] is not null) throw Invalid();
+        if (data["items"] is not JsonArray items) throw Invalid();
+        if (data["destroy"] is not null)
+        {
+            if (!command.DestroyOriginal || data["destroy"] is not JsonObject destroy) throw Invalid();
+            RequireMembers(destroy, "status", "oldState", "newState", "destroyed", "notFound");
+        }
         foreach (var node in items)
         {
             if (node is not JsonObject item) throw Invalid();
@@ -29,14 +34,36 @@ internal static class GatewayEwsItemCopyReply
         if (result.Status != MailCopyStatus.Ok)
         {
             if (result.OldTargetState is not null || result.NewTargetState is not null || result.Items.Count != 0
-                || reply.KnownEntities.Count != 0) throw Invalid();
+                || reply.KnownEntities.Count != 0 || result.Destroy is not null) throw Invalid();
             return result;
         }
         if (!string.Equals(result.OldTargetState, command.IfInState, StringComparison.Ordinal)
             || string.IsNullOrEmpty(result.NewTargetState) || result.NewTargetState.Length > 256
             || result.NewTargetState.Any(char.IsControl) || result.Items.Count != command.Items.Count) throw Invalid();
         ValidateItems(result, command, sources, reply.KnownEntities);
+        ValidateDestruction(result, command);
         return result;
+    }
+
+    private static void ValidateDestruction(MailCopyResult result, MailCopyCommand command)
+    {
+        var successful = result.Items.Select((item, index) => (item, index)).Where(pair => pair.item.Error == MailCopyItemError.None)
+            .Select(pair => command.Items[pair.index].SourceEmailId!.Value).ToArray();
+        if (!command.DestroyOriginal || successful.Length == 0)
+        {
+            if (result.Destroy is not null) throw Invalid();
+            return;
+        }
+        var destroy = result.Destroy;
+        if (command.SourceAccountId != command.TargetAccountId || command.DestroyFromIfInState is not null
+            || destroy is null || destroy.Status != MailCopyDestroyStatus.Completed
+            || !string.Equals(destroy.OldState, result.NewTargetState, StringComparison.Ordinal)
+            || string.IsNullOrEmpty(destroy.NewState) || destroy.NewState.Length > 256 || destroy.NewState.Any(char.IsControl)
+            || string.Equals(destroy.OldState, destroy.NewState, StringComparison.Ordinal)
+            || string.Equals(result.OldTargetState, destroy.NewState, StringComparison.Ordinal)
+            || destroy.Destroyed is null || destroy.NotFound is null || destroy.NotFound.Count != 0
+            || successful.Distinct().Count() != successful.Length || destroy.Destroyed.Count != successful.Length
+            || !destroy.Destroyed.SequenceEqual(successful)) throw Invalid();
     }
 
     private static void ValidateItems(MailCopyResult result, MailCopyCommand command,

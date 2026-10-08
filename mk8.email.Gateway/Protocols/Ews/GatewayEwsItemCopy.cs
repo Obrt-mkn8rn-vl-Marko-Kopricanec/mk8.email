@@ -10,7 +10,8 @@ internal static class GatewayEwsItemCopy
         JmapApplicationProfile profile, Guid account, GatewayEwsRequest request, CancellationToken cancellationToken)
     {
         var references = request.Items ?? throw new InvalidOperationException("The EWS copy request is incomplete.");
-        var plans = Prepare(references, account);
+        var moving = request.Operation is "MoveItem";
+        var plans = Prepare(references, account, moving);
         if (request.Folders.Count != 1) throw new InvalidOperationException("The EWS copy destination is incomplete.");
         var destination = request.Folders[0];
         var targetError = !GatewayEwsFolderIdCodec.TryDecode(destination.Id, out var targetAccount, out var target) ? "ErrorInvalidIdMalformed"
@@ -23,28 +24,33 @@ internal static class GatewayEwsItemCopy
         var read = await application.ReadItemsAsync(authentication, profile, account, ids, cancellationToken).ConfigureAwait(false);
         var snapshots = read.Messages.ToDictionary(item => item.MessageId, item => item.Value);
         var key = read.State is null ? null : Convert.ToBase64String(Encoding.UTF8.GetBytes(read.State));
+        var admitted = new HashSet<Guid>();
         for (var index = 0; index < plans.Length; index++)
         {
             if (plans[index].Code is not null) continue;
             var code = read.Status == MailMessageReadStatus.RequestTooLarge ? "ErrorDataSizeLimitExceeded"
                 : !snapshots.ContainsKey(plans[index].Id) ? "ErrorItemNotFound"
                 : references[index].ChangeKey is not null && !string.Equals(references[index].ChangeKey, key, StringComparison.Ordinal)
-                    ? "ErrorIrresolvableConflict" : null;
+                    ? "ErrorIrresolvableConflict"
+                : moving && snapshots[plans[index].Id].Stored!.FolderId == target ? "ErrorInvalidRequest"
+                : moving && !admitted.Add(plans[index].Id) ? "ErrorItemNotFound" : null;
             plans[index] = plans[index] with { Code = code };
         }
         var items = plans.Where(plan => plan.Code is null).Select(plan => new MailCopyItem(plan.Token, plan.Id, false,
             target, MailMessageMailboxIssue.None, null, MailMessageKeywordIssue.None, null, false)).ToArray();
         if (items.Length == 0) return GatewayEwsItemCopyResponse.Render(request, account, plans, null);
-        // The same-account copy compares both admitted email states atomically.
-        // Source deletion is NEVER authorized by this presentation operation.
-        var command = new MailCopyCommand(account, account, read.State!, read.State!, false, null, items);
+        // Both operations compare the admitted account state before any writes.
+        // Only MoveItem authorizes deletion of successfully copied sources in
+        // this same transaction. A pre-copy state must not guard the later
+        // deletion stage: creating the replacement has already changed it.
+        var command = new MailCopyCommand(account, account, read.State!, read.State!, moving, null, items);
         var reply = await application.ExecuteOperationAsync(authentication, profile, MailOperationKind.CopyMessages,
             command, cancellationToken).ConfigureAwait(false);
         var result = GatewayEwsItemCopyReply.Decode(reply, command, snapshots);
         return GatewayEwsItemCopyResponse.Render(request, account, plans, result);
     }
 
-    private static GatewayEwsItemCopyPlan[] Prepare(IReadOnlyList<GatewayEwsItemReference> references, Guid account)
+    private static GatewayEwsItemCopyPlan[] Prepare(IReadOnlyList<GatewayEwsItemReference> references, Guid account, bool moving)
     {
         var plans = new GatewayEwsItemCopyPlan[references.Count];
         for (var index = 0; index < plans.Length; index++)
@@ -53,7 +59,7 @@ internal static class GatewayEwsItemCopy
             var code = !GatewayEwsItemIdCodec.TryDecode(reference.Id, out var requestedAccount, out var id) ? "ErrorInvalidIdMalformed"
                 : account == Guid.Empty ? "ErrorItemNotFound" : requestedAccount != account ? "ErrorAccessDenied"
                 : !ValidKey(reference.ChangeKey) ? "ErrorInvalidChangeKey" : null;
-            plans[index] = new(id, "ewsCopy" + index.ToString(CultureInfo.InvariantCulture), code);
+            plans[index] = new(id, (moving ? "ewsMove" : "ewsCopy") + index.ToString(CultureInfo.InvariantCulture), code);
         }
         return plans;
     }

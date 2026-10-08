@@ -13,7 +13,7 @@ internal static class GatewayEwsItemCopyParser
         GatewayEwsRequestParser.Container(fields[0]);
         var folders = fields[0].Elements().ToArray();
         if (folders.Length != 1) throw Invalid();
-        // This initial copy profile binds an ordinary physical folder identity.
+        // These initial transfer profiles bind an ordinary physical folder identity.
         // It does not silently ignore a destination version or resolve a role
         // outside the copy transaction without a corresponding domain guard.
         if (folders[0].Name != GatewayEwsSoap.Types + "FolderId")
@@ -33,7 +33,7 @@ internal static class GatewayEwsItemCopyParser
             if (fields[2].Value is not ("true" or "1" or "false" or "0")) throw Invalid();
             returnIds = fields[2].Value is "true" or "1";
         }
-        return new("CopyItem", new HashSet<string>(StringComparer.Ordinal), [destination], false, 0, 0, false,
+        return new(operation.Name.LocalName, new HashSet<string>(StringComparer.Ordinal), [destination], false, 0, 0, false,
             Items: items, ReturnNewItemIds: returnIds);
     }
 

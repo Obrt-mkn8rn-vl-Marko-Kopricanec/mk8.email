@@ -43,7 +43,7 @@ namespace mk8.email.Messaging.Tests;
 [TestCategory("PostgreSQL")]
 [TestCategory("AzureBlobCompatible")]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals creates this integration class; discovery is verified by executed test counts.")]
-internal sealed class GatewayHttpCaptureBoundaryTests
+internal sealed partial class GatewayHttpCaptureBoundaryTests
 {
     [TestMethod]
     public async Task ProductionKnownLengthRejectionRecordsBothDirectionsWithoutWorkerDispatch()
@@ -155,7 +155,7 @@ internal sealed class GatewayHttpCaptureBoundaryTests
         await fixture.AssertPayloadBudgetsAndBlobReferencesAsync().ConfigureAwait(false);
     }
 
-    internal sealed class CaptureFixture : IAsyncDisposable
+    internal sealed partial class CaptureFixture : IAsyncDisposable
     {
         internal string ApplicationConnection => _database.ConnectionString;
         internal IServiceScopeFactory DomainScopes => _workerProvider.GetRequiredService<IServiceScopeFactory>();
@@ -170,12 +170,13 @@ internal sealed class GatewayHttpCaptureBoundaryTests
         private readonly PostgresGatewayTrafficJournal _journal;
         private readonly int _maximumPayloadBytes;
         private readonly SocketsHttpHandler _clientHandler;
+        private readonly GatewayFixtureFailureHandler _diagnosticHandler;
         private readonly string? _discoveryCertificatePath;
 
         private CaptureFixture(PostgresTestDatabase database, NpgsqlDataSource dataSource, AesGcmPayloadProtector protector,
             BlobContainerClient container, ServiceProvider workerProvider, ApplicationRequestWorker worker,
             WebApplication host, PostgresGatewayTrafficJournal journal, UploadApplication application, int maximumPayloadBytes,
-            bool ordinaryClient, FaultingJournal faultingJournal, string? discoveryCertificatePath)
+            bool ordinaryClient, FaultingJournal faultingJournal, string? discoveryCertificatePath, GatewayFixtureDiagnostics diagnostics)
         {
             _database = database;
             _dataSource = dataSource;
@@ -189,13 +190,15 @@ internal sealed class GatewayHttpCaptureBoundaryTests
             _maximumPayloadBytes = maximumPayloadBytes;
             Faults = faultingJournal;
             _discoveryCertificatePath = discoveryCertificatePath;
+            Diagnostics = diagnostics;
             Address = new Uri(host.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
             _clientHandler = new SocketsHttpHandler
             {
                 AllowAutoRedirect = false,
                 ConnectCallback = (context, cancellationToken) => ConnectAsync(context, ordinaryClient, cancellationToken),
             };
-            Client = new HttpClient(_clientHandler, disposeHandler: false) { BaseAddress = Address, Timeout = TimeSpan.FromSeconds(15) };
+            _diagnosticHandler = new GatewayFixtureFailureHandler(_clientHandler, diagnostics, CaptureFailureSnapshotAsync, diagnostics.Publish);
+            Client = new HttpClient(_diagnosticHandler, disposeHandler: false) { BaseAddress = Address, Timeout = TimeSpan.FromSeconds(15) };
             Client.DefaultRequestHeaders.Add("X-Forwarded-Proto", "https");
             Client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", "dGVzdDp0ZXN0LXByb3RvY29sLXNlY3JldA==");
         }
@@ -234,7 +237,8 @@ internal sealed class GatewayHttpCaptureBoundaryTests
             };
             var bus = new PostgresApplicationBus(dataSource, protector, options, largeObjectStore: store);
             var journal = new PostgresGatewayTrafficJournal(dataSource, protector, options, store);
-            var faultingJournal = new FaultingJournal(journal, failSequence);
+            var diagnostics = new GatewayFixtureDiagnostics();
+            var faultingJournal = new FaultingJournal(journal, failSequence, diagnostics);
             var application = new UploadApplication();
             var certificatePath = discoveryListeners ? await CreateDiscoveryCertificateAsync().ConfigureAwait(false) : null;
             var environment = CreateEnvironment(maximumPayloadBytes, blobConnection, certificatePath, disableJmap);
@@ -242,7 +246,7 @@ internal sealed class GatewayHttpCaptureBoundaryTests
                 .AddScoped<IApplicationRequestDispatcher>(provider =>
                 {
                     var dispatcher = new GatewayAutodiscoverFixtureDispatcher(provider);
-                    return decorateDispatcher?.Invoke(dispatcher) ?? dispatcher;
+                    return new GatewayFixtureDiagnostics.Dispatcher(decorateDispatcher?.Invoke(dispatcher) ?? dispatcher, diagnostics);
                 });
             if (mailFolders) GatewayEwsFixtureDomain.Configure(services, database.ConnectionString, store, protector, environment, folderLockInterceptor);
             var provider = services.BuildServiceProvider();
@@ -250,13 +254,13 @@ internal sealed class GatewayHttpCaptureBoundaryTests
                 new ApplicationWorkerIdentity("worker@http-boundary", TimeSpan.FromSeconds(30)), NullLogger<ApplicationRequestWorker>.Instance);
             Assert.HasCount(0, environment.Validate(role: EnvironmentValidationRole.Gateway));
             Assert.HasCount(0, environment.Validate(role: EnvironmentValidationRole.ApplicationWorker));
-            var host = BuildProductionHost(environment, bus, faultingJournal);
+            var host = BuildProductionHost(environment, bus, faultingJournal, diagnostics);
             CaptureFixture? fixture = null;
             MapProtocolRoutes(host, () => fixture!);
             await worker.StartAsync(CancellationToken.None).ConfigureAwait(false);
             await host.StartAsync(CancellationToken.None).ConfigureAwait(false);
             fixture = new CaptureFixture(database, dataSource, protector, container, provider, worker, host, journal, application,
-                maximumPayloadBytes, ordinaryClient, faultingJournal, certificatePath);
+                maximumPayloadBytes, ordinaryClient, faultingJournal, certificatePath, diagnostics);
             return fixture;
         }
 
@@ -319,7 +323,7 @@ internal sealed class GatewayHttpCaptureBoundaryTests
         }
 
         private static WebApplication BuildProductionHost(EnvironmentConfig environment,
-            IApplicationRequestClient bus, IGatewayTrafficJournal journal)
+            IApplicationRequestClient bus, IGatewayTrafficJournal journal, GatewayFixtureDiagnostics diagnostics)
         {
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = Environments.Production });
             builder.WebHost.ConfigureKestrel(server =>
@@ -349,6 +353,12 @@ internal sealed class GatewayHttpCaptureBoundaryTests
                 forwarded.KnownProxies.Add(IPAddress.Parse("127.0.0.2"));
             });
             var host = builder.Build();
+            host.Use(async (context, next) =>
+            {
+                diagnostics.Record(GatewayFixtureDiagnostics.Phase.GatewayEnter);
+                try { await next(context).ConfigureAwait(false); }
+                finally { diagnostics.Record(GatewayFixtureDiagnostics.Phase.GatewayExit); }
+            });
             GatewayHttpPipeline.Configure(host); // The identical Production pipeline used by Program.cs.
             return host;
         }
@@ -493,7 +503,8 @@ internal sealed class GatewayHttpCaptureBoundaryTests
         public async ValueTask DisposeAsync()
         {
             Client.Dispose();
-            _clientHandler.Dispose();
+            _diagnosticHandler.Dispose(); // Owns and disposes the inner SocketsHttpHandler.
+            _clientHandler.Dispose(); // Idempotent explicit field cleanup also documents the fixture's ownership.
             Application.ReleasePoll(changes: false);
             await _host.StopAsync().ConfigureAwait(false);
             await _host.DisposeAsync().ConfigureAwait(false);
@@ -549,13 +560,16 @@ internal sealed class GatewayHttpCaptureBoundaryTests
             }));
     }
 
-    internal sealed class FaultingJournal(PostgresGatewayTrafficJournal journal, long? failSequence) : IGatewayTrafficJournal
+    internal sealed class FaultingJournal(PostgresGatewayTrafficJournal journal, long? failSequence, GatewayFixtureDiagnostics diagnostics) : IGatewayTrafficJournal
     {
         public bool FailNextChunk { get; set; }
         public TaskCompletionSource<GatewayTrafficRecord> Failure { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public Task AppendAsync(GatewayTrafficRecord record, CancellationToken cancellationToken = default)
+        public async Task AppendAsync(GatewayTrafficRecord record, CancellationToken cancellationToken = default)
         {
+            var inbound = string.Equals(record.Direction, GatewayTrafficDirections.Inbound, StringComparison.Ordinal);
+            diagnostics.Record(inbound ? GatewayFixtureDiagnostics.Phase.JournalInboundStart : GatewayFixtureDiagnostics.Phase.JournalOutboundStart,
+                record.ApplicationRequestId);
             if (record.Metadata.TryGetValue("layer", out var layer) && string.Equals(layer, "presentation", StringComparison.Ordinal)
                 && (record.Sequence == failSequence
                     || (FailNextChunk && record.Sequence >= 2 && string.Equals(record.Direction, GatewayTrafficDirections.Outbound, StringComparison.Ordinal))))
@@ -563,7 +577,9 @@ internal sealed class GatewayHttpCaptureBoundaryTests
                 Failure.TrySetResult(record);
                 throw new InvalidOperationException("Deliberate journal write failure.");
             }
-            return journal.AppendAsync(record, cancellationToken);
+            await journal.AppendAsync(record, cancellationToken).ConfigureAwait(false);
+            diagnostics.Record(inbound ? GatewayFixtureDiagnostics.Phase.JournalInboundComplete : GatewayFixtureDiagnostics.Phase.JournalOutboundComplete,
+                record.ApplicationRequestId);
         }
 
         public Task<IReadOnlyList<GatewayTrafficRecord>> ReadSessionAsync(Guid sessionId, CancellationToken cancellationToken = default) =>

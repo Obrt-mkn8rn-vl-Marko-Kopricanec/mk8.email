@@ -83,7 +83,14 @@ internal sealed partial class GatewayFixtureDiagnosticsTests
     }
 
     [TestMethod]
-    public async Task HttpLifecycleOverlappingAttemptsKeepTheirOwnImmutableCorrelation()
+    public Task HttpLifecycleOverlappingAttemptsKeepTheirOwnImmutableCorrelation()
+        => ObserveOverlappingHttpScopesAsync(cancelBeforeResume: false);
+
+    [TestMethod]
+    public Task HttpLifecycleCleanupBeforeResumeObservesCancellationWithoutInventingAnEvent()
+        => ObserveOverlappingHttpScopesAsync(cancelBeforeResume: true);
+
+    private static async Task ObserveOverlappingHttpScopesAsync(bool cancelBeforeResume)
     {
         var diagnostics = new GatewayFixtureDiagnostics();
         using var source = new EventSource(GatewayFixtureHttpDiagnostics.ControlledSourceName);
@@ -109,6 +116,14 @@ internal sealed partial class GatewayFixtureDiagnosticsTests
         {
             await entered.Task.WaitAsync(deadline.Token).ConfigureAwait(false);
             await dispatcher.DispatchAsync(second, deadline.Token).ConfigureAwait(false);
+            if (cancelBeforeResume)
+                await GatewayEwsRouteTests.ObserveWriterCleanupAsync(pending, Task.CompletedTask, deadline, null).ConfigureAwait(false);
+            else
+            {
+                release.TrySetResult();
+                // Success requires the first emission before cleanup is permitted to cancel it.
+                await pending.ConfigureAwait(false);
+            }
         }
         // Original observation failures remain in the inherited owned-task cleanup inventory.
 #pragma warning disable CA1031
@@ -121,9 +136,10 @@ internal sealed partial class GatewayFixtureDiagnosticsTests
             await GatewayEwsRouteTests.ObserveWriterCleanupAsync(pending, Task.CompletedTask, deadline, original).ConfigureAwait(false);
         }
         var events = DiagnosticEvents(diagnostics).Where(IsHttpEvent).ToArray();
-        Assert.HasCount(2, events);
+        Assert.HasCount(cancelBeforeResume ? 1 : 2, events);
+        Assert.AreEqual(cancelBeforeResume, pending.IsCanceled);
         Assert.AreEqual(second.Id, events[0].GetProperty("Request").GetGuid());
-        Assert.AreEqual(first.Id, events[1].GetProperty("Request").GetGuid());
+        if (!cancelBeforeResume) Assert.AreEqual(first.Id, events[1].GetProperty("Request").GetGuid());
         Assert.IsTrue(events.All(value => value.GetProperty("Request").GetGuid() == value.GetProperty("Span").GetGuid()
             && value.GetProperty("Attempt").GetInt32() == (value.GetProperty("Request").GetGuid() == first.Id ? 1 : 2)));
     }

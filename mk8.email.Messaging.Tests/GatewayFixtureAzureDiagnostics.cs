@@ -15,6 +15,7 @@ internal sealed class GatewayFixtureAzureDiagnostics(GatewayFixtureDiagnostics d
     public override void Process(HttpMessage message, ReadOnlyMemory<HttpPipelinePolicy> pipeline)
     {
         var attempt = Start(message);
+        using var scope = diagnostics.EnterAzureAttempt(attempt.Activity, attempt.Span, attempt.Number);
         var outcome = Phase.AzureFault;
         try { ProcessNext(message, pipeline); outcome = Phase.AzureReturned; }
         catch (OperationCanceledException) when (message.CancellationToken.IsCancellationRequested)
@@ -25,6 +26,7 @@ internal sealed class GatewayFixtureAzureDiagnostics(GatewayFixtureDiagnostics d
     public override async ValueTask ProcessAsync(HttpMessage message, ReadOnlyMemory<HttpPipelinePolicy> pipeline)
     {
         var attempt = Start(message);
+        using var scope = diagnostics.EnterAzureAttempt(attempt.Activity, attempt.Span, attempt.Number);
         var outcome = Phase.AzureFault;
         try { await ProcessNextAsync(message, pipeline).ConfigureAwait(false); outcome = Phase.AzureReturned; }
         catch (OperationCanceledException) when (message.CancellationToken.IsCancellationRequested)

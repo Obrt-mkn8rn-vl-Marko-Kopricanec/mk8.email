@@ -8,7 +8,7 @@ namespace mk8.email.Messaging.Tests;
 
 internal sealed partial class GatewayEwsRouteTests
 {
-    private static async Task ObserveWriterCleanupAsync(Task mutation, Task? writer, CancellationTokenSource deadline,
+    internal static async Task ObserveWriterCleanupAsync(Task mutation, Task? writer, CancellationTokenSource deadline,
         Exception? originalFailure, bool concurrency = false, bool legacy = false, Func<CancellationToken, Task>? rollback = null)
     {
         var tasks = new List<Task> { mutation };

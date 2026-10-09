@@ -246,6 +246,7 @@ internal sealed partial class GatewayHttpCaptureBoundaryTests
             var certificatePath = discoveryListeners ? await CreateDiscoveryCertificateAsync().ConfigureAwait(false) : null;
             var environment = CreateEnvironment(maximumPayloadBytes, blobConnection, certificatePath, disableJmap);
             var services = new ServiceCollection().AddSingleton<IJmapApplicationService>(application)
+                .AddSingleton(_ => new GatewayFixtureHttpDiagnostics(diagnostics))
                 .AddScoped<IApplicationRequestDispatcher>(provider =>
                 {
                     var dispatcher = new GatewayAutodiscoverFixtureDispatcher(provider);
@@ -269,6 +270,8 @@ internal sealed partial class GatewayHttpCaptureBoundaryTests
             await host.StartAsync(CancellationToken.None).ConfigureAwait(false);
             fixture = new CaptureFixture(database, dataSource, protector, container, provider, worker, host, journal, application,
                 maximumPayloadBytes, ordinaryClient, faultingJournal, certificatePath, diagnostics);
+            // Provider owns the listener until AFTER Worker.StopAsync, without altering SDK clients.
+            _ = provider.GetRequiredService<GatewayFixtureHttpDiagnostics>();
             return fixture;
         }
 

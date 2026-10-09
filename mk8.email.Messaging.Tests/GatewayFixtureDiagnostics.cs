@@ -13,18 +13,19 @@ internal sealed class GatewayFixtureDiagnostics
     private readonly Queue<PhaseEvent> _events = new();
     private readonly Stopwatch _clock = Stopwatch.StartNew();
     private readonly AsyncLocal<DispatchIdentity?> _dispatch = new();
+    private readonly AsyncLocal<AzureAttemptIdentity?> _azureAttempt = new();
     private long _dropped;
     private string? _lastReport;
 
     public string? LastReport { get { lock (_sync) return _lastReport; } }
 
     public void Record(Phase phase, Guid? request = null, Operation operation = Operation.Other,
-        Activity activity = Activity.None, Guid? span = null, int? attempt = null, int? status = null)
+        Activity activity = Activity.None, Guid? span = null, int? attempt = null, int? status = null, Guid? httpTrace = null)
     {
         lock (_sync)
         {
             if (_events.Count == MaximumEvents) { _events.Dequeue(); _dropped++; }
-            _events.Enqueue(new(_clock.ElapsedMilliseconds, phase.ToString(), request, operation.ToString(), activity.ToString(), span, attempt, status));
+            _events.Enqueue(new(_clock.ElapsedMilliseconds, phase.ToString(), request, operation.ToString(), activity.ToString(), span, attempt, status, httpTrace));
         }
     }
 
@@ -32,6 +33,21 @@ internal sealed class GatewayFixtureDiagnostics
     {
         if (_dispatch.Value is { } identity)
             Record(phase, identity.Request, identity.Operation, activity, span, attempt, status);
+    }
+
+    public IDisposable EnterAzureAttempt(Activity activity, Guid span, int attempt)
+    {
+        var previous = _azureAttempt.Value;
+        _azureAttempt.Value = new(activity, span, attempt);
+        return new AzureAttemptScope(this, previous);
+    }
+
+    public void RecordHttp(Phase phase, Guid httpTrace)
+    {
+        // Ambient context must belong to BOTH this recorder's dispatch and its domain SDK attempt.
+        if (_dispatch.Value is { } dispatch && _azureAttempt.Value is { } attempt)
+            Record(phase, dispatch.Request, dispatch.Operation, attempt.Activity, attempt.Span, attempt.Number,
+                httpTrace: httpTrace == Guid.Empty ? null : httpTrace);
     }
 
     public string Report(JsonElement database, string workerState)
@@ -68,7 +84,9 @@ internal sealed class GatewayFixtureDiagnostics
         JournalInboundStart, JournalInboundComplete, JournalOutboundStart, JournalOutboundComplete,
         DispatchStart, DispatchComplete, DispatchFault, IoStart, IoReturned, IoFault, IoCancelled,
         AzureStart, AzureReturned, AzureFault, AzureCancelled,
-        TransportStart, TransportReturned, TransportFault, TransportCancelled
+        TransportStart, TransportReturned, TransportFault, TransportCancelled,
+        HttpRequestStart, HttpRequestLeftQueue, HttpRequestHeadersStart, HttpRequestHeadersStop,
+        HttpResponseHeadersStart, HttpResponseHeadersStop, HttpRequestStop, HttpRequestFailed
     }
     internal enum Operation { Other, Authenticate, Profile, Mail }
     internal enum Activity
@@ -78,8 +96,13 @@ internal sealed class GatewayFixtureDiagnostics
         LeaseRenew, ResponseComplete, RequestFail, ClientBusSend
     }
     private sealed record DispatchIdentity(Guid Request, Operation Operation);
+    private sealed record AzureAttemptIdentity(Activity Activity, Guid Span, int Number);
+    private sealed class AzureAttemptScope(GatewayFixtureDiagnostics owner, AzureAttemptIdentity? previous) : IDisposable
+    {
+        public void Dispose() => owner._azureAttempt.Value = previous;
+    }
     private sealed record PhaseEvent(long Milliseconds, string Phase, Guid? Request, string Operation, string Activity,
-        Guid? Span, int? Attempt, int? Status);
+        Guid? Span, int? Attempt, int? Status, Guid? HttpTrace);
 
     internal sealed class Dispatcher(IApplicationRequestDispatcher inner, GatewayFixtureDiagnostics diagnostics)
         : IApplicationRequestDispatcher

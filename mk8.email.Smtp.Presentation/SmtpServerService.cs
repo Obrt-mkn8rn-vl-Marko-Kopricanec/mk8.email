@@ -521,7 +521,8 @@ public partial class SmtpServerService(
                         await writer.WriteLineAsync("530 5.7.0 Issue STARTTLS first").ConfigureAwait(false);
                         break;
                     }
-                    if (session.Mode is ListenerMode.Submission && !session.IsAuthenticated && config.RequireAuth)
+                    if (session.Mode is ListenerMode.Submission or ListenerMode.ImplicitTls
+                        && !session.IsAuthenticated && config.RequireAuth)
                     {
                         await writer.WriteLineAsync("530 5.7.0 Authentication required").ConfigureAwait(false);
                         break;

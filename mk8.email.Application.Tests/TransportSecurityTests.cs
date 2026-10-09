@@ -31,7 +31,7 @@ namespace mk8.email.Application.Tests;
 [TestClass]
 [DoNotParallelize]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
-internal sealed class TransportSecurityTests
+internal sealed partial class TransportSecurityTests
 {
     private const string TestUsername = "user@mk8n.com";
     private const string TestPassword = "correct horse battery staple";
@@ -4193,7 +4193,8 @@ internal sealed class TransportSecurityTests
         int? pop3ImplicitTlsPort = null,
         string? certificatePath = null,
         int connectionTimeoutSeconds = 10,
-        bool enableOAuth = false)
+        bool enableOAuth = false,
+        bool requireAuthentication = true)
     {
         return new EnvironmentConfig
         {
@@ -4207,8 +4208,8 @@ internal sealed class TransportSecurityTests
                 EnableSubmission = submissionPort.HasValue,
                 EnableImplicitTls = smtpImplicitTlsPort.HasValue,
                 EnableStartTls = true,
-                RequireAuth = true,
-                AllowRelay = true,
+                RequireAuth = requireAuthentication,
+                AllowRelay = requireAuthentication,
             },
             Imap = new ImapConfig
             {

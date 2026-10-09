@@ -27,6 +27,11 @@ internal sealed class MailCopyService(
         var targetAccount = await accounts.GetAccountByInboxIdAsync(user, command.TargetAccountId,
             cancellationToken).ConfigureAwait(false);
         if (targetAccount is null) return Failure(MailCopyStatus.TargetAccountNotFound);
+        // The processor's existing gate-first transaction keeps this comparison
+        // and the copy/delete writes serialized with participating folder writers.
+        if (command.IfMailboxInState is not null && !string.Equals(command.IfMailboxInState,
+            await states.GetStateAsync(targetAccount.InboxId, JmapConstants.MailboxDataType, cancellationToken).ConfigureAwait(false),
+            StringComparison.Ordinal)) return Failure(MailCopyStatus.StateMismatch);
         var sourceState = await states.GetStateAsync(sourceAccount.InboxId, JmapConstants.EmailDataType,
             cancellationToken).ConfigureAwait(false);
         var oldTargetState = await states.GetStateAsync(targetAccount.InboxId, JmapConstants.EmailDataType,

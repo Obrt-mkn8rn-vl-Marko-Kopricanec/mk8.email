@@ -6,7 +6,7 @@ public static class DistributedContractVersions
 {
     // Bump when the two roles' internal contract interpretation changes.
     // This is compatibility metadata, not a release hash or peer attestation.
-    public const string Current = "mk8.distributed.v43";
+    public const string Current = "mk8.distributed.v44";
 
     public static IReadOnlySet<string> SupersededOperations { get; } = new[]
     {
@@ -23,7 +23,7 @@ public static class DistributedContractVersions
         "mail.operation.execute.v20", "mail.operation.execute.v21", "mail.operation.execute.v22",
         "mail.operation.execute.v23", "mail.operation.execute.v24", "mail.operation.execute.v25",
         "mail.operation.execute.v26", "mail.operation.execute.v27", "mail.operation.execute.v28", "mail.operation.execute.v29",
-        "mail.operation.execute.v30", "mail.operation.execute.v31", "mail.operation.execute.v32", "mail.operation.execute.v33", "mail.operation.execute.v34", "mail.operation.execute.v35",
+        "mail.operation.execute.v30", "mail.operation.execute.v31", "mail.operation.execute.v32", "mail.operation.execute.v33", "mail.operation.execute.v34", "mail.operation.execute.v35", "mail.operation.execute.v36",
     }.ToFrozenSet(StringComparer.Ordinal);
 
     // Every batch format that can create invocation receipts, including superseded formats.
@@ -39,7 +39,7 @@ public static class DistributedContractVersions
         "mail.operation.execute.v19", "mail.operation.execute.v20", "mail.operation.execute.v21",
         "mail.operation.execute.v22", "mail.operation.execute.v23", "mail.operation.execute.v24",
         "mail.operation.execute.v25", "mail.operation.execute.v26", "mail.operation.execute.v27",
-        "mail.operation.execute.v28", "mail.operation.execute.v29", "mail.operation.execute.v30", "mail.operation.execute.v31", "mail.operation.execute.v32", "mail.operation.execute.v33", "mail.operation.execute.v34", "mail.operation.execute.v35",
+        "mail.operation.execute.v28", "mail.operation.execute.v29", "mail.operation.execute.v30", "mail.operation.execute.v31", "mail.operation.execute.v32", "mail.operation.execute.v33", "mail.operation.execute.v34", "mail.operation.execute.v35", "mail.operation.execute.v36",
         ApplicationOperations.MailOperationExecute,
     }.ToFrozenSet(StringComparer.Ordinal);
 }

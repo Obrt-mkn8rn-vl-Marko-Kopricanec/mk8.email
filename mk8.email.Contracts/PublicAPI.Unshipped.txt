@@ -61,8 +61,8 @@ mk8.email.Contracts.Messaging.MailSubmissionCreate.Deconstruct(out string! Creat
 mk8.email.Contracts.Messaging.MailSubmissionUpdate.Deconstruct(out string! RequestedId, out mk8.email.Contracts.Messaging.MailSubmissionPatch! Patch) -> void
 mk8.email.Contracts.Messaging.MailSubmissionMutationFailure.Deconstruct(out mk8.email.Contracts.Messaging.MailSubmissionMutationError Error, out string? Description, out System.Collections.Generic.IReadOnlyList<string!>? Properties, out System.Collections.Generic.IReadOnlyList<string!>? InvalidRecipients, out long? MaxSize, out int? MaxRecipients, out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailSubmissionEmailIssue>? EmailIssues) -> void
 mk8.email.Contracts.Messaging.MailSubmissionSnapshot.Deconstruct(out System.Guid Id, out string! IdentityId, out string! EmailId, out string! ThreadId, out mk8.email.Contracts.Messaging.MailSubmissionEnvelope? Envelope, out string! EnvelopeSender, out System.Collections.Generic.IReadOnlyList<string!>! EnvelopeRecipients, out System.DateTime SendAt, out string! UndoStatus, out System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailSubmissionDeliverySnapshot!>? DeliveryRecipients) -> void
-const mk8.email.Contracts.Messaging.ApplicationOperations.MailOperationExecute = "mail.operation.execute.v36" -> string!
-const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v43" -> string!
+const mk8.email.Contracts.Messaging.ApplicationOperations.MailOperationExecute = "mail.operation.execute.v37" -> string!
+const mk8.email.Contracts.Messaging.DistributedContractVersions.Current = "mk8.distributed.v44" -> string!
 mk8.email.Contracts.Messaging.MailEnvelopeAddress
 mk8.email.Contracts.Messaging.MailEnvelopeAddress.<Clone>$() -> mk8.email.Contracts.Messaging.MailEnvelopeAddress!
 mk8.email.Contracts.Messaging.MailEnvelopeAddress.Address.get -> string!
@@ -1421,6 +1421,8 @@ mk8.email.Contracts.Messaging.MailCopyCommand.IfFromInState.get -> string?
 mk8.email.Contracts.Messaging.MailCopyCommand.IfFromInState.init -> void
 mk8.email.Contracts.Messaging.MailCopyCommand.IfInState.get -> string?
 mk8.email.Contracts.Messaging.MailCopyCommand.IfInState.init -> void
+mk8.email.Contracts.Messaging.MailCopyCommand.IfMailboxInState.get -> string?
+mk8.email.Contracts.Messaging.MailCopyCommand.IfMailboxInState.init -> void
 mk8.email.Contracts.Messaging.MailCopyCommand.Items.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailCopyItem!>!
 mk8.email.Contracts.Messaging.MailCopyCommand.Items.init -> void
 mk8.email.Contracts.Messaging.MailCopyCommand.MailCopyCommand(System.Guid SourceAccountId, System.Guid TargetAccountId, string? IfFromInState, string? IfInState, bool DestroyOriginal, string? DestroyFromIfInState, System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailCopyItem!>! Items) -> void
@@ -2148,6 +2150,8 @@ mk8.email.Contracts.Messaging.MailImportCommand.Deconstruct(out System.Guid Acco
 mk8.email.Contracts.Messaging.MailImportCommand.Equals(mk8.email.Contracts.Messaging.MailImportCommand? other) -> bool
 mk8.email.Contracts.Messaging.MailImportCommand.IfInState.get -> string?
 mk8.email.Contracts.Messaging.MailImportCommand.IfInState.init -> void
+mk8.email.Contracts.Messaging.MailImportCommand.IfMailboxInState.get -> string?
+mk8.email.Contracts.Messaging.MailImportCommand.IfMailboxInState.init -> void
 mk8.email.Contracts.Messaging.MailImportCommand.Items.get -> System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailImportItem!>!
 mk8.email.Contracts.Messaging.MailImportCommand.Items.init -> void
 mk8.email.Contracts.Messaging.MailImportCommand.MailImportCommand(System.Guid AccountId, string? IfInState, System.Collections.Generic.IReadOnlyList<mk8.email.Contracts.Messaging.MailImportItem!>! Items) -> void

@@ -32,7 +32,11 @@ public sealed record MailImportItem(
 public sealed record MailImportCommand(
     [property: JsonRequired] Guid AccountId,
     [property: JsonRequired] string? IfInState,
-    [property: JsonRequired] IReadOnlyList<MailImportItem> Items);
+    [property: JsonRequired] IReadOnlyList<MailImportItem> Items)
+{
+    [JsonRequired]
+    public string? IfMailboxInState { get; init; }
+}
 
 public enum MailImportStatus
 {

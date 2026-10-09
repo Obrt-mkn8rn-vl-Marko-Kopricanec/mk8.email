@@ -263,6 +263,34 @@ internal sealed class JmapOperationBoundaryTests
     }
 
     [TestMethod]
+    [DataRow(MailOperationKind.ImportMessages, "missing")]
+    [DataRow(MailOperationKind.CopyMessages, "missing")]
+    [DataRow(MailOperationKind.ImportMessages, "empty")]
+    [DataRow(MailOperationKind.CopyMessages, "empty")]
+    [DataRow(MailOperationKind.ImportMessages, "long")]
+    [DataRow(MailOperationKind.CopyMessages, "long")]
+    [DataRow(MailOperationKind.ImportMessages, "control")]
+    [DataRow(MailOperationKind.CopyMessages, "control")]
+    [DataRow(MailOperationKind.ImportMessages, "type")]
+    [DataRow(MailOperationKind.CopyMessages, "type")]
+    public async Task MailboxStateGuardsCannotBeMissingOrMalformedOnTheCurrentTypedContract(MailOperationKind operation, string mode)
+    {
+        var fixture = await JmapFixture.CreateAsync().ConfigureAwait(false);
+        await using var lifetime = fixture.ConfigureAwait(false);
+        using var scope = fixture.Services.CreateScope();
+        var arguments = (JsonObject)(operation == MailOperationKind.ImportMessages
+            ? JsonSerializer.SerializeToNode(new MailImportCommand(fixture.InboxId, null, []), JsonSerializerOptions.Web)
+            : JsonSerializer.SerializeToNode(new MailCopyCommand(fixture.InboxId, fixture.InboxId, null, null, false, null, []), JsonSerializerOptions.Web))!;
+        if (mode is "missing") arguments.Remove("ifMailboxInState");
+        else arguments["ifMailboxInState"] = mode is "type" ? JsonValue.Create(1)
+            : JsonValue.Create(mode is "empty" ? "" : mode is "long" ? new string('x', 257) : "s\n10");
+        await Assert.ThrowsAsync<MailApplicationException>(() => scope.ServiceProvider.GetRequiredService<JmapRequestProcessor>()
+            .ExecuteAsync(new([MailFeature.Basic, MailFeature.Messages], operation, arguments,
+                new Dictionary<string, string>(StringComparer.Ordinal), new Dictionary<string, string>(StringComparer.Ordinal)),
+                fixture.User, Guid.CreateVersion7())).ConfigureAwait(false);
+    }
+
+    [TestMethod]
     public async Task UndefinedTypedDependencyRejectsBeforeEarlierInvocations()
     {
         var calls = 0;

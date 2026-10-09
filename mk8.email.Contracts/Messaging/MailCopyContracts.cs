@@ -22,7 +22,11 @@ public sealed record MailCopyCommand(
     [property: JsonRequired] string? IfInState,
     [property: JsonRequired] bool DestroyOriginal,
     [property: JsonRequired] string? DestroyFromIfInState,
-    [property: JsonRequired] IReadOnlyList<MailCopyItem> Items);
+    [property: JsonRequired] IReadOnlyList<MailCopyItem> Items)
+{
+    [JsonRequired]
+    public string? IfMailboxInState { get; init; }
+}
 
 public enum MailCopyStatus
 {

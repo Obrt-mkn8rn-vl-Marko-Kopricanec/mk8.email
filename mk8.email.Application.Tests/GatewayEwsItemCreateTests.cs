@@ -11,7 +11,7 @@ namespace mk8.email.Application.Tests;
 
 [TestClass]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals executes this strict native-MIME CreateItem/upload/import fixture; discovered outcomes are retained.")]
-internal sealed class GatewayEwsItemCreateTests
+internal sealed partial class GatewayEwsItemCreateTests
 {
     private static readonly Guid Account = new("1138f53b-3efa-4a59-8602-e215c0df1e35");
     private static readonly Guid Target = new("1538f53b-3efa-4a59-8602-e215c0df1e35");
@@ -70,7 +70,7 @@ internal sealed class GatewayEwsItemCreateTests
     }
 
     [TestMethod]
-    [DataRow("<t:DistinguishedFolderId Id='drafts'/>", "ErrorInvalidRequest")]
+    [DataRow("<t:DistinguishedFolderId Id='drafts' ChangeKey='czEw'/>", "ErrorInvalidRequest")]
     [DataRow("<t:FolderId Id='target' ChangeKey='czEw'/>", "ErrorInvalidRequest")]
     [DataRow("<t:FolderId Id='target' Extra='value'/>", "ErrorSchemaValidation")]
     [DataRow("<t:FolderId Id='a'/><t:FolderId Id='b'/>", "ErrorSchemaValidation")]

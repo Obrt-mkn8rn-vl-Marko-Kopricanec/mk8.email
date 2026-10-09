@@ -13,13 +13,7 @@ internal static class GatewayEwsItemCopyParser
         GatewayEwsRequestParser.Container(fields[0]);
         var folders = fields[0].Elements().ToArray();
         if (folders.Length != 1) throw Invalid();
-        // These initial transfer profiles bind an ordinary physical folder identity.
-        // It does not silently ignore a destination version or resolve a role
-        // outside the copy transaction without a corresponding domain guard.
-        if (folders[0].Name != GatewayEwsSoap.Types + "FolderId")
-            throw new GatewayEwsRequestException("ErrorInvalidRequest");
-        var destination = GatewayEwsRequestParser.ParseReference(folders[0]);
-        if (destination.ChangeKey is not null) throw new GatewayEwsRequestException("ErrorInvalidRequest");
+        var destination = GatewayEwsItemDestination.Parse(folders[0]);
         GatewayEwsRequestParser.Container(fields[1]);
         var items = fields[1].Elements().Select(GatewayEwsItemRequestParser.Reference).ToArray();
         if (items.Length == 0) throw Invalid();

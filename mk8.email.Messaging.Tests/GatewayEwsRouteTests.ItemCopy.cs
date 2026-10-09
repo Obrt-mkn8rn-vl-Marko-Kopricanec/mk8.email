@@ -125,7 +125,7 @@ internal sealed partial class GatewayEwsRouteTests
     }
 
     [TestMethod]
-    [DataRow("<t:DistinguishedFolderId Id='inbox'/>", "<t:ItemId Id='opaque'/>", "", "ErrorInvalidRequest")]
+    [DataRow("<t:DistinguishedFolderId Id='inbox' ChangeKey='czEw'/>", "<t:ItemId Id='opaque'/>", "", "ErrorInvalidRequest")]
     [DataRow("<t:FolderId Id='folder' ChangeKey='czEw'/>", "<t:ItemId Id='opaque'/>", "", "ErrorInvalidRequest")]
     [DataRow("<t:FolderId Id='folder'/>", "<t:RecurringMasterItemId OccurrenceId='opaque'/>", "", "ErrorSchemaValidation")]
     [DataRow("<t:FolderId Id='folder'/>", "<t:ItemId Id='opaque'/>", "<m:ReturnNewItemIds>True</m:ReturnNewItemIds>", "ErrorSchemaValidation")]

@@ -22,6 +22,9 @@ internal sealed class MailImportService(
         if (account is null) return Failure(MailImportStatus.AccountNotFound);
         if (command.Items.Count > environment.Jmap.MaxObjectsInSet)
             return Failure(MailImportStatus.RequestTooLarge);
+        if (command.IfMailboxInState is not null && !string.Equals(command.IfMailboxInState,
+            await states.GetStateAsync(account.InboxId, JmapConstants.MailboxDataType, cancellationToken).ConfigureAwait(false),
+            StringComparison.Ordinal)) return Failure(MailImportStatus.StateMismatch);
         var oldState = await states.GetStateAsync(account.InboxId, JmapConstants.EmailDataType,
             cancellationToken).ConfigureAwait(false);
         if (command.IfInState is not null

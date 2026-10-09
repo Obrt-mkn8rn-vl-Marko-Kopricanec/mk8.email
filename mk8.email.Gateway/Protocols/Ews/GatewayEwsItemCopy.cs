@@ -13,14 +13,14 @@ internal static class GatewayEwsItemCopy
         var moving = request.Operation is "MoveItem";
         var plans = Prepare(references, account, moving);
         if (request.Folders.Count != 1) throw new InvalidOperationException("The EWS copy destination is incomplete.");
-        var destination = request.Folders[0];
-        var targetError = !GatewayEwsFolderIdCodec.TryDecode(destination.Id, out var targetAccount, out var target) ? "ErrorInvalidIdMalformed"
-            : targetAccount != account ? "ErrorAccessDenied" : target == Guid.Empty ? "ErrorAccessDenied" : null;
-        if (targetError is not null) return GatewayEwsItemCopyResponse.Render(request, account, plans, null, targetError);
         var ids = plans.Where(plan => plan.Code is null).Select(plan => plan.Id).Distinct().ToArray();
         if (ids.Length == 0) return GatewayEwsItemCopyResponse.Render(request, account, plans, null);
         if (ids.Length > profile.Limits.MaxObjectsInGet || plans.Count(plan => plan.Code is null) > profile.Limits.MaxObjectsInSet)
             throw new GatewayEwsRequestException("ErrorExceededFindCountLimit");
+        var destination = await GatewayEwsItemDestination.ResolveAsync(application, authentication, profile, account,
+            request.Folders[0], cancellationToken).ConfigureAwait(false);
+        if (destination.Error is not null) return GatewayEwsItemCopyResponse.Render(request, account, plans, null, destination.Error);
+        var target = destination.Folder;
         var read = await application.ReadItemsAsync(authentication, profile, account, ids, cancellationToken).ConfigureAwait(false);
         var snapshots = read.Messages.ToDictionary(item => item.MessageId, item => item.Value);
         var key = read.State is null ? null : Convert.ToBase64String(Encoding.UTF8.GetBytes(read.State));
@@ -43,7 +43,10 @@ internal static class GatewayEwsItemCopy
         // Only MoveItem authorizes deletion of successfully copied sources in
         // this same transaction. A pre-copy state must not guard the later
         // deletion stage: creating the replacement has already changed it.
-        var command = new MailCopyCommand(account, account, read.State!, read.State!, moving, null, items);
+        var command = new MailCopyCommand(account, account, read.State!, read.State!, moving, null, items)
+        {
+            IfMailboxInState = destination.MailboxState,
+        };
         var reply = await application.ExecuteOperationAsync(authentication, profile, MailOperationKind.CopyMessages,
             command, cancellationToken).ConfigureAwait(false);
         var result = GatewayEwsItemCopyReply.Decode(reply, command, snapshots);

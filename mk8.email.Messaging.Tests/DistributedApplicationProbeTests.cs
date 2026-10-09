@@ -15,6 +15,7 @@ internal sealed class DistributedApplicationProbeTests
     [DataRow("mk8.distributed.v3", false)]
     [DataRow("mk8.distributed.v6", false)]
     [DataRow("mk8.distributed.v8", false)]
+    [DataRow("mk8.distributed.v43", false)]
     [DataRow("different-contract", false)]
     [DataRow("MK8.distributed.v7", false)]
     public async Task ActivationProbeRequiresMatchingWorkerContracts(string? version, bool compatible)

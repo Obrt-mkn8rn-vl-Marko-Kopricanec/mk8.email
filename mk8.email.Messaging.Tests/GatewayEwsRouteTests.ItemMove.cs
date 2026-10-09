@@ -121,7 +121,7 @@ internal sealed partial class GatewayEwsRouteTests
     }
 
     [TestMethod]
-    [DataRow("<t:DistinguishedFolderId Id='inbox'/>")]
+    [DataRow("<t:DistinguishedFolderId Id='inbox' ChangeKey='czEw'/>")]
     [DataRow("<t:FolderId Id='folder' ChangeKey='czEw'/>")]
     public async Task MoveItemUnsupportedProfileIsJournaledBeforeWorker(string target)
     {

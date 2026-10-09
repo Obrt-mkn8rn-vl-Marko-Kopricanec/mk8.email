@@ -68,7 +68,7 @@ internal sealed partial class GatewayEwsRouteTests
     [TestMethod]
     [DataRow("MessageDisposition='SendOnly'", "<t:FolderId Id='opaque'/>", "<t:Message><t:MimeContent>TQ==</t:MimeContent></t:Message>", "ErrorInvalidRequest")]
     [DataRow("MessageDisposition='SendAndSaveCopy'", "<t:FolderId Id='opaque'/>", "<t:Message><t:MimeContent>TQ==</t:MimeContent></t:Message>", "ErrorInvalidRequest")]
-    [DataRow("MessageDisposition='SaveOnly'", "<t:DistinguishedFolderId Id='drafts'/>", "<t:Message><t:MimeContent>TQ==</t:MimeContent></t:Message>", "ErrorInvalidRequest")]
+    [DataRow("MessageDisposition='SaveOnly'", "<t:DistinguishedFolderId Id='drafts' ChangeKey='czEw'/>", "<t:Message><t:MimeContent>TQ==</t:MimeContent></t:Message>", "ErrorInvalidRequest")]
     [DataRow("MessageDisposition='SaveOnly'", "<t:FolderId Id='opaque' ChangeKey='czEw'/>", "<t:Message><t:MimeContent>TQ==</t:MimeContent></t:Message>", "ErrorInvalidRequest")]
     [DataRow("MessageDisposition='SaveOnly'", "<t:FolderId Id='opaque'/>", "<t:CalendarItem/>", "ErrorInvalidRequest")]
     [DataRow("MessageDisposition='SaveOnly'", "<t:FolderId Id='opaque'/>", "<t:Message><t:MimeContent>/w==</t:MimeContent></t:Message>", "ErrorInvalidMimeContent")]

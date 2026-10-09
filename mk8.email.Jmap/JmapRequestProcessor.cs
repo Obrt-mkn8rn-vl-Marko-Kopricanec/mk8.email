@@ -2023,14 +2023,15 @@ public sealed class JmapRequestProcessor
 
     private MailImportCommand ParseImportCommand(JsonObject arguments)
     {
-        if (arguments.Count != 3 || !arguments.ContainsKey("accountId")
-            || !arguments.ContainsKey("ifInState") || !arguments.ContainsKey("items"))
+        if (arguments.Count != 4 || !arguments.ContainsKey("accountId")
+            || !arguments.ContainsKey("ifInState") || !arguments.ContainsKey("items") || !arguments.ContainsKey("ifMailboxInState"))
             throw NotRequest("The import command has an invalid shape.");
         try
         {
             var import = JsonSerializer.Deserialize<MailImportCommand>(arguments, StrictReceiptJsonOptions)
                 ?? throw NotRequest("The import command is missing.");
-            if (import.Items is null || import.Items.Count > _environment.Jmap.MaxObjectsInSet
+            if (!ValidMailboxStateGuard(import.IfMailboxInState)
+                || import.Items is null || import.Items.Count > _environment.Jmap.MaxObjectsInSet
                 || import.Items.Any(item => item is null || item.CreationId is null
                     || item.Keywords is null || !Enum.IsDefined(item.MailboxIssue)
                     || !Enum.IsDefined(item.KeywordIssue)
@@ -2053,16 +2054,17 @@ public sealed class JmapRequestProcessor
 
     private MailCopyCommand ParseCopyCommand(JsonObject arguments)
     {
-        if (arguments.Count != 7 || !arguments.ContainsKey("sourceAccountId")
+        if (arguments.Count != 8 || !arguments.ContainsKey("sourceAccountId")
             || !arguments.ContainsKey("targetAccountId") || !arguments.ContainsKey("ifFromInState")
             || !arguments.ContainsKey("ifInState") || !arguments.ContainsKey("destroyOriginal")
-            || !arguments.ContainsKey("destroyFromIfInState") || !arguments.ContainsKey("items"))
+            || !arguments.ContainsKey("destroyFromIfInState") || !arguments.ContainsKey("items") || !arguments.ContainsKey("ifMailboxInState"))
             throw NotRequest("The copy command has an invalid shape.");
         try
         {
             var copy = JsonSerializer.Deserialize<MailCopyCommand>(arguments, StrictReceiptJsonOptions)
                 ?? throw NotRequest("The copy command is missing.");
-            if (copy.Items is null || copy.Items.Count > _environment.Jmap.MaxObjectsInSet
+            if (!ValidMailboxStateGuard(copy.IfMailboxInState)
+                || copy.Items is null || copy.Items.Count > _environment.Jmap.MaxObjectsInSet
                 || copy.Items.Any(item => item is null || item.CreationId is null
                     || !Enum.IsDefined(item.MailboxIssue) || !Enum.IsDefined(item.KeywordIssue)
                     || !item.InvalidInitialProperties && item.SourceEmailId is null
@@ -2082,6 +2084,9 @@ public sealed class JmapRequestProcessor
             throw NotRequest("The copy command contains invalid values.");
         }
     }
+
+    private static bool ValidMailboxStateGuard(string? state) => state is null
+        || state.Length is > 0 and <= 256 && !state.Any(char.IsControl);
 
     private static void ValidateContactCriteria(MailContactQueryCriteria? criteria)
     {

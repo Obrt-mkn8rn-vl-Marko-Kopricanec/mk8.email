@@ -11,7 +11,7 @@ namespace mk8.email.Application.Tests;
 
 [TestClass]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals executes this strict CopyItem/typed-creation fixture; discovered outcomes are retained.")]
-internal sealed class GatewayEwsItemCopyTests
+internal sealed partial class GatewayEwsItemCopyTests
 {
     private static readonly Guid Account = new("1138f53b-3efa-4a59-8602-e215c0df1e35");
     private static readonly Guid Source = new("2238f53b-3efa-4a59-8602-e215c0df1e35");
@@ -42,7 +42,7 @@ internal sealed class GatewayEwsItemCopyTests
     }
 
     [TestMethod]
-    [DataRow("<t:DistinguishedFolderId Id='inbox'/>", "<t:ItemId Id='item'/>", "", "ErrorInvalidRequest")]
+    [DataRow("<t:DistinguishedFolderId Id='inbox' ChangeKey='czEw'/>", "<t:ItemId Id='item'/>", "", "ErrorInvalidRequest")]
     [DataRow("<t:FolderId Id='folder' ChangeKey='czEw'/>", "<t:ItemId Id='item'/>", "", "ErrorInvalidRequest")]
     [DataRow("", "<t:ItemId Id='item'/>", "", "ErrorSchemaValidation")]
     [DataRow("<t:FolderId Id='a'/><t:FolderId Id='b'/>", "<t:ItemId Id='item'/>", "", "ErrorSchemaValidation")]

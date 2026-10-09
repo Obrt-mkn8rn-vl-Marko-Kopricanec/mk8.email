@@ -4,7 +4,7 @@ Gateway parses and validates I-JSON and the outer JMAP request envelope. Its
 batch, call, result and reference-selector models exist only in Gateway, not in
 the shared durable Contracts assembly. It sends a protocol-neutral
 authentication/feature/operation-count admission plan through `mail.plan.validate`, then
-one resolved mail operation at a time through `mail.operation.execute.v36`. Worker
+one resolved mail operation at a time through `mail.operation.execute.v37`. Worker
 returns a typed operation result, domain failures, known entity mappings and an
 account profile. Gateway alone sequences the batch, handles Core/echo, and renders
 the response envelope and HTTP problems. Worker receives neither the original
@@ -29,7 +29,7 @@ wrong-case or undefined internal discriminators fail closed before any mutation.
 Handler registration rejects duplicate or invalid identifiers, and primary/additional
 result identifiers are checked before commit and on receipt replay. Opaque business
 values named `name` or `sourceName` are untouched. This is a coordinated contract
-change (`mk8.distributed.v43`), not evidence that the final analyzer/review gates pass.
+change (`mk8.distributed.v44`), not evidence that the final analyzer/review gates pass.
 
 `Mailbox/get`, `Thread/get`, `AddressBook/get`, `Identity/get`, `EmailSubmission/get`, `VacationResponse/get`,
 `PushSubscription/get` and all seven simple `/changes` methods have fully typed commands/results across this
@@ -215,7 +215,7 @@ provides a typed alias map with each business command. Worker resolves only thos
 aliases against its current known-entity map, so a create followed by a reference
 inside one operation still works without Worker parsing the JMAP `#` marker.
 The alias map became mandatory in the historical v35 command and remains required
-on the current v36 command. Opaque non-ID values are not rewritten.
+on the current v37 command. Opaque non-ID values are not rewritten.
 
 Worker returns typed accounts, feature limits and change maps, never session URLs
 or event/push JSON. Gateway renders discovery documents, chooses its public URLs,
@@ -243,11 +243,17 @@ This changes the durable operation contracts. The old `jmap.api.process`,
 `mail.operation.execute.v24`, `mail.operation.execute.v25`,
 `mail.operation.execute.v26`, `mail.operation.execute.v27`,
 `mail.operation.execute.v28`, `mail.operation.execute.v29`, `mail.operation.execute.v30`,
-`mail.operation.execute.v31`, `mail.operation.execute.v32`, `mail.operation.execute.v33`, `mail.operation.execute.v34`, `mail.operation.execute.v35` operations
+`mail.operation.execute.v31`, `mail.operation.execute.v32`, `mail.operation.execute.v33`, `mail.operation.execute.v34`, `mail.operation.execute.v35`, `mail.operation.execute.v36` operations
 are unsupported. The current operations are `mail.plan.validate`,
-`mail.operation.execute.v36`, `jmap.profile.get.v2`, `jmap.upload.v2`,
+`mail.operation.execute.v37`, `jmap.profile.get.v2`, `jmap.upload.v2`,
 `jmap.download.v2`, `jmap.changes.poll.v2` and `webpush.send.v2`. Old requests must
 not be reinterpreted as new empty or incomplete data.
+Current copy/import commands require the nullable `ifMailboxInState` member.
+Null retains ordinary JMAP behavior; EWS named physical destinations carry the
+admitted mailbox state, which the independently authorized native service compares
+inside the gate-first transaction before content/domain writes. This complements,
+not replaces, the required EWS email-state guards. An import's temporary account
+upload may already exist and retains its ordinary quota/expiry semantics.
 Before upgrading an existing distributed installation, stop admission, drain or
 explicitly reconcile old pending/leased operations with their original Worker,
 and upgrade both roles before resuming admission. An old Gateway/new Worker or

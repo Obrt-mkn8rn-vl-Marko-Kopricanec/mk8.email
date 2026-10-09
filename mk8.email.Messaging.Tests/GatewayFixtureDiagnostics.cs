@@ -67,13 +67,15 @@ internal sealed class GatewayFixtureDiagnostics
         ClientSend, ClientHeaders, ClientCancelled, GatewayEnter, GatewayExit,
         JournalInboundStart, JournalInboundComplete, JournalOutboundStart, JournalOutboundComplete,
         DispatchStart, DispatchComplete, DispatchFault, IoStart, IoReturned, IoFault, IoCancelled,
-        AzureStart, AzureReturned, AzureFault, AzureCancelled
+        AzureStart, AzureReturned, AzureFault, AzureCancelled,
+        TransportStart, TransportReturned, TransportFault, TransportCancelled
     }
     internal enum Operation { Other, Authenticate, Profile, Mail }
     internal enum Activity
     {
         None, DbReader, DbScalar, DbNonQuery, OtherDb, BlobPut, BlobRead, BlobDelete,
-        AzureContainerCreate, AzureUpload, AzureBlock, AzureBlockList, AzureProperties, AzureDownload, AzureDelete, AzureOther
+        AzureContainerCreate, AzureUpload, AzureBlock, AzureBlockList, AzureProperties, AzureDownload, AzureDelete, AzureOther,
+        LeaseRenew, ResponseComplete, RequestFail, ClientBusSend
     }
     private sealed record DispatchIdentity(Guid Request, Operation Operation);
     private sealed record PhaseEvent(long Milliseconds, string Phase, Guid? Request, string Operation, string Activity,

@@ -217,7 +217,8 @@ internal sealed partial class GatewayHttpCaptureBoundaryTests
             Microsoft.EntityFrameworkCore.Diagnostics.DbCommandInterceptor? folderLockInterceptor = null,
             Func<IApplicationRequestDispatcher, IApplicationRequestDispatcher>? decorateDispatcher = null,
             Func<mk8.email.Contracts.Storage.ILargeObjectStore, mk8.email.Contracts.Storage.ILargeObjectStore>? decorateDomainStore = null,
-            Action<BlobClientOptions>? configureDomainBlob = null)
+            Action<BlobClientOptions>? configureDomainBlob = null,
+            Func<IApplicationRequestConsumer, IApplicationRequestConsumer>? decorateConsumer = null)
         {
             var database = await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false);
             var blobConnection = Environment.GetEnvironmentVariable("MK8_EMAIL_TEST_AZURE_BLOB_CONNECTION");
@@ -258,11 +259,10 @@ internal sealed partial class GatewayHttpCaptureBoundaryTests
                     new GatewayFixtureBlobDiagnostics(domainStore, diagnostics), protector, environment, folderLockInterceptor, diagnostics);
             }
             var provider = services.BuildServiceProvider();
-            var worker = new ApplicationRequestWorker(bus, provider.GetRequiredService<IServiceScopeFactory>(),
-                new ApplicationWorkerIdentity("worker@http-boundary", TimeSpan.FromSeconds(30)), NullLogger<ApplicationRequestWorker>.Instance);
+            var worker = CreateObservedWorker(bus, provider, diagnostics, decorateConsumer);
             Assert.HasCount(0, environment.Validate(role: EnvironmentValidationRole.Gateway));
             Assert.HasCount(0, environment.Validate(role: EnvironmentValidationRole.ApplicationWorker));
-            var host = BuildProductionHost(environment, bus, faultingJournal, diagnostics);
+            var host = BuildProductionHost(environment, new GatewayFixtureTransportDiagnostics.Client(bus, diagnostics), faultingJournal, diagnostics);
             CaptureFixture? fixture = null;
             MapProtocolRoutes(host, () => fixture!);
             await worker.StartAsync(CancellationToken.None).ConfigureAwait(false);
@@ -271,6 +271,12 @@ internal sealed partial class GatewayHttpCaptureBoundaryTests
                 maximumPayloadBytes, ordinaryClient, faultingJournal, certificatePath, diagnostics);
             return fixture;
         }
+
+        private static ApplicationRequestWorker CreateObservedWorker(IApplicationRequestConsumer bus, ServiceProvider provider,
+            GatewayFixtureDiagnostics diagnostics, Func<IApplicationRequestConsumer, IApplicationRequestConsumer>? decorate) =>
+            new(new GatewayFixtureTransportDiagnostics.Consumer(decorate?.Invoke(bus) ?? bus, diagnostics),
+                provider.GetRequiredService<IServiceScopeFactory>(),
+                new ApplicationWorkerIdentity("worker@http-boundary", TimeSpan.FromSeconds(30)), NullLogger<ApplicationRequestWorker>.Instance);
 
         private static AzureBlobLargeObjectStore CreateObservedDomainStore(string connection, string container,
             GatewayFixtureDiagnostics diagnostics, Action<BlobClientOptions>? configure)

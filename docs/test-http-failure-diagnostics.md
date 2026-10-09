@@ -74,6 +74,29 @@ server. Synthetic pause/retry controls verify observation and ownership, not act
 provider root cause. Actual configured-endpoint round trips cover conflict lookup,
 read and deletion separately from the real folder-read receipt upload routes.
 
+Run 37876760215 remains FAILED on its original initial folder-key timeout. Its
+Mail domain dispatcher and observed Azure calls returned before cancellation, but
+no response-completion boundary was captured. That does not identify renewal join,
+transport persistence, response loading, scheduling or any historical cause.
+
+Test-only bus decorators now observe the Worker consumer's complete/fail/renew
+calls and the Gateway client's original Send call with closed labels and opaque
+request/span correlation. They forward the original arguments/token/result/error
+and do not replace Send with a custom enqueue/wait algorithm. Unclaimed scans and
+direct enqueue/wait/get calls return the original tasks without per-poll logging.
+The underlying bus, journal and their Blob clients remain undecorated. There is
+no SQL/provider substage, retry/deadline change or production instrumentation.
+
+Completion entry occurs after the unchanged Worker's renewal shutdown join.
+Absence of entry is only a boundary gap, not proof of why shutdown has not returned.
+Completion can commit and notify before its method returns: the Gateway may already
+read a completed row and deliver a journaled response while a controlled consumer
+return is paused. Conversely, a pre-completion pause leaves a processing row.
+Returned renewal means call return, not successful lease ownership; its actual
+boolean is passed through. Controlled before/after pauses own and join both the
+HTTP and completion tasks, including injected assertion failures. These controls
+do not reproduce the historical timeout or prove stability/physical durability.
+
 Framework contract: [HttpClient timeout](https://learn.microsoft.com/en-us/dotnet/api/system.net.http.httpclient.timeout?view=net-10.0)
 and [delegating-handler cancellation](https://learn.microsoft.com/en-us/dotnet/api/system.net.http.delegatinghandler.sendasync?view=net-10.0).
 Async EF boundary contract: [EF Core interceptors](https://learn.microsoft.com/en-us/ef/core/logging-events-diagnostics/interceptors).

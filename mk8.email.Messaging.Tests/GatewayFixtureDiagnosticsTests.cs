@@ -8,7 +8,7 @@ namespace mk8.email.Messaging.Tests;
 [TestClass]
 [DoNotParallelize]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals executes this fixture; new diagnostic outcomes are retained and counted.")]
-internal sealed class GatewayFixtureDiagnosticsTests
+internal sealed partial class GatewayFixtureDiagnosticsTests
 {
     [TestMethod]
     public void EventHistoryIsBoundedAndRetainsOnlyRegisteredPhaseOperationAndOpaqueId()

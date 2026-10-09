@@ -215,7 +215,8 @@ internal sealed partial class GatewayHttpCaptureBoundaryTests
             bool discoveryListeners = false, bool mailFolders = false, int additionalFolders = 0,
             int? maximumPayloadOverride = null, bool disableJmap = false,
             Microsoft.EntityFrameworkCore.Diagnostics.DbCommandInterceptor? folderLockInterceptor = null,
-            Func<IApplicationRequestDispatcher, IApplicationRequestDispatcher>? decorateDispatcher = null)
+            Func<IApplicationRequestDispatcher, IApplicationRequestDispatcher>? decorateDispatcher = null,
+            Func<mk8.email.Contracts.Storage.ILargeObjectStore, mk8.email.Contracts.Storage.ILargeObjectStore>? decorateDomainStore = null)
         {
             var database = await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false);
             var blobConnection = Environment.GetEnvironmentVariable("MK8_EMAIL_TEST_AZURE_BLOB_CONNECTION");
@@ -248,7 +249,12 @@ internal sealed partial class GatewayHttpCaptureBoundaryTests
                     var dispatcher = new GatewayAutodiscoverFixtureDispatcher(provider);
                     return new GatewayFixtureDiagnostics.Dispatcher(decorateDispatcher?.Invoke(dispatcher) ?? dispatcher, diagnostics);
                 });
-            if (mailFolders) GatewayEwsFixtureDomain.Configure(services, database.ConnectionString, store, protector, environment, folderLockInterceptor);
+            if (mailFolders)
+            {
+                var domainStore = decorateDomainStore?.Invoke(store) ?? store;
+                GatewayEwsFixtureDomain.Configure(services, database.ConnectionString,
+                    new GatewayFixtureBlobDiagnostics(domainStore, diagnostics), protector, environment, folderLockInterceptor, diagnostics);
+            }
             var provider = services.BuildServiceProvider();
             var worker = new ApplicationRequestWorker(bus, provider.GetRequiredService<IServiceScopeFactory>(),
                 new ApplicationWorkerIdentity("worker@http-boundary", TimeSpan.FromSeconds(30)), NullLogger<ApplicationRequestWorker>.Instance);

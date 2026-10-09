@@ -24,7 +24,8 @@ internal static class GatewayEwsFixtureDomain
     internal static readonly Guid ForeignFolderId = new("1738f53b-3efa-4a59-8602-e215c0df1e35");
 
     public static void Configure(IServiceCollection services, string connection, ILargeObjectStore objects,
-        AesGcmPayloadProtector protector, EnvironmentConfig environment, DbCommandInterceptor? interceptor = null)
+        AesGcmPayloadProtector protector, EnvironmentConfig environment, DbCommandInterceptor? interceptor = null,
+        GatewayFixtureDiagnostics? diagnostics = null)
     {
         services.AddLogging().AddSingleton(environment).AddSingleton(objects)
             .AddSingleton<IStoredContentProtector>(new MessagingStoredContentProtector(protector))
@@ -32,6 +33,7 @@ internal static class GatewayEwsFixtureDomain
         services.AddDbContext<EmailDbContext>(options =>
         {
             options.UseNpgsql(connection);
+            if (diagnostics is not null) options.AddInterceptors(new GatewayFixtureCommandDiagnostics(diagnostics));
             if (interceptor is not null) options.AddInterceptors(interceptor);
         });
         services.AddJmapApplication();

@@ -7,6 +7,17 @@ mapped to a closed diagnostic category; request identifiers are opaque reference
 Evicted event counts are explicit. No request URI, headers, body, credentials,
 stored MIME, SQL text, exception messages or connection string is recorded.
 
+Worker-domain async EF calls and Blob put/read/delete calls additionally record
+start/returned/fault/cancellation with closed activity labels and opaque span IDs.
+Async-local dispatch correlation separates concurrent/nested requests and restores
+the caller's context. Setup/background work without that context is not attributed.
+The domain-only Blob decorator forwards the original arguments, streams, result,
+exception and cancellation token; transport/journal Blob storage is not decorated.
+The EF interceptor does not inspect or modify SQL, parameters, rows or errors, and
+forwards any existing interception result. Reader-return does not mean rows have
+finished materializing. Sync EF, direct Npgsql and the raw transaction-start gate
+are outside this hook. These observations distinguish boundaries, not root cause.
+
 When the inner HTTP transport cancels while awaiting response headers, the test
 handler keeps the original cancellation and makes one independent, cancellable
 diagnostic attempt. Its two-second collection budget is separate from the original
@@ -36,5 +47,11 @@ DeleteFolder root-refusal client's 15-second timeout. New diagnostic controls or
 later successful runs do not retroactively explain that failure, establish
 stability/SLA, exclude indirect/global regressions or authorize any deployment.
 
+Run 37863320748 also remains FAILED: initial folder-key reading timed out before
+that test began its later competing writer. The accepted point snapshot showed
+Mail dispatch in progress and an idle transaction, but no SQL/Blob subphase; the
+new I/O observations do not retroactively identify that failure's cause.
+
 Framework contract: [HttpClient timeout](https://learn.microsoft.com/en-us/dotnet/api/system.net.http.httpclient.timeout?view=net-10.0)
 and [delegating-handler cancellation](https://learn.microsoft.com/en-us/dotnet/api/system.net.http.delegatinghandler.sendasync?view=net-10.0).
+Async EF boundary contract: [EF Core interceptors](https://learn.microsoft.com/en-us/ef/core/logging-events-diagnostics/interceptors).

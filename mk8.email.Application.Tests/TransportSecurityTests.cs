@@ -4657,18 +4657,22 @@ internal sealed partial class TransportSecurityTests
         ServiceProvider services,
         IHostedService hostedService,
         StubEmailService emailService,
-        StubMailSubmissionQueue mailQueue) : IAsyncDisposable
+        StubMailSubmissionQueue mailQueue,
+        NativeAuthenticationObserver authenticationObserver) : IAsyncDisposable
     {
         public StubEmailService EmailService { get; } = emailService;
         public StubMailSubmissionQueue MailQueue { get; } = mailQueue;
+        public NativeAuthenticationObserver AuthenticationObserver { get; } = authenticationObserver;
 
         public static async Task<ServerFixture> StartSmtpAsync(
             EnvironmentConfig environment,
             int port,
             ILogger<SmtpServerService>? logger = null,
-            IGatewayTrafficJournal? journal = null)
+            IGatewayTrafficJournal? journal = null,
+            Func<IMailAuthenticator, IMailAuthenticator>? authenticationDecorator = null)
         {
-            var (services, emailService, mailQueue) = CreateServices(environment);
+            var (services, emailService, mailQueue, observer) = CreateServices(
+                environment, authenticationDecorator: authenticationDecorator);
 
             // The returned fixture owns this allocation; finally releases untransferred resources if initialization fails.
 #pragma warning disable CA2000
@@ -4685,7 +4689,7 @@ internal sealed partial class TransportSecurityTests
 
                 // The returned fixture owns this allocation; finally releases untransferred resources if initialization fails.
 #pragma warning disable CA2000
-                var fixture = new ServerFixture(services, hostedService, emailService, mailQueue);
+                var fixture = new ServerFixture(services, hostedService, emailService, mailQueue, observer);
 
 #pragma warning restore CA2000
                 await fixture.StartAsync(port).ConfigureAwait(false);
@@ -4713,10 +4717,12 @@ internal sealed partial class TransportSecurityTests
             int port,
             ILogger<ImapServerService>? logger = null,
             IImapApplicationService? applicationService = null,
-            IGatewayTrafficJournal? journal = null)
+            IGatewayTrafficJournal? journal = null,
+            Func<IMailAuthenticator, IMailAuthenticator>? authenticationDecorator = null)
         {
-            var (services, emailService, mailQueue) = CreateServices(
-                environment, imapApplicationService: applicationService);
+            var (services, emailService, mailQueue, observer) = CreateServices(
+                environment, imapApplicationService: applicationService,
+                authenticationDecorator: authenticationDecorator);
 
             // The returned fixture owns this allocation; finally releases untransferred resources if initialization fails.
 #pragma warning disable CA2000
@@ -4733,7 +4739,7 @@ internal sealed partial class TransportSecurityTests
 
                 // The returned fixture owns this allocation; finally releases untransferred resources if initialization fails.
 #pragma warning disable CA2000
-                var fixture = new ServerFixture(services, hostedService, emailService, mailQueue);
+                var fixture = new ServerFixture(services, hostedService, emailService, mailQueue, observer);
 
 #pragma warning restore CA2000
                 await fixture.StartAsync(port).ConfigureAwait(false);
@@ -4761,9 +4767,11 @@ internal sealed partial class TransportSecurityTests
             int port,
             ILogger<Pop3ServerService>? logger = null,
             IGatewayTrafficJournal? journal = null,
-            IPop3ApplicationService? applicationService = null)
+            IPop3ApplicationService? applicationService = null,
+            Func<IMailAuthenticator, IMailAuthenticator>? authenticationDecorator = null)
         {
-            var (services, emailService, mailQueue) = CreateServices(environment, applicationService);
+            var (services, emailService, mailQueue, observer) = CreateServices(
+                environment, applicationService, authenticationDecorator: authenticationDecorator);
 
             // The returned fixture owns this allocation; finally releases untransferred resources if initialization fails.
 #pragma warning disable CA2000
@@ -4781,7 +4789,7 @@ internal sealed partial class TransportSecurityTests
 
                 // The returned fixture owns this allocation; finally releases untransferred resources if initialization fails.
 #pragma warning disable CA2000
-                var fixture = new ServerFixture(services, hostedService, emailService, mailQueue);
+                var fixture = new ServerFixture(services, hostedService, emailService, mailQueue, observer);
 
 #pragma warning restore CA2000
                 await fixture.StartAsync(port).ConfigureAwait(false);
@@ -4806,15 +4814,23 @@ internal sealed partial class TransportSecurityTests
 
         public async ValueTask DisposeAsync()
         {
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             try
             {
-                await hostedService.StopAsync(timeout.Token).ConfigureAwait(false);
+                // Declared output failures are contained; even an unexpected diagnostic fault cannot skip shutdown.
+                _ = AuthenticationObserver.WritePoint(AuthenticationPoint.FixtureStopping);
             }
             finally
             {
-                (hostedService as IDisposable)?.Dispose();
-                await services.DisposeAsync().ConfigureAwait(false);
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                try
+                {
+                    await hostedService.StopAsync(timeout.Token).ConfigureAwait(false);
+                }
+                finally
+                {
+                    (hostedService as IDisposable)?.Dispose();
+                    await services.DisposeAsync().ConfigureAwait(false);
+                }
             }
         }
 
@@ -4871,13 +4887,16 @@ internal sealed partial class TransportSecurityTests
         private static (
             ServiceProvider Services,
             StubEmailService EmailService,
-            StubMailSubmissionQueue MailQueue) CreateServices(
+            StubMailSubmissionQueue MailQueue,
+            NativeAuthenticationObserver AuthenticationObserver) CreateServices(
                 EnvironmentConfig environment,
                 IPop3ApplicationService? applicationService = null,
-                IImapApplicationService? imapApplicationService = null)
+                IImapApplicationService? imapApplicationService = null,
+                Func<IMailAuthenticator, IMailAuthenticator>? authenticationDecorator = null)
         {
             var emailService = new StubEmailService();
             var mailQueue = new StubMailSubmissionQueue();
+            var observer = new NativeAuthenticationObserver();
             var databaseName = $"transport-{Guid.NewGuid():N}";
             var serviceCollection = new ServiceCollection();
             serviceCollection.AddSingleton(environment);
@@ -4894,7 +4913,14 @@ internal sealed partial class TransportSecurityTests
                 serviceCollection.AddSingleton(applicationService);
             serviceCollection.AddSingleton<IPop3MaildropLeaseStore, InMemoryPop3MaildropLeaseStore>();
             serviceCollection.AddScoped<ISenderAuthorizationService, SenderAuthorizationService>();
-            serviceCollection.AddScoped<IMailAuthenticator, MailAuthenticator>();
+            serviceCollection.AddScoped<MailAuthenticator>();
+            serviceCollection.AddScoped<IMailAuthenticator>(provider =>
+            {
+                IMailAuthenticator authenticator = provider.GetRequiredService<MailAuthenticator>();
+                if (authenticationDecorator is not null)
+                    authenticator = authenticationDecorator(authenticator);
+                return new ObservedMailAuthenticator(authenticator, observer);
+            });
             serviceCollection.AddScoped<IOAuthTokenService, OAuthTokenService>();
             serviceCollection.AddSingleton<ILargeObjectStore, InMemoryLargeObjectStore>();
             serviceCollection.AddScoped(provider => new LargeObjectTransactionEffects(
@@ -4909,7 +4935,7 @@ internal sealed partial class TransportSecurityTests
             try
             {
                 SeedAccount(services);
-                return (services, emailService, mailQueue);
+                return (services, emailService, mailQueue, observer);
             }
             catch
             {

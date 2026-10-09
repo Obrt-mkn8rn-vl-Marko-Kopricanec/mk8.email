@@ -6,6 +6,8 @@ namespace mk8.email.Application.Tests;
 
 internal sealed partial class TransportSecurityTests
 {
+    public TestContext? TestContext { get; set; }
+
     [TestMethod]
     [DataRow("smtp", false, false)]
     [DataRow("smtp", true, false)]
@@ -19,10 +21,11 @@ internal sealed partial class TransportSecurityTests
     [DataRow("pop3", true, false)]
     [DataRow("pop3", false, true)]
     [DataRow("pop3", true, true)]
-    [Timeout(30_000)]
+    [Timeout(30_000, CooperativeCancellation = true)]
     public async Task NativeAuthenticationReadCancellationIsObservedWithoutCancellingServerWork(
         string protocol, bool afterInner, bool injectAssertion)
     {
+        Assert.IsNotNull(TestContext);
         var held = new HeldNativeAuthentication(afterInner);
         var port = ReservePort();
         var server = await StartObservedNativeServerAsync(protocol, port, held).ConfigureAwait(false);
@@ -34,7 +37,7 @@ internal sealed partial class TransportSecurityTests
         try
         {
             await BeginHeldNativeAuthenticationAsync(protocol, connection).ConfigureAwait(false);
-            await held.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+            await held.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.CancellationToken).ConfigureAwait(false);
             if (injectAssertion) throw injected;
             await Assert.ThrowsAsync<OperationCanceledException>(connection.ReadLineAsync).ConfigureAwait(false);
             Assert.IsFalse(held.Completing.IsCompleted);
@@ -52,8 +55,7 @@ internal sealed partial class TransportSecurityTests
             held.ReleaseAndSeal();
             failure = await ObserveOwnedAuthenticationCleanupAsync(held.Completing, failure).ConfigureAwait(false);
         }
-        if (injectAssertion) Assert.AreSame(injected, failure);
-        else if (failure is not null) ExceptionDispatchInfo.Capture(failure).Throw();
+        AssertControlledAuthenticationOutcome(injectAssertion, injected, failure);
         Assert.IsTrue(held.Completing.IsCompletedSuccessfully);
         await AssertNativeAuthenticationReplyAsync(protocol, connection).ConfigureAwait(false);
         AssertAuthenticationEvents(server.AuthenticationObserver, primary: false, AuthenticationPhase.Returned);
@@ -119,6 +121,89 @@ internal sealed partial class TransportSecurityTests
 
     private static bool IsFatalAuthenticationControl(Exception error) =>
         error is OutOfMemoryException or StackOverflowException or AccessViolationException;
+
+    private static void AssertControlledAuthenticationOutcome(
+        bool injectAssertion, Exception injected, Exception? failure)
+    {
+        // A failed entry/cleanup stage is not the intended injected assertion.
+        // Surface its actual fault inventory before testing the positive control.
+        if (failure is not null && (!injectAssertion || !ReferenceEquals(injected, failure)))
+            ExceptionDispatchInfo.Capture(failure).Throw();
+        if (injectAssertion) Assert.AreSame(injected, failure);
+    }
+
+    [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public void NativeAuthenticationPostconditionPreservesUnexpectedOriginalFailure(bool injectAssertion)
+    {
+        var expected = new AssertFailedException("controlled expected injection");
+        var original = new TimeoutException("controlled failure before injection");
+        var actual = Assert.Throws<TimeoutException>(() =>
+            AssertControlledAuthenticationOutcome(injectAssertion, expected, original));
+        Assert.AreSame(original, actual);
+    }
+
+    [TestMethod]
+    public void NativeAuthenticationPostconditionPreservesOriginalAndOwnedFaultInventory()
+    {
+        var original = new AssertFailedException("controlled actual injection");
+        var owned = new InvalidOperationException("controlled owned task failure");
+        var inventory = new AggregateException(original, owned);
+        var actual = Assert.Throws<AggregateException>(() =>
+            AssertControlledAuthenticationOutcome(injectAssertion: true, original, inventory));
+        Assert.AreSame(inventory, actual);
+        Assert.AreSame(original, actual.InnerExceptions[0]);
+        Assert.AreSame(owned, actual.InnerExceptions[1]);
+    }
+
+    [TestMethod]
+    public void NativeAuthenticationPostconditionAdmitsOnlyTheIntendedControlOutcomes()
+    {
+        var injected = new AssertFailedException("controlled actual injection");
+        AssertControlledAuthenticationOutcome(injectAssertion: false, injected, failure: null);
+        AssertControlledAuthenticationOutcome(injectAssertion: true, injected, injected);
+        Assert.Throws<AssertFailedException>(() =>
+            AssertControlledAuthenticationOutcome(injectAssertion: true, injected, failure: null));
+    }
+
+    [TestMethod]
+    public async Task NativeAuthenticationEntryWaitCancellationDoesNotCancelTheOwnedBody()
+    {
+        using var entryCancellation = new CancellationTokenSource();
+        var innerBody = new TaskCompletionSource<AuthenticatedMailUser?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        // This control creates the body and completes/joins it through the held proxy in finally.
+#pragma warning disable VSTHRD003
+        var inner = new ControlledMailAuthenticator(() => innerBody.Task);
+#pragma warning restore VSTHRD003
+        var held = new HeldNativeAuthentication(afterInner: true);
+        var completing = held.InvokeAsync(inner, primary: false, "user", "password", CancellationToken.None);
+        Exception? failure = null;
+        try
+        {
+            await entryCancellation.CancelAsync().ConfigureAwait(false);
+            var actual = await Assert.ThrowsAsync<OperationCanceledException>(() =>
+                held.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5), entryCancellation.Token)).ConfigureAwait(false);
+            Assert.AreEqual(entryCancellation.Token, actual.CancellationToken);
+            Assert.IsFalse(completing.IsCompleted);
+            Assert.IsFalse(held.Entered.Task.IsCompleted);
+            Assert.IsNotNull(inner.Inputs);
+            Assert.AreEqual(CancellationToken.None, inner.Inputs.Cancellation);
+        }
+        catch (Exception error) when (!IsFatalAuthenticationControl(error))
+        {
+            failure = error;
+        }
+        finally
+        {
+            innerBody.TrySetResult(null);
+            held.ReleaseAndSeal();
+            failure = await ObserveOwnedAuthenticationCleanupAsync(completing, failure).ConfigureAwait(false);
+        }
+        if (failure is not null) ExceptionDispatchInfo.Capture(failure).Throw();
+        Assert.IsTrue(completing.IsCompletedSuccessfully);
+        Assert.IsTrue(held.Entered.Task.IsCompletedSuccessfully);
+    }
 
     [TestMethod]
     public async Task NativeAuthenticationCleanupRetainsOriginalAndOwnedFault()

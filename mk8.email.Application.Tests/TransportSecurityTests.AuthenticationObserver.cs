@@ -108,9 +108,9 @@ internal sealed partial class TransportSecurityTests
         Assert.HasCount(4, completed);
         foreach (var group in completed.GroupBy(item => item.Span))
         {
-            Assert.AreSequenceEqual(
-                new[] { AuthenticationPhase.Entered, AuthenticationPhase.Returned },
-                group.Select(item => item.Phase).ToArray());
+            Assert.AreSequenceEqual<AuthenticationPhase>(
+                [AuthenticationPhase.Entered, AuthenticationPhase.Returned],
+                [.. group.Select(item => item.Phase)]);
             Assert.AreEqual(group.First().Primary, group.Last().Primary);
         }
     }

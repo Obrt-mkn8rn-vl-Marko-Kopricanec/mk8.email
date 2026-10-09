@@ -122,13 +122,29 @@ internal sealed partial class GatewayEwsRouteTests
         }
     }
 
-    private sealed class ResponseCompletionBarrier(IApplicationRequestConsumer inner, bool committed) : IApplicationRequestConsumer
+    private sealed class ResponseCompletionBarrier : IApplicationRequestConsumer
     {
+        private readonly IApplicationRequestConsumer _inner;
+        private readonly Action? _onEntered;
+        private readonly TaskCompletionSource<Task> _body = new(TaskCreationOptions.RunContinuationsAsynchronously);
         // GetFolder performs count then read; post-commit delivery requires pausing the final read completion.
-        private int _remaining = committed ? 2 : 1;
-        public bool Committed => committed;
+        private int _remaining;
+
+        public ResponseCompletionBarrier(IApplicationRequestConsumer inner, bool committed, Action? onEntered = null)
+        {
+            _inner = inner;
+            _onEntered = onEntered;
+            Committed = committed;
+            _remaining = committed ? 2 : 1;
+            // Publish the exact task returned by this consumer before any invocation can signal entry.
+            // Unwrap owns the paused body, including a fault before CompleteAsync returns/linkage finishes.
+            Completing = _body.Task.Unwrap();
+        }
+
+        public bool Committed { get; }
         public Guid RequestId { get; private set; }
-        public Task? Completing { get; private set; }
+        public Task Completing { get; }
+        public bool BodyLinked => _body.Task.IsCompleted;
         public bool SendingCompleted { get; set; }
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -136,26 +152,35 @@ internal sealed partial class GatewayEwsRouteTests
         public Task CompleteAsync(ApplicationRequestLease lease, ApplicationResponse response, CancellationToken cancellationToken = default)
         {
             if (lease.Request.Operation is not ApplicationOperations.MailOperationExecute || Interlocked.Decrement(ref _remaining) != 0)
-                return inner.CompleteAsync(lease, response, cancellationToken);
+                return _inner.CompleteAsync(lease, response, cancellationToken);
             RequestId = lease.Request.Id;
-            Completing = CompletePausedAsync(lease, response, cancellationToken);
+            _body.SetResult(CompletePausedAsync(lease, response, cancellationToken));
+            // This stable proxy owns the body started here; deterministic entry cleanup checks its exact identity/fault.
+#pragma warning disable VSTHRD003
             return Completing;
+#pragma warning restore VSTHRD003
         }
 
         private async Task CompletePausedAsync(ApplicationRequestLease lease, ApplicationResponse response, CancellationToken token)
         {
-            if (!committed) { Entered.TrySetResult(); await Release.Task.WaitAsync(token).ConfigureAwait(false); }
-            await inner.CompleteAsync(lease, response, token).ConfigureAwait(false);
-            if (committed) { Entered.TrySetResult(); await Release.Task.WaitAsync(token).ConfigureAwait(false); }
+            if (!Committed) { SignalEntry(); await Release.Task.WaitAsync(token).ConfigureAwait(false); }
+            await _inner.CompleteAsync(lease, response, token).ConfigureAwait(false);
+            if (Committed) { SignalEntry(); await Release.Task.WaitAsync(token).ConfigureAwait(false); }
+        }
+
+        private void SignalEntry()
+        {
+            Entered.TrySetResult();
+            _onEntered?.Invoke();
         }
 
         public Task<ApplicationRequestLease> WaitForRequestAsync(string workerId, CancellationToken cancellationToken = default) =>
-            inner.WaitForRequestAsync(workerId, cancellationToken);
+            _inner.WaitForRequestAsync(workerId, cancellationToken);
         public Task<ApplicationRequestLease?> TryClaimAsync(string workerId, CancellationToken cancellationToken = default) =>
-            inner.TryClaimAsync(workerId, cancellationToken);
+            _inner.TryClaimAsync(workerId, cancellationToken);
         public Task<bool> RenewLeaseAsync(ApplicationRequestLease lease, CancellationToken cancellationToken = default) =>
-            inner.RenewLeaseAsync(lease, cancellationToken);
+            _inner.RenewLeaseAsync(lease, cancellationToken);
         public Task FailAsync(ApplicationRequestLease lease, string errorCode, string errorDetail, CancellationToken cancellationToken = default) =>
-            inner.FailAsync(lease, errorCode, errorDetail, cancellationToken);
+            _inner.FailAsync(lease, errorCode, errorDetail, cancellationToken);
     }
 }

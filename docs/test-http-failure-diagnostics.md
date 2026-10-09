@@ -97,6 +97,18 @@ boolean is passed through. Controlled before/after pauses own and join both the
 HTTP and completion tasks, including injected assertion failures. These controls
 do not reproduce the historical timeout or prove stability/physical durability.
 
+The rejected e5595b7 control assigned a nullable completion task only after an
+async body could synchronously signal entry. Asynchronous continuations did not
+order that assignment ahead of failure cleanup. The corrected consumer creates a
+stable unwrapped task at construction and returns it from the controlled consumer;
+the unchanged outer diagnostic observer awaits it and returns its own observed task.
+Its non-null handle owns the body's eventual result or fault even when cleanup
+starts before the body returns its task. A synchronous entry hook deterministically
+starts the real cleanup before invocation return/body linkage in both pause modes,
+then faults completion and checks the original assertion plus completion fault.
+The original four real-route controls remain unchanged. This is a test-ownership
+correction, not a production fix or explanation of any historical CI timeout.
+
 Framework contract: [HttpClient timeout](https://learn.microsoft.com/en-us/dotnet/api/system.net.http.httpclient.timeout?view=net-10.0)
 and [delegating-handler cancellation](https://learn.microsoft.com/en-us/dotnet/api/system.net.http.delegatinghandler.sendasync?view=net-10.0).
 Async EF boundary contract: [EF Core interceptors](https://learn.microsoft.com/en-us/ef/core/logging-events-diagnostics/interceptors).

@@ -19,19 +19,19 @@ internal sealed class GatewayFixtureDiagnostics
     public string? LastReport { get { lock (_sync) return _lastReport; } }
 
     public void Record(Phase phase, Guid? request = null, Operation operation = Operation.Other,
-        Activity activity = Activity.None, Guid? span = null)
+        Activity activity = Activity.None, Guid? span = null, int? attempt = null, int? status = null)
     {
         lock (_sync)
         {
             if (_events.Count == MaximumEvents) { _events.Dequeue(); _dropped++; }
-            _events.Enqueue(new(_clock.ElapsedMilliseconds, phase.ToString(), request, operation.ToString(), activity.ToString(), span));
+            _events.Enqueue(new(_clock.ElapsedMilliseconds, phase.ToString(), request, operation.ToString(), activity.ToString(), span, attempt, status));
         }
     }
 
-    public void RecordIo(Phase phase, Activity activity, Guid span)
+    public void RecordIo(Phase phase, Activity activity, Guid span, int? attempt = null, int? status = null)
     {
         if (_dispatch.Value is { } identity)
-            Record(phase, identity.Request, identity.Operation, activity, span);
+            Record(phase, identity.Request, identity.Operation, activity, span, attempt, status);
     }
 
     public string Report(JsonElement database, string workerState)
@@ -66,12 +66,18 @@ internal sealed class GatewayFixtureDiagnostics
     {
         ClientSend, ClientHeaders, ClientCancelled, GatewayEnter, GatewayExit,
         JournalInboundStart, JournalInboundComplete, JournalOutboundStart, JournalOutboundComplete,
-        DispatchStart, DispatchComplete, DispatchFault, IoStart, IoReturned, IoFault, IoCancelled
+        DispatchStart, DispatchComplete, DispatchFault, IoStart, IoReturned, IoFault, IoCancelled,
+        AzureStart, AzureReturned, AzureFault, AzureCancelled
     }
     internal enum Operation { Other, Authenticate, Profile, Mail }
-    internal enum Activity { None, DbReader, DbScalar, DbNonQuery, OtherDb, BlobPut, BlobRead, BlobDelete }
+    internal enum Activity
+    {
+        None, DbReader, DbScalar, DbNonQuery, OtherDb, BlobPut, BlobRead, BlobDelete,
+        AzureContainerCreate, AzureUpload, AzureBlock, AzureBlockList, AzureProperties, AzureDownload, AzureDelete, AzureOther
+    }
     private sealed record DispatchIdentity(Guid Request, Operation Operation);
-    private sealed record PhaseEvent(long Milliseconds, string Phase, Guid? Request, string Operation, string Activity, Guid? Span);
+    private sealed record PhaseEvent(long Milliseconds, string Phase, Guid? Request, string Operation, string Activity,
+        Guid? Span, int? Attempt, int? Status);
 
     internal sealed class Dispatcher(IApplicationRequestDispatcher inner, GatewayFixtureDiagnostics diagnostics)
         : IApplicationRequestDispatcher

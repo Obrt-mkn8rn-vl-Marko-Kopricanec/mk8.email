@@ -52,6 +52,30 @@ that test began its later competing writer. The accepted point snapshot showed
 Mail dispatch in progress and an idle transaction, but no SQL/Blob subphase; the
 new I/O observations do not retroactively identify that failure's cause.
 
+Run 37869384595 remains FAILED on the existing alias-refusal client's 15-second
+timeout. Its last observed domain BlobPut had started without a matching return
+at the collection point. That identifies neither the provider operation nor why
+it did not return. Later in-memory phases and the database snapshot are sequential
+observations, not an atomic shared timeline.
+
+The domain fixture now adds a test-only Azure SDK `BeforeTransport` policy with
+closed container-create/upload/block/block-list/properties/download/delete/other
+labels, opaque per-message span, attempt number and numeric returned status.
+Only fixed method/query operation selectors are inspected; no URI, SAS, object
+name, headers, body or error is retained. Unknown/ambiguous selectors stay Other.
+Each SDK transport-policy entry is recorded separately, including existing SDK
+retries; the policy forwards the same message/result/exception/token and does not
+change retry or network-timeout options. Bus/journal clients are undecorated.
+
+A transport return is not complete response-body consumption, Blob integrity
+validation or business commit. A returned retryable status may be followed by an
+unobserved retry delay; attempt-start likewise is not proof that bytes reached a
+server. Synthetic pause/retry controls verify observation and ownership, not actual
+provider root cause. Actual configured-endpoint round trips cover conflict lookup,
+read and deletion separately from the real folder-read receipt upload routes.
+
 Framework contract: [HttpClient timeout](https://learn.microsoft.com/en-us/dotnet/api/system.net.http.httpclient.timeout?view=net-10.0)
 and [delegating-handler cancellation](https://learn.microsoft.com/en-us/dotnet/api/system.net.http.delegatinghandler.sendasync?view=net-10.0).
 Async EF boundary contract: [EF Core interceptors](https://learn.microsoft.com/en-us/ef/core/logging-events-diagnostics/interceptors).
+Pinned Azure.Core 1.55.0 placement: [pipeline builder](https://github.com/Azure/azure-sdk-for-net/blob/Azure.Core_1.55.0/sdk/core/Azure.Core/src/Pipeline/HttpPipelineBuilder.cs)
+and [BeforeTransport contract](https://github.com/Azure/azure-sdk-for-net/blob/Azure.Core_1.55.0/sdk/core/Azure.Core/src/HttpPipelinePosition.cs).

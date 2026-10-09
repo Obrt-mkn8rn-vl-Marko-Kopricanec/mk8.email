@@ -216,7 +216,8 @@ internal sealed partial class GatewayHttpCaptureBoundaryTests
             int? maximumPayloadOverride = null, bool disableJmap = false,
             Microsoft.EntityFrameworkCore.Diagnostics.DbCommandInterceptor? folderLockInterceptor = null,
             Func<IApplicationRequestDispatcher, IApplicationRequestDispatcher>? decorateDispatcher = null,
-            Func<mk8.email.Contracts.Storage.ILargeObjectStore, mk8.email.Contracts.Storage.ILargeObjectStore>? decorateDomainStore = null)
+            Func<mk8.email.Contracts.Storage.ILargeObjectStore, mk8.email.Contracts.Storage.ILargeObjectStore>? decorateDomainStore = null,
+            Action<BlobClientOptions>? configureDomainBlob = null)
         {
             var database = await PostgresTestDatabase.TryCreateAsync().ConfigureAwait(false);
             var blobConnection = Environment.GetEnvironmentVariable("MK8_EMAIL_TEST_AZURE_BLOB_CONNECTION");
@@ -251,7 +252,8 @@ internal sealed partial class GatewayHttpCaptureBoundaryTests
                 });
             if (mailFolders)
             {
-                var domainStore = decorateDomainStore?.Invoke(store) ?? store;
+                var observedStore = CreateObservedDomainStore(blobConnection, container.Name, diagnostics, configureDomainBlob);
+                var domainStore = decorateDomainStore?.Invoke(observedStore) ?? observedStore;
                 GatewayEwsFixtureDomain.Configure(services, database.ConnectionString,
                     new GatewayFixtureBlobDiagnostics(domainStore, diagnostics), protector, environment, folderLockInterceptor, diagnostics);
             }
@@ -268,6 +270,16 @@ internal sealed partial class GatewayHttpCaptureBoundaryTests
             fixture = new CaptureFixture(database, dataSource, protector, container, provider, worker, host, journal, application,
                 maximumPayloadBytes, ordinaryClient, faultingJournal, certificatePath, diagnostics);
             return fixture;
+        }
+
+        private static AzureBlobLargeObjectStore CreateObservedDomainStore(string connection, string container,
+            GatewayFixtureDiagnostics diagnostics, Action<BlobClientOptions>? configure)
+        {
+            var options = new BlobClientOptions();
+            GatewayFixtureAzureDiagnostics.Configure(options, diagnostics);
+            configure?.Invoke(options);
+            return new AzureBlobLargeObjectStore(new BlobServiceClient(connection, options),
+                new AzureBlobLargeObjectStoreOptions { ContainerName = container, CreateContainerIfMissing = true });
         }
 
         private static async Task<string> CreateDiscoveryCertificateAsync()

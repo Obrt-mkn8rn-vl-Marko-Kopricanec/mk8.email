@@ -22,7 +22,7 @@ namespace mk8.email.Messaging.Tests;
 [TestCategory("PostgreSQL")]
 [TestCategory("AzureBlobCompatible")]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest discovers and executes the explicit full-host controls by reflection.")]
-internal sealed class NativeHostStartupTests
+internal sealed partial class NativeHostStartupTests
 {
     public TestContext? TestContext { get; set; }
 
@@ -64,7 +64,8 @@ internal sealed class NativeHostStartupTests
     }
 
     private async Task RunHostsAsync(PostgresTestDatabase database, string blob, string container,
-        string directory, bool unknownRecipient, List<NativeHostProcess> hosts, List<NativeHostScanner> scanners, Exception? injected)
+        string directory, bool unknownRecipient, List<NativeHostProcess> hosts, List<NativeHostScanner> scanners, Exception? injected,
+        bool? implicitTls = null)
     {
         Assert.IsNotNull(TestContext);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TestContext.CancellationToken);
@@ -76,7 +77,7 @@ internal sealed class NativeHostStartupTests
         var scanner = new NativeHostScanner(scannerPort);
         scanners.Add(scanner);
         await scanner.StartAsync(token).ConfigureAwait(false);
-        var config = CreateConfig(database, blob, container, directory, smtpPort, scannerPort);
+        var config = CreateConfig(database, blob, container, directory, smtpPort, scannerPort, implicitTls);
         var gatewayErrors = config.Validate(isDevelopment: false, EnvironmentValidationRole.Gateway);
         var workerErrors = config.Validate(isDevelopment: false, EnvironmentValidationRole.ApplicationWorker);
         Assert.HasCount(0, gatewayErrors, string.Join("; ", gatewayErrors));
@@ -84,6 +85,7 @@ internal sealed class NativeHostStartupTests
         var configPath = Path.Combine(directory, "native-host.json");
         await File.WriteAllTextAsync(configPath, JsonSerializer.Serialize(config), token).ConfigureAwait(false);
         await SeedAsync(database.ConnectionString, token).ConfigureAwait(false);
+        if (implicitTls.HasValue) await SetSubmissionPasswordAsync(database.ConnectionString, token).ConfigureAwait(false);
         {
             var prepare = NativeHostProcess.Start("MK8_EMAIL_TEST_WORKER_DLL", configPath, TestContext, "--prepare");
             hosts.Add(prepare);
@@ -98,7 +100,10 @@ internal sealed class NativeHostStartupTests
         hosts.Add(gateway);
         await WaitForApplicationAsync(gateway, worker, httpPort, token).ConfigureAwait(false);
         if (injected is not null) ExceptionDispatchInfo.Capture(injected).Throw();
-        await RunSessionAsync(database.ConnectionString, blob, container, smtpPort, unknownRecipient, scanner.Scanned, token).ConfigureAwait(false);
+        if (implicitTls.HasValue)
+            await RunSubmissionSessionAsync(database.ConnectionString, smtpPort, config.Tls.CertificatePath!, implicitTls.Value, token).ConfigureAwait(false);
+        else
+            await RunSessionAsync(database.ConnectionString, blob, container, smtpPort, unknownRecipient, scanner.Scanned, token).ConfigureAwait(false);
         Assert.IsFalse(worker.HasExited, "The Worker exited before the native canary completed.");
         Assert.IsFalse(gateway.HasExited, "The Gateway exited before the native canary completed.");
     }
@@ -207,7 +212,7 @@ internal sealed class NativeHostStartupTests
     }
 
     private static EnvironmentConfig CreateConfig(PostgresTestDatabase database, string blob, string container,
-        string directory, int smtpPort, int scannerPort)
+        string directory, int smtpPort, int scannerPort, bool? implicitTls = null)
     {
         var connection = new NpgsqlConnectionStringBuilder(database.ConnectionString);
         // Reserved tenant identities and loopback listeners are finite owned fixtures,
@@ -222,7 +227,23 @@ internal sealed class NativeHostStartupTests
                 Username = connection.Username!,
                 Password = string.IsNullOrEmpty(connection.Password) ? "local-host-test-only-password" : connection.Password,
             },
-            Smtp = new SmtpConfig { Hostname = "email.example.test", ListenAddress = "127.0.0.1", Port = smtpPort, AllowRelay = false },
+            Smtp = implicitTls.HasValue
+                ? new SmtpConfig
+                {
+                    Hostname = "email.example.test",
+                    ListenAddress = "127.0.0.1",
+                    EnableSmtp = false,
+                    EnableSubmission = !implicitTls.Value,
+                    SubmissionPort = smtpPort,
+                    EnableImplicitTls = implicitTls.Value,
+                    ImplicitTlsPort = smtpPort,
+                    EnableStartTls = !implicitTls.Value,
+                    RequireTls = true,
+                    RequireAuth = true,
+                    AllowRelay = false,
+                }
+                : new SmtpConfig { Hostname = "email.example.test", ListenAddress = "127.0.0.1", Port = smtpPort, AllowRelay = false },
+            Tls = implicitTls.HasValue ? new TlsConfig { CertificatePath = CreateSubmissionCertificate(directory) } : new TlsConfig(),
             Imap = new ImapConfig { EnableImap = false },
             Pop3 = new Pop3Config { EnablePop3 = false },
             Sieve = new SieveConfig { EnableManageSieve = false },

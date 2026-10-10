@@ -7,12 +7,14 @@ namespace mk8.email.Messaging.Tests;
 
 internal sealed class NativeHostScanner : IAsyncDisposable
 {
+    // Synthetic reserved-tenant header data only; not a cryptographic signature or signer proof.
+    internal const string SyntheticSubmissionSignature = "v=1; a=rsa-sha256; d=example.test; s=fixture; bh=AA==; b=AA==";
     private readonly WebApplication _application;
     private readonly TaskCompletionSource<string> _scanned = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Task? _stopping;
     private Task? _disposing;
 
-    public NativeHostScanner(int port)
+    public NativeHostScanner(int port, bool includeSubmissionSignature = false)
     {
         var builder = WebApplication.CreateSlimBuilder();
         builder.WebHost.UseUrls(string.Create(CultureInfo.InvariantCulture, $"http://127.0.0.1:{port}"));
@@ -21,6 +23,17 @@ internal sealed class NativeHostScanner : IAsyncDisposable
         {
             using var reader = new StreamReader(context.Request.Body);
             _scanned.TrySetResult(await reader.ReadToEndAsync(context.RequestAborted).ConfigureAwait(false));
+            if (includeSubmissionSignature)
+            {
+                return Results.Json(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["action"] = "no action",
+                    ["score"] = 0,
+                    ["required_score"] = 10,
+                    ["symbols"] = new { },
+                    ["dkim-signature"] = SyntheticSubmissionSignature,
+                });
+            }
             return Results.Json(new { action = "no action", score = 0, required_score = 10, symbols = new { } });
         });
     }

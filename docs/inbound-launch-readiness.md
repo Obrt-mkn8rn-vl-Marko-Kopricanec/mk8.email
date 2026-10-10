@@ -58,6 +58,16 @@ password authentication and sender authorization, with no queued message or
 mailbox effect. These are local TLS/authentication controls, not public PKI,
 authenticated delivery, provider interoperability or stability certification.
 
+Distinct Production-host DATA controls submit only to an owned local recipient
+over STARTTLS or implicit TLS. They bind the SMTP acknowledgement to the persisted
+Submission queue, refuse a nonlocal recipient, and check distinct Sent/Inbox
+delivery identities, per-folder UID/modseq, read flags and integrity-checked queued
+and mailbox Blob bytes. They use no redirect/vacation policy and request no DSN.
+The scanner stand-in supplies explicitly synthetic DKIM header data, not a valid
+cryptographic signature. These finite local scanner/Blob fixtures do not establish
+actual signing, external delivery, public PKI, default storage-provider HTTPS,
+crash recovery or stability.
+
 Separate Linux Production-host shutdown controls retain an open native session,
 request SIGTERM through an owned process descriptor, and require actual successful
 exit plus stdout/stderr settlement before fixture dependency retirement. A cancelled

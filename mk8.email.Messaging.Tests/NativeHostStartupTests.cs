@@ -66,7 +66,8 @@ internal sealed partial class NativeHostStartupTests
     private async Task RunHostsAsync(PostgresTestDatabase database, string blob, string container,
         string directory, bool unknownRecipient, List<NativeHostProcess> hosts, List<NativeHostScanner> scanners, Exception? injected,
         bool? implicitTls = null,
-        Func<NativeHostProcess, NativeHostProcess, int, CancellationToken, Task>? shutdownControl = null)
+        Func<NativeHostProcess, NativeHostProcess, int, CancellationToken, Task>? shutdownControl = null,
+        Func<int, string, Task<string>, CancellationToken, Task>? submissionControl = null)
     {
         Assert.IsNotNull(TestContext);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TestContext.CancellationToken);
@@ -75,14 +76,11 @@ internal sealed partial class NativeHostStartupTests
         var smtpPort = AllocateLoopbackPort();
         var httpPort = AllocateLoopbackPort();
         var scannerPort = AllocateLoopbackPort();
-        var scanner = new NativeHostScanner(scannerPort);
+        var scanner = new NativeHostScanner(scannerPort, includeSubmissionSignature: submissionControl is not null);
         scanners.Add(scanner);
         await scanner.StartAsync(token).ConfigureAwait(false);
         var config = CreateConfig(database, blob, container, directory, smtpPort, scannerPort, implicitTls);
-        var gatewayErrors = config.Validate(isDevelopment: false, EnvironmentValidationRole.Gateway);
-        var workerErrors = config.Validate(isDevelopment: false, EnvironmentValidationRole.ApplicationWorker);
-        Assert.HasCount(0, gatewayErrors, string.Join("; ", gatewayErrors));
-        Assert.HasCount(0, workerErrors, string.Join("; ", workerErrors));
+        ValidateHostRoles(config);
         var configPath = Path.Combine(directory, "native-host.json");
         await File.WriteAllTextAsync(configPath, JsonSerializer.Serialize(config), token).ConfigureAwait(false);
         await SeedAsync(database.ConnectionString, token).ConfigureAwait(false);
@@ -106,7 +104,9 @@ internal sealed partial class NativeHostStartupTests
             await shutdownControl(worker, gateway, smtpPort, token).ConfigureAwait(false);
             return;
         }
-        if (implicitTls.HasValue)
+        if (submissionControl is not null)
+            await submissionControl(smtpPort, config.Tls.CertificatePath!, scanner.Scanned, token).ConfigureAwait(false);
+        else if (implicitTls.HasValue)
             await RunSubmissionSessionAsync(database.ConnectionString, smtpPort, config.Tls.CertificatePath!, implicitTls.Value, token).ConfigureAwait(false);
         else
             await RunSessionAsync(database.ConnectionString, blob, container, smtpPort, unknownRecipient, scanner.Scanned, token).ConfigureAwait(false);
@@ -117,6 +117,14 @@ internal sealed partial class NativeHostStartupTests
     {
         Assert.IsFalse(worker.HasExited, "The Worker exited before the native canary completed.");
         Assert.IsFalse(gateway.HasExited, "The Gateway exited before the native canary completed.");
+    }
+
+    private static void ValidateHostRoles(EnvironmentConfig config)
+    {
+        var gatewayErrors = config.Validate(isDevelopment: false, EnvironmentValidationRole.Gateway);
+        var workerErrors = config.Validate(isDevelopment: false, EnvironmentValidationRole.ApplicationWorker);
+        Assert.HasCount(0, gatewayErrors, string.Join("; ", gatewayErrors));
+        Assert.HasCount(0, workerErrors, string.Join("; ", workerErrors));
     }
 
     private async Task RecordStartupPointAsync(string connectionString)

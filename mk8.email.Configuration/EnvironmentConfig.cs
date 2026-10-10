@@ -83,6 +83,9 @@ public sealed class EnvironmentConfig
     {
         if (validatesPresentation)
         {
+            if (!IPAddress.TryParse(Smtp.ListenAddress, out _))
+                errors.Add("Smtp.ListenAddress must be a literal IP address.");
+
             var enabledPorts = new List<(string Name, int Port)>();
             AddEnabledPort(enabledPorts, Smtp.EnableSmtp, "Smtp.Port", Smtp.Port);
             AddEnabledPort(enabledPorts, Smtp.EnableSubmission, "Smtp.SubmissionPort", Smtp.SubmissionPort);

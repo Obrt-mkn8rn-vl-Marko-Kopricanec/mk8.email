@@ -3,6 +3,7 @@ namespace mk8.email.Configuration;
 public sealed class SmtpConfig
 {
     public string Hostname { get; init; } = "localhost";
+    public string ListenAddress { get; init; } = "0.0.0.0";
     public int Port { get; init; } = 25;
     public int SubmissionPort { get; init; } = 587;
     public int ImplicitTlsPort { get; init; } = 465;

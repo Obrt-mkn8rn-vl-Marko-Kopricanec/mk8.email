@@ -1,1 +1,2 @@
 #nullable enable
+override mk8.email.Smtp.Presentation.SmtpServerService.StopAsync(System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!

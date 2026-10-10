@@ -88,21 +88,28 @@ public partial class SmtpServerService(
 
     private readonly ConnectionLimiter _connectionLimiter = new(MaximumConcurrentConnections);
     private readonly ConnectionLimiter _dataTransactionLimiter = new(MaximumConcurrentDataTransactions);
+    private readonly TaskCompletionSource<Task> _stopBody = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _stopStarted;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var config = SmtpListenerOptions.FromEnvironment(env);
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        await RunListenersAsync(config, lifetime).ConfigureAwait(false);
+    }
 
+    private async Task RunListenersAsync(SmtpListenerOptions config, CancellationTokenSource lifetime)
+    {
         var tasks = new List<Task>();
 
         if (config.EnableSmtp)
-            tasks.Add(ListenAsync(config.SmtpPort, ListenerMode.Smtp, config, stoppingToken));
+            tasks.Add(ListenAsync(config.SmtpPort, ListenerMode.Smtp, config, lifetime));
 
         if (config.EnableSubmission)
-            tasks.Add(ListenAsync(config.SmtpSubmissionPort, ListenerMode.Submission, config, stoppingToken));
+            tasks.Add(ListenAsync(config.SmtpSubmissionPort, ListenerMode.Submission, config, lifetime));
 
         if (config.EnableImplicitTls)
-            tasks.Add(ListenAsync(config.SmtpImplicitTlsPort, ListenerMode.ImplicitTls, config, stoppingToken));
+            tasks.Add(ListenAsync(config.SmtpImplicitTlsPort, ListenerMode.ImplicitTls, config, lifetime));
 
         if (tasks.Count == 0)
         {
@@ -110,12 +117,64 @@ public partial class SmtpServerService(
             return;
         }
 
-        await Task.WhenAll(tasks).ConfigureAwait(false);
+        var completing = Task.WhenAll(tasks);
+        await completing.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        if (completing.Exception is { } failures)
+            throw failures;
+        await completing.ConfigureAwait(false);
     }
 
-    private async Task ListenAsync(int port, ListenerMode mode, SmtpListenerOptions config, CancellationToken ct)
+    public override Task StopAsync(CancellationToken cancellationToken)
     {
-        var listener = new TcpListener(IPAddress.Any, port);
+        if (base.ExecuteTask is null)
+            return Task.CompletedTask;
+        // Publish a shared body through the already-existing source, including
+        // reentrant/concurrent callers before cancellation has returned its task.
+        if (Interlocked.CompareExchange(ref _stopStarted, 1, 0) == 0)
+            _stopBody.SetResult(StopCoreAsync());
+        return _stopBody.Task.Unwrap().WaitAsync(cancellationToken);
+    }
+
+    private async Task StopCoreAsync()
+    {
+        // A caller can cancel its wait, not shared shutdown. Also join execution
+        // if base cancellation callbacks fault before its suppressed wait finishes.
+        var completing = Task.WhenAll(base.StopAsync(CancellationToken.None), base.ExecuteTask ?? Task.CompletedTask);
+        await completing.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        if (completing.Exception is { } failures)
+            throw failures;
+        await completing.ConfigureAwait(false);
+    }
+
+    private async Task ListenAsync(int port, ListenerMode mode, SmtpListenerOptions config, CancellationTokenSource lifetime)
+    {
+        using var listener = new TcpListener(config.ListenAddress, port);
+        await RunListenerAsync(listener, port, mode, config, lifetime).ConfigureAwait(false);
+        LogListenerStopped(logger, mode, port);
+    }
+
+    private async Task RunListenerAsync(TcpListener listener, int port, ListenerMode mode,
+        SmtpListenerOptions config, CancellationTokenSource lifetime)
+    {
+        var connections = new List<Task>();
+        var accepting = AcceptConnectionsAsync(listener, port, mode, config, connections, lifetime.Token);
+        // Observe admission in the context that started it, but retain its fault
+        // until shutdown has also cancelled siblings and joined owned sessions.
+        await accepting.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        listener.Stop();
+        var draining = Task.WhenAll(lifetime.CancelAsync(), Task.WhenAll(connections));
+        // Both tasks remain owned even if acceptance/binding or shutdown fails.
+        var completing = Task.WhenAll(accepting, draining);
+        await completing.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        if (completing.Exception is { } failures)
+            throw failures;
+        await completing.ConfigureAwait(false);
+
+    }
+
+    private async Task AcceptConnectionsAsync(TcpListener listener, int port, ListenerMode mode,
+        SmtpListenerOptions config, List<Task> connections, CancellationToken ct)
+    {
         try
         {
             listener.Start();
@@ -123,19 +182,13 @@ public partial class SmtpServerService(
             while (!ct.IsCancellationRequested)
             {
                 var client = await listener.AcceptTcpClientAsync(ct).ConfigureAwait(false);
-                // The detached handler owns and closes this client; the listener never disposes it.
-#pragma warning disable CA2025
-                _ = HandleConnectionAsync(client, mode, config, ct);
-#pragma warning restore CA2025
+                // Only this accept loop mutates the inventory; drain starts after it
+                // settles, so even a synchronously entered handler cannot be missed.
+                connections.Add(HandleConnectionAsync(client, mode, config, ct));
+                connections.RemoveAll(static task => task.IsCompletedSuccessfully);
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
-        finally
-        {
-            listener.Stop();
-            listener.Dispose();
-            LogListenerStopped(logger, mode, port);
-        }
     }
 
     // Connection setup keeps its TLS, journal, and client-disposal lifetimes together.
@@ -247,7 +300,7 @@ public partial class SmtpServerService(
         {
             LogConnectionTimedOut(logger, remoteLabel);
         }
-        // A detached connection task must log and close rather than fault unobserved.
+        // Individual session failures retain the existing log-and-close behavior.
 #pragma warning disable CA1031
         catch (Exception ex)
 #pragma warning restore CA1031

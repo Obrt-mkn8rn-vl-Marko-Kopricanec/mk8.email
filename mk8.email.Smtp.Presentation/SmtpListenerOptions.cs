@@ -1,3 +1,4 @@
+using System.Net;
 using mk8.email.Configuration;
 
 namespace mk8.email.Smtp.Presentation;
@@ -19,7 +20,8 @@ internal sealed record SmtpListenerOptions(
     int MaxMessageSizeBytes,
     int MaxRecipientsPerMessage,
     int ConnectionTimeoutSeconds,
-    int MaxConnectionsPerIp)
+    int MaxConnectionsPerIp,
+    IPAddress ListenAddress)
 {
     public static SmtpListenerOptions FromEnvironment(EnvironmentConfig environment) => new(
         environment.Smtp.Hostname,
@@ -38,5 +40,6 @@ internal sealed record SmtpListenerOptions(
         environment.Limits.MaxMessageSizeBytes,
         environment.Limits.MaxRecipientsPerMessage,
         environment.Limits.ConnectionTimeoutSeconds,
-        environment.Limits.MaxConnectionsPerIp);
+        environment.Limits.MaxConnectionsPerIp,
+        IPAddress.Parse(environment.Smtp.ListenAddress));
 }

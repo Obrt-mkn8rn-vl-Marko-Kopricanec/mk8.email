@@ -9,7 +9,7 @@ internal sealed class SieveScriptTests
 {
     private const string RawMessage =
         "From: Sender <sender@example.net>\r\n" +
-        "To: admin@mk8n.com\r\n" +
+        "To: admin@tenant.example.test\r\n" +
         "Subject: Queue test\r\n" +
         "X-List: engineering\r\n\r\n" +
         "This is the message body.\r\n";
@@ -51,7 +51,7 @@ internal sealed class SieveScriptTests
             require ["copy", "envelope"];
             if allof (
                 address :domain :is "From" "example.net",
-                envelope :matches "to" "admin@*.com"
+                envelope :matches "to" "admin@*.test"
             ) {
                 redirect :copy "archive@example.org";
             }
@@ -154,7 +154,7 @@ internal sealed class SieveScriptTests
             """);
         const string mimeMessage =
             "From: sender@example.net\r\n" +
-            "To: admin@mk8n.com\r\n" +
+            "To: admin@tenant.example.test\r\n" +
             "Subject: MIME body\r\n" +
             "Content-Type: multipart/mixed; boundary=test\r\n\r\n" +
             "--test\r\nContent-Type: text/plain\r\n\r\nordinary body\r\n" +
@@ -168,7 +168,7 @@ internal sealed class SieveScriptTests
             compilation.Program!,
             new SieveMessageContext(
                 "sender@example.net",
-                "admin@mk8n.com",
+                "admin@tenant.example.test",
                 mimeMessage,
                 DefaultFolders.Inbox,
                 new HashSet<string>([DefaultFolders.Inbox, "Archive"], StringComparer.Ordinal)));
@@ -189,7 +189,7 @@ internal sealed class SieveScriptTests
     {
         const string message =
             "From: sender@example.net\r\n" +
-            "To: admin@mk8n.com\r\n" +
+            "To: admin@tenant.example.test\r\n" +
             "Subject: ÉX\r\n\r\nbody\r\n";
         var exact = SieveScript.Compile(
             "if header :is \"Subject\" \"éx\" { discard; } else { keep; }");
@@ -288,7 +288,7 @@ internal sealed class SieveScriptTests
     {
         const string message =
             "From: sender@example.net\r\n" +
-            "To: admin@mk8n.com\r\n" +
+            "To: admin@tenant.example.test\r\n" +
             "X-Route: first\r\n" +
             "X-Route: second\r\n\tcontinued\r\n" +
             "Content-Type: text/plain\r\n\r\nbody marker\r\n";
@@ -313,7 +313,7 @@ internal sealed class SieveScriptTests
     {
         const string part = "--parts\r\nContent-Type: text/plain\r\n\r\nbody\r\n";
         var message = "From: sender@example.net\r\n" +
-            "To: admin@mk8n.com\r\n" +
+            "To: admin@tenant.example.test\r\n" +
             "Content-Type: multipart/mixed; boundary=parts\r\n\r\n" +
             string.Concat(Enumerable.Repeat(part, count)) + "--parts--\r\n";
         var compilation = SieveScript.Compile("keep;");
@@ -351,7 +351,7 @@ internal sealed class SieveScriptTests
             compilation.Program!,
             new SieveMessageContext(
                 "sender@example.net",
-                "admin@mk8n.com",
+                "admin@tenant.example.test",
                 RawMessage,
                 DefaultFolders.Inbox,
                 mailboxes ?? new HashSet<string>(DefaultFolders.All, StringComparer.Ordinal)));
@@ -363,7 +363,7 @@ internal sealed class SieveScriptTests
             compilation.Program!,
             new SieveMessageContext(
                 "sender@example.net",
-                "admin@mk8n.com",
+                "admin@tenant.example.test",
                 message,
                 DefaultFolders.Inbox,
                 new HashSet<string>(DefaultFolders.All, StringComparer.Ordinal)));

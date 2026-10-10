@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using mk8.email.Contracts.Storage;
 using mk8.email.Infrastructure.Data;
 using mk8.email.Infrastructure.Models;
+using SmtpAddress = mk8.email.MailWire.SmtpAddress;
 
 namespace mk8.email.Application.Services;
 
@@ -11,9 +12,39 @@ public sealed class MailQueueMaintenanceService(
     MailQueueContentService content,
     ILargeObjectStore objects)
 {
+    private readonly EmailDbContext _database = database;
+    private readonly MailQueueContentService _content = content;
+    private readonly ILargeObjectStore _objects = objects;
+
+    // Retain the shipped signature, but never infer a deployment probe identity.
+    // Old callers must opt into the method that supplies the exact sender.
     public async Task<bool> PurgeQuarantinedSmokeMessageAsync(
         string marker,
         CancellationToken cancellationToken = default)
+    {
+        ValidateMarker(marker);
+        cancellationToken.ThrowIfCancellationRequested();
+        return await PurgeQuarantinedSmokeMessageFromSenderAsync(
+            marker, string.Empty, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<bool> PurgeQuarantinedSmokeMessageFromSenderAsync(
+        string marker,
+        string expectedEnvelopeSender,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateMarker(marker);
+        ArgumentNullException.ThrowIfNull(expectedEnvelopeSender);
+        if (!SmtpAddress.TryNormalize(expectedEnvelopeSender, allowEmpty: false, out var normalized, out _)
+            || !string.Equals(normalized, expectedEnvelopeSender, StringComparison.Ordinal))
+        {
+            throw new ArgumentException("The expected envelope sender must be canonical.", nameof(expectedEnvelopeSender));
+        }
+
+        return await PurgeMatchingMessageAsync(marker, expectedEnvelopeSender, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static void ValidateMarker(string marker)
     {
         ArgumentNullException.ThrowIfNull(marker);
         if (marker.Length != 32 || marker.Any(character => character is not
@@ -22,17 +53,21 @@ public sealed class MailQueueMaintenanceService(
             throw new ArgumentException("The smoke marker must be 32 lowercase hexadecimal characters.",
                 nameof(marker));
         }
+    }
 
-        var transaction = await database.Database.BeginTransactionAsync(
+    private async Task<bool> PurgeMatchingMessageAsync(
+        string marker, string expectedEnvelopeSender, CancellationToken cancellationToken)
+    {
+        var transaction = await _database.Database.BeginTransactionAsync(
             IsolationLevel.Serializable, cancellationToken).ConfigureAwait(false);
         // A null transaction is intentional for non-relational test providers.
 #pragma warning disable CA2007, MA0004
         await using (transaction)
         {
 #pragma warning restore CA2007, MA0004
-            var matches = await database.MailQueueMessages
+            var matches = await _database.MailQueueMessages
             .Where(message => message.DsnEnvelopeId == marker
-                && message.EnvelopeSender == "probe@debian.org"
+                && message.EnvelopeSender == expectedEnvelopeSender
                 && message.Direction == MailQueueDirections.Inbound)
             .Take(2)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
@@ -40,7 +75,7 @@ public sealed class MailQueueMaintenanceService(
                 return false;
 
             var message = matches[0];
-            var reference = content.TryGetReference(message);
+            var reference = _content.TryGetReference(message);
             if (message.RawMessage is not null
                 || reference is null
                 || !string.Equals(reference.ObjectName, MailQueueContentService.BuildObjectName(message.Id), StringComparison.Ordinal))
@@ -48,7 +83,7 @@ public sealed class MailQueueMaintenanceService(
                 throw new InvalidOperationException("The quarantined smoke message has no valid Blob reference.");
             }
 
-            var raw = await content.ReadAsync(message, cancellationToken).ConfigureAwait(false);
+            var raw = await _content.ReadAsync(message, cancellationToken).ConfigureAwait(false);
             var headerEnd = raw.IndexOf("\r\n\r\n", StringComparison.Ordinal);
             if (headerEnd < 0 || !raw[..headerEnd].Split("\r\n")
                     .Contains($"X-Mk8-Test: {marker}", StringComparer.OrdinalIgnoreCase))
@@ -56,11 +91,11 @@ public sealed class MailQueueMaintenanceService(
                 throw new InvalidOperationException("The quarantined message does not match its smoke marker.");
             }
 
-            database.MailQueueMessages.Remove(message);
-            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            _database.MailQueueMessages.Remove(message);
+            await _database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
 
-            if (!await objects.DeleteIfMatchAsync(reference, cancellationToken).ConfigureAwait(false))
+            if (!await _objects.DeleteIfMatchAsync(reference, cancellationToken).ConfigureAwait(false))
             {
                 throw new InvalidOperationException(
                     "The quarantined smoke message was removed, but its Blob was not deleted.");

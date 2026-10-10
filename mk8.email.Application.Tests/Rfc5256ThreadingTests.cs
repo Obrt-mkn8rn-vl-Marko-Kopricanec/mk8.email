@@ -10,15 +10,15 @@ internal sealed class Rfc5256ThreadingTests
     public void MessageIdNormalizationUnquotesButRemainsCaseSensitive()
     {
         var quoted = Rfc5256Threading.ParseMessageIds(
-            """<"01KF8JCEOCBS0045PS"@xxx.yyy.com>""");
+            """<"01KF8JCEOCBS0045PS"@thread.example.test>""");
         var unquoted = Rfc5256Threading.ParseMessageIds(
-            "<01KF8JCEOCBS0045PS@xxx.yyy.com>");
+            "<01KF8JCEOCBS0045PS@thread.example.test>");
         var escaped = Rfc5256Threading.ParseMessageIds("""<"a\.b"@example.net>""");
         var dotted = Rfc5256Threading.ParseMessageIds("<a.b@example.net>");
         var quotedAtSign = Rfc5256Threading.ParseMessageIds(
             """<"a@b"@example.net>""");
         var differentCase = Rfc5256Threading.ParseMessageIds(
-            "<01kf8jceocbs0045ps@xxx.yyy.com>");
+            "<01kf8jceocbs0045ps@thread.example.test>");
 
         Assert.HasCount(1, quoted);
         Assert.AreEqual(quoted[0], unquoted[0], StringComparer.Ordinal);
@@ -29,7 +29,7 @@ internal sealed class Rfc5256ThreadingTests
         Assert.AreNotEqual(quoted[0], differentCase[0], StringComparer.Ordinal);
         Assert.AreEqual(
             unquoted[0],
-            Rfc5256Threading.ParseFirstMessageId("01KF8JCEOCBS0045PS@xxx.yyy.com"), StringComparer.Ordinal);
+            Rfc5256Threading.ParseFirstMessageId("01KF8JCEOCBS0045PS@thread.example.test"), StringComparer.Ordinal);
         Assert.IsEmpty(Rfc5256Threading.ParseMessageIds(
             "noise <without-domain> <@example.net> <local@>"));
     }

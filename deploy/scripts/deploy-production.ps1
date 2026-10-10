@@ -79,7 +79,7 @@ $sshOptions = @(
     '-o', 'LogLevel=ERROR'
 )
 
-$taskRoot = 'D:\temp\mk8.email\deploy-production'
+$taskRoot = Join-Path ([IO.Path]::GetTempPath()) 'mk8.email/deploy-production'
 $runRoot = Join-Path $taskRoot ([Guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($runRoot) | Out-Null
 

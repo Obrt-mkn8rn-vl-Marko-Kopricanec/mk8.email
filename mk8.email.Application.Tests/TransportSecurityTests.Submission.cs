@@ -86,14 +86,14 @@ internal sealed partial class TransportSecurityTests
 
     private static async Task PrepareSecureSubmissionConnectionAsync(ProtocolConnection connection, bool implicitTls)
     {
-        if (implicitTls) await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        if (implicitTls) await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         StringAssert.StartsWith(await connection.ReadLineAsync().ConfigureAwait(false), "220 ", StringComparison.Ordinal);
         await connection.WriteLineAsync("EHLO client.example").ConfigureAwait(false);
         await connection.ReadSmtpResponseAsync().ConfigureAwait(false);
         if (implicitTls) return;
         await connection.WriteLineAsync("STARTTLS").ConfigureAwait(false);
         StringAssert.StartsWith(await connection.ReadLineAsync().ConfigureAwait(false), "220 ", StringComparison.Ordinal);
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync("EHLO client.example").ConfigureAwait(false);
         await connection.ReadSmtpResponseAsync().ConfigureAwait(false);
     }
@@ -102,7 +102,7 @@ internal sealed partial class TransportSecurityTests
     {
         await connection.WriteLineAsync($"MAIL FROM:<{TestUsername}>").ConfigureAwait(false);
         Assert.AreEqual("530 5.7.0 Authentication required", await connection.ReadLineAsync().ConfigureAwait(false), StringComparer.Ordinal);
-        await connection.WriteLineAsync("RCPT TO:<postmaster@mk8n.com>").ConfigureAwait(false);
+        await connection.WriteLineAsync("RCPT TO:<postmaster@tenant.example.test>").ConfigureAwait(false);
         StringAssert.StartsWith(await connection.ReadLineAsync().ConfigureAwait(false), "503 ", StringComparison.Ordinal);
         await connection.WriteLineAsync("DATA").ConfigureAwait(false);
         StringAssert.StartsWith(await connection.ReadLineAsync().ConfigureAwait(false), "503 ", StringComparison.Ordinal);
@@ -110,11 +110,11 @@ internal sealed partial class TransportSecurityTests
 
     private static async Task QueueToLocalRecipientAsync(ProtocolConnection connection, string sender)
     {
-        await connection.WriteLineAsync("RCPT TO:<postmaster@mk8n.com>").ConfigureAwait(false);
+        await connection.WriteLineAsync("RCPT TO:<postmaster@tenant.example.test>").ConfigureAwait(false);
         StringAssert.StartsWith(await connection.ReadLineAsync().ConfigureAwait(false), "250 ", StringComparison.Ordinal);
         await connection.WriteLineAsync("DATA").ConfigureAwait(false);
         StringAssert.StartsWith(await connection.ReadLineAsync().ConfigureAwait(false), "354 ", StringComparison.Ordinal);
-        await connection.WriteRawAsync($"From: {sender}\r\nTo: postmaster@mk8n.com\r\nSubject: mail canary\r\n\r\nbody\r\n.\r\n").ConfigureAwait(false);
+        await connection.WriteRawAsync($"From: {sender}\r\nTo: postmaster@tenant.example.test\r\nSubject: mail canary\r\n\r\nbody\r\n.\r\n").ConfigureAwait(false);
         StringAssert.StartsWith(await connection.ReadLineAsync().ConfigureAwait(false), "250 2.0.0 Queued as ", StringComparison.Ordinal);
     }
 }

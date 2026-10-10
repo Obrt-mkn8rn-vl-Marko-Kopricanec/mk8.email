@@ -19,13 +19,37 @@ namespace mk8.email.Application.Tests;
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
 internal sealed class MailQueueTests
 {
-    private const string TestDomain = "mk8n.com";
-    private const string TestAccount = "admin@mk8n.com";
+    private const string TestDomain = "tenant.example.test";
+    private const string TestAccount = "admin@tenant.example.test";
     private const string RawMessage =
         "From: sender@example.net\r\n" +
-        "To: admin@mk8n.com\r\n" +
+        "To: admin@tenant.example.test\r\n" +
         "Subject: queue test\r\n\r\n" +
         "body\r\n";
+
+    [TestMethod]
+    [DataRow("")]
+    [DataRow("invalid")]
+    [DataRow("Sender@EXAMPLE.test")]
+    [DataRow("Probe <probe@example.test>")]
+    [DataRow("probe@example.test\r\nother")]
+    public async Task SmokeCleanupRequiresExplicitCanonicalSenderBeforeStoreAccess(string sender)
+    {
+        var services = CreateServices(CreateEnvironment(), CleanScan(), new StubRelay(OutboundDeliveryStatus.Delivered));
+        await using var servicesLifetime = services.ConfigureAwait(false);
+        using var scope = services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+        var cleanup = new MailQueueMaintenanceService(database,
+            scope.ServiceProvider.GetRequiredService<MailQueueContentService>(),
+            services.GetRequiredService<ILargeObjectStore>());
+        var marker = Guid.NewGuid().ToString("N");
+        await Assert.ThrowsExactlyAsync<ArgumentException>(() =>
+            cleanup.PurgeQuarantinedSmokeMessageFromSenderAsync(marker, sender)).ConfigureAwait(false);
+        await Assert.ThrowsExactlyAsync<ArgumentException>(() =>
+            cleanup.PurgeQuarantinedSmokeMessageAsync(marker)).ConfigureAwait(false);
+        Assert.AreEqual(0, database.ChangeTracker.Entries().Count());
+        Assert.AreEqual(0, services.GetRequiredService<InMemoryLargeObjectStore>().Count);
+    }
 
     [TestMethod]
     [DataRow("id", "The queue identifier is not valid.")]
@@ -112,7 +136,7 @@ internal sealed class MailQueueTests
         var queue = scope.ServiceProvider.GetRequiredService<IMailSubmissionQueue>();
         Assert.AreEqual(queueId, await queue.EnqueueAsync(new MailSubmission(queueId, TestAccount,
             [new MailEnvelopeRecipient(TestAccount, true, new MailDsnRecipient("delay", null)),
-                new MailEnvelopeRecipient("ADMIN@MK8N.COM", false, new MailDsnRecipient("invalid", "invalid")),
+                new MailEnvelopeRecipient("ADMIN@TENANT.EXAMPLE.TEST", false, new MailDsnRecipient("invalid", "invalid")),
                 new MailEnvelopeRecipient("josé@example.net", false)],
             RawMessage, invalidMetadata ? new string('x', 46) : " 192.0.2.42 ",
             invalidMetadata ? "unsafe\r\nhelo" : " mx.example.net ", TestAccount)).ConfigureAwait(false));
@@ -195,8 +219,8 @@ internal sealed class MailQueueTests
                         true,
                         new MailDsnRecipient(
                             "failure,delay",
-                            "rfc822;admin+40mk8n.com")),
-                    new MailEnvelopeRecipient("ADMIN@MK8N.COM", true),
+                            "rfc822;admin+40tenant.example.test")),
+                    new MailEnvelopeRecipient("ADMIN@TENANT.EXAMPLE.TEST", true),
                 ],
                 RawMessage,
                 "192.0.2.10",
@@ -222,7 +246,7 @@ internal sealed class MailQueueTests
         Assert.AreEqual("queue+2Btest", queued.DsnEnvelopeId, StringComparer.Ordinal);
         Assert.AreEqual("FAILURE,DELAY", queued.Recipients.Single().DsnNotify, StringComparer.Ordinal);
         Assert.AreEqual(
-            "rfc822;admin+40mk8n.com",
+            "rfc822;admin+40tenant.example.test",
             queued.Recipients.Single().DsnOriginalRecipient, StringComparer.Ordinal);
     }
 
@@ -339,7 +363,7 @@ internal sealed class MailQueueTests
     public async Task WorkerScansAndDeliversInboundMessageFromDurableQueue()
     {
         var environment = CreateEnvironment();
-        var scan = CleanScan("Authentication-Results: email.mk8n.com; spf=pass; dkim=pass; dmarc=pass\r\n");
+        var scan = CleanScan("Authentication-Results: email.tenant.example.test; spf=pass; dkim=pass; dmarc=pass\r\n");
         var services = CreateServices(
             environment,
             scan,
@@ -349,7 +373,7 @@ internal sealed class MailQueueTests
         var queueId = await EnqueueAsync(
             services,
             "sender@example.net",
-            "undefined@mk8n.com",
+            "undefined@tenant.example.test",
             isLocal: true,
             authenticatedUser: null).ConfigureAwait(false);
 
@@ -365,7 +389,7 @@ internal sealed class MailQueueTests
         var delivered = await database.Emails.Include(message => message.Folder).SingleAsync().ConfigureAwait(false);
         Assert.AreEqual(queued.Recipients.Single().Id, delivered.QueueDeliveryId);
         Assert.AreEqual(DefaultFolders.Inbox, delivered.Folder.Name, StringComparer.Ordinal);
-        StringAssert.Contains(delivered.RawHeaders!, "Authentication-Results: email.mk8n.com", StringComparison.Ordinal);
+        StringAssert.Contains(delivered.RawHeaders!, "Authentication-Results: email.tenant.example.test", StringComparison.Ordinal);
     }
 
     [TestMethod]
@@ -960,7 +984,7 @@ internal sealed class MailQueueTests
         await EnqueueAsync(
             services,
             "sender@example.net",
-            "undefined@mk8n.com",
+            "undefined@tenant.example.test",
             isLocal: true,
             authenticatedUser: null).ConfigureAwait(false);
 
@@ -1063,7 +1087,7 @@ StringComparer.Ordinal, $"message={queued.AttemptCount}:{queued.NextAttemptAt:o}
     [TestMethod]
     public async Task SieveRedirectLoopFallsBackToKeepAtLastRecipient()
     {
-        const string secondAccount = "second@mk8n.com";
+        const string secondAccount = "second@tenant.example.test";
         var environment = CreateEnvironment();
         var relay = new StubRelay(OutboundDeliveryStatus.Delivered);
         var services = CreateServices(environment, CleanScan(), relay);
@@ -1402,7 +1426,7 @@ StringComparer.Ordinal, $"message={queueMessage.AttemptCount}:{queueMessage.Next
 
     private static EnvironmentConfig CreateEnvironment(int maxAttempts = 5) => new()
     {
-        Smtp = new SmtpConfig { Hostname = "email.mk8n.com" },
+        Smtp = new SmtpConfig { Hostname = "email.tenant.example.test" },
         Limits = new LimitsConfig
         {
             MaxMessageSizeBytes = 1024 * 1024,

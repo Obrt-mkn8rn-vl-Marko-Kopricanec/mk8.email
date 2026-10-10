@@ -21,7 +21,7 @@ internal sealed class SieveScriptServiceTests
         await (database.Users.AddAsync(new UserDB
         {
             Id = userId,
-            Username = "admin@mk8n.com",
+            Username = "admin@tenant.example.test",
             PasswordHash = "unused",
             Role = "User",
         })).ConfigureAwait(false);
@@ -65,7 +65,7 @@ internal sealed class SieveScriptServiceTests
         await (database.Users.AddAsync(new UserDB
         {
             Id = userId,
-            Username = "admin@mk8n.com",
+            Username = "admin@tenant.example.test",
             PasswordHash = "unused",
             Role = "User",
         })).ConfigureAwait(false);
@@ -92,7 +92,7 @@ internal sealed class SieveScriptServiceTests
         await (database.Users.AddAsync(new UserDB
         {
             Id = userId,
-            Username = "admin@mk8n.com",
+            Username = "admin@tenant.example.test",
             PasswordHash = "unused",
             Role = "User",
         })).ConfigureAwait(false);

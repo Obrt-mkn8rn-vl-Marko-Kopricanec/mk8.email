@@ -1,0 +1,23 @@
+$ORIGIN @@MK8_PRIMARY_DOMAIN@@.
+$TTL 300
+
+@                               IN MX 10 @@MK8_MAIL_HOST@@.
+_jmap._tcp                      IN SRV 0 1 443 @@MK8_MAIL_HOST@@.
+_imaps._tcp                     IN SRV 0 1 993 @@MK8_MAIL_HOST@@.
+_caldavs._tcp                   IN SRV 0 1 443 @@MK8_MAIL_HOST@@.
+_caldavs._tcp                   IN TXT "path=/dav/"
+_carddavs._tcp                  IN SRV 0 1 443 @@MK8_MAIL_HOST@@.
+_carddavs._tcp                  IN TXT "path=/dav/"
+_pop3._tcp                      IN SRV 0 1 110 @@MK8_MAIL_HOST@@.
+_pop3s._tcp                     IN SRV 0 1 995 @@MK8_MAIL_HOST@@.
+_sieve._tcp                     IN SRV 0 1 4190 @@MK8_MAIL_HOST@@.
+_submission._tcp                IN SRV 0 1 587 @@MK8_MAIL_HOST@@.
+_submissions._tcp               IN SRV 0 1 465 @@MK8_MAIL_HOST@@.
+@                               IN CAA 0 issue "@@MK8_CERTIFICATE_AUTHORITY@@"
+@                               IN CAA 0 issuewild ";"
+@                               IN TXT "v=spf1 mx -all"
+; DKIM is deliberately absent: import the public TXT generated from the owned
+; key by mk8-domain for @@MK8_DKIM_SELECTOR@@. Never ship a deployment key here.
+_dmarc                          IN TXT "v=DMARC1; p=none; rua=mailto:@@MK8_DMARC_LOCAL_PART@@@@@MK8_PRIMARY_DOMAIN@@; fo=1; adkim=s; aspf=s; pct=100"
+_mta-sts                        IN TXT "v=STSv1; id=@@MK8_MTA_STS_POLICY_ID@@"
+_smtp._tls                      IN TXT "v=TLSRPTv1; rua=mailto:@@MK8_TLS_REPORT_LOCAL_PART@@@@@MK8_PRIMARY_DOMAIN@@"

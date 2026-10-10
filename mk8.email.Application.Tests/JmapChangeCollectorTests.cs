@@ -26,7 +26,7 @@ internal sealed class JmapChangeCollectorTests
         {
             Id = queueId,
             EnvelopeSender = fixture.User.Username,
-            RawMessage = "From: user@mk8n.com\r\nTo: recipient@example.net\r\n\r\nbody",
+            RawMessage = "From: user@tenant.example.test\r\nTo: recipient@example.net\r\n\r\nbody",
             Direction = MailQueueDirections.Submission,
             State = MailQueueStates.Pending,
             ScanState = MailQueueScanStates.Pending,

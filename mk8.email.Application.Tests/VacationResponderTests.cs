@@ -17,11 +17,11 @@ namespace mk8.email.Application.Tests;
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
 internal sealed class VacationResponderTests
 {
-    private const string AccountAddress = "admin@mk8n.com";
-    private const string AliasAddress = "support@mk8n.com";
+    private const string AccountAddress = "admin@tenant.example.test";
+    private const string AliasAddress = "support@tenant.example.test";
     private const string SenderAddress = "sender@example.net";
     private const string DeliverableMessage =
-        "From: sender@example.net\r\nTo: admin@mk8n.com\r\nSubject: Away\r\n\r\nbody\r\n";
+        "From: sender@example.net\r\nTo: admin@tenant.example.test\r\nSubject: Away\r\n\r\nbody\r\n";
     private static readonly DateTimeOffset Now = new(2026, 9, 20, 12, 0, 0, TimeSpan.Zero);
 
     [TestMethod]
@@ -141,7 +141,7 @@ internal sealed class VacationResponderTests
         var rawMessage =
             "From: sender@example.net\r\n" +
             "To: another@example.org\r\n" +
-            "Resent-Cc: Support <support@mk8n.com>\r\n" +
+            "Resent-Cc: Support <support@tenant.example.test>\r\n" +
             "References: <root@example.net> <ancestor@example.net>\r\n" +
             "Message-ID: <original@example.net>\r\n" +
             "Subject: alias check\r\n\r\n" +
@@ -179,7 +179,7 @@ internal sealed class VacationResponderTests
         await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var rawMessage =
             "From: sender@example.net\r\n" +
-            "To: admin@mk8n.com\r\n" +
+            "To: admin@tenant.example.test\r\n" +
             "In-Reply-To: <root@example.net>\r\n" +
             "Message-ID: <original@example.net>\r\n" +
             "Subject: thread check\r\n\r\n" +
@@ -215,7 +215,7 @@ internal sealed class VacationResponderTests
         Assert.IsTrue(await fixture.Responder.QueueResponseAsync(
             SenderAddress,
             AccountAddress,
-            "From: sender@example.net\r\nTo: admin@mk8n.com\r\nSubject: Away\r\n\r\nbody\r\n",
+            "From: sender@example.net\r\nTo: admin@tenant.example.test\r\nSubject: Away\r\n\r\nbody\r\n",
             DefaultFolders.Inbox,
             Guid.CreateVersion7()).ConfigureAwait(false));
 
@@ -232,7 +232,7 @@ internal sealed class VacationResponderTests
         await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var rawMessage =
             "From: sender@example.net\r\n" +
-            "To: admin@mk8n.com\r\n" +
+            "To: admin@tenant.example.test\r\n" +
             "Auto-Submitted: (origin) no (manual); x-client=\"mail app\"\r\n" +
             "Subject: parameter check\r\n\r\n" +
             "body\r\n";
@@ -254,7 +254,7 @@ internal sealed class VacationResponderTests
         await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var rawMessage =
             "From: sender@example.net\r\n" +
-            "To: admin@mk8n.com\r\n" +
+            "To: admin@tenant.example.test\r\n" +
             "Auto-Submitted: no\r\n" +
             "Auto-Submitted: auto-generated; x-source=scheduler\r\n" +
             "Subject: loop check\r\n\r\n" +
@@ -279,7 +279,7 @@ internal sealed class VacationResponderTests
         const string sender = "INFO@example.net";
         var rawMessage =
             "From: INFO@example.net\r\n" +
-            "To: support@mk8n.com\r\n" +
+            "To: support@tenant.example.test\r\n" +
             "Subject: culture check\r\n\r\n" +
             "body\r\n";
         var originalCulture = CultureInfo.CurrentCulture;
@@ -366,7 +366,7 @@ internal sealed class VacationResponderTests
             var address = new AddressDB
             {
                 Id = Guid.CreateVersion7(),
-                Domain = "mk8n.com",
+                Domain = "tenant.example.test",
                 IsActive = true,
                 Company = company,
             };
@@ -412,7 +412,7 @@ internal sealed class VacationResponderTests
             var queue = new CapturingQueue();
             var environment = new EnvironmentConfig
             {
-                Smtp = new SmtpConfig { Hostname = "email.mk8n.com" },
+                Smtp = new SmtpConfig { Hostname = "email.tenant.example.test" },
                 Limits = new LimitsConfig
                 {
                     MaxMessageSizeBytes = maxMessageSizeBytes,

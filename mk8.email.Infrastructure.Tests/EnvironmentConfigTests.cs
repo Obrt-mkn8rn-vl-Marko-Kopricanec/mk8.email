@@ -175,7 +175,7 @@ public sealed class EnvironmentConfigTests
     {
         var configuration = CreateValidConfiguration(
             oauthEnable: true,
-            oauthPublicBaseUrl: "http://email.mk8n.com?unsafe=true",
+            oauthPublicBaseUrl: "http://email.tenant.example.test?unsafe=true",
             oauthClientId: "",
             oauthAuthorizationCodeMinutes: 16);
 
@@ -205,7 +205,7 @@ public sealed class EnvironmentConfigTests
     public void OpenIdConnectRequiresOAuthAndAValidSigningKey()
     {
         var errors = CreateValidConfiguration(
-            oauthPublicBaseUrl: "https://email.mk8n.com/tenant",
+            oauthPublicBaseUrl: "https://email.tenant.example.test/tenant",
             oidcEnable: true,
             oidcSigningKey: "not-a-private-key",
             oidcIdTokenMinutes: 0).Validate();
@@ -273,7 +273,7 @@ public sealed class EnvironmentConfigTests
     {
         var configuration = CreateValidConfiguration(
             oauthEnable: true,
-            oauthPublicBaseUrl: "https://email.mk8n.com",
+            oauthPublicBaseUrl: "https://email.tenant.example.test",
             oidcEnable: true,
             oidcSigningKeyFile: Path.Combine(_testDirectory, "worker-only-signing-key"),
             mfaEnable: true,
@@ -459,7 +459,7 @@ public sealed class EnvironmentConfigTests
             },
             Smtp = new SmtpConfig
             {
-                Hostname = "email.mk8n.com",
+                Hostname = "email.tenant.example.test",
                 EnableSmtp = false,
                 EnableSubmission = false,
                 EnableImplicitTls = false,
@@ -567,7 +567,7 @@ public sealed class EnvironmentConfigTests
             },
             Smtp = new SmtpConfig
             {
-                Hostname = "email.mk8n.com",
+                Hostname = "email.tenant.example.test",
                 Port = 2525,
                 SubmissionPort = 2587,
                 ImplicitTlsPort = 2465,

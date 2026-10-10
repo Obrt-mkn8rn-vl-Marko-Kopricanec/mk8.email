@@ -1,4 +1,4 @@
 version: STSv1
 mode: enforce
-mx: email.mk8n.com
+mx: @@MK8_MAIL_HOST@@
 max_age: 604800

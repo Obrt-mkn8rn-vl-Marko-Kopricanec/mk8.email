@@ -9,7 +9,7 @@ namespace mk8.email.Application.Tests;
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
 internal sealed class SenderAuthorizationTests : IDisposable
 {
-    private const string TestUsername = "user@mk8n.com";
+    private const string TestUsername = "user@tenant.example.test";
     private EmailDbContext _database = null!;
     private SenderAuthorizationService _service = null!;
     private AddressDB _address = null!;
@@ -32,7 +32,7 @@ internal sealed class SenderAuthorizationTests : IDisposable
         _address = new AddressDB
         {
             Id = Guid.CreateVersion7(),
-            Domain = "mk8n.com",
+            Domain = "tenant.example.test",
             IsActive = true,
             Company = _company,
         };
@@ -65,13 +65,13 @@ internal sealed class SenderAuthorizationTests : IDisposable
     [TestMethod]
     public async Task ActiveOwnedAddressIsAuthorizedWithoutCaseSensitivity()
     {
-        Assert.IsTrue(await _service.CanSendAsAsync(TestUsername, "User@MK8N.COM").ConfigureAwait(false));
+        Assert.IsTrue(await _service.CanSendAsAsync(TestUsername, "User@TENANT.EXAMPLE.TEST").ConfigureAwait(false));
     }
 
     [TestMethod]
     public async Task UnownedOrInactiveAddressIsRejected()
     {
-        Assert.IsFalse(await _service.CanSendAsAsync(TestUsername, "other@mk8n.com").ConfigureAwait(false));
+        Assert.IsFalse(await _service.CanSendAsAsync(TestUsername, "other@tenant.example.test").ConfigureAwait(false));
 
         _address.IsActive = false;
         await _database.SaveChangesAsync().ConfigureAwait(false);
@@ -87,8 +87,8 @@ internal sealed class SenderAuthorizationTests : IDisposable
     public void MatchingFromAndSenderHeadersAreAuthorized()
     {
         const string message =
-            "From: Display Name <user@mk8n.com>\r\n" +
-            "Sender: user@mk8n.com\r\n" +
+            "From: Display Name <user@tenant.example.test>\r\n" +
+            "Sender: user@tenant.example.test\r\n" +
             "Subject: authorized\r\n\r\nbody\r\n";
 
         Assert.IsTrue(_service.HasMatchingFromAddress(message, TestUsername));
@@ -99,13 +99,13 @@ internal sealed class SenderAuthorizationTests : IDisposable
     {
         Assert.IsFalse(_service.HasMatchingFromAddress("Subject: missing\r\n\r\nbody", TestUsername));
         Assert.IsFalse(_service.HasMatchingFromAddress(
-            "From: user@mk8n.com\r\nFrom: other@mk8n.com\r\n\r\nbody",
+            "From: user@tenant.example.test\r\nFrom: other@tenant.example.test\r\n\r\nbody",
             TestUsername));
         Assert.IsFalse(_service.HasMatchingFromAddress(
-            "From: other@mk8n.com\r\n\r\nbody",
+            "From: other@tenant.example.test\r\n\r\nbody",
             TestUsername));
         Assert.IsFalse(_service.HasMatchingFromAddress(
-            "From: user@mk8n.com\r\nSender: other@mk8n.com\r\n\r\nbody",
+            "From: user@tenant.example.test\r\nSender: other@tenant.example.test\r\n\r\nbody",
             TestUsername));
     }
 }

@@ -12,11 +12,11 @@ namespace mk8.email.Application.Tests;
 internal sealed class DkimSigningTests
 {
     private const string RawMessage =
-        "From: Sender <sender@mk8n.com>\r\n" +
+        "From: Sender <sender@tenant.example.test>\r\n" +
         "To: Recipient <recipient@example.com>\r\n" +
         "Subject: DKIM test\r\n" +
         "Date: Thu, 03 Sep 2026 12:00:00 +0200\r\n" +
-        "Message-ID: <dkim-test@mk8n.com>\r\n" +
+        "Message-ID: <dkim-test@tenant.example.test>\r\n" +
         "MIME-Version: 1.0\r\n" +
         "Content-Type: text/plain; charset=utf-8\r\n" +
         "\r\n" +
@@ -54,7 +54,7 @@ internal sealed class DkimSigningTests
     {
         var signer = new MimeKitDkimSigningService();
 
-        var signed = signer.Sign(RawMessage, "mk8n.com", "default", _key.PrivateKeyPath);
+        var signed = signer.Sign(RawMessage, "tenant.example.test", "default", _key.PrivateKeyPath);
         using var message = LoadMessage(signed);
         var signatureIndex = message.Headers.IndexOf(HeaderId.DkimSignature);
 
@@ -62,7 +62,7 @@ internal sealed class DkimSigningTests
         var signature = message.Headers[signatureIndex];
         StringAssert.Contains(signature.Value, "a=rsa-sha256", StringComparison.Ordinal);
         StringAssert.Contains(signature.Value, "c=relaxed/relaxed", StringComparison.Ordinal);
-        StringAssert.Contains(signature.Value, "d=mk8n.com", StringComparison.Ordinal);
+        StringAssert.Contains(signature.Value, "d=tenant.example.test", StringComparison.Ordinal);
         StringAssert.Contains(signature.Value, "s=default", StringComparison.Ordinal);
 
         var verifier = new DkimVerifier(new TestPublicKeyLocator(_key.PublicDnsRecord));
@@ -73,7 +73,7 @@ internal sealed class DkimSigningTests
     public void BodyChangeInvalidatesSignature()
     {
         var signer = new MimeKitDkimSigningService();
-        var signed = signer.Sign(RawMessage, "mk8n.com", "default", _key.PrivateKeyPath);
+        var signed = signer.Sign(RawMessage, "tenant.example.test", "default", _key.PrivateKeyPath);
         var changed = signed.Replace("Hello DKIM.", "Changed body.", StringComparison.Ordinal);
         using var message = LoadMessage(changed);
         var signature = message.Headers[message.Headers.IndexOf(HeaderId.DkimSignature)];
@@ -90,7 +90,7 @@ internal sealed class DkimSigningTests
         var signer = new MimeKitDkimSigningService();
 
         var exception = Assert.ThrowsExactly<DkimSigningException>(
-            () => signer.Sign(RawMessage, "mk8n.com", "default", invalidKeyPath));
+            () => signer.Sign(RawMessage, "tenant.example.test", "default", invalidKeyPath));
 
         Assert.IsNotNull(exception.InnerException);
     }
@@ -101,7 +101,7 @@ internal sealed class DkimSigningTests
         var signer = new MimeKitDkimSigningService();
 
         Assert.ThrowsExactly<DkimSigningException>(
-            () => signer.Sign("Subject: Missing From\r\n\r\nbody", "mk8n.com", "default", _key.PrivateKeyPath));
+            () => signer.Sign("Subject: Missing From\r\n\r\nbody", "tenant.example.test", "default", _key.PrivateKeyPath));
     }
 
     [TestMethod]
@@ -111,17 +111,17 @@ internal sealed class DkimSigningTests
         var utf8Text = Encoding.UTF8.GetBytes("café");
         var wireText = Encoding.Latin1.GetString(utf8Text);
         var rawMessage =
-            "From: admin@mk8n.com\r\n" +
+            "From: admin@tenant.example.test\r\n" +
             "To: recipient@example.net\r\n" +
             "Subject: UTF-8 body\r\n" +
             "Date: Thu, 04 Sep 2026 12:00:00 +0000\r\n" +
-            "Message-ID: <utf8-test@mk8n.com>\r\n" +
+            "Message-ID: <utf8-test@tenant.example.test>\r\n" +
             "MIME-Version: 1.0\r\n" +
             "Content-Type: text/plain; charset=utf-8\r\n" +
             "Content-Transfer-Encoding: 8bit\r\n\r\n" +
             wireText + "\r\n";
 
-        var signed = signer.Sign(rawMessage, "mk8n.com", "default", _key.PrivateKeyPath);
+        var signed = signer.Sign(rawMessage, "tenant.example.test", "default", _key.PrivateKeyPath);
 
         Assert.IsTrue(Encoding.Latin1.GetBytes(signed).AsSpan().IndexOf(utf8Text) >= 0);
         using var message = LoadMessage(signed);

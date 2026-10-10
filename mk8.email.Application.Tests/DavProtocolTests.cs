@@ -150,13 +150,13 @@ internal sealed class DavProtocolTests
         PRODID:-//mk8.email//DAV tests//EN
         METHOD:REQUEST
         BEGIN:VEVENT
-        UID:release-planning-1@mk8n.com
+        UID:release-planning-1@tenant.example.test
         DTSTAMP:20260921T080000Z
         DTSTART:20261001T100000Z
         DTEND:20261001T110000Z
         RRULE:FREQ=WEEKLY;COUNT=4
-        ORGANIZER:mailto:dav.user@mk8n.com
-        ATTENDEE;CN=Engineering;PARTSTAT=NEEDS-ACTION:mailto:engineering@mk8n.com
+        ORGANIZER:mailto:dav.user@tenant.example.test
+        ATTENDEE;CN=Engineering;PARTSTAT=NEEDS-ACTION:mailto:engineering@tenant.example.test
         SUMMARY:Release planning
         BEGIN:VALARM
         ACTION:DISPLAY
@@ -906,7 +906,7 @@ internal sealed class DavProtocolTests
         VERSION:2.0
         PRODID:-//mk8.email//Shared DAV tests//EN
         BEGIN:VEVENT
-        UID:shared-one@mk8n.com
+        UID:shared-one@tenant.example.test
         DTSTAMP:20260921T080000Z
         DTSTART:20261002T100000Z
         DTEND:20261002T110000Z
@@ -978,7 +978,7 @@ internal sealed class DavProtocolTests
         VERSION:2.0
         PRODID:-//mk8.email//Shared DAV tests//EN
         BEGIN:VEVENT
-        UID:shared-two@mk8n.com
+        UID:shared-two@tenant.example.test
         DTSTAMP:20260921T080000Z
         DTSTART:20261003T100000Z
         DTEND:20261003T110000Z
@@ -1105,7 +1105,7 @@ internal sealed class DavProtocolTests
         PRODID:-//mk8.email//Scheduling tests//EN
         METHOD:REQUEST
         BEGIN:VEVENT
-        UID:scheduling-invitation-1@mk8n.com
+        UID:scheduling-invitation-1@tenant.example.test
         DTSTAMP:20260921T080000Z
         DTSTART:20261001T100000Z
         DTEND:20261001T110000Z
@@ -1161,7 +1161,7 @@ internal sealed class DavProtocolTests
         PRODID:-//mk8.email//Scheduling tests//EN
         METHOD:REPLY
         BEGIN:VEVENT
-        UID:scheduling-invitation-1@mk8n.com
+        UID:scheduling-invitation-1@tenant.example.test
         DTSTAMP:20260921T081500Z
         DTSTART:20261001T100000Z
         DTEND:20261001T110000Z
@@ -1204,7 +1204,7 @@ internal sealed class DavProtocolTests
             "text/calendar; method=REQUEST",
             new Dictionary<string, string>(StringComparer.Ordinal)
             {
-                ["Originator"] = "mailto:forged@mk8n.com",
+                ["Originator"] = "mailto:forged@tenant.example.test",
                 ["Recipient"] = $"mailto:{DavFixture.AttendeeAddress}",
             }).ConfigureAwait(false);
         Assert.AreEqual(HttpStatusCode.Forbidden, forged.StatusCode);
@@ -1229,7 +1229,7 @@ internal sealed class DavProtocolTests
         VERSION:2.0
         PRODID:-//mk8.email//Scheduling tests//EN
         BEGIN:VEVENT
-        UID:recurring-busy-1@mk8n.com
+        UID:recurring-busy-1@tenant.example.test
         DTSTAMP:20260921T080000Z
         DTSTART:20261001T100000Z
         DTEND:20261001T110000Z
@@ -1252,7 +1252,7 @@ internal sealed class DavProtocolTests
         VERSION:2.0
         PRODID:-//mk8.email//Scheduling tests//EN
         BEGIN:VEVENT
-        UID:daylight-saving-busy-1@mk8n.com
+        UID:daylight-saving-busy-1@tenant.example.test
         DTSTAMP:20260921T080000Z
         DTSTART;TZID=Europe/Zagreb:20261018T100000
         DTEND;TZID=Europe/Zagreb:20261018T110000
@@ -1274,7 +1274,7 @@ internal sealed class DavProtocolTests
         VERSION:2.0
         PRODID:-//mk8.email//Scheduling tests//EN
         BEGIN:VEVENT
-        UID:last-weekday-busy-1@mk8n.com
+        UID:last-weekday-busy-1@tenant.example.test
         DTSTAMP:20260921T080000Z
         DTSTART:20260930T140000Z
         DTEND:20260930T143000Z
@@ -1297,7 +1297,7 @@ internal sealed class DavProtocolTests
         PRODID:-//mk8.email//Scheduling tests//EN
         METHOD:REQUEST
         BEGIN:VFREEBUSY
-        UID:freebusy-request-1@mk8n.com
+        UID:freebusy-request-1@tenant.example.test
         DTSTAMP:20260921T090000Z
         DTSTART:20261001T000000Z
         DTEND:20261101T000000Z

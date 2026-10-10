@@ -28,8 +28,8 @@ namespace mk8.email.Application.Tests;
 
 internal sealed class DavFixture : IAsyncDisposable
 {
-    private const string Username = "dav.user@mk8n.com";
-    private const string AttendeeUsername = "dav.attendee@mk8n.com";
+    private const string Username = "dav.user@tenant.example.test";
+    private const string AttendeeUsername = "dav.attendee@tenant.example.test";
     private const string OutsiderUsername = "dav.outsider@other.example";
     private const string Password = "correct horse battery staple";
     private readonly WebApplication webApplication;
@@ -114,7 +114,7 @@ internal sealed class DavFixture : IAsyncDisposable
         {
             Smtp = new SmtpConfig
             {
-                Hostname = "email.mk8n.com",
+                Hostname = "email.tenant.example.test",
                 AllowRelay = true,
             },
             Dav = new DavConfig
@@ -128,7 +128,7 @@ internal sealed class DavFixture : IAsyncDisposable
             {
                 EnableJmap = true,
                 IsDefault = true,
-                PublicBaseUrl = "https://email.mk8n.com",
+                PublicBaseUrl = "https://email.tenant.example.test",
             },
         };
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
@@ -176,7 +176,7 @@ internal sealed class DavFixture : IAsyncDisposable
             var primaryAddress = new AddressDB
             {
                 Id = Guid.CreateVersion7(),
-                Domain = "mk8n.com",
+                Domain = "tenant.example.test",
                 Company = company,
                 IsActive = true,
             };

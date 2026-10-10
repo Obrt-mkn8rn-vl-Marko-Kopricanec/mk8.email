@@ -1,6 +1,12 @@
 #!/bin/sh
 set -eu
 
+# Refuse tracked templates before any target or service mutation.
+if LC_ALL=C grep -Eq '[@]{2}MK8_[A-Z0-9_]+[@]{2}' "$0"; then
+    printf '%s\n' "Render required deployment inputs before using this template." >&2
+    exit 2
+fi
+
 test "$#" -ge 1
 
 test_root=/usr/local/lib/mk8email/tests
@@ -20,7 +26,7 @@ release_queue_probe() {
             UPDATE mail_queue_messages
             SET next_attempt_at = CURRENT_TIMESTAMP
             WHERE dsn_envelope_id = '$marker'
-                AND envelope_sender = 'probe@debian.org'
+                AND envelope_sender = 'probe@example.invalid'
                 AND direction = 'inbound'
                 AND state = 'pending'
             RETURNING id
@@ -51,7 +57,7 @@ wait_for_mail_recovery() {
                 --healthcheck-gateway /etc/mk8email/mk8email.gateway.config.json \
                 >/dev/null 2>&1 \
             && curl --silent --fail --max-time 35 --noproxy '*' \
-                --header 'Host: admin.mk8n.com' \
+                --header 'Host: @@MK8_ADMIN_HOST@@' \
                 http://127.0.0.1:8080/health/application >/dev/null; then
             return 0
         fi
@@ -109,14 +115,14 @@ case "$1" in
         systemctl is-active --quiet mk8email-wake.service
         before=$(gateway_journal_count)
         curl --silent --fail --max-time 5 --noproxy '*' \
-            --header 'Host: admin.mk8n.com' \
+            --header 'Host: @@MK8_ADMIN_HOST@@' \
             http://127.0.0.1:8080/health/live >/dev/null
         curl --silent --fail --max-time 5 --noproxy '*' \
-            --header 'Host: admin.mk8n.com' \
+            --header 'Host: @@MK8_ADMIN_HOST@@' \
             http://127.0.0.1:8080/health/ready >/dev/null
         unavailable_status=$(curl --silent --output /dev/null \
             --write-out '%{http_code}' --max-time 40 --noproxy '*' \
-            --header 'Host: admin.mk8n.com' \
+            --header 'Host: @@MK8_ADMIN_HOST@@' \
             http://127.0.0.1:8080/health/application)
         test "$unavailable_status" = 503
         after=$(gateway_journal_count)

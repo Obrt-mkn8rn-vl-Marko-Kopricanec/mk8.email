@@ -8,6 +8,12 @@ import urllib.request
 from html.parser import HTMLParser
 from pathlib import Path
 
+# This is an operator template, not a configured target.
+import re
+if re.search(r"[@]{2}MK8_[A-Z0-9_]+[@]{2}", Path(__file__).read_text(encoding="utf-8")):
+    raise RuntimeError("Render required deployment inputs before using this template.")
+
+
 
 class TokenParser(HTMLParser):
     def __init__(self) -> None:
@@ -27,7 +33,7 @@ def require(condition: bool, message: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--password-file", default="/etc/mk8email/bootstrap-secrets/admin.password")
+    parser.add_argument("--password-file", default="/etc/mk8email/bootstrap-secrets/@@MK8_ADMIN_LOCAL_PART@@.password")
     arguments = parser.parse_args()
     password = Path(arguments.password_file).read_text(encoding="ascii")
 
@@ -49,7 +55,7 @@ def main() -> None:
 
     form = urllib.parse.urlencode(
         {
-            "Input.Username": "admin@mk8n.com",
+            "Input.Username": "@@MK8_ADMIN_LOCAL_PART@@@@@MK8_PRIMARY_DOMAIN@@",
             "Input.Password": password,
             "ReturnUrl": "/",
             "__RequestVerificationToken": token_parser.token,
@@ -69,8 +75,8 @@ def main() -> None:
 
     with opener.open(f"{base}/Accounts", timeout=15) as response:
         accounts_page = response.read().decode("utf-8")
-    require("admin@mk8n.com" in accounts_page, "The administrator account is missing from the dashboard.")
-    require("mk8n@mk8n.com" in accounts_page, "The primary account is missing from the dashboard.")
+    require("@@MK8_ADMIN_LOCAL_PART@@@@@MK8_PRIMARY_DOMAIN@@" in accounts_page, "The administrator account is missing from the dashboard.")
+    require("@@MK8_PRIMARY_LOCAL_PART@@@@@MK8_PRIMARY_DOMAIN@@" in accounts_page, "The primary account is missing from the dashboard.")
 
     try:
         opener.open(urllib.request.Request(f"{base}/Logout", data=b"", method="POST"), timeout=15)

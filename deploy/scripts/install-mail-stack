@@ -1,6 +1,12 @@
 #!/bin/sh
 set -eu
 
+# Refuse tracked templates before any target or service mutation.
+if LC_ALL=C grep -Eq '[@]{2}MK8_[A-Z0-9_]+[@]{2}' "$0"; then
+    printf '%s\n' "Render required deployment inputs before using this template." >&2
+    exit 2
+fi
+
 if [ "$(id -u)" -ne 0 ] || [ "$#" -ne 1 ]; then
     printf '%s\n' "Usage: install-mail-stack ASSET_ROOT" >&2
     exit 2
@@ -184,21 +190,21 @@ chmod 0440 /etc/mk8email/admin-tls/privkey.pem
 
 install -d -o root -g root -m 0750 /etc/mk8email/domains
 install -d -o root -g dkimkeys -m 0751 /etc/mk8email/dkim
-install -d -o root -g root -m 0750 /etc/mk8email/domains/mk8n.com
-install -d -o root -g dkimkeys -m 0750 /etc/mk8email/dkim/mk8n.com
-if [ ! -e /etc/mk8email/domains/mk8n.com/dkim-selector ]; then
-    printf '%s\n' s202609 > /etc/mk8email/domains/mk8n.com/dkim-selector
-    chown root:root /etc/mk8email/domains/mk8n.com/dkim-selector
-    chmod 0644 /etc/mk8email/domains/mk8n.com/dkim-selector
+install -d -o root -g root -m 0750 /etc/mk8email/domains/@@MK8_PRIMARY_DOMAIN@@
+install -d -o root -g dkimkeys -m 0750 /etc/mk8email/dkim/@@MK8_PRIMARY_DOMAIN@@
+if [ ! -e /etc/mk8email/domains/@@MK8_PRIMARY_DOMAIN@@/dkim-selector ]; then
+    printf '%s\n' @@MK8_DKIM_SELECTOR@@ > /etc/mk8email/domains/@@MK8_PRIMARY_DOMAIN@@/dkim-selector
+    chown root:root /etc/mk8email/domains/@@MK8_PRIMARY_DOMAIN@@/dkim-selector
+    chmod 0644 /etc/mk8email/domains/@@MK8_PRIMARY_DOMAIN@@/dkim-selector
 fi
-if [ ! -f /etc/mk8email/domains/mk8n.com/dkim-selector ] \
-    || [ -L /etc/mk8email/domains/mk8n.com/dkim-selector ] \
-    || [ "$(stat -c '%U:%G %a %h' /etc/mk8email/domains/mk8n.com/dkim-selector)" \
+if [ ! -f /etc/mk8email/domains/@@MK8_PRIMARY_DOMAIN@@/dkim-selector ] \
+    || [ -L /etc/mk8email/domains/@@MK8_PRIMARY_DOMAIN@@/dkim-selector ] \
+    || [ "$(stat -c '%U:%G %a %h' /etc/mk8email/domains/@@MK8_PRIMARY_DOMAIN@@/dkim-selector)" \
         != "root:root 644 1" ]; then
     printf '%s\n' "The primary DKIM selector file is not safe." >&2
     exit 1
 fi
-primary_selector=$(sed -n '1p' /etc/mk8email/domains/mk8n.com/dkim-selector)
+primary_selector=$(sed -n '1p' /etc/mk8email/domains/@@MK8_PRIMARY_DOMAIN@@/dkim-selector)
 case "$primary_selector" in
     ''|*[!a-z0-9]*)
         printf '%s\n' "The primary DKIM selector is not valid." >&2
@@ -209,8 +215,8 @@ esac
     printf '%s\n' "The primary DKIM selector is too long." >&2
     exit 1
 }
-primary_key=/etc/mk8email/dkim/mk8n.com/$primary_selector.private.pem
-legacy_key=/etc/mk8email/dkim/s202609.private.pem
+primary_key=/etc/mk8email/dkim/@@MK8_PRIMARY_DOMAIN@@/$primary_selector.private.pem
+legacy_key=/etc/mk8email/dkim/@@MK8_DKIM_SELECTOR@@.private.pem
 legacy_key_migrated=false
 if [ -e "$primary_key" ] || [ -L "$primary_key" ]; then
     if [ ! -f "$primary_key" ] || [ -L "$primary_key" ] \
@@ -220,7 +226,7 @@ if [ -e "$primary_key" ] || [ -L "$primary_key" ]; then
         exit 1
     fi
 else
-    test "$primary_selector" = s202609
+    test "$primary_selector" = @@MK8_DKIM_SELECTOR@@
     if [ ! -f "$legacy_key" ] || [ -L "$legacy_key" ] \
         || [ "$(stat -c '%U %h' "$legacy_key")" != "root 1" ] \
         || [ ! -s "$legacy_key" ]; then
@@ -381,17 +387,17 @@ install -o root -g root -m 0644 "$asset_root/deploy/nginx/mk8-services.conf" /et
 ln -sfn /etc/nginx/sites-available/mk8-admin.conf /etc/nginx/sites-enabled/mk8-admin.conf
 ln -sfn /etc/nginx/sites-available/mk8-services.conf /etc/nginx/sites-enabled/mk8-services.conf
 install -d -o root -g root -m 0755 /etc/nginx/mk8email-domains.d /var/www/mk8email-domains
-/usr/local/sbin/mk8-domain prepare mk8n mk8n.com
-primary_domain_certificate=/etc/mk8email/domains/mk8n.com/tls/fullchain.pem
-primary_domain_private_key=/etc/mk8email/domains/mk8n.com/tls/privkey.pem
-primary_domain_nginx=/etc/nginx/mk8email-domains.d/mk8n.com.conf
+/usr/local/sbin/mk8-domain prepare @@MK8_COMPANY_ID@@ @@MK8_PRIMARY_DOMAIN@@
+primary_domain_certificate=/etc/mk8email/domains/@@MK8_PRIMARY_DOMAIN@@/tls/fullchain.pem
+primary_domain_private_key=/etc/mk8email/domains/@@MK8_PRIMARY_DOMAIN@@/tls/privkey.pem
+primary_domain_nginx=/etc/nginx/mk8email-domains.d/@@MK8_PRIMARY_DOMAIN@@.conf
 if [ ! -e "$primary_domain_certificate" ] \
     && [ ! -e "$primary_domain_private_key" ] \
     && [ ! -e "$primary_domain_nginx" ]; then
     primary_lineage=$(mktemp -d /run/mk8-primary-lineage.XXXXXX)
     install -o root -g root -m 0644 /etc/mk8email/tls/fullchain.pem "$primary_lineage/fullchain.pem"
     install -o root -g root -m 0600 /etc/mk8email/tls/privkey.pem "$primary_lineage/privkey.pem"
-    RENEWED_LINEAGE=$primary_lineage /usr/local/sbin/deploy-mk8-domain-certificate mk8n.com
+    RENEWED_LINEAGE=$primary_lineage /usr/local/sbin/deploy-mk8-domain-certificate @@MK8_PRIMARY_DOMAIN@@
     rm -rf -- "$primary_lineage"
     primary_lineage=
 elif [ ! -s "$primary_domain_certificate" ] \
@@ -431,7 +437,7 @@ fail2ban-client -t
 aide --config=/etc/aide/aide.conf --config-check
 
 if [ "$legacy_key_migrated" = true ]; then
-    rm -f -- /etc/mk8email/dkim/s202609.private.pem
+    rm -f -- /etc/mk8email/dkim/@@MK8_DKIM_SELECTOR@@.private.pem
 fi
 
 systemctl unmask mk8email.service rspamd.service clamav-daemon.service \

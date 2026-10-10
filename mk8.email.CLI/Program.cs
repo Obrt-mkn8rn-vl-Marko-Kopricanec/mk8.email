@@ -51,7 +51,7 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
         return 2;
     }
 
-    if (Matches(arguments, 3, "--purge-quarantined-smoke-message")
+    if (Matches(arguments, 4, "--purge-quarantined-smoke-message")
         && (arguments[2].Length != 32
             || arguments[2].Any(character => character is not
                 (>= '0' and <= '9' or >= 'a' and <= 'f'))))
@@ -332,7 +332,7 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
                 Console.CancelKeyPress -= cancel;
             }
         }
-        if (Matches(arguments, 3, "--purge-quarantined-smoke-message"))
+        if (Matches(arguments, 4, "--purge-quarantined-smoke-message"))
         {
             var validated = EnvironmentLoader.LoadFromFile(
                 arguments[1], isDevelopment, EnvironmentValidationRole.ApplicationWorker);
@@ -340,7 +340,7 @@ static async Task<int> RunManagementCommandAsync(string[] arguments)
             using var scope = host.Services.CreateScope();
             var removed = await scope.ServiceProvider
                 .GetRequiredService<MailQueueMaintenanceService>()
-                .PurgeQuarantinedSmokeMessageAsync(arguments[2]).ConfigureAwait(false);
+                .PurgeQuarantinedSmokeMessageFromSenderAsync(arguments[2], arguments[3]).ConfigureAwait(false);
             Console.WriteLine(removed
                 ? "The quarantined smoke message and Blob were removed."
                 : "No unique quarantined smoke message matched the marker.");
@@ -580,7 +580,7 @@ static bool IsSupportedCommand(string[] arguments) =>
     || Matches(arguments, 3, "--create-app-password")
     || Matches(arguments, 2, "--list-app-passwords")
     || Matches(arguments, 3, "--revoke-app-password")
-    || Matches(arguments, 3, "--purge-quarantined-smoke-message")
+    || Matches(arguments, 4, "--purge-quarantined-smoke-message")
     || Matches(arguments, 3, "--export-distributed-snapshot")
     || Matches(arguments, 3, "--restore-distributed-snapshot")
     || Matches(arguments, 2, "--verify-distributed-snapshot")

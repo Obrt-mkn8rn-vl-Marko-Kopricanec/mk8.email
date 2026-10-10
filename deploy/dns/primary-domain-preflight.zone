@@ -1,0 +1,6 @@
+$ORIGIN @@MK8_PRIMARY_DOMAIN@@.
+$TTL 300
+
+@@MK8_MAIL_RELATIVE_NAME@@       IN A @@MK8_PUBLIC_IPV4@@ ; cf_tags=cf-proxied:false
+@@MK8_MTA_STS_RELATIVE_NAME@@    IN A @@MK8_PUBLIC_IPV4@@ ; cf_tags=cf-proxied:false
+@@MK8_AUTOCONFIG_RELATIVE_NAME@@ IN A @@MK8_PUBLIC_IPV4@@ ; cf_tags=cf-proxied:false

@@ -65,18 +65,18 @@ internal sealed class MailQueueAzureBlobPersistenceTests
 
             var queueId = Guid.CreateVersion7();
             var marker = Guid.NewGuid().ToString("N");
-            var raw = $"From: probe@debian.org\r\nTo: admin@example.test\r\n" +
+            var raw = $"From: probe@example.invalid\r\nTo: admin@example.test\r\n" +
                 $"X-Mk8-Test: {marker}\r\nSubject: smoke\r\n\r\nquarantine probe\r\n";
             using (var enqueueScope = provider.CreateScope())
             {
                 await enqueueScope.ServiceProvider.GetRequiredService<IMailSubmissionQueue>()
                     .EnqueueAsync(new MailSubmission(
                         queueId,
-                        "probe@debian.org",
+                        "probe@example.invalid",
                         [new MailEnvelopeRecipient("admin@example.test", true)],
                         raw,
                         "192.0.2.1",
-                        "probe.debian.org",
+                        "probe.example.invalid",
                         null,
                         Dsn: new MailDsnEnvelope(EnvelopeId: marker))).ConfigureAwait(false);
             }
@@ -86,9 +86,9 @@ internal sealed class MailQueueAzureBlobPersistenceTests
             {
                 var maintenance = pendingScope.ServiceProvider
                     .GetRequiredService<MailQueueMaintenanceService>();
-                Assert.IsFalse(await maintenance.PurgeQuarantinedSmokeMessageAsync(marker).ConfigureAwait(false));
-                Assert.IsFalse(await maintenance.PurgeQuarantinedSmokeMessageAsync(
-                    Guid.NewGuid().ToString("N")).ConfigureAwait(false));
+                Assert.IsFalse(await maintenance.PurgeQuarantinedSmokeMessageFromSenderAsync(marker, "probe@example.invalid").ConfigureAwait(false));
+                Assert.IsFalse(await maintenance.PurgeQuarantinedSmokeMessageFromSenderAsync(
+                    Guid.NewGuid().ToString("N"), "probe@example.invalid").ConfigureAwait(false));
                 await Assert.ThrowsExactlyAsync<ArgumentException>(() =>
                     maintenance.PurgeQuarantinedSmokeMessageAsync("unsafe-marker")).ConfigureAwait(false);
             }
@@ -103,9 +103,12 @@ internal sealed class MailQueueAzureBlobPersistenceTests
 
             using (var purgeScope = provider.CreateScope())
             {
+                Assert.IsFalse(await purgeScope.ServiceProvider
+                    .GetRequiredService<MailQueueMaintenanceService>()
+                    .PurgeQuarantinedSmokeMessageFromSenderAsync(marker, "other@example.invalid").ConfigureAwait(false));
                 Assert.IsTrue(await purgeScope.ServiceProvider
                     .GetRequiredService<MailQueueMaintenanceService>()
-                    .PurgeQuarantinedSmokeMessageAsync(marker).ConfigureAwait(false));
+                    .PurgeQuarantinedSmokeMessageFromSenderAsync(marker, "probe@example.invalid").ConfigureAwait(false));
             }
 
             var verification = CreateContext(databaseServer.ConnectionString);
@@ -119,11 +122,11 @@ internal sealed class MailQueueAzureBlobPersistenceTests
                 await enqueueScope.ServiceProvider.GetRequiredService<IMailSubmissionQueue>()
                     .EnqueueAsync(new MailSubmission(
                         forgedId,
-                        "probe@debian.org",
+                        "probe@example.invalid",
                         [new MailEnvelopeRecipient("admin@example.test", true)],
                         raw.Replace(marker, Guid.NewGuid().ToString("N"), StringComparison.Ordinal),
                         "192.0.2.1",
-                        "probe.debian.org",
+                        "probe.example.invalid",
                         null,
                         Dsn: new MailDsnEnvelope(EnvelopeId: marker))).ConfigureAwait(false);
             }
@@ -138,7 +141,7 @@ internal sealed class MailQueueAzureBlobPersistenceTests
             {
                 await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
                     purgeScope.ServiceProvider.GetRequiredService<MailQueueMaintenanceService>()
-                        .PurgeQuarantinedSmokeMessageAsync(marker)).ConfigureAwait(false);
+                        .PurgeQuarantinedSmokeMessageFromSenderAsync(marker, "probe@example.invalid")).ConfigureAwait(false);
             }
             var forgedVerification = CreateContext(databaseServer.ConnectionString);
             await using var forgedVerificationLifetime = forgedVerification.ConfigureAwait(false);

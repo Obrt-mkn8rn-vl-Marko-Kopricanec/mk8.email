@@ -1,6 +1,12 @@
 #!/bin/sh
 set -eu
 
+# Refuse tracked templates before any target or service mutation.
+if LC_ALL=C grep -Eq '[@]{2}MK8_[A-Z0-9_]+[@]{2}' "$0"; then
+    printf '%s\n' "Render required deployment inputs before using this template." >&2
+    exit 2
+fi
+
 export LC_ALL=C
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
@@ -13,7 +19,7 @@ fi
 
 lineage=${RENEWED_LINEAGE:-/etc/letsencrypt/live/mk8-mail}
 destination=/etc/mk8email/tls
-required_names="email.mk8n.com"
+required_names="@@MK8_MAIL_HOST@@"
 
 fail() {
     printf '%s\n' "$1" >&2
@@ -219,13 +225,13 @@ probe_certificate() {
 for required_name in $required_names; do
     probe_certificate "https-$required_name" "$required_name" -connect 127.0.0.1:443
 done
-probe_certificate smtp email.mk8n.com -starttls smtp -connect 127.0.0.1:25
-probe_certificate submissions email.mk8n.com -connect 127.0.0.1:465
-probe_certificate submission email.mk8n.com -starttls smtp -connect 127.0.0.1:587
-probe_certificate imaps email.mk8n.com -connect 127.0.0.1:993
-probe_certificate pop3 email.mk8n.com -starttls pop3 -connect 127.0.0.1:110
-probe_certificate pop3s email.mk8n.com -connect 127.0.0.1:995
-probe_certificate sieve email.mk8n.com -starttls sieve -connect 127.0.0.1:4190
+probe_certificate smtp @@MK8_MAIL_HOST@@ -starttls smtp -connect 127.0.0.1:25
+probe_certificate submissions @@MK8_MAIL_HOST@@ -connect 127.0.0.1:465
+probe_certificate submission @@MK8_MAIL_HOST@@ -starttls smtp -connect 127.0.0.1:587
+probe_certificate imaps @@MK8_MAIL_HOST@@ -connect 127.0.0.1:993
+probe_certificate pop3 @@MK8_MAIL_HOST@@ -starttls pop3 -connect 127.0.0.1:110
+probe_certificate pop3s @@MK8_MAIL_HOST@@ -connect 127.0.0.1:995
+probe_certificate sieve @@MK8_MAIL_HOST@@ -starttls sieve -connect 127.0.0.1:4190
 
 systemctl is-active --quiet nginx.service
 systemctl is-active --quiet mk8email-gateway.service

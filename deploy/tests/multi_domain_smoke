@@ -1,6 +1,12 @@
 #!/bin/sh
 set -eu
 
+# Refuse tracked templates before any target or service mutation.
+if LC_ALL=C grep -Eq '[@]{2}MK8_[A-Z0-9_]+[@]{2}' "$0"; then
+    printf '%s\n' "Render required deployment inputs before using this template." >&2
+    exit 2
+fi
+
 if [ "$(id -u)" -ne 0 ] || [ "$#" -ne 0 ]; then
     printf '%s\n' "Usage: multi_domain_smoke" >&2
     exit 2
@@ -95,8 +101,8 @@ trap 'exit 1' HUP INT TERM
     exit 1
 }
 primary_public_ipv4=$(cat /etc/mk8email/public-ipv4)
-grep -Fx "email IN A $primary_public_ipv4 ; cf_tags=cf-proxied:false" \
-    /etc/mk8email/domains/mk8n.com/cloudflare-import.zone >/dev/null \
+grep -Fx "@@MK8_MAIL_RELATIVE_NAME@@ IN A $primary_public_ipv4 ; cf_tags=cf-proxied:false" \
+    /etc/mk8email/domains/@@MK8_PRIMARY_DOMAIN@@/cloudflare-import.zone >/dev/null \
     || { printf '%s\n' "The primary domain import omits its canonical A record." >&2; exit 1; }
 [ "$(database_value "SELECT count(*) FROM addresses WHERE domain = '$domain'")" -eq 0 ] \
     || { printf '%s\n' "The test domain already exists." >&2; exit 1; }
@@ -123,23 +129,23 @@ initial_mta_sts_id=$(sed -n '1p' "$domain_directory/mta-sts-id")
 [ "$(sed -n '1p' "$domain_directory/mta-sts-id")" = "$initial_mta_sts_id" ] \
     || { printf '%s\n' "Repeated preparation changed an unchanged MTA-STS identifier." >&2; exit 1; }
 grep -Fx "\$ORIGIN $domain." "$domain_directory/cloudflare-import.zone" >/dev/null
-grep -Fx "@ IN MX 10 email.mk8n.com." \
+grep -Fx "@ IN MX 10 @@MK8_MAIL_HOST@@." \
     "$domain_directory/cloudflare-import.zone" >/dev/null
-grep -Fx "_pop3._tcp IN SRV 0 1 110 email.mk8n.com." \
+grep -Fx "_pop3._tcp IN SRV 0 1 110 @@MK8_MAIL_HOST@@." \
     "$domain_directory/cloudflare-import.zone" >/dev/null
-grep -Fx "_pop3s._tcp IN SRV 0 1 995 email.mk8n.com." \
+grep -Fx "_pop3s._tcp IN SRV 0 1 995 @@MK8_MAIL_HOST@@." \
     "$domain_directory/cloudflare-import.zone" >/dev/null
-grep -Fx "_sieve._tcp IN SRV 0 1 4190 email.mk8n.com." \
+grep -Fx "_sieve._tcp IN SRV 0 1 4190 @@MK8_MAIL_HOST@@." \
     "$domain_directory/cloudflare-import.zone" >/dev/null
-grep -Fx "_caldavs._tcp IN SRV 0 1 443 email.mk8n.com." \
+grep -Fx "_caldavs._tcp IN SRV 0 1 443 @@MK8_MAIL_HOST@@." \
     "$domain_directory/cloudflare-import.zone" >/dev/null
 grep -Fx '_caldavs._tcp IN TXT "path=/dav/"' \
     "$domain_directory/cloudflare-import.zone" >/dev/null
-grep -Fx "_carddavs._tcp IN SRV 0 1 443 email.mk8n.com." \
+grep -Fx "_carddavs._tcp IN SRV 0 1 443 @@MK8_MAIL_HOST@@." \
     "$domain_directory/cloudflare-import.zone" >/dev/null
 grep -Fx '_carddavs._tcp IN TXT "path=/dav/"' \
     "$domain_directory/cloudflare-import.zone" >/dev/null
-grep -Fx "autoconfig IN CNAME email.mk8n.com. ; cf_tags=cf-proxied:false" \
+grep -Fx "autoconfig IN CNAME @@MK8_MAIL_HOST@@. ; cf_tags=cf-proxied:false" \
     "$domain_directory/cloudflare-import.zone" >/dev/null
 grep -F '<incomingServer type="pop3">' \
     "$web_directory/autoconfig/mail/config-v1.1.xml" >/dev/null

@@ -20,7 +20,7 @@ internal sealed class RspamdMailScannerTests
               "score":0.5,
               "required_score":15.0,
               "symbols":{"DKIM_SIGNED":{"score":0.0}},
-              "dkim-signature":"v=1; a=rsa-sha256; d=mk8n.com;\n\tb=test"
+              "dkim-signature":"v=1; a=rsa-sha256; d=tenant.example.test;\n\tb=test"
             }
             """);
         using var client = new HttpClient(handler);
@@ -29,20 +29,20 @@ internal sealed class RspamdMailScannerTests
 
         var result = await scanner.ScanAsync(new MailScanRequest(
             queueId,
-            "admin@mk8n.com",
+            "admin@tenant.example.test",
             ["recipient@example.net"],
-            "From: admin@mk8n.com\r\n\r\nbody\r\n",
+            "From: admin@tenant.example.test\r\n\r\nbody\r\n",
             "192.0.2.10",
             "client.example",
-            "admin@mk8n.com")).ConfigureAwait(false);
+            "admin@tenant.example.test")).ConfigureAwait(false);
 
         Assert.AreEqual("no action", result.Action, StringComparer.Ordinal);
         StringAssert.StartsWith(result.AddedHeaders, "DKIM-Signature: v=1;", StringComparison.Ordinal);
         StringAssert.Contains(result.AddedHeaders, "\r\n\tb=test\r\n", StringComparison.Ordinal);
         Assert.AreEqual(queueId.ToString("N"), handler.Headers["Queue-Id"].Single(), StringComparer.Ordinal);
-        Assert.AreEqual("admin@mk8n.com", handler.Headers["User"].Single(), StringComparer.Ordinal);
+        Assert.AreEqual("admin@tenant.example.test", handler.Headers["User"].Single(), StringComparer.Ordinal);
         Assert.AreEqual("recipient@example.net", handler.Headers["Rcpt"].Single(), StringComparer.Ordinal);
-        StringAssert.Contains(handler.Body!, "From: admin@mk8n.com", StringComparison.Ordinal);
+        StringAssert.Contains(handler.Body!, "From: admin@tenant.example.test", StringComparison.Ordinal);
     }
 
     [TestMethod]
@@ -104,7 +104,7 @@ internal sealed class RspamdMailScannerTests
             """);
         using var client = new HttpClient(handler);
         using var scanner = new RspamdMailScanner(CreateEnvironment(), client);
-        var request = InboundRequest() with { AuthenticatedUser = "admin@mk8n.com" };
+        var request = InboundRequest() with { AuthenticatedUser = "admin@tenant.example.test" };
 
         await Assert.ThrowsExactlyAsync<InvalidDataException>(() => scanner.ScanAsync(request)).ConfigureAwait(false);
     }
@@ -112,7 +112,7 @@ internal sealed class RspamdMailScannerTests
     private static MailScanRequest InboundRequest() => new(
         Guid.CreateVersion7(),
         "sender@example.net",
-        ["admin@mk8n.com"],
+        ["admin@tenant.example.test"],
         "From: sender@example.net\r\n\r\nbody\r\n",
         "192.0.2.10",
         "sender.example.net",
@@ -120,7 +120,7 @@ internal sealed class RspamdMailScannerTests
 
     private static EnvironmentConfig CreateEnvironment() => new()
     {
-        Smtp = new SmtpConfig { Hostname = "email.mk8n.com" },
+        Smtp = new SmtpConfig { Hostname = "email.tenant.example.test" },
         Filtering = new FilteringConfig
         {
             RspamdEndpoint = "http://127.0.0.1:11333/checkv2",

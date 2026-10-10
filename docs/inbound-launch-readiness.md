@@ -1,50 +1,81 @@
-# Inbound-mail launch preparation, 9–12 October 2026
+# Inbound-mail readiness
 
-Owner priority is actual inbound-mail readiness. Optional enterprise/EWS expansion is deferred during this preparation window; earlier bounded source acceptance is neither enterprise completion nor operational authorization. Earliest owner-authorized shared live-testing start is **12 October, 12:00 Europe/Zagreb (10:00 UTC)**. All preparation below remains in the existing development environment until separately satisfied installation, exact-source/artifact/configuration, owner and production gates permit target work.
+Source acceptance is not inbound readiness, stable runtime, application-package
+acceptance or operational permission. Target-specific timetables, hardware,
+addresses, tenant names and peer evidence belong in ignored internal planning,
+not this public codebase. Optional enterprise/EWS work does not replace mail
+readiness and does not authorize public proxy exposure.
 
-## Gated timetable
+## Configuration and discovery
 
-| Checkpoint | Required work and decision |
-| --- | --- |
-| Friday 9 October | Reconcile source-backed Email/Sava/Drava/DNS contracts; reproduce and correct launch-critical local defects; preserve every failed result and unknown cause. |
-| Saturday 10 October, 12:00 CEST | Agree non-secret host/guest/network allocation, actual Blob account/endpoint/policy, certificate/CA and DNS integration, independent custody and enabled mail/client services. Unavailable inputs remain explicit blockers, not invented defaults. |
-| Sunday 11 October, 18:00 CEST | Freeze exact reviewed candidate, application artifacts and rendered configuration/assets; reconcile local and CI outcomes, rollback/health/recovery proof and owner go/no-go. Unmet gates mean no-go. |
-| Monday 12 October | Recheck approved identities, certificates, DNS/PTR/ports and dependencies; live tests no earlier than noon, only after authorization and gates. DNS readiness alone does not authorize mail cutover. |
+Require explicit canonical mail/admin hostnames, owned domains, listener binds,
+ports, private admin networks and public HTTPS base URLs. MX targets must have
+direct approved address records, not CNAMEs. Publish IPv6 only after proving the
+actual listener and route; selecting an IPv6 bind is not dual-stack proof. PTR is
+an address-provider action, separate from the forward zone. SPF must match the
+actual outbound providers. DKIM keys/selectors, CAA, reporting mailboxes, DMARC,
+MTA-STS and TLS-RPT policy are operator inputs, not values inherited from an old
+zone export. Do not alter existing services before an explicitly agreed cutover.
 
-The R630 parent and Debian13 guests are intended, not an approved addressing/bind map or independent two-host resilience proof. Current fresh-checkpoint deployment maturity is **UNMET**; neither an earlier checkpoint's age nor idle review time counts toward the greater-than-24-hour condition.
+Tracked deployment assets are unrendered examples with required profile tokens.
+See [source policy](deployment-source-policy.md) before rendering. Generated
+assets and private profiles are not tracked and are not automatically approved
+for installation. Static discovery must advertise only actually enabled,
+configured services, with exact rendered content and certificate identities.
+The MTA-STS enforce template is not an approved served policy.
 
-## Proposed minimal service contract, not deployed configuration
+SMTP inbound, authenticated submission and native IMAP/POP/ManageSieve retain
+their own listeners. An HTTP reverse proxy cannot implicitly carry those
+transports. RequireAuth protects both configured submission modes before MAIL;
+relay permission is independently authenticated. Public JMAP/OAuth/DAV and
+streaming SSE need distinct route/deadline controls. Admin, Razor and health
+remain private; the supplied public nginx profile does not expose POX/EWS.
 
-Canonical native mail name: `email.mk8n.com`, MX priority10 with direct approved A, not a CNAME target. Native SMTP source currently binds IPv4 Any; do not publish native-mail AAAA as working delivery without an explicit listener/route proof. Current IP allocation through getrealip.net is pending. The owner-supplied Cloudflare export is historical only: obsolete VPS addresses, old DKIM keys, CAA, MTA-STS and other records are not approved new-zone inputs. Eventual retirement/overlap is an explicit cutover decision; no existing public service changes early. PTR is an address-provider/owner action, separate from forward DNS. SPF must describe actual outbound providers; DKIM requires actual public key/selector and private custody; reporting mailboxes and DMARC policy must be agreed before publication.
+Only the explicitly trusted loopback proxy hop has source support. Strip forged
+forwarding headers, then prove client-IP/scheme propagation through the actual
+proxy path. Separate-guest HTTPS alone does not establish client-IP authority.
+Liveness is not readiness: `/health/live`, `/health/ready` and
+`/health/application` have different process, SQL-transport and Worker meanings.
+Require native TLS/authentication, Blob and durable enqueue/delivery canaries.
 
-SMTP25 remains anonymous inbound delivery to admitted local recipients. Submission587 uses STARTTLS; implicit-TLS submission465 also enforces configured RequireAuth before MAIL. External relay independently requires authenticated identity and configured relay permission. IMAP993, JMAP and their authentication/storage paths require separate canaries. Optional POP/ManageSieve/DAV/OAuth listener/features must be explicitly enabled before advertising them. Example message/upload25MiB, JMAP/DAV10MiB, recipients100, IP connections10 and logical Worker deadlines are source examples, not approved final limits or throughput/SLA claims.
+## Blob dependency and limits
 
-Native SMTP/submission/IMAP/POP/ManageSieve are Gateway-owned sockets, not Drava HTTP routes. Drava80/443 and same-guest loopback Email upstream are proposals. Gateway's systemd template binds HTTP127.0.0.1:8080; Jmap.Port8081 is not Program's HTTP listener allocation. Only trusted loopback proxy peers and one forwarded hop are configured. Preserve original Host/raw target, methods, authorization and protocol headers; strip forged client forwarding values and prove generated IP/scheme across the Drava boundary. Separate-guest HTTPS alone does not confer trusted client-IP semantics. Public HTTP paths are bounded JMAP/OAuth/DAV; SSE aliases must stream without a finite ordinary-request timeout. Razor/admin and health stay private; no public POX/EWS expansion.
+The adapter pins Azure.Storage.Blobs 12.29.2 and Azure.Core 1.55.0, with API
+2026-06-06 and default transfer/retry options, not automatic version negotiation.
+Supply the account, endpoint, protected connection-string file, container and
+prefix explicitly. A custom DNS host with an account path cannot be assumed to
+work with the default SDK URI construction: check actual container/object URIs
+before accepting it. Host-style or IP-style alternatives require independently
+validated TLS/Host/SNI/account routing. No endpoint is allocated by this guide.
 
-`/health/live` is process liveness, `/health/ready` checks SQL durable transport, and `/health/application` probes Worker. None replaces native TLS/auth, actual Blob create/read/conditional-delete, SMTP durable enqueue, Worker delivery and JMAP/mailbox convergence. Dependency order is Sava Application/exclusive usable root → Sava Gateway readiness plus exact client canary → prepared/version-compatible Email database → Wake/Worker/Gateway → private deep mail canaries → owner-authorized route/MX admission.
+Required immutable uploads use If-None-Match:*, length/SHA256 metadata and quoted
+ETag; 409/412 reconciliation requires exact HEAD metadata. Conditional full/range
+reads and snapshot-inclusive deletion must refuse replacement/stale references.
+Leases, tags, HNS, append/page blobs, CPK and Bearer are not required by this
+adapter. Preserve known request lengths, escaped targets, authentication and
+conditional fields through every proxy hop; do not infer that an object's total
+length is one HTTP body. With the example 64 MiB transport cap, a receipt can be
+268,500,992 bytes and the default uploader stages it in blocks. Archive capacity,
+retention and whole-volume admission require a separate agreement. Never expire
+referenced mail, journal, queues or receipts. An ingress limit is not a quota or
+physical-durability guarantee. Loopback/Azurite or injected transport evidence is
+not actual-provider/default-HTTPS interoperability.
 
-## Required Blob profile and open archive contract
+## Required readiness and recovery gates
 
-Email pins Azure.Storage.Blobs12.29.2/Azure.Core1.55.0 and uses default Blob client/transfer options. Its [pinned version source](https://github.com/Azure/azure-sdk-for-net/blob/Azure.Storage.Blobs_12.29.2/sdk/storage/Azure.Storage.Common/src/Shared/StorageVersionExtensions.cs) selects API `2026-06-06`; there is no automatic version negotiation. SharedKey via protected ConnectionStringFile is the proposed launch profile; secret contents never travel in peer messages. The runtime loader supports that file but does not itself enforce Unix owner/mode. Account, signing policy, provisioner and independent escrow/reissue are still owner inputs.
+Start a usable storage Application and prove its Gateway/client canary, then the
+version-compatible database, Wake/Worker/Gateway, deep private mail canaries and
+only then explicitly authorized route/MX admission. Preserve exact source,
+application artifact, configuration, owner, install, rollback, health and
+production gates. Review certificate renewal/reissue before activation.
 
-The custom-DNS/account-path proposal `https://blob.mk8n.com/<account>` is **not compatible with the current default Email client construction**. An actual pinned12.29.2 no-network probe observed GetBlobContainerClient/GetBlobClient losing the requested container segment; Sava's own path parsing does not establish SDK URI compatibility. The [pinned URI builder](https://github.com/Azure/azure-sdk-for-net/blob/Azure.Storage.Blobs_12.29.2/sdk/storage/Azure.Storage.Blobs/src/BlobUriBuilder.cs) distinguishes IP-style endpoints from DNS hosts. These exact observations are construction only, not signing, network, TLS or endpoint approval:
-
-| Diagnostic service URI | Actual object URI for container `mk8-email-objects`, object `mail/probe.bin` |
-| --- | --- |
-| `https://blob.mk8n.com/mk8email` | `https://blob.mk8n.com/mk8email/mail/probe.bin` — container lost |
-| `https://127.0.0.1:59425/mk8email` | `https://127.0.0.1:59425/mk8email/mk8-email-objects/mail/probe.bin` |
-| `https://mk8email.blob.mk8n.com/` | `https://mk8email.blob.mk8n.com/mk8-email-objects/mail/probe.bin` |
-
-An explicitly agreed account-named host-style endpoint at its root, or an HTTPS IP path-style endpoint with validated certificate identity, is a candidate only. Do not hide the incompatible proposal with path/Host rewriting. Account `mk8email`, hostnames, addresses, ports, DNS/Host/SNI routing and certificate scopes remain unapproved. If Sava's general `blob.mk8n.com` path-style frontend is retained for other clients, **no configured account may be named `blob`**, because its host-style selection would take precedence. Proposed private preprovisioned container `mk8-email-objects`, CreateContainerIfMissing=false. Required immutable block uploads use If-None-Match:*, length/SHA256 metadata and quoted ETag;409/412 triggers exact HEAD verification. Conditional full/range reads and snapshot-inclusive conditional deletion must deny stale/replacement references. Leases/tags/HNS/append/page/CPK/Bearer are not Email's required launch profile.
-
-At the example64MiB transport cap the maximum receipt is268,500,992 bytes, not a25MiB message. The [pinned uploader](https://github.com/Azure/azure-sdk-for-net/blob/Azure.Storage.Blobs_12.29.2/sdk/storage/Azure.Storage.Common/src/Shared/PartitionedUploader.cs) uses a strict-less-than256MiB one-shot threshold and normally8MiB blocks for larger content; the receipt is staged, then conditionally committed. Preserve each request's known Content-Length, raw escaped path/query, auth/x-ms/Range/conditional fields. Sava has no trusted forwarded-scheme configuration: proposed Drava backend must use verified actual TLS and original Host, not HTTP plus X-Forwarded-Proto.
-
-Drava's proposed Blob-host-specific269,615,107-byte request cap/structured allowance remains unvalidated configuration, separate from other service ceilings and total object/archive length. Its forward local17/17 transport controls report complete256MiB-1/269,615,107-byte length/hash/raw-target checks after distinct length-loss and upload-response-phase corrections. The original failed runs remain failed; this is controlled peer transport evidence, not actual SDK/Sava/strict-upstream-TLS or route-readiness proof. Sava's separate host-style loopback research uses the actual pinned adapter with injected HTTP transport: the small workflow succeeds and the maximum receipt's staged workflow completes inside an overall FAILED run, while30MiB and256MiB-1 single-shot immutable replays fail before adapter HEAD reconciliation. Required large single-shot replay remains a launch blocker; no new source fix, default transport/HTTPS/Drava/configuration or broad interoperability acceptance follows. There is **no configured application whole-archive maximum**: archive volume/admission, capacity/retention and separate offsite credentials/routes remain open agreements. Neither SDK block limits nor an ingress ceiling is a backup quota or durability proof. Never lifecycle-expire referenced mail, journal, queues or receipts. The approved actual Email-to-Sava deployment profile remains unproved; Azurite is not that proof.
-
-## Static discovery, certificate and rollback inputs
-
-`deploy/domain-templates/autoconfig.xml` and `deploy/scripts/mk8-domain` render public client XML under `/var/www/mk8email-domains/<domain>/autoconfig/mail/config-v1.1.xml`. The template advertises JMAP/OAuth/IMAP993/POP995/SMTP587/DAV, including Thunderbird registration and scopes. Do not serve it unchanged for disabled services. Drava needs accepted bounded static-origin plumbing plus exact host, enabled configuration and public asset hashes, not a Gateway404 or fabricated settings.
-
-`deploy/domain-templates/mta-sts.txt` is **mode: enforce**, max_age604800 and configured canonical MX. That template is not an approved served policy. Exact rendered policy, corresponding TXT id, MX/TLS readiness and discovery/web certificates must agree before publication. Existing Cloudflare-only Drava ACME is not automatically compatible with native whole-zone authority migration; reviewed private DNS APIv2/scoped TXT integration or an explicitly agreed certificate alternative remains required. Native listener certificate custody stays with Email; renewal/reissue through the reviewed path is required before activation.
-
-Rollback cannot run an old Worker against the new schema or undo acknowledged writes by switching binaries. Preserve gate-first coarse database coordination, quiesced DDL, forward-only/superseded-queue reconciliation, matching keys/configuration and coordinated restore. Independent escrow/reissue and identity-safe key rotation/reconciliation, privileged two-host upgrade/recovery/rollback and measured≤24-hour disposable Gateway restoration remain unproved gates. Outbound journal failure can withhold an acknowledgement after domain commit; postcommit Blob cleanup is not atomic physical erasure. Historical local/CI timeouts, rejected/incomplete runs and unknown causes remain unresolved; a new passing run explains none of them.
+Independent secret escrow/reissue, coordinated identity-safe key lifecycle and
+reconciliation, recovery/upgrade/rollback across two physical hosts, and measured
+Gateway restoration remain required. VMs on one parent are not two-host proof.
+Use coarse gate-first database coordination and quiesced DDL: old Workers cannot
+roll alongside a new schema. Switching binaries does not undo acknowledged
+writes; restore must match keys, configuration and forward-only/superseded queues.
+Outbound journal refusal can withhold acknowledgement after commit; postcommit
+Blob cleanup is not atomic physical erasure. Preserve failed, rejected,
+incomplete and unknown histories. A new passing run neither diagnoses earlier
+timeouts nor establishes stability, SLA or global/indirect regression exclusion.

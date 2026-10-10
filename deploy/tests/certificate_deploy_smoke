@@ -1,6 +1,12 @@
 #!/bin/sh
 set -eu
 
+# Refuse tracked templates before any target or service mutation.
+if LC_ALL=C grep -Eq '[@]{2}MK8_[A-Z0-9_]+[@]{2}' "$0"; then
+    printf '%s\n' "Render required deployment inputs before using this template." >&2
+    exit 2
+fi
+
 if [ "$(id -u)" -ne 0 ] || [ "$#" -gt 1 ]; then
     printf '%s\n' "Usage: certificate_deploy_smoke [DEPLOY_SCRIPT]" >&2
     exit 2
@@ -51,8 +57,8 @@ generate_certificate() {
     chmod 0600 "$output_directory/privkey.pem"
 }
 
-generate_certificate "$test_root/old" email.mk8n.com "DNS:email.mk8n.com"
-generate_certificate "$test_root/alternate" email.mk8n.com "DNS:email.mk8n.com"
+generate_certificate "$test_root/old" @@MK8_MAIL_HOST@@ "DNS:@@MK8_MAIL_HOST@@"
+generate_certificate "$test_root/alternate" @@MK8_MAIL_HOST@@ "DNS:@@MK8_MAIL_HOST@@"
 generate_certificate "$test_root/invalid" invalid.example "DNS:invalid.example"
 install -d -o root -g tlskeys -m 0751 "$test_root/destination"
 install -o root -g tlskeys -m 0444 "$test_root/old/fullchain.pem" \
@@ -111,7 +117,7 @@ if ! unshare --mount sh -eu -c '
         printf "%s\n" "Certificate deployment accepted an invalid service name." >&2
         exit 1
     fi
-    grep -F "The certificate does not cover email.mk8n.com." \
+    grep -F "The certificate does not cover @@MK8_MAIL_HOST@@." \
         "$7/invalid-name.log" >/dev/null
     cmp --silent "$7/old/fullchain.pem" /etc/mk8email/tls/fullchain.pem
     cmp --silent "$7/old/privkey.pem" /etc/mk8email/tls/privkey.pem

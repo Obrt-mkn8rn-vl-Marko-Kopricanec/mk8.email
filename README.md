@@ -2,7 +2,7 @@
 
 A self-hosted .NET 10 email and groupware server with JMAP as its default client protocol and secure IMAP, POP3, SMTP, ManageSieve, CalDAV, and CardDAV compatibility for traditional clients such as Thunderbird.
 
-JMAP discovery is available at `https://email.mk8n.com/.well-known/jmap` and through each hosted domain's `_jmap._tcp` SRV record. The implementation supports JMAP Core, Mail, Submission, VacationResponse, Contacts (RFC 9610/JSContact), uploads/downloads, push subscriptions, and event-source state notifications.
+JMAP discovery is available at `https://<configured-mail-host>/.well-known/jmap` and through each hosted domain's `_jmap._tcp` SRV record. The implementation supports JMAP Core, Mail, Submission, VacationResponse, Contacts (RFC 9610/JSContact), uploads/downloads, push subscriptions, and event-source state notifications.
 
 Thunderbird autoconfiguration advertises JMAP first for clients that support it, IMAP as the current Thunderbird mail fallback, POP3 as an alternate retrieval protocol, authenticated SMTP submission, and CalDAV/CardDAV groupware endpoints. SMTP supports `SIZE`, `8BITMIME`, end-to-end `SMTPUTF8`, and `DSN`, including internationalized local parts, IDN normalization for DNS routing, UTF-8 trace fields, durable next-hop capability enforcement, per-recipient notification requests, and standards-based delivery reports. Each hosted domain publishes RFC 6186 and RFC 6764 SRV discovery, while `/.well-known/caldav` and `/.well-known/carddav` redirect clients to the authenticated DAV service. Password authentication is exposed only after TLS, and both implicit TLS and standards-based upgrade listeners are available for POP3 and SMTP.
 

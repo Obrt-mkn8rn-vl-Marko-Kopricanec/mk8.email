@@ -27,7 +27,7 @@ namespace mk8.email.Application.Tests;
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
 internal sealed class ManageSieveProtocolTests
 {
-    private const string TestUsername = "user@mk8n.com";
+    private const string TestUsername = "user@tenant.example.test";
     private const string TestPassword = "correct horse battery staple";
     private const string TestAccessToken = "sieve-access-token";
     private static readonly Guid TestUserId = Guid.Parse("01994f34-9776-7d2d-898c-d0273d6832ef");
@@ -258,7 +258,7 @@ internal sealed class ManageSieveProtocolTests
         await connection.ReadCapabilityResponseAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("OK ", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         var capabilities = await connection.ReadCapabilityResponseAsync().ConfigureAwait(false);
         CollectionAssert.Contains(capabilities, "\"SASL\" \"PLAIN XOAUTH2\"");
 
@@ -287,7 +287,7 @@ internal sealed class ManageSieveProtocolTests
         await connection.ReadCapabilityResponseAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("OK ", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         var capabilities = await connection.ReadCapabilityResponseAsync().ConfigureAwait(false);
         CollectionAssert.Contains(capabilities, "\"SASL\" \"PLAIN\"");
         CollectionAssert.DoesNotContain(capabilities, "\"STARTTLS\"");
@@ -301,7 +301,7 @@ internal sealed class ManageSieveProtocolTests
         {
             Smtp = new SmtpConfig
             {
-                Hostname = "email.mk8n.com",
+                Hostname = "email.tenant.example.test",
                 EnableSmtp = false,
             },
             Imap = new ImapConfig
@@ -328,7 +328,7 @@ internal sealed class ManageSieveProtocolTests
             OAuth = new OAuthConfig
             {
                 EnableOAuth = enableOAuth,
-                PublicBaseUrl = "https://email.mk8n.com",
+                PublicBaseUrl = "https://email.tenant.example.test",
             },
             Tls = new TlsConfig
             {
@@ -426,7 +426,7 @@ internal sealed class ManageSieveProtocolTests
                 await database.Addresses.AddAsync(new AddressDB
                 {
                     Id = Guid.CreateVersion7(),
-                    Domain = "mk8n.com",
+                    Domain = "tenant.example.test",
                     IsActive = true,
                     Company = company,
                 }).ConfigureAwait(false);

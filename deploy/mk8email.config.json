@@ -1,13 +1,13 @@
 {
   "Database": {
-    "Host": "database",
+    "Host": "@@MK8_DATABASE_HOST@@",
     "Port": 5432,
     "Name": "mk8email",
     "Username": "mk8email",
     "PasswordFile": "/run/secrets/database_password"
   },
   "Smtp": {
-    "Hostname": "email.mk8n.com",
+    "Hostname": "@@MK8_MAIL_HOST@@",
     "Port": 2525,
     "SubmissionPort": 2587,
     "ImplicitTlsPort": 2465,
@@ -42,7 +42,7 @@
     "Port": 8081,
     "EnableJmap": true,
     "IsDefault": true,
-    "PublicBaseUrl": "https://email.mk8n.com",
+    "PublicBaseUrl": "https://@@MK8_MAIL_HOST@@",
     "MaxUploadSizeBytes": 26214400,
     "MaxRequestSizeBytes": 10485760,
     "MaxCallsInRequest": 64,
@@ -65,7 +65,7 @@
   },
   "Dkim": {
     "PrivateKeyPath": "/run/secrets/dkim_private_key",
-    "Selector": "s202609",
+    "Selector": "@@MK8_DKIM_SELECTOR@@",
     "EnableSigning": true
   },
   "Security": {
@@ -96,7 +96,7 @@
   "Admin": {
     "AllowedNetworks": [
       "127.0.0.0/8",
-      "172.30.8.0/24"
+      "@@MK8_CONTAINER_CIDR@@"
     ],
     "DataProtectionKeyPath": "/var/lib/mk8email-admin/data-protection",
     "AuditLogPath": "/var/log/mk8email-admin/audit.jsonl",

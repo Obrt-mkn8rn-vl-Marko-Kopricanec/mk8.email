@@ -94,7 +94,7 @@ internal sealed class OutboundSmtpRelayTests
         var relay = CreateRelay(new StubResolver(Available(server.Port)));
 
         var result = await relay.RelayAsync(
-            "sender@mk8n.com",
+            "sender@tenant.example.test",
             "recipient@example.com",
             "Subject: test\r\n\r\n.first\r\nlast\r\n").ConfigureAwait(false);
         await server.WaitForCompletionAsync().ConfigureAwait(false);
@@ -117,7 +117,7 @@ internal sealed class OutboundSmtpRelayTests
         var result = await relay.RelayAsync(
             string.Empty,
             "recipient@example.com",
-            "From: mailer-daemon@mk8n.com\r\nSubject: response\r\n\r\nbody\r\n").ConfigureAwait(false);
+            "From: mailer-daemon@tenant.example.test\r\nSubject: response\r\n\r\nbody\r\n").ConfigureAwait(false);
         await server.WaitForCompletionAsync().ConfigureAwait(false);
 
         Assert.AreEqual(OutboundDeliveryStatus.Delivered, result.Status);
@@ -144,7 +144,7 @@ internal sealed class OutboundSmtpRelayTests
             ])));
 
         var result = await relay.RelayAsync(
-            "sender@mk8n.com",
+            "sender@tenant.example.test",
             "recipient@example.com",
             "Subject: fallback\r\n\r\nbody").ConfigureAwait(false);
         await firstServer.WaitForCompletionAsync().ConfigureAwait(false);
@@ -172,7 +172,7 @@ internal sealed class OutboundSmtpRelayTests
         var relay = CreateRelay(new StubResolver(Available(server.Port)));
 
         var result = await relay.RelayAsync(
-            "sender@mk8n.com",
+            "sender@tenant.example.test",
             "recipient@example.com",
             "Subject: no downgrade\r\n\r\nbody").ConfigureAwait(false);
         await server.WaitForCompletionAsync().ConfigureAwait(false);
@@ -199,7 +199,7 @@ internal sealed class OutboundSmtpRelayTests
         var relay = CreateRelay(new StubResolver(Available(server.Port)));
 
         var result = await relay.RelayAsync(
-            "sender@mk8n.com",
+            "sender@tenant.example.test",
             "recipient@example.com",
             "Subject: reject\r\n\r\nbody").ConfigureAwait(false);
         await server.WaitForCompletionAsync().ConfigureAwait(false);
@@ -224,7 +224,7 @@ internal sealed class OutboundSmtpRelayTests
         var relay = CreateRelay(new StubResolver(Available(server.Port)));
 
         var result = await relay.RelayAsync(
-            "sender@mk8n.com",
+            "sender@tenant.example.test",
             "recipient@example.com",
             "Subject: eight bit\r\n\r\ncafé").ConfigureAwait(false);
         await server.WaitForCompletionAsync().ConfigureAwait(false);
@@ -258,7 +258,7 @@ internal sealed class OutboundSmtpRelayTests
         var relay = CreateRelay(new StubResolver(Available(server.Port)));
 
         var result = await relay.RelayAsync(
-            "sender@mk8n.com",
+            "sender@tenant.example.test",
             "recipient@example.com",
             "Subject: eight bit\r\n\r\ncafé").ConfigureAwait(false);
         await server.WaitForCompletionAsync().ConfigureAwait(false);
@@ -266,7 +266,7 @@ internal sealed class OutboundSmtpRelayTests
         Assert.AreEqual(OutboundDeliveryStatus.Delivered, result.Status);
         CollectionAssert.Contains(
             server.Session!.Commands,
-            "MAIL FROM:<sender@mk8n.com> BODY=8BITMIME");
+            "MAIL FROM:<sender@tenant.example.test> BODY=8BITMIME");
         CollectionAssert.Contains(server.Session.DataLines, "café");
     }
 
@@ -297,14 +297,14 @@ internal sealed class OutboundSmtpRelayTests
         var resolver = new StubResolver(Available(server.Port));
         var relay = CreateRelay(resolver);
         const string message =
-            "From: José <josé@mk8n.com>\r\n" +
+            "From: José <josé@tenant.example.test>\r\n" +
             "To: δοκιμή@bücher.example\r\n" +
             "Subject: Žuta pošta\r\n\r\n" +
             "Pozdrav\r\n";
         var wireMessage = Encoding.Latin1.GetString(Encoding.UTF8.GetBytes(message));
 
         var result = await relay.RelayAsync(
-            "josé@mk8n.com",
+            "josé@tenant.example.test",
             "δοκιμή@bücher.example",
             wireMessage,
             new OutboundMailOptions(RequiresSmtpUtf8: true)).ConfigureAwait(false);
@@ -314,7 +314,7 @@ internal sealed class OutboundSmtpRelayTests
         Assert.AreEqual("xn--bcher-kva.example", resolver.LastDomain, StringComparer.Ordinal);
         CollectionAssert.Contains(
             server.Session!.Commands,
-            "MAIL FROM:<josé@mk8n.com> BODY=8BITMIME SMTPUTF8");
+            "MAIL FROM:<josé@tenant.example.test> BODY=8BITMIME SMTPUTF8");
         CollectionAssert.Contains(
             server.Session.Commands,
             "RCPT TO:<δοκιμή@xn--bcher-kva.example>");
@@ -338,7 +338,7 @@ internal sealed class OutboundSmtpRelayTests
             Encoding.UTF8.GetBytes("Subject: Žuta pošta\r\n\r\nbody\r\n"));
 
         var result = await relay.RelayAsync(
-            "sender@mk8n.com",
+            "sender@tenant.example.test",
             "recipient@example.com",
             wireMessage,
             new OutboundMailOptions(RequiresSmtpUtf8: true)).ConfigureAwait(false);
@@ -374,7 +374,7 @@ internal sealed class OutboundSmtpRelayTests
         var relay = CreateRelay(new StubResolver(Available(server.Port)));
 
         var result = await relay.RelayAsync(
-            "sender@mk8n.com",
+            "sender@tenant.example.test",
             "recipient@example.com",
             "Subject: DSN forwarding\r\n\r\nbody\r\n",
             new OutboundMailOptions(
@@ -390,7 +390,7 @@ internal sealed class OutboundSmtpRelayTests
         Assert.AreEqual("localhost", result.RemoteMta, StringComparer.Ordinal);
         CollectionAssert.Contains(
             server.Session!.Commands,
-            "MAIL FROM:<sender@mk8n.com> RET=HDRS ENVID=job+2B42");
+            "MAIL FROM:<sender@tenant.example.test> RET=HDRS ENVID=job+2B42");
         CollectionAssert.Contains(
             server.Session.Commands,
             "RCPT TO:<recipient@example.com> " +
@@ -410,7 +410,7 @@ internal sealed class OutboundSmtpRelayTests
         var relay = CreateRelay(new StubResolver(Available(server.Port)));
 
         var result = await relay.RelayAsync(
-            "sender@mk8n.com",
+            "sender@tenant.example.test",
             "recipient@example.com",
             "Subject: DSN fallback\r\n\r\nbody\r\n",
             new OutboundMailOptions(
@@ -422,7 +422,7 @@ internal sealed class OutboundSmtpRelayTests
 
         Assert.AreEqual(OutboundDeliveryStatus.Delivered, result.Status);
         Assert.IsFalse(result.DsnParametersForwarded);
-        CollectionAssert.Contains(server.Session!.Commands, "MAIL FROM:<sender@mk8n.com>");
+        CollectionAssert.Contains(server.Session!.Commands, "MAIL FROM:<sender@tenant.example.test>");
         CollectionAssert.Contains(server.Session.Commands, "RCPT TO:<recipient@example.com>");
         Assert.IsFalse(server.Session.Commands.Any(command =>
             command.Contains("RET=", StringComparison.Ordinal)
@@ -444,7 +444,7 @@ internal sealed class OutboundSmtpRelayTests
         var relay = CreateRelay(new StubResolver(Available(server.Port)));
 
         var result = await relay.RelayAsync(
-            "sender@mk8n.com",
+            "sender@tenant.example.test",
             "recipient@example.com",
             "Subject: no legacy bounce\r\n\r\nbody\r\n",
             new OutboundMailOptions(
@@ -465,7 +465,7 @@ internal sealed class OutboundSmtpRelayTests
         var relay = CreateRelay(resolver);
 
         var result = await relay.RelayAsync(
-            "sender@mk8n.com\r\nRCPT TO:<attacker@example.com>",
+            "sender@tenant.example.test\r\nRCPT TO:<attacker@example.com>",
             "recipient@example.com",
             "body").ConfigureAwait(false);
 
@@ -486,7 +486,7 @@ internal sealed class OutboundSmtpRelayTests
 
         var result = await relay.RelayAsync(
             new SmtpRelayPresentationRequest(
-                "sender@mk8n.com",
+                "sender@tenant.example.test",
                 "recipient@example.com",
                 "Subject: recorded\r\n\r\n.first\r\n",
                 null),
@@ -513,9 +513,9 @@ internal sealed class OutboundSmtpRelayTests
             .Where(record => string.Equals(record.Direction, GatewayTrafficDirections.Inbound, StringComparison.Ordinal))
             .SelectMany(record => record.Payload)
             .ToArray());
-        StringAssert.Contains(outbound, "EHLO email.mk8n.com\r\n", StringComparison.Ordinal);
+        StringAssert.Contains(outbound, "EHLO email.tenant.example.test\r\n", StringComparison.Ordinal);
         StringAssert.Contains(outbound, "STARTTLS\r\n", StringComparison.Ordinal);
-        StringAssert.Contains(outbound, "MAIL FROM:<sender@mk8n.com>\r\n", StringComparison.Ordinal);
+        StringAssert.Contains(outbound, "MAIL FROM:<sender@tenant.example.test>\r\n", StringComparison.Ordinal);
         StringAssert.Contains(outbound, "..first\r\n.\r\n", StringComparison.Ordinal);
         StringAssert.Contains(inbound, "220 receiver.test ESMTP\r\n", StringComparison.Ordinal);
         StringAssert.Contains(inbound, "250 Queued\r\n", StringComparison.Ordinal);
@@ -543,7 +543,7 @@ internal sealed class OutboundSmtpRelayTests
         await Assert.ThrowsExactlyAsync<InvalidOperationException>(async () =>
             await relay.RelayAsync(
                 new SmtpRelayPresentationRequest(
-                    "sender@mk8n.com",
+                    "sender@tenant.example.test",
                     "recipient@example.com",
                     "Subject: test\r\n\r\nbody\r\n",
                     null),
@@ -562,7 +562,7 @@ internal sealed class OutboundSmtpRelayTests
             {
                 Smtp = new SmtpConfig
                 {
-                    Hostname = "email.mk8n.com",
+                    Hostname = "email.tenant.example.test",
                 },
                 Limits = new LimitsConfig
                 {

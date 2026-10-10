@@ -1,1 +1,1 @@
-mk8n.com /etc/mk8email/dkim/mk8n.com/s202609.private.pem
+@@MK8_PRIMARY_DOMAIN@@ /etc/mk8email/dkim/@@MK8_PRIMARY_DOMAIN@@/@@MK8_DKIM_SELECTOR@@.private.pem

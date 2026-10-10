@@ -76,7 +76,7 @@ internal sealed partial class TransportSecurityTests
 
     private static async Task BeginHeldNativeAuthenticationAsync(string protocol, ProtocolConnection connection)
     {
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.ReadLineAsync().ConfigureAwait(false);
         if (string.Equals(protocol, "imap", StringComparison.Ordinal))
         {

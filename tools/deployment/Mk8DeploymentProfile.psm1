@@ -9,6 +9,23 @@ $script:Mk8ProfilePropertyNames = @(
     'SshKeyPath'
     'KnownHostsPath'
     'BackupDestination'
+    'PrimaryDomain'
+    'MailHostname'
+    'AdminHostname'
+    'AutoconfigHostname'
+    'MtaStsHostname'
+    'ContainerCidr'
+    'DkimSelector'
+    'DmarcReportLocalPart'
+    'TlsReportLocalPart'
+    'AdministratorLocalPart'
+    'PrimaryLocalPart'
+    'CompanyId'
+    'MtaStsPolicyId'
+    'CertificateAuthority'
+    'WanInterfaceList'
+    'DatabaseHost'
+    'ObjectStorageContainer'
 )
 
 $script:Mk8TokenByProperty = [ordered]@{
@@ -16,6 +33,54 @@ $script:Mk8TokenByProperty = [ordered]@{
     '@@MK8_LAN_CIDR@@' = 'LanCidr'
     '@@MK8_TRUSTED_ADMIN_IPV4@@' = 'TrustedAdminIPv4'
     '@@MK8_PUBLIC_IPV4@@' = 'PublicIPv4'
+    '@@MK8_PRIMARY_DOMAIN@@' = 'PrimaryDomain'
+    '@@MK8_MAIL_HOST@@' = 'MailHostname'
+    '@@MK8_ADMIN_HOST@@' = 'AdminHostname'
+    '@@MK8_MAIL_RELATIVE_NAME@@' = 'MailRelativeName'
+    '@@MK8_AUTOCONFIG_RELATIVE_NAME@@' = 'AutoconfigRelativeName'
+    '@@MK8_MTA_STS_RELATIVE_NAME@@' = 'MtaStsRelativeName'
+    '@@MK8_CONTAINER_CIDR@@' = 'ContainerCidr'
+    '@@MK8_DKIM_SELECTOR@@' = 'DkimSelector'
+    '@@MK8_DMARC_LOCAL_PART@@' = 'DmarcReportLocalPart'
+    '@@MK8_TLS_REPORT_LOCAL_PART@@' = 'TlsReportLocalPart'
+    '@@MK8_ADMIN_LOCAL_PART@@' = 'AdministratorLocalPart'
+    '@@MK8_PRIMARY_LOCAL_PART@@' = 'PrimaryLocalPart'
+    '@@MK8_COMPANY_ID@@' = 'CompanyId'
+    '@@MK8_MTA_STS_POLICY_ID@@' = 'MtaStsPolicyId'
+    '@@MK8_CERTIFICATE_AUTHORITY@@' = 'CertificateAuthority'
+    '@@MK8_WAN_INTERFACE_LIST@@' = 'WanInterfaceList'
+    '@@MK8_DATABASE_HOST@@' = 'DatabaseHost'
+    '@@MK8_OBJECT_CONTAINER@@' = 'ObjectStorageContainer'
+}
+
+# Only canonical ASCII labels are substituted into shell/JSON/XML/DNS assets.
+# No operator input may introduce escaping, metacharacters or extra statements.
+function Assert-Mk8DnsName {
+    param([Parameter(Mandatory)] [string]$Value, [Parameter(Mandatory)] [string]$Name)
+    $address = $null
+    if ($Value.Length -gt 253 -or $Value -cne $Value.ToLowerInvariant() `
+        -or [Net.IPAddress]::TryParse($Value, [ref]$address) `
+        -or -not [regex]::IsMatch($Value, '\A[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+\z')) {
+        throw "$Name must be a canonical lower-case ASCII DNS name, not an IP address."
+    }
+}
+
+function Get-Mk8PrivateCidr {
+    param([Parameter(Mandatory)] [string]$Value, [Parameter(Mandatory)] [string]$Name)
+    $match = [regex]::Match($Value, '\A(?<address>[^/]+)/(?<prefix>[0-9]{1,2})\z')
+    if (-not $match.Success) { throw "$Name must be a canonical IPv4 CIDR." }
+    $address = Get-Mk8IPv4Details -Value $match.Groups['address'].Value -Name $Name
+    $prefix = [int]$match.Groups['prefix'].Value
+    if ($prefix -lt 8 -or $prefix -gt 30 -or [string]$prefix -cne $match.Groups['prefix'].Value) {
+        throw "$Name must have a canonical prefix length from 8 through 30."
+    }
+    if (-not (Test-Mk8PrivateIPv4 -Bytes $address.Bytes)) { throw "$Name must use a private IPv4 range." }
+    $blockSize = [uint64][Math]::Pow(2, 32 - $prefix)
+    if (($address.Number % $blockSize) -ne 0) { throw "$Name must start at its network address." }
+    $last = $address.Number + $blockSize - 1
+    $lastBytes = [Net.IPAddress]::Parse(($last -shr 24).ToString() + '.' + (($last -shr 16) -band 255) + '.' + (($last -shr 8) -band 255) + '.' + ($last -band 255)).GetAddressBytes()
+    if (-not (Test-Mk8PrivateIPv4 -Bytes $lastBytes)) { throw "$Name must lie entirely inside a private IPv4 range." }
+    return [pscustomobject]@{ Number = $address.Number; Last = $last }
 }
 
 function Test-Mk8PathAtOrWithin {
@@ -211,7 +276,7 @@ function Import-Mk8DeploymentProfile {
         $document.Dispose()
     }
 
-    if ($values.Version -ne 1) {
+    if ($values.Version -ne 2) {
         throw 'The deployment profile version is not supported.'
     }
     foreach ($name in $script:Mk8ProfilePropertyNames | Where-Object { $_ -cne 'Version' }) {
@@ -220,11 +285,66 @@ function Import-Mk8DeploymentProfile {
         }
     }
 
+    foreach ($name in @('PrimaryDomain', 'MailHostname', 'AdminHostname', 'AutoconfigHostname', 'MtaStsHostname', 'CertificateAuthority')) {
+        Assert-Mk8DnsName -Value $values[$name] -Name $name
+    }
+    $hosts = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($name in @('MailHostname', 'AdminHostname', 'AutoconfigHostname', 'MtaStsHostname')) {
+        if (-not $hosts.Add($values[$name])) { throw 'Service hostnames must be distinct.' }
+    }
+    foreach ($name in @('Mail', 'Autoconfig', 'MtaSts')) {
+        $suffix = '.' + $values.PrimaryDomain
+        $hostName = $values[$name + 'Hostname']
+        if (-not $hostName.EndsWith($suffix, [StringComparison]::Ordinal)) {
+            throw "$name`Hostname must be beneath PrimaryDomain for the DNS templates."
+        }
+        $values[$name + 'RelativeName'] = $hostName.Substring(0, $hostName.Length - $suffix.Length)
+    }
+    # The existing per-domain discovery renderer uses these protocol/convention
+    # labels. Reject inconsistent profile inputs rather than advertising a route
+    # that its unchanged certificate/health contracts do not handle.
+    if ($values.AutoconfigHostname -cne ('autoconfig.' + $values.PrimaryDomain) `
+        -or $values.MtaStsHostname -cne ('mta-sts.' + $values.PrimaryDomain)) {
+        throw 'Discovery hostnames must match the declared per-domain discovery labels.'
+    }
+    foreach ($name in @('DmarcReportLocalPart', 'TlsReportLocalPart', 'AdministratorLocalPart', 'PrimaryLocalPart')) {
+        if (-not [regex]::IsMatch($values[$name], '\A[a-z0-9]+(?:[._+-][a-z0-9]+)*\z') `
+            -or $values[$name].Length -gt 64 `
+            -or ($values[$name].Length + 1 + $values.PrimaryDomain.Length) -gt 254) {
+            throw "$name must be a bounded canonical template-safe mail local part."
+        }
+    }
+    if ($values.AdministratorLocalPart -ceq $values.PrimaryLocalPart) { throw 'Administrator and primary local parts must differ.' }
+    foreach ($name in @('DkimSelector', 'CompanyId', 'MtaStsPolicyId', 'WanInterfaceList')) {
+        if (-not [regex]::IsMatch($values[$name], '\A[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}\z')) {
+            throw "$name must be a bounded template-safe identifier."
+        }
+    }
+    if (-not [regex]::IsMatch($values.DkimSelector, '\A[a-z0-9]{1,63}\z')) {
+        throw 'DkimSelector must be a canonical lower-case alphanumeric DNS label.'
+    }
+    $container = Get-Mk8PrivateCidr -Value $values.ContainerCidr -Name 'ContainerCidr'
+    $lan = Get-Mk8PrivateCidr -Value $values.LanCidr -Name 'LanCidr'
+    if ($container.Number -le $lan.Last -and $lan.Number -le $container.Last) {
+        throw 'ContainerCidr must not overlap LanCidr.'
+    }
+    $databaseAddress = $null
+    if ([Net.IPAddress]::TryParse($values.DatabaseHost, [ref]$databaseAddress)) {
+        if ($databaseAddress.ToString() -cne $values.DatabaseHost) { throw 'DatabaseHost must be canonical.' }
+    }
+    else {
+        Assert-Mk8DnsName -Value $values.DatabaseHost -Name 'DatabaseHost'
+    }
+    if (-not [regex]::IsMatch($values.ObjectStorageContainer, '\A[a-z0-9][a-z0-9-]{1,61}[a-z0-9]\z') `
+        -or $values.ObjectStorageContainer.Contains('--', [StringComparison]::Ordinal)) {
+        throw 'ObjectStorageContainer must be a valid lower-case Azure Blob container name.'
+    }
+
     $server = Get-Mk8IPv4Details -Value $values.ServerIPv4 -Name 'ServerIPv4'
     $administrator = Get-Mk8IPv4Details -Value $values.TrustedAdminIPv4 -Name 'TrustedAdminIPv4'
     $public = Get-Mk8IPv4Details -Value $values.PublicIPv4 -Name 'PublicIPv4'
 
-    $cidrMatch = [regex]::Match($values.LanCidr, '^(?<address>[^/]+)/(?<prefix>[0-9]{1,2})$')
+    $cidrMatch = [regex]::Match($values.LanCidr, '\A(?<address>[^/]+)/(?<prefix>[0-9]{1,2})\z')
     if (-not $cidrMatch.Success) {
         throw 'LanCidr must be a canonical IPv4 CIDR.'
     }
@@ -339,6 +459,13 @@ function New-Mk8RenderedDeployAssets {
             Copy-Item -LiteralPath $sourceItem.FullName -Destination $renderedDeployPath -Recurse -Force
         }
 
+        $composePath = Join-Path $repositoryPath 'compose.yaml'
+        if (-not (Test-Path -LiteralPath $composePath -PathType Leaf) `
+            -or ((Get-Item -LiteralPath $composePath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw 'The compose template must be an ordinary file.'
+        }
+        Copy-Item -LiteralPath $composePath -Destination (Join-Path $destinationPath 'compose.yaml')
+
         if (Test-Path -LiteralPath (Join-Path $renderedDeployPath 'secrets')) {
             throw 'The rendered assets contain the private profile directory.'
         }
@@ -348,7 +475,7 @@ function New-Mk8RenderedDeployAssets {
             $tokenCounts[$token] = 0
         }
         $utf8 = [Text.UTF8Encoding]::new($false, $true)
-        foreach ($file in Get-ChildItem -LiteralPath $renderedDeployPath -File -Recurse -Force) {
+        foreach ($file in Get-ChildItem -LiteralPath $destinationPath -File -Recurse -Force) {
             $bytes = [IO.File]::ReadAllBytes($file.FullName)
             if ([Array]::IndexOf($bytes, [byte]0) -ge 0) {
                 continue

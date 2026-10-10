@@ -81,7 +81,7 @@ internal sealed class SmtpDsnTests
             recipient,
             DeliveryStatusAction.Failed,
             message.RawMessage!,
-            "email.mk8n.com",
+            "email.tenant.example.test",
             new DateTimeOffset(2026, 9, 21, 12, 0, 0, TimeSpan.Zero),
             "550 5.1.1 mailbox missing",
             "5.1.1",
@@ -97,7 +97,7 @@ internal sealed class SmtpDsnTests
         var status = Assert.IsInstanceOfType<MessageDeliveryStatus>(report[1]);
         Assert.HasCount(2, status.StatusGroups);
         Assert.AreEqual("job+42=done", status.StatusGroups[0]["Original-Envelope-ID"], StringComparer.Ordinal);
-        Assert.AreEqual("dns; email.mk8n.com", status.StatusGroups[0]["Reporting-MTA"], StringComparer.Ordinal);
+        Assert.AreEqual("dns; email.tenant.example.test", status.StatusGroups[0]["Reporting-MTA"], StringComparer.Ordinal);
         Assert.AreEqual(
             "rfc822; old+tag@example.net",
             status.StatusGroups[1]["Original-Recipient"], StringComparer.Ordinal);
@@ -126,7 +126,7 @@ internal sealed class SmtpDsnTests
             recipient,
             DeliveryStatusAction.Failed,
             message.RawMessage!,
-            "email.mk8n.com",
+            "email.tenant.example.test",
             new DateTimeOffset(2026, 9, 21, 12, 0, 0, TimeSpan.Zero),
             "Το γραμματοκιβώτιο λείπει",
             "5.1.1");
@@ -171,7 +171,7 @@ internal sealed class SmtpDsnTests
             message.Recipients.Single(),
             (DeliveryStatusAction)actionValue,
             message.RawMessage!,
-            "email.mk8n.com",
+            "email.tenant.example.test",
             new DateTimeOffset(2026, 9, 21, 12, 0, 0, TimeSpan.Zero));
 
         using var parsed = MimeMessage.Load(new MemoryStream(

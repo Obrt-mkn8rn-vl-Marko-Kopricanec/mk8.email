@@ -1,13 +1,19 @@
 #!/bin/sh
 set -eu
 
+# Refuse tracked templates before any target or service mutation.
+if LC_ALL=C grep -Eq '[@]{2}MK8_[A-Z0-9_]+[@]{2}' "$0"; then
+    printf '%s\n' "Render required deployment inputs before using this template." >&2
+    exit 2
+fi
+
 export LC_ALL=C
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
 umask 077
 
-canonical_mail_host=email.mk8n.com
-primary_mail_domain=mk8n.com
+canonical_mail_host=@@MK8_MAIL_HOST@@
+primary_mail_domain=@@MK8_PRIMARY_DOMAIN@@
 domain_root=/etc/mk8email/domains
 key_root=/etc/mk8email/dkim
 web_root=/var/www/mk8email-domains
@@ -634,7 +640,7 @@ write_domain_assets() {
         printf '%s %s.\n' "\$ORIGIN" "$asset_domain"
         printf '%s\n\n' "\$TTL 300"
         if [ "$asset_domain" = "$primary_mail_domain" ]; then
-            printf 'email IN A %s ; cf_tags=cf-proxied:false\n' \
+            printf '@@MK8_MAIL_RELATIVE_NAME@@ IN A %s ; cf_tags=cf-proxied:false\n' \
                 "$asset_public_ipv4"
         fi
         printf '@ IN MX 10 %s.\n' "$canonical_mail_host"
@@ -651,13 +657,13 @@ write_domain_assets() {
         printf '_submissions._tcp IN SRV 0 1 465 %s.\n' "$canonical_mail_host"
         printf 'autoconfig IN CNAME %s. ; cf_tags=cf-proxied:false\n' "$canonical_mail_host"
         printf 'mta-sts IN CNAME %s. ; cf_tags=cf-proxied:false\n' "$canonical_mail_host"
-        printf '@ IN CAA 0 issue "letsencrypt.org"\n'
+        printf '@ IN CAA 0 issue "@@MK8_CERTIFICATE_AUTHORITY@@"\n'
         printf '@ IN CAA 0 issuewild ";"\n'
         printf '@ IN TXT "v=spf1 mx -all"\n'
         cat "$work/dkim-record"
-        printf '_dmarc IN TXT "v=DMARC1; p=none; rua=mailto:postmaster@%s; fo=1; adkim=s; aspf=s; pct=100"\n' "$asset_domain"
+        printf '_dmarc IN TXT "v=DMARC1; p=none; rua=mailto:@@MK8_DMARC_LOCAL_PART@@@%s; fo=1; adkim=s; aspf=s; pct=100"\n' "$asset_domain"
         printf '_mta-sts IN TXT "v=STSv1; id=%s"\n' "$asset_mta_id"
-        printf '_smtp._tls IN TXT "v=TLSRPTv1; rua=mailto:postmaster@%s"\n' "$asset_domain"
+        printf '_smtp._tls IN TXT "v=TLSRPTv1; rua=mailto:@@MK8_TLS_REPORT_LOCAL_PART@@@%s"\n' "$asset_domain"
     } > "$work/cloudflare-import.zone"
     check_replaceable_file "$asset_directory/cloudflare-import.zone"
     install -o root -g root -m 0644 "$work/cloudflare-import.zone" \

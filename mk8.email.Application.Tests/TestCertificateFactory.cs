@@ -14,7 +14,7 @@ internal static class TestCertificateFactory
         && errors is SslPolicyErrors.None or SslPolicyErrors.RemoteCertificateChainErrors
         && Certificates.ContainsKey(certificate.GetCertHashString(HashAlgorithmName.SHA256));
 
-    public static string Create(string directory, string hostName = "email.mk8n.com")
+    public static string Create(string directory, string hostName = "email.tenant.example.test")
     {
         using var key = RSA.Create(2048);
         var request = new CertificateRequest(

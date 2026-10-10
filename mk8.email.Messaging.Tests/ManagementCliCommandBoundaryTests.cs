@@ -25,7 +25,7 @@ internal sealed class ManagementCliCommandBoundaryTests
             ["--create-app-password", "person@example.test", "device"],
             ["--list-app-passwords", "person@example.test"],
             ["--revoke-app-password", "person@example.test", Guid.Empty.ToString("D")],
-            ["--purge-quarantined-smoke-message", missing, new string('a', 32)],
+            ["--purge-quarantined-smoke-message", missing, new string('a', 32), "probe@example.invalid"],
             ["--export-distributed-snapshot", missing, missing],
             ["--restore-distributed-snapshot", missing, missing],
             ["--verify-distributed-snapshot", missing],
@@ -52,10 +52,10 @@ internal sealed class ManagementCliCommandBoundaryTests
 
         foreach (var command in recognizedCommands)
         {
-            var result = await RunCliAsync(missing, command).ConfigureAwait(false);
-            Assert.AreEqual(1, result.ExitCode,
-                $"{command[0]} must be recognized and fail on the missing prerequisite: {result.Output}");
-            Assert.IsFalse(result.Output.Contains("Use one valid management command.", StringComparison.Ordinal));
+            var (exitCode, output) = await RunCliAsync(missing, command).ConfigureAwait(false);
+            Assert.AreEqual(1, exitCode,
+                $"{command[0]} must be recognized and fail on the missing prerequisite: {output}");
+            Assert.IsFalse(output.Contains("Use one valid management command.", StringComparison.Ordinal));
         }
 
         string[][] rejectedCommands =
@@ -67,10 +67,20 @@ internal sealed class ManagementCliCommandBoundaryTests
         ];
         foreach (var command in rejectedCommands)
         {
-            var result = await RunCliAsync(missing, command).ConfigureAwait(false);
-            Assert.AreEqual(2, result.ExitCode, $"{command[0]}: {result.Output}");
-            StringAssert.Contains(result.Output, "Use one valid management command.", StringComparison.Ordinal);
+            var (exitCode, output) = await RunCliAsync(missing, command).ConfigureAwait(false);
+            Assert.AreEqual(2, exitCode, $"{command[0]}: {output}");
+            StringAssert.Contains(output, "Use one valid management command.", StringComparison.Ordinal);
         }
+    }
+
+    [TestMethod]
+    public async Task SmokeCleanupWithoutSenderRefusesBeforeConfiguration()
+    {
+        var missing = Path.Combine(Path.GetTempPath(), $"mk8email-missing-{Guid.NewGuid():N}");
+        var (exitCode, output) = await RunCliAsync(missing,
+            ["--purge-quarantined-smoke-message", missing, new string('a', 32)]).ConfigureAwait(false);
+        Assert.AreEqual(2, exitCode, output);
+        Assert.Contains("Use one valid management command.", output, StringComparison.Ordinal);
     }
 
     [TestMethod]
@@ -98,11 +108,11 @@ internal sealed class ManagementCliCommandBoundaryTests
             await File.WriteAllTextAsync(configPath, JsonSerializer.Serialize(config)).ConfigureAwait(false);
             const string secret = "secret-must-not-appear-in-command-output";
             await File.WriteAllTextAsync(wakePath, secret + "=not-a-connection-string").ConfigureAwait(false);
-            var malformed = await RunCliAsync(configPath,
+            var (malformedExitCode, malformedOutput) = await RunCliAsync(configPath,
                 ["--prepare-worker-wake", configPath, wakePath], development: true).ConfigureAwait(false);
-            Assert.AreEqual(1, malformed.ExitCode, malformed.Output);
-            StringAssert.Contains(malformed.Output, "not a valid PostgreSQL connection string", StringComparison.Ordinal);
-            Assert.IsFalse(malformed.Output.Contains(secret, StringComparison.Ordinal));
+            Assert.AreEqual(1, malformedExitCode, malformedOutput);
+            StringAssert.Contains(malformedOutput, "not a valid PostgreSQL connection string", StringComparison.Ordinal);
+            Assert.IsFalse(malformedOutput.Contains(secret, StringComparison.Ordinal));
 
             foreach (var changed in new[] { "host", "port", "database", "role" })
             {
@@ -116,26 +126,26 @@ internal sealed class ManagementCliCommandBoundaryTests
                     case "role": connection.Username = config.Database.Username; break;
                 }
                 await File.WriteAllTextAsync(wakePath, connection.ConnectionString).ConfigureAwait(false);
-                var mismatch = await RunCliAsync(configPath,
+                var (mismatchExitCode, mismatchOutput) = await RunCliAsync(configPath,
                     ["--prepare-worker-wake", configPath, wakePath], development: true).ConfigureAwait(false);
-                Assert.AreEqual(1, mismatch.ExitCode, mismatch.Output);
-                StringAssert.Contains(mismatch.Output, "separate roles on the same explicit database endpoint", StringComparison.Ordinal);
-                Assert.IsFalse(mismatch.Output.Contains(secret, StringComparison.Ordinal));
+                Assert.AreEqual(1, mismatchExitCode, mismatchOutput);
+                StringAssert.Contains(mismatchOutput, "separate roles on the same explicit database endpoint", StringComparison.Ordinal);
+                Assert.IsFalse(mismatchOutput.Contains(secret, StringComparison.Ordinal));
             }
             if (OperatingSystem.IsLinux())
             {
                 var link = Path.Combine(directory.FullName, "wake-link.connection");
                 File.CreateSymbolicLink(link, wakePath);
-                var symlink = await RunCliAsync(configPath,
+                var (symlinkExitCode, symlinkOutput) = await RunCliAsync(configPath,
                     ["--prepare-worker-wake", configPath, link], development: true).ConfigureAwait(false);
-                Assert.AreEqual(1, symlink.ExitCode, symlink.Output);
-                StringAssert.Contains(symlink.Output, "missing, oversized or unsafe", StringComparison.Ordinal);
+                Assert.AreEqual(1, symlinkExitCode, symlinkOutput);
+                StringAssert.Contains(symlinkOutput, "missing, oversized or unsafe", StringComparison.Ordinal);
                 if (!string.Equals(Environment.UserName, "root", StringComparison.Ordinal))
                 {
-                    var service = await RunCliAsync(configPath,
+                    var (serviceExitCode, serviceOutput) = await RunCliAsync(configPath,
                         ["--prepare-worker-wake", configPath, wakePath]).ConfigureAwait(false);
-                    Assert.AreEqual(1, service.ExitCode, service.Output);
-                    StringAssert.Contains(service.Output, "require a root operator", StringComparison.Ordinal);
+                    Assert.AreEqual(1, serviceExitCode, serviceOutput);
+                    StringAssert.Contains(serviceOutput, "require a root operator", StringComparison.Ordinal);
                 }
             }
         }

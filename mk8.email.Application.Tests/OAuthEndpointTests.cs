@@ -57,7 +57,7 @@ new Uri("/.well-known/oauth-authorization-server", UriKind.RelativeOrAbsolute)).
         using (var metadata = JsonDocument.Parse(await metadataResponse.Content.ReadAsStringAsync().ConfigureAwait(false)))
         {
             Assert.AreEqual(
-                "https://email.mk8n.com/oauth/authorize",
+                "https://email.tenant.example.test/oauth/authorize",
                 metadata.RootElement.GetProperty("authorization_endpoint").GetString(), StringComparer.Ordinal);
             CollectionAssert.Contains(
                 metadata.RootElement.GetProperty("code_challenge_methods_supported")
@@ -193,7 +193,7 @@ new Uri("/.well-known/openid-configuration", UriKind.RelativeOrAbsolute)).Config
         using var discovery = JsonDocument.Parse(
             await discoveryResponse.Content.ReadAsStringAsync().ConfigureAwait(false));
         Assert.AreEqual(
-            "https://email.mk8n.com/oauth/jwks",
+            "https://email.tenant.example.test/oauth/jwks",
             discovery.RootElement.GetProperty("jwks_uri").GetString(), StringComparer.Ordinal);
         CollectionAssert.Contains(
             discovery.RootElement.GetProperty("scopes_supported")
@@ -256,7 +256,7 @@ new Uri("/.well-known/openid-configuration", UriKind.RelativeOrAbsolute)).Config
 
         Assert.IsNotNull(tokens.IdToken);
         var claims = VerifyIdToken(tokens.IdToken, jwk);
-        Assert.AreEqual("https://email.mk8n.com", claims.GetProperty("iss").GetString(), StringComparer.Ordinal);
+        Assert.AreEqual("https://email.tenant.example.test", claims.GetProperty("iss").GetString(), StringComparer.Ordinal);
         Assert.AreEqual("thunderbird", claims.GetProperty("aud").GetString(), StringComparer.Ordinal);
         Assert.AreEqual(nonce, claims.GetProperty("nonce").GetString(), StringComparer.Ordinal);
         Assert.AreEqual(Username, claims.GetProperty("email").GetString(), StringComparer.Ordinal);
@@ -518,12 +518,12 @@ new Uri("/oauth/token", UriKind.RelativeOrAbsolute),
             using var signingKey = RSA.Create(2048);
             var environment = new EnvironmentConfig
             {
-                Smtp = new SmtpConfig { Hostname = "email.mk8n.com" },
+                Smtp = new SmtpConfig { Hostname = "email.tenant.example.test" },
                 OAuth = new OAuthConfig
                 {
                     EnableOAuth = true,
                     EnableOpenIdConnect = true,
-                    PublicBaseUrl = "https://email.mk8n.com",
+                    PublicBaseUrl = "https://email.tenant.example.test",
                     ClientId = "thunderbird",
                     AccessTokenMinutes = 10,
                     RefreshTokenDays = 90,

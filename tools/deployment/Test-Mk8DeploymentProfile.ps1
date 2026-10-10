@@ -66,6 +66,7 @@ try {
         }
     }
     [IO.Directory]::CreateDirectory($testSecrets) | Out-Null
+    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'compose.yaml') -Destination $testRepository
 
     $keyPath = Join-Path $runPath 'test-key'
     $knownHostsPath = Join-Path $runPath 'known-hosts'
@@ -74,7 +75,7 @@ try {
     [IO.File]::WriteAllText($knownHostsPath, 'test-host', [Text.Encoding]::ASCII)
 
     $validProfile = [ordered]@{
-        Version = 1
+        Version = 2
         ServerIPv4 = '10.44.8.25'
         LanCidr = '10.44.8.0/24'
         TrustedAdminIPv4 = '10.44.8.1'
@@ -82,6 +83,23 @@ try {
         SshKeyPath = $keyPath
         KnownHostsPath = $knownHostsPath
         BackupDestination = $backupPath
+        PrimaryDomain = 'example.test'
+        MailHostname = 'mx.example.test'
+        AdminHostname = 'admin.example.test'
+        AutoconfigHostname = 'autoconfig.example.test'
+        MtaStsHostname = 'mta-sts.example.test'
+        ContainerCidr = '10.55.0.0/24'
+        DkimSelector = 'fixture1'
+        DmarcReportLocalPart = 'reports'
+        TlsReportLocalPart = 'tls-reports'
+        AdministratorLocalPart = 'administrator'
+        PrimaryLocalPart = 'primary'
+        CompanyId = 'fixture-company'
+        MtaStsPolicyId = 'fixture-policy-1'
+        CertificateAuthority = 'ca.example.test'
+        WanInterfaceList = 'fixture-wan'
+        DatabaseHost = 'db.example.test'
+        ObjectStorageContainer = 'fixture-objects'
     }
     $profilePath = Join-Path $testSecrets 'production-profile.json'
     Write-TestProfile -Path $profilePath -Values $validProfile
@@ -109,28 +127,24 @@ try {
         'The rendered nginx configuration does not contain the server address.'
     Assert-True ($renderedNginx.Contains($validProfile.LanCidr, [StringComparison]::Ordinal)) `
         'The rendered nginx configuration does not contain the LAN CIDR.'
-    $oldHostname = $renderedFiles `
-        | Select-String -Pattern '(?<![A-Za-z0-9.-])mail\.mk8n\.com' `
-        | Select-Object -First 1
-    Assert-True ($null -eq $oldHostname) 'The rendered assets contain the old mail hostname.'
     $renderedMailConfig = Get-Content `
         -LiteralPath (Join-Path $renderedRoot 'deploy/native/mk8email.config.json') -Raw
     Assert-True ($renderedMailConfig.Contains(
-        '"Hostname": "email.mk8n.com"',
+        '"Hostname": "mx.example.test"',
         [StringComparison]::Ordinal)) `
         'The rendered native mail configuration has the wrong mail hostname.'
     $renderedDns = Get-Content `
-        -LiteralPath (Join-Path $renderedRoot 'deploy/dns/mk8n.com.zone') -Raw
+        -LiteralPath (Join-Path $renderedRoot 'deploy/dns/primary-domain.zone') -Raw
     Assert-True ($renderedDns.Contains(
-        'IN MX 10 email.mk8n.com.',
+        'IN MX 10 mx.example.test.',
         [StringComparison]::Ordinal)) `
         'The rendered MX record has the wrong mail hostname.'
     Assert-True ($renderedDns.Contains(
-        '_caldavs._tcp                   IN SRV 0 1 443 email.mk8n.com.',
+        '_caldavs._tcp                   IN SRV 0 1 443 mx.example.test.',
         [StringComparison]::Ordinal)) `
         'The rendered DNS records omit CalDAV discovery.'
     Assert-True ($renderedDns.Contains(
-        '_carddavs._tcp                  IN SRV 0 1 443 email.mk8n.com.',
+        '_carddavs._tcp                  IN SRV 0 1 443 mx.example.test.',
         [StringComparison]::Ordinal)) `
         'The rendered DNS records omit CardDAV discovery.'
     foreach ($routerFile in @('mk8-web-preflight.rsc', 'mk8-public-services.rsc')) {
@@ -148,24 +162,81 @@ try {
     $renderedAutoconfig = Get-Content `
         -LiteralPath (Join-Path $renderedRoot 'deploy/nginx/www/autoconfig/mail/config-v1.1.xml') -Raw
     Assert-True ($renderedAutoconfig.Contains(
-        '<hostname>email.mk8n.com</hostname>',
+        '<hostname>mx.example.test</hostname>',
         [StringComparison]::Ordinal)) `
         'The rendered client configuration has the wrong mail hostname.'
     Assert-True ($renderedAutoconfig.Contains(
-        '<url>https://email.mk8n.com/.well-known/jmap</url>',
+        '<url>https://mx.example.test/.well-known/jmap</url>',
         [StringComparison]::Ordinal)) `
         'The rendered client configuration omits the preferred JMAP endpoint.'
     Assert-True ($renderedAutoconfig.Contains(
-        '<url>https://email.mk8n.com/.well-known/caldav</url>',
+        '<url>https://mx.example.test/.well-known/caldav</url>',
         [StringComparison]::Ordinal)) `
         'The rendered client configuration omits CalDAV.'
     Assert-True ($renderedAutoconfig.Contains(
-        '<url>https://email.mk8n.com/.well-known/carddav</url>',
+        '<url>https://mx.example.test/.well-known/carddav</url>',
         [StringComparison]::Ordinal)) `
         'The rendered client configuration omits CardDAV.'
     $sourceNginx = Get-Content -LiteralPath (Join-Path $testDeploy 'nginx/mk8-admin.conf') -Raw
     Assert-True ($sourceNginx.Contains('@@MK8_SERVER_IPV4@@', [StringComparison]::Ordinal)) `
         'Rendering changed the deployment source.'
+
+    # All addresses below are numeric classification/rendering fixtures. No sockets,
+    # DNS or deployment scripts are invoked, and PublicIPv4 is never an allocation.
+    $renderedCompose = Get-Content -LiteralPath (Join-Path $renderedRoot 'compose.yaml') -Raw
+    Assert-True ($renderedCompose.Contains($validProfile.ContainerCidr, [StringComparison]::Ordinal)) 'Compose subnet was not rendered.'
+    Assert-True ($renderedDns.Contains('mailto:reports@example.test', [StringComparison]::Ordinal)) 'DMARC report input was lost.'
+    Assert-True ($renderedDns.Contains('ca.example.test', [StringComparison]::Ordinal)) 'CAA input was lost.'
+    Assert-True (-not $renderedDns.Contains('p=MIIB', [StringComparison]::Ordinal)) 'A public deployment key was shipped.'
+    $second = [ordered]@{} + $validProfile
+    $second.PrimaryDomain = 'example.invalid'
+    $second.MailHostname = 'mail.example.invalid'
+    $second.AdminHostname = 'private.example.invalid'
+    $second.AutoconfigHostname = 'autoconfig.example.invalid'
+    $second.MtaStsHostname = 'mta-sts.example.invalid'
+    $second.DatabaseHost = 'db.example.invalid'
+    Write-TestProfile -Path $profilePath -Values $second
+    New-Mk8RenderedDeployAssets -ProfilePath $profilePath -RepositoryRoot $testRepository -Destination (Join-Path $runPath 'second') | Out-Null
+    $secondConfig = Get-Content -LiteralPath (Join-Path $runPath 'second/deploy/native/mk8email.config.json') -Raw
+    Assert-True ($secondConfig.Contains('https://mail.example.invalid', [StringComparison]::Ordinal)) 'A second independent domain was not rendered.'
+    Assert-True (-not $secondConfig.Contains('example.test', [StringComparison]::Ordinal)) 'The first profile leaked into the second render.'
+    foreach ($case in @(
+        @('PrimaryDomain', 'EXAMPLE.test', 'canonical'),
+        @('PrimaryDomain', '127.0.0.1', 'canonical'),
+        @('MailHostname', 'mail.other.test', 'beneath'),
+        @('AdminHostname', 'mx.example.test', 'distinct'),
+        @('PrimaryDomain', 'x.test;touch', 'canonical'),
+        @('DmarcReportLocalPart', 'x";touch', 'template-safe'),
+        @('DkimSelector', 'x._domainkey', 'template-safe'),
+        @('WanInterfaceList', 'wan;command', 'template-safe'),
+        @('ContainerCidr', '10.44.8.0/24', 'overlap'),
+        @('ContainerCidr', '10.0.0.0/08', 'canonical'),
+        @('ContainerCidr', '172.0.0.0/8', 'private'),
+        @('CertificateAuthority', 'https://ca.example.test', 'canonical'),
+        @('DatabaseHost', 'host;Password=secret', 'canonical'),
+        @('ObjectStorageContainer', 'INVALID', 'container name'),
+        @('ObjectStorageContainer', 'invalid--name', 'container name'),
+        @('PrimaryDomain', "example.test`n", 'canonical'),
+        @('WanInterfaceList', "fixture`n", 'template-safe'),
+        @('CompanyId', "fixture`n", 'template-safe'),
+        @('DkimSelector', "fixture1`n", 'template-safe'),
+        @('MtaStsPolicyId', "fixture1`n", 'template-safe'),
+        @('DmarcReportLocalPart', "reports`n", 'template-safe'),
+        @('ContainerCidr', "10.55.0.0/24`n", 'canonical'),
+        @('ObjectStorageContainer', "fixture-objects`n", 'container name')
+    )) {
+        $invalid = [ordered]@{} + $validProfile
+        $invalid[$case[0]] = $case[1]
+        Write-TestProfile -Path $profilePath -Values $invalid
+        Assert-Throws { Import-Mk8DeploymentProfile -Path $profilePath -RepositoryRoot $testRepository } $case[2]
+    }
+    $missingDomain = [ordered]@{} + $validProfile
+    $missingDomain.Remove('PrimaryDomain')
+    Write-TestProfile -Path $profilePath -Values $missingDomain
+    Assert-Throws { Import-Mk8DeploymentProfile -Path $profilePath -RepositoryRoot $testRepository } 'missing a property'
+    $duplicate = ($validProfile | ConvertTo-Json) -replace '"Version": 2', '"Version": 2, "Version": 2'
+    [IO.File]::WriteAllText($profilePath, $duplicate, [Text.UTF8Encoding]::new($false))
+    Assert-Throws { Import-Mk8DeploymentProfile -Path $profilePath -RepositoryRoot $testRepository } 'duplicate'
 
     $invalidCidr = [ordered]@{} + $validProfile
     $invalidCidr.LanCidr = '10.44.8.1/24'

@@ -10,7 +10,7 @@ namespace mk8.email.Application.Tests;
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
 internal sealed class MailAuthenticatorTests
 {
-    private const string Username = "user@mk8n.com";
+    private const string Username = "user@tenant.example.test";
     private const string Password = "test-password-value";
 
     [TestMethod]
@@ -20,7 +20,7 @@ internal sealed class MailAuthenticatorTests
         await using var databaseLifetime = database.ConfigureAwait(false);
         var authenticator = new MailAuthenticator(database);
 
-        var result = await authenticator.AuthenticateAsync("USER@MK8N.COM", Password).ConfigureAwait(false);
+        var result = await authenticator.AuthenticateAsync("USER@TENANT.EXAMPLE.TEST", Password).ConfigureAwait(false);
 
         Assert.IsNotNull(result);
         Assert.AreEqual(Username, result.Username, StringComparer.Ordinal);
@@ -65,7 +65,7 @@ internal sealed class MailAuthenticatorTests
         database.Addresses.Add(new AddressDB
         {
             Id = Guid.CreateVersion7(),
-            Domain = "mk8n.com",
+            Domain = "tenant.example.test",
             Company = company,
             IsActive = domainActive,
         });

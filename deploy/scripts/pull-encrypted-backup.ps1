@@ -83,7 +83,7 @@ if ((Test-Path -LiteralPath $finalBackup) -or (Test-Path -LiteralPath $finalChec
     throw 'The local encrypted backup already exists.'
 }
 
-$taskRoot = 'D:\temp\mk8.email\pull-encrypted-backup'
+$taskRoot = Join-Path ([IO.Path]::GetTempPath()) 'mk8.email/pull-encrypted-backup'
 $runRoot = Join-Path $taskRoot ([Guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($runRoot) | Out-Null
 

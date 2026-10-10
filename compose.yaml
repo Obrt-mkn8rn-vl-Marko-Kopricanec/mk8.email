@@ -121,4 +121,4 @@ networks:
   edge:
     ipam:
       config:
-        - subnet: 172.30.8.0/24
+        - subnet: @@MK8_CONTAINER_CIDR@@

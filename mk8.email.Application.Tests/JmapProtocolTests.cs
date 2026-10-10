@@ -2688,7 +2688,7 @@ internal sealed class JmapProtocolTests
         await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var raw = Encoding.UTF8.GetBytes(
             "From: Sender <sender@example.net>\r\n"
-            + "To: user@mk8n.com\r\n"
+            + "To: user@tenant.example.test\r\n"
             + "Subject: Imported message\r\n"
             + "Message-ID: <import-1@example.net>\r\n"
             + "Date: Sat, 20 Sep 2026 10:00:00 +0000\r\n"
@@ -3201,7 +3201,7 @@ internal sealed class JmapProtocolTests
         await using var fixtureLifetime = fixture.ConfigureAwait(false);
         var relatedRaw = Encoding.UTF8.GetBytes(
             "From: sender@example.net\r\n"
-            + "To: user@mk8n.com\r\n"
+            + "To: user@tenant.example.test\r\n"
             + "Date: Sun, 20 Sep 2026 10:00:00 +0000\r\n"
             + "Subject: Nested structure\r\n"
             + "MIME-Version: 1.0\r\n"
@@ -3214,14 +3214,14 @@ internal sealed class JmapProtocolTests
             + "--outer--\r\n");
         var relatedBlobId = await fixture.StoreBlobAsync(relatedRaw).ConfigureAwait(false);
         var previewRaw = Encoding.UTF8.GetBytes(
-            "From: sender@example.net\r\nTo: user@mk8n.com\r\n"
+            "From: sender@example.net\r\nTo: user@tenant.example.test\r\n"
             + "Date: Sun, 20 Sep 2026 10:00:00 +0000\r\n"
             + "Content-Type: text/plain; charset=utf-8\r\n"
             + "Content-Transfer-Encoding: 8bit\r\n\r\n"
             + string.Concat(Enumerable.Repeat("😀", 300)));
         var previewBlobId = await fixture.StoreBlobAsync(previewRaw).ConfigureAwait(false);
         var htmlPreviewBlobId = await fixture.StoreBlobAsync(Encoding.UTF8.GetBytes(
-            "From: sender@example.net\r\nTo: user@mk8n.com\r\n"
+            "From: sender@example.net\r\nTo: user@tenant.example.test\r\n"
             + "Date: Sun, 20 Sep 2026 10:00:00 +0000\r\n"
             + "Content-Type: text/html; charset=utf-8\r\n\r\n"
             + "<p>Hello &amp; welcome</p>")).ConfigureAwait(false);
@@ -3255,13 +3255,13 @@ internal sealed class JmapProtocolTests
                 .GetValue<string>(), StringComparer.Ordinal);
 
         var attachedRaw = Encoding.UTF8.GetBytes(
-            "From: sender@example.net\r\nTo: user@mk8n.com\r\n"
+            "From: sender@example.net\r\nTo: user@tenant.example.test\r\n"
             + "Date: Sun, 20 Sep 2026 10:00:00 +0000\r\n"
             + "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=outer\r\n\r\n"
             + "--outer\r\nContent-Type: text/plain\r\n\r\nOuter payload\r\n"
             + "--outer\r\nContent-Type: message/rfc822\r\n"
             + "Content-Disposition: attachment; filename=nested.eml\r\n\r\n"
-            + "From: nested@example.net\r\nTo: user@mk8n.com\r\n"
+            + "From: nested@example.net\r\nTo: user@tenant.example.test\r\n"
             + "Date: Sun, 20 Sep 2026 11:00:00 +0000\r\n"
             + "Subject: Attached\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n"
             + "Nested payload\r\n--outer--\r\n");
@@ -4446,7 +4446,7 @@ internal sealed class JmapProtocolTests
                 Body = Encoding.ASCII.GetString(raw),
                 RawMessage = raw,
                 SizeBytes = 0,
-                MessageId = $"<{emailId:N}@mk8n.com>",
+                MessageId = $"<{emailId:N}@tenant.example.test>",
                 EmailObjectId = emailId.ToString("N"),
                 ThreadObjectId = emailId.ToString("N"),
                 ReceivedAt = DateTime.UtcNow,

@@ -20,10 +20,16 @@ from email.policy import default
 from email.utils import format_datetime
 from pathlib import Path
 
+# This is an operator template, not a configured target.
+import re
+if re.search(r"[@]{2}MK8_[A-Z0-9_]+[@]{2}", Path(__file__).read_text(encoding="utf-8")):
+    raise RuntimeError("Render required deployment inputs before using this template.")
+
+
 
 LOCAL_HOST = "127.0.0.1"
 INBOUND_HOST = "@@MK8_SERVER_IPV4@@"
-PUBLIC_MAIL_HOST = "email.mk8n.com"
+PUBLIC_MAIL_HOST = "@@MK8_MAIL_HOST@@"
 
 
 def require(condition: bool, message: str) -> None:
@@ -350,8 +356,8 @@ def new_search_message(
 
 def require_recipient_rejected(recipient: str) -> None:
     with smtplib.SMTP(INBOUND_HOST, 25, timeout=20) as client:
-        client.ehlo("probe.debian.org")
-        require(client.mail("probe@debian.org")[0] == 250, "The test sender was rejected.")
+        client.ehlo("probe.example.invalid")
+        require(client.mail("probe@example.invalid")[0] == 250, "The test sender was rejected.")
         code, _ = client.rcpt(recipient)
         require(code in (550, 554), "mk8.email accepted a recipient for an inactive domain.")
 
@@ -387,15 +393,15 @@ def require_pop3_login_rejected(account: str, password: str) -> None:
 
 def send_inbound(value: EmailMessage) -> None:
     with smtplib.SMTP(INBOUND_HOST, 25, timeout=30) as client:
-        client.ehlo("probe.debian.org")
+        client.ehlo("probe.example.invalid")
         client.send_message(value)
 
 
 def send_submission(value: EmailMessage, account: str, password: str) -> None:
     with smtplib.SMTP(LOCAL_HOST, 587, timeout=30) as client:
-        client.ehlo("probe.debian.org")
+        client.ehlo("probe.example.invalid")
         client.starttls(context=tls_context())
-        client.ehlo("probe.debian.org")
+        client.ehlo("probe.example.invalid")
         client.login(account, password)
         client.send_message(value)
 
@@ -521,7 +527,7 @@ def test_copy_quota(account: str, password: str) -> None:
     marker = uuid.uuid4().hex
     original_quota = None
     try:
-        send_inbound(new_message("probe@debian.org", account, marker))
+        send_inbound(new_message("probe@example.invalid", account, marker))
         source_content = wait_for_message(account, password, marker, delete=False)
         original_quota, used_bytes, source_bytes = quota_state(account, marker)
         require(source_bytes > 0 and used_bytes >= source_bytes, "The source size is not valid.")
@@ -586,7 +592,7 @@ def move_state(account: str, source_uid: int) -> tuple[int, int]:
 def test_move_tombstone(account: str, password: str) -> None:
     marker = uuid.uuid4().hex
     try:
-        send_inbound(new_message("probe@debian.org", account, marker))
+        send_inbound(new_message("probe@example.invalid", account, marker))
         source_content = wait_for_message(account, password, marker, delete=False)
 
         with imaplib.IMAP4_SSL(LOCAL_HOST, 993, ssl_context=tls_context(), timeout=20) as client:
@@ -634,7 +640,7 @@ def test_search(account: str, password: str) -> None:
     try:
         send_inbound(
             new_search_message(
-                "first-search@debian.org",
+                "first-search@example.invalid",
                 account,
                 first_marker,
                 first_subject,
@@ -644,7 +650,7 @@ def test_search(account: str, password: str) -> None:
         )
         send_inbound(
             new_search_message(
-                "second-search@debian.org",
+                "second-search@example.invalid",
                 account,
                 second_marker,
                 second_subject,
@@ -796,11 +802,11 @@ def test_command_literals(account: str, password: str) -> None:
 
 def require_sender_mismatch_rejected(account: str, password: str) -> None:
     with smtplib.SMTP(LOCAL_HOST, 587, timeout=30) as client:
-        client.ehlo("probe.debian.org")
+        client.ehlo("probe.example.invalid")
         client.starttls(context=tls_context())
-        client.ehlo("probe.debian.org")
+        client.ehlo("probe.example.invalid")
         client.login(account, password)
-        code, _ = client.mail("admin@mk8n.com")
+        code, _ = client.mail("@@MK8_ADMIN_LOCAL_PART@@@@@MK8_PRIMARY_DOMAIN@@")
         if code < 400:
             code, _ = client.rcpt(account)
         require(code in (550, 553), "mk8.email accepted a sender from another hosted domain.")
@@ -808,12 +814,12 @@ def require_sender_mismatch_rejected(account: str, password: str) -> None:
 
 def test_active(domain: str, account: str, password: str, selector: str) -> None:
     exact_marker = uuid.uuid4().hex
-    send_inbound(new_message("probe@debian.org", account, exact_marker))
+    send_inbound(new_message("probe@example.invalid", account, exact_marker))
     wait_for_message(account, password, exact_marker)
 
     catchall_marker = uuid.uuid4().hex
     catchall_recipient = f"undefined-{catchall_marker}@{domain}"
-    send_inbound(new_message("probe@debian.org", catchall_recipient, catchall_marker))
+    send_inbound(new_message("probe@example.invalid", catchall_recipient, catchall_marker))
     wait_for_message(account, password, catchall_marker)
 
     submission_marker = uuid.uuid4().hex

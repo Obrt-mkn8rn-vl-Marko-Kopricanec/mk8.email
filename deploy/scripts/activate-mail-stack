@@ -1,6 +1,12 @@
 #!/bin/sh
 set -eu
 
+# Refuse tracked templates before any target or service mutation.
+if LC_ALL=C grep -Eq '[@]{2}MK8_[A-Z0-9_]+[@]{2}' "$0"; then
+    printf '%s\n' "Render required deployment inputs before using this template." >&2
+    exit 2
+fi
+
 if [ "$(id -u)" -ne 0 ]; then
     printf '%s\n' "Run this command as root." >&2
     exit 2
@@ -128,8 +134,8 @@ clamdscan --config-file=/etc/clamav/clamd.conf --ping 1 >/dev/null 2>&1
 dashboard_ready=false
 for _ in $(seq 1 30); do
     if curl --silent --fail --insecure --max-time 3 --noproxy '*' \
-        --resolve admin.mk8n.com:8443:@@MK8_SERVER_IPV4@@ \
-        https://admin.mk8n.com:8443/health/ready >/dev/null; then
+        --resolve @@MK8_ADMIN_HOST@@:8443:@@MK8_SERVER_IPV4@@ \
+        https://@@MK8_ADMIN_HOST@@:8443/health/ready >/dev/null; then
         dashboard_ready=true
         break
     fi
@@ -138,7 +144,7 @@ done
 [ "$dashboard_ready" = true ]
 
 curl --silent --fail --max-time 30 --noproxy '*' \
-    --header 'Host: admin.mk8n.com' \
+    --header 'Host: @@MK8_ADMIN_HOST@@' \
     http://127.0.0.1:8080/health/application >/dev/null \
     || fail "The Gateway could not reach the Application Worker."
 

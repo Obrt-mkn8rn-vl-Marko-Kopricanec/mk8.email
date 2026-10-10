@@ -55,7 +55,7 @@ internal sealed class JmapFixture : IAsyncDisposable
         var inboxFolderId = Guid.CreateVersion7();
         var draftsFolderId = Guid.CreateVersion7();
         var sentFolderId = Guid.CreateVersion7();
-        const string username = "user@mk8n.com";
+        const string username = "user@tenant.example.test";
 
         try
         {
@@ -86,14 +86,14 @@ internal sealed class JmapFixture : IAsyncDisposable
         {
             Smtp = new SmtpConfig
             {
-                Hostname = "email.mk8n.com",
+                Hostname = "email.tenant.example.test",
                 AllowRelay = false,
             },
             Jmap = new JmapConfig
             {
                 EnableJmap = true,
                 IsDefault = true,
-                PublicBaseUrl = "https://email.mk8n.com",
+                PublicBaseUrl = "https://email.tenant.example.test",
                 MaxUploadSizeBytes = objectSizeLimit,
                 MaxUnreferencedBlobBytesPerAccount = blobLimit,
             },
@@ -134,7 +134,7 @@ internal sealed class JmapFixture : IAsyncDisposable
             var address = new AddressDB
             {
                 Id = Guid.CreateVersion7(),
-                Domain = "mk8n.com",
+                Domain = "tenant.example.test",
                 Company = company,
                 IsActive = true,
             };
@@ -203,7 +203,7 @@ internal sealed class JmapFixture : IAsyncDisposable
             throw;
         }
         return GatewayJmapBatchCodec.Render(await ProcessBatchAsync(processor, batch, user, cancellationToken).ConfigureAwait(false),
-            environment ?? new EnvironmentConfig { Smtp = new SmtpConfig { Hostname = "email.mk8n.com" } });
+            environment ?? new EnvironmentConfig { Smtp = new SmtpConfig { Hostname = "email.tenant.example.test" } });
     }
 
     internal static async Task<JmapApplicationBatchResult> ProcessBatchAsync(

@@ -40,9 +40,9 @@ internal sealed class JmapCoreTests
             .GetProfileAsync(fixture.User).ConfigureAwait(false);
         var session = GatewayJmapProfileCodec.Render(profile, fixture.Configuration);
 
-        Assert.AreEqual("https://email.mk8n.com/jmap/api", session["apiUrl"]?.GetValue<string>(), StringComparer.Ordinal);
+        Assert.AreEqual("https://email.tenant.example.test/jmap/api", session["apiUrl"]?.GetValue<string>(), StringComparer.Ordinal);
         Assert.AreEqual(
-            "https://email.mk8n.com/jmap/upload/{accountId}",
+            "https://email.tenant.example.test/jmap/upload/{accountId}",
             session["uploadUrl"]?.GetValue<string>(), StringComparer.Ordinal);
         Assert.IsTrue(session["state"]!.GetValue<string>().StartsWith('S'));
 

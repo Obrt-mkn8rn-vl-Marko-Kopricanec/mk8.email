@@ -1,6 +1,12 @@
 #!/bin/sh
 set -eu
 
+# Refuse tracked templates before any target or service mutation.
+if LC_ALL=C grep -Eq '[@]{2}MK8_[A-Z0-9_]+[@]{2}' "$0"; then
+    printf '%s\n' "Render required deployment inputs before using this template." >&2
+    exit 2
+fi
+
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
 export DOTNET_ENVIRONMENT=Production
@@ -162,7 +168,7 @@ while [ "$attempt" -lt 15 ]; do
         case "$1" in
             gateway)
                 if curl --silent --fail --max-time 3 --noproxy '*' \
-                    --header 'Host: admin.mk8n.com' \
+                    --header 'Host: @@MK8_ADMIN_HOST@@' \
                     http://127.0.0.1:8080/health/ready >/dev/null \
                     && timeout 20s runuser -u mk8email -- /usr/bin/dotnet "$cli" \
                         --healthcheck-gateway "$config" >/dev/null \

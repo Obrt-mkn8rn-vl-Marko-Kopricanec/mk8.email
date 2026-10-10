@@ -1,13 +1,19 @@
 #!/bin/sh
 set -eu
 
+# Refuse tracked templates before any target or service mutation.
+if LC_ALL=C grep -Eq '[@]{2}MK8_[A-Z0-9_]+[@]{2}' "$0"; then
+    printf '%s\n' "Render required deployment inputs before using this template." >&2
+    exit 2
+fi
+
 if [ "$#" -gt 2 ]; then
     printf '%s\n' "Usage: tls_smoke [CA_FILE [HOSTNAME]]" >&2
     exit 2
 fi
 
 ca_file=${1:-}
-hostname=${2:-email.mk8n.com}
+hostname=${2:-@@MK8_MAIL_HOST@@}
 
 reject_protocol() {
     label=$1

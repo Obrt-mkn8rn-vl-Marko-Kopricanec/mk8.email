@@ -33,7 +33,7 @@ namespace mk8.email.Application.Tests;
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
 internal sealed partial class TransportSecurityTests
 {
-    private const string TestUsername = "user@mk8n.com";
+    private const string TestUsername = "user@tenant.example.test";
     private const string TestPassword = "correct horse battery staple";
     // Public synthetic fixture credential only. Avoid generating the same costly
     // password hash on every setup; each login still uses production verification.
@@ -114,7 +114,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadSmtpResponseAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("MAIL FROM:<sender@example.test>").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("250 ", StringComparison.Ordinal));
-        await connection.WriteLineAsync("RCPT TO:<user@mk8n.com>").ConfigureAwait(false);
+        await connection.WriteLineAsync("RCPT TO:<user@tenant.example.test>").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("451 ", StringComparison.Ordinal));
         await connection.WriteLineAsync("NOOP").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("250 ", StringComparison.Ordinal));
@@ -180,7 +180,7 @@ internal sealed partial class TransportSecurityTests
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("+OK ", StringComparison.Ordinal));
         await connection.WriteLineAsync("STLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("+OK ", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"USER {TestUsername}").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("+OK ", StringComparison.Ordinal));
         await connection.WriteLineAsync($"PASS {TestPassword}").ConfigureAwait(false);
@@ -254,7 +254,7 @@ internal sealed partial class TransportSecurityTests
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("* OK ", StringComparison.Ordinal));
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK ", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.AreEqual(
             "a2 NO [UNAVAILABLE] Authentication service unavailable",
@@ -279,7 +279,7 @@ internal sealed partial class TransportSecurityTests
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("* OK ", StringComparison.Ordinal));
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK ", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.AreEqual("a2 OK LOGIN completed", await connection.ReadLineAsync().ConfigureAwait(false), StringComparer.Ordinal);
         await connection.WriteLineAsync("a3 LIST \"\" \"*\"").ConfigureAwait(false);
@@ -304,7 +304,7 @@ internal sealed partial class TransportSecurityTests
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("* OK ", StringComparison.Ordinal));
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK ", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.AreEqual("a2 OK LOGIN completed", await connection.ReadLineAsync().ConfigureAwait(false), StringComparer.Ordinal);
         await connection.WriteLineAsync("a3 STATUS INBOX (MESSAGES UIDNEXT SIZE)").ConfigureAwait(false);
@@ -346,7 +346,7 @@ internal sealed partial class TransportSecurityTests
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("* OK ", StringComparison.Ordinal));
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK ", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.AreEqual("a2 OK LOGIN completed", await connection.ReadLineAsync().ConfigureAwait(false), StringComparer.Ordinal);
         await connection.WriteLineAsync("a3 SELECT INBOX").ConfigureAwait(false);
@@ -372,7 +372,7 @@ internal sealed partial class TransportSecurityTests
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("* OK ", StringComparison.Ordinal));
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK ", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.AreEqual("a2 OK LOGIN completed", await connection.ReadLineAsync().ConfigureAwait(false), StringComparer.Ordinal);
         await connection.WriteLineAsync("a3 SELECT INBOX").ConfigureAwait(false);
@@ -401,7 +401,7 @@ internal sealed partial class TransportSecurityTests
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("* OK ", StringComparison.Ordinal));
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK ", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.AreEqual("a2 OK LOGIN completed", await connection.ReadLineAsync().ConfigureAwait(false), StringComparer.Ordinal);
         await connection.WriteLineAsync("a3 SELECT INBOX").ConfigureAwait(false);
@@ -446,7 +446,7 @@ internal sealed partial class TransportSecurityTests
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("* OK ", StringComparison.Ordinal));
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK ", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.AreEqual("a2 OK LOGIN completed", await connection.ReadLineAsync().ConfigureAwait(false), StringComparer.Ordinal);
         await connection.WriteLineAsync("a3 SELECT INBOX").ConfigureAwait(false);
@@ -545,7 +545,7 @@ internal sealed partial class TransportSecurityTests
 
         await connection.WriteLineAsync("STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("220 ", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
 
         await connection.WriteLineAsync("EHLO client.example").ConfigureAwait(false);
         var capability = await connection.ReadSmtpResponseAsync().ConfigureAwait(false);
@@ -582,7 +582,7 @@ internal sealed partial class TransportSecurityTests
             await smtp.ReadSmtpResponseAsync().ConfigureAwait(false);
             await smtp.WriteLineAsync("STARTTLS").ConfigureAwait(false);
             Assert.IsTrue((await smtp.ReadLineAsync().ConfigureAwait(false)).StartsWith("220 ", StringComparison.Ordinal));
-            await smtp.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+            await smtp.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
             await smtp.WriteLineAsync("EHLO client.example").ConfigureAwait(false);
             StringAssert.Contains(await smtp.ReadSmtpResponseAsync().ConfigureAwait(false), "XOAUTH2", StringComparison.Ordinal);
             await smtp.WriteLineAsync($"AUTH XOAUTH2 {CreateXOAuth2Response(smtpToken)}").ConfigureAwait(false);
@@ -596,7 +596,7 @@ internal sealed partial class TransportSecurityTests
             await imap.ReadLineAsync().ConfigureAwait(false);
             await imap.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
             Assert.IsTrue((await imap.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-            await imap.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+            await imap.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
             await imap.WriteLineAsync("a2 CAPABILITY").ConfigureAwait(false);
             StringAssert.Contains(await imap.ReadLineAsync().ConfigureAwait(false), "AUTH=XOAUTH2", StringComparison.Ordinal);
             Assert.IsTrue((await imap.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
@@ -612,7 +612,7 @@ internal sealed partial class TransportSecurityTests
             await pop3.ReadLineAsync().ConfigureAwait(false);
             await pop3.WriteLineAsync("STLS").ConfigureAwait(false);
             Assert.IsTrue((await pop3.ReadLineAsync().ConfigureAwait(false)).StartsWith("+OK ", StringComparison.Ordinal));
-            await pop3.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+            await pop3.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
             await pop3.WriteLineAsync("CAPA").ConfigureAwait(false);
             CollectionAssert.Contains(
                 await ReadPop3MultilineAsync(pop3).ConfigureAwait(false),
@@ -714,7 +714,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("EHLO client.example").ConfigureAwait(false);
         await connection.ReadSmtpResponseAsync().ConfigureAwait(false);
-        await connection.WriteLineAsync("MAIL FROM:<sender@mk8n.com>").ConfigureAwait(false);
+        await connection.WriteLineAsync("MAIL FROM:<sender@tenant.example.test>").ConfigureAwait(false);
 
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("530 ", StringComparison.Ordinal));
     }
@@ -735,7 +735,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadSmtpResponseAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("MAIL FROM:<sender@example.com>").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("250 ", StringComparison.Ordinal));
-        await connection.WriteLineAsync("RCPT TO:<postmaster@mk8n.com>").ConfigureAwait(false);
+        await connection.WriteLineAsync("RCPT TO:<postmaster@tenant.example.test>").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("250 ", StringComparison.Ordinal));
         await connection.WriteLineAsync("DATA").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("354 ", StringComparison.Ordinal));
@@ -811,7 +811,7 @@ internal sealed partial class TransportSecurityTests
 
         await connection.WriteLineAsync("MAIL FROM:<sender@example.com> BODY=8BITMIME").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("250 ", StringComparison.Ordinal));
-        await connection.WriteLineAsync("RCPT TO:<postmaster@mk8n.com>").ConfigureAwait(false);
+        await connection.WriteLineAsync("RCPT TO:<postmaster@tenant.example.test>").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("250 ", StringComparison.Ordinal));
         await connection.WriteLineAsync("DATA").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("354 ", StringComparison.Ordinal));
@@ -842,12 +842,12 @@ internal sealed partial class TransportSecurityTests
             "MAIL FROM:<josé@example.com> BODY=8BITMIME SMTPUTF8").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("250 ", StringComparison.Ordinal));
         await connection.WriteUtf8LineAsync(
-            @"RCPT TO:<δοκιμή@mk8n.com> ORCPT=utf-8;\x{3B4}\x{3BF}\x{3BA}\x{3B9}\x{3BC}\x{3AE}@mk8n.com").ConfigureAwait(false);
+            @"RCPT TO:<δοκιμή@tenant.example.test> ORCPT=utf-8;\x{3B4}\x{3BF}\x{3BA}\x{3B9}\x{3BC}\x{3AE}@tenant.example.test").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("250 ", StringComparison.Ordinal));
         await connection.WriteLineAsync("DATA").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("354 ", StringComparison.Ordinal));
         await connection.WriteUtf8LineAsync("From: José <josé@example.com>").ConfigureAwait(false);
-        await connection.WriteUtf8LineAsync("To: δοκιμή@mk8n.com").ConfigureAwait(false);
+        await connection.WriteUtf8LineAsync("To: δοκιμή@tenant.example.test").ConfigureAwait(false);
         await connection.WriteUtf8LineAsync("Subject: Žuta pošta").ConfigureAwait(false);
         await connection.WriteLineAsync(string.Empty).ConfigureAwait(false);
         await connection.WriteUtf8LineAsync("Pozdrav iz Zagreba").ConfigureAwait(false);
@@ -858,9 +858,9 @@ internal sealed partial class TransportSecurityTests
         Assert.IsTrue(submission.RequiresSmtpUtf8);
         Assert.AreEqual("josé@example.com", submission.EnvelopeSender, StringComparer.Ordinal);
         var recipient = submission.Recipients.Single();
-        Assert.AreEqual("δοκιμή@mk8n.com", recipient.Address, StringComparer.Ordinal);
+        Assert.AreEqual("δοκιμή@tenant.example.test", recipient.Address, StringComparer.Ordinal);
         Assert.AreEqual(
-            @"utf-8;\x{3B4}\x{3BF}\x{3BA}\x{3B9}\x{3BC}\x{3AE}@mk8n.com",
+            @"utf-8;\x{3B4}\x{3BF}\x{3BA}\x{3B9}\x{3BC}\x{3AE}@tenant.example.test",
             recipient.Dsn!.OriginalRecipient, StringComparer.Ordinal);
         var decoded = Encoding.UTF8.GetString(
             Encoding.Latin1.GetBytes(submission.RawMessage));
@@ -886,7 +886,7 @@ internal sealed partial class TransportSecurityTests
             "MAIL FROM:<sender@example.com> RET=hdrs ENVID=job+2B42+3Ddone").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("250 ", StringComparison.Ordinal));
         await connection.WriteLineAsync(
-            "RCPT TO:<postmaster@mk8n.com> " +
+            "RCPT TO:<postmaster@tenant.example.test> " +
             "NOTIFY=success,failure,delay " +
             "ORCPT=rfc822;old+2Btag+40example.com").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("250 ", StringComparison.Ordinal));
@@ -934,19 +934,19 @@ internal sealed partial class TransportSecurityTests
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("250 ", StringComparison.Ordinal));
 
         await connection.WriteLineAsync(
-            "RCPT TO:<postmaster@mk8n.com> NOTIFY=NEVER,FAILURE").ConfigureAwait(false);
+            "RCPT TO:<postmaster@tenant.example.test> NOTIFY=NEVER,FAILURE").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("501 5.5.4", StringComparison.Ordinal));
         await connection.WriteLineAsync(
-            "RCPT TO:<postmaster@mk8n.com> " +
+            "RCPT TO:<postmaster@tenant.example.test> " +
             "ORCPT=rfc822;one@example.com ORCPT=rfc822;two@example.com").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("501 5.5.4", StringComparison.Ordinal));
         await connection.WriteUtf8LineAsync(
-            "RCPT TO:<postmaster@mk8n.com> ORCPT=utf-8;δοκιμή@example.com").ConfigureAwait(false);
+            "RCPT TO:<postmaster@tenant.example.test> ORCPT=utf-8;δοκιμή@example.com").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("501 5.5.4", StringComparison.Ordinal));
         await connection.WriteLineAsync(
-            @"RCPT TO:<postmaster@mk8n.com> ORCPT=utf-8;\x{3B4}\x{3BF}\x{3BA}\x{3B9}\x{3BC}\x{3AE}@example.com").ConfigureAwait(false);
+            @"RCPT TO:<postmaster@tenant.example.test> ORCPT=utf-8;\x{3B4}\x{3BF}\x{3BA}\x{3B9}\x{3BC}\x{3AE}@example.com").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("250 ", StringComparison.Ordinal));
-        await connection.WriteLineAsync("RCPT TO:<postmaster@mk8n.com> FUTURE=value").ConfigureAwait(false);
+        await connection.WriteLineAsync("RCPT TO:<postmaster@tenant.example.test> FUTURE=value").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("555 5.5.4", StringComparison.Ordinal));
         Assert.AreEqual(0, server.MailQueue.EnqueueCalls);
     }
@@ -971,9 +971,9 @@ internal sealed partial class TransportSecurityTests
 
         await connection.WriteLineAsync("MAIL FROM:<sender@example.com> BODY=8BITMIME").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("250 ", StringComparison.Ordinal));
-        await connection.WriteUtf8LineAsync("RCPT TO:<δοκιμή@mk8n.com>").ConfigureAwait(false);
+        await connection.WriteUtf8LineAsync("RCPT TO:<δοκιμή@tenant.example.test>").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("553 5.6.7", StringComparison.Ordinal));
-        await connection.WriteLineAsync("RCPT TO:<postmaster@mk8n.com>").ConfigureAwait(false);
+        await connection.WriteLineAsync("RCPT TO:<postmaster@tenant.example.test>").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("250 ", StringComparison.Ordinal));
         await connection.WriteLineAsync("DATA").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("354 ", StringComparison.Ordinal));
@@ -1031,7 +1031,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadSmtpResponseAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("MAIL FROM:<sender@example.com>").ConfigureAwait(false);
         await connection.ReadLineAsync().ConfigureAwait(false);
-        await connection.WriteLineAsync("RCPT TO:<postmaster@mk8n.com>").ConfigureAwait(false);
+        await connection.WriteLineAsync("RCPT TO:<postmaster@tenant.example.test>").ConfigureAwait(false);
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("DATA").ConfigureAwait(false);
         await connection.ReadLineAsync().ConfigureAwait(false);
@@ -1045,7 +1045,7 @@ internal sealed partial class TransportSecurityTests
         Assert.IsNotNull(server.MailQueue.LastSubmission);
         StringAssert.StartsWith(server.MailQueue.LastSubmission.RawMessage, "Received: from client.example", StringComparison.Ordinal);
         Assert.AreEqual("sender@example.com", server.MailQueue.LastSubmission.EnvelopeSender, StringComparer.Ordinal);
-        Assert.AreEqual("postmaster@mk8n.com", server.MailQueue.LastSubmission.Recipients.Single().Address, StringComparer.Ordinal);
+        Assert.AreEqual("postmaster@tenant.example.test", server.MailQueue.LastSubmission.Recipients.Single().Address, StringComparer.Ordinal);
         Assert.IsTrue(server.MailQueue.LastSubmission.Recipients.Single().IsLocal);
 
         await connection.WriteLineAsync("DATA").ConfigureAwait(false);
@@ -1126,7 +1126,7 @@ internal sealed partial class TransportSecurityTests
         await using var connectionLifetime = connection.ConfigureAwait(false);
 
         await AuthenticateSmtpAsync(connection).ConfigureAwait(false);
-        await connection.WriteLineAsync("MAIL FROM:<other@mk8n.com>").ConfigureAwait(false);
+        await connection.WriteLineAsync("MAIL FROM:<other@tenant.example.test>").ConfigureAwait(false);
 
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("553 ", StringComparison.Ordinal));
         Assert.AreEqual(0, server.MailQueue.EnqueueCalls);
@@ -1152,7 +1152,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("DATA").ConfigureAwait(false);
         await connection.ReadLineAsync().ConfigureAwait(false);
-        await connection.WriteLineAsync("From: other@mk8n.com").ConfigureAwait(false);
+        await connection.WriteLineAsync("From: other@tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync("To: recipient@example.com").ConfigureAwait(false);
         await connection.WriteLineAsync("Subject: rejected sender").ConfigureAwait(false);
         await connection.WriteLineAsync(string.Empty).ConfigureAwait(false);
@@ -1177,7 +1177,7 @@ internal sealed partial class TransportSecurityTests
         await using var connectionLifetime = connection.ConfigureAwait(false);
 
         await UpgradeSmtpToTlsAsync(connection).ConfigureAwait(false);
-        await connection.WriteLineAsync("MAIL FROM:<other@mk8n.com>").ConfigureAwait(false);
+        await connection.WriteLineAsync("MAIL FROM:<other@tenant.example.test>").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("250 ", StringComparison.Ordinal));
         var credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes($"\0{TestUsername}\0{TestPassword}"));
         await connection.WriteLineAsync($"AUTH PLAIN {credentials}").ConfigureAwait(false);
@@ -1297,7 +1297,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
 
         await connection.WriteLineAsync("a2 CAPABILITY").ConfigureAwait(false);
         var capability = await connection.ReadLineAsync().ConfigureAwait(false);
@@ -1323,7 +1323,7 @@ internal sealed partial class TransportSecurityTests
             await connection.ReadLineAsync().ConfigureAwait(false);
             await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
             Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-            await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+            await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
 
             var credentials = Convert.ToBase64String(
                 Encoding.UTF8.GetBytes($"\0{TestUsername}\0{TestPassword}"));
@@ -1338,10 +1338,10 @@ internal sealed partial class TransportSecurityTests
         await rejected.ReadLineAsync().ConfigureAwait(false);
         await rejected.WriteLineAsync("b1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await rejected.ReadLineAsync().ConfigureAwait(false)).StartsWith("b1 OK", StringComparison.Ordinal));
-        await rejected.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await rejected.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
 
         var proxyCredentials = Convert.ToBase64String(
-            Encoding.UTF8.GetBytes($"other@mk8n.com\0{TestUsername}\0{TestPassword}"));
+            Encoding.UTF8.GetBytes($"other@tenant.example.test\0{TestUsername}\0{TestPassword}"));
         await rejected.WriteLineAsync($"b2 AUTHENTICATE PLAIN {proxyCredentials}").ConfigureAwait(false);
         Assert.IsTrue((await rejected.ReadLineAsync().ConfigureAwait(false)).StartsWith("b2 NO", StringComparison.Ordinal));
         await rejected.WriteLineAsync($"b3 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
@@ -1364,7 +1364,7 @@ internal sealed partial class TransportSecurityTests
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 BAD", StringComparison.Ordinal));
         await connection.WriteLineAsync("a2 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a3 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a3 OK", StringComparison.Ordinal));
 
@@ -1391,7 +1391,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
 
@@ -1415,7 +1415,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
 
@@ -1457,7 +1457,7 @@ internal sealed partial class TransportSecurityTests
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("-ERR [AUTH]", StringComparison.Ordinal));
         await connection.WriteLineAsync("STLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("+OK ", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
 
         await connection.WriteLineAsync("CAPA").ConfigureAwait(false);
         var secureCapabilities = await ReadPop3MultilineAsync(connection).ConfigureAwait(false);
@@ -1517,7 +1517,7 @@ internal sealed partial class TransportSecurityTests
         {
             var connection = (await ProtocolConnection.ConnectAsync(port).ConfigureAwait(false));
             await using var connectionLifetime = connection.ConfigureAwait(false);
-            await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+            await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
             Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("+OK ", StringComparison.Ordinal));
             var credentials = Convert.ToBase64String(
                 Encoding.UTF8.GetBytes($"\0{TestUsername}\0{TestPassword}"));
@@ -1547,7 +1547,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
 
@@ -1594,7 +1594,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
 
         await connection.WriteRawAsync(
             $"a2 LOGIN {{{TestUsername.Length}+}}\r\n{TestUsername} {{{TestPassword.Length}+}}\r\n{TestPassword}\r\n").ConfigureAwait(false);
@@ -1630,11 +1630,11 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
 
-        const string message = "From: user@mk8n.com\r\nTo: user@mk8n.com\r\nSubject: literal mailbox\r\n\r\nbody\r\n";
+        const string message = "From: user@tenant.example.test\r\nTo: user@tenant.example.test\r\nSubject: literal mailbox\r\n\r\nbody\r\n";
         await connection.WriteRawAsync($"a3 APPEND {{4+}}\r\nSent {{{message.Length}}}\r\n").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("+ ", StringComparison.Ordinal));
         await connection.WriteRawAsync(message).ConfigureAwait(false);
@@ -1679,10 +1679,10 @@ internal sealed partial class TransportSecurityTests
         await append.ReadLineAsync().ConfigureAwait(false);
         await append.WriteLineAsync("c1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await append.ReadLineAsync().ConfigureAwait(false)).StartsWith("c1 OK", StringComparison.Ordinal));
-        await append.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await append.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await append.WriteLineAsync($"c2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await append.ReadLineAsync().ConfigureAwait(false)).StartsWith("c2 OK", StringComparison.Ordinal));
-        const string message = "From: user@mk8n.com\r\nTo: user@mk8n.com\r\nSubject: long continuation\r\n\r\nbody\r\n";
+        const string message = "From: user@tenant.example.test\r\nTo: user@tenant.example.test\r\nSubject: long continuation\r\n\r\nbody\r\n";
         await append.WriteLineAsync($"c3 APPEND \"Sent\" {{{message.Length}}}").ConfigureAwait(false);
         Assert.IsTrue((await append.ReadLineAsync().ConfigureAwait(false)).StartsWith("+ ", StringComparison.Ordinal));
         await append.WriteRawAsync(message).ConfigureAwait(false);
@@ -1705,7 +1705,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
 
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
@@ -1747,7 +1747,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
 
@@ -1823,7 +1823,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
 
@@ -1842,8 +1842,8 @@ internal sealed partial class TransportSecurityTests
             line.EndsWith("\"Projects/&U,BTFw-\"", StringComparison.Ordinal)));
 
         const string message =
-            "From: user@mk8n.com\r\n" +
-            "To: user@mk8n.com\r\n" +
+            "From: user@tenant.example.test\r\n" +
+            "To: user@tenant.example.test\r\n" +
             "Subject: international mailbox\r\n" +
             "\r\n" +
             "body\r\n";
@@ -1905,7 +1905,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
 
@@ -1913,8 +1913,8 @@ internal sealed partial class TransportSecurityTests
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a3 BAD", StringComparison.Ordinal));
 
         const string internationalMessage =
-            "From: user@mk8n.com\r\n" +
-            "To: user@mk8n.com\r\n" +
+            "From: user@tenant.example.test\r\n" +
+            "To: user@tenant.example.test\r\n" +
             "Subject: Žuta pošta\r\n" +
             "\r\n" +
             "Pozdrav\r\n";
@@ -1972,7 +1972,7 @@ internal sealed partial class TransportSecurityTests
         Assert.AreEqual("Žuta pošta", (await server.GetStoredEmailAsync(DefaultFolders.Inbox).ConfigureAwait(false)).Subject, StringComparer.Ordinal);
 
         var invalidHeaderPrefix = Encoding.ASCII.GetBytes(
-            "From: user@mk8n.com\r\nTo: user@mk8n.com\r\nSubject: ");
+            "From: user@tenant.example.test\r\nTo: user@tenant.example.test\r\nSubject: ");
         var invalidHeaderMessage = invalidHeaderPrefix
             .Concat(new byte[] { 0xc3, 0x28 })
             .Concat(Encoding.ASCII.GetBytes("\r\n\r\nbody\r\n"))
@@ -2011,7 +2011,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
 
@@ -2093,7 +2093,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
         await connection.WriteLineAsync("a3 SELECT INBOX").ConfigureAwait(false);
@@ -2134,7 +2134,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
         await connection.WriteLineAsync("a3 SELECT INBOX").ConfigureAwait(false);
@@ -2202,7 +2202,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
         await connection.WriteLineAsync("a3 SELECT INBOX").ConfigureAwait(false);
@@ -2295,7 +2295,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
         await connection.WriteLineAsync("a3 SELECT INBOX").ConfigureAwait(false);
@@ -2363,7 +2363,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
         await connection.WriteLineAsync("a3 SELECT INBOX").ConfigureAwait(false);
@@ -2412,7 +2412,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
         await connection.WriteLineAsync("a3 SELECT INBOX").ConfigureAwait(false);
@@ -2496,7 +2496,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
         await connection.WriteLineAsync("a3 SELECT INBOX").ConfigureAwait(false);
@@ -2563,7 +2563,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
         await connection.WriteLineAsync("a3 SELECT INBOX").ConfigureAwait(false);
@@ -2633,13 +2633,13 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
 
         const string message =
-            "From: user@mk8n.com\r\n" +
-            "To: user@mk8n.com\r\n" +
+            "From: user@tenant.example.test\r\n" +
+            "To: user@tenant.example.test\r\n" +
             "Subject: café\r\n" +
             "\r\n" +
             "\r\nbody é\r\n";
@@ -2679,19 +2679,19 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
 
         const string firstMessage =
-            "From: user@mk8n.com\r\n" +
-            "To: user@mk8n.com\r\n" +
+            "From: user@tenant.example.test\r\n" +
+            "To: user@tenant.example.test\r\n" +
             "Subject: first\r\n" +
             "\r\n" +
             "first body\r\n";
         const string secondMessage =
-            "From: user@mk8n.com\r\n" +
-            "To: user@mk8n.com\r\n" +
+            "From: user@tenant.example.test\r\n" +
+            "To: user@tenant.example.test\r\n" +
             "Subject: second\r\n" +
             "\r\n" +
             "second body\r\n";
@@ -2745,13 +2745,13 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
 
         const string message =
-            "From: user@mk8n.com\r\n" +
-            "To: user@mk8n.com\r\n" +
+            "From: user@tenant.example.test\r\n" +
+            "To: user@tenant.example.test\r\n" +
             "Subject: keyword persistence\r\n" +
             "\r\n" +
             "tagged message\r\n";
@@ -2858,25 +2858,25 @@ internal sealed partial class TransportSecurityTests
         await writerConnection.ReadLineAsync().ConfigureAwait(false);
         await writerConnection.WriteLineAsync("w1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await writerConnection.ReadLineAsync().ConfigureAwait(false)).StartsWith("w1 OK", StringComparison.Ordinal));
-        await writerConnection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await writerConnection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await writerConnection.WriteLineAsync($"w2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await writerConnection.ReadLineAsync().ConfigureAwait(false)).StartsWith("w2 OK", StringComparison.Ordinal));
 
         await idleConnection.ReadLineAsync().ConfigureAwait(false);
         await idleConnection.WriteLineAsync("r1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await idleConnection.ReadLineAsync().ConfigureAwait(false)).StartsWith("r1 OK", StringComparison.Ordinal));
-        await idleConnection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await idleConnection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await idleConnection.WriteLineAsync($"r2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await idleConnection.ReadLineAsync().ConfigureAwait(false)).StartsWith("r2 OK", StringComparison.Ordinal));
 
         const string firstMessage =
-            "From: user@mk8n.com\r\nTo: user@mk8n.com\r\n" +
+            "From: user@tenant.example.test\r\nTo: user@tenant.example.test\r\n" +
             "Subject: first idle message\r\n\r\nfirst\r\n";
         const string secondMessage =
-            "From: user@mk8n.com\r\nTo: user@mk8n.com\r\n" +
+            "From: user@tenant.example.test\r\nTo: user@tenant.example.test\r\n" +
             "Subject: second idle message\r\n\r\nsecond\r\n";
         const string thirdMessage =
-            "From: user@mk8n.com\r\nTo: user@mk8n.com\r\n" +
+            "From: user@tenant.example.test\r\nTo: user@tenant.example.test\r\n" +
             "Subject: third idle message\r\n\r\nthird\r\n";
 
         await writerConnection.WriteLineAsync($"w3 APPEND INBOX {{{firstMessage.Length}}}").ConfigureAwait(false);
@@ -2958,8 +2958,8 @@ internal sealed partial class TransportSecurityTests
         var server = (await ServerFixture.StartImapAsync(environment, port).ConfigureAwait(false));
         await using var serverLifetime = server.ConfigureAwait(false);
         const string message =
-            "From: user@mk8n.com\r\n" +
-            "To: user@mk8n.com\r\n" +
+            "From: user@tenant.example.test\r\n" +
+            "To: user@tenant.example.test\r\n" +
             "Subject: quota\r\n" +
             "\r\n" +
             "body\r\n";
@@ -2970,7 +2970,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
 
@@ -3004,7 +3004,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
 
@@ -3053,7 +3053,7 @@ internal sealed partial class TransportSecurityTests
             await connection.ReadLineAsync().ConfigureAwait(false);
             await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
             Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-            await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+            await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
             await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
             Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
             await connection.WriteLineAsync($"a3 APPEND INBOX {{{message.Length}}}").ConfigureAwait(false);
@@ -3100,7 +3100,7 @@ internal sealed partial class TransportSecurityTests
             await connection.ReadLineAsync().ConfigureAwait(false);
             await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
             Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-            await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+            await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
             await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
             Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
             await connection.WriteLineAsync("a3 SELECT INBOX").ConfigureAwait(false);
@@ -3149,7 +3149,7 @@ internal sealed partial class TransportSecurityTests
             await connection.ReadLineAsync().ConfigureAwait(false);
             await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
             Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-            await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+            await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
             await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
             Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
             await connection.WriteLineAsync("a3 SELECT INBOX").ConfigureAwait(false);
@@ -3198,7 +3198,7 @@ internal sealed partial class TransportSecurityTests
             await connection.ReadLineAsync().ConfigureAwait(false);
             await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
             Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-            await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+            await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
             await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
             Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
             await connection.WriteLineAsync("a3 SELECT INBOX").ConfigureAwait(false);
@@ -3250,7 +3250,7 @@ internal sealed partial class TransportSecurityTests
             await connection.ReadLineAsync().ConfigureAwait(false);
             await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
             Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-            await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+            await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
             await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
             Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
             await connection.WriteLineAsync("a3 SELECT INBOX").ConfigureAwait(false);
@@ -3299,7 +3299,7 @@ internal sealed partial class TransportSecurityTests
             await connection.ReadLineAsync().ConfigureAwait(false);
             await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
             Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-            await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+            await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
             await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
             Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
             await connection.WriteLineAsync("a3 SELECT INBOX").ConfigureAwait(false);
@@ -3337,7 +3337,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
         await connection.WriteLineAsync("a3 SELECT INBOX").ConfigureAwait(false);
@@ -3373,7 +3373,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
         await connection.WriteLineAsync("a3 SELECT INBOX").ConfigureAwait(false);
@@ -3398,8 +3398,8 @@ internal sealed partial class TransportSecurityTests
         await using var serverLifetime = server.ConfigureAwait(false);
         await server.SeedSentMessagesWithReverseDatesAsync().ConfigureAwait(false);
         const string message =
-            "From: user@mk8n.com\r\n" +
-            "To: user@mk8n.com\r\n" +
+            "From: user@tenant.example.test\r\n" +
+            "To: user@tenant.example.test\r\n" +
             "Subject: bounded append\r\n\r\n" +
             "body\r\n";
         var connections = new List<ProtocolConnection>();
@@ -3413,7 +3413,7 @@ internal sealed partial class TransportSecurityTests
                 await connection.ReadLineAsync().ConfigureAwait(false);
                 await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
                 Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-                await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+                await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
                 await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
                 Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
                 await connection.WriteLineAsync("a3 SELECT Sent").ConfigureAwait(false);
@@ -3480,7 +3480,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
 
@@ -3521,7 +3521,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
         await connection.WriteLineAsync("a3 SELECT Sent").ConfigureAwait(false);
@@ -3602,7 +3602,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
         await connection.WriteLineAsync($"a3 APPEND Sent {{{message.Length}}}").ConfigureAwait(false);
@@ -3692,7 +3692,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
         await connection.WriteLineAsync($"a3 APPEND Sent {{{message.Length}}}").ConfigureAwait(false);
@@ -3813,7 +3813,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
 
@@ -3952,7 +3952,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
         await connection.WriteLineAsync("a3 SELECT Sent").ConfigureAwait(false);
@@ -3999,7 +3999,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
         await connection.WriteLineAsync("a3 SELECT Sent").ConfigureAwait(false);
@@ -4051,7 +4051,7 @@ internal sealed partial class TransportSecurityTests
             await connection.ReadLineAsync().ConfigureAwait(false);
             await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
             Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-            await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+            await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
             await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
             Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
             await connection.WriteLineAsync("a3 ENABLE QRESYNC").ConfigureAwait(false);
@@ -4074,7 +4074,7 @@ internal sealed partial class TransportSecurityTests
         await reconnect.ReadLineAsync().ConfigureAwait(false);
         await reconnect.WriteLineAsync("b1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await reconnect.ReadLineAsync().ConfigureAwait(false)).StartsWith("b1 OK", StringComparison.Ordinal));
-        await reconnect.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await reconnect.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await reconnect.WriteLineAsync($"b2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await reconnect.ReadLineAsync().ConfigureAwait(false)).StartsWith("b2 OK", StringComparison.Ordinal));
         await reconnect.WriteLineAsync("b3 ENABLE QRESYNC").ConfigureAwait(false);
@@ -4103,7 +4103,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadLineAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("a1 STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a1 OK", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync($"a2 LOGIN \"{TestUsername}\" \"{TestPassword}\"").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("a2 OK", StringComparison.Ordinal));
         await connection.WriteLineAsync("a3 SELECT Sent").ConfigureAwait(false);
@@ -4200,7 +4200,7 @@ internal sealed partial class TransportSecurityTests
         {
             Smtp = new SmtpConfig
             {
-                Hostname = "email.mk8n.com",
+                Hostname = "email.tenant.example.test",
                 Port = smtpPort ?? ReservePort(),
                 SubmissionPort = submissionPort ?? ReservePort(),
                 ImplicitTlsPort = smtpImplicitTlsPort ?? ReservePort(),
@@ -4229,7 +4229,7 @@ internal sealed partial class TransportSecurityTests
             OAuth = new OAuthConfig
             {
                 EnableOAuth = enableOAuth,
-                PublicBaseUrl = "https://email.mk8n.com",
+                PublicBaseUrl = "https://email.tenant.example.test",
                 ClientId = "thunderbird",
             },
             Tls = new TlsConfig
@@ -4311,7 +4311,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadSmtpResponseAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("MAIL FROM:<sender@example.com>").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("250 ", StringComparison.Ordinal));
-        await connection.WriteLineAsync("RCPT TO:<postmaster@mk8n.com>").ConfigureAwait(false);
+        await connection.WriteLineAsync("RCPT TO:<postmaster@tenant.example.test>").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("250 ", StringComparison.Ordinal));
     }
 
@@ -4322,7 +4322,7 @@ internal sealed partial class TransportSecurityTests
         await connection.ReadSmtpResponseAsync().ConfigureAwait(false);
         await connection.WriteLineAsync("STARTTLS").ConfigureAwait(false);
         Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("220 ", StringComparison.Ordinal));
-        await connection.UpgradeToTlsAsync("email.mk8n.com").ConfigureAwait(false);
+        await connection.UpgradeToTlsAsync("email.tenant.example.test").ConfigureAwait(false);
         await connection.WriteLineAsync("EHLO client.example").ConfigureAwait(false);
         await connection.ReadSmtpResponseAsync().ConfigureAwait(false);
     }
@@ -4503,7 +4503,7 @@ internal sealed partial class TransportSecurityTests
             CancellationToken cancellationToken = default) => listingUnavailable
             ? Task.FromException<ImapMailboxListResult>(new IOException("Worker unavailable"))
             : Task.FromResult(new ImapMailboxListResult(
-                [new ImapMailboxInfo("user", "mk8n.com", "INBOX", true, true)]));
+                [new ImapMailboxInfo("user", "tenant.example.test", "INBOX", true, true)]));
 
         public Task<ImapMailboxStatusResult> GetMailboxStatusesAsync(
             ImapMailboxStatusRequest request,
@@ -4838,7 +4838,7 @@ internal sealed partial class TransportSecurityTests
         {
             using var scope = services.CreateScope();
             var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
-            var address = await database.Addresses.SingleAsync(item => item.Domain == "mk8n.com").ConfigureAwait(false);
+            var address = await database.Addresses.SingleAsync(item => item.Domain == "tenant.example.test").ConfigureAwait(false);
             address.IsActive = false;
             await database.SaveChangesAsync().ConfigureAwait(false);
         }
@@ -4960,7 +4960,7 @@ internal sealed partial class TransportSecurityTests
                 var address = new AddressDB
                 {
                     Id = Guid.CreateVersion7(),
-                    Domain = "mk8n.com",
+                    Domain = "tenant.example.test",
                     IsActive = true,
                     Company = company,
                 };

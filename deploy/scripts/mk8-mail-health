@@ -1,6 +1,12 @@
 #!/bin/sh
 set -eu
 
+# Refuse tracked templates before any target or service mutation.
+if LC_ALL=C grep -Eq '[@]{2}MK8_[A-Z0-9_]+[@]{2}' "$0"; then
+    printf '%s\n' "Render required deployment inputs before using this template." >&2
+    exit 2
+fi
+
 deep=false
 strict=false
 for option in "$@"; do
@@ -164,7 +170,7 @@ timeout 20s runuser -u mk8email -- /usr/bin/dotnet \
     >/dev/null 2>&1 \
     || record_error "A Gateway mail listener is not ready."
 curl --silent --fail --max-time 10 --noproxy '*' \
-    --header 'Host: admin.mk8n.com' \
+    --header 'Host: @@MK8_ADMIN_HOST@@' \
     http://127.0.0.1:8080/health/ready >/dev/null \
     || record_error "The Gateway durable transport is not ready."
 signature_path=$(find /var/lib/clamav -maxdepth 1 -type f \
@@ -299,38 +305,38 @@ esac
 openssl x509 -in /etc/mk8email/tls/fullchain.pem -noout -checkend 1209600 >/dev/null 2>&1 \
     || record_error "The mail certificate expires within 14 days."
 openssl x509 -in /etc/mk8email/tls/fullchain.pem -noout \
-    -checkhost email.mk8n.com >/dev/null 2>&1 \
-    || record_error "The mail certificate does not cover email.mk8n.com."
+    -checkhost @@MK8_MAIL_HOST@@ >/dev/null 2>&1 \
+    || record_error "The mail certificate does not cover @@MK8_MAIL_HOST@@."
 openssl x509 -in /etc/mk8email/admin-tls/fullchain.pem -noout -checkend 1209600 >/dev/null 2>&1 \
     || record_error "The administrator certificate expires within 14 days."
 openssl x509 -in /etc/mk8email/admin-tls/fullchain.pem -noout \
-    -checkhost admin.mk8n.com >/dev/null 2>&1 \
-    || record_error "The administrator certificate does not cover admin.mk8n.com."
+    -checkhost @@MK8_ADMIN_HOST@@ >/dev/null 2>&1 \
+    || record_error "The administrator certificate does not cover @@MK8_ADMIN_HOST@@."
 mail_certificate_remaining=$(certificate_remaining /etc/mk8email/tls/fullchain.pem)
 admin_certificate_remaining=$(certificate_remaining /etc/mk8email/admin-tls/fullchain.pem)
 curl --silent --fail --insecure --max-time 10 \
     --noproxy '*' \
-    --resolve admin.mk8n.com:8443:@@MK8_SERVER_IPV4@@ \
-    https://admin.mk8n.com:8443/health/ready >/dev/null \
+    --resolve @@MK8_ADMIN_HOST@@:8443:@@MK8_SERVER_IPV4@@ \
+    https://@@MK8_ADMIN_HOST@@:8443/health/ready >/dev/null \
     || record_error "The administrator dashboard is not ready."
 curl --silent --fail --insecure --max-time 10 --noproxy '*' \
     --request OPTIONS \
-    --resolve email.mk8n.com:443:127.0.0.1 \
-    https://email.mk8n.com/dav/ >/dev/null \
+    --resolve @@MK8_MAIL_HOST@@:443:127.0.0.1 \
+    https://@@MK8_MAIL_HOST@@/dav/ >/dev/null \
     || record_error "The public DAV service is not ready."
 curl --silent --fail --insecure --max-time 10 --noproxy '*' \
-    --resolve email.mk8n.com:443:127.0.0.1 \
-    https://email.mk8n.com/.well-known/oauth-authorization-server \
+    --resolve @@MK8_MAIL_HOST@@:443:127.0.0.1 \
+    https://@@MK8_MAIL_HOST@@/.well-known/oauth-authorization-server \
     | grep -F '"code_challenge_methods_supported":["S256"]' >/dev/null \
     || record_error "The public OAuth discovery service is not ready."
 curl --silent --fail --insecure --max-time 10 --noproxy '*' \
-    --resolve email.mk8n.com:443:127.0.0.1 \
-    https://email.mk8n.com/.well-known/openid-configuration \
+    --resolve @@MK8_MAIL_HOST@@:443:127.0.0.1 \
+    https://@@MK8_MAIL_HOST@@/.well-known/openid-configuration \
     | grep -F '"id_token_signing_alg_values_supported":["RS256"]' >/dev/null \
     || record_error "The public OpenID Connect discovery service is not ready."
 curl --silent --fail --insecure --max-time 10 --noproxy '*' \
-    --resolve email.mk8n.com:443:127.0.0.1 \
-    https://email.mk8n.com/oauth/jwks \
+    --resolve @@MK8_MAIL_HOST@@:443:127.0.0.1 \
+    https://@@MK8_MAIL_HOST@@/oauth/jwks \
     | grep -F '"alg":"RS256"' >/dev/null \
     || record_error "The public OpenID Connect signing keys are not ready."
 
@@ -442,7 +448,7 @@ esac
 
 if [ "$deep" = true ]; then
     curl --silent --fail --max-time 30 --noproxy '*' \
-        --header 'Host: admin.mk8n.com' \
+        --header 'Host: @@MK8_ADMIN_HOST@@' \
         http://127.0.0.1:8080/health/application >/dev/null \
         || record_error "The Application Worker did not complete the Gateway probe."
     if [ -n "$latest_backup" ] && [ -s "$latest_backup/SHA256SUMS" ]; then

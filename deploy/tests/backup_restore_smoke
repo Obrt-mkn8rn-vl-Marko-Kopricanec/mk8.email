@@ -1,6 +1,12 @@
 #!/bin/sh
 set -eu
 
+# Refuse tracked templates before any target or service mutation.
+if LC_ALL=C grep -Eq '[@]{2}MK8_[A-Z0-9_]+[@]{2}' "$0"; then
+    printf '%s\n' "Render required deployment inputs before using this template." >&2
+    exit 2
+fi
+
 test "$#" -eq 1
 backup_directory=$1
 test_database=mk8email_restore_smoke
@@ -134,19 +140,19 @@ tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
     | grep -Fx 'usr/local/share/mk8email/postgresql/restricted-role-posture.sql' >/dev/null
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
-    | grep -Fx 'etc/mk8email/domains/mk8n.com/dkim-selector' >/dev/null
+    | grep -Fx 'etc/mk8email/domains/@@MK8_PRIMARY_DOMAIN@@/dkim-selector' >/dev/null
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
     | grep -Fx 'etc/mk8email/secrets/mfa_encryption_key' >/dev/null
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
     | grep -Fx 'etc/mk8email/secrets/oidc_signing_key.pem' >/dev/null
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
-    | grep -E '^etc/mk8email/dkim/mk8n[.]com/[a-z0-9]+[.]private[.]pem$' >/dev/null
+    | grep -Fx 'etc/mk8email/dkim/@@MK8_PRIMARY_DOMAIN@@/@@MK8_DKIM_SELECTOR@@.private.pem' >/dev/null
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
-    | grep -Fx 'etc/mk8email/domains/mk8n.com/tls/fullchain.pem' >/dev/null
+    | grep -Fx 'etc/mk8email/domains/@@MK8_PRIMARY_DOMAIN@@/tls/fullchain.pem' >/dev/null
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
-    | grep -Fx 'etc/nginx/mk8email-domains.d/mk8n.com.conf' >/dev/null
+    | grep -Fx 'etc/nginx/mk8email-domains.d/@@MK8_PRIMARY_DOMAIN@@.conf' >/dev/null
 tar --list --gzip --file="$backup_directory/configuration.tar.gz" \
-    | grep -Fx 'var/www/mk8email-domains/mk8n.com/autoconfig/mail/config-v1.1.xml' >/dev/null
+    | grep -Fx 'var/www/mk8email-domains/@@MK8_PRIMARY_DOMAIN@@/autoconfig/mail/config-v1.1.xml' >/dev/null
 test -s "$backup_directory/debian-packages.tsv"
 test -s "$backup_directory/debian-manual-packages.txt"
 test -s "$backup_directory/os-release"
@@ -159,12 +165,12 @@ runuser -u postgres -- pg_restore --exit-on-error --no-owner --no-acl \
 
 account_count=$(runuser -u postgres -- psql --quiet --tuples-only --no-align \
     --dbname="$test_database" \
-    --command="SELECT count(*) FROM users WHERE is_active AND username IN ('admin@mk8n.com', 'mk8n@mk8n.com')")
+    --command="SELECT count(*) FROM users WHERE is_active AND username IN ('@@MK8_ADMIN_LOCAL_PART@@@@@MK8_PRIMARY_DOMAIN@@', '@@MK8_PRIMARY_LOCAL_PART@@@@@MK8_PRIMARY_DOMAIN@@')")
 test "$account_count" -eq 2
 
 catchall_count=$(runuser -u postgres -- psql --quiet --tuples-only --no-align \
     --dbname="$test_database" \
-    --command="SELECT count(*) FROM inboxes source JOIN addresses source_domain ON source_domain.id = source.address_id JOIN inboxes target ON target.id = source.alias_for_inbox_id JOIN addresses target_domain ON target_domain.id = target.address_id WHERE source.name = '*' AND source_domain.domain = 'mk8n.com' AND target.name = 'mk8n' AND target_domain.domain = 'mk8n.com'")
+    --command="SELECT count(*) FROM inboxes source JOIN addresses source_domain ON source_domain.id = source.address_id JOIN inboxes target ON target.id = source.alias_for_inbox_id JOIN addresses target_domain ON target_domain.id = target.address_id WHERE source.name = '*' AND source_domain.domain = '@@MK8_PRIMARY_DOMAIN@@' AND target.name = '@@MK8_PRIMARY_LOCAL_PART@@' AND target_domain.domain = '@@MK8_PRIMARY_DOMAIN@@'")
 test "$catchall_count" -eq 1
 
 echo "Backup checksums, archives, accounts, and catch-all restore tests passed."

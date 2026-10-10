@@ -14,12 +14,18 @@ from email.message import EmailMessage
 from email.parser import BytesParser
 from pathlib import Path
 
+# This is an operator template, not a configured target.
+import re
+if re.search(r"[@]{2}MK8_[A-Z0-9_]+[@]{2}", Path(__file__).read_text(encoding="utf-8")):
+    raise RuntimeError("Render required deployment inputs before using this template.")
+
+
 
 LOCAL_HOST = "127.0.0.1"
 INBOUND_HOST = "@@MK8_SERVER_IPV4@@"
-DOMAIN = "mk8n.com"
-ADMIN = f"admin@{DOMAIN}"
-PRIMARY = f"mk8n@{DOMAIN}"
+DOMAIN = "@@MK8_PRIMARY_DOMAIN@@"
+ADMIN = f"@@MK8_ADMIN_LOCAL_PART@@@{DOMAIN}"
+PRIMARY = f"@@MK8_PRIMARY_LOCAL_PART@@@{DOMAIN}"
 ENCRYPTED_EICAR_ZIP = base64.b64decode(
     "UEsDBC0ACQAAALcQJF08z1Fo//////////8BABQALQEAEABEAAAAAAAAAFAAAAAAAAAA"
     "Cy18tiyQY8pkaPOWeZ96AV8BDLdCpeSUktp1qzQN+oGuoGyYzqnJUwO/UQGHJZZzy"
@@ -50,7 +56,7 @@ def contains_marker(raw: bytes, marker: str) -> bool:
 
 def message(recipient: str, marker: str, body: str = "Local production smoke test.") -> EmailMessage:
     value = EmailMessage()
-    value["From"] = "probe@debian.org"
+    value["From"] = "probe@example.invalid"
     value["To"] = recipient
     value["Subject"] = f"mk8.email smoke {marker}"
     value["X-Mk8-Test"] = marker
@@ -65,7 +71,7 @@ def send_inbound(value: EmailMessage) -> None:
     for attempt in range(3):
         try:
             with smtplib.SMTP(INBOUND_HOST, 25, timeout=30) as client:
-                client.ehlo("probe.debian.org")
+                client.ehlo("probe.example.invalid")
                 client.send_message(value, mail_options=[f"ENVID={marker}"])
             return
         except smtplib.SMTPRecipientsRefused as error:
@@ -82,10 +88,10 @@ def send_submission(value: EmailMessage, password: str, implicit_tls: bool) -> N
     else:
         client = smtplib.SMTP(LOCAL_HOST, 587, timeout=30)
     with client:
-        client.ehlo("probe.debian.org")
+        client.ehlo("probe.example.invalid")
         if not implicit_tls:
             client.starttls(context=tls_context())
-            client.ehlo("probe.debian.org")
+            client.ehlo("probe.example.invalid")
         client.login(ADMIN, password)
         client.send_message(value)
 
@@ -244,7 +250,7 @@ def test_manage_sieve(account: str, password: str) -> None:
         require(read_sieve_line(raw_stream).startswith(b"OK"), "ManageSieve rejected STARTTLS.")
         raw_stream.close()
 
-        tls_socket = tls_context().wrap_socket(raw_socket, server_hostname="email.mk8n.com")
+        tls_socket = tls_context().wrap_socket(raw_socket, server_hostname="@@MK8_MAIL_HOST@@")
         stream = tls_socket.makefile("rwb", buffering=0)
         capabilities = read_sieve_capabilities(stream)
         require(b'"SASL" "PLAIN"' in capabilities, "ManageSieve did not advertise SASL PLAIN over TLS.")
@@ -320,7 +326,7 @@ def queue_status(marker: str) -> tuple[str, int]:
             "The queue marker is not safe.")
     query = (
         "SELECT state || '|' || attempt_count FROM mail_queue_messages "
-        f"WHERE dsn_envelope_id = '{marker}' AND envelope_sender = 'probe@debian.org' "
+        f"WHERE dsn_envelope_id = '{marker}' AND envelope_sender = 'probe@example.invalid' "
         "AND direction = 'inbound' ORDER BY received_at DESC LIMIT 1"
     )
     result = subprocess.run(
@@ -381,6 +387,7 @@ def purge_quarantined_smoke_message(marker: str) -> None:
             "--purge-quarantined-smoke-message",
             "/etc/mk8email/mk8email.worker.config.json",
             marker,
+            "probe@example.invalid",
         ],
         check=True,
         timeout=35,
@@ -389,20 +396,20 @@ def purge_quarantined_smoke_message(marker: str) -> None:
 
 def test_open_relay() -> None:
     with smtplib.SMTP(INBOUND_HOST, 25, timeout=30) as client:
-        client.ehlo("probe.debian.org")
+        client.ehlo("probe.example.invalid")
         require(client.has_extn("8bitmime"), "mk8.email did not advertise 8BITMIME.")
         require(client.has_extn("smtputf8"), "mk8.email did not advertise SMTPUTF8.")
         require(client.has_extn("dsn"), "mk8.email did not advertise DSN.")
-        require(client.mail("probe@debian.org")[0] == 250, "The relay test sender was not accepted.")
-        code, _ = client.rcpt("recipient@debian.org")
+        require(client.mail("probe@example.invalid")[0] == 250, "The relay test sender was not accepted.")
+        code, _ = client.rcpt("recipient@example.invalid")
         require(code in (550, 554), "mk8.email accepted an unauthenticated relay recipient.")
 
 
 def test_sender_mismatch(password: str) -> None:
     with smtplib.SMTP(LOCAL_HOST, 587, timeout=30) as client:
-        client.ehlo("probe.debian.org")
+        client.ehlo("probe.example.invalid")
         client.starttls(context=tls_context())
-        client.ehlo("probe.debian.org")
+        client.ehlo("probe.example.invalid")
         client.login(ADMIN, password)
         code, _ = client.mail(PRIMARY)
         if code < 400:
@@ -524,8 +531,8 @@ def main() -> None:
         "mode",
         choices=("baseline", "unsafe", "scanner-down", "queue-send", "queue-receive", "subject-receive"),
     )
-    parser.add_argument("--admin-password-file", default="/etc/mk8email/bootstrap-secrets/admin.password")
-    parser.add_argument("--primary-password-file", default="/etc/mk8email/bootstrap-secrets/mk8n.password")
+    parser.add_argument("--admin-password-file", default="/etc/mk8email/bootstrap-secrets/@@MK8_ADMIN_LOCAL_PART@@.password")
+    parser.add_argument("--primary-password-file", default="/etc/mk8email/bootstrap-secrets/@@MK8_PRIMARY_LOCAL_PART@@.password")
     parser.add_argument("--account")
     parser.add_argument("--marker")
     parser.add_argument("--subject")

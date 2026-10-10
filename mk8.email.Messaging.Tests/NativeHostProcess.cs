@@ -11,14 +11,21 @@ internal sealed class NativeHostProcess : IAsyncDisposable
     private readonly Task<string> _error;
     private readonly TestContext _context;
     private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private Task? _exiting;
+    private readonly Task _exiting;
+    private readonly TaskCompletionSource<Task> _stopBody = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private const int StopRequested = 1;
+    private const int StopAdmissionClosed = 2;
+    private int _stopState;
+    public Task GracefulCompleting { get; }
 
     private NativeHostProcess(Process process, TestContext context)
     {
         _process = process;
         _context = context;
+        GracefulCompleting = _stopBody.Task.Unwrap();
         _output = ReadOutputAsync(process.StandardOutput);
         _error = process.StandardError.ReadToEndAsync(CancellationToken.None);
+        _exiting = process.WaitForExitAsync(CancellationToken.None);
     }
 
     public bool HasExited => _process.HasExited;
@@ -90,13 +97,42 @@ internal sealed class NativeHostProcess : IAsyncDisposable
 
     public async Task RequireSuccessfulExitAsync(CancellationToken cancellationToken)
     {
-        await _process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+        await _exiting.WaitAsync(cancellationToken).ConfigureAwait(false);
         // Bound this caller's wait without cancelling the independently owned read.
         Assert.AreEqual(0, _process.ExitCode, await _error.WaitAsync(cancellationToken).ConfigureAwait(false));
     }
 
+    public Task RequestGracefulStopAsync(CancellationToken cancellationToken)
+    {
+        var previous = Interlocked.CompareExchange(ref _stopState, StopRequested, 0);
+        if ((previous & StopAdmissionClosed) != 0)
+            return Task.FromException(new ObjectDisposedException(nameof(NativeHostProcess)));
+        if (previous == 0)
+            _stopBody.SetResult(StopGracefullyAsync());
+        // A pre-cancelled caller always receives cancellation, even if the
+        // separately owned body finishes before this caller returns its task.
+        return cancellationToken.IsCancellationRequested
+            ? Task.FromCanceled(cancellationToken)
+            : GracefulCompleting.WaitAsync(cancellationToken);
+    }
+
+    private async Task StopGracefullyAsync()
+    {
+        // Publish the owned task before entering native dispatch. Caller cancellation
+        // bounds only its wait; disposal also retains this actual body below.
+        await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
+        NativeHostSignal.TerminateOwnedChild(_process);
+        await Task.WhenAll(_exiting, _output, _error).WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        Assert.AreEqual(0, _process.ExitCode, "The owned host did not exit successfully after SIGTERM.");
+        _context.WriteLine("Owned native host graceful SIGTERM exit: {0}", _process.ExitCode);
+    }
+
     public async ValueTask DisposeAsync()
     {
+        // Seal stop admission before taking the join inventory. A body admitted
+        // just before this transition is retained through its existing proxy,
+        // even when the first caller has not linked its returned task yet.
+        var stopAdmitted = (Interlocked.Or(ref _stopState, StopAdmissionClosed) & StopRequested) != 0;
         // Abrupt retirement is confined to this fixture's actual child handle;
         // it is not a graceful-stop, recovery or deployment claim.
         var errors = new List<Exception>();
@@ -106,8 +142,9 @@ internal sealed class NativeHostProcess : IAsyncDisposable
         catch (Exception error) when (error is not (OutOfMemoryException or StackOverflowException or AccessViolationException))
 #pragma warning restore CA1031
         { errors.Add(error); }
-        _exiting ??= _process.WaitForExitAsync(CancellationToken.None);
-        var tasks = new Task[] { _exiting, _output, _error };
+        var tasks = !stopAdmitted
+            ? new Task[] { _exiting, _output, _error }
+            : [_exiting, _output, _error, GracefulCompleting];
         var joining = Task.WhenAll(tasks);
         try { await joining.WaitAsync(TimeSpan.FromSeconds(15), CancellationToken.None).ConfigureAwait(false); }
         // WhenAll settles every actual task; collect its full ordinary fault inventory below.

@@ -65,7 +65,8 @@ internal sealed partial class NativeHostStartupTests
 
     private async Task RunHostsAsync(PostgresTestDatabase database, string blob, string container,
         string directory, bool unknownRecipient, List<NativeHostProcess> hosts, List<NativeHostScanner> scanners, Exception? injected,
-        bool? implicitTls = null)
+        bool? implicitTls = null,
+        Func<NativeHostProcess, NativeHostProcess, int, CancellationToken, Task>? shutdownControl = null)
     {
         Assert.IsNotNull(TestContext);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TestContext.CancellationToken);
@@ -100,10 +101,20 @@ internal sealed partial class NativeHostStartupTests
         hosts.Add(gateway);
         await WaitForApplicationAsync(gateway, worker, httpPort, token).ConfigureAwait(false);
         if (injected is not null) ExceptionDispatchInfo.Capture(injected).Throw();
+        if (shutdownControl is not null)
+        {
+            await shutdownControl(worker, gateway, smtpPort, token).ConfigureAwait(false);
+            return;
+        }
         if (implicitTls.HasValue)
             await RunSubmissionSessionAsync(database.ConnectionString, smtpPort, config.Tls.CertificatePath!, implicitTls.Value, token).ConfigureAwait(false);
         else
             await RunSessionAsync(database.ConnectionString, blob, container, smtpPort, unknownRecipient, scanner.Scanned, token).ConfigureAwait(false);
+        AssertHostsRunning(worker, gateway);
+    }
+
+    private static void AssertHostsRunning(NativeHostProcess worker, NativeHostProcess gateway)
+    {
         Assert.IsFalse(worker.HasExited, "The Worker exited before the native canary completed.");
         Assert.IsFalse(gateway.HasExited, "The Gateway exited before the native canary completed.");
     }

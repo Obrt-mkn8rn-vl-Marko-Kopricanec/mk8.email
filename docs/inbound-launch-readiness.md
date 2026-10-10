@@ -58,6 +58,13 @@ password authentication and sender authorization, with no queued message or
 mailbox effect. These are local TLS/authentication controls, not public PKI,
 authenticated delivery, provider interoperability or stability certification.
 
+Separate Linux Production-host shutdown controls retain an open native session,
+request SIGTERM through an owned process descriptor, and require actual successful
+exit plus stdout/stderr settlement before fixture dependency retirement. A cancelled
+caller wait does not cancel that shared body. Abrupt retirement remains cleanup
+fallback and cannot satisfy the graceful-exit assertion. These finite idle-session
+controls are not arbitrary hung-work termination, crash recovery or durability proof.
+
 ## Blob dependency and limits
 
 The adapter pins Azure.Storage.Blobs 12.29.2 and Azure.Core 1.55.0, with API

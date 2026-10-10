@@ -137,6 +137,10 @@ public partial class SmtpServerService(
 
     private async Task StopCoreAsync()
     {
+        // Return an owned task before base.StopAsync can synchronously dispatch
+        // dependency cancellation callbacks. Even the first caller can then
+        // cancel only its wait while that callback work remains joined below.
+        await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
         // A caller can cancel its wait, not shared shutdown. Also join execution
         // if base cancellation callbacks fault before its suppressed wait finishes.
         var completing = Task.WhenAll(base.StopAsync(CancellationToken.None), base.ExecuteTask ?? Task.CompletedTask);

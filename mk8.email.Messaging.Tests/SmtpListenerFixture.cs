@@ -57,6 +57,7 @@ internal sealed class SmtpListenerFixture : IAsyncDisposable
     public async Task JoinAsync(CancellationTokenSource deadline, Exception? originalFailure, bool expectedBindFailure = false)
     {
         Hold.Release();
+        RecipientHold.ReleaseCancellation();
         RecipientHold.Release();
         _ = StopAsync(CancellationToken.None); // Stored in _stops before the bounded join.
         var owned = Task.WhenAll(_stops.Append(Completing));
@@ -85,6 +86,7 @@ internal sealed class SmtpListenerFixture : IAsyncDisposable
             throw new InvalidOperationException("Actual SMTP work is still active; dependency retirement is refused.");
         foreach (var client in _clients) client.Dispose();
         Server.Dispose();
+        RecipientHold.Dispose();
         await _services.DisposeAsync().ConfigureAwait(false);
     }
 

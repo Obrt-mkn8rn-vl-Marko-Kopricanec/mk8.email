@@ -105,6 +105,66 @@ internal sealed class SmtpListenerLifetimeTests
 
     [TestMethod]
     [Timeout(45_000, CooperativeCancellation = true)]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task FirstStopReturnsCancellableWaitBeforeHeldSynchronousCallbackSettles(bool cancelBeforeStop)
+    {
+        var port = SmtpListenerFixture.ReservePort();
+        await RunAsync(new SmtpConfig { ListenAddress = "127.0.0.1", Port = port }, async (fixture, deadline) =>
+        {
+            fixture.RecipientHold.Enabled = true;
+            fixture.RecipientHold.HoldCancellation = true;
+            await fixture.Signals.Started.Task.WaitAsync(deadline.Token).ConfigureAwait(false);
+            var client = await NativeSmtpClient.ConnectAsync(port, deadline.Token).ConfigureAwait(false);
+            await using var clientLifetime = client.ConfigureAwait(false);
+            await client.GreetAsync(deadline.Token).ConfigureAwait(false);
+            await client.BeginMessageAsync("controlled@example.test", deadline.Token).ConfigureAwait(false);
+            await fixture.RecipientHold.Entered.Task.WaitAsync(deadline.Token).ConfigureAwait(false);
+            using var firstWait = new CancellationTokenSource();
+            if (cancelBeforeStop) await firstWait.CancelAsync().ConfigureAwait(false);
+            // This direct invocation must return before the finite callback gate
+            // releases; a Task.Run wrapper would hide the first-caller contract.
+            var first = fixture.StopAsync(firstWait.Token);
+            await fixture.RecipientHold.Cancelled.Task.WaitAsync(deadline.Token).ConfigureAwait(false);
+            Assert.IsFalse(fixture.RecipientHold.CallbackCompleted.Task.IsCompleted);
+            if (!cancelBeforeStop)
+            {
+                Assert.IsFalse(first.IsCompleted);
+                await firstWait.CancelAsync().ConfigureAwait(false);
+            }
+            // Observe this actual first caller's cancelled wait, not shared shutdown.
+#pragma warning disable VSTHRD003
+            await Assert.ThrowsAsync<OperationCanceledException>(() => first).ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+            var second = fixture.StopAsync(deadline.Token);
+            var third = fixture.StopAsync(deadline.Token);
+            Assert.IsFalse(second.IsCompleted);
+            Assert.IsFalse(third.IsCompleted);
+            Assert.IsFalse(fixture.Completing.IsCompleted);
+            Assert.AreEqual(0, fixture.DisposedScopes);
+            fixture.RecipientHold.ReleaseCancellation();
+            await fixture.RecipientHold.CallbackCompleted.Task.WaitAsync(deadline.Token).ConfigureAwait(false);
+            // Callback settlement alone cannot retire the independently held session.
+            Assert.IsFalse(second.IsCompleted);
+            Assert.IsFalse(third.IsCompleted);
+            Assert.AreEqual(0, fixture.DisposedScopes);
+            fixture.RecipientHold.Release();
+#pragma warning disable VSTHRD003
+            var secondFailure = await Assert.ThrowsAsync<AggregateException>(() => second).ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+#pragma warning disable VSTHRD003
+            var thirdFailure = await Assert.ThrowsAsync<AggregateException>(() => third).ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+            Assert.AreSame(secondFailure, thirdFailure);
+            Assert.IsTrue(secondFailure.Flatten().InnerExceptions.All(error => ReferenceEquals(error, fixture.RecipientHold.Failure)));
+            Assert.IsTrue(fixture.Completing.IsCompletedSuccessfully);
+            Assert.AreEqual(1, fixture.DisposedScopes);
+            fixture.RecipientHold.FailureObserved = true;
+        }, hold: false).ConfigureAwait(false);
+    }
+
+    [TestMethod]
+    [Timeout(45_000, CooperativeCancellation = true)]
     public async Task FailedSiblingBindCancelsAndJoinsAlreadyStartedListener()
     {
         using var occupied = new TcpListener(IPAddress.Loopback, 0);

@@ -70,6 +70,27 @@ class JobBoundaryTests(unittest.TestCase):
                                             env=environment, capture_output=True, timeout=10)
                     self.assertEqual(validation == tests == "success", result.returncode == 0)
 
+    def test_native_host_inputs_are_exact_runner_build_paths_and_missing_files_refuse(self):
+        messaging = step("test", "Test distributed messaging with PostgreSQL and Azure Blob")
+        for role, project in (("GATEWAY", "Gateway"), ("WORKER", "Application.Worker")):
+            self.assertIn(f"MK8_EMAIL_TEST_{role}_DLL: ${{{{ github.workspace }}}}/mk8.email.{project}/bin/Release/net10.0/mk8.email.{project}.dll", messaging)
+        build = step("test", "Build test project")
+        self.assertIn('dotnet build "${{ matrix.project }}"', build)
+        self.assertNotIn("--no-dependencies", build)
+        admission = script("test", "Test distributed messaging with PostgreSQL and Azure Blob").split("azurite_container=", 1)[0]
+        with tempfile.TemporaryDirectory(prefix="mk8-ci-host-inputs-") as temporary:
+            root = Path(temporary)
+            files = [root / (role + suffix) for role in ("gateway", "worker") for suffix in (".dll", ".deps.json", ".runtimeconfig.json")]
+            for file in files:
+                file.write_text("controlled build input")
+            environment = dict(os.environ, MK8_EMAIL_TEST_GATEWAY_DLL=str(root / "gateway.dll"), MK8_EMAIL_TEST_WORKER_DLL=str(root / "worker.dll"))
+            self.assertEqual(0, subprocess.run(["/usr/bin/bash", "-c", admission], env=environment, capture_output=True, timeout=10).returncode)
+            for file in files:
+                with self.subTest(missing=file.name):
+                    file.unlink()
+                    self.assertNotEqual(0, subprocess.run(["/usr/bin/bash", "-c", admission], env=environment, capture_output=True, timeout=10).returncode)
+                    file.write_text("controlled build input")
+
     def test_test_failure_is_not_masked_by_tee_and_console_evidence_survives(self):
         body = script("test", "Test application or infrastructure")
         body = body.replace("${{ matrix.project }}", "controlled.csproj").replace("${{ matrix.suite }}", "application")

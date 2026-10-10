@@ -38,6 +38,19 @@ Liveness is not readiness: `/health/live`, `/health/ready` and
 `/health/application` have different process, SQL-transport and Worker meanings.
 Require native TLS/authentication, Blob and durable enqueue/delivery canaries.
 
+Maintained `NativeHostStartupTests` exercise the actual Production Gateway and
+Worker entry points, production configuration validation, a native anonymous
+inbound listener, real local-recipient admission and queue/mailbox persistence.
+They require explicit absolute compiled Gateway/Worker DLL inputs through
+`MK8_EMAIL_TEST_GATEWAY_DLL` and `MK8_EMAIL_TEST_WORKER_DLL`, plus owned PostgreSQL
+and Blob development endpoints. A loopback HTTP scanner stand-in drives the real
+scanner client; it is not an actual filtering-provider certificate. Reserved
+tenant identities and dynamically selected loopback ports are finite fixtures,
+not deployment defaults. The separate assertion-failure row checks owned process
+and output-task retirement before fixture dependencies are removed. These
+targeted controls do not prove native TLS/authentication, default Sava HTTPS,
+graceful host shutdown, physical durability, stability or deployment readiness.
+
 ## Blob dependency and limits
 
 The adapter pins Azure.Storage.Blobs 12.29.2 and Azure.Core 1.55.0, with API

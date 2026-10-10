@@ -11,9 +11,13 @@ internal static class GatewayEwsFolderResponse
         foreach (var reference in request.Folders)
         {
             var (id, code) = graph is null ? (Guid.Empty, error ?? "ErrorFolderNotFound") : graph.Resolve(reference, username);
+            var ids = code is null && request.Operation is "FindFolder"
+                ? graph!.Find(id, request.Deep, request.FolderRestriction) : [];
             if (code is null && string.Equals(request.Operation, "FindFolder", StringComparison.Ordinal)
-                && !request.Indexed && graph!.Find(id, request.Deep).Count > request.Limit)
+                && !request.Indexed && ids.Count > request.Limit)
+            {
                 code = "ErrorExceededFindCountLimit";
+            }
             var response = new XElement(messages + (request.Operation + "ResponseMessage"),
                 new XAttribute("ResponseClass", code is null ? "Success" : "Error"));
             if (code is not null)
@@ -27,16 +31,15 @@ internal static class GatewayEwsFolderResponse
                 if (string.Equals(request.Operation, "GetFolder", StringComparison.Ordinal))
                     response.Add(new XElement(messages + "Folders", graph!.Render(id, request.Properties)));
                 else
-                    response.Add(Find(request, graph!, id));
+                    response.Add(Find(request, graph!, ids));
             }
             results.Add(response);
         }
         return GatewayEwsSoap.Envelope(new XElement(messages + (request.Operation + "Response"), results));
     }
 
-    private static XElement Find(GatewayEwsRequest request, GatewayEwsFolderGraph graph, Guid parent)
+    private static XElement Find(GatewayEwsRequest request, GatewayEwsFolderGraph graph, IReadOnlyList<Guid> ids)
     {
-        var ids = graph.Find(parent, request.Deep);
         var offset = Math.Min(request.Offset, ids.Count);
         var page = ids.Skip(offset).Take(request.Limit).ToArray();
         var next = offset + page.Length;

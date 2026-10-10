@@ -16,6 +16,7 @@ internal sealed class GatewayEwsFolderGraph(Guid account, string state, IReadOnl
     internal int Count => _folders.Count;
     internal MailFolderSnapshot? Snapshot(Guid id) => _folders.GetValueOrDefault(id);
     internal bool HasChildren(Guid id) => _children[id == Guid.Empty ? null : id].Any();
+    internal int ChildCount(Guid id) => _children[id == Guid.Empty ? null : id].Count();
     internal bool HasName(Guid? parentId, string name, Guid? excluding = null) =>
         _children[parentId].Any(folder => folder.Id != excluding && string.Equals(folder.Name, name, StringComparison.OrdinalIgnoreCase));
 
@@ -85,12 +86,12 @@ internal sealed class GatewayEwsFolderGraph(Guid account, string state, IReadOnl
         if (properties.Contains("FolderClass")) result.Add(new XElement(types + "FolderClass", "IPF.Note"));
         if (properties.Contains("DisplayName")) result.Add(new XElement(types + "DisplayName", folder?.Name ?? "Top of Information Store"));
         if (properties.Contains("TotalCount")) result.Add(new XElement(types + "TotalCount", folder?.TotalEmails ?? 0));
-        if (properties.Contains("ChildFolderCount")) result.Add(new XElement(types + "ChildFolderCount", _children[id == Guid.Empty ? null : id].Count()));
+        if (properties.Contains("ChildFolderCount")) result.Add(new XElement(types + "ChildFolderCount", ChildCount(id)));
         if (properties.Contains("UnreadCount")) result.Add(new XElement(types + "UnreadCount", folder?.UnreadEmails ?? 0));
         return result;
     }
 
-    public IReadOnlyList<Guid> Find(Guid parent, bool deep)
+    public IReadOnlyList<Guid> Find(Guid parent, bool deep, GatewayEwsFolderRestriction? restriction = null)
     {
         var result = new List<MailFolderSnapshot>();
         var pending = new Queue<Guid?>();
@@ -99,7 +100,9 @@ internal sealed class GatewayEwsFolderGraph(Guid account, string state, IReadOnl
         {
             foreach (var child in _children[current])
             {
-                result.Add(child);
+                // Traverse the admitted scope independently of the caller predicate:
+                // a nonmatching ancestor must not hide a matching deep descendant.
+                if (restriction?.Matches(child, ChildCount(child.Id)) ?? true) result.Add(child);
                 if (deep) pending.Enqueue(child.Id);
             }
         }

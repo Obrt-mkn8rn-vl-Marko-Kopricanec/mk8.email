@@ -130,17 +130,27 @@ internal static class GatewayEwsRequestParser
         if (find && traversal is not ("Shallow" or "Deep"))
             throw new GatewayEwsRequestException("ErrorInvalidTraversal");
         var fields = operation.Elements().ToArray();
-        if (fields.Length is < 2 or > 3 || !find && fields.Length != 2
+        if (fields.Length is < 2 or > 4 || (!find && fields.Length != 2)
             || fields[0].Name != GatewayEwsSoap.Messages + "FolderShape"
-            || fields[^1].Name != GatewayEwsSoap.Messages + (find ? "ParentFolderIds" : "FolderIds")) Invalid();
+            || fields[^1].Name != GatewayEwsSoap.Messages + (find ? "ParentFolderIds" : "FolderIds"))
+        {
+            Invalid();
+        }
         var properties = ParseShape(fields[0]);
-        var (offset, limit, indexed) = fields.Length == 3 ? ParsePage(fields[1]) : (0, MaximumPageSize, false);
+        var index = 1;
+        var (offset, limit, indexed) = find && fields[index].Name == GatewayEwsSoap.Messages + "IndexedPageFolderView"
+            ? ParsePage(fields[index++]) : (0, MaximumPageSize, false);
+        GatewayEwsFolderRestriction? restriction = null;
+        if (find && fields[index].Name == GatewayEwsSoap.Messages + "Restriction")
+            restriction = GatewayEwsFolderRestriction.Parse(fields[index++]);
+        if (index != fields.Length - 1) throw new GatewayEwsRequestException("ErrorUnsupportedPathForQuery");
         Container(fields[^1]);
         var references = fields[^1].Elements().Select(ParseReference).ToArray();
         if (references.Length == 0) Invalid();
         if (references.Length > MaximumReferences)
             throw new GatewayEwsRequestException("ErrorExceededFindCountLimit");
-        return new(operation.Name.LocalName, properties, references, string.Equals(traversal, "Deep", StringComparison.Ordinal), offset, limit, indexed);
+        return new(operation.Name.LocalName, properties, references, string.Equals(traversal, "Deep", StringComparison.Ordinal),
+            offset, limit, indexed, FolderRestriction: restriction);
     }
 
     private static void ParseHeader(XElement header)

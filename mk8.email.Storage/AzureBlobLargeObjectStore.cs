@@ -21,6 +21,16 @@ public sealed partial class AzureBlobLargeObjectStore : ILargeObjectStore
         _options = options ?? new AzureBlobLargeObjectStoreOptions();
         AzureBlobLargeObjectStoreOptions.Validate(_options);
         _container = serviceClient.GetBlobContainerClient(_options.ContainerName);
+        // The SDK reparses this URI when constructing object clients. An ambiguous
+        // account path on a DNS endpoint can otherwise discard the configured container.
+        var address = new BlobUriBuilder(_container.Uri, trimBlobNameSlashes: false);
+        if (!string.Equals(address.BlobContainerName, _options.ContainerName, StringComparison.Ordinal)
+            || !string.IsNullOrEmpty(address.BlobName))
+        {
+            throw new ArgumentException(
+                "The Azure Blob endpoint must preserve the configured container in object URLs.",
+                nameof(serviceClient));
+        }
     }
 
     public string Provider => LargeObjectProviders.AzureBlob;

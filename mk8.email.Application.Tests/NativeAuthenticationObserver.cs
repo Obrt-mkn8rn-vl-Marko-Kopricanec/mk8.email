@@ -1,10 +1,11 @@
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using mk8.email.Application.Services;
 
 namespace mk8.email.Application.Tests;
 
-internal sealed class NativeAuthenticationObserver(Action<string>? write = null)
+internal sealed class NativeAuthenticationObserver(Action<string>? write = null) : IMailAuthenticationStageObserver
 {
     internal const int Capacity = 128;
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -13,9 +14,28 @@ internal sealed class NativeAuthenticationObserver(Action<string>? write = null)
     };
     private readonly Lock _gate = new();
     private readonly Queue<AuthenticationEvent> _events = new();
+    private readonly Queue<AuthenticationStageEvent> _stageEvents = new();
     private readonly long _started = Stopwatch.GetTimestamp();
     private readonly Action<string> _write = write ?? Console.WriteLine;
     private long _dropped;
+    private long _stageDropped;
+
+    public void Record(Guid call, MailAuthenticationStage stage, MailAuthenticationStagePhase phase)
+    {
+        ArgumentOutOfRangeException.ThrowIfEqual(call, Guid.Empty);
+        if (!Enum.IsDefined(stage)) throw new ArgumentOutOfRangeException(nameof(stage));
+        if (!Enum.IsDefined(phase)) throw new ArgumentOutOfRangeException(nameof(phase));
+        lock (_gate)
+        {
+            if (_stageEvents.Count == Capacity)
+            {
+                _stageEvents.Dequeue();
+                _stageDropped++;
+            }
+            _stageEvents.Enqueue(new AuthenticationStageEvent(
+                call, stage, phase, (long)Stopwatch.GetElapsedTime(_started).TotalMilliseconds));
+        }
+    }
 
     public Guid Enter(bool primary)
     {
@@ -49,7 +69,8 @@ internal sealed class NativeAuthenticationObserver(Action<string>? write = null)
             return new AuthenticationSnapshot(
                 point, (long)Stopwatch.GetElapsedTime(_started).TotalMilliseconds,
                 _dropped, Array.AsReadOnly(_events.ToArray()), ThreadPool.ThreadCount,
-                ThreadPool.PendingWorkItemCount, availableWorkers);
+                ThreadPool.PendingWorkItemCount, availableWorkers,
+                Array.AsReadOnly(_stageEvents.ToArray()), _stageDropped);
         }
     }
 

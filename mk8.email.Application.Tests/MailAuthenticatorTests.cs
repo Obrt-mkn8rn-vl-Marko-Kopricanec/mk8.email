@@ -8,7 +8,7 @@ namespace mk8.email.Application.Tests;
 
 [TestClass]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
-internal sealed class MailAuthenticatorTests
+internal sealed partial class MailAuthenticatorTests
 {
     private const string Username = "user@tenant.example.test";
     private const string Password = "test-password-value";

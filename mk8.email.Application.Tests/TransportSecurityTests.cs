@@ -4913,7 +4913,8 @@ internal sealed partial class TransportSecurityTests
                 serviceCollection.AddSingleton(applicationService);
             serviceCollection.AddSingleton<IPop3MaildropLeaseStore, InMemoryPop3MaildropLeaseStore>();
             serviceCollection.AddScoped<ISenderAuthorizationService, SenderAuthorizationService>();
-            serviceCollection.AddScoped<MailAuthenticator>();
+            serviceCollection.AddScoped(provider => new MailAuthenticator(
+                provider.GetRequiredService<EmailDbContext>(), observer));
             serviceCollection.AddScoped<IMailAuthenticator>(provider =>
             {
                 IMailAuthenticator authenticator = provider.GetRequiredService<MailAuthenticator>();

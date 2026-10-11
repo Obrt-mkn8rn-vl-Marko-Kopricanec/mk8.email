@@ -75,6 +75,19 @@ caller wait does not cancel that shared body. Abrupt retirement remains cleanup
 fallback and cannot satisfy the graceful-exit assertion. These finite idle-session
 controls are not arbitrary hung-work termination, crash recovery or durability proof.
 
+Internal authentication-stage diagnostics are opt-in through the maintained test
+fixture, not enabled by the existing public authenticator constructor. The bounded
+recorder stores only opaque call IDs, fixed candidate-query/password-verification/
+credential-update phases and monotonic times, with separate drop accounting.
+It retains no credentials, account IDs, SQL, result payloads or exception text.
+Stage entry without a terminal event is only an observed boundary, not evidence
+of a database, crypto, scheduler or permanent-stall cause. Static initialization,
+provider internals and response delivery remain outside those stage labels.
+Diagnostic sink faults do not replace ordinary authentication outcomes; fatal
+faults and arbitrary hung callbacks are not certified. Finite observer-entry
+controls do not reproduce historical timeouts or authorize weaker authentication,
+retries, altered protocol deadlines or a readiness claim.
+
 ## Blob dependency and limits
 
 The adapter pins Azure.Storage.Blobs 12.29.2 and Azure.Core 1.55.0, with API

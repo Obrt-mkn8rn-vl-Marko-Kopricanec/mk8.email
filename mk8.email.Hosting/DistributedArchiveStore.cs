@@ -55,7 +55,7 @@ public static partial class DistributedArchiveStore
             Convert.ToHexStringLower(cipherDigest.Hash), cipherDigest.Length,
             Convert.ToHexStringLower(signatureDigest.Hash), signatureDigest.Length,
             Convert.ToHexStringLower(SHA256.HashData(verifier.ExportSubjectPublicKeyInfo())));
-        var container = service.GetBlobContainerClient(containerName);
+        var container = GetAdmittedContainer(service, containerName);
         await container.CreateIfNotExistsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
         var root = $"distributed-archives/v1/{archiveId}/";
         await PublishFileAsync(container.GetBlobClient(root + CipherName), cipher,
@@ -114,7 +114,7 @@ public static partial class DistributedArchiveStore
         var keyHash = Convert.ToHexStringLower(
             SHA256.HashData(verifier.ExportSubjectPublicKeyInfo()));
         var root = $"distributed-archives/v1/{archiveId}/";
-        var container = service.GetBlobContainerClient(containerName);
+        var container = GetAdmittedContainer(service, containerName);
         var indexBytes = await ReadIndexBytesAsync(
             container.GetBlobClient(root + IndexName), cancellationToken).ConfigureAwait(false);
         var index = ParseIndex(indexBytes, archiveId, keyHash);
@@ -144,6 +144,22 @@ public static partial class DistributedArchiveStore
                 Directory.Delete(stage, recursive: true);
             throw;
         }
+    }
+
+    private static BlobContainerClient GetAdmittedContainer(BlobServiceClient service, string containerName)
+    {
+        var container = service.GetBlobContainerClient(containerName);
+        // Object-client construction reparses this URI. Never publish or fetch
+        // an archive when a DNS account path would discard its configured container.
+        var address = new BlobUriBuilder(container.Uri, trimBlobNameSlashes: false);
+        if (!string.Equals(address.BlobContainerName, containerName, StringComparison.Ordinal)
+            || !string.IsNullOrEmpty(address.BlobName))
+        {
+            throw new ArgumentException(
+                "The Azure Blob endpoint must preserve the archive container in object URLs.",
+                nameof(service));
+        }
+        return container;
     }
 
     public static string ReadPrivateConnectionString(string path)

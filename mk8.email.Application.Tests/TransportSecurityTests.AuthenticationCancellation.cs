@@ -106,11 +106,12 @@ internal sealed partial class TransportSecurityTests
         Assert.StartsWith(expected, await connection.ReadLineAsync().ConfigureAwait(false), StringComparison.Ordinal);
     }
 
-    private static async Task<Exception?> ObserveOwnedAuthenticationCleanupAsync(Task owned, Exception? original)
+    private static async Task<Exception?> ObserveOwnedAuthenticationCleanupAsync(
+        Task owned, Exception? original, TimeSpan? observationLimit = null)
     {
         try
         {
-            await owned.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+            await owned.WaitAsync(observationLimit ?? TimeSpan.FromSeconds(5), CancellationToken.None).ConfigureAwait(false);
             return original;
         }
         catch (Exception cleanup) when (!IsFatalAuthenticationControl(cleanup))

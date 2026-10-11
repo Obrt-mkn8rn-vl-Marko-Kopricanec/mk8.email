@@ -6,6 +6,12 @@ addresses, tenant names and peer evidence belong in ignored internal planning,
 not this public codebase. Optional enterprise/EWS work does not replace mail
 readiness and does not authorize public proxy exposure.
 
+Controlled authentication cleanup tests distinguish an observation timeout from
+actual body settlement, including preservation of an earlier assertion and a
+later owned-body fault. Their finite gates are not native-provider, arbitrary
+hung-task or dependency-retirement certification, and do not diagnose or replace
+historical native authentication timeouts. Existing native deadlines remain.
+
 ## Configuration and discovery
 
 Require explicit canonical mail/admin hostnames, owned domains, listener binds,

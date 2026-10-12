@@ -277,13 +277,18 @@ public static partial class DistributedArchiveStore
             cancellationToken: cancellationToken).ConfigureAwait(false)).Value;
         if (properties.ContentLength is <= 0 or > MaximumIndexBytes)
             throw new InvalidOperationException("The archive completion index is invalid.");
-        var target = new MemoryStream((int)properties.ContentLength);
+        // Capacity alone is not a limit: use a non-expandable buffer so a
+        // changed/malformed GET cannot grow past the admitted HEAD length.
+        var target = new MemoryStream(new byte[(int)properties.ContentLength], writable: true);
         await using (target.ConfigureAwait(false))
         {
+            target.SetLength(0);
             await blob.DownloadToAsync(target, new BlobDownloadToOptions
             {
                 Conditions = new BlobRequestConditions { IfMatch = properties.ETag },
             }, cancellationToken).ConfigureAwait(false);
+            if (target.Length != properties.ContentLength)
+                throw new InvalidOperationException("The archive completion index length changed.");
             return target.ToArray();
         }
     }

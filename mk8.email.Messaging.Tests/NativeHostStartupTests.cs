@@ -67,7 +67,8 @@ internal sealed partial class NativeHostStartupTests
         string directory, bool unknownRecipient, List<NativeHostProcess> hosts, List<NativeHostScanner> scanners, Exception? injected,
         bool? implicitTls = null,
         Func<NativeHostProcess, NativeHostProcess, int, CancellationToken, Task>? shutdownControl = null,
-        Func<int, string, Task<string>, CancellationToken, Task>? submissionControl = null)
+        Func<int, string, Task<string>, CancellationToken, Task>? submissionControl = null,
+        Func<int, CancellationToken, Task>? healthControl = null)
     {
         Assert.IsNotNull(TestContext);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TestContext.CancellationToken);
@@ -81,8 +82,7 @@ internal sealed partial class NativeHostStartupTests
         await scanner.StartAsync(token).ConfigureAwait(false);
         var config = CreateConfig(database, blob, container, directory, smtpPort, scannerPort, implicitTls);
         ValidateHostRoles(config);
-        var configPath = Path.Combine(directory, "native-host.json");
-        await File.WriteAllTextAsync(configPath, JsonSerializer.Serialize(config), token).ConfigureAwait(false);
+        var configPath = await WriteNativeConfigAsync(directory, config, token).ConfigureAwait(false);
         await SeedAsync(database.ConnectionString, token).ConfigureAwait(false);
         if (implicitTls.HasValue) await SetSubmissionPasswordAsync(database.ConnectionString, token).ConfigureAwait(false);
         {
@@ -97,8 +97,9 @@ internal sealed partial class NativeHostStartupTests
         var gateway = NativeHostProcess.Start("MK8_EMAIL_TEST_GATEWAY_DLL", configPath, TestContext,
             httpUrl: string.Create(CultureInfo.InvariantCulture, $"http://127.0.0.1:{httpPort}"));
         hosts.Add(gateway);
-        await WaitForApplicationAsync(gateway, worker, httpPort, token).ConfigureAwait(false);
+        await WaitForApplicationAsync(gateway, worker, httpPort, database.ConnectionString, token).ConfigureAwait(false);
         if (injected is not null) ExceptionDispatchInfo.Capture(injected).Throw();
+        if (await TryRunHealthControlAsync(healthControl, httpPort, worker, gateway, token).ConfigureAwait(false)) return;
         if (shutdownControl is not null)
         {
             await shutdownControl(worker, gateway, smtpPort, token).ConfigureAwait(false);
@@ -111,6 +112,22 @@ internal sealed partial class NativeHostStartupTests
         else
             await RunSessionAsync(database.ConnectionString, blob, container, smtpPort, unknownRecipient, scanner.Scanned, token).ConfigureAwait(false);
         AssertHostsRunning(worker, gateway);
+    }
+
+    private static async Task<string> WriteNativeConfigAsync(string directory, EnvironmentConfig config, CancellationToken token)
+    {
+        var path = Path.Combine(directory, "native-host.json");
+        await File.WriteAllTextAsync(path, JsonSerializer.Serialize(config), token).ConfigureAwait(false);
+        return path;
+    }
+
+    private static async Task<bool> TryRunHealthControlAsync(Func<int, CancellationToken, Task>? control,
+        int port, NativeHostProcess worker, NativeHostProcess gateway, CancellationToken token)
+    {
+        if (control is null) return false;
+        await control(port, token).ConfigureAwait(false);
+        AssertHostsRunning(worker, gateway);
+        return true;
     }
 
     private static void AssertHostsRunning(NativeHostProcess worker, NativeHostProcess gateway)
@@ -193,17 +210,20 @@ internal sealed partial class NativeHostStartupTests
     }
 
     private static async Task RetireAsync(List<NativeHostProcess> hosts, List<NativeHostScanner> scanners, PostgresTestDatabase database,
-        BlobContainerClient? container, DirectoryInfo? directory, Exception? original)
+        BlobContainerClient? container, DirectoryInfo? directory, Exception? original, List<Task>? healthBodies = null)
     {
         var errors = new List<Exception>();
         foreach (var host in Enumerable.Reverse(hosts))
             await CleanupStageAsync(() => host.DisposeAsync().AsTask(), errors).ConfigureAwait(false);
+        if (healthBodies is not null)
+            await ObserveHealthBodiesAsync(healthBodies, original, errors).ConfigureAwait(false);
         if (hosts.TrueForAll(host => host.Retired))
         {
             foreach (var scanner in scanners)
                 await CleanupStageAsync(() => scanner.DisposeAsync().AsTask(), errors).ConfigureAwait(false);
         }
-        if (hosts.TrueForAll(host => host.Retired) && scanners.TrueForAll(scanner => scanner.Retired))
+        if (hosts.TrueForAll(host => host.Retired) && scanners.TrueForAll(scanner => scanner.Retired)
+            && healthBodies?.TrueForAll(body => body.IsCompleted) != false)
         {
             if (container is not null)
                 await CleanupStageAsync(() => container.DeleteIfExistsAsync(), errors).ConfigureAwait(false);
@@ -218,6 +238,33 @@ internal sealed partial class NativeHostStartupTests
         if (errors.Count == 0) return;
         if (original is not null) errors.Insert(0, original);
         throw new AggregateException("Native hosted fixture retirement failed.", errors);
+    }
+
+    internal static async Task ObserveHealthBodiesAsync(List<Task> bodies, Exception? original, List<Exception> errors)
+    {
+        var joining = Task.WhenAll(bodies);
+        try { await joining.WaitAsync(TimeSpan.FromSeconds(15), CancellationToken.None).ConfigureAwait(false); }
+        // Collect each actual terminal body below, not merely WhenAll's first fault.
+#pragma warning disable CA1031
+        catch (Exception error) when (error is not (OutOfMemoryException or StackOverflowException or AccessViolationException))
+#pragma warning restore CA1031
+        { if (!joining.IsCompleted) errors.Add(error); }
+        foreach (var body in bodies)
+        {
+            if (!body.IsCompleted) continue;
+            try { await body.WaitAsync(CancellationToken.None).ConfigureAwait(false); }
+            // The expected primary assertion/cancellation is already retained; a
+            // distinct ordinary body fault must still survive the cleanup inventory.
+#pragma warning disable CA1031
+            catch (Exception error) when (error is not (OutOfMemoryException or StackOverflowException or AccessViolationException))
+#pragma warning restore CA1031
+            {
+                IEnumerable<Exception> faults = body.Exception is { } bodyFaults ? bodyFaults.Flatten().InnerExceptions
+                    : error is AggregateException aggregate ? aggregate.Flatten().InnerExceptions : [error];
+                errors.AddRange(faults.Where(fault => !ReferenceEquals(fault, original)
+                    && !errors.Exists(existing => ReferenceEquals(existing, fault))));
+            }
+        }
     }
 
     private static async Task CleanupStageAsync(Func<Task> cleanup, List<Exception> errors)
@@ -343,7 +390,8 @@ internal sealed partial class NativeHostStartupTests
         }
     }
 
-    private static async Task WaitForApplicationAsync(NativeHostProcess gateway, NativeHostProcess worker, int port, CancellationToken token)
+    private async Task WaitForApplicationAsync(NativeHostProcess gateway, NativeHostProcess worker, int port,
+        string connection, CancellationToken token)
     {
         using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
         var uri = new Uri(string.Create(CultureInfo.InvariantCulture, $"http://127.0.0.1:{port}/health/application"));
@@ -353,7 +401,10 @@ internal sealed partial class NativeHostStartupTests
             Assert.IsFalse(worker.HasExited, "The Worker exited during hosted startup.");
             try
             {
-                using var response = await client.GetAsync(uri, token).ConfigureAwait(false);
+                using var response = await NativeHealthObservation.ObserveRequestAsync(
+                    requestToken => client.GetAsync(uri, requestToken),
+                    diagnosticToken => NativeHealthObservation.ReadAsync(connection, diagnosticToken),
+                    EmitHealthPoint, token).ConfigureAwait(false);
                 if (response.StatusCode == HttpStatusCode.OK) return;
             }
             catch (HttpRequestException)
@@ -362,6 +413,13 @@ internal sealed partial class NativeHostStartupTests
             }
             await Task.Delay(TimeSpan.FromMilliseconds(100), token).ConfigureAwait(false);
         }
+    }
+
+    private void EmitHealthPoint(NativeHealthPoint point)
+    {
+        Assert.IsNotNull(TestContext);
+        TestContext.WriteLine("Owned health counts (sequential point, not current-HTTP identity/causal timeline): {0}",
+            JsonSerializer.Serialize(point));
     }
 
     private static int AllocateLoopbackPort()

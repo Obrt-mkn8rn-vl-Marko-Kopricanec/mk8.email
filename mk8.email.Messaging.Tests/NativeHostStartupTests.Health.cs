@@ -99,15 +99,50 @@ internal sealed partial class NativeHostStartupTests
         { original = exception; }
         finally
         {
-            await SettleHeldHealthAsync(sending, transaction, deadline, original).ConfigureAwait(false);
-            // A released request may win the cancellation race on the injected branch.
-            if (sending.IsCompletedSuccessfully)
-            {
-                using var response = await sending.WaitAsync(CancellationToken.None).ConfigureAwait(false);
-            }
+            await SettleAndDisposeHealthResponseAsync(sending,
+                SettleHeldHealthAsync(sending, transaction, deadline, original), original).ConfigureAwait(false);
         }
         Assert.IsTrue(sending.IsCompleted);
         if (original is not null) ExceptionDispatchInfo.Capture(original).Throw();
+    }
+
+    internal static async Task SettleAndDisposeHealthResponseAsync(Task<HttpResponseMessage> sending,
+        Task settle, Exception? original)
+    {
+        Exception? settlementError = null;
+        Exception? disposalError = null;
+        try { await settle.WaitAsync(CancellationToken.None).ConfigureAwait(false); }
+        // Retain settlement faults while independently retiring a returned response.
+#pragma warning disable CA1031
+        catch (Exception error) when (error is not (OutOfMemoryException or StackOverflowException or AccessViolationException))
+#pragma warning restore CA1031
+        { settlementError = error; }
+        finally
+        {
+            // Actual settlement owns the joins. Its ordinary failure cannot skip
+            // disposal when release allowed this request to return successfully.
+            if (sending.IsCompletedSuccessfully)
+            {
+                try { using var response = await sending.WaitAsync(CancellationToken.None).ConfigureAwait(false); }
+                // A distinct ordinary disposal fault must not replace settlement.
+#pragma warning disable CA1031
+                catch (Exception error) when (error is not (OutOfMemoryException or StackOverflowException or AccessViolationException))
+#pragma warning restore CA1031
+                { disposalError = error; }
+            }
+        }
+        if (disposalError is null)
+        {
+            if (settlementError is not null) ExceptionDispatchInfo.Capture(settlementError).Throw();
+            return;
+        }
+        var errors = new List<Exception>();
+        if (original is not null) errors.Add(original);
+        IEnumerable<Exception> settlementFaults = settlementError is AggregateException aggregate
+            ? aggregate.Flatten().InnerExceptions : settlementError is not null ? [settlementError] : [];
+        errors.AddRange(settlementFaults.Where(error => !errors.Exists(existing => ReferenceEquals(existing, error))));
+        if (!errors.Exists(existing => ReferenceEquals(existing, disposalError))) errors.Add(disposalError);
+        throw new AggregateException("Owned health settlement/response disposal failed.", errors);
     }
 
     private static async Task BlockHealthTableAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken token)

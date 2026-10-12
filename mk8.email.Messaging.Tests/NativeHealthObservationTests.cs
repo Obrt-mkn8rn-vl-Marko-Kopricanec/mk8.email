@@ -7,6 +7,78 @@ internal sealed class NativeHealthObservationTests
     private static readonly NativeHealthPoint Point = new(1, 2, 3, 4, 5, 6, 7, 8);
 
     [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task SuccessfulHealthResponseIsDisposedDespiteSettlementFault(bool disposalFault)
+    {
+        var original = new AssertFailedException("Controlled retained assertion.");
+        var cleanup = new InvalidOperationException("Controlled settlement fault after request return.");
+        var disposal = disposalFault ? new IOException("Controlled content disposal fault.") : null;
+        var stream = new DisposalStream(disposal);
+        await using var streamLifetime = stream.ConfigureAwait(false);
+        using var response = new DisposalResponse { Content = new StreamContent(stream) };
+        // FromResult is already successfully completed, not work using this
+        // resource later. Explicit observation and actual helper disposal follow.
+#pragma warning disable CA2025
+        var sending = Task.FromResult<HttpResponseMessage>(response);
+#pragma warning restore CA2025
+        Assert.AreSame(response, await sending.ConfigureAwait(false));
+        var settlement = new AggregateException(original, cleanup);
+        AggregateException? observed = null;
+        try
+        {
+            await NativeHostStartupTests.SettleAndDisposeHealthResponseAsync(sending,
+                Task.FromException(settlement), original).ConfigureAwait(false);
+            Assert.Fail("The actual ordinary settlement fault must survive response disposal.");
+        }
+        catch (AggregateException error) { observed = error; }
+        Assert.IsNotNull(observed);
+        Assert.IsTrue(response.DisposalEntered);
+        Assert.AreEqual(!disposalFault, response.DisposalCompleted);
+        Assert.IsFalse(stream.CanRead);
+        if (disposalFault)
+        {
+            var readError = await Assert.ThrowsExactlyAsync<HttpRequestException>(() =>
+                response.Content.ReadAsStringAsync(CancellationToken.None)).ConfigureAwait(false);
+            Assert.AreEqual(typeof(ObjectDisposedException), readError.InnerException?.GetType());
+        }
+        else
+        {
+            await Assert.ThrowsExactlyAsync<ObjectDisposedException>(() =>
+                response.Content.ReadAsStringAsync(CancellationToken.None)).ConfigureAwait(false);
+        }
+        var faults = observed.Flatten().InnerExceptions;
+        Assert.HasCount(disposalFault ? 3 : 2, faults);
+        Assert.Contains(original, faults);
+        Assert.Contains(cleanup, faults);
+        if (disposal is not null) Assert.Contains(disposal, faults);
+        else Assert.AreSame(settlement, observed);
+    }
+
+    private sealed class DisposalResponse : HttpResponseMessage
+    {
+        internal bool DisposalEntered { get; private set; }
+        internal bool DisposalCompleted { get; private set; }
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) DisposalEntered = true;
+            base.Dispose(disposing);
+            if (disposing) DisposalCompleted = true;
+        }
+    }
+
+    private sealed class DisposalStream(Exception? failure) : MemoryStream
+    {
+        protected override void Dispose(bool disposing)
+        {
+            var wasReadable = CanRead;
+            base.Dispose(disposing);
+            if (disposing && wasReadable && failure is not null)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+        }
+    }
+
+    [TestMethod]
     public async Task ActualBodyInventoryRetainsAllDistinctFaultsFromOneJoinedBody()
     {
         var original = new AssertFailedException("Controlled primary assertion.");

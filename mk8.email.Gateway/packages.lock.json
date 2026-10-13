@@ -120,6 +120,14 @@
         "resolved": "10.0.2",
         "contentHash": "q5RfBI+wywJSFUNDE1L4ZbHEHCFTblo8Uf6A6oe4feOUFYiUQXyAf9GBh5qEZpvJaHiEbpBPkQumjEhXCJxdrg=="
       },
+      "Supprocom.Secrets": {
+        "type": "Transitive",
+        "resolved": "0.1.4",
+        "contentHash": "0yZfw62CAuoC9pIrSZ1nXt8/QHIaDiCwdfDXXCX3mM3nCuiTHVEh4/Jv8wL6Htlwr20YOZpLRUeBymlx79ebPg==",
+        "dependencies": {
+          "System.IO.FileSystem.AccessControl": "5.0.0"
+        }
+      },
       "System.ClientModel": {
         "type": "Transitive",
         "resolved": "1.11.0",
@@ -127,6 +135,11 @@
         "dependencies": {
           "System.Memory.Data": "10.0.3"
         }
+      },
+      "System.IO.FileSystem.AccessControl": {
+        "type": "Transitive",
+        "resolved": "5.0.0",
+        "contentHash": "SxHB3nuNrpptVk+vZ/F+7OHEpoHUIKKMl02bUmYHQr1r+glbZQxs7pRtsf4ENO29TVm2TH3AEeep2fJcy92oYw=="
       },
       "System.IO.Hashing": {
         "type": "Transitive",
@@ -151,7 +164,8 @@
       "mk8.email.configuration": {
         "type": "Project",
         "dependencies": {
-          "Npgsql": "[10.0.2, )"
+          "Npgsql": "[10.0.2, )",
+          "Supprocom.Secrets": "[0.1.4, 0.1.4]"
         }
       },
       "mk8.email.contracts": {

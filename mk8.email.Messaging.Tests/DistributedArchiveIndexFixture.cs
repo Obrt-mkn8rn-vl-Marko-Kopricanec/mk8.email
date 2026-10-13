@@ -28,7 +28,7 @@ internal sealed class DistributedArchiveIndexFixture : IDisposable
     internal DistributedArchiveIndexFixture()
     {
         _handler = new ArchiveHandler();
-        _client = new HttpClient(_handler);
+        _client = new HttpClient(_handler, disposeHandler: false);
         Service = new BlobServiceClient(new Uri("https://account.blob.example.test/"),
             new StorageSharedKeyCredential("account", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
             new BlobClientOptions { Transport = new HttpClientTransport(_client) });
@@ -44,9 +44,12 @@ internal sealed class DistributedArchiveIndexFixture : IDisposable
         File.SetUnixFileMode(Verifier, UnixFileMode.UserRead | UnixFileMode.UserWrite);
         var index = JsonSerializer.SerializeToUtf8Bytes(new
         {
-            SchemaVersion = 1, ArchiveId,
-            CipherSha256 = Hash(_cipher), CipherLength = _cipher.LongLength,
-            SignatureSha256 = Hash(_signature), SignatureLength = _signature.LongLength,
+            SchemaVersion = 1,
+            ArchiveId,
+            CipherSha256 = Hash(_cipher),
+            CipherLength = _cipher.LongLength,
+            SignatureSha256 = Hash(_signature),
+            SignatureLength = _signature.LongLength,
             VerificationKeySha256 = Hash(signer.ExportSubjectPublicKeyInfo()),
         });
         var bytes = bodyLength == 0 ? index : Pad(index, bodyLength);
@@ -75,7 +78,14 @@ internal sealed class DistributedArchiveIndexFixture : IDisposable
 
     public void Dispose()
     {
-        _client.Dispose();
+        try
+        {
+            _client.Dispose();
+        }
+        finally
+        {
+            _handler.Dispose();
+        }
         Root.Delete(recursive: true);
         GC.SuppressFinalize(this);
     }

@@ -6,6 +6,8 @@ namespace mk8.email.Messaging.Tests;
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest discovers and executes these pinned-SDK no-network archive index controls by reflection.")]
 internal sealed class DistributedArchiveIndexBoundsTests
 {
+    private static readonly string[] RefusedRequests = ["HEAD complete.json", "GET complete.json"];
+
     public TestContext? TestContext { get; set; }
 
     [TestMethod]
@@ -55,7 +57,7 @@ internal sealed class DistributedArchiveIndexBoundsTests
     {
         Assert.IsFalse(Path.Exists(fixture.Destination));
         Assert.HasCount(0, Directory.EnumerateDirectories(fixture.Root.FullName));
-        Assert.AreSequenceEqual(new[] { "HEAD complete.json", "GET complete.json" }, fixture.Requests);
+        Assert.AreSequenceEqual(RefusedRequests, fixture.Requests, StringComparer.Ordinal);
         Assert.IsTrue(fixture.ConditionsMatched);
     }
 

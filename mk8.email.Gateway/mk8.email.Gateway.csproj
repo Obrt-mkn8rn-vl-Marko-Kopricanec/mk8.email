@@ -32,4 +32,8 @@
     <ProjectReference Include="..\mk8.email.Smtp.Presentation\mk8.email.Smtp.Presentation.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="Environment/.env.template" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

@@ -68,10 +68,8 @@ internal sealed class NativeHostProcess : IAsyncDisposable
         await _started.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public static NativeHostProcess Start(string assemblyVariable, string configPath, TestContext context,
-        string? argument = null, string? httpUrl = null)
+    public static NativeHostProcess Start(string assembly, TestContext context, string? argument = null)
     {
-        var assembly = Environment.GetEnvironmentVariable(assemblyVariable);
         if (string.IsNullOrWhiteSpace(assembly) || !Path.IsPathFullyQualified(assembly)
             || !File.Exists(assembly) || !File.Exists(Path.ChangeExtension(assembly, ".deps.json"))
             || !File.Exists(Path.ChangeExtension(assembly, ".runtimeconfig.json")))
@@ -87,10 +85,6 @@ internal sealed class NativeHostProcess : IAsyncDisposable
         };
         start.ArgumentList.Add(assembly);
         if (argument is not null) start.ArgumentList.Add(argument);
-        start.Environment["MK8EMAIL_CONFIG_FILE"] = configPath;
-        start.Environment["DOTNET_ENVIRONMENT"] = "Production";
-        start.Environment["ASPNETCORE_ENVIRONMENT"] = "Production";
-        if (httpUrl is not null) start.Environment["ASPNETCORE_URLS"] = httpUrl;
         var process = Process.Start(start) ?? throw new InvalidOperationException("The owned host did not start.");
         return new NativeHostProcess(process, context);
     }

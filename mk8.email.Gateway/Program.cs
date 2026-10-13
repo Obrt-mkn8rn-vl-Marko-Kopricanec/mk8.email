@@ -1,9 +1,8 @@
-using System.Net;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.DataProtection;
-using Microsoft.AspNetCore.HttpOverrides;
 using mk8.email.Configuration;
+using mk8.email.Gateway;
 using mk8.email.Contracts.Mail;
 using mk8.email.Contracts.Imap;
 using mk8.email.Contracts.Pop3;
@@ -24,10 +23,26 @@ using mk8.email.Imap.Presentation;
 using mk8.email.Messaging;
 using mk8.email.Smtp.Presentation;
 
-var builder = WebApplication.CreateBuilder(args);
-var environmentConfig = EnvironmentLoader.Load(
-    builder.Environment.IsDevelopment(),
-    EnvironmentValidationRole.Gateway);
+if (args.Length != 0)
+{
+    await Console.Error.WriteLineAsync("The Gateway does not accept service configuration arguments.").ConfigureAwait(false);
+    return 2;
+}
+EnvironmentConfig environmentConfig;
+WebApplicationBuilder builder;
+try
+{
+    environmentConfig = await PortableEnvironmentLoader.LoadAsync(EnvironmentValidationRole.Gateway).ConfigureAwait(false);
+    builder = GatewayHostBootstrap.CreateBuilder(environmentConfig);
+}
+// Startup diagnostics must not print a malformed secret document or raw value.
+#pragma warning disable CA1031
+catch (Exception exception) when (exception is not (OutOfMemoryException or StackOverflowException or AccessViolationException))
+#pragma warning restore CA1031
+{
+    await Console.Error.WriteLineAsync($"Gateway configuration failed ({exception.GetType().Name}).").ConfigureAwait(false);
+    return 1;
+}
 
 builder.WebHost.ConfigureKestrel(options =>
 {
@@ -140,14 +155,6 @@ builder.Services.AddRateLimiter(options =>
         }));
 });
 
-builder.Services.Configure<ForwardedHeadersOptions>(options =>
-{
-    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
-    options.ForwardLimit = 1;
-    options.KnownProxies.Add(IPAddress.Loopback);
-    options.KnownProxies.Add(IPAddress.IPv6Loopback);
-});
-
 builder.Services.AddRazorPages(options =>
 {
     options.Conventions.AuthorizeFolder("/");
@@ -155,6 +162,7 @@ builder.Services.AddRazorPages(options =>
 });
 
 var app = builder.Build();
+await using var appLifetime = app.ConfigureAwait(false);
 
 GatewayHttpPipeline.Configure(app);
 
@@ -178,5 +186,6 @@ if (environmentConfig.Dav.EnableDav)
 app.MapRazorPages();
 
 await app.RunAsync().ConfigureAwait(false);
+return 0;
 
 public partial class Program;

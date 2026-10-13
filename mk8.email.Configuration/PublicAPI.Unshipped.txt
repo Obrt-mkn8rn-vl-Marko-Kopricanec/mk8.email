@@ -1,4 +1,17 @@
 #nullable enable
+mk8.email.Configuration.GatewayHttpConfig
+mk8.email.Configuration.GatewayHttpConfig.GatewayHttpConfig() -> void
+mk8.email.Configuration.GatewayHttpConfig.ListenAddress.get -> string!
+mk8.email.Configuration.GatewayHttpConfig.ListenAddress.init -> void
+mk8.email.Configuration.GatewayHttpConfig.Port.get -> int
+mk8.email.Configuration.GatewayHttpConfig.Port.init -> void
+mk8.email.Configuration.GatewayHttpConfig.AllowedHosts.get -> System.Collections.Generic.IReadOnlyList<string!>!
+mk8.email.Configuration.GatewayHttpConfig.AllowedHosts.init -> void
+mk8.email.Configuration.GatewayHttpConfig.HttpsRedirectPort.get -> int?
+mk8.email.Configuration.GatewayHttpConfig.HttpsRedirectPort.init -> void
+mk8.email.Configuration.GatewayHttpConfig.Validate() -> System.Collections.Generic.IReadOnlyList<string!>!
+mk8.email.Configuration.EnvironmentConfig.Http.get -> mk8.email.Configuration.GatewayHttpConfig!
+mk8.email.Configuration.EnvironmentConfig.Http.init -> void
 mk8.email.Configuration.PortableEnvironmentLoader
 static mk8.email.Configuration.PortableEnvironmentLoader.LoadAsync(mk8.email.Configuration.EnvironmentValidationRole role = mk8.email.Configuration.EnvironmentValidationRole.Combined, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Configuration.EnvironmentConfig!>!
 mk8.email.Configuration.SmtpConfig.ListenAddress.get -> string!

@@ -7,6 +7,7 @@ internal static class GatewayHttpPipeline
 {
     public static void Configure(WebApplication app)
     {
+        app.UseHostFiltering();
         if (!app.Environment.IsDevelopment())
             app.UseWhen(context => !GatewayProtocolPaths.IsPublicProtocol(context.Request.Path),
                 branch => branch.UseExceptionHandler("/Error"));

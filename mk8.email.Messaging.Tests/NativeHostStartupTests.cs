@@ -80,22 +80,22 @@ internal sealed partial class NativeHostStartupTests
         var scanner = new NativeHostScanner(scannerPort, includeSubmissionSignature: submissionControl is not null);
         scanners.Add(scanner);
         await scanner.StartAsync(token).ConfigureAwait(false);
-        var config = CreateConfig(database, blob, container, directory, smtpPort, scannerPort, implicitTls);
+        var config = CreateConfig(database, blob, container, directory, smtpPort, scannerPort, httpPort, implicitTls);
         ValidateHostRoles(config);
-        var configPath = await WriteNativeConfigAsync(directory, config, token).ConfigureAwait(false);
+        var (workerAssembly, gatewayAssembly) = await NativeHostInstallation.PrepareRolesAsync(
+            directory, config, token).ConfigureAwait(false);
         await SeedAsync(database.ConnectionString, token).ConfigureAwait(false);
         if (implicitTls.HasValue) await SetSubmissionPasswordAsync(database.ConnectionString, token).ConfigureAwait(false);
         {
-            var prepare = NativeHostProcess.Start("MK8_EMAIL_TEST_WORKER_DLL", configPath, TestContext, "--prepare");
+            var prepare = NativeHostProcess.Start(workerAssembly, TestContext, "--prepare");
             hosts.Add(prepare);
             await prepare.RequireSuccessfulExitAsync(token).ConfigureAwait(false);
         }
-        var worker = NativeHostProcess.Start("MK8_EMAIL_TEST_WORKER_DLL", configPath, TestContext, "--serve");
+        var worker = NativeHostProcess.Start(workerAssembly, TestContext, "--serve");
         hosts.Add(worker);
         try { await worker.RequireStartedAsync(token).ConfigureAwait(false); }
         finally { await RecordStartupPointAsync(database.ConnectionString).ConfigureAwait(false); }
-        var gateway = NativeHostProcess.Start("MK8_EMAIL_TEST_GATEWAY_DLL", configPath, TestContext,
-            httpUrl: string.Create(CultureInfo.InvariantCulture, $"http://127.0.0.1:{httpPort}"));
+        var gateway = NativeHostProcess.Start(gatewayAssembly, TestContext);
         hosts.Add(gateway);
         await WaitForApplicationAsync(gateway, worker, httpPort, database.ConnectionString, token).ConfigureAwait(false);
         if (injected is not null) ExceptionDispatchInfo.Capture(injected).Throw();
@@ -112,13 +112,6 @@ internal sealed partial class NativeHostStartupTests
         else
             await RunSessionAsync(database.ConnectionString, blob, container, smtpPort, unknownRecipient, scanner.Scanned, token).ConfigureAwait(false);
         AssertHostsRunning(worker, gateway);
-    }
-
-    private static async Task<string> WriteNativeConfigAsync(string directory, EnvironmentConfig config, CancellationToken token)
-    {
-        var path = Path.Combine(directory, "native-host.json");
-        await File.WriteAllTextAsync(path, JsonSerializer.Serialize(config), token).ConfigureAwait(false);
-        return path;
     }
 
     private static async Task<bool> TryRunHealthControlAsync(Func<int, CancellationToken, Task>? control,
@@ -278,7 +271,7 @@ internal sealed partial class NativeHostStartupTests
     }
 
     private static EnvironmentConfig CreateConfig(PostgresTestDatabase database, string blob, string container,
-        string directory, int smtpPort, int scannerPort, bool? implicitTls = null)
+        string directory, int smtpPort, int scannerPort, int httpPort, bool? implicitTls = null)
     {
         var connection = new NpgsqlConnectionStringBuilder(database.ConnectionString);
         // Reserved tenant identities and loopback listeners are finite owned fixtures,
@@ -328,10 +321,12 @@ internal sealed partial class NativeHostStartupTests
             Messaging = new MessagingConfig
             {
                 Enabled = true,
+                WorkerId = "owned-hosted-worker",
                 EncryptionKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
                 NotificationFallbackSeconds = 1,
             },
             ObjectStorage = new ObjectStorageConfig { ConnectionString = blob, ContainerName = container, CreateContainerIfMissing = true },
+            Http = new GatewayHttpConfig { ListenAddress = "127.0.0.1", Port = httpPort, AllowedHosts = ["127.0.0.1"] },
         };
     }
 

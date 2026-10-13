@@ -27,6 +27,7 @@ public sealed class EnvironmentConfig
     public AdminConfig Admin { get; init; } = new();
     public MessagingConfig Messaging { get; init; } = new();
     public ObjectStorageConfig ObjectStorage { get; init; } = new();
+    public GatewayHttpConfig Http { get; init; } = new();
 
     public string BuildConnectionString()
     {

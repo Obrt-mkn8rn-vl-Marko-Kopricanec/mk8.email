@@ -27,17 +27,9 @@ if (!drain && !prepare && !args.SequenceEqual(["--serve"]))
 
 try
 {
-    var isDevelopment = string.Equals(
-        Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT"),
-        "Development",
-        StringComparison.Ordinal);
-    var environment = EnvironmentLoader.Load(
-        isDevelopment,
-        EnvironmentValidationRole.ApplicationWorker);
-    if (!environment.Messaging.Enabled)
-        throw new InvalidOperationException("Messaging.Enabled must be true for the Application Worker.");
-
-    var builder = Host.CreateApplicationBuilder(args: []);
+    var environment = await PortableEnvironmentLoader.LoadAsync(EnvironmentValidationRole.ApplicationWorker).ConfigureAwait(false);
+    var workerId = WorkerHostBootstrap.RequireWorkerIdentity(environment);
+    var builder = WorkerHostBootstrap.CreateBuilder();
     builder.Logging.ClearProviders();
     builder.Logging.AddJsonConsole();
     builder.Logging.AddFilter("Microsoft.EntityFrameworkCore.Database.Command", LogLevel.Warning);
@@ -52,10 +44,6 @@ try
         builder.Services.AddSingleton<IJmapPushPresentationClient, JmapPushPresentationClient>();
         builder.Services.AddJmapApplication();
     }
-
-    var workerId = string.IsNullOrWhiteSpace(environment.Messaging.WorkerId)
-        ? $"application@{Environment.MachineName}"
-        : environment.Messaging.WorkerId;
 
     builder.Services.AddDistributedMessaging(environment);
     builder.Services.AddSingleton<IDurablePresentationEffectSink, DurablePresentationEffectSink>();
@@ -156,6 +144,6 @@ catch (Exception exception)
 #pragma warning restore CA1031
 {
     await Console.Error.WriteLineAsync(
-        $"The Application Worker failed: {exception.GetBaseException().Message}").ConfigureAwait(false);
+        $"The Application Worker failed ({exception.GetType().Name}).").ConfigureAwait(false);
     return 1;
 }

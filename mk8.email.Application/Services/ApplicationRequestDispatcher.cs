@@ -261,14 +261,16 @@ public sealed class ApplicationRequestDispatcher(IServiceProvider services) : IA
                         cancellationToken).ConfigureAwait(false)),
             ApplicationOperations.OAuthAuthorizationCodeRedeem => Success(
                 request.Id,
-                await services.GetRequiredService<IOAuthApplicationService>()
+                await services.GetRequiredService<DurableOAuthApplicationService>()
                     .RedeemAuthorizationCodeAsync(
+                        request.Id,
                         Deserialize<OAuthAuthorizationCodeRedeemRequest>(request),
                         cancellationToken).ConfigureAwait(false)),
             ApplicationOperations.OAuthTokenRefresh => Success(
                 request.Id,
-                await services.GetRequiredService<IOAuthApplicationService>()
+                await services.GetRequiredService<DurableOAuthApplicationService>()
                     .RefreshTokenAsync(
+                        request.Id,
                         Deserialize<OAuthRefreshTokenRequest>(request),
                         cancellationToken).ConfigureAwait(false)),
             ApplicationOperations.OAuthTokenRevoke => await RevokeOAuthTokenAsync(

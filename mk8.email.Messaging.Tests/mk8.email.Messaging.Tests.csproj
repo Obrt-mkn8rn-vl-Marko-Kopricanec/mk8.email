@@ -23,6 +23,8 @@
 
   <ItemGroup>
     <AdditionalFiles Include="BannedSymbols.txt" />
+    <None Include="../mk8.email.Gateway/Environment/.env.template" Link="RoleTemplates/Gateway.env.template" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../mk8.email.Application.Worker/Environment/.env.template" Link="RoleTemplates/Worker.env.template" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

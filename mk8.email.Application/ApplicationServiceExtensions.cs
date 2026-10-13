@@ -18,8 +18,11 @@ public static class ApplicationServiceExtensions
         services.AddScoped<ICompanyService, CompanyService>();
         services.AddScoped<IMailAdministrationService, MailAdministrationService>();
         services.AddScoped<IApplicationPasswordService, ApplicationPasswordService>();
-        services.AddScoped<IOAuthTokenService, OAuthTokenService>();
-        services.AddScoped<IOAuthAuthorizationService, OAuthAuthorizationService>();
+        services.AddScoped<OAuthTokenService>();
+        services.AddScoped<IOAuthTokenService>(provider => provider.GetRequiredService<OAuthTokenService>());
+        services.AddScoped<OAuthAuthorizationService>();
+        services.AddScoped<IOAuthAuthorizationService>(provider => provider.GetRequiredService<OAuthAuthorizationService>());
+        services.AddScoped<DurableOAuthApplicationService>();
         services.AddScoped<IOAuthApplicationService, OAuthApplicationService>();
         services.AddSingleton<IOpenIdConnectService, OpenIdConnectService>();
         services.AddScoped<IMfaService, MfaService>();

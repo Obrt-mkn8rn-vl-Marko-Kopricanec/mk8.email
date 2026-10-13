@@ -263,11 +263,7 @@ public partial class SmtpServerService(
 
                 using var streamReader = new StreamReader(stream, ProtocolEncoding, detectEncodingFromByteOrderMarks: false, bufferSize: 4096, leaveOpen: true);
                 var reader = new BoundedLineReader(streamReader);
-                var writer = new StreamWriter(stream, ProtocolEncoding, bufferSize: 4096, leaveOpen: true)
-                {
-                    AutoFlush = true,
-                    NewLine = "\r\n"
-                };
+                var writer = new SessionResponseWriter(stream, ProtocolEncoding, timeout.Token);
                 await using var writerLifetime = writer.ConfigureAwait(false);
 
                 var session = new SmtpSession
@@ -316,7 +312,7 @@ public partial class SmtpServerService(
     // SMTP transaction state is intentionally processed as one ordered protocol state machine.
 #pragma warning disable MA0051
     private async Task RunSmtpSessionAsync(
-        BoundedLineReader reader, StreamWriter writer, SmtpSession session,
+        BoundedLineReader reader, SessionResponseWriter writer, SmtpSession session,
         ISmtpApplicationService application,
         SmtpListenerOptions config,
         CancellationTokenSource timeout, Stream? upgradableStream = null, string? clientIp = null)
@@ -733,11 +729,7 @@ public partial class SmtpServerService(
 
                         using var tlsStreamReader = new StreamReader(tlsStream, ProtocolEncoding, detectEncodingFromByteOrderMarks: false, bufferSize: 4096, leaveOpen: true);
                         var tlsReader = new BoundedLineReader(tlsStreamReader);
-                        var tlsWriter = new StreamWriter(tlsStream, ProtocolEncoding, bufferSize: 4096, leaveOpen: true)
-                        {
-                            AutoFlush = true,
-                            NewLine = "\r\n"
-                        };
+                        var tlsWriter = new SessionResponseWriter(tlsStream, ProtocolEncoding, timeout.Token);
                         await using var tlsWriterLifetime = tlsWriter.ConfigureAwait(false);
 
                         session.Reset();
@@ -790,7 +782,7 @@ public partial class SmtpServerService(
         }
     }
 
-    private async Task WriteEhloAsync(StreamWriter writer, SmtpListenerOptions config, bool isSecure)
+    private async Task WriteEhloAsync(SessionResponseWriter writer, SmtpListenerOptions config, bool isSecure)
     {
         await writer.WriteLineAsync($"250-{config.SmtpHostname}").ConfigureAwait(false);
         await writer.WriteLineAsync($"250-SIZE {config.MaxMessageSizeBytes}").ConfigureAwait(false);
@@ -855,7 +847,7 @@ public partial class SmtpServerService(
     // SASL mechanism negotiation shares the same attempt and failure state.
 #pragma warning disable MA0051
     private async Task HandleAuthAsync(
-        string line, BoundedLineReader reader, StreamWriter writer,
+        string line, BoundedLineReader reader, SessionResponseWriter writer,
         SmtpSession session, ISmtpApplicationService application,
         string clientIp, CancellationToken ct)
     {

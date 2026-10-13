@@ -82,6 +82,6 @@ public sealed partial class AesGcmPayloadProtector : IMessagingPayloadProtector,
         return new MessagingEncryptionKey(key.Id, (byte[])key.Key.Clone());
     }
 
-    [GeneratedRegex("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$", RegexOptions.CultureInvariant, 100)]
+    [GeneratedRegex(@"\A[A-Za-z0-9][A-Za-z0-9._-]{0,63}\z", RegexOptions.CultureInvariant, 100)]
     private static partial Regex KeyIdPattern();
 }

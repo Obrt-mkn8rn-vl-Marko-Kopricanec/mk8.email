@@ -1,4 +1,5 @@
 #nullable enable
+override mk8.email.Gateway.Protocols.Pop3.Pop3ServerService.StopAsync(System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
 static mk8.email.Gateway.Protocols.GatewayProtocolPaths.IsAutodiscover(Microsoft.AspNetCore.Http.PathString path) -> bool
 mk8.email.Gateway.ApplicationBridge.GatewayApplicationException.GatewayApplicationException() -> void
 mk8.email.Gateway.ApplicationBridge.GatewayApplicationException.GatewayApplicationException(string! message) -> void

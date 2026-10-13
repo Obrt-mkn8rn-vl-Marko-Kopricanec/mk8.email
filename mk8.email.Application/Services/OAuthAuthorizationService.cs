@@ -89,12 +89,20 @@ public sealed class OAuthAuthorizationService(
         return codeValue;
     }
 
-    public async Task<OAuthTokenPair?> RedeemAuthorizationCodeAsync(
+    public Task<OAuthTokenPair?> RedeemAuthorizationCodeAsync(
         string code,
         string clientId,
         string redirectUri,
         string codeVerifier,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        RedeemCoreAsync(code, clientId, redirectUri, codeVerifier, ownsTransaction: true, cancellationToken);
+
+    internal Task<OAuthTokenPair?> RedeemWithinReceiptAsync(string code, string clientId, string redirectUri,
+        string codeVerifier, CancellationToken cancellationToken) =>
+        RedeemCoreAsync(code, clientId, redirectUri, codeVerifier, ownsTransaction: false, cancellationToken);
+
+    private async Task<OAuthTokenPair?> RedeemCoreAsync(string code, string clientId, string redirectUri,
+        string codeVerifier, bool ownsTransaction, CancellationToken cancellationToken)
     {
         if (!TryParseCodeId(code, out var codeId)
             || !OAuthProtocolValues.IsValidPkceVerifier(codeVerifier))
@@ -102,9 +110,11 @@ public sealed class OAuthAuthorizationService(
             return null;
         }
 
-        var transaction = await database.Database.BeginTransactionAsync(
+        if (!ownsTransaction && database.Database.CurrentTransaction is null)
+            throw new InvalidOperationException("OAuth redemption requires its receipt transaction.");
+        var transaction = ownsTransaction ? await database.Database.BeginTransactionAsync(
             IsolationLevel.Serializable,
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken).ConfigureAwait(false) : null;
         // A null transaction is intentional for non-relational test providers.
 #pragma warning disable CA2007, MA0004
         await using (transaction)
@@ -140,7 +150,7 @@ public sealed class OAuthAuthorizationService(
             if (pair?.IdToken is not null)
                 pair = await AddIdTokenAsync(pair, authorizationCode, now, cancellationToken).ConfigureAwait(false);
             await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            if (transaction is not null) await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             return pair;
         }
     }

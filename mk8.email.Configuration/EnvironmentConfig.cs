@@ -360,7 +360,7 @@ public sealed class EnvironmentConfig
 
     private void ValidateMessagingCore(List<string> errors)
     {
-        if (!IsMessagingIdentifier(Messaging.EncryptionKeyId, 64, allowAtAndSlash: false))
+        if (!IsMessagingKeyIdentifier(Messaging.EncryptionKeyId))
         {
             errors.Add("Messaging.EncryptionKeyId is invalid.");
         }
@@ -375,7 +375,7 @@ public sealed class EnvironmentConfig
         }
         foreach (var key in Messaging.DecryptionKeys)
         {
-            if (!IsMessagingIdentifier(key.Id, 64, allowAtAndSlash: false))
+            if (!IsMessagingKeyIdentifier(key.Id))
             {
                 errors.Add("A Messaging.DecryptionKeys identifier is invalid.");
             }
@@ -548,4 +548,12 @@ public sealed class EnvironmentConfig
             || character is '.' or '_' or '-' or ':'
             || allowAtAndSlash && character is '@' or '/');
     }
+
+    // Encryption envelopes have a narrower grammar than Worker identities.
+    // Keep this identical to the actual AES-GCM protector's key admission.
+    private static bool IsMessagingKeyIdentifier(string? value) =>
+        !string.IsNullOrWhiteSpace(value)
+        && value.Length <= 64
+        && char.IsAsciiLetterOrDigit(value[0])
+        && value.All(character => char.IsAsciiLetterOrDigit(character) || character is '.' or '_' or '-');
 }

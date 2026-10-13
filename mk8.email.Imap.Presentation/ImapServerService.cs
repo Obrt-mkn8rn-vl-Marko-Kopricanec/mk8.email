@@ -128,6 +128,8 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         string[] StatusItems);
 
     private readonly ConnectionLimiter _connectionLimiter = new(MaximumConcurrentConnections);
+    private readonly TaskCompletionSource<Task> _stopBody = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _stopStarted;
     private readonly NonBlockingCommandLimiter _messageWriteCommandLimiter = new(MaximumConcurrentMessageWriteCommands);
     private readonly NonBlockingCommandLimiter _fetchCommandLimiter = new(MaximumConcurrentFetchCommands);
     private readonly NonBlockingCommandLimiter _searchCommandLimiter = new(MaximumConcurrentSearchCommands);
@@ -135,14 +137,19 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var config = ImapListenerConfig.From(env);
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        await RunListenersAsync(config, lifetime).ConfigureAwait(false);
+    }
 
+    private async Task RunListenersAsync(ImapListenerConfig config, CancellationTokenSource lifetime)
+    {
         var tasks = new List<Task>();
 
         if (config.EnableImap)
-            tasks.Add(ListenAsync(config.ImapPort, ListenerMode.Imap, config, stoppingToken));
+            tasks.Add(ListenAsync(config.ImapPort, ListenerMode.Imap, config, lifetime));
 
         if (config.EnableImapImplicitTls)
-            tasks.Add(ListenAsync(config.ImapImplicitTlsPort, ListenerMode.ImplicitTls, config, stoppingToken));
+            tasks.Add(ListenAsync(config.ImapImplicitTlsPort, ListenerMode.ImplicitTls, config, lifetime));
 
         if (tasks.Count == 0)
         {
@@ -150,32 +157,36 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             return;
         }
 
-        await Task.WhenAll(tasks).ConfigureAwait(false);
+        var completing = Task.WhenAll(tasks);
+        await completing.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        if (completing.Exception is { } faults) throw faults;
+        await completing.ConfigureAwait(false);
     }
 
-    private async Task ListenAsync(int port, ListenerMode mode, ImapListenerConfig config, CancellationToken ct)
+    public override Task StopAsync(CancellationToken cancellationToken)
+    {
+        if (base.ExecuteTask is null) return Task.CompletedTask;
+        if (Interlocked.CompareExchange(ref _stopStarted, 1, 0) == 0)
+            _stopBody.SetResult(StopCoreAsync());
+        return _stopBody.Task.Unwrap().WaitAsync(cancellationToken);
+    }
+
+    private async Task StopCoreAsync()
+    {
+        await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
+        var completing = Task.WhenAll(base.StopAsync(CancellationToken.None), base.ExecuteTask ?? Task.CompletedTask);
+        await completing.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        if (completing.Exception is { } faults) throw faults;
+        await completing.ConfigureAwait(false);
+    }
+
+    private async Task ListenAsync(int port, ListenerMode mode, ImapListenerConfig config, CancellationTokenSource lifetime)
     {
         using var listener = new TcpListener(IPAddress.Any, port);
-        listener.Start();
-        LogListenerStarted(logger, mode, port);
-
-        try
-        {
-            while (!ct.IsCancellationRequested)
-            {
-                var client = await listener.AcceptTcpClientAsync(ct).ConfigureAwait(false);
-                // The detached handler owns its accepted client and observes shutdown cancellation.
-#pragma warning disable CA2025
-                _ = HandleConnectionAsync(client, mode, config, ct);
-#pragma warning restore CA2025
-            }
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
-        finally
-        {
-            listener.Stop();
-            LogListenerStopped(logger, mode, port);
-        }
+        await OwnedTcpListener.RunAsync(listener, lifetime,
+            (client, token) => HandleConnectionAsync(client, mode, config, token),
+            () => LogListenerStarted(logger, mode, port),
+            () => LogListenerStopped(logger, mode, port)).ConfigureAwait(false);
     }
 
     // Keep the ordered IMAP protocol handler/parser steps together.
@@ -294,11 +305,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
 
         using var streamReader = new StreamReader(stream, ProtocolEncoding, detectEncodingFromByteOrderMarks: false, bufferSize: 4096, leaveOpen: true);
         var reader = new BoundedLineReader(streamReader);
-        var writer = new StreamWriter(stream, ProtocolEncoding, bufferSize: 4096, leaveOpen: true)
-        {
-            AutoFlush = true,
-            NewLine = "\r\n"
-        };
+        var writer = new SessionResponseWriter(stream, ProtocolEncoding, ct);
         await using (writer.ConfigureAwait(false))
         {
             if (sendGreeting)
@@ -710,7 +717,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
 #pragma warning restore MA0051
         string initialLine,
         BoundedLineReader reader,
-        StreamWriter writer,
+        SessionResponseWriter writer,
         ImapSession session,
         CancellationTokenSource timeout,
         int connectionTimeoutSeconds)
@@ -851,7 +858,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     }
 
     private static async Task RejectCommandLiteralAsync(
-        StreamWriter writer,
+        SessionResponseWriter writer,
         string tag,
         ImapSession session,
         bool isNonSynchronizing,
@@ -867,7 +874,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         await writer.WriteLineAsync($"{tag} BAD {response}").ConfigureAwait(false);
     }
 
-    private static async Task<bool> HandleCompressAsync(StreamWriter writer, string tag, string args)
+    private static async Task<bool> HandleCompressAsync(SessionResponseWriter writer, string tag, string args)
     {
         var mechanism = args.Trim().ToUpperInvariant();
         if (!string.Equals(mechanism, "DEFLATE", StringComparison.Ordinal))
@@ -883,7 +890,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     }
 
     private async Task HandleCapabilityAsync(
-        StreamWriter writer,
+        SessionResponseWriter writer,
         string tag,
         ImapListenerConfig config,
         ImapSession session)
@@ -909,7 +916,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         await writer.WriteLineAsync($"{tag} OK CAPABILITY completed").ConfigureAwait(false);
     }
 
-    private async Task HandleLoginAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
+    private async Task HandleLoginAsync(SessionResponseWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
         if (!session.IsSecure)
         {
@@ -959,7 +966,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
 #pragma warning disable MA0051
     private async Task HandleAuthenticateAsync(
 #pragma warning restore MA0051
-        BoundedLineReader reader, StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
+        BoundedLineReader reader, SessionResponseWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
         if (!session.IsSecure)
         {
@@ -1135,7 +1142,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     }
 
     private static async Task StopAfterTooManyAuthenticationFailuresAsync(
-        StreamWriter writer,
+        SessionResponseWriter writer,
         ImapSession session)
     {
         if (session.AuthenticationFailures < 5)
@@ -1147,7 +1154,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
 
     // Keep the ordered IMAP protocol handler/parser steps together.
 #pragma warning disable MA0051
-    private async Task HandleListAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
+    private async Task HandleListAsync(SessionResponseWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
 #pragma warning restore MA0051
     {
         if (!TryParseListCommand(args, session.Utf8Enabled, out var options, out var failureResponse))
@@ -1249,7 +1256,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         await writer.WriteLineAsync($"{tag} OK LIST completed").ConfigureAwait(false);
     }
 
-    private async Task HandleLsubAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
+    private async Task HandleLsubAsync(SessionResponseWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
         if (!TryParseMailboxArgs(args, session.Utf8Enabled, out var reference, out var pattern))
         {
@@ -1293,7 +1300,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
 #pragma warning disable MA0051
     private async Task HandleSelectAsync(
 #pragma warning restore MA0051
-        StreamWriter writer, string tag, string args, ImapSession session, bool readOnly, CancellationToken ct)
+        SessionResponseWriter writer, string tag, string args, ImapSession session, bool readOnly, CancellationToken ct)
     {
         var selectArgs = args.Trim();
         var parenIdx = selectArgs.IndexOf('(', StringComparison.Ordinal);
@@ -1462,7 +1469,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         return sb.ToString();
     }
 
-    private async Task HandleCreateAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
+    private async Task HandleCreateAsync(SessionResponseWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
         if (!TryParseMailboxName(args.Trim(), session.Utf8Enabled, out var mailboxName))
         {
@@ -1509,7 +1516,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         }
     }
 
-    private async Task HandleDeleteAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
+    private async Task HandleDeleteAsync(SessionResponseWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
         if (!TryParseMailboxName(args.Trim(), session.Utf8Enabled, out var mailboxName))
         {
@@ -1563,7 +1570,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         await writer.WriteLineAsync($"{tag} OK DELETE completed").ConfigureAwait(false);
     }
 
-    private async Task HandleRenameAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
+    private async Task HandleRenameAsync(SessionResponseWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
         var parsedArgs = ParseTwoMailboxArgs(args, session.Utf8Enabled);
         if (parsedArgs is null)
@@ -1620,7 +1627,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         await writer.WriteLineAsync($"{tag} OK RENAME completed").ConfigureAwait(false);
     }
 
-    private async Task HandleStatusAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
+    private async Task HandleStatusAsync(SessionResponseWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
         var parenIdx = args.IndexOf('(', StringComparison.Ordinal);
         if (parenIdx < 0)
@@ -1722,13 +1729,13 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         return results.ToString();
     }
 
-    private async Task HandleFetchAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
+    private async Task HandleFetchAsync(SessionResponseWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
         await HandleFetchWithLimitAsync(writer, tag, args, session, useUid: false, ct).ConfigureAwait(false);
     }
 
     private async Task HandleFetchWithLimitAsync(
-        StreamWriter writer,
+        SessionResponseWriter writer,
         string tag,
         string args,
         ImapSession session,
@@ -1749,7 +1756,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
 #pragma warning disable MA0051
     private async Task HandleFetchCoreAsync(
 #pragma warning restore MA0051
-        StreamWriter writer,
+        SessionResponseWriter writer,
         string tag,
         string args,
         ImapSession session,
@@ -1993,14 +2000,14 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     private static FetchPresentationMessage ToTransientFetchMessage(
         ImapFetchMessage fetched) => new(fetched);
 
-    private async Task HandleStoreAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
+    private async Task HandleStoreAsync(SessionResponseWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
         => await HandleStoreCoreAsync(writer, tag, args, session, useUid: false, ct).ConfigureAwait(false);
 
     // Keep the ordered IMAP protocol handler/parser steps together.
 #pragma warning disable MA0051
     private async Task HandleStoreCoreAsync(
 #pragma warning restore MA0051
-        StreamWriter writer,
+        SessionResponseWriter writer,
         string tag,
         string args,
         ImapSession session,
@@ -2144,13 +2151,13 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         return lines;
     }
 
-    private async Task HandleSearchAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
+    private async Task HandleSearchAsync(SessionResponseWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
         await HandleSearchWithLimitAsync(writer, tag, args, session, useUid: false, ct).ConfigureAwait(false);
     }
 
     private async Task HandleSearchWithLimitAsync(
-        StreamWriter writer,
+        SessionResponseWriter writer,
         string tag,
         string args,
         ImapSession session,
@@ -2174,7 +2181,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
 #pragma warning disable MA0051
     private async Task HandleSearchCoreAsync(
 #pragma warning restore MA0051
-        StreamWriter writer,
+        SessionResponseWriter writer,
         string tag,
         string args,
         ImapSession session,
@@ -2298,7 +2305,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         await writer.WriteLineAsync($"{tag} OK {commandName} completed").ConfigureAwait(false);
     }
 
-    private async Task HandleExpungeAsync(StreamWriter writer, string tag, ImapSession session, CancellationToken ct)
+    private async Task HandleExpungeAsync(SessionResponseWriter writer, string tag, ImapSession session, CancellationToken ct)
     {
         var result = await TryExpungeDeletedAsync(writer, tag, "EXPUNGE", session, ct).ConfigureAwait(false);
         if (result is null)
@@ -2314,7 +2321,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     }
 
     private async Task<ImapExpungeResult?> TryExpungeDeletedAsync(
-        StreamWriter writer,
+        SessionResponseWriter writer,
         string tag,
         string operation,
         ImapSession session,
@@ -2349,7 +2356,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     }
 
     private static async Task WriteExpungeMessagesAsync(
-        StreamWriter writer, ImapSession session, ImapExpungeResult result)
+        SessionResponseWriter writer, ImapSession session, ImapExpungeResult result)
     {
         if (session.QresyncEnabled)
         {
@@ -2368,7 +2375,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     }
 
     private async Task HandleCopyAsync(
-        StreamWriter writer,
+        SessionResponseWriter writer,
         string tag,
         string args,
         ImapSession session,
@@ -2378,7 +2385,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     }
 
     private async Task HandleCopyWithLimitAsync(
-        StreamWriter writer,
+        SessionResponseWriter writer,
         string tag,
         string args,
         ImapSession session,
@@ -2396,7 +2403,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     }
 
     private async Task HandleCopyCoreAsync(
-        StreamWriter writer,
+        SessionResponseWriter writer,
         string tag,
         string args,
         ImapSession session,
@@ -2502,7 +2509,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     }
 
     private async Task HandleUidAsync(
-        StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
+        SessionResponseWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
         var spaceIdx = args.IndexOf(' ', StringComparison.Ordinal);
         if (spaceIdx <= 0)
@@ -2556,21 +2563,21 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         }
     }
 
-    private async Task HandleUidFetchAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
+    private async Task HandleUidFetchAsync(SessionResponseWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
         await HandleFetchWithLimitAsync(writer, tag, args, session, useUid: true, ct).ConfigureAwait(false);
     }
 
-    private async Task HandleUidSearchAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
+    private async Task HandleUidSearchAsync(SessionResponseWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
         await HandleSearchWithLimitAsync(writer, tag, args, session, useUid: true, ct).ConfigureAwait(false);
     }
 
-    private async Task HandleUidStoreAsync(StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
+    private async Task HandleUidStoreAsync(SessionResponseWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
         => await HandleStoreCoreAsync(writer, tag, args, session, useUid: true, ct).ConfigureAwait(false);
 
     private async Task HandleUidCopyAsync(
-        StreamWriter writer,
+        SessionResponseWriter writer,
         string tag,
         string args,
         ImapSession session,
@@ -2579,7 +2586,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         await HandleCopyWithLimitAsync(writer, tag, args, session, useUid: true, ct).ConfigureAwait(false);
     }
 
-    private static async Task HandleEnableAsync(StreamWriter writer, string tag, string args, ImapSession session)
+    private static async Task HandleEnableAsync(SessionResponseWriter writer, string tag, string args, ImapSession session)
     {
         var requested = args.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         var enabled = new List<string>();
@@ -2610,7 +2617,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     }
 
     private async Task HandleSubscribeAsync(
-        StreamWriter writer, string tag, string args, ImapSession session, bool subscribe, CancellationToken ct)
+        SessionResponseWriter writer, string tag, string args, ImapSession session, bool subscribe, CancellationToken ct)
     {
         if (!TryParseMailboxName(args.Trim(), session.Utf8Enabled, out var mailboxName))
         {
@@ -4216,7 +4223,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     }
 
     private async Task HandleGetQuotaRootAsync(
-        StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
+        SessionResponseWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
         if (!TryParseMailboxName(args.Trim(), session.Utf8Enabled, out var mailboxName))
         {
@@ -4257,7 +4264,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     }
 
     private async Task HandleGetQuotaAsync(
-        StreamWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
+        SessionResponseWriter writer, string tag, string args, ImapSession session, CancellationToken ct)
     {
         if (!string.IsNullOrEmpty(UnquoteArg(args.Trim())))
         {
@@ -4502,7 +4509,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     }
 
     private async Task HandleSortAsync(
-        StreamWriter writer, string tag, string args, ImapSession session, bool useUid, CancellationToken ct)
+        SessionResponseWriter writer, string tag, string args, ImapSession session, bool useUid, CancellationToken ct)
     {
         using var slot = _searchCommandLimiter.TryAcquire();
         if (slot is null)
@@ -4518,7 +4525,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
 #pragma warning disable MA0051
     private async Task HandleSortCoreAsync(
 #pragma warning restore MA0051
-        StreamWriter writer, string tag, string args, ImapSession session, bool useUid, CancellationToken ct)
+        SessionResponseWriter writer, string tag, string args, ImapSession session, bool useUid, CancellationToken ct)
     {
         if (!TryParseSortArguments(
                 args,
@@ -4604,7 +4611,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     }
 
     private async Task HandleThreadAsync(
-        StreamWriter writer, string tag, string args, ImapSession session, bool useUid, CancellationToken ct)
+        SessionResponseWriter writer, string tag, string args, ImapSession session, bool useUid, CancellationToken ct)
     {
         using var slot = _searchCommandLimiter.TryAcquire();
         if (slot is null)
@@ -4620,7 +4627,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
 #pragma warning disable MA0051
     private async Task HandleThreadCoreAsync(
 #pragma warning restore MA0051
-        StreamWriter writer, string tag, string args, ImapSession session, bool useUid, CancellationToken ct)
+        SessionResponseWriter writer, string tag, string args, ImapSession session, bool useUid, CancellationToken ct)
     {
         if (!TryParseThreadArguments(
                 args,
@@ -4928,7 +4935,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     }
 
     private async Task HandleUidExpungeAsync(
-        StreamWriter writer, string tag, string uidSetArg, ImapSession session, CancellationToken ct)
+        SessionResponseWriter writer, string tag, string uidSetArg, ImapSession session, CancellationToken ct)
     {
         ImapUidSelection selection;
         if (string.Equals(uidSetArg, "$", StringComparison.Ordinal))
@@ -4961,7 +4968,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     }
 
     private async Task HandleMoveAsync(
-        StreamWriter writer,
+        SessionResponseWriter writer,
         string tag,
         string args,
         ImapSession session,
@@ -4971,7 +4978,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     }
 
     private async Task HandleUidMoveAsync(
-        StreamWriter writer,
+        SessionResponseWriter writer,
         string tag,
         string args,
         ImapSession session,
@@ -4981,7 +4988,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     }
 
     private async Task HandleMoveCoreAsync(
-        StreamWriter writer,
+        SessionResponseWriter writer,
         string tag,
         string args,
         ImapSession session,
@@ -5101,7 +5108,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
 
     private async Task HandleAppendAsync(
         BoundedLineReader reader,
-        StreamWriter writer,
+        SessionResponseWriter writer,
         string tag,
         string args,
         ImapSession session,
@@ -5141,7 +5148,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     private async Task HandleAppendCoreAsync(
 #pragma warning restore MA0051
         BoundedLineReader reader,
-        StreamWriter writer,
+        SessionResponseWriter writer,
         string tag,
         string args,
         ImapSession session,
@@ -5456,7 +5463,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
 
     private static async Task<bool> ConsumeRejectedAppendRemainderAsync(
         BoundedLineReader reader,
-        StreamWriter writer,
+        SessionResponseWriter writer,
         ImapSession session,
         CancellationTokenSource timeout,
         int connectionTimeoutSeconds,
@@ -5488,7 +5495,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
     }
 
     private static async Task RejectAppendBeforeLiteralAsync(
-        StreamWriter writer,
+        SessionResponseWriter writer,
         string tag,
         ImapSession session,
         bool isLiteralPlus,
@@ -5597,7 +5604,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
 #pragma warning disable MA0051
     private async Task HandleIdleAsync(
 #pragma warning restore MA0051
-        BoundedLineReader reader, StreamWriter writer, string tag,
+        BoundedLineReader reader, SessionResponseWriter writer, string tag,
         ImapSession session, CancellationTokenSource timeout, int connectionTimeoutSeconds)
     {
         var knownMessages = new List<ImapIdleMessage>();

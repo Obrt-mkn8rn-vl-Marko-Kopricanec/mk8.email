@@ -7,6 +7,7 @@ using Microsoft.Extensions.Hosting;
 using mk8.email.Application.Worker;
 using mk8.email.Configuration;
 using mk8.email.Gateway;
+using Supprocom.Secrets;
 
 namespace mk8.email.Messaging.Tests;
 
@@ -103,6 +104,9 @@ internal sealed class PortableHostBootstrapTests
         {
             Http = http,
             Smtp = new SmtpConfig { EnableSmtp = true, Port = http.Port },
+            Dav = new DavConfig { EnableDav = false },
+            OAuth = new OAuthConfig { EnableOAuth = false },
+            Jmap = new JmapConfig { EnableJmap = false },
         }));
         Assert.ThrowsExactly<InvalidOperationException>(() => GatewayHostBootstrap.CreateBuilder(new EnvironmentConfig
         {
@@ -119,6 +123,35 @@ internal sealed class PortableHostBootstrapTests
             new EnvironmentConfig { Messaging = new MessagingConfig { Enabled = true } }));
         Assert.AreEqual("owned-worker", WorkerHostBootstrap.RequireWorkerIdentity(
             new EnvironmentConfig { Messaging = new MessagingConfig { Enabled = true, WorkerId = "owned-worker" } }), StringComparer.Ordinal);
+    }
+
+    [TestMethod]
+    [DataRow("Gateway")]
+    [DataRow("Worker")]
+    public async Task PublishedTemplateKeysBindToTheActualRoleSchema(string role)
+    {
+        Assert.IsNotNull(TestContext);
+        var text = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory,
+            "RoleTemplates", role + ".env.template"), TestContext.CancellationToken).ConfigureAwait(false);
+        var settings = SupprocomSecretDocument.Parse(text).Settings;
+        Assert.IsNotEmpty(settings);
+        Assert.IsTrue(settings.All(setting => setting.Value.Length == 0), "Publish only nonsecret blank outlines.");
+        // Finite reserved fixture values check binding, not template activation,
+        // complete domain validity, provisioning or approved deployment values.
+        using var source = new ConfigurationManager();
+        source.AddInMemoryCollection(settings.Select(setting => new KeyValuePair<string, string?>(
+            setting.Key, setting.Key switch
+            {
+                "Database:Host" => "database.example.test",
+                "Database:Name" => "fixture_database",
+                "Http:Port" => "12345",
+                "Messaging:Enabled" => "true",
+                _ => "fixture",
+            })));
+        var bound = source.Get<EnvironmentConfig>(options => options.ErrorOnUnknownConfiguration = true);
+        Assert.IsNotNull(bound);
+        Assert.AreEqual("database.example.test", bound.Database.Host, StringComparer.Ordinal);
+        Assert.AreEqual("fixture_database", bound.Database.Name, StringComparer.Ordinal);
     }
 
     private static EnvironmentConfig Configuration() => new()

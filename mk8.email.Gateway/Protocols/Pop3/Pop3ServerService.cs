@@ -51,6 +51,8 @@ public sealed partial class Pop3ServerService(
     }
 
     private readonly ConnectionLimiter _connectionLimiter = new(MaximumConcurrentConnections);
+    private readonly TaskCompletionSource<Task> _stopBody = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _stopStarted;
     private readonly Pop3RetrievalLimiter _retrievalLimiter = new(4);
 
     [LoggerMessage(EventId = 1, Level = LogLevel.Warning, Message = "No POP3 listeners are enabled.")]
@@ -113,20 +115,26 @@ public sealed partial class Pop3ServerService(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        await RunListenersAsync(lifetime).ConfigureAwait(false);
+    }
+
+    private async Task RunListenersAsync(CancellationTokenSource lifetime)
+    {
         var tasks = new List<Task>();
         if (environment.Pop3.EnablePop3)
         {
             tasks.Add(ListenAsync(
                 environment.Pop3.Port,
                 ListenerMode.StartTls,
-                stoppingToken));
+                lifetime));
         }
         if (environment.Pop3.EnableImplicitTls)
         {
             tasks.Add(ListenAsync(
                 environment.Pop3.ImplicitTlsPort,
                 ListenerMode.ImplicitTls,
-                stoppingToken));
+                lifetime));
         }
 
         if (tasks.Count == 0)
@@ -135,37 +143,36 @@ public sealed partial class Pop3ServerService(
             return;
         }
 
-        await Task.WhenAll(tasks).ConfigureAwait(false);
+        var completing = Task.WhenAll(tasks);
+        await completing.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        if (completing.Exception is { } faults) throw faults;
+        await completing.ConfigureAwait(false);
     }
 
-    private async Task ListenAsync(int port, ListenerMode mode, CancellationToken cancellationToken)
+    public override Task StopAsync(CancellationToken cancellationToken)
+    {
+        if (base.ExecuteTask is null) return Task.CompletedTask;
+        if (Interlocked.CompareExchange(ref _stopStarted, 1, 0) == 0)
+            _stopBody.SetResult(StopCoreAsync());
+        return _stopBody.Task.Unwrap().WaitAsync(cancellationToken);
+    }
+
+    private async Task StopCoreAsync()
+    {
+        await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
+        var completing = Task.WhenAll(base.StopAsync(CancellationToken.None), base.ExecuteTask ?? Task.CompletedTask);
+        await completing.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        if (completing.Exception is { } faults) throw faults;
+        await completing.ConfigureAwait(false);
+    }
+
+    private async Task ListenAsync(int port, ListenerMode mode, CancellationTokenSource lifetime)
     {
         using var listener = new TcpListener(IPAddress.Any, port);
-        var activeConnections = new List<Task>();
-        listener.Start();
-        LogListenerStarted(logger, mode, port);
-
-        try
-        {
-            while (!cancellationToken.IsCancellationRequested)
-            {
-                var client = await listener.AcceptTcpClientAsync(cancellationToken).ConfigureAwait(false);
-                activeConnections.RemoveAll(static task => task.IsCompletedSuccessfully);
-                // The listener joins all retained accepted-handler tasks in its finally block.
-#pragma warning disable CA2025
-                activeConnections.Add(HandleConnectionAsync(client, mode, cancellationToken));
-#pragma warning restore CA2025
-            }
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-        }
-        finally
-        {
-            listener.Stop();
-            await Task.WhenAll(activeConnections).ConfigureAwait(false);
-            LogListenerStopped(logger, mode, port);
-        }
+        await OwnedTcpListener.RunAsync(listener, lifetime,
+            (client, token) => HandleConnectionAsync(client, mode, token),
+            () => LogListenerStarted(logger, mode, port),
+            () => LogListenerStopped(logger, mode, port)).ConfigureAwait(false);
     }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ordered wire-protocol state machine is kept together to preserve command and response sequencing.")]
@@ -308,15 +315,7 @@ public sealed partial class Pop3ServerService(
             bufferSize: 4096,
             leaveOpen: true);
         var reader = new BoundedLineReader(streamReader);
-        var writer = new StreamWriter(
-            stream,
-            MailWireEncoding.Instance,
-            bufferSize: 4096,
-            leaveOpen: true)
-        {
-            AutoFlush = true,
-            NewLine = "\r\n",
-        };
+        var writer = new SessionResponseWriter(stream, MailWireEncoding.Instance, cancellationToken);
         await using var writerLifetime = writer.ConfigureAwait(false);
 
         if (sendGreeting)
@@ -494,7 +493,7 @@ public sealed partial class Pop3ServerService(
     private TimeSpan MaildropLeaseLifetime =>
         TimeSpan.FromSeconds(environment.Limits.ConnectionTimeoutSeconds + 30);
 
-    private async Task WriteCapabilitiesAsync(StreamWriter writer, Pop3Session session)
+    private async Task WriteCapabilitiesAsync(SessionResponseWriter writer, Pop3Session session)
     {
         await writer.WriteLineAsync("+OK Capability list follows").ConfigureAwait(false);
         await writer.WriteLineAsync("TOP").ConfigureAwait(false);
@@ -519,7 +518,7 @@ public sealed partial class Pop3ServerService(
     }
 
     private static async Task HandleUserAsync(
-        StreamWriter writer,
+        SessionResponseWriter writer,
         string username,
         Pop3Session session)
     {
@@ -544,7 +543,7 @@ public sealed partial class Pop3ServerService(
     }
 
     private async Task HandlePasswordAsync(
-        StreamWriter writer,
+        SessionResponseWriter writer,
         string password,
         Pop3Session session,
         CancellationToken cancellationToken)
@@ -576,7 +575,7 @@ public sealed partial class Pop3ServerService(
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ordered wire-protocol state machine is kept together to preserve command and response sequencing.")]
     private async Task HandleAuthAsync(
         BoundedLineReader reader,
-        StreamWriter writer,
+        SessionResponseWriter writer,
         string argument,
         Pop3Session session,
         CancellationToken cancellationToken)
@@ -706,7 +705,7 @@ public sealed partial class Pop3ServerService(
     }
 
     private async Task AuthenticateAndOpenAsync(
-        StreamWriter writer,
+        SessionResponseWriter writer,
         string username,
         string password,
         Pop3Session session,
@@ -738,7 +737,7 @@ public sealed partial class Pop3ServerService(
     }
 
     private async Task OpenMaildropAsync(
-        StreamWriter writer,
+        SessionResponseWriter writer,
         Pop3IdentityResult user,
         Pop3Session session,
         CancellationToken cancellationToken)
@@ -805,7 +804,7 @@ public sealed partial class Pop3ServerService(
     }
 
     private static async Task<bool> RequireTransactionAsync(
-        StreamWriter writer,
+        SessionResponseWriter writer,
         Pop3Session session)
     {
         if (session.State == Pop3State.Transaction)
@@ -815,14 +814,14 @@ public sealed partial class Pop3ServerService(
         return false;
     }
 
-    private static Task WriteStatAsync(StreamWriter writer, Pop3Session session)
+    private static Task WriteStatAsync(SessionResponseWriter writer, Pop3Session session)
     {
         var (count, size) = GetMaildropStatistics(session);
         return writer.WriteLineAsync($"+OK {count} {size}");
     }
 
     private static async Task HandleListAsync(
-        StreamWriter writer,
+        SessionResponseWriter writer,
         string argument,
         Pop3Session session)
     {
@@ -851,7 +850,7 @@ public sealed partial class Pop3ServerService(
     }
 
     private static async Task HandleUidlAsync(
-        StreamWriter writer,
+        SessionResponseWriter writer,
         string argument,
         Pop3Session session)
     {
@@ -881,7 +880,7 @@ public sealed partial class Pop3ServerService(
 
     private async Task HandleTopAsync(
         Stream stream,
-        StreamWriter writer,
+        SessionResponseWriter writer,
         string argument,
         Pop3Session session,
         CancellationToken cancellationToken)
@@ -906,7 +905,7 @@ public sealed partial class Pop3ServerService(
 
     private async Task HandleRetrieveAsync(
         Stream stream,
-        StreamWriter writer,
+        SessionResponseWriter writer,
         string messageNumber,
         Pop3Session session,
         int? bodyLineCount,
@@ -970,7 +969,7 @@ public sealed partial class Pop3ServerService(
     }
 
     private static async Task HandleDeleteAsync(
-        StreamWriter writer,
+        SessionResponseWriter writer,
         string argument,
         Pop3Session session)
     {
@@ -986,7 +985,7 @@ public sealed partial class Pop3ServerService(
     }
 
     private async Task HandleQuitAsync(
-        StreamWriter writer,
+        SessionResponseWriter writer,
         Pop3Session session,
         CancellationToken cancellationToken)
     {

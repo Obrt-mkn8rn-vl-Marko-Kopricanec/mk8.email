@@ -68,17 +68,27 @@ public sealed class OAuthTokenService(
         return issued.Pair;
     }
 
-    public async Task<OAuthTokenPair?> RefreshAsync(
+    public Task<OAuthTokenPair?> RefreshAsync(
         string refreshToken,
         string clientId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        RefreshCoreAsync(refreshToken, clientId, ownsTransaction: true, cancellationToken);
+
+    internal Task<OAuthTokenPair?> RefreshWithinReceiptAsync(string refreshToken, string clientId,
+        CancellationToken cancellationToken) =>
+        RefreshCoreAsync(refreshToken, clientId, ownsTransaction: false, cancellationToken);
+
+    private async Task<OAuthTokenPair?> RefreshCoreAsync(string refreshToken, string clientId,
+        bool ownsTransaction, CancellationToken cancellationToken)
     {
         if (!TryParseTokenId(refreshToken, "mk8_rt_", out var tokenId))
             return null;
 
-        var transaction = await database.Database.BeginTransactionAsync(
+        if (!ownsTransaction && database.Database.CurrentTransaction is null)
+            throw new InvalidOperationException("OAuth rotation requires its receipt transaction.");
+        var transaction = ownsTransaction ? await database.Database.BeginTransactionAsync(
             IsolationLevel.Serializable,
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken).ConfigureAwait(false) : null;
         // A null transaction is intentional for non-relational test providers.
 #pragma warning disable CA2007, MA0004
         await using (transaction)
@@ -98,7 +108,7 @@ public sealed class OAuthTokenService(
             {
                 await RevokeGrantEntityAsync(token.Grant, now, cancellationToken).ConfigureAwait(false);
                 await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                if (transaction is not null) await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
                 return null;
             }
             if (token.ExpiresAt <= now
@@ -108,7 +118,7 @@ public sealed class OAuthTokenService(
             {
                 token.RevokedAt ??= now;
                 await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                if (transaction is not null) await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
                 return null;
             }
 
@@ -126,7 +136,7 @@ public sealed class OAuthTokenService(
             var issued = IssueTokenPair(token.Grant, now);
             token.ReplacedByTokenId = issued.RefreshTokenId;
             await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            if (transaction is not null) await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             return issued.Pair;
         }
     }

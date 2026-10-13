@@ -16,26 +16,24 @@ public static class PortableEnvironmentLoader
     internal static async Task<EnvironmentConfig> LoadFromDirectoryAsync(
         string directory,
         EnvironmentValidationRole role,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<CancellationToken, Task>? afterActivePrecheck = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(directory);
         if (!Enum.IsDefined(role))
             throw new ArgumentOutOfRangeException(nameof(role));
         cancellationToken.ThrowIfCancellationRequested();
 
-        var options = new SupprocomSecretsOptions
-        {
-            EnvironmentName = "Production",
-            FileOverridesProcessEnvironment = true,
-        };
-        options.File.Directory = Path.GetFullPath(directory);
-        options.File.Import = SecretFileImport.None;
-        options.File.Recovery = SecretFileRecovery.None;
-        options.File.Protection = SecretFileProtection.InstallationBoundAesGcm;
-
-        var active = new FileInfo(Path.Combine(options.File.Directory, ".env"));
+        var installationDirectory = Path.GetFullPath(directory);
+        var options = CreateActiveOnlyOptions(installationDirectory);
+        var active = new FileInfo(Path.Combine(installationDirectory, ".env"));
         if (!active.Exists || active.Length == 0)
             throw new InvalidOperationException("The installation-local active configuration is missing or empty.");
+
+        // Per-call test coordination owns and awaits the exact post-precheck
+        // interleaving. Public startup has no callback or provider override.
+        if (afterActivePrecheck is not null)
+            await afterActivePrecheck(cancellationToken).ConfigureAwait(false);
 
         // The builtin store refuses external pointers and never resolves provider
         // manifests/adapters. One awaited snapshot owns the startup collection.
@@ -70,6 +68,26 @@ public static class PortableEnvironmentLoader
         if (errors.Count > 0)
             throw new InvalidOperationException("The portable configuration is not valid: " + string.Join("; ", errors));
         return config;
+    }
+
+    private static SupprocomSecretsOptions CreateActiveOnlyOptions(string installationDirectory)
+    {
+        var options = new SupprocomSecretsOptions
+        {
+            EnvironmentName = "Production",
+            FileOverridesProcessEnvironment = true,
+        };
+        options.File.Directory = installationDirectory;
+        options.File.Import = SecretFileImport.None;
+        options.File.Recovery = SecretFileRecovery.None;
+        options.File.Protection = SecretFileProtection.InstallationBoundAesGcm;
+        // 0.1.4 has no active-only creation flag. Alias its template candidate
+        // to the active document itself: a separate provisioning template can
+        // never be selected, even if the active file disappears after admission.
+        // Missing active yields an empty snapshot; empty active fails template
+        // validation before writes. Import/recovery remain disabled.
+        options.File.TemplateName = options.File.ActiveName;
+        return options;
     }
 
     private static void RefuseSecretFileFallbacks(EnvironmentConfig config)

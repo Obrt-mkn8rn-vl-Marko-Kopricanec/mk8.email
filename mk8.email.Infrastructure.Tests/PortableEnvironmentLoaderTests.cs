@@ -9,6 +9,9 @@ namespace mk8.email.Infrastructure.Tests;
     "Design", "CA1515", Justification = "MSTest requires a public fixture for discovery.")]
 public sealed class PortableEnvironmentLoaderTests
 {
+    private static readonly string[] RemovedActiveFiles = [".env.template"];
+    private static readonly string[] TruncatedActiveFiles = [".env", ".env.template"];
+
     public TestContext TestContext { get; set; } = null!;
 
     [TestMethod]
@@ -125,6 +128,51 @@ public sealed class PortableEnvironmentLoaderTests
         await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => LoadAsync(fixture)).ConfigureAwait(false);
         Assert.IsFalse(File.Exists(Path.Combine(fixture.Root.FullName, ".env")));
         Assert.IsFalse(File.Exists(Path.Combine(fixture.Root.FullName, ".installation.key")));
+    }
+
+    [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task ActiveLossAfterPrecheckCannotActivateASeparateTemplate(bool truncate)
+    {
+        using var fixture = new SettingsFixture();
+        await fixture.WriteAsync(TestContext.CancellationToken).ConfigureAwait(false);
+        var active = Path.Combine(fixture.Root.FullName, ".env");
+        var template = Path.Combine(fixture.Root.FullName, ".env.template");
+        var templateBytes = await File.ReadAllBytesAsync(active, TestContext.CancellationToken).ConfigureAwait(false);
+        await File.WriteAllBytesAsync(template, templateBytes, TestContext.CancellationToken).ConfigureAwait(false);
+        var precheckEntries = 0;
+        Task<EnvironmentConfig> AttemptAsync() => PortableEnvironmentLoader.LoadFromDirectoryAsync(
+            fixture.Root.FullName, EnvironmentValidationRole.Combined, TestContext.CancellationToken,
+            async token =>
+            {
+                Assert.IsTrue(File.Exists(active));
+                Assert.IsGreaterThan(0L, new FileInfo(active).Length);
+                precheckEntries++;
+                if (truncate)
+                    await File.WriteAllBytesAsync(active, [], token).ConfigureAwait(false);
+                else
+                    File.Delete(active);
+            });
+
+        if (truncate)
+        {
+            var failure = await Assert.ThrowsExactlyAsync<SupprocomSecretsException>(AttemptAsync).ConfigureAwait(false);
+            Assert.AreEqual("InvalidTemplate", failure.Code, StringComparer.Ordinal);
+            Assert.AreEqual(0L, new FileInfo(active).Length);
+        }
+        else
+        {
+            await Assert.ThrowsExactlyAsync<InvalidOperationException>(AttemptAsync).ConfigureAwait(false);
+            Assert.IsFalse(File.Exists(active));
+        }
+
+        Assert.AreEqual(1, precheckEntries);
+        Assert.AreSequenceEqual(templateBytes,
+            await File.ReadAllBytesAsync(template, TestContext.CancellationToken).ConfigureAwait(false));
+        Assert.AreSequenceEqual(truncate ? TruncatedActiveFiles : RemovedActiveFiles,
+            Directory.EnumerateFiles(fixture.Root.FullName).Select(Path.GetFileName).Order(StringComparer.Ordinal).ToArray(),
+            StringComparer.Ordinal);
     }
 
     [TestMethod]

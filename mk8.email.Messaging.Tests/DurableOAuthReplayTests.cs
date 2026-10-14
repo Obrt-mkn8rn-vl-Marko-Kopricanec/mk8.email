@@ -2,9 +2,11 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using mk8.email.Application;
 using mk8.email.Application.Interfaces;
 using mk8.email.Application.Services;
+using mk8.email.Application.Worker;
 using mk8.email.Configuration;
 using mk8.email.Contracts.Messaging;
 using mk8.email.Contracts.Protocol;
@@ -23,6 +25,50 @@ internal sealed class DurableOAuthReplayTests
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     public TestContext? TestContext { get; set; }
+
+    [TestMethod]
+    [DataRow(false, false)]
+    [DataRow(true, false)]
+    [DataRow(false, true)]
+    [DataRow(true, true)]
+    [Timeout(90_000, CooperativeCancellation = true)]
+    public async Task ActualWorkerPreservesCommittedOAuthResultAcrossCompletionFault(bool redeemCode, bool acknowledged)
+    {
+        Assert.IsNotNull(TestContext);
+        var token = TestContext.CancellationToken;
+        var fixture = await Rig.CreateAsync(token).ConfigureAwait(false);
+        await using var fixtureLifetime = fixture.ConfigureAwait(false);
+        var request = await fixture.CreateRequestAsync(redeemCode, token).ConfigureAwait(false);
+        await fixture.Bus.EnqueueAsync(request, token).ConfigureAwait(false);
+        var lease = await fixture.Bus.WaitForRequestAsync("worker:first", token).ConfigureAwait(false);
+        var faulting = new CompletionFaultConsumer(fixture.Bus, acknowledged);
+        await fixture.ProcessWithWorkerAsync(faulting, lease, token).ConfigureAwait(false);
+        var first = faulting.DispatchedResponse;
+        Assert.IsNotNull(first);
+        Assert.AreEqual(1, faulting.CompletionCalls);
+        Assert.AreEqual(0, faulting.FailureCalls);
+        var issued = Decode(first).Token;
+        Assert.IsNotNull(issued);
+        await fixture.AssertEncryptedReceiptAsync(request.Id, issued, token).ConfigureAwait(false);
+        var snapshot = await fixture.Bus.GetAsync(request.Id, token).ConfigureAwait(false);
+        Assert.IsNotNull(snapshot);
+        Assert.AreEqual(acknowledged ? "completed" : "processing", snapshot.State, StringComparer.Ordinal);
+        if (!acknowledged)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(6), token).ConfigureAwait(false);
+            var reclaimed = await fixture.Bus.WaitForRequestAsync("worker:recovery", token).ConfigureAwait(false);
+            Assert.AreEqual(request.Id, reclaimed.Request.Id);
+            Assert.IsGreaterThan(lease.AttemptCount, reclaimed.AttemptCount);
+            await fixture.ProcessWithWorkerAsync(fixture.Bus, reclaimed, token).ConfigureAwait(false);
+        }
+        var recovered = await fixture.Bus.WaitForResponseAsync(request.Id, request.Deadline, token).ConfigureAwait(false);
+        Assert.AreSequenceEqual(first.Payload, recovered.Payload);
+        Assert.IsNotNull(await fixture.AuthenticateAsync(issued.AccessToken, token).ConfigureAwait(false));
+        var database = fixture.Context();
+        await using var databaseLifetime = database.ConfigureAwait(false);
+        Assert.AreEqual(1, await database.ApplicationOperationReceipts.CountAsync(token).ConfigureAwait(false));
+        Assert.AreEqual(redeemCode ? 2 : 4, await database.OAuthTokens.CountAsync(token).ConfigureAwait(false));
+    }
 
     [TestMethod]
     [DataRow(false)]
@@ -100,6 +146,15 @@ internal sealed class DurableOAuthReplayTests
         private ServiceProvider Services => _services ?? throw new InvalidOperationException("Fixture services are not initialized.");
         internal PostgresApplicationBus Bus => _bus ?? throw new InvalidOperationException("Fixture bus is not initialized.");
         internal EmailDbContext Context() => new(new DbContextOptionsBuilder<EmailDbContext>().UseNpgsql(_server.ConnectionString).Options);
+
+        internal async Task ProcessWithWorkerAsync(IApplicationRequestConsumer consumer,
+            ApplicationRequestLease lease, CancellationToken token)
+        {
+            using var worker = new ApplicationRequestWorker(consumer, Services.GetRequiredService<IServiceScopeFactory>(),
+                new ApplicationWorkerIdentity(lease.WorkerId, TimeSpan.FromSeconds(1)),
+                NullLogger<ApplicationRequestWorker>.Instance);
+            await worker.ProcessLeaseAsync(lease, token).ConfigureAwait(false);
+        }
 
         internal static async Task<Rig> CreateAsync(CancellationToken token)
         {
@@ -230,6 +285,37 @@ internal sealed class DurableOAuthReplayTests
                     await _server.DisposeAsync().ConfigureAwait(false);
                 }
             }
+        }
+    }
+
+    private sealed class CompletionFaultConsumer(PostgresApplicationBus bus, bool acknowledged) : IApplicationRequestConsumer
+    {
+        internal ApplicationResponse? DispatchedResponse { get; private set; }
+        internal int CompletionCalls { get; private set; }
+        internal int FailureCalls { get; private set; }
+
+        public Task<ApplicationRequestLease> WaitForRequestAsync(string workerId, CancellationToken cancellationToken = default) =>
+            bus.WaitForRequestAsync(workerId, cancellationToken);
+        public Task<ApplicationRequestLease?> TryClaimAsync(string workerId, CancellationToken cancellationToken = default) =>
+            bus.TryClaimAsync(workerId, cancellationToken);
+        public Task<bool> RenewLeaseAsync(ApplicationRequestLease lease, CancellationToken cancellationToken = default) =>
+            bus.RenewLeaseAsync(lease, cancellationToken);
+
+        public async Task CompleteAsync(ApplicationRequestLease lease, ApplicationResponse response,
+            CancellationToken cancellationToken = default)
+        {
+            CompletionCalls++;
+            DispatchedResponse = response;
+            if (acknowledged)
+                await bus.CompleteAsync(lease, response, cancellationToken).ConfigureAwait(false);
+            throw new IOException("Controlled failure before or after actual completion acknowledgment.");
+        }
+
+        public Task FailAsync(ApplicationRequestLease lease, string errorCode, string errorDetail,
+            CancellationToken cancellationToken = default)
+        {
+            FailureCalls++;
+            return bus.FailAsync(lease, errorCode, errorDetail, cancellationToken);
         }
     }
 }

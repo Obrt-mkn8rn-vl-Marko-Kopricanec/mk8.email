@@ -51,6 +51,7 @@ public sealed partial class Pop3ServerService(
     }
 
     private readonly ConnectionLimiter _connectionLimiter = new(MaximumConcurrentConnections);
+    private readonly AcceptedSessionTasks _admittedSessions = new();
     private readonly TaskCompletionSource<Task> _stopBody = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _stopStarted;
     private readonly Pop3RetrievalLimiter _retrievalLimiter = new(4);
@@ -172,8 +173,11 @@ public sealed partial class Pop3ServerService(
         await OwnedTcpListener.RunAsync(listener, lifetime,
             (client, token) => HandleConnectionAsync(client, mode, token),
             () => LogListenerStarted(logger, mode, port),
-            () => LogListenerStopped(logger, mode, port)).ConfigureAwait(false);
+            () => LogListenerStopped(logger, mode, port), _admittedSessions).ConfigureAwait(false);
     }
+
+    // This observes actual accepted settlement without canceling the EOF path.
+    internal Task JoinAdmittedSessionsAsync() => _admittedSessions.JoinAdmittedAsync();
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051", Justification = "The ordered wire-protocol state machine is kept together to preserve command and response sequencing.")]
     private async Task HandleConnectionAsync(

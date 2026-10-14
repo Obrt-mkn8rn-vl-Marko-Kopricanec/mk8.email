@@ -8,20 +8,21 @@ namespace mk8.email.MailWire;
 internal static class OwnedTcpListener
 {
     internal static async Task RunAsync(TcpListener listener, CancellationTokenSource lifetime,
-        Func<TcpClient, CancellationToken, Task> handle, Action started, Action stopped)
+        Func<TcpClient, CancellationToken, Task> handle, Action started, Action stopped,
+        AcceptedSessionTasks? admittedSessions = null)
     {
-        var sessions = new List<Task>();
+        var sessions = admittedSessions ?? new AcceptedSessionTasks();
         var accepting = AcceptAsync(listener, handle, started, sessions, lifetime.Token);
         await accepting.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         var completing = Task.WhenAll(accepting, CloseAsync(listener, stopped),
-            lifetime.CancelAsync(), Task.WhenAll(sessions));
+            lifetime.CancelAsync(), sessions.JoinAdmittedAsync());
         await completing.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         if (completing.Exception is { } faults) throw faults;
         await completing.ConfigureAwait(false);
     }
 
     private static async Task AcceptAsync(TcpListener listener,
-        Func<TcpClient, CancellationToken, Task> handle, Action started, List<Task> sessions, CancellationToken token)
+        Func<TcpClient, CancellationToken, Task> handle, Action started, AcceptedSessionTasks sessions, CancellationToken token)
     {
         try
         {
@@ -30,20 +31,10 @@ internal static class OwnedTcpListener
             while (!token.IsCancellationRequested)
             {
                 var client = await listener.AcceptTcpClientAsync(token).ConfigureAwait(false);
-                // The async admission wrapper retains a synchronous handler fault
-                // too, and keeps the accepted socket alive until its task settles.
-                sessions.Add(HandleAsync(client, handle, token));
-                sessions.RemoveAll(task => task.IsCompletedSuccessfully);
+                sessions.Start(client, handle, token);
             }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
-    }
-
-    private static async Task HandleAsync(TcpClient client,
-        Func<TcpClient, CancellationToken, Task> handle, CancellationToken token)
-    {
-        using var clientLifetime = client;
-        await handle(client, token).ConfigureAwait(false);
     }
 
     private static async Task CloseAsync(TcpListener listener, Action stopped)

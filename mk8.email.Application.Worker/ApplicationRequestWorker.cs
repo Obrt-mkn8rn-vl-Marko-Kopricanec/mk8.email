@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using mk8.email.Application.Interfaces;
+using mk8.email.Contracts.Messaging;
 using mk8.email.Messaging;
 
 namespace mk8.email.Application.Worker;
@@ -34,12 +35,10 @@ internal sealed partial class ApplicationRequestWorker(
         ApplicationRequestLease lease,
         CancellationToken stoppingToken)
     {
-        // Do not turn an upgrade race into a terminal unknown-operation reply.
-        // Leave the lease retryable for the original role to drain/reconcile.
-        if (mk8.email.Contracts.Messaging.DistributedContractVersions.SupersededOperations.Contains(lease.Request.Operation))
-            throw new InvalidOperationException("A superseded application operation requires its original Worker.");
+        EnsureCurrentContract(lease.Request);
         var operationCancellation = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
         var leaseLost = false;
+        var dispatchCompleted = false;
         var renewTask = RenewLeaseAsync(lease, operationCancellation, () => leaseLost = true);
         try
         {
@@ -48,6 +47,10 @@ internal sealed partial class ApplicationRequestWorker(
                 using var scope = scopeFactory.CreateScope();
                 var dispatcher = scope.ServiceProvider.GetRequiredService<IApplicationRequestDispatcher>();
                 var response = await dispatcher.DispatchAsync(lease.Request, operationCancellation.Token).ConfigureAwait(false);
+                // Dispatch may have committed effects and an encrypted operation receipt.
+                // A later publication failure (including an ambiguous acknowledgment)
+                // must not convert that same durable operation into a terminal failure.
+                dispatchCompleted = true;
                 await StopRenewalAsync(operationCancellation, renewTask).ConfigureAwait(false);
                 if (leaseLost)
                     throw new ApplicationRequestLeaseLostException(lease.Request.Id);
@@ -67,14 +70,15 @@ internal sealed partial class ApplicationRequestWorker(
                 await StopRenewalAsync(operationCancellation, renewTask).ConfigureAwait(false);
                 LogLeaseLoss(logger, exception, lease.Request.Id);
             }
-            // This is the durable request boundary: unexpected handler faults must yield a retryable response.
+            // Only dispatch failures are business failures. Leave publication failures
+            // reclaimable under the SAME request ID; an acknowledged commit is already
+            // completed and must likewise never be overwritten by FailAsync.
 #pragma warning disable CA1031
             catch (Exception exception)
 #pragma warning restore CA1031
             {
                 await StopRenewalAsync(operationCancellation, renewTask).ConfigureAwait(false);
-                LogRequestFailure(logger, exception, lease.Request.Id);
-                await FailRequestAsync(lease, stoppingToken).ConfigureAwait(false);
+                await ReportProcessingFailureAsync(lease, exception, dispatchCompleted, stoppingToken).ConfigureAwait(false);
             }
         }
         finally
@@ -88,6 +92,26 @@ internal sealed partial class ApplicationRequestWorker(
                 operationCancellation.Dispose();
             }
         }
+    }
+
+    private static void EnsureCurrentContract(ApplicationRequest request)
+    {
+        // An upgrade race leaves the lease retryable for its original role,
+        // rather than publishing a terminal unknown-operation response.
+        if (DistributedContractVersions.SupersededOperations.Contains(request.Operation))
+            throw new InvalidOperationException("A superseded application operation requires its original Worker.");
+    }
+
+    private async Task ReportProcessingFailureAsync(ApplicationRequestLease lease, Exception exception,
+        bool dispatchCompleted, CancellationToken stoppingToken)
+    {
+        if (dispatchCompleted)
+        {
+            LogResponsePublicationFailure(logger, exception, lease.Request.Id);
+            return;
+        }
+        LogRequestFailure(logger, exception, lease.Request.Id);
+        await FailRequestAsync(lease, stoppingToken).ConfigureAwait(false);
     }
 
     private async Task FailRequestAsync(
@@ -178,4 +202,10 @@ internal sealed partial class ApplicationRequestWorker(
         Level = LogLevel.Warning,
         Message = "Application request {RequestId} failed after losing its lease")]
     private static partial void LogFailureAfterLeaseLoss(ILogger logger, Exception exception, Guid requestId);
+
+    [LoggerMessage(
+        EventId = 1005,
+        Level = LogLevel.Error,
+        Message = "Application request {RequestId} dispatched but response publication was not acknowledged; preserve its durable outcome for recovery")]
+    private static partial void LogResponsePublicationFailure(ILogger logger, Exception exception, Guid requestId);
 }

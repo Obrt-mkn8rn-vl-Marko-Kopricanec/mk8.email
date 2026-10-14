@@ -8,6 +8,7 @@ using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Runtime.InteropServices;
+using System.Runtime.ExceptionServices;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -295,420 +296,461 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         }
     }
 
-    // Keep the ordered IMAP protocol handler/parser steps together.
-#pragma warning disable MA0051
     private async Task<SessionUpgrade> RunImapSessionAsync(
-#pragma warning restore MA0051
         Stream stream, ImapListenerConfig config, ImapSession session, CancellationTokenSource timeout, bool sendGreeting = true)
     {
-        var ct = timeout.Token;
-
         using var streamReader = new StreamReader(stream, ProtocolEncoding, detectEncodingFromByteOrderMarks: false, bufferSize: 4096, leaveOpen: true);
         var reader = new BoundedLineReader(streamReader);
-        var writer = new SessionResponseWriter(stream, ProtocolEncoding, ct);
-        await using (writer.ConfigureAwait(false))
+        Exception? initiatingFailure = null;
+        var result = SessionUpgrade.None;
+        var writer = new SessionResponseWriter(stream, ProtocolEncoding, timeout.Token);
+        try
         {
-            if (sendGreeting)
-                await writer.WriteLineAsync($"* OK {config.SmtpHostname} IMAP4rev1 mk8.email ready").ConfigureAwait(false);
-
-            while (!timeout.IsCancellationRequested && session.State != ImapState.Logout)
+            await using (writer.ConfigureAwait(false))
             {
-                timeout.CancelAfter(TimeSpan.FromSeconds(config.ConnectionTimeoutSeconds));
-                var lineResult = await reader.ReadLineAsync(MaximumCommandLineCharacters, ct).ConfigureAwait(false);
-                if (lineResult.IsTooLong)
+                try
                 {
-                    await writer.WriteLineAsync("* BYE Command line is too long").ConfigureAwait(false);
-                    session.State = ImapState.Logout;
-                    break;
+                    result = await RunImapCommandsAsync(reader, writer, config, session, timeout, sendGreeting).ConfigureAwait(false);
                 }
-
-                var initialLine = lineResult.Value;
-                if (initialLine is null)
-                    break;
-
-                var line = await ReadCommandLiteralsAsync(
-                    initialLine,
-                    reader,
-                    writer,
-                    session,
-                    timeout,
-                    config.ConnectionTimeoutSeconds).ConfigureAwait(false);
-                if (line is null)
-                    continue;
-
-                var spaceIdx = line.IndexOf(' ', StringComparison.Ordinal);
-                if (spaceIdx <= 0)
+                // The actual command has already settled before disposal. Hold
+                // its initiating failure until the response owner also settles.
+#pragma warning disable CA1031
+                catch (Exception error) when (error is not
+                    (OutOfMemoryException or StackOverflowException or AccessViolationException))
+#pragma warning restore CA1031
                 {
-                    await writer.WriteLineAsync("* BAD Invalid command").ConfigureAwait(false);
-                    continue;
-                }
-
-                var tag = line[..spaceIdx];
-                var rest = line[(spaceIdx + 1)..];
-
-                var cmdSpaceIdx = rest.IndexOf(' ', StringComparison.Ordinal);
-                var command = (cmdSpaceIdx > 0 ? rest[..cmdSpaceIdx] : rest).ToUpperInvariant();
-                var args = cmdSpaceIdx > 0 ? rest[(cmdSpaceIdx + 1)..] : string.Empty;
-
-                switch (command)
-                {
-                    case "CAPABILITY":
-                        await HandleCapabilityAsync(writer, tag, config, session).ConfigureAwait(false);
-                        break;
-
-                    case "NOOP":
-                        await writer.WriteLineAsync($"{tag} OK NOOP completed").ConfigureAwait(false);
-                        break;
-
-                    case "LOGOUT":
-                        await writer.WriteLineAsync("* BYE IMAP4rev1 server logging out").ConfigureAwait(false);
-                        await writer.WriteLineAsync($"{tag} OK LOGOUT completed").ConfigureAwait(false);
-                        session.State = ImapState.Logout;
-                        break;
-
-                    case "STARTTLS":
-                        if (session.IsSecure)
-                        {
-                            await writer.WriteLineAsync($"{tag} BAD TLS is already active").ConfigureAwait(false);
-                            break;
-                        }
-                        if (session.State != ImapState.NotAuthenticated)
-                        {
-                            await writer.WriteLineAsync($"{tag} BAD STARTTLS is only available before authentication").ConfigureAwait(false);
-                            break;
-                        }
-                        if (config.EnableStartTls && config.TlsCertificatePath is not null)
-                        {
-                            await writer.WriteLineAsync($"{tag} OK Begin TLS negotiation").ConfigureAwait(false);
-                            await writer.FlushAsync(ct).ConfigureAwait(false);
-                            return SessionUpgrade.StartTls;
-                        }
-                        await writer.WriteLineAsync($"{tag} BAD STARTTLS not enabled").ConfigureAwait(false);
-                        break;
-
-                    case "LOGIN":
-                        await HandleLoginAsync(writer, tag, args, session, ct).ConfigureAwait(false);
-                        await StopAfterTooManyAuthenticationFailuresAsync(writer, session).ConfigureAwait(false);
-                        break;
-
-                    case "AUTHENTICATE":
-                        await HandleAuthenticateAsync(reader, writer, tag, args, session, ct).ConfigureAwait(false);
-                        await StopAfterTooManyAuthenticationFailuresAsync(writer, session).ConfigureAwait(false);
-                        break;
-
-                    case "NAMESPACE":
-                        await writer.WriteLineAsync("* NAMESPACE ((\"\" \"/\")) NIL NIL").ConfigureAwait(false);
-                        await writer.WriteLineAsync($"{tag} OK NAMESPACE completed").ConfigureAwait(false);
-                        break;
-
-                    case "ID":
-                        await writer.WriteLineAsync("* ID (\"name\" \"mk8.email\" \"version\" \"1.0\")").ConfigureAwait(false);
-                        await writer.WriteLineAsync($"{tag} OK ID completed").ConfigureAwait(false);
-                        break;
-
-                    case "ENABLE":
-                        if (session.State != ImapState.Authenticated)
-                        {
-                            await writer.WriteLineAsync($"{tag} BAD ENABLE is only valid in the authenticated state").ConfigureAwait(false);
-                            break;
-                        }
-                        await HandleEnableAsync(writer, tag, args, session).ConfigureAwait(false);
-                        break;
-
-                    case "SUBSCRIBE":
-                        if (session.State == ImapState.NotAuthenticated)
-                        {
-                            await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
-                            break;
-                        }
-                        await HandleSubscribeAsync(writer, tag, args, session, subscribe: true, ct).ConfigureAwait(false);
-                        break;
-
-                    case "UNSUBSCRIBE":
-                        if (session.State == ImapState.NotAuthenticated)
-                        {
-                            await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
-                            break;
-                        }
-                        await HandleSubscribeAsync(writer, tag, args, session, subscribe: false, ct).ConfigureAwait(false);
-                        break;
-
-                    case "GETQUOTAROOT":
-                        if (session.State == ImapState.NotAuthenticated)
-                        {
-                            await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
-                            break;
-                        }
-                        await HandleGetQuotaRootAsync(writer, tag, args, session, ct).ConfigureAwait(false);
-                        break;
-
-                    case "GETQUOTA":
-                        if (session.State == ImapState.NotAuthenticated)
-                        {
-                            await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
-                            break;
-                        }
-                        await HandleGetQuotaAsync(writer, tag, args, session, ct).ConfigureAwait(false);
-                        break;
-
-                    case "LIST":
-                        if (session.State == ImapState.NotAuthenticated)
-                        {
-                            await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
-                            break;
-                        }
-                        await HandleListAsync(writer, tag, args, session, ct).ConfigureAwait(false);
-                        break;
-
-                    case "LSUB":
-                        if (session.State == ImapState.NotAuthenticated)
-                        {
-                            await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
-                            break;
-                        }
-                        await HandleLsubAsync(writer, tag, args, session, ct).ConfigureAwait(false);
-                        break;
-
-                    case "SELECT":
-                        if (session.State == ImapState.NotAuthenticated)
-                        {
-                            await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
-                            break;
-                        }
-                        await HandleSelectAsync(writer, tag, args, session, readOnly: false, ct).ConfigureAwait(false);
-                        break;
-
-                    case "EXAMINE":
-                        if (session.State == ImapState.NotAuthenticated)
-                        {
-                            await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
-                            break;
-                        }
-                        await HandleSelectAsync(writer, tag, args, session, readOnly: true, ct).ConfigureAwait(false);
-                        break;
-
-                    case "CREATE":
-                        if (session.State == ImapState.NotAuthenticated)
-                        {
-                            await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
-                            break;
-                        }
-                        await HandleCreateAsync(writer, tag, args, session, ct).ConfigureAwait(false);
-                        break;
-
-                    case "DELETE":
-                        if (session.State == ImapState.NotAuthenticated)
-                        {
-                            await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
-                            break;
-                        }
-                        await HandleDeleteAsync(writer, tag, args, session, ct).ConfigureAwait(false);
-                        break;
-
-                    case "RENAME":
-                        if (session.State == ImapState.NotAuthenticated)
-                        {
-                            await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
-                            break;
-                        }
-                        await HandleRenameAsync(writer, tag, args, session, ct).ConfigureAwait(false);
-                        break;
-
-                    case "STATUS":
-                        if (session.State == ImapState.NotAuthenticated)
-                        {
-                            await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
-                            break;
-                        }
-                        await HandleStatusAsync(writer, tag, args, session, ct).ConfigureAwait(false);
-                        break;
-
-                    case "FETCH":
-                        if (session.State != ImapState.Selected)
-                        {
-                            await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
-                            break;
-                        }
-                        await HandleFetchAsync(writer, tag, args, session, ct).ConfigureAwait(false);
-                        break;
-
-                    case "STORE":
-                        if (session.State != ImapState.Selected)
-                        {
-                            await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
-                            break;
-                        }
-                        await HandleStoreAsync(writer, tag, args, session, ct).ConfigureAwait(false);
-                        break;
-
-                    case "SEARCH":
-                        if (session.State != ImapState.Selected)
-                        {
-                            await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
-                            break;
-                        }
-                        await HandleSearchAsync(writer, tag, args, session, ct).ConfigureAwait(false);
-                        break;
-
-                    case "EXPUNGE":
-                        if (session.State != ImapState.Selected)
-                        {
-                            await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
-                            break;
-                        }
-                        if (session.SelectedReadOnly)
-                        {
-                            await writer.WriteLineAsync($"{tag} NO Mailbox is read-only").ConfigureAwait(false);
-                            break;
-                        }
-                        await HandleExpungeAsync(writer, tag, session, ct).ConfigureAwait(false);
-                        break;
-
-                    case "COPY":
-                        if (session.State != ImapState.Selected)
-                        {
-                            await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
-                            break;
-                        }
-                        await HandleCopyAsync(writer, tag, args, session, ct).ConfigureAwait(false);
-                        break;
-
-                    case "MOVE":
-                        if (session.State != ImapState.Selected)
-                        {
-                            await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
-                            break;
-                        }
-                        if (session.SelectedReadOnly)
-                        {
-                            await writer.WriteLineAsync($"{tag} NO Mailbox is read-only").ConfigureAwait(false);
-                            break;
-                        }
-                        await HandleMoveAsync(writer, tag, args, session, ct).ConfigureAwait(false);
-                        break;
-
-                    case "APPEND":
-                        if (session.State == ImapState.NotAuthenticated)
-                        {
-                            await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
-                            break;
-                        }
-                        await HandleAppendAsync(
-                            reader,
-                            writer,
-                            tag,
-                            args,
-                            session,
-                            config.MaxMessageSizeBytes,
-                            timeout,
-                            config.ConnectionTimeoutSeconds).ConfigureAwait(false);
-                        break;
-
-                    case "IDLE":
-                        if (session.State == ImapState.NotAuthenticated)
-                        {
-                            await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
-                            break;
-                        }
-                        await HandleIdleAsync(reader, writer, tag, session, timeout, config.ConnectionTimeoutSeconds).ConfigureAwait(false);
-                        break;
-
-                    case "CHECK":
-                        if (session.State != ImapState.Selected)
-                        {
-                            await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
-                            break;
-                        }
-                        await writer.WriteLineAsync($"{tag} OK CHECK completed").ConfigureAwait(false);
-                        break;
-
-                    case "CLOSE":
-                        if (session.State != ImapState.Selected)
-                        {
-                            await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
-                            break;
-                        }
-                        if (!session.SelectedReadOnly)
-                        {
-                            var closeResult = await TryExpungeDeletedAsync(
-                                writer, tag, "CLOSE", session, ct).ConfigureAwait(false);
-                            if (closeResult is null)
-                                break;
-                            if (!closeResult.FolderFound)
-                            {
-                                await writer.WriteLineAsync($"{tag} NO Mailbox not found").ConfigureAwait(false);
-                                break;
-                            }
-                        }
-                        session.SelectedFolderId = null;
-                        session.SelectedFolderName = null;
-                        session.State = ImapState.Authenticated;
-                        await writer.WriteLineAsync($"{tag} OK CLOSE completed").ConfigureAwait(false);
-                        break;
-
-                    case "UNSELECT":
-                        if (session.State != ImapState.Selected)
-                        {
-                            await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
-                            break;
-                        }
-                        session.SelectedFolderId = null;
-                        session.SelectedFolderName = null;
-                        session.State = ImapState.Authenticated;
-                        await writer.WriteLineAsync($"{tag} OK UNSELECT completed").ConfigureAwait(false);
-                        break;
-
-                    case "UID":
-                        if (session.State != ImapState.Selected)
-                        {
-                            await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
-                            break;
-                        }
-                        await HandleUidAsync(writer, tag, args, session, ct).ConfigureAwait(false);
-                        break;
-
-                    case "SORT":
-                        if (session.State != ImapState.Selected)
-                        {
-                            await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
-                            break;
-                        }
-                        await HandleSortAsync(writer, tag, args, session, useUid: false, ct).ConfigureAwait(false);
-                        break;
-
-                    case "THREAD":
-                        if (session.State != ImapState.Selected)
-                        {
-                            await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
-                            break;
-                        }
-                        await HandleThreadAsync(writer, tag, args, session, useUid: false, ct).ConfigureAwait(false);
-                        break;
-
-                    case "COMPRESS":
-                        if (session.State == ImapState.NotAuthenticated)
-                        {
-                            await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
-                            break;
-                        }
-                        if (session.CompressEnabled)
-                        {
-                            await writer.WriteLineAsync($"{tag} BAD COMPRESS already active").ConfigureAwait(false);
-                            break;
-                        }
-                        if (!await HandleCompressAsync(writer, tag, args).ConfigureAwait(false))
-                            break;
-                        session.CompressEnabled = true;
-                        return SessionUpgrade.Compress;
-
-                    default:
-                        await writer.WriteLineAsync($"{tag} BAD Command not recognized").ConfigureAwait(false);
-                        break;
+                    initiatingFailure = error;
                 }
             }
-
-            return SessionUpgrade.None;
         }
+#pragma warning disable CA1031 // A disposal fault must retain the independently settled command's original failure.
+        catch (Exception disposalFailure) when (disposalFailure is not
+            (OutOfMemoryException or StackOverflowException or AccessViolationException))
+#pragma warning restore CA1031
+        {
+            RethrowImapResponseFailure(initiatingFailure, disposalFailure);
+        }
+        if (initiatingFailure is not null)
+            ExceptionDispatchInfo.Capture(initiatingFailure).Throw();
+        return result;
+    }
+
+    // Keep the existing ordered IMAP command/parser steps together, separate
+    // from the response owner's acquisition and fault-preserving retirement.
+#pragma warning disable MA0051
+    private async Task<SessionUpgrade> RunImapCommandsAsync(
+#pragma warning restore MA0051
+        BoundedLineReader reader, SessionResponseWriter writer, ImapListenerConfig config,
+        ImapSession session, CancellationTokenSource timeout, bool sendGreeting)
+    {
+        var ct = timeout.Token;
+        if (sendGreeting)
+            await writer.WriteLineAsync($"* OK {config.SmtpHostname} IMAP4rev1 mk8.email ready").ConfigureAwait(false);
+
+        while (!timeout.IsCancellationRequested && session.State != ImapState.Logout)
+        {
+            timeout.CancelAfter(TimeSpan.FromSeconds(config.ConnectionTimeoutSeconds));
+            var lineResult = await reader.ReadLineAsync(MaximumCommandLineCharacters, ct).ConfigureAwait(false);
+            if (lineResult.IsTooLong)
+            {
+                await writer.WriteLineAsync("* BYE Command line is too long").ConfigureAwait(false);
+                session.State = ImapState.Logout;
+                break;
+            }
+
+            var initialLine = lineResult.Value;
+            if (initialLine is null)
+                break;
+
+            var line = await ReadCommandLiteralsAsync(
+                initialLine,
+                reader,
+                writer,
+                session,
+                timeout,
+                config.ConnectionTimeoutSeconds).ConfigureAwait(false);
+            if (line is null)
+                continue;
+
+            var spaceIdx = line.IndexOf(' ', StringComparison.Ordinal);
+            if (spaceIdx <= 0)
+            {
+                await writer.WriteLineAsync("* BAD Invalid command").ConfigureAwait(false);
+                continue;
+            }
+
+            var tag = line[..spaceIdx];
+            var rest = line[(spaceIdx + 1)..];
+
+            var cmdSpaceIdx = rest.IndexOf(' ', StringComparison.Ordinal);
+            var command = (cmdSpaceIdx > 0 ? rest[..cmdSpaceIdx] : rest).ToUpperInvariant();
+            var args = cmdSpaceIdx > 0 ? rest[(cmdSpaceIdx + 1)..] : string.Empty;
+
+            switch (command)
+            {
+                case "CAPABILITY":
+                    await HandleCapabilityAsync(writer, tag, config, session).ConfigureAwait(false);
+                    break;
+
+                case "NOOP":
+                    await writer.WriteLineAsync($"{tag} OK NOOP completed").ConfigureAwait(false);
+                    break;
+
+                case "LOGOUT":
+                    await writer.WriteLineAsync("* BYE IMAP4rev1 server logging out").ConfigureAwait(false);
+                    await writer.WriteLineAsync($"{tag} OK LOGOUT completed").ConfigureAwait(false);
+                    session.State = ImapState.Logout;
+                    break;
+
+                case "STARTTLS":
+                    if (session.IsSecure)
+                    {
+                        await writer.WriteLineAsync($"{tag} BAD TLS is already active").ConfigureAwait(false);
+                        break;
+                    }
+                    if (session.State != ImapState.NotAuthenticated)
+                    {
+                        await writer.WriteLineAsync($"{tag} BAD STARTTLS is only available before authentication").ConfigureAwait(false);
+                        break;
+                    }
+                    if (config.EnableStartTls && config.TlsCertificatePath is not null)
+                    {
+                        await writer.WriteLineAsync($"{tag} OK Begin TLS negotiation").ConfigureAwait(false);
+                        await writer.FlushAsync(ct).ConfigureAwait(false);
+                        return SessionUpgrade.StartTls;
+                    }
+                    await writer.WriteLineAsync($"{tag} BAD STARTTLS not enabled").ConfigureAwait(false);
+                    break;
+
+                case "LOGIN":
+                    await HandleLoginAsync(writer, tag, args, session, ct).ConfigureAwait(false);
+                    await StopAfterTooManyAuthenticationFailuresAsync(writer, session).ConfigureAwait(false);
+                    break;
+
+                case "AUTHENTICATE":
+                    await HandleAuthenticateAsync(reader, writer, tag, args, session, ct).ConfigureAwait(false);
+                    await StopAfterTooManyAuthenticationFailuresAsync(writer, session).ConfigureAwait(false);
+                    break;
+
+                case "NAMESPACE":
+                    await writer.WriteLineAsync("* NAMESPACE ((\"\" \"/\")) NIL NIL").ConfigureAwait(false);
+                    await writer.WriteLineAsync($"{tag} OK NAMESPACE completed").ConfigureAwait(false);
+                    break;
+
+                case "ID":
+                    await writer.WriteLineAsync("* ID (\"name\" \"mk8.email\" \"version\" \"1.0\")").ConfigureAwait(false);
+                    await writer.WriteLineAsync($"{tag} OK ID completed").ConfigureAwait(false);
+                    break;
+
+                case "ENABLE":
+                    if (session.State != ImapState.Authenticated)
+                    {
+                        await writer.WriteLineAsync($"{tag} BAD ENABLE is only valid in the authenticated state").ConfigureAwait(false);
+                        break;
+                    }
+                    await HandleEnableAsync(writer, tag, args, session).ConfigureAwait(false);
+                    break;
+
+                case "SUBSCRIBE":
+                    if (session.State == ImapState.NotAuthenticated)
+                    {
+                        await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
+                        break;
+                    }
+                    await HandleSubscribeAsync(writer, tag, args, session, subscribe: true, ct).ConfigureAwait(false);
+                    break;
+
+                case "UNSUBSCRIBE":
+                    if (session.State == ImapState.NotAuthenticated)
+                    {
+                        await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
+                        break;
+                    }
+                    await HandleSubscribeAsync(writer, tag, args, session, subscribe: false, ct).ConfigureAwait(false);
+                    break;
+
+                case "GETQUOTAROOT":
+                    if (session.State == ImapState.NotAuthenticated)
+                    {
+                        await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
+                        break;
+                    }
+                    await HandleGetQuotaRootAsync(writer, tag, args, session, ct).ConfigureAwait(false);
+                    break;
+
+                case "GETQUOTA":
+                    if (session.State == ImapState.NotAuthenticated)
+                    {
+                        await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
+                        break;
+                    }
+                    await HandleGetQuotaAsync(writer, tag, args, session, ct).ConfigureAwait(false);
+                    break;
+
+                case "LIST":
+                    if (session.State == ImapState.NotAuthenticated)
+                    {
+                        await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
+                        break;
+                    }
+                    await HandleListAsync(writer, tag, args, session, ct).ConfigureAwait(false);
+                    break;
+
+                case "LSUB":
+                    if (session.State == ImapState.NotAuthenticated)
+                    {
+                        await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
+                        break;
+                    }
+                    await HandleLsubAsync(writer, tag, args, session, ct).ConfigureAwait(false);
+                    break;
+
+                case "SELECT":
+                    if (session.State == ImapState.NotAuthenticated)
+                    {
+                        await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
+                        break;
+                    }
+                    await HandleSelectAsync(writer, tag, args, session, readOnly: false, ct).ConfigureAwait(false);
+                    break;
+
+                case "EXAMINE":
+                    if (session.State == ImapState.NotAuthenticated)
+                    {
+                        await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
+                        break;
+                    }
+                    await HandleSelectAsync(writer, tag, args, session, readOnly: true, ct).ConfigureAwait(false);
+                    break;
+
+                case "CREATE":
+                    if (session.State == ImapState.NotAuthenticated)
+                    {
+                        await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
+                        break;
+                    }
+                    await HandleCreateAsync(writer, tag, args, session, ct).ConfigureAwait(false);
+                    break;
+
+                case "DELETE":
+                    if (session.State == ImapState.NotAuthenticated)
+                    {
+                        await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
+                        break;
+                    }
+                    await HandleDeleteAsync(writer, tag, args, session, ct).ConfigureAwait(false);
+                    break;
+
+                case "RENAME":
+                    if (session.State == ImapState.NotAuthenticated)
+                    {
+                        await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
+                        break;
+                    }
+                    await HandleRenameAsync(writer, tag, args, session, ct).ConfigureAwait(false);
+                    break;
+
+                case "STATUS":
+                    if (session.State == ImapState.NotAuthenticated)
+                    {
+                        await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
+                        break;
+                    }
+                    await HandleStatusAsync(writer, tag, args, session, ct).ConfigureAwait(false);
+                    break;
+
+                case "FETCH":
+                    if (session.State != ImapState.Selected)
+                    {
+                        await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
+                        break;
+                    }
+                    await HandleFetchAsync(writer, tag, args, session, ct).ConfigureAwait(false);
+                    break;
+
+                case "STORE":
+                    if (session.State != ImapState.Selected)
+                    {
+                        await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
+                        break;
+                    }
+                    await HandleStoreAsync(writer, tag, args, session, ct).ConfigureAwait(false);
+                    break;
+
+                case "SEARCH":
+                    if (session.State != ImapState.Selected)
+                    {
+                        await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
+                        break;
+                    }
+                    await HandleSearchAsync(writer, tag, args, session, ct).ConfigureAwait(false);
+                    break;
+
+                case "EXPUNGE":
+                    if (session.State != ImapState.Selected)
+                    {
+                        await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
+                        break;
+                    }
+                    if (session.SelectedReadOnly)
+                    {
+                        await writer.WriteLineAsync($"{tag} NO Mailbox is read-only").ConfigureAwait(false);
+                        break;
+                    }
+                    await HandleExpungeAsync(writer, tag, session, ct).ConfigureAwait(false);
+                    break;
+
+                case "COPY":
+                    if (session.State != ImapState.Selected)
+                    {
+                        await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
+                        break;
+                    }
+                    await HandleCopyAsync(writer, tag, args, session, ct).ConfigureAwait(false);
+                    break;
+
+                case "MOVE":
+                    if (session.State != ImapState.Selected)
+                    {
+                        await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
+                        break;
+                    }
+                    if (session.SelectedReadOnly)
+                    {
+                        await writer.WriteLineAsync($"{tag} NO Mailbox is read-only").ConfigureAwait(false);
+                        break;
+                    }
+                    await HandleMoveAsync(writer, tag, args, session, ct).ConfigureAwait(false);
+                    break;
+
+                case "APPEND":
+                    if (session.State == ImapState.NotAuthenticated)
+                    {
+                        await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
+                        break;
+                    }
+                    await HandleAppendAsync(
+                        reader,
+                        writer,
+                        tag,
+                        args,
+                        session,
+                        config.MaxMessageSizeBytes,
+                        timeout,
+                        config.ConnectionTimeoutSeconds).ConfigureAwait(false);
+                    break;
+
+                case "IDLE":
+                    if (session.State == ImapState.NotAuthenticated)
+                    {
+                        await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
+                        break;
+                    }
+                    await HandleIdleAsync(reader, writer, tag, session, timeout, config.ConnectionTimeoutSeconds).ConfigureAwait(false);
+                    break;
+
+                case "CHECK":
+                    if (session.State != ImapState.Selected)
+                    {
+                        await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
+                        break;
+                    }
+                    await writer.WriteLineAsync($"{tag} OK CHECK completed").ConfigureAwait(false);
+                    break;
+
+                case "CLOSE":
+                    if (session.State != ImapState.Selected)
+                    {
+                        await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
+                        break;
+                    }
+                    if (!session.SelectedReadOnly)
+                    {
+                        var closeResult = await TryExpungeDeletedAsync(
+                            writer, tag, "CLOSE", session, ct).ConfigureAwait(false);
+                        if (closeResult is null)
+                            break;
+                        if (!closeResult.FolderFound)
+                        {
+                            await writer.WriteLineAsync($"{tag} NO Mailbox not found").ConfigureAwait(false);
+                            break;
+                        }
+                    }
+                    session.SelectedFolderId = null;
+                    session.SelectedFolderName = null;
+                    session.State = ImapState.Authenticated;
+                    await writer.WriteLineAsync($"{tag} OK CLOSE completed").ConfigureAwait(false);
+                    break;
+
+                case "UNSELECT":
+                    if (session.State != ImapState.Selected)
+                    {
+                        await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
+                        break;
+                    }
+                    session.SelectedFolderId = null;
+                    session.SelectedFolderName = null;
+                    session.State = ImapState.Authenticated;
+                    await writer.WriteLineAsync($"{tag} OK UNSELECT completed").ConfigureAwait(false);
+                    break;
+
+                case "UID":
+                    if (session.State != ImapState.Selected)
+                    {
+                        await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
+                        break;
+                    }
+                    await HandleUidAsync(writer, tag, args, session, ct).ConfigureAwait(false);
+                    break;
+
+                case "SORT":
+                    if (session.State != ImapState.Selected)
+                    {
+                        await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
+                        break;
+                    }
+                    await HandleSortAsync(writer, tag, args, session, useUid: false, ct).ConfigureAwait(false);
+                    break;
+
+                case "THREAD":
+                    if (session.State != ImapState.Selected)
+                    {
+                        await writer.WriteLineAsync($"{tag} NO No mailbox selected").ConfigureAwait(false);
+                        break;
+                    }
+                    await HandleThreadAsync(writer, tag, args, session, useUid: false, ct).ConfigureAwait(false);
+                    break;
+
+                case "COMPRESS":
+                    if (session.State == ImapState.NotAuthenticated)
+                    {
+                        await writer.WriteLineAsync($"{tag} NO Not authenticated").ConfigureAwait(false);
+                        break;
+                    }
+                    if (session.CompressEnabled)
+                    {
+                        await writer.WriteLineAsync($"{tag} BAD COMPRESS already active").ConfigureAwait(false);
+                        break;
+                    }
+                    if (!await HandleCompressAsync(writer, tag, args).ConfigureAwait(false))
+                        break;
+                    session.CompressEnabled = true;
+                    return SessionUpgrade.Compress;
+
+                default:
+                    await writer.WriteLineAsync($"{tag} BAD Command not recognized").ConfigureAwait(false);
+                    break;
+            }
+        }
+
+        return SessionUpgrade.None;
+    }
+
+    private static void RethrowImapResponseFailure(Exception? initiatingFailure, Exception disposalFailure)
+    {
+        if (initiatingFailure is not null)
+            throw new AggregateException(initiatingFailure, disposalFailure);
+        ExceptionDispatchInfo.Capture(disposalFailure).Throw();
     }
 
     // Keep the ordered IMAP protocol handler/parser steps together.
@@ -5632,15 +5674,36 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
         await writer.WriteLineAsync("+ idling").ConfigureAwait(false);
         timeout.CancelAfter(TimeSpan.FromMinutes(30));
 
-        var backendUnavailableLogged = false;
-        var readTask = reader.ReadLineAsync(MaximumCommandLineCharacters, timeout.Token).AsTask();
-        while (!timeout.IsCancellationRequested)
-        {
-            var completed = await Task.WhenAny(readTask, Task.Delay(TimeSpan.FromSeconds(5), timeout.Token)).ConfigureAwait(false);
+        // The read is created by this call's scoped owner and independently
+        // joined there; the polling callback borrows that SAME actual task.
+#pragma warning disable VSTHRD003
+        await OwnedSessionRead.RunAsync(
+            token => reader.ReadLineAsync(MaximumCommandLineCharacters, token).AsTask(),
+            (reading, token) => PollIdleAsync(reading, writer, tag, session, timeout,
+                connectionTimeoutSeconds, knownMessages, lastKnownModSeq, token), timeout.Token).ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+    }
 
-            if (completed == readTask)
+    // Keep the ordered IMAP IDLE polling and response composition together.
+#pragma warning disable MA0051
+    private async Task PollIdleAsync(Task<BoundedLine> readTask, SessionResponseWriter writer,
+#pragma warning restore MA0051
+        string tag, ImapSession session, CancellationTokenSource timeout, int connectionTimeoutSeconds,
+        List<ImapIdleMessage> knownMessages, long lastKnownModSeq, CancellationToken idleToken)
+    {
+        var backendUnavailableLogged = false;
+        while (!idleToken.IsCancellationRequested)
+        {
+            // Borrowed from the enclosing scoped read owner, which joins it on every exit.
+#pragma warning disable VSTHRD003
+            var readCompleted = await WaitForIdleReadOrPollAsync(readTask, idleToken).ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+
+            if (readCompleted)
             {
+#pragma warning disable VSTHRD003
                 var lineResult = await readTask.ConfigureAwait(false);
+#pragma warning restore VSTHRD003
                 if (lineResult.IsTooLong)
                 {
                     timeout.CancelAfter(TimeSpan.FromSeconds(connectionTimeoutSeconds));
@@ -5670,7 +5733,7 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
                 try
                 {
                     var snapshot = await GetIdleSnapshotAsync(
-                        session.UserId, session.SelectedFolderId.Value, timeout.Token).ConfigureAwait(false);
+                        session.UserId, session.SelectedFolderId.Value, idleToken).ConfigureAwait(false);
                     ValidateIdleSnapshot(snapshot);
                     currentMessages = snapshot.Messages;
                     currentModSeq = snapshot.HighestModSeq;
@@ -5770,6 +5833,29 @@ IGatewayTrafficJournal? journal = null) : BackgroundService
             }
         }
     }
+
+    private static async Task<bool> WaitForIdleReadOrPollAsync(Task reading, CancellationToken token)
+    {
+        using var pollCancellation = CancellationTokenSource.CreateLinkedTokenSource(token);
+        var polling = Task.Delay(TimeSpan.FromSeconds(5), pollCancellation.Token);
+        // Reading is the enclosing command owner's actual task, not unrelated work.
+#pragma warning disable VSTHRD003
+        var completed = await Task.WhenAny(reading, polling).ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+        // WhenAny cannot forward either child's failure. Independently settle
+        // the owned timer/cancellation before forwarding session cancellation.
+#pragma warning disable CA2025 // Both tasks finish before the poll source is disposed below.
+        var settling = Task.WhenAll(CancelIdlePollAsync(pollCancellation), polling);
+#pragma warning restore CA2025
+        await settling.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        if (settling.Exception is { } failures)
+            throw failures;
+        token.ThrowIfCancellationRequested();
+        return completed == reading;
+    }
+
+    private static async Task CancelIdlePollAsync(CancellationTokenSource pollCancellation) =>
+        await pollCancellation.CancelAsync().ConfigureAwait(false);
 
     private async Task<ImapIdleSnapshotResult> GetIdleSnapshotAsync(
         Guid userId,

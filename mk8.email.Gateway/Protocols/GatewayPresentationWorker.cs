@@ -112,6 +112,7 @@ internal sealed class GatewayPresentationWorker(
 #pragma warning disable CA2025
         var renewal = RenewLeaseAsync(lease, operationCancellation);
 #pragma warning restore CA2025
+        AggregateException? settlementFailure = null;
         try
         {
             await AppendInternalAsync(
@@ -182,16 +183,20 @@ internal sealed class GatewayPresentationWorker(
         }
         finally
         {
-            await operationCancellation.CancelAsync().ConfigureAwait(false);
-            try
-            {
-                await renewal.ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (operationCancellation.IsCancellationRequested)
-            {
-            }
+            // Neither a cancellation callback fault nor a renewal fault can
+            // bypass the independent join of the other actual owned task.
+#pragma warning disable CA2025 // This WhenAll is joined before the operation source leaves its using scope.
+            var settling = Task.WhenAll(CancelOperationAsync(operationCancellation), renewal);
+#pragma warning restore CA2025
+            await settling.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            settlementFailure = settling.Exception;
         }
+        if (settlementFailure is not null)
+            throw settlementFailure;
     }
+
+    private static async Task CancelOperationAsync(CancellationTokenSource operationCancellation) =>
+        await operationCancellation.CancelAsync().ConfigureAwait(false);
 
     private async Task<ApplicationResponse> DispatchAsync(
         ApplicationRequest request,
@@ -290,6 +295,26 @@ internal sealed class GatewayPresentationWorker(
         }
         catch (OperationCanceledException) when (operationCancellation.IsCancellationRequested)
         {
+        }
+        // A lease-renewal fault closes admission to further cooperative effects
+        // immediately, not after the slow dispatch eventually returns.
+#pragma warning disable CA1031
+        catch (Exception renewalFailure) when (renewalFailure is not
+            (OutOfMemoryException or StackOverflowException or AccessViolationException))
+#pragma warning restore CA1031
+        {
+            try
+            {
+                await operationCancellation.CancelAsync().ConfigureAwait(false);
+            }
+#pragma warning disable CA1031 // Independently retain the initiating renewal fault and actual cancellation callback faults.
+            catch (Exception cancellationFailure) when (cancellationFailure is not
+                (OutOfMemoryException or StackOverflowException or AccessViolationException))
+#pragma warning restore CA1031
+            {
+                throw new AggregateException(renewalFailure, cancellationFailure);
+            }
+            throw;
         }
     }
 

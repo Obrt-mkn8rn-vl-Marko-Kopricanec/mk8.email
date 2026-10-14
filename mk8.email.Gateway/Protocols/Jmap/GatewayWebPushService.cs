@@ -14,6 +14,8 @@ internal sealed class GatewayWebPushService : IDisposable
     private readonly HttpClient _client;
     private readonly IGatewayTrafficJournal _journal;
     private readonly int _maximumJournalPayloadBytes;
+    private readonly TimeProvider _timeProvider;
+    private static readonly TimeSpan DeliveryAttemptTimeout = TimeSpan.FromSeconds(10);
 
     // The chained constructor transfers handler ownership to HttpClient(disposeHandler: true).
 #pragma warning disable CA2000
@@ -29,13 +31,24 @@ internal sealed class GatewayWebPushService : IDisposable
         HttpMessageHandler handler,
         IGatewayTrafficJournal journal,
         int maximumJournalPayloadBytes)
+        : this(handler, journal, maximumJournalPayloadBytes, TimeProvider.System)
     {
+    }
+
+    internal GatewayWebPushService(
+        HttpMessageHandler handler,
+        IGatewayTrafficJournal journal,
+        int maximumJournalPayloadBytes,
+        TimeProvider timeProvider)
+    {
+        ArgumentNullException.ThrowIfNull(timeProvider);
         _client = new HttpClient(handler, disposeHandler: true)
         {
             Timeout = TimeSpan.FromSeconds(10),
         };
         _journal = journal;
         _maximumJournalPayloadBytes = maximumJournalPayloadBytes;
+        _timeProvider = timeProvider;
     }
 
     private static byte[]? GetPayload(WebPushSendRequest request)
@@ -147,12 +160,18 @@ internal sealed class GatewayWebPushService : IDisposable
         });
         if (requestTrace.Length > _maximumJournalPayloadBytes)
             throw new InvalidOperationException("The Web Push request exceeds the journal payload limit.");
+        // Queue lifetime admits a later attempt; it is not this attempt's body
+        // read allowance. One deadline covers BOTH journals, headers and content.
+        // Awaited work and response/stream disposal still retain actual ownership;
+        // cancellation does not promise termination of uncooperative content.
+        using var deadline = new CancellationTokenSource(DeliveryAttemptTimeout, _timeProvider);
+        using var attempt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
         await AppendExternalAsync(
             sessionId,
             exchangeId,
             sequence: 1,
             GatewayTrafficDirections.Outbound,
-            requestTrace).ConfigureAwait(false);
+            requestTrace, attempt.Token).ConfigureAwait(false);
 
         HttpResponseMessage response;
         try
@@ -160,11 +179,11 @@ internal sealed class GatewayWebPushService : IDisposable
             response = await _client.SendAsync(
                 request,
                 HttpCompletionOption.ResponseHeadersRead,
-                cancellationToken).ConfigureAwait(false);
+                attempt.Token).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
         {
-            return await RecordNetworkFailureAsync(sessionId, exchangeId).ConfigureAwait(false);
+            return await RecordNetworkFailureAsync(sessionId, exchangeId, attempt.Token).ConfigureAwait(false);
         }
 
         using (response)
@@ -175,11 +194,11 @@ internal sealed class GatewayWebPushService : IDisposable
             {
                 (responseBody, truncated) = await ReadResponseBodyAsync(
                     response,
-                    cancellationToken).ConfigureAwait(false);
+                    attempt.Token).ConfigureAwait(false);
             }
             catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
             {
-                return await RecordNetworkFailureAsync(sessionId, exchangeId).ConfigureAwait(false);
+                return await RecordNetworkFailureAsync(sessionId, exchangeId, attempt.Token).ConfigureAwait(false);
             }
 
             var responseTrace = JsonSerializer.SerializeToUtf8Bytes(new
@@ -196,7 +215,7 @@ internal sealed class GatewayWebPushService : IDisposable
                 exchangeId,
                 sequence: 2,
                 GatewayTrafficDirections.Inbound,
-                responseTrace).ConfigureAwait(false);
+                responseTrace, attempt.Token).ConfigureAwait(false);
             if (response.IsSuccessStatusCode)
                 return new WebPushSendResult(WebPushSendOutcome.Success);
             if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Gone)
@@ -209,14 +228,15 @@ internal sealed class GatewayWebPushService : IDisposable
 
     private async Task<WebPushSendResult> RecordNetworkFailureAsync(
         Guid sessionId,
-        Guid exchangeId)
+        Guid exchangeId,
+        CancellationToken cancellationToken)
     {
         await AppendExternalAsync(
             sessionId,
             exchangeId,
             sequence: 2,
             GatewayTrafficDirections.Inbound,
-            JsonSerializer.SerializeToUtf8Bytes(new { error = "network-failure" })).ConfigureAwait(false);
+            JsonSerializer.SerializeToUtf8Bytes(new { error = "network-failure" }), cancellationToken).ConfigureAwait(false);
         return new WebPushSendResult(WebPushSendOutcome.Failed);
     }
 
@@ -251,9 +271,9 @@ internal sealed class GatewayWebPushService : IDisposable
         Guid exchangeId,
         long sequence,
         string direction,
-        byte[] payload)
+        byte[] payload,
+        CancellationToken cancellationToken)
     {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await _journal.AppendAsync(
             new GatewayTrafficRecord(
                 Guid.CreateVersion7(),
@@ -266,7 +286,7 @@ internal sealed class GatewayWebPushService : IDisposable
                 new Dictionary<string, string>(StringComparer.Ordinal),
                 DateTimeOffset.UtcNow,
                 exchangeId),
-            timeout.Token).ConfigureAwait(false);
+            cancellationToken).ConfigureAwait(false);
     }
 
     public void Dispose() => _client.Dispose();

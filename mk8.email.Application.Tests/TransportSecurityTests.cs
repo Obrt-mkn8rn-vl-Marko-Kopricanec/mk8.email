@@ -3,6 +3,7 @@ using System.IO.Compression;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
+using System.Runtime.ExceptionServices;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -23,6 +24,7 @@ using mk8.email.Contracts.Pop3;
 using mk8.email.Gateway.Protocols.Pop3;
 using mk8.email.Imap.Presentation;
 using mk8.email.Messaging;
+using mk8.email.MailWire;
 using mk8.email.Smtp.Presentation;
 using mk8.email.Utils;
 
@@ -761,6 +763,7 @@ internal sealed partial class TransportSecurityTests
         var server = (await ServerFixture.StartSmtpAsync(environment, port).ConfigureAwait(false));
         await using var serverLifetime = server.ConfigureAwait(false);
         var connections = new List<ProtocolConnection>();
+        Exception? failure = null;
 
         try
         {
@@ -785,10 +788,11 @@ internal sealed partial class TransportSecurityTests
             await connections[4].WriteLineAsync("DATA").ConfigureAwait(false);
             Assert.IsTrue((await connections[4].ReadLineAsync().ConfigureAwait(false)).StartsWith("354 ", StringComparison.Ordinal));
         }
+        catch (Exception original) when (!IsFatalAuthenticationControl(original)) { failure = original; }
         finally
         {
-            foreach (var connection in connections)
-                await connection.DisposeAsync().ConfigureAwait(false);
+            await DisposeEveryOwnerAsync(connections.Select(connection =>
+                (Func<ValueTask>)connection.DisposeAsync), failure).ConfigureAwait(false);
         }
     }
 
@@ -1527,6 +1531,7 @@ internal sealed partial class TransportSecurityTests
             Assert.IsTrue((await connection.ReadLineAsync().ConfigureAwait(false)).StartsWith("+OK ", StringComparison.Ordinal));
         }
 
+        await server.JoinPop3EofSessionsAsync(CancellationToken.None).ConfigureAwait(false);
         Assert.AreEqual(2, await server.CountStoredEmailsAsync().ConfigureAwait(false));
         Assert.AreEqual(0, await server.CountExpungedUidsAsync().ConfigureAwait(false));
     }
@@ -3403,6 +3408,7 @@ internal sealed partial class TransportSecurityTests
             "Subject: bounded append\r\n\r\n" +
             "body\r\n";
         var connections = new List<ProtocolConnection>();
+        Exception? failure = null;
 
         try
         {
@@ -3458,10 +3464,11 @@ internal sealed partial class TransportSecurityTests
 
             Assert.IsTrue(accepted);
         }
+        catch (Exception original) when (!IsFatalAuthenticationControl(original)) { failure = original; }
         finally
         {
-            foreach (var connection in connections)
-                await connection.DisposeAsync().ConfigureAwait(false);
+            await DisposeEveryOwnerAsync(connections.Select(connection =>
+                (Func<ValueTask>)connection.DisposeAsync), failure).ConfigureAwait(false);
         }
     }
 
@@ -4663,6 +4670,16 @@ internal sealed partial class TransportSecurityTests
         public StubEmailService EmailService { get; } = emailService;
         public StubMailSubmissionQueue MailQueue { get; } = mailQueue;
         public NativeAuthenticationObserver AuthenticationObserver { get; } = authenticationObserver;
+        private int _dependenciesRetirementEntered;
+        public bool DependenciesRetirementEntered => Volatile.Read(ref _dependenciesRetirementEntered) != 0;
+
+        public Task StopImapAsync() => RequireImapHost().StopAsync(CancellationToken.None);
+        public Task ImapExecutionTask => RequireImapHost().ExecuteTask
+            ?? throw new InvalidOperationException("The owned IMAP fixture has not started.");
+
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "MA0038", Justification = "This method reads the instance's primary-constructor hostedService capture; it cannot be static. The higher-priority CA1822 rule remains enabled.")]
+        private ImapServerService RequireImapHost() => hostedService as ImapServerService
+            ?? throw new InvalidOperationException("This observation requires the owned IMAP fixture.");
 
         public static async Task<ServerFixture> StartSmtpAsync(
             EnvironmentConfig environment,
@@ -4812,26 +4829,31 @@ internal sealed partial class TransportSecurityTests
 
         }
 
-        public async ValueTask DisposeAsync()
+        public async ValueTask DisposeAsync() => await RetireHostedServiceAsync(hostedService,
+            () =>
+            {
+                (hostedService as IDisposable)?.Dispose();
+                return ValueTask.CompletedTask;
+            }, RetireDependenciesAsync,
+            () => _ = AuthenticationObserver.WritePoint(AuthenticationPoint.FixtureStopping)).ConfigureAwait(false);
+
+        private async ValueTask RetireDependenciesAsync()
         {
-            try
-            {
-                // Declared output failures are contained; even an unexpected diagnostic fault cannot skip shutdown.
-                _ = AuthenticationObserver.WritePoint(AuthenticationPoint.FixtureStopping);
-            }
-            finally
-            {
-                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-                try
-                {
-                    await hostedService.StopAsync(timeout.Token).ConfigureAwait(false);
-                }
-                finally
-                {
-                    (hostedService as IDisposable)?.Dispose();
-                    await services.DisposeAsync().ConfigureAwait(false);
-                }
-            }
+            Interlocked.Exchange(ref _dependenciesRetirementEntered, 1);
+            await services.DisposeAsync().ConfigureAwait(false);
+        }
+
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "MA0038", Justification = "This method uses the instance's captured primary-constructor services; it cannot be static. CA1822 remains enabled.")]
+        public async Task ChangeOwnedInboxFlagForIdleAsync(CancellationToken cancellationToken = default)
+        {
+            var scope = services.CreateAsyncScope();
+            await using var scopeLifetime = scope.ConfigureAwait(false);
+            var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            var folder = await database.Folders.SingleAsync(item => item.Name == DefaultFolders.Inbox, cancellationToken).ConfigureAwait(false);
+            var message = await database.Emails.OrderBy(item => item.Uid).FirstAsync(cancellationToken).ConfigureAwait(false);
+            message.IsRead = true;
+            message.ModSeq = folder.HighestModSeq = 10;
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         }
 
         public async Task DisableOwnedAddressAsync()
@@ -4850,6 +4872,44 @@ internal sealed partial class TransportSecurityTests
             var user = await database.Users.SingleAsync(item => item.Username == TestUsername).ConfigureAwait(false);
             user.QuotaBytes = quotaBytes;
             await database.SaveChangesAsync().ConfigureAwait(false);
+        }
+
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "MA0038", Justification = "This method uses the instance's captured primary-constructor hostedService; it cannot be static. CA1822 remains enabled.")]
+        public async Task JoinPop3EofSessionsAsync(CancellationToken cancellationToken = default)
+        {
+            if (hostedService is not Pop3ServerService pop3)
+                throw new InvalidOperationException("This EOF observation requires the owned POP3 fixture.");
+            await pop3.JoinAdmittedSessionsAsync().WaitAsync(TimeSpan.FromSeconds(5), cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "MA0038", Justification = "This method uses the instance's captured primary-constructor services; it cannot be static. CA1822 remains enabled.")]
+        public async Task<AuthenticatedMailUser> GetOwnedFixtureUserAsync(CancellationToken cancellationToken = default)
+        {
+            var scope = services.CreateAsyncScope();
+            await using var scopeLifetime = scope.ConfigureAwait(false);
+            var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            var user = await database.Users.SingleAsync(candidate => candidate.Username == TestUsername
+                && candidate.IsActive && candidate.Company != null && candidate.Company.IsActive, cancellationToken).ConfigureAwait(false);
+            return new AuthenticatedMailUser(user.Id, user.Username);
+        }
+
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "MA0038", Justification = "This method uses the instance's captured primary-constructor services; it cannot be static. CA1822 remains enabled.")]
+        public async Task<string> GetOwnedPop3MaildropReplyAsync(CancellationToken cancellationToken = default)
+        {
+            var scope = services.CreateAsyncScope();
+            await using var scopeLifetime = scope.ConfigureAwait(false);
+            var database = scope.ServiceProvider.GetRequiredService<EmailDbContext>();
+            var content = scope.ServiceProvider.GetRequiredService<MailboxMessageContentService>();
+            var messages = await database.Emails.ToListAsync(cancellationToken).ConfigureAwait(false);
+            var sizes = new List<int>();
+            foreach (var message in messages)
+            {
+                var raw = await content.ReadAsync(message, cancellationToken).ConfigureAwait(false);
+                sizes.Add(Pop3WireCodec.GetNormalizedCrlfLength(raw));
+            }
+            return string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                $"+OK maildrop has {sizes.Count} messages ({sizes.Sum()} octets)");
         }
 
         public async Task<int> CountStoredEmailsAsync()
@@ -5431,8 +5491,11 @@ SortVector5(folder.Id)).ConfigureAwait(false);
     {
         private static readonly Encoding ProtocolEncoding = Encoding.Latin1;
         private readonly TcpClient _client;
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Usage", "CA2213", Justification = "DisposeAsync passes this field's actual DisposeAsync to the independent all-owner cleanup inventory; controlled disposal-fault cases execute it.")]
         private Stream _stream;
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Usage", "CA2213", Justification = "DisposeAsync invokes this field's Dispose through the independent all-owner cleanup inventory, including after other owner faults.")]
         private StreamReader _reader;
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Usage", "CA2213", Justification = "DisposeAsync passes this field's actual DisposeAsync to the independent all-owner cleanup inventory; every owner is attempted.")]
         private StreamWriter _writer;
 
         private ProtocolConnection(TcpClient client)
@@ -5443,12 +5506,40 @@ SortVector5(folder.Id)).ConfigureAwait(false);
             _writer = CreateWriter(_stream);
         }
 
-        public static async Task<ProtocolConnection> ConnectAsync(int port)
+        public static async Task<ProtocolConnection> ConnectAsync(int port,
+            Func<TcpClient, int, CancellationToken, Task>? connect = null)
         {
-            var client = new TcpClient();
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-            await client.ConnectAsync(IPAddress.Loopback, port, timeout.Token).ConfigureAwait(false);
-            return new ProtocolConnection(client);
+            // This exact local is disposed directly in finally on every failed
+            // acquisition, and cleared ONLY after the owning constructor returns.
+#pragma warning disable CA2000
+            TcpClient? client = new();
+#pragma warning restore CA2000
+            ProtocolConnection? transferred = null;
+            Exception? failure = null;
+            try
+            {
+                if (connect is null)
+                    await client.ConnectAsync(IPAddress.Loopback, port, timeout.Token).ConfigureAwait(false);
+                else
+                    await connect(client, port, timeout.Token).ConfigureAwait(false);
+                transferred = new ProtocolConnection(client);
+                client = null;
+            }
+            catch (Exception original) when (!IsFatalAuthenticationControl(original))
+            {
+                failure = original;
+            }
+            finally
+            {
+                try { client?.Dispose(); }
+                catch (Exception cleanup) when (!IsFatalAuthenticationControl(cleanup))
+                {
+                    failure = failure is null ? cleanup : new AggregateException(failure, cleanup);
+                }
+            }
+            if (failure is not null) ExceptionDispatchInfo.Capture(failure).Throw();
+            return transferred ?? throw new InvalidOperationException("The protocol connection was not transferred.");
         }
 
         public Task<string> ReadLineAsync() => ReadLineAsync(TimeSpan.FromSeconds(3));
@@ -5525,36 +5616,61 @@ SortVector5(folder.Id)).ConfigureAwait(false);
                 .GetString(Encoding.Latin1.GetBytes(wireValue));
         }
 
-        public async Task UpgradeToTlsAsync(string hostName)
+        public async Task UpgradeToTlsAsync(string hostName,
+            Func<SslStream, string, CancellationToken, Task>? authenticate = null)
         {
             await _writer.FlushAsync().ConfigureAwait(false);
-            _reader.Dispose();
-            await _writer.DisposeAsync().ConfigureAwait(false);
+            await DisposeEveryOwnerAsync([
+                () => { _reader.Dispose(); return ValueTask.CompletedTask; }, _writer.DisposeAsync,
+            ]).ConfigureAwait(false);
 
-            var tlsStream = new SslStream(
+            SslStream? tlsStream = new(
                 _stream,
                 leaveInnerStreamOpen: false,
                 (_, certificate, _, errors) => TestCertificateFactory.IsTrusted(certificate, errors));
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-            await tlsStream.AuthenticateAsClientAsync(
-                new SslClientAuthenticationOptions { TargetHost = hostName },
-                timeout.Token).ConfigureAwait(false);
-
-            _stream = tlsStream;
-            _reader = CreateReader(_stream);
-            _writer = CreateWriter(_stream);
+            Exception? failure = null;
+            try
+            {
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                if (authenticate is null)
+                {
+                    await tlsStream.AuthenticateAsClientAsync(
+                        new SslClientAuthenticationOptions { TargetHost = hostName },
+                        timeout.Token).ConfigureAwait(false);
+                }
+                else
+                {
+                    await authenticate(tlsStream, hostName, timeout.Token).ConfigureAwait(false);
+                }
+                _stream = tlsStream;
+                tlsStream = null; // Transfer only after successful authentication.
+                _reader = CreateReader(_stream);
+                _writer = CreateWriter(_stream);
+            }
+            catch (Exception original) when (!IsFatalAuthenticationControl(original))
+            {
+                failure = original;
+            }
+            finally
+            {
+                if (tlsStream is not null)
+                    await DisposeEveryOwnerAsync([tlsStream.DisposeAsync], failure).ConfigureAwait(false);
+            }
+            if (failure is not null) ExceptionDispatchInfo.Capture(failure).Throw();
         }
 
         public async Task UpgradeToDeflateAsync()
         {
             await _writer.FlushAsync().ConfigureAwait(false);
-            _reader.Dispose();
-            await _writer.DisposeAsync().ConfigureAwait(false);
+            await DisposeEveryOwnerAsync([
+                () => { _reader.Dispose(); return ValueTask.CompletedTask; }, _writer.DisposeAsync,
+            ]).ConfigureAwait(false);
 
             var transport = _stream;
 
             DeflateStream? inflater = null;
             DeflateStream? deflater = null;
+            Exception? failure = null;
             try
             {
 
@@ -5575,20 +5691,28 @@ SortVector5(folder.Id)).ConfigureAwait(false);
                 _reader = CreateReader(_stream);
                 _writer = CreateWriter(_stream);
             }
+            catch (Exception original) when (!IsFatalAuthenticationControl(original))
+            {
+                failure = original;
+            }
             finally
             {
-                if (inflater is not null) await inflater.DisposeAsync().ConfigureAwait(false);
-                if (deflater is not null) await deflater.DisposeAsync().ConfigureAwait(false);
+                var cleanup = new List<Func<ValueTask>>();
+                if (inflater is not null) cleanup.Add(inflater.DisposeAsync);
+                if (deflater is not null) cleanup.Add(deflater.DisposeAsync);
+                await DisposeEveryOwnerAsync(cleanup, failure).ConfigureAwait(false);
             }
 
         }
 
         public async ValueTask DisposeAsync()
         {
-            _reader.Dispose();
-            await _writer.DisposeAsync().ConfigureAwait(false);
-            await _stream.DisposeAsync().ConfigureAwait(false);
-            _client.Dispose();
+            await DisposeEveryOwnerAsync([
+                () => { _reader.Dispose(); return ValueTask.CompletedTask; },
+                _writer.DisposeAsync,
+                _stream.DisposeAsync,
+                () => { _client.Dispose(); return ValueTask.CompletedTask; },
+            ]).ConfigureAwait(false);
         }
 
         private static StreamReader CreateReader(Stream stream) =>
@@ -5648,20 +5772,23 @@ SortVector5(folder.Id)).ConfigureAwait(false);
         {
             if (disposing)
             {
-                readStream.Dispose();
-                writeStream.Dispose();
-                transport.Dispose();
+                DisposeEveryOwner([readStream.Dispose, writeStream.Dispose, transport.Dispose,
+                    () => base.Dispose(disposing)]);
             }
-            base.Dispose(disposing);
+            else base.Dispose(disposing);
         }
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Usage", "CA2215", Justification = "The base Stream.DisposeAsync only forwards to virtual Dispose; this override independently disposes every child and explicitly calls base.Dispose(true), avoiding a duplicate virtual child-disposal pass.")]
         public override async ValueTask DisposeAsync()
         {
-            await readStream.DisposeAsync().ConfigureAwait(false);
-            await writeStream.DisposeAsync().ConfigureAwait(false);
-            await transport.DisposeAsync().ConfigureAwait(false);
-            await base.DisposeAsync().ConfigureAwait(false);
-            GC.SuppressFinalize(this);
+            try
+            {
+                await DisposeEveryOwnerAsync([
+                    readStream.DisposeAsync, writeStream.DisposeAsync, transport.DisposeAsync,
+                    () => { base.Dispose(disposing: true); return ValueTask.CompletedTask; },
+                ]).ConfigureAwait(false);
+            }
+            finally { GC.SuppressFinalize(this); }
         }
     }
 

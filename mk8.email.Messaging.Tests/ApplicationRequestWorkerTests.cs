@@ -1,6 +1,7 @@
 using System.Threading.Channels;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using mk8.email.Application;
 using mk8.email.Application.Interfaces;
@@ -20,6 +21,37 @@ namespace mk8.email.Messaging.Tests;
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1812", Justification = "MSTest DiscoverInternals instantiates this test class by reflection; focused discovery is verified by executed test counts.")]
 internal sealed class ApplicationRequestWorkerTests
 {
+    [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task CompletionFailureNeverTerminallyFailsSuccessfullyDispatchedWork(bool acknowledged)
+    {
+        var fault = new IOException("Controlled response-publication acknowledgment failure.");
+        var requests = new StubRequestConsumer
+        {
+            CompletionHandler = (_, _, _) => Task.FromException(fault),
+            RecordCompletedResponse = acknowledged,
+        };
+        var dispatcher = new StubDispatcher();
+        var log = new PublicationLog();
+        var services = new ServiceCollection().AddSingleton<IApplicationRequestDispatcher>(dispatcher)
+            .BuildServiceProvider();
+        await using var servicesLifetime = services.ConfigureAwait(false);
+        using var worker = new ApplicationRequestWorker(requests,
+            services.GetRequiredService<IServiceScopeFactory>(),
+            new ApplicationWorkerIdentity("publication@test", TimeSpan.FromMinutes(1)),
+            log);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var request = NewRequest();
+        await worker.ProcessLeaseAsync(new ApplicationRequestLease(request, "publication@test",
+            DateTimeOffset.UtcNow.AddMinutes(2), 1), timeout.Token).ConfigureAwait(false);
+        Assert.AreEqual(1, dispatcher.DispatchCount);
+        Assert.AreEqual(1, requests.CompletionCalls);
+        Assert.AreEqual(0, requests.FailureCalls);
+        Assert.AreSame(fault, log.Failure);
+        Assert.AreEqual(acknowledged, requests.Completed.Task.IsCompletedSuccessfully);
+    }
+
     [TestMethod]
     public void DrainModeUsesTheSameQueueAndPushWorkersAsHostedMode()
     {
@@ -451,6 +483,18 @@ internal sealed class ApplicationRequestWorkerTests
         }
     }
 
+    private sealed class PublicationLog : ILogger<ApplicationRequestWorker>
+    {
+        internal Exception? Failure { get; private set; }
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (eventId.Id == 1005) Failure = exception;
+        }
+    }
+
     private sealed class ThrowAfterSignalDispatcher(Task signal) : IApplicationRequestDispatcher
     {
         public async Task<ApplicationResponse> DispatchAsync(
@@ -470,6 +514,10 @@ internal sealed class ApplicationRequestWorkerTests
         public TaskCompletionSource<ApplicationResponse> Completed { get; } = new(
             TaskCreationOptions.RunContinuationsAsynchronously);
         public Func<ApplicationRequestLease, CancellationToken, Task<bool>>? RenewalHandler { get; init; }
+        public Func<ApplicationRequestLease, ApplicationResponse, CancellationToken, Task>? CompletionHandler { get; init; }
+        public bool RecordCompletedResponse { get; init; } = true;
+        public int CompletionCalls { get; private set; }
+        public int FailureCalls { get; private set; }
 
         public async Task<ApplicationRequestLease> WaitForRequestAsync(
             string workerId,
@@ -497,8 +545,10 @@ internal sealed class ApplicationRequestWorkerTests
             ApplicationResponse response,
             CancellationToken cancellationToken = default)
         {
-            Completed.TrySetResult(response);
-            return Task.CompletedTask;
+            CompletionCalls++;
+            if (RecordCompletedResponse)
+                Completed.TrySetResult(response);
+            return CompletionHandler?.Invoke(lease, response, cancellationToken) ?? Task.CompletedTask;
         }
 
         public Task FailAsync(
@@ -507,6 +557,7 @@ internal sealed class ApplicationRequestWorkerTests
             string errorDetail,
             CancellationToken cancellationToken = default)
         {
+            FailureCalls++;
             Completed.TrySetException(new InvalidOperationException(errorDetail));
             return Task.CompletedTask;
         }

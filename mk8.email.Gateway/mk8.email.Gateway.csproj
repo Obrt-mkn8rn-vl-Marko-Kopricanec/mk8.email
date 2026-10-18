@@ -10,6 +10,8 @@
 
   <ItemGroup>
     <PackageReference Include="MimeKit" Version="4.17.0" />
+    <!-- Override MimeKit's vulnerable PKCS floor with the October 2026 security patch. -->
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="[10.0.13]" />
     <PackageReference Include="Meziantou.Analyzer" Version="3.0.270" PrivateAssets="all" />
     <PackageReference Include="Roslynator.Analyzers" Version="5.0.0" PrivateAssets="all" />
     <PackageReference Include="Microsoft.VisualStudio.Threading.Analyzers" Version="18.7.23" PrivateAssets="all" />

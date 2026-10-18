@@ -22,38 +22,8 @@ public static class PortableEnvironmentLoader
         ArgumentException.ThrowIfNullOrWhiteSpace(directory);
         if (!Enum.IsDefined(role))
             throw new ArgumentOutOfRangeException(nameof(role));
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var installationDirectory = Path.GetFullPath(directory);
-        var options = CreateActiveOnlyOptions(installationDirectory);
-        var active = new FileInfo(Path.Combine(installationDirectory, ".env"));
-        if (!active.Exists || active.Length == 0)
-            throw new InvalidOperationException("The installation-local active configuration is missing or empty.");
-
-        // Per-call test coordination owns and awaits the exact post-precheck
-        // interleaving. Public startup has no callback or provider override.
-        if (afterActivePrecheck is not null)
-            await afterActivePrecheck(cancellationToken).ConfigureAwait(false);
-
-        // The builtin store refuses external pointers and never resolves provider
-        // manifests/adapters. One awaited snapshot owns the startup collection.
-        var store = new SupprocomSecretFileStore(options);
-        var values = await store.LoadAsync(cancellationToken).ConfigureAwait(false);
-
-        using var source = new ConfigurationManager();
-        source.AddInMemoryCollection(values.Select(pair =>
-            new KeyValuePair<string, string?>(pair.Key, pair.Value)));
-        EnvironmentConfig config;
-        try
-        {
-            config = source.Get<EnvironmentConfig>(binder => binder.ErrorOnUnknownConfiguration = true)
-                ?? throw new InvalidOperationException("The portable configuration is empty.");
-        }
-        catch (InvalidOperationException)
-        {
-            // Binder diagnostics can include a failed conversion's raw value.
-            throw new InvalidOperationException("The portable configuration contains unknown or invalid settings.");
-        }
+        var config = await LoadSnapshotAsync<EnvironmentConfig>(directory, cancellationToken, afterActivePrecheck)
+            .ConfigureAwait(false);
 
         RefuseSecretFileFallbacks(config);
         if (role is EnvironmentValidationRole.ApplicationWorker
@@ -74,6 +44,44 @@ public static class PortableEnvironmentLoader
         if (errors.Count > 0)
             throw new InvalidOperationException("The portable configuration is not valid: " + string.Join("; ", errors));
         return config;
+    }
+
+    public static Task<WakeConfig> LoadWakeAsync(CancellationToken cancellationToken = default) =>
+        LoadWakeFromDirectoryAsync(Path.Combine(AppContext.BaseDirectory, "Environment"), cancellationToken);
+
+    internal static async Task<WakeConfig> LoadWakeFromDirectoryAsync(string directory, CancellationToken cancellationToken)
+    {
+        var config = await LoadSnapshotAsync<WakeConfig>(directory, cancellationToken).ConfigureAwait(false);
+        config.Validate();
+        return config;
+    }
+
+    private static async Task<T> LoadSnapshotAsync<T>(string directory, CancellationToken cancellationToken,
+        Func<CancellationToken, Task>? afterActivePrecheck = null) where T : class
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(directory);
+        cancellationToken.ThrowIfCancellationRequested();
+        var installationDirectory = Path.GetFullPath(directory);
+        var options = CreateActiveOnlyOptions(installationDirectory);
+        var active = new FileInfo(Path.Combine(installationDirectory, ".env"));
+        if (!active.Exists || active.Length == 0)
+            throw new InvalidOperationException("The installation-local active configuration is missing or empty.");
+        // Only the existing friend-test entry can supply this per-call awaited hook.
+        if (afterActivePrecheck is not null)
+            await afterActivePrecheck(cancellationToken).ConfigureAwait(false);
+        var store = new SupprocomSecretFileStore(options);
+        var values = await store.LoadAsync(cancellationToken).ConfigureAwait(false);
+        using var source = new ConfigurationManager();
+        source.AddInMemoryCollection(values.Select(pair => new KeyValuePair<string, string?>(pair.Key, pair.Value)));
+        try
+        {
+            return source.Get<T>(binder => binder.ErrorOnUnknownConfiguration = true)
+                ?? throw new InvalidOperationException("The portable configuration is empty.");
+        }
+        catch (InvalidOperationException)
+        {
+            throw new InvalidOperationException("The portable configuration contains unknown or invalid settings.");
+        }
     }
 
     private static SupprocomSecretsOptions CreateActiveOnlyOptions(string installationDirectory)

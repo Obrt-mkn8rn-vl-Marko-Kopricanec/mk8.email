@@ -603,8 +603,8 @@
       },
       "System.Security.Cryptography.Pkcs": {
         "type": "Transitive",
-        "resolved": "10.0.0",
-        "contentHash": "UPWqLSygJlFerRi9XNIuM0a1VC8gHUIufyP24xQ0sc+XimqUAEcjpOz9DhKpyDjH+5B/wO3RpC0KpkEeDj/ddg=="
+        "resolved": "10.0.13",
+        "contentHash": "a+EovgC1fBnwdlQ6cn3j4JFBfKqiFaFvoAhjisOoSvazLAcIznaBzPQP0oYnvccmeXfqUH1KebVZOxSeH6rMaw=="
       },
       "System.Security.Cryptography.ProtectedData": {
         "type": "Transitive",
@@ -629,6 +629,7 @@
           "Microsoft.Extensions.Hosting.Abstractions": "[10.0.4, )",
           "Microsoft.Extensions.Logging.Abstractions": "[10.0.4, )",
           "MimeKit": "[4.17.0, )",
+          "System.Security.Cryptography.Pkcs": "[10.0.13, 10.0.13]",
           "mk8.email.Contracts": "[1.0.0, )",
           "mk8.email.Infrastructure": "[1.0.0, )",
           "mk8.email.MailWire": "[1.0.0, )",
@@ -672,6 +673,7 @@
         "type": "Project",
         "dependencies": {
           "MimeKit": "[4.17.0, )",
+          "System.Security.Cryptography.Pkcs": "[10.0.13, 10.0.13]",
           "mk8.email.Configuration": "[1.0.0, )",
           "mk8.email.Contracts": "[1.0.0, )",
           "mk8.email.Hosting": "[1.0.0, )",
@@ -700,6 +702,7 @@
           "Microsoft.Extensions.Hosting.Abstractions": "[10.0.4, )",
           "Microsoft.Extensions.Logging.Abstractions": "[10.0.4, )",
           "MimeKit": "[4.17.0, )",
+          "System.Security.Cryptography.Pkcs": "[10.0.13, 10.0.13]",
           "mk8.email.Configuration": "[1.0.0, )",
           "mk8.email.Contracts": "[1.0.0, )",
           "mk8.email.MailWire": "[1.0.0, )",
@@ -763,7 +766,8 @@
       "mk8.email.wake": {
         "type": "Project",
         "dependencies": {
-          "Npgsql": "[10.0.2, )"
+          "Npgsql": "[10.0.2, )",
+          "mk8.email.Configuration": "[1.0.0, )"
         }
       }
     }

@@ -3,37 +3,41 @@ using System.Diagnostics;
 namespace mk8.email.Wake;
 
 internal sealed class WorkerProcessTrigger(
-    string workerAssemblyPath,
-    string workerConfigPath) : IWorkerWakeAction
+    string dotnetHostPath,
+    string workerAssemblyPath) : IWorkerWakeAction
 {
     public void Validate()
     {
-        if (!Path.IsPathFullyQualified(workerAssemblyPath)
-            || !Path.IsPathFullyQualified(workerConfigPath)
-            || !File.Exists(workerAssemblyPath)
-            || !File.Exists(workerConfigPath))
+        if (!Path.IsPathFullyQualified(dotnetHostPath)
+            || !Path.IsPathFullyQualified(workerAssemblyPath)
+            || !File.Exists(dotnetHostPath)
+            || !File.Exists(workerAssemblyPath))
         {
             throw new InvalidOperationException(
-                "The on-demand Worker assembly or configuration file is missing.");
+                "The explicitly configured dotnet host or Worker assembly is missing.");
         }
     }
 
-    public async Task SignalAsync(CancellationToken cancellationToken)
+    internal ProcessStartInfo CreateStartInfo()
     {
         Validate();
-        cancellationToken.ThrowIfCancellationRequested();
-        var dotnetHost = Environment.ProcessPath is { } path
-            && string.Equals(Path.GetFileName(path), "dotnet", StringComparison.Ordinal)
-                ? path
-                : "dotnet";
-        var start = new ProcessStartInfo(dotnetHost)
+        var start = new ProcessStartInfo(dotnetHostPath)
         {
             UseShellExecute = false,
             WorkingDirectory = Path.GetDirectoryName(workerAssemblyPath)!,
         };
         start.ArgumentList.Add(workerAssemblyPath);
         start.ArgumentList.Add("--drain");
-        start.Environment["MK8EMAIL_CONFIG_FILE"] = workerConfigPath;
+        // The Worker independently loads its own fixed AppContext root. No
+        // inherited service values, config locator or PATH lookup is forwarded.
+        start.Environment.Clear();
+        return start;
+    }
+
+    public async Task SignalAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var start = CreateStartInfo();
         using var process = Process.Start(start)
             ?? throw new InvalidOperationException("The on-demand Worker could not start.");
         try

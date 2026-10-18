@@ -7,5 +7,6 @@
 internal-docs
 deploy/secrets
 *.env
+**/.installation.key
 *.user
 *.suo

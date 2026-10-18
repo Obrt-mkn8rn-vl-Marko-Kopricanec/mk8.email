@@ -10,6 +10,8 @@
 
   <ItemGroup>
     <PackageReference Include="MimeKit" Version="4.17.0" />
+    <!-- Override MimeKit's vulnerable PKCS floor with the October 2026 security patch. -->
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="[10.0.13]" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.4" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.4" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.4" />

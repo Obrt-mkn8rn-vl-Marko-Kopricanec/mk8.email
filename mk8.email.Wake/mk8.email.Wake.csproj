@@ -19,6 +19,8 @@
 
   <ItemGroup>
     <AdditionalFiles Include="BannedSymbols.txt" />
+    <ProjectReference Include="../mk8.email.Configuration/mk8.email.Configuration.csproj" />
+    <None Update="Environment/.env.template" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Compile Include="../deploy/postgresql/RestrictedPostgresRolePolicy.cs" Link="RestrictedPostgresRolePolicy.cs" />
     <EmbeddedResource Include="../deploy/postgresql/restricted-role-posture.sql" LogicalName="mk8.email.RestrictedRolePolicy.sql" />
   </ItemGroup>

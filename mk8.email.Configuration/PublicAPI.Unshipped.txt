@@ -1,4 +1,26 @@
 #nullable enable
+mk8.email.Configuration.WakeConfig
+mk8.email.Configuration.WakeConfig.WakeConfig() -> void
+mk8.email.Configuration.WakeConfig.BuildConnectionString() -> string!
+static mk8.email.Configuration.PortableEnvironmentLoader.LoadWakeAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<mk8.email.Configuration.WakeConfig!>!
+mk8.email.Configuration.WakeConfig.DatabaseHost.get -> string!
+mk8.email.Configuration.WakeConfig.DatabaseHost.init -> void
+mk8.email.Configuration.WakeConfig.DatabasePort.get -> int
+mk8.email.Configuration.WakeConfig.DatabasePort.init -> void
+mk8.email.Configuration.WakeConfig.DatabaseName.get -> string!
+mk8.email.Configuration.WakeConfig.DatabaseName.init -> void
+mk8.email.Configuration.WakeConfig.DatabaseUsername.get -> string!
+mk8.email.Configuration.WakeConfig.DatabaseUsername.init -> void
+mk8.email.Configuration.WakeConfig.DatabasePassword.get -> string!
+mk8.email.Configuration.WakeConfig.DatabasePassword.init -> void
+mk8.email.Configuration.WakeConfig.DatabaseSslMode.get -> Npgsql.SslMode
+mk8.email.Configuration.WakeConfig.DatabaseSslMode.init -> void
+mk8.email.Configuration.WakeConfig.DotnetHostPath.get -> string!
+mk8.email.Configuration.WakeConfig.DotnetHostPath.init -> void
+mk8.email.Configuration.WakeConfig.WorkerAssemblyPath.get -> string!
+mk8.email.Configuration.WakeConfig.WorkerAssemblyPath.init -> void
+mk8.email.Configuration.WakeConfig.IncludeJmap.get -> bool
+mk8.email.Configuration.WakeConfig.IncludeJmap.init -> void
 mk8.email.Configuration.DkimConfig.PrivateKeyPem.get -> string?
 mk8.email.Configuration.DkimConfig.PrivateKeyPem.init -> void
 mk8.email.Configuration.DkimConfig.CreateSigningKey() -> System.Security.Cryptography.RSA!
